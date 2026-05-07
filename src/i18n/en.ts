@@ -164,6 +164,7 @@ export const en: Translations = {
   script_genre_fantasy: 'Fantasy',
   script_genre_historical: 'Historical',
   script_tone: 'Tone',
+  script_model: 'Model',
   script_tone_serious: 'Serious',
   script_tone_comedy: 'Comedy',
   script_tone_suspense: 'Suspense',
