@@ -41,13 +41,14 @@ const TONES = [
 ]
 
 const MODELS = [
+  { id: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+  { id: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
   { id: 'deepseek/deepseek-chat-v3.1', label: 'DeepSeek V3.1' },
   { id: 'deepseek/deepseek-r1', label: 'DeepSeek R1' },
   { id: 'meta-llama/llama-3.3-70b-instruct', label: 'Llama 3.3 70B' },
-  { id: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-  { id: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-  { id: 'anthropic/claude-3.5-sonnet', label: 'Claude 3.5 Sonnet' },
 ]
+
+const isAvailableModel = (model: string) => MODELS.some(item => item.id === model)
 
 const STORAGE_KEY = 'doopoo_scripts'
 
@@ -111,7 +112,7 @@ Please write a complete ${selectedType.toLowerCase()} drama script in ${lang ===
             { role: 'system', content: t.script_system_writer },
             { role: 'user', content: aiPrompt },
           ],
-          model: selectedModel,
+          model: isAvailableModel(selectedModel) ? selectedModel : MODELS[0].id,
           max_tokens: 2000,
           temperature: 0.85,
         },
@@ -137,7 +138,7 @@ Please write a complete ${selectedType.toLowerCase()} drama script in ${lang ===
             { role: 'system', content: t.script_system_optimizer },
             { role: 'user', content: `Optimize this ${script.type.toLowerCase()} drama script:\n\n${script.content}` },
           ],
-          model: selectedModel,
+          model: isAvailableModel(selectedModel) ? selectedModel : MODELS[0].id,
           max_tokens: 2000,
           temperature: 0.8,
         },
