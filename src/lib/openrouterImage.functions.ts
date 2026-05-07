@@ -7,10 +7,14 @@ const PREFERRED_ORDER = [
   'google/gemini-3.1-flash-image-preview',
   'google/gemini-2.5-flash-image',
   'google/gemini-3-pro-image-preview',
-  'openai/gpt-5-image-mini',
-  'openai/gpt-5-image',
-  'openai/gpt-5.4-image-2',
 ]
+
+// Models known to frequently reject normal creative prompts via TOS — skip them.
+const BLOCKED_MODELS = new Set<string>([
+  'openai/gpt-5-image',
+  'openai/gpt-5-image-mini',
+  'openai/gpt-5.4-image-2',
+])
 
 const RETRYABLE_STATUSES = new Set([403, 404, 429, 502, 503])
 
@@ -42,13 +46,10 @@ async function fetchImageModels(apiKey: string): Promise<string[]> {
 function buildAttempts(requested: string | undefined, available: string[]): string[] {
   const set = new Set<string>()
   if (requested?.trim()) set.add(requested.trim())
-  // Preferred models that exist in available set
   for (const id of PREFERRED_ORDER) if (available.includes(id)) set.add(id)
-  // Then any remaining available image models
   for (const id of available) set.add(id)
-  // Fallback if model list fetch failed
   if (set.size === 0) PREFERRED_ORDER.forEach(id => set.add(id))
-  return [...set]
+  return [...set].filter(id => !BLOCKED_MODELS.has(id))
 }
 
 export const generateImage = createServerFn({ method: 'POST' })
