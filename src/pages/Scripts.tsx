@@ -71,10 +71,7 @@ Please write a complete ${selectedType.toLowerCase()} drama script in ${lang ===
         body: JSON.stringify({
           model: 'deepseek/deepseek-chat-v3',
           messages: [
-            { role: 'system', content: lang === 'zh'
-              ? '你是一位专业的剧本写作师，擅长创作各种类型的短剧、微电影和广告脚本。'
-              : 'You are a professional screenwriter, skilled at creating short dramas, micro films, and commercial scripts.'
-            },
+            { role: 'system', content: t.script_system_writer },
             { role: 'user', content: aiPrompt },
           ],
           max_tokens: 2000,
@@ -82,11 +79,11 @@ Please write a complete ${selectedType.toLowerCase()} drama script in ${lang ===
         }),
       })
       const data = await res.json()
-      const content = data.choices?.[0]?.message?.content || (lang === 'zh' ? '生成失败，请重试。' : 'Generation failed, please retry.')
+      const content = data.choices?.[0]?.message?.content || t.script_generation_failed
 
       setScripts(prev => prev.map(s => s.id === tempScript.id ? { ...s, content } : s))
     } catch {
-      setScripts(prev => prev.map(s => s.id === tempScript.id ? { ...s, content: lang === 'zh' ? '网络错误，请重试。' : 'Network error, please retry.' } : s))
+      setScripts(prev => prev.map(s => s.id === tempScript.id ? { ...s, content: t.script_network_error } : s))
     } finally {
       setGenerating(false)
     }
@@ -101,10 +98,7 @@ Please write a complete ${selectedType.toLowerCase()} drama script in ${lang ===
       body: JSON.stringify({
         model: 'deepseek/deepseek-chat-v3',
         messages: [
-          { role: 'system', content: lang === 'zh'
-            ? '你是一位专业的剧本优化师，在保留原意的基础上提升剧本质量。'
-            : 'You are a professional script optimizer. Improve the quality while preserving the original meaning.'
-          },
+          { role: 'system', content: t.script_system_optimizer },
           { role: 'user', content: `Optimize this ${script.type.toLowerCase()} drama script:\n\n${script.content}` },
         ],
         max_tokens: 2000,
@@ -139,7 +133,7 @@ Please write a complete ${selectedType.toLowerCase()} drama script in ${lang ===
       <div className="panel p-6 space-y-4">
         <h2 className="font-semibold text-text-primary flex items-center gap-2">
           <Sparkles size={16} className="text-accent" />
-          {lang === 'zh' ? '创建新剧本' : 'Create New Script'}
+          {t.scripts_create_new}
         </h2>
 
         <div className="grid grid-cols-3 gap-3">
@@ -209,7 +203,7 @@ Please write a complete ${selectedType.toLowerCase()} drama script in ${lang ===
       {/* Scripts list */}
       <div className="space-y-3">
         <h2 className="font-display text-xl font-bold">
-          {lang === 'zh' ? '剧本库' : 'Script Library'} ({scripts.length})
+          {t.scripts_library} ({scripts.length})
         </h2>
 
         {scripts.length === 0 ? (
