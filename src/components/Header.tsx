@@ -1,4 +1,4 @@
-import { Link, NavLink } from '@tanstack/react-router'
+import { Link } from '@tanstack/react-router'
 import { ChevronDown, MessageCircle, Sparkles, Sun, Moon, Globe } from 'lucide-react'
 import Logo from './Logo'
 import { useTheme } from '../context/ThemeContext'
@@ -21,22 +21,23 @@ export default function Header() {
           <Logo />
           <nav className="hidden md:flex items-center gap-1 text-sm">
             {topLinks.map((l) => (
-              <NavLink
+              <Link
                 key={l.to}
                 to={l.to}
-                className={({ isActive }) =>
-                  `px-3 py-1.5 rounded-full transition-all duration-200 ${
-                    l.accent
-                      ? 'text-accent hover:bg-accent-dim border border-accent/30'
-                      : isActive
-                      ? 'text-text-primary bg-bg-elevated'
-                      : 'text-text-secondary hover:text-text-primary'
-                  }`
+                className={`px-3 py-1.5 rounded-full transition-all duration-200 ${
+                  l.accent
+                    ? 'text-accent hover:bg-accent-dim border border-accent/30'
+                    : 'text-text-secondary hover:text-text-primary'
+                }`}
+                activeProps={
+                  l.accent
+                    ? undefined
+                    : { className: '!text-text-primary !bg-bg-elevated' }
                 }
               >
                 {l.accent && <Sparkles size={12} className="inline mr-1 -mt-0.5" />}
                 {l.label}
-              </NavLink>
+              </Link>
             ))}
           </nav>
         </div>
