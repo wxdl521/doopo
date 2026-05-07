@@ -2,16 +2,53 @@ import { createServerFn } from '@tanstack/react-start'
 
 type Input = { prompt: string; model?: string }
 
-const FALLBACK_MODELS = [
-  'google/gemini-2.5-flash-image-preview',
-  'google/gemini-2.0-flash-exp:free',
-] as const
+// Preferred order — tried first if present in the live model list.
+const PREFERRED_ORDER = [
+  'google/gemini-3.1-flash-image-preview',
+  'google/gemini-2.5-flash-image',
+  'google/gemini-3-pro-image-preview',
+  'openai/gpt-5-image-mini',
+  'openai/gpt-5-image',
+  'openai/gpt-5.4-image-2',
+]
 
-const RETRYABLE_STATUSES = new Set([403, 404, 429])
+const RETRYABLE_STATUSES = new Set([403, 404, 429, 502, 503])
 
-const getModelAttempts = (requested?: string) => {
-  const requestedModel = requested?.trim()
-  return [...new Set([requestedModel, ...FALLBACK_MODELS].filter(Boolean))] as string[]
+let cachedModels: { ids: string[]; ts: number } | null = null
+const MODEL_CACHE_MS = 10 * 60 * 1000
+
+async function fetchImageModels(apiKey: string): Promise<string[]> {
+  if (cachedModels && Date.now() - cachedModels.ts < MODEL_CACHE_MS) return cachedModels.ids
+  try {
+    const res = await fetch('https://openrouter.ai/api/v1/models', {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    })
+    if (!res.ok) return []
+    const json: any = await res.json()
+    const ids: string[] = (json?.data ?? [])
+      .filter((m: any) => {
+        const out = m?.architecture?.output_modalities ?? []
+        return Array.isArray(out) && out.includes('image')
+      })
+      .map((m: any) => m.id)
+      .filter((id: string) => id && !id.startsWith('openrouter/'))
+    cachedModels = { ids, ts: Date.now() }
+    return ids
+  } catch {
+    return []
+  }
+}
+
+function buildAttempts(requested: string | undefined, available: string[]): string[] {
+  const set = new Set<string>()
+  if (requested?.trim()) set.add(requested.trim())
+  // Preferred models that exist in available set
+  for (const id of PREFERRED_ORDER) if (available.includes(id)) set.add(id)
+  // Then any remaining available image models
+  for (const id of available) set.add(id)
+  // Fallback if model list fetch failed
+  if (set.size === 0) PREFERRED_ORDER.forEach(id => set.add(id))
+  return [...set]
 }
 
 export const generateImage = createServerFn({ method: 'POST' })
@@ -24,12 +61,14 @@ export const generateImage = createServerFn({ method: 'POST' })
   .handler(async ({ data }) => {
     const apiKey = process.env.OPENROUTER_API_KEY
     if (!apiKey) {
-      return { url: '', error: 'OPENROUTER_API_KEY is not configured' }
+      return { url: '', error: 'OPENROUTER_API_KEY is not configured', model: '' }
     }
 
+    const available = await fetchImageModels(apiKey)
+    const attempts = buildAttempts(data.model, available)
     let lastError = 'Image generation failed'
 
-    for (const model of getModelAttempts(data.model)) {
+    for (const model of attempts) {
       try {
         const controller = new AbortController()
         const timeout = setTimeout(() => controller.abort(), 55_000)
@@ -52,26 +91,26 @@ export const generateImage = createServerFn({ method: 'POST' })
 
         if (!res.ok) {
           const text = await res.text().catch(() => '')
-          if (res.status === 401) return { url: '', error: 'OpenRouter authentication failed (401)' }
-          lastError = `OpenRouter error ${res.status}: ${text.slice(0, 200)}`
+          if (res.status === 401) return { url: '', error: 'OpenRouter authentication failed (401)', model }
+          lastError = `[${model}] ${res.status}: ${text.slice(0, 180)}`
           if (RETRYABLE_STATUSES.has(res.status)) continue
-          return { url: '', error: lastError }
+          return { url: '', error: lastError, model }
         }
 
-        const json = await res.json()
+        const json: any = await res.json()
         const msg = json?.choices?.[0]?.message
         const url: string =
           msg?.images?.[0]?.image_url?.url ||
           msg?.images?.[0]?.url ||
           ''
-        if (url) return { url, error: null as string | null }
-        lastError = 'Model returned no image'
+        if (url) return { url, error: null as string | null, model }
+        lastError = `[${model}] returned no image`
       } catch (e) {
         lastError = e instanceof Error && e.name === 'AbortError'
-          ? 'Image request timed out'
-          : e instanceof Error ? e.message : 'Network error'
+          ? `[${model}] timed out`
+          : `[${model}] ${e instanceof Error ? e.message : 'network error'}`
       }
     }
 
-    return { url: '', error: lastError }
+    return { url: '', error: lastError, model: '' }
   })
