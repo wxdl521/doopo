@@ -1,4 +1,4 @@
-import { Link, NavLink } from 'react-router-dom'
+import { Link, NavLink } from '@tanstack/react-router'
 import { ChevronDown, MessageCircle, Sparkles, Sun, Moon, Globe } from 'lucide-react'
 import Logo from './Logo'
 import { useTheme } from '../context/ThemeContext'

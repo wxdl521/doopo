@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom'
+import { Link } from '@tanstack/react-router'
 
 export default function Logo({ size = 'md' }: { size?: 'sm' | 'md' | 'lg' }) {
   const dim = size === 'lg' ? 40 : size === 'sm' ? 24 : 32

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Outlet } from 'react-router-dom'
+import { Outlet } from '@tanstack/react-router'
 import Sidebar from '../components/Sidebar'
 import Header from '../components/Header'
 import PromoBanner from '../components/PromoBanner'

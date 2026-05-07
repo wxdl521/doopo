@@ -1,5 +1,5 @@
 import { Plus } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { Link } from '@tanstack/react-router'
 
 export function NewProjectCard({ to = '/projects', label = 'New Project' }: { to?: string; label?: string }) {
   return (

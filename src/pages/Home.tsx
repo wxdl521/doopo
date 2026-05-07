@@ -1,4 +1,4 @@
-import { Link } from 'react-router-dom'
+import { Link } from '@tanstack/react-router'
 import HeroPromptInput from '../components/HeroPromptInput'
 import QuickActionChips from '../components/QuickActionChips'
 import { NewProjectCard, ProjectCard, type ProjectMeta } from '../components/ProjectCard'
