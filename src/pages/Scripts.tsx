@@ -43,10 +43,9 @@ const TONES = [
 const MODELS = [
   { id: 'deepseek/deepseek-chat-v3.1', label: 'DeepSeek V3.1' },
   { id: 'deepseek/deepseek-r1', label: 'DeepSeek R1' },
-  { id: 'google/gemini-2.0-flash-exp:free', label: 'Gemini 2.0 Flash (Free)' },
   { id: 'meta-llama/llama-3.3-70b-instruct', label: 'Llama 3.3 70B' },
-  { id: 'qwen/qwen-2.5-72b-instruct', label: 'Qwen 2.5 72B' },
-  { id: 'openai/gpt-4o-mini', label: 'GPT-4o mini' },
+  { id: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
+  { id: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
   { id: 'anthropic/claude-3.5-sonnet', label: 'Claude 3.5 Sonnet' },
 ]
 

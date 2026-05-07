@@ -47,6 +47,7 @@ export const generateScript = createServerFn({ method: 'POST' })
         const text = await res.text().catch(() => '')
         if (res.status === 401) return { content: '', error: 'OpenRouter authentication failed (401)' }
         if (res.status === 404) return { content: '', error: `Model not available (404). Please pick another model.` }
+        if (res.status === 403) return { content: '', error: 'This model rejected the request (403). Please try a different model.' }
         if (res.status === 429) return { content: '', error: 'Rate limit exceeded, please try again later (429)' }
         return { content: '', error: `OpenRouter error ${res.status}: ${text.slice(0, 200)}` }
       }
