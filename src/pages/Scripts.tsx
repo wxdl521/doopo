@@ -41,11 +41,11 @@ const TONES = [
 ]
 
 const MODELS = [
-  { id: 'deepseek/deepseek-chat-v3.1:free', label: 'DeepSeek V3.1 (Free)' },
-  { id: 'deepseek/deepseek-r1:free', label: 'DeepSeek R1 (Free)' },
+  { id: 'deepseek/deepseek-chat-v3.1', label: 'DeepSeek V3.1' },
+  { id: 'deepseek/deepseek-r1', label: 'DeepSeek R1' },
   { id: 'google/gemini-2.0-flash-exp:free', label: 'Gemini 2.0 Flash (Free)' },
-  { id: 'meta-llama/llama-3.3-70b-instruct:free', label: 'Llama 3.3 70B (Free)' },
-  { id: 'qwen/qwen-2.5-72b-instruct:free', label: 'Qwen 2.5 72B (Free)' },
+  { id: 'meta-llama/llama-3.3-70b-instruct', label: 'Llama 3.3 70B' },
+  { id: 'qwen/qwen-2.5-72b-instruct', label: 'Qwen 2.5 72B' },
   { id: 'openai/gpt-4o-mini', label: 'GPT-4o mini' },
   { id: 'anthropic/claude-3.5-sonnet', label: 'Claude 3.5 Sonnet' },
 ]
