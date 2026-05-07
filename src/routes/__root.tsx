@@ -12,6 +12,9 @@ import appCss from "../styles.css?url";
 import { ThemeProvider } from "../context/ThemeContext";
 import { LanguageProvider } from "../i18n/LanguageContext";
 import MainLayout from "../layouts/MainLayout";
+import { useEffect } from "react";
+import { useServerFn } from "@tanstack/react-start";
+import { probeImageModels } from "../lib/openrouterImage.functions";
 
 function NotFoundComponent() {
   return (
@@ -118,6 +121,20 @@ function RootShell({ children }: { children: React.ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+  const probe = useServerFn(probeImageModels);
+
+  useEffect(() => {
+    probe()
+      .then((r: any) => {
+        if (r?.blocked?.length) {
+          console.info('[image-models] blocked at startup:', r.blocked);
+        }
+        if (r?.healthy?.length) {
+          console.info('[image-models] healthy:', r.healthy);
+        }
+      })
+      .catch(() => {});
+  }, [probe]);
 
   return (
     <QueryClientProvider client={queryClient}>
