@@ -55,9 +55,8 @@ const STORAGE_KEY = 'doopoo_scripts'
 export default function Scripts() {
   const { t, lang } = useLanguage()
   const callGenerate = useServerFn(generateScript)
-  const [scripts, setScripts] = useState<Script[]>(() => {
-    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]') } catch { return [] }
-  })
+  const [scripts, setScripts] = useState<Script[]>([])
+  const [hydrated, setHydrated] = useState(false)
   const [newTitle, setNewTitle] = useState('')
   const [newPlot, setNewPlot] = useState('')
   const [selectedType, setSelectedType] = useState('Short')
@@ -70,8 +69,16 @@ export default function Scripts() {
   const [exportMenuId, setExportMenuId] = useState<string | null>(null)
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(scripts))
-  }, [scripts])
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]')
+      setScripts(saved)
+    } catch { /* ignore */ }
+    setHydrated(true)
+  }, [])
+
+  useEffect(() => {
+    if (hydrated) localStorage.setItem(STORAGE_KEY, JSON.stringify(scripts))
+  }, [scripts, hydrated])
 
   const aiPrompt = `[${selectedType} Drama, ${selectedGenre}, ${selectedTone} tone]
 Title: ${newTitle}
