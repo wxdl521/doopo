@@ -2,12 +2,13 @@ import { createServerFn } from '@tanstack/react-start'
 
 type Input = { prompt: string; model?: string }
 
+// Lovable AI Gateway image models (Nano Banana family)
 const FALLBACK_MODELS = [
-  'google/gemini-2.5-flash-image-preview',
-  'google/gemini-2.0-flash-exp:free',
+  'google/gemini-2.5-flash-image',
+  'google/gemini-3.1-flash-image-preview',
 ] as const
 
-const RETRYABLE_STATUSES = new Set([403, 404, 429])
+const RETRYABLE_STATUSES = new Set([402, 403, 404, 429, 500, 502, 503])
 
 const getModelAttempts = (requested?: string) => {
   const requestedModel = requested?.trim()
@@ -22,9 +23,9 @@ export const generateImage = createServerFn({ method: 'POST' })
     return input
   })
   .handler(async ({ data }) => {
-    const apiKey = process.env.OPENROUTER_API_KEY
+    const apiKey = process.env.LOVABLE_API_KEY
     if (!apiKey) {
-      return { url: '', error: 'OPENROUTER_API_KEY is not configured' }
+      return { url: '', error: 'LOVABLE_API_KEY is not configured' }
     }
 
     let lastError = 'Image generation failed'
@@ -32,14 +33,12 @@ export const generateImage = createServerFn({ method: 'POST' })
     for (const model of getModelAttempts(data.model)) {
       try {
         const controller = new AbortController()
-        const timeout = setTimeout(() => controller.abort(), 55_000)
-        const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        const timeout = setTimeout(() => controller.abort(), 90_000)
+        const res = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
           method: 'POST',
           headers: {
             Authorization: `Bearer ${apiKey}`,
             'Content-Type': 'application/json',
-            'HTTP-Referer': 'https://doopoo.app',
-            'X-Title': 'Doopoo',
           },
           body: JSON.stringify({
             model,
@@ -52,8 +51,8 @@ export const generateImage = createServerFn({ method: 'POST' })
 
         if (!res.ok) {
           const text = await res.text().catch(() => '')
-          if (res.status === 401) return { url: '', error: 'OpenRouter authentication failed (401)' }
-          lastError = `OpenRouter error ${res.status}: ${text.slice(0, 200)}`
+          if (res.status === 401) return { url: '', error: 'AI Gateway authentication failed (401)' }
+          lastError = `AI Gateway error ${res.status}: ${text.slice(0, 200)}`
           if (RETRYABLE_STATUSES.has(res.status)) continue
           return { url: '', error: lastError }
         }
