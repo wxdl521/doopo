@@ -32,7 +32,7 @@ export const generateScript = createServerFn({ method: 'POST' })
           'X-Title': 'Doopoo',
         },
         body: JSON.stringify({
-          model: data.model ?? 'deepseek/deepseek-chat-v3.1:free',
+          model: data.model ?? 'deepseek/deepseek-chat-v3.1',
           messages: data.messages,
           max_tokens: data.max_tokens ?? 2000,
           temperature: data.temperature ?? 0.85,
