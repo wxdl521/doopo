@@ -5,9 +5,9 @@ export default function Footer() {
   const { t } = useLanguage()
 
   const cols = [
-    { title: 'Product', links: ['Seedance', 'Blog', 'Download App', 'OpenClaw API'] },
-    { title: 'Legal', links: ['Privacy Policy', 'Terms of Service', 'Pricing', 'Contact'] },
-    { title: 'Resources', links: ['Discord', 'Documentation', 'Status', 'Changelog'] },
+    { title: t.footer_col_product, links: [t.footer_link_seedance, t.footer_link_blog, t.footer_link_app, t.footer_link_openclaw] },
+    { title: t.footer_col_legal, links: [t.footer_link_privacy, t.footer_link_terms, t.footer_link_pricing, t.footer_link_contact] },
+    { title: t.footer_col_resources, links: [t.footer_link_discord, t.footer_link_docs, t.footer_link_status, t.footer_link_changelog] },
   ]
 
   return (
@@ -36,8 +36,8 @@ export default function Footer() {
         ))}
 
         <div>
-          <h4 className="text-text-primary font-semibold mb-4">Contact</h4>
-          <p className="text-sm text-text-secondary">Support:</p>
+          <h4 className="text-text-primary font-semibold mb-4">{t.footer_col_contact}</h4>
+          <p className="text-sm text-text-secondary">{t.footer_support_label}</p>
           <a href="mailto:hello@doopoo.ai" className="text-sm gradient-text font-medium">
             hello@doopoo.ai
           </a>
@@ -48,7 +48,7 @@ export default function Footer() {
         <span>{t.footer_rights}</span>
         <span className="flex items-center gap-2">
           <span className="w-2 h-2 rounded-full bg-accent animate-pulse" />
-          All systems operational
+          {t.footer_status}
         </span>
       </div>
     </footer>

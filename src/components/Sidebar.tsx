@@ -12,22 +12,22 @@ import {
 } from 'lucide-react'
 import { useLanguage } from '../i18n/LanguageContext'
 
-const footerItems = [
-  { to: '#', label: 'Support', icon: Headphones },
-  { to: '#', label: 'Contact', icon: Mail },
-]
-
 export default function Sidebar() {
   const { t } = useLanguage()
 
   const items = [
     { to: '/home', label: t.nav_home, icon: Home },
-    { to: '/projects', label: 'Projects', icon: FolderOpen },
+    { to: '/projects', label: t.nav_projects, icon: FolderOpen },
     { to: '/scripts', label: t.nav_scripts, icon: FileText },
     { to: '/characters', label: t.nav_characters, icon: Users },
-    { to: '/bases', label: 'Assets', icon: Bookmark },
-    { to: '/zoclaw', label: 'ZoClaw', icon: WandSparkles },
+    { to: '/bases', label: t.nav_bases, icon: Bookmark },
+    { to: '/zoclaw', label: t.nav_zoclaw, icon: WandSparkles },
     { to: '/models', label: t.nav_models, icon: Sparkles },
+  ]
+
+  const footerItems = [
+    { to: '#', label: t.nav_support, icon: Headphones },
+    { to: '#', label: t.nav_contact, icon: Mail },
   ]
 
   return (

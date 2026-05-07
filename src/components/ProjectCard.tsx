@@ -1,7 +1,10 @@
 import { Plus } from 'lucide-react'
 import { Link } from '@tanstack/react-router'
+import { useLanguage } from '../i18n/LanguageContext'
 
-export function NewProjectCard({ to = '/projects', label = 'New Project' }: { to?: string; label?: string }) {
+export function NewProjectCard({ to = '/projects', label }: { to?: string; label?: string }) {
+  const { t } = useLanguage()
+  const text = label ?? t.projects_new
   return (
     <Link
       to={to}
@@ -15,7 +18,7 @@ export function NewProjectCard({ to = '/projects', label = 'New Project' }: { to
         <Plus size={22} />
       </div>
       <span className="mt-3 font-medium text-text-secondary group-hover:text-text-primary">
-        {label}
+        {text}
       </span>
     </Link>
   )
@@ -30,10 +33,16 @@ export type ProjectMeta = {
 }
 
 export function ProjectCard({ project }: { project: ProjectMeta }) {
+  const { t } = useLanguage()
   const statusColors: Record<NonNullable<ProjectMeta['status']>, string> = {
     draft: 'bg-amber-400/20 text-amber-300 border-amber-400/30',
     rendering: 'bg-accent-dim text-accent border-accent/30',
     ready: 'bg-emerald-500/20 text-emerald-300 border-emerald-400/30',
+  }
+  const statusLabels: Record<NonNullable<ProjectMeta['status']>, string> = {
+    draft: t.projects_status_draft,
+    rendering: t.projects_status_rendering,
+    ready: t.projects_status_ready,
   }
   return (
     <div className="card group cursor-pointer">
@@ -46,14 +55,14 @@ export function ProjectCard({ project }: { project: ProjectMeta }) {
              }} />
         {project.status && (
           <span className={`absolute top-3 right-3 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider border ${statusColors[project.status]}`}>
-            {project.status}
+            {statusLabels[project.status]}
           </span>
         )}
       </div>
       <div className="px-4 py-3">
         <h4 className="font-semibold text-text-primary truncate">{project.title}</h4>
         {project.updated && (
-          <p className="text-xs text-text-muted mt-0.5">Updated {project.updated}</p>
+          <p className="text-xs text-text-muted mt-0.5">{t.projects_updated_prefix} {project.updated}</p>
         )}
       </div>
     </div>
