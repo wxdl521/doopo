@@ -485,11 +485,11 @@ export default function Characters() {
             </div>
 
             {/* Description */}
-            {artDirectorMsgs[artDirectorMsgs.length - 1] && (
+            {profile && (
               <div className="bg-bg-elevated rounded-xl p-4">
                 <p className="text-xs font-medium text-text-muted mb-2">{t.char_desc}</p>
-                <p className="text-sm text-text-secondary leading-relaxed">
-                  {artDirectorMsgs[artDirectorMsgs.length - 1].text}
+                <p className="text-sm text-text-secondary leading-relaxed whitespace-pre-wrap">
+                  {profile}
                 </p>
               </div>
             )}
