@@ -1,4 +1,4 @@
-import { NavLink } from '@tanstack/react-router'
+import { Link } from '@tanstack/react-router'
 import {
   Home,
   FolderOpen,
@@ -37,19 +37,18 @@ export default function Sidebar() {
            style={{ height: 'calc(100vh - 57px)' }}>
       <nav className="flex flex-col items-center gap-2">
         {items.map(({ to, label, icon: Icon }, i) => (
-          <NavLink
+          <Link
             key={to}
             to={to}
-            className={({ isActive }) =>
-              `nav-item ${isActive ? 'nav-item-active' : ''}`
-            }
+            className="nav-item"
+            activeProps={{ className: 'nav-item nav-item-active' }}
             style={{ animationDelay: `${i * 60}ms` }}
           >
             <Icon size={20} />
             <span className="text-[10px] font-medium leading-tight whitespace-pre text-center">
               {label}
             </span>
-          </NavLink>
+          </Link>
         ))}
       </nav>
 
