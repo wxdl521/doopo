@@ -1,5 +1,6 @@
 import { Download, Upload, Plus, FolderOpen, Image as ImageIcon, Music2, Video, FileText } from 'lucide-react'
 import { useState } from 'react'
+import { useLanguage } from '../i18n/LanguageContext'
 
 type BaseItem = {
   id: string
@@ -26,33 +27,40 @@ const typeIcons = {
 } as const
 
 export default function Bases() {
+  const { t } = useLanguage()
   const [filter, setFilter] = useState<'All' | BaseItem['type']>('All')
   const list = filter === 'All' ? bases : bases.filter((b) => b.type === filter)
+
+  const typeLabels: Record<'All' | BaseItem['type'], string> = {
+    All: t.bases_type_all,
+    characters: t.bases_type_characters,
+    locations: t.bases_type_locations,
+    props: t.bases_type_props,
+    audio: t.bases_type_audio,
+    storyboards: t.bases_type_storyboards,
+  }
 
   return (
     <div className="animate-fade-in">
       <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-8">
         <div>
-          <h1 className="font-display text-3xl md:text-4xl font-bold">My Bases</h1>
-          <p className="text-text-secondary mt-1 max-w-xl">
-            Reusable knowledge collections — characters, locations, props, audio, and storyboards
-            that travel with you across projects.
-          </p>
+          <h1 className="font-display text-3xl md:text-4xl font-bold">{t.bases_title}</h1>
+          <p className="text-text-secondary mt-1 max-w-xl">{t.bases_subtitle}</p>
         </div>
         <div className="flex items-center gap-2">
-          <button className="btn-ghost"><Upload size={14} /> Import Base</button>
-          <button className="btn-primary"><Plus size={14} /> New Base</button>
+          <button className="btn-ghost"><Upload size={14} /> {t.bases_import}</button>
+          <button className="btn-primary"><Plus size={14} /> {t.bases_new}</button>
         </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-2 mb-6">
-        {(['All', 'characters', 'locations', 'props', 'audio', 'storyboards'] as const).map((t) => (
+        {(['All', 'characters', 'locations', 'props', 'audio', 'storyboards'] as const).map((k) => (
           <button
-            key={t}
-            onClick={() => setFilter(t)}
-            className={`chip capitalize ${filter === t ? 'chip-active' : ''}`}
+            key={k}
+            onClick={() => setFilter(k)}
+            className={`chip ${filter === k ? 'chip-active' : ''}`}
           >
-            {t}
+            {typeLabels[k]}
           </button>
         ))}
       </div>
@@ -66,8 +74,8 @@ export default function Bases() {
                           group-hover:text-accent transition">
             <Plus size={26} />
           </div>
-          <span className="mt-3 font-semibold text-text-primary">New Base</span>
-          <span className="text-xs text-text-muted mt-1">Curate a new collection</span>
+          <span className="mt-3 font-semibold text-text-primary">{t.bases_new}</span>
+          <span className="text-xs text-text-muted mt-1">{t.bases_new_desc}</span>
         </button>
 
         {list.map((b) => {
@@ -87,13 +95,13 @@ export default function Bases() {
                 </div>
                 <div className="absolute bottom-3 right-3 px-2 py-0.5 rounded-md text-[11px]
                                 bg-black/50 backdrop-blur text-white/90 font-mono">
-                  {b.count} items
+                  {b.count} {t.bases_items_suffix}
                 </div>
               </div>
               <div className="px-4 py-3 flex items-center justify-between">
                 <div>
                   <h4 className="font-semibold text-text-primary">{b.title}</h4>
-                  <p className="text-xs text-text-muted capitalize mt-0.5">{b.type}</p>
+                  <p className="text-xs text-text-muted mt-0.5">{typeLabels[b.type]}</p>
                 </div>
                 <button
                   onClick={(e) => e.stopPropagation()}
@@ -114,12 +122,8 @@ export default function Bases() {
             <FileText size={20} />
           </div>
           <div className="flex-1">
-            <h3 className="font-display text-xl font-bold">What is a Base?</h3>
-            <p className="text-text-secondary mt-1 leading-relaxed">
-              A Base is a small library of related assets — say, every character in a web-novel
-              or every shot in a brand kit. Reference a Base in any prompt and the agent will use
-              that knowledge automatically.
-            </p>
+            <h3 className="font-display text-xl font-bold">{t.bases_what_title}</h3>
+            <p className="text-text-secondary mt-1 leading-relaxed">{t.bases_what_body}</p>
           </div>
         </div>
       </section>

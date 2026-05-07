@@ -1,22 +1,18 @@
 import { useState, useRef } from 'react'
 import { ArrowRight, ChevronDown, FileText, ImagePlus, Loader2, Plus, RefreshCw, Sparkles, X, MessageCircle } from 'lucide-react'
-
-const AI_MODELS = [
-  { id: 'deepseek/deepseek-chat-v3', label: 'DeepSeek Chat', desc: '快速·中文友好' },
-  { id: 'mistralai/mistral-nemo', label: 'Mistral Nemo', desc: '均衡·多语言' },
-  { id: 'meta-llama/llama-3.1-8b-instruct', label: 'Llama 3.1', desc: '开源·推理强' },
-]
+import { useLanguage } from '../i18n/LanguageContext'
 
 const PROXY_URL = 'http://43.130.52.57:8080/v1/chat/completions'
 
-const placeholders = [
-  '描述一个赛博朋克城市夜景，需要包含霓虹灯、雨后的街道和远处的广告牌 →',
-  '写一段关于AI与人类情感的对话脚本 →',
-  '解释量子计算的基本原理，用简单的比喻 →',
-  '帮我写一篇关于可再生能源的科普文章开头 →',
-]
-
 export default function HeroPromptInput() {
+  const { t, lang } = useLanguage()
+  const AI_MODELS = [
+    { id: 'deepseek/deepseek-chat-v3', label: 'DeepSeek Chat', desc: lang === 'zh' ? '快速·中文友好' : 'Fast · Chinese-friendly' },
+    { id: 'mistralai/mistral-nemo', label: 'Mistral Nemo', desc: lang === 'zh' ? '均衡·多语言' : 'Balanced · Multilingual' },
+    { id: 'meta-llama/llama-3.1-8b-instruct', label: 'Llama 3.1', desc: lang === 'zh' ? '开源·推理强' : 'Open Source · Strong Reasoning' },
+  ]
+  const placeholders = [t.prompt_placeholder_1, t.prompt_placeholder_2, t.prompt_placeholder_3, t.prompt_placeholder_4]
+
   const [value, setValue] = useState('')
   const [selectedModel, setSelectedModel] = useState(AI_MODELS[0])
   const [showModels, setShowModels] = useState(false)
@@ -52,9 +48,9 @@ export default function HeroPromptInput() {
       }
 
       const data = await res.json()
-      setResponse(data.choices?.[0]?.message?.content || '（无回复内容）')
+      setResponse(data.choices?.[0]?.message?.content || t.hero_no_reply)
     } catch (e: any) {
-      setError(e.message || '请求失败')
+      setError(e.message || t.hero_request_failed)
     } finally {
       setLoading(false)
     }
@@ -85,9 +81,9 @@ export default function HeroPromptInput() {
           />
 
           <div className="mt-4 flex flex-wrap items-center gap-2 md:gap-3">
-            <button className="btn-ghost !px-3" title="附件"><Plus size={16} /></button>
-            <button className="btn-ghost"><FileText size={15} /> 上传脚本</button>
-            <button className="btn-ghost"><ImagePlus size={15} /> 上传故事板</button>
+            <button className="btn-ghost !px-3" title={t.hero_attach}><Plus size={16} /></button>
+            <button className="btn-ghost"><FileText size={15} /> {t.hero_upload_script}</button>
+            <button className="btn-ghost"><ImagePlus size={15} /> {t.hero_upload_storyboard}</button>
 
             {/* 模型选择器 */}
             <div className="relative">
@@ -119,7 +115,7 @@ export default function HeroPromptInput() {
             </div>
 
             <div className="ml-auto flex items-center gap-2 text-xs text-text-muted">
-              <span className="hidden md:inline">{value.length} 字符</span>
+              <span className="hidden md:inline">{value.length} {t.hero_chars_suffix}</span>
               <button
                 onClick={handleCreate}
                 disabled={!value.trim() || loading}
@@ -130,7 +126,7 @@ export default function HeroPromptInput() {
                 ) : (
                   <Sparkles size={14} />
                 )}
-                {loading ? '思考中…' : '创建'}
+                {loading ? t.hero_thinking : t.hero_create}
                 {!loading && <ArrowRight size={14} />}
               </button>
             </div>
@@ -144,18 +140,18 @@ export default function HeroPromptInput() {
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2 text-sm text-text-secondary">
               <MessageCircle size={14} className="text-accent" />
-              <span>AI 回复</span>
+              <span>{t.hero_ai_reply}</span>
               <span className="text-xs text-text-muted">· {selectedModel.label}</span>
             </div>
             <button onClick={closeResponse} className="btn-ghost !px-2 !py-1 text-xs">
-              <X size={12} /> 关闭
+              <X size={12} /> {t.hero_close}
             </button>
           </div>
 
           {loading && (
             <div className="flex items-center gap-2 text-text-muted text-sm">
               <Loader2 size={14} className="animate-spin" />
-              正在生成回复…
+              {t.hero_generating_reply}
             </div>
           )}
 

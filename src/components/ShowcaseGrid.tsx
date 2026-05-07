@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react'
 import { showcase, showcaseFilters, type ShowcaseFilter } from '../data/showcase'
 import ShowcaseCard from './ShowcaseCard'
+import { useLanguage } from '../i18n/LanguageContext'
 
 export default function ShowcaseGrid({ initial = 'Featured', limit }: { initial?: ShowcaseFilter; limit?: number }) {
+  const { t } = useLanguage()
   const [filter, setFilter] = useState<ShowcaseFilter>(initial)
 
   const items = useMemo(() => {
@@ -30,7 +32,7 @@ export default function ShowcaseGrid({ initial = 'Featured', limit }: { initial?
 
       {items.length === 0 ? (
         <div className="panel p-10 text-center text-text-muted">
-          No items in this category yet — check back soon.
+          {t.showcase_no_items}
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">

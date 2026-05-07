@@ -1,6 +1,7 @@
 import { Filter, Search } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { NewProjectCard, ProjectCard, type ProjectMeta } from '../components/ProjectCard'
+import { useLanguage } from '../i18n/LanguageContext'
 
 const all: ProjectMeta[] = [
   { id: '1', title: 'Lighthouse Reverie', thumbnail: 'from-indigo-700 via-violet-800 to-slate-950', status: 'rendering', updated: '2 min ago' },
@@ -13,10 +14,18 @@ const all: ProjectMeta[] = [
   { id: '8', title: 'Late Night Train', thumbnail: 'from-rose-700 via-blue-800 to-indigo-950', status: 'draft', updated: 'last month' },
 ]
 
-const tabs = ['All', 'Rendering', 'Drafts', 'Ready'] as const
+const TAB_KEYS = ['All', 'Rendering', 'Drafts', 'Ready'] as const
+type TabKey = typeof TAB_KEYS[number]
 
 export default function Projects() {
-  const [tab, setTab] = useState<(typeof tabs)[number]>('All')
+  const { t } = useLanguage()
+  const tabLabels: Record<TabKey, string> = {
+    All: t.projects_tab_all,
+    Rendering: t.projects_tab_rendering,
+    Drafts: t.projects_tab_drafts,
+    Ready: t.projects_tab_ready,
+  }
+  const [tab, setTab] = useState<TabKey>('All')
   const [q, setQ] = useState('')
 
   const list = useMemo(() => {
@@ -33,8 +42,8 @@ export default function Projects() {
     <div className="animate-fade-in">
       <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mb-6">
         <div>
-          <h1 className="font-display text-3xl md:text-4xl font-bold">My Projects</h1>
-          <p className="text-text-secondary mt-1">Pick up where you left off, or start something fresh.</p>
+          <h1 className="font-display text-3xl md:text-4xl font-bold">{t.projects_title}</h1>
+          <p className="text-text-secondary mt-1">{t.projects_subtitle}</p>
         </div>
         <div className="flex items-center gap-2">
           <div className="relative">
@@ -42,24 +51,24 @@ export default function Projects() {
             <input
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="Search projects"
+              placeholder={t.projects_search}
               className="pl-9 pr-3 py-2 rounded-full bg-bg-elevated border border-border
                          text-sm text-text-primary placeholder:text-text-muted
                          focus:outline-none focus:border-accent/60 focus:shadow-glow w-56"
             />
           </div>
-          <button className="btn-ghost"><Filter size={14} /> Filter</button>
+          <button className="btn-ghost"><Filter size={14} /> {t.projects_filter}</button>
         </div>
       </div>
 
       <div className="flex flex-wrap items-center gap-2 mb-6">
-        {tabs.map((t) => (
+        {TAB_KEYS.map((k) => (
           <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={`chip ${tab === t ? 'chip-active' : ''}`}
+            key={k}
+            onClick={() => setTab(k)}
+            className={`chip ${tab === k ? 'chip-active' : ''}`}
           >
-            {t}
+            {tabLabels[k]}
           </button>
         ))}
       </div>

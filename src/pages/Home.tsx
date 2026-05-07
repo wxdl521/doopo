@@ -57,9 +57,9 @@ export default function Home() {
       {/* Recent Projects */}
       <section>
         <div className="flex items-center justify-between mb-5">
-          <h2 className="font-display text-2xl font-bold">Recent Projects</h2>
+          <h2 className="font-display text-2xl font-bold">{t.home_recent_projects}</h2>
           <Link to="/projects" className="text-sm text-accent hover:underline">
-            VIEW ALL →
+            {t.home_view_all}
           </Link>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
@@ -73,9 +73,9 @@ export default function Home() {
       {/* Showcase */}
       <section>
         <div className="flex items-center justify-between mb-5">
-          <h2 className="font-display text-2xl font-bold">Showcase</h2>
+          <h2 className="font-display text-2xl font-bold">{t.home_showcase}</h2>
           <Link to="/showcase" className="text-sm text-accent hover:underline">
-            EXPLORE →
+            {t.home_explore}
           </Link>
         </div>
         <ShowcaseGrid initial="Featured" limit={6} />
