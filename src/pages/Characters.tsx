@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react'
-import { Loader2, Sparkles, Send, Download, Palette, BookOpen, Star, Shirt, SmilePlus, Eye } from 'lucide-react'
+import { Loader2, Sparkles, Send, Download, Palette, BookOpen, Star, Shirt, SmilePlus, Eye, FileText } from 'lucide-react'
 import { useServerFn } from '@tanstack/react-start'
 import { useLanguage } from '../i18n/LanguageContext'
 import { generateScript } from '../lib/openrouter.functions'
@@ -111,6 +111,7 @@ export default function Characters() {
   ]
   const [selectedComposition, setSelectedComposition] = useState('full')
   const [generatedImages, setGeneratedImages] = useState<Record<Tab, string>>({ front: '', side: '', back: '', expression: '', accessory: '' })
+  const [promptPreview, setPromptPreview] = useState<Record<Tab, string>>({ front: '', side: '', back: '', expression: '', accessory: '' })
   const [selectedImage, setSelectedImage] = useState<Tab>('front')
   const [activeTab, setActiveTab] = useState<Tab>('front')
   const [loading, setLoading] = useState(false)
@@ -119,6 +120,21 @@ export default function Characters() {
 
   const scrollBottom = () => {
     setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
+  }
+
+  const buildPrompt = (v: Tab, desc: string) => {
+    const styleConf = STYLE_PROMPTS[selectedStyle] || { positive: `${selectedStyle} style`, negative: '' }
+    const compConf = COMPOSITION_PROMPTS[selectedComposition] || ''
+    const consistencyAnchor = `consistent character design, same outfit and hairstyle across all views, neutral studio background, character sheet, master reference of: ${desc}`
+    const composition = v === 'expression' || v === 'accessory' ? '' : compConf
+    return [
+      consistencyAnchor,
+      styleConf.positive,
+      composition,
+      VIEW_PROMPTS[v],
+      'high quality illustration, sharp focus, professional concept art',
+      styleConf.negative ? `Avoid: ${styleConf.negative}.` : '',
+    ].filter(Boolean).join(', ')
   }
 
   const handleGenerate = async () => {
@@ -132,6 +148,12 @@ export default function Characters() {
     const userMsg = { role: 'user', text: desc }
     setMessages(prev => [...prev, userMsg])
     setDescription('')
+    const views: Tab[] = ['front', 'side', 'back', 'expression', 'accessory']
+    const previews = views.reduce((acc, v) => {
+      acc[v] = buildPrompt(v, desc)
+      return acc
+    }, {} as Record<Tab, string>)
+    setPromptPreview(previews)
     scrollBottom()
 
     try {
@@ -151,24 +173,10 @@ export default function Characters() {
       const reply = textRes.content || t.char_generation_failed
       setMessages(prev => [...prev, { role: 'art-director', text: reply }])
 
-      // Generate 5 view images in parallel
-      const views: Tab[] = ['front', 'side', 'back', 'expression', 'accessory']
-      const styleConf = STYLE_PROMPTS[selectedStyle] || { positive: `${selectedStyle} style`, negative: '' }
-      const compConf = COMPOSITION_PROMPTS[selectedComposition] || ''
-      // Consistency anchor: shared seed text helps the model lock identity across views
-      const consistencyAnchor = `consistent character design, same outfit and hairstyle across all views, neutral studio background, character sheet, master reference of: ${desc}`
+      // Generate 5 view images in parallel using the previewed prompts
       const imgResults = await Promise.allSettled(
         views.map(async (v) => {
-          const viewPrompt = VIEW_PROMPTS[v]
-          const composition = v === 'expression' || v === 'accessory' ? '' : compConf
-          const prompt = [
-            consistencyAnchor,
-            styleConf.positive,
-            composition,
-            viewPrompt,
-            'high quality illustration, sharp focus, professional concept art',
-            styleConf.negative ? `Avoid: ${styleConf.negative}.` : '',
-          ].filter(Boolean).join(', ')
+          const prompt = previews[v]
           const r = await callGenerateImage({ data: { prompt } })
           return { view: v, url: r.url, error: r.error }
         }),
