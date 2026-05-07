@@ -19,6 +19,16 @@ const TYPES = ['Micro', 'Short', 'Feature', 'Ad']
 const GENRES = ['Sci-Fi', 'Romance', 'Thriller', 'Comedy', 'Drama', 'Horror', 'Fantasy', 'Historical']
 const TONES = ['Serious', 'Comedy', 'Suspense', 'Romance', 'Horror']
 
+const MODELS = [
+  { id: 'deepseek/deepseek-chat-v3.1:free', label: 'DeepSeek V3.1 (Free)' },
+  { id: 'deepseek/deepseek-r1:free', label: 'DeepSeek R1 (Free)' },
+  { id: 'google/gemini-2.0-flash-exp:free', label: 'Gemini 2.0 Flash (Free)' },
+  { id: 'meta-llama/llama-3.3-70b-instruct:free', label: 'Llama 3.3 70B (Free)' },
+  { id: 'qwen/qwen-2.5-72b-instruct:free', label: 'Qwen 2.5 72B (Free)' },
+  { id: 'openai/gpt-4o-mini', label: 'GPT-4o mini' },
+  { id: 'anthropic/claude-3.5-sonnet', label: 'Claude 3.5 Sonnet' },
+]
+
 const STORAGE_KEY = 'doopoo_scripts'
 
 export default function Scripts() {
@@ -32,6 +42,7 @@ export default function Scripts() {
   const [selectedType, setSelectedType] = useState('Short')
   const [selectedGenre, setSelectedGenre] = useState('Drama')
   const [selectedTone, setSelectedTone] = useState('Serious')
+  const [selectedModel, setSelectedModel] = useState(MODELS[0].id)
   const [generating, setGenerating] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
@@ -72,6 +83,7 @@ Please write a complete ${selectedType.toLowerCase()} drama script in ${lang ===
             { role: 'system', content: t.script_system_writer },
             { role: 'user', content: aiPrompt },
           ],
+          model: selectedModel,
           max_tokens: 2000,
           temperature: 0.85,
         },
@@ -97,6 +109,7 @@ Please write a complete ${selectedType.toLowerCase()} drama script in ${lang ===
             { role: 'system', content: t.script_system_optimizer },
             { role: 'user', content: `Optimize this ${script.type.toLowerCase()} drama script:\n\n${script.content}` },
           ],
+          model: selectedModel,
           max_tokens: 2000,
           temperature: 0.8,
         },
@@ -164,6 +177,17 @@ Please write a complete ${selectedType.toLowerCase()} drama script in ${lang ===
               {TONES.map(tn => <option key={tn} value={tn}>{tn}</option>)}
             </select>
           </div>
+        </div>
+
+        <div>
+          <label className="text-xs text-text-muted mb-1 block">{t.script_model ?? 'Model'}</label>
+          <select
+            value={selectedModel}
+            onChange={e => setSelectedModel(e.target.value)}
+            className="w-full rounded-lg bg-bg-elevated border border-border text-sm text-text-primary px-3 py-2 focus:outline-none focus:border-accent/50"
+          >
+            {MODELS.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+          </select>
         </div>
 
         <div>
