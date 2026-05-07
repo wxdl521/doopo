@@ -16,6 +16,12 @@ const BLOCKED_MODELS = new Set<string>([
   'google/gemini-2.5-flash-image',
 ])
 
+// Runtime block list, populated by health probe + 403 responses observed at runtime.
+const runtimeBlocked = new Set<string>()
+let probeState: { ts: number; healthy: string[]; blocked: string[] } | null = null
+const PROBE_CACHE_MS = 30 * 60 * 1000
+const PROBE_PROMPT = 'a small red dot on white background'
+
 const RETRYABLE_STATUSES = new Set([403, 404, 429, 502, 503])
 
 let cachedModels: { ids: string[]; ts: number } | null = null
@@ -49,8 +55,61 @@ function buildAttempts(requested: string | undefined, available: string[]): stri
   for (const id of PREFERRED_ORDER) if (available.includes(id)) set.add(id)
   for (const id of available) set.add(id)
   if (set.size === 0) PREFERRED_ORDER.forEach(id => set.add(id))
-  return [...set].filter(id => !BLOCKED_MODELS.has(id))
+  return [...set].filter(id => !BLOCKED_MODELS.has(id) && !runtimeBlocked.has(id))
 }
+
+async function probeModel(apiKey: string, model: string): Promise<boolean> {
+  try {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 15_000)
+    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+        'HTTP-Referer': 'https://doopoo.app',
+        'X-Title': 'Doopoo',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: PROBE_PROMPT }],
+        modalities: ['image', 'text'],
+        max_tokens: 1,
+      }),
+      signal: controller.signal,
+    })
+    clearTimeout(timeout)
+    // 403 / 404 = unusable; 401 = auth issue (don't blame the model); others = healthy enough.
+    if (res.status === 403 || res.status === 404) return false
+    return true
+  } catch {
+    // Network/timeout — give the benefit of the doubt; don't pre-block.
+    return true
+  }
+}
+
+export const probeImageModels = createServerFn({ method: 'POST' }).handler(async () => {
+  const apiKey = process.env.OPENROUTER_API_KEY
+  if (!apiKey) return { healthy: [], blocked: [], cached: false }
+  if (probeState && Date.now() - probeState.ts < PROBE_CACHE_MS) {
+    return { ...probeState, cached: true }
+  }
+  const available = await fetchImageModels(apiKey)
+  const candidates = [...new Set([...PREFERRED_ORDER, ...available])]
+    .filter(id => !BLOCKED_MODELS.has(id))
+    .slice(0, 6)
+  const results = await Promise.all(
+    candidates.map(async id => ({ id, ok: await probeModel(apiKey, id) })),
+  )
+  const healthy: string[] = []
+  const blocked: string[] = []
+  for (const r of results) {
+    if (r.ok) healthy.push(r.id)
+    else { blocked.push(r.id); runtimeBlocked.add(r.id) }
+  }
+  probeState = { ts: Date.now(), healthy, blocked }
+  return { healthy, blocked, cached: false }
+})
 
 export const generateImage = createServerFn({ method: 'POST' })
   .inputValidator((input: Input) => {
@@ -94,6 +153,7 @@ export const generateImage = createServerFn({ method: 'POST' })
           const text = await res.text().catch(() => '')
           if (res.status === 401) return { url: '', error: 'OpenRouter authentication failed (401)', model }
           lastError = `[${model}] ${res.status}: ${text.slice(0, 180)}`
+          if (res.status === 403 || res.status === 404) runtimeBlocked.add(model)
           if (RETRYABLE_STATUSES.has(res.status)) continue
           return { url: '', error: lastError, model }
         }
