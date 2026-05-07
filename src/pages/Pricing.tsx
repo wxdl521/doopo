@@ -1,5 +1,6 @@
 import { Check, Sparkles, Star, Zap } from 'lucide-react'
 import { useState } from 'react'
+import { useLanguage } from '../i18n/LanguageContext'
 
 type Plan = {
   id: string
@@ -7,87 +8,92 @@ type Plan = {
   tagline: string
   monthly: number
   yearly: number
-  points: string
+  points: number
   features: string[]
   highlight?: boolean
   ribbon?: string
 }
 
-const plans: Plan[] = [
-  {
-    id: 'free',
-    name: 'Starter',
-    tagline: 'Try the agent on a small story.',
-    monthly: 0,
-    yearly: 0,
-    points: '70 pts / month',
-    features: [
-      'All free models',
-      '720p exports',
-      '1 active project',
-      'Community support',
-    ],
-  },
-  {
-    id: 'pro',
-    name: 'Pro',
-    tagline: 'For solo creators shipping weekly.',
-    monthly: 29,
-    yearly: 290,
-    points: '2,400 pts / month',
-    features: [
-      'Premium models (Sora, Veo, Kling)',
-      '1080p exports & per-shot stems',
-      'Unlimited projects, 5 active Bases',
-      'Priority queue',
-      'Email support',
-    ],
-    highlight: true,
-    ribbon: 'Most popular',
-  },
-  {
-    id: 'studio',
-    name: 'Studio',
-    tagline: 'For teams and brand work.',
-    monthly: 99,
-    yearly: 990,
-    points: '12,000 pts / month',
-    features: [
-      'All Pro features',
-      '4K exports + ProRes',
-      'Team Bases & shared seats (3)',
-      'API access (10k req / mo)',
-      'Dedicated support channel',
-    ],
-  },
-]
-
 export default function Pricing() {
+  const { t } = useLanguage()
   const [annual, setAnnual] = useState(true)
+
+  const plans: Plan[] = [
+    {
+      id: 'free',
+      name: t.pricing_plan_starter_name,
+      tagline: t.pricing_plan_starter_tag,
+      monthly: 0,
+      yearly: 0,
+      points: 70,
+      features: [
+        t.pricing_plan_starter_f1,
+        t.pricing_plan_starter_f2,
+        t.pricing_plan_starter_f3,
+        t.pricing_plan_starter_f4,
+      ],
+    },
+    {
+      id: 'pro',
+      name: t.pricing_plan_pro_name,
+      tagline: t.pricing_plan_pro_tag,
+      monthly: 29,
+      yearly: 290,
+      points: 2400,
+      features: [
+        t.pricing_plan_pro_f1,
+        t.pricing_plan_pro_f2,
+        t.pricing_plan_pro_f3,
+        t.pricing_plan_pro_f4,
+        t.pricing_plan_pro_f5,
+      ],
+      highlight: true,
+      ribbon: t.pricing_ribbon_popular,
+    },
+    {
+      id: 'studio',
+      name: t.pricing_plan_studio_name,
+      tagline: t.pricing_plan_studio_tag,
+      monthly: 99,
+      yearly: 990,
+      points: 12000,
+      features: [
+        t.pricing_plan_studio_f1,
+        t.pricing_plan_studio_f2,
+        t.pricing_plan_studio_f3,
+        t.pricing_plan_studio_f4,
+        t.pricing_plan_studio_f5,
+      ],
+    },
+  ]
+
+  const faq: Array<[string, string]> = [
+    [t.pricing_faq_q1, t.pricing_faq_a1],
+    [t.pricing_faq_q2, t.pricing_faq_a2],
+    [t.pricing_faq_q3, t.pricing_faq_a3],
+    [t.pricing_faq_q4, t.pricing_faq_a4],
+  ]
 
   return (
     <div className="animate-fade-in">
       <div className="text-center mb-10">
         <h1 className="font-display text-4xl md:text-5xl font-bold">
-          Pricing that scales with your <span className="gradient-text">story</span>.
+          {t.pricing_title_p1} <span className="gradient-text">{t.pricing_title_p2}</span>.
         </h1>
-        <p className="text-text-secondary mt-3 max-w-2xl mx-auto">
-          One subscription unlocks every model on Doopoo. Points roll over for two months;
-          unused points convert to render credits the third.
-        </p>
+        <p className="text-text-secondary mt-3 max-w-2xl mx-auto">{t.pricing_subtitle}</p>
 
         <div className="mt-6 inline-flex items-center gap-1 p-1 rounded-full bg-bg-elevated border border-border">
           <button
             onClick={() => setAnnual(false)}
             className={`px-4 py-1.5 rounded-full text-sm transition ${!annual ? 'bg-accent text-bg font-semibold' : 'text-text-secondary'}`}
           >
-            Monthly
+            {t.pricing_billing_monthly}
           </button>
           <button
             onClick={() => setAnnual(true)}
             className={`px-4 py-1.5 rounded-full text-sm transition ${annual ? 'bg-accent text-bg font-semibold' : 'text-text-secondary'}`}
           >
-            Annual <span className="ml-1 text-[10px] uppercase tracking-wider">save 17%</span>
+            {t.pricing_billing_annual} <span className="ml-1 text-[10px] uppercase tracking-wider">{t.pricing_save_badge}</span>
           </button>
         </div>
       </div>
@@ -116,19 +122,19 @@ export default function Pricing() {
 
               <div className="mt-6 flex items-baseline gap-1">
                 <span className="text-4xl font-display font-bold">${price}</span>
-                <span className="text-text-muted">/mo</span>
+                <span className="text-text-muted">{t.pricing_per_month}</span>
                 {annual && p.monthly > 0 && (
                   <span className="ml-2 text-xs text-text-muted line-through">${p.monthly}</span>
                 )}
               </div>
               <div className="mt-1 text-sm text-accent flex items-center gap-1.5">
-                <Zap size={13} /> {p.points}
+                <Zap size={13} /> {p.points.toLocaleString()} {t.pricing_points_suffix}
               </div>
 
               <button
                 className={`mt-6 w-full justify-center ${p.highlight ? 'btn-primary' : 'btn-outline'}`}
               >
-                <Sparkles size={14} /> {p.id === 'free' ? 'Start free' : `Choose ${p.name}`}
+                <Sparkles size={14} /> {p.id === 'free' ? t.pricing_start_free : `${t.pricing_choose} ${p.name}`}
               </button>
 
               <ul className="mt-7 space-y-3">
@@ -147,14 +153,9 @@ export default function Pricing() {
       </div>
 
       <section className="mt-20 max-w-4xl mx-auto">
-        <h2 className="font-display text-2xl font-bold mb-5">Frequently asked</h2>
+        <h2 className="font-display text-2xl font-bold mb-5">{t.pricing_faq_title}</h2>
         <div className="space-y-3">
-          {[
-            ['What is a point?', 'A point is a unit of compute. Generating a 5-second 1080p video on Kling 03 costs about 12 points.'],
-            ['Do points expire?', 'Subscription points roll over for 2 billing cycles. Top-up packs never expire.'],
-            ['Can I cancel anytime?', 'Yes. You keep access until the end of the period and any unused points are still usable.'],
-            ['Is there a student plan?', 'Yes — write to support with a .edu address and we’ll set you up with Pro at 50% off.'],
-          ].map(([q, a]) => (
+          {faq.map(([q, a]) => (
             <details key={q} className="panel p-5 group">
               <summary className="cursor-pointer flex items-center justify-between font-semibold text-text-primary">
                 {q}

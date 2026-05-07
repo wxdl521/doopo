@@ -14,14 +14,16 @@ export default function Characters() {
   const { t, lang } = useLanguage()
 
   const [messages, setMessages] = useState<Message[]>([
-    {
-      role: 'art-director',
-      text: lang === 'zh'
-        ? '你好！我是你的专属角色设计师。告诉我你心目中的角色形象，我会为你生成专业的设定集，包括多视角图、配色方案和详细描述。'
-        : "Hi! I'm your personal character designer. Tell me about your character's image, and I'll create a professional profile including multi-view images, color palettes, and detailed descriptions.",
-    },
+    { role: 'art-director', text: t.characters_initial_msg },
   ])
   const [description, setDescription] = useState('')
+  const styles = [
+    { key: 'Visual Novel', label: t.char_style_vn },
+    { key: 'Chibi', label: t.char_style_chibi },
+    { key: 'Ethereal Gothic', label: t.char_style_gothic },
+    { key: 'Realistic', label: t.char_style_realistic },
+    { key: 'Anime', label: t.char_style_anime },
+  ]
   const [selectedStyle, setSelectedStyle] = useState('Visual Novel')
   const [generatedImages, setGeneratedImages] = useState<Record<Tab, string>>({ front: '', side: '', back: '', expression: '', accessory: '' })
   const [selectedImage, setSelectedImage] = useState<Tab>('front')
@@ -29,8 +31,6 @@ export default function Characters() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
-
-  const styles = ['Visual Novel', 'Chibi', 'Ethereal Gothic', 'Realistic', 'Anime']
 
   const systemPrompt = lang === 'zh'
     ? `作为专业角色设计师，根据以下描述为角色撰写详细设定（外貌、性格、背景、服装配饰），用中文，200字以内：\n${description}`
@@ -60,7 +60,7 @@ export default function Characters() {
         body: JSON.stringify({
           model: 'deepseek/deepseek-chat-v3',
           messages: [
-            { role: 'system', content: 'You are a professional character designer AI.' },
+            { role: 'system', content: t.char_system_designer },
             { role: 'user', content: systemPrompt },
           ],
           max_tokens: 600,
@@ -70,7 +70,7 @@ export default function Characters() {
 
       if (!res.ok) throw new Error('API error')
       const data = await res.json()
-      const reply = data.choices?.[0]?.message?.content || '生成失败，请重试。'
+      const reply = data.choices?.[0]?.message?.content || t.char_generation_failed
       const artMsg = { role: 'art-director', text: reply }
       setMessages(prev => [...prev, artMsg])
 
@@ -145,11 +145,11 @@ export default function Characters() {
           <div className="flex flex-wrap gap-2">
             {styles.map(s => (
               <button
-                key={s}
-                onClick={() => setSelectedStyle(s)}
-                className={`chip text-xs ${selectedStyle === s ? 'chip-active' : ''}`}
+            key={s.key}
+            onClick={() => setSelectedStyle(s.key)}
+            className={`chip text-xs ${selectedStyle === s.key ? 'chip-active' : ''}`}
               >
-                {s}
+            {s.label}
               </button>
             ))}
           </div>

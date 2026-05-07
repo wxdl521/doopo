@@ -79,15 +79,6 @@ const IMAGE_MODELS: ImageModel[] = [
   },
 ]
 
-const filters = [
-  { key: 'all', label: '全部' },
-  { key: 'available', label: '在线' },
-  { key: 'chat', label: '对话' },
-  { key: 'image', label: '绘图' },
-  { key: 'video', label: '视频' },
-  { key: 'audio', label: '音频' },
-] as const
-
 function ModelCard({ model, type, t, lang }: { model: any; type: string; t: any; lang: string }) {
   const [copied, setCopied] = useState(false)
 
@@ -126,6 +117,7 @@ function ModelCard({ model, type, t, lang }: { model: any; type: string; t: any;
       <div className="flex items-center gap-2">
         <button
           onClick={copyId}
+          title={t.models_copy_id}
           className="flex-1 py-2 rounded-lg text-xs font-semibold bg-bg-elevated border border-border text-text-secondary hover:text-accent hover:border-accent/40 transition"
         >
           {copied ? '✓' : '#'}
@@ -155,7 +147,7 @@ export default function Models() {
           { key: 'all', label: t.models_filter_all },
           { key: 'chat', label: t.models_filter_chat },
           { key: 'image', label: t.models_filter_image },
-          { key: 'video', label: 'Video' },
+          { key: 'video', label: t.models_filter_video },
         ].map(f => (
           <button
             key={f.key}
@@ -172,7 +164,7 @@ export default function Models() {
         <section>
           <h2 className="font-display text-xl font-bold mb-4 flex items-center gap-2">
             <Sparkles size={18} className="text-accent" />
-            AI {t.nav_models}
+            {t.models_section_ai}
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {AI_MODELS.map(m => (
@@ -187,7 +179,7 @@ export default function Models() {
         <section>
           <h2 className="font-display text-xl font-bold mb-4 flex items-center gap-2">
             <ImageIcon size={18} className="text-accent" />
-            {t.models_filter_image}
+            {t.models_section_image}
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {IMAGE_MODELS.map(m => (
@@ -202,7 +194,7 @@ export default function Models() {
         <section>
           <h2 className="font-display text-xl font-bold mb-4 flex items-center gap-2">
             <Video size={18} className="text-accent" />
-            Video
+            {t.models_section_video}
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {VIDEO_MODELS.map(m => (
