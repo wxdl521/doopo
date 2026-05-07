@@ -256,7 +256,6 @@ export const zh = {
   char_status_pending: '待开始',
   char_status_active: '进行中',
   char_status_done: '已完成',
-  characters_initial_msg: '我是你的艺术总监。先用一句话告诉我这个角色，我会带你一步步把它做出来。',
 
   // ============ Pricing ============
   pricing_title_p1: '随你的故事一起',
