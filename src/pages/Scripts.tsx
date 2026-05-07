@@ -345,7 +345,7 @@ Please write a complete ${selectedType.toLowerCase()} drama script in ${lang ===
                             <ChevronDown size={12} className={`transition-transform ${exportMenuId === script.id ? 'rotate-180' : ''}`} />
                           </button>
                           {exportMenuId === script.id && (
-                            <div className="absolute z-10 mt-1 left-0 min-w-[180px] rounded-lg border border-border bg-bg-elevated shadow-lg overflow-hidden">
+                             <div className="absolute z-50 bottom-full mb-1 left-0 min-w-[180px] rounded-lg border border-border bg-bg-elevated shadow-lg overflow-hidden">
                               <button
                                 onClick={() => handleExport(script, 'txt')}
                                 className="w-full flex items-center gap-2 px-3 py-2 text-xs text-text-primary hover:bg-bg-base text-left"
