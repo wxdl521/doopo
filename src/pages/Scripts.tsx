@@ -55,9 +55,8 @@ const STORAGE_KEY = 'doopoo_scripts'
 export default function Scripts() {
   const { t, lang } = useLanguage()
   const callGenerate = useServerFn(generateScript)
-  const [scripts, setScripts] = useState<Script[]>(() => {
-    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]') } catch { return [] }
-  })
+  const [scripts, setScripts] = useState<Script[]>([])
+  const [hydrated, setHydrated] = useState(false)
   const [newTitle, setNewTitle] = useState('')
   const [newPlot, setNewPlot] = useState('')
   const [selectedType, setSelectedType] = useState('Short')
@@ -70,8 +69,16 @@ export default function Scripts() {
   const [exportMenuId, setExportMenuId] = useState<string | null>(null)
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(scripts))
-  }, [scripts])
+    try {
+      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]')
+      setScripts(saved)
+    } catch { /* ignore */ }
+    setHydrated(true)
+  }, [])
+
+  useEffect(() => {
+    if (hydrated) localStorage.setItem(STORAGE_KEY, JSON.stringify(scripts))
+  }, [scripts, hydrated])
 
   const aiPrompt = `[${selectedType} Drama, ${selectedGenre}, ${selectedTone} tone]
 Title: ${newTitle}
@@ -273,9 +280,12 @@ Please write a complete ${selectedType.toLowerCase()} drama script in ${lang ===
           scripts.map(script => (
             <div key={script.id} className="panel overflow-hidden">
               {/* Summary bar */}
-              <button
-                className="w-full flex items-center justify-between px-5 py-4 hover:bg-bg-elevated/50 transition text-left"
+              <div
+                role="button"
+                tabIndex={0}
+                className="w-full flex items-center justify-between px-5 py-4 hover:bg-bg-elevated/50 transition text-left cursor-pointer"
                 onClick={() => setExpandedId(expandedId === script.id ? null : script.id)}
+                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') setExpandedId(expandedId === script.id ? null : script.id) }}
               >
                 <div className="flex items-center gap-3 min-w-0">
                   <span className={`chip-active chip text-xs flex-shrink-0`}>{script.type}</span>
@@ -299,7 +309,7 @@ Please write a complete ${selectedType.toLowerCase()} drama script in ${lang ===
                   </button>
                   <ChevronDown size={14} className={`text-text-muted transition-transform ${expandedId === script.id ? 'rotate-180' : ''}`} />
                 </div>
-              </button>
+              </div>
 
               {/* Expanded content */}
               {expandedId === script.id && (
