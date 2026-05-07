@@ -180,7 +180,7 @@ Please write a complete ${selectedType.toLowerCase()} drama script in ${lang ===
         </div>
 
         <div>
-          <label className="text-xs text-text-muted mb-1 block">{t.script_model ?? 'Model'}</label>
+          <label className="text-xs text-text-muted mb-1 block">{t.script_model}</label>
           <select
             value={selectedModel}
             onChange={e => setSelectedModel(e.target.value)}
