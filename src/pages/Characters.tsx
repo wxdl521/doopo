@@ -1,12 +1,12 @@
-import { useState, useRef } from 'react'
-import { Loader2, Sparkles, Send, Download, Palette, BookOpen, Star, Shirt, SmilePlus, Eye, FileText } from 'lucide-react'
+import { useState } from 'react'
+import { Loader2, Sparkles, Send, Download, Palette, BookOpen, Star, Shirt, SmilePlus, Eye, FileText, Check, RefreshCw, ArrowLeft, Pencil, RotateCcw } from 'lucide-react'
 import { useServerFn } from '@tanstack/react-start'
 import { useLanguage } from '../i18n/LanguageContext'
 import { generateScript } from '../lib/openrouter.functions'
 import { generateImage } from '../lib/openrouterImage.functions'
 
-type Message = { role: string; text: string }
 type Tab = 'front' | 'side' | 'back' | 'expression' | 'accessory'
+type Step = 'brief' | 'profile' | 'style' | 'hero' | 'sheet'
 
 const VIEWS = ['front', 'side', 'back', 'expression', 'accessory'] as Tab[]
 
@@ -83,10 +83,10 @@ export default function Characters() {
   const callGenerateText = useServerFn(generateScript)
   const callGenerateImage = useServerFn(generateImage)
 
-  const [messages, setMessages] = useState<Message[]>([
-    { role: 'art-director', text: t.characters_initial_msg },
-  ])
-  const [description, setDescription] = useState('')
+  const [step, setStep] = useState<Step>('brief')
+  const [brief, setBrief] = useState('')
+  const [profile, setProfile] = useState('')
+  const [editingProfile, setEditingProfile] = useState(false)
   const styles = [
     { key: 'Visual Novel', label: t.char_style_vn },
     { key: 'Chibi', label: t.char_style_chibi },
@@ -115,12 +115,8 @@ export default function Characters() {
   const [selectedImage, setSelectedImage] = useState<Tab>('front')
   const [activeTab, setActiveTab] = useState<Tab>('front')
   const [loading, setLoading] = useState(false)
+  const [loadingMsg, setLoadingMsg] = useState('')
   const [error, setError] = useState('')
-  const bottomRef = useRef<HTMLDivElement>(null)
-
-  const scrollBottom = () => {
-    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
-  }
 
   const buildPrompt = (v: Tab, desc: string) => {
     const styleConf = STYLE_PROMPTS[selectedStyle] || { positive: `${selectedStyle} style`, negative: '' }
@@ -137,27 +133,13 @@ export default function Characters() {
     ].filter(Boolean).join(', ')
   }
 
-  const handleGenerate = async () => {
-    if (!description.trim()) return
-    const desc = description
-    const userPrompt = lang === 'zh'
-      ? `作为专业角色设计师，根据以下描述为角色撰写详细设定（外貌、性格、背景、服装配饰），用中文，200字以内：\n${desc}`
-      : `As a professional character designer, write a detailed character profile (appearance, personality, background, costumes and accessories) in English, within 200 words, based on the following description:\n${desc}`
-    setLoading(true)
-    setError('')
-    const userMsg = { role: 'user', text: desc }
-    setMessages(prev => [...prev, userMsg])
-    setDescription('')
-    const views: Tab[] = ['front', 'side', 'back', 'expression', 'accessory']
-    const previews = views.reduce((acc, v) => {
-      acc[v] = buildPrompt(v, desc)
-      return acc
-    }, {} as Record<Tab, string>)
-    setPromptPreview(previews)
-    scrollBottom()
-
+  const generateProfile = async (b: string) => {
+    setLoading(true); setError(''); setLoadingMsg(t.char_step_profile)
     try {
-      const textRes = await callGenerateText({
+      const userPrompt = lang === 'zh'
+        ? `作为资深艺术总监，根据以下导演简报，撰写完整的角色档案（外貌特征、性格气质、背景故事、服装配饰、关键道具）。用中文，结构化分点列出，约200字：\n${b}`
+        : `As a senior art director, write a complete character profile (appearance, personality, background, costume, key props) based on this director brief. Structured bullet points, ~200 words:\n${b}`
+      const res = await callGenerateText({
         data: {
           messages: [
             { role: 'system', content: t.char_system_designer },
@@ -167,49 +149,64 @@ export default function Characters() {
           temperature: 0.85,
         },
       })
-      if (textRes.error && !textRes.content) {
-        setError(textRes.error)
-      }
-      const reply = textRes.content || t.char_generation_failed
-      setMessages(prev => [...prev, { role: 'art-director', text: reply }])
-
-      // Generate 5 view images in parallel using the previewed prompts
-      const imgResults = await Promise.allSettled(
-        views.map(async (v) => {
-          const prompt = previews[v]
-          const r = await callGenerateImage({ data: { prompt } })
-          return { view: v, url: r.url, error: r.error }
-        }),
-      )
-
-      const newImages = { ...generatedImages }
-      let firstFilled: Tab | null = null
-      let imgError = ''
-      imgResults.forEach((r) => {
-        if (r.status === 'fulfilled') {
-          if (r.value.url) {
-            newImages[r.value.view] = r.value.url
-            if (!firstFilled) firstFilled = r.value.view
-          } else if (r.value.error) {
-            imgError = r.value.error
-          }
-        } else {
-          imgError = r.reason?.message || imgError
-        }
-      })
-      setGeneratedImages(newImages)
-      if (firstFilled) {
-        setSelectedImage(firstFilled)
-        setActiveTab(firstFilled)
-      } else if (imgError) {
-        setError(t.char_image_generation_failed || imgError)
-      }
+      if (res.error && !res.content) { setError(res.error); return }
+      setProfile(res.content || '')
+      setStep('profile')
     } catch (e: any) {
-      setError(e.message || 'Error')
-    } finally {
-      setLoading(false)
-      scrollBottom()
-    }
+      setError(e?.message || 'Error')
+    } finally { setLoading(false); setLoadingMsg('') }
+  }
+
+  const generateHero = async () => {
+    setLoading(true); setError(''); setLoadingMsg(t.char_step_hero)
+    const v: Tab = 'front'
+    const prompt = buildPrompt(v, profile || brief)
+    setPromptPreview(p => ({ ...p, [v]: prompt }))
+    try {
+      const r = await callGenerateImage({ data: { prompt } })
+      if (r.url) {
+        setGeneratedImages(prev => ({ ...prev, front: r.url }))
+        setSelectedImage('front'); setActiveTab('front')
+        setStep('hero')
+      } else {
+        setError(r.error || t.char_image_generation_failed)
+      }
+    } catch (e: any) { setError(e?.message || 'Error') }
+    finally { setLoading(false); setLoadingMsg('') }
+  }
+
+  const generateSheet = async () => {
+    setLoading(true); setError(''); setLoadingMsg(t.char_step_sheet)
+    const restViews: Tab[] = ['side', 'back', 'expression', 'accessory']
+    const previews = restViews.reduce((acc, v) => {
+      acc[v] = buildPrompt(v, profile || brief)
+      return acc
+    }, {} as Record<string, string>)
+    setPromptPreview(p => ({ ...p, ...previews }))
+    try {
+      const results = await Promise.allSettled(
+        restViews.map(async v => ({ v, ...(await callGenerateImage({ data: { prompt: previews[v] } })) })),
+      )
+      const next = { ...generatedImages }
+      let imgError = ''
+      results.forEach(r => {
+        if (r.status === 'fulfilled') {
+          if (r.value.url) next[r.value.v as Tab] = r.value.url
+          else if (r.value.error) imgError = r.value.error
+        } else imgError = r.reason?.message || imgError
+      })
+      setGeneratedImages(next)
+      setStep('sheet')
+      if (!Object.values(next).filter(Boolean).length && imgError) setError(imgError)
+    } catch (e: any) { setError(e?.message || 'Error') }
+    finally { setLoading(false); setLoadingMsg('') }
+  }
+
+  const restart = () => {
+    setStep('brief'); setBrief(''); setProfile(''); setEditingProfile(false)
+    setGeneratedImages({ front: '', side: '', back: '', expression: '', accessory: '' })
+    setPromptPreview({ front: '', side: '', back: '', expression: '', accessory: '' })
+    setError('')
   }
 
   const copyPalette = () => {
@@ -217,94 +214,180 @@ export default function Characters() {
     navigator.clipboard.writeText(colors.join(', '))
   }
 
-  const artDirectorMsgs = messages.filter(m => m.role === 'art-director')
+  const stepsMeta: { key: Step; label: string }[] = [
+    { key: 'brief', label: t.char_step_brief },
+    { key: 'profile', label: t.char_step_profile },
+    { key: 'style', label: t.char_step_style },
+    { key: 'hero', label: t.char_step_hero },
+    { key: 'sheet', label: t.char_step_sheet },
+  ]
+  const stepIndex = stepsMeta.findIndex(s => s.key === step)
 
   return (
     <div className="flex flex-col lg:flex-row gap-6 animate-fade-in" style={{ minHeight: 'calc(100vh - 120px)' }}>
-      {/* Left: Chat Panel */}
-      <div className="lg:w-[380px] flex flex-col panel p-5 gap-4">
+      {/* Left: Director workflow */}
+      <div className="lg:w-[420px] flex flex-col panel p-5 gap-4">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-gradient-to-br from-cyan-400 to-emerald-500 flex items-center justify-center">
             <Sparkles size={18} className="text-white" />
           </div>
-          <div>
+          <div className="flex-1">
             <h2 className="font-semibold text-text-primary">{t.characters_title}</h2>
             <p className="text-xs text-text-muted">{t.characters_subtitle}</p>
           </div>
+          {step !== 'brief' && (
+            <button onClick={restart} className="text-xs text-text-muted hover:text-accent flex items-center gap-1" title={t.char_action_restart}>
+              <RotateCcw size={12} /> {t.char_action_restart}
+            </button>
+          )}
         </div>
 
-        {/* Style selector */}
-        <div>
-          <label className="text-xs font-medium text-text-muted mb-2 block">{t.char_style}</label>
-          <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto pr-1">
-            {styles.map(s => (
+        {/* Stepper */}
+        <ol className="flex flex-col gap-1.5">
+          {stepsMeta.map((s, i) => {
+            const state = i < stepIndex ? 'done' : i === stepIndex ? 'active' : 'pending'
+            return (
+              <li key={s.key} className={`flex items-center gap-2.5 text-xs px-3 py-2 rounded-lg border transition ${
+                state === 'active' ? 'border-accent/50 bg-accent-dim/30 text-text-primary'
+                : state === 'done' ? 'border-border bg-bg-elevated text-text-secondary'
+                : 'border-border/50 text-text-muted'
+              }`}>
+                <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] flex-shrink-0 ${
+                  state === 'done' ? 'bg-emerald-500/80 text-white'
+                  : state === 'active' ? 'bg-accent text-white' : 'bg-bg-elevated border border-border'
+                }`}>
+                  {state === 'done' ? <Check size={11} /> : i + 1}
+                </span>
+                <span className="flex-1">{s.label}</span>
+                {state === 'active' && loading && <Loader2 size={12} className="animate-spin text-accent" />}
+              </li>
+            )
+          })}
+        </ol>
+
+        {/* Step body */}
+        <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+          {step === 'brief' && (
+            <div className="space-y-3">
+              <p className="text-xs text-text-muted">{t.char_step_brief_hint}</p>
+              <textarea
+                value={brief}
+                onChange={e => setBrief(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && brief.trim()) { e.preventDefault(); generateProfile(brief) } }}
+                placeholder={t.char_desc_hint}
+                rows={4}
+                className="w-full rounded-xl bg-bg-elevated border border-border text-sm text-text-primary p-3 resize-none focus:outline-none focus:border-accent/50 transition placeholder:text-text-muted"
+              />
               <button
-            key={s.key}
-            onClick={() => setSelectedStyle(s.key)}
-            className={`chip text-xs ${selectedStyle === s.key ? 'chip-active' : ''}`}
+                onClick={() => generateProfile(brief)}
+                disabled={loading || !brief.trim()}
+                className="w-full btn-primary justify-center disabled:opacity-40"
               >
-            {s.label}
+                {loading ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
+                {loading ? t.char_generating : t.char_action_confirm}
               </button>
-            ))}
-          </div>
-        </div>
+            </div>
+          )}
 
-        {/* Composition selector */}
-        <div>
-          <label className="text-xs font-medium text-text-muted mb-2 block">{t.char_composition}</label>
-          <div className="flex flex-wrap gap-2">
-            {compositions.map(c => (
-              <button
-                key={c.key}
-                onClick={() => setSelectedComposition(c.key)}
-                className={`chip text-xs ${selectedComposition === c.key ? 'chip-active' : ''}`}
-              >
-                {c.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto space-y-4 max-h-[360px] pr-1">
-          {messages.map((msg, i) => (
-            <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
-              {msg.role === 'art-director' && (
-                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-cyan-400 to-emerald-500 flex items-center justify-center flex-shrink-0 mt-1">
-                  <Sparkles size={14} className="text-white" />
+          {step === 'profile' && (
+            <div className="space-y-3">
+              <p className="text-xs text-text-muted">{t.char_step_profile_hint}</p>
+              {editingProfile ? (
+                <textarea
+                  value={profile}
+                  onChange={e => setProfile(e.target.value)}
+                  rows={10}
+                  className="w-full rounded-xl bg-bg-elevated border border-border text-sm text-text-primary p-3 resize-none focus:outline-none focus:border-accent/50"
+                />
+              ) : (
+                <div className="bg-bg-elevated rounded-xl p-3 text-sm text-text-secondary whitespace-pre-wrap leading-relaxed max-h-72 overflow-y-auto">
+                  {profile}
                 </div>
               )}
-              <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
-                msg.role === 'art-director'
-                  ? 'bg-bg-elevated text-text-primary rounded-tl-md'
-                  : 'bg-accent-dim text-text-primary rounded-tr-md'
-              }`}>
-                {msg.text}
+              <div className="flex gap-2 flex-wrap">
+                <button onClick={() => setEditingProfile(v => !v)} className="btn-ghost text-xs">
+                  <Pencil size={13} /> {editingProfile ? t.char_action_confirm : t.char_action_edit}
+                </button>
+                <button onClick={() => generateProfile(brief)} disabled={loading} className="btn-ghost text-xs">
+                  <RefreshCw size={13} /> {t.char_action_regen}
+                </button>
+                <button onClick={() => setStep('brief')} className="btn-ghost text-xs">
+                  <ArrowLeft size={13} /> {t.char_action_back}
+                </button>
+                <button onClick={() => { setEditingProfile(false); setStep('style') }} className="btn-primary text-xs ml-auto">
+                  <Check size={13} /> {t.char_action_confirm}
+                </button>
               </div>
             </div>
-          ))}
-          <div ref={bottomRef} />
-        </div>
+          )}
 
-        {/* Input */}
-        <div className="space-y-2">
-          <textarea
-            value={description}
-            onChange={e => setDescription(e.target.value)}
-            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleGenerate() } }}
-            placeholder={t.char_desc_hint}
-            rows={3}
-            className="w-full rounded-xl bg-bg-elevated border border-border text-sm text-text-primary p-3 resize-none focus:outline-none focus:border-accent/50 transition placeholder:text-text-muted"
-          />
-          <button
-            onClick={handleGenerate}
-            disabled={loading || !description.trim()}
-            className="w-full btn-primary justify-center disabled:opacity-40"
-          >
-            {loading ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
-            {loading ? t.char_generating : t.char_generate}
-          </button>
-          {error && <p className="text-xs text-red-400 text-center">{error}</p>}
+          {step === 'style' && (
+            <div className="space-y-3">
+              <p className="text-xs text-text-muted">{t.char_step_style_hint}</p>
+              <div>
+                <label className="text-xs font-medium text-text-muted mb-2 block">{t.char_style}</label>
+                <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto pr-1">
+                  {styles.map(s => (
+                    <button key={s.key} onClick={() => setSelectedStyle(s.key)}
+                      className={`chip text-xs ${selectedStyle === s.key ? 'chip-active' : ''}`}>{s.label}</button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-text-muted mb-2 block">{t.char_composition}</label>
+                <div className="flex flex-wrap gap-2">
+                  {compositions.map(c => (
+                    <button key={c.key} onClick={() => setSelectedComposition(c.key)}
+                      className={`chip text-xs ${selectedComposition === c.key ? 'chip-active' : ''}`}>{c.label}</button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex gap-2 pt-2">
+                <button onClick={() => setStep('profile')} className="btn-ghost text-xs">
+                  <ArrowLeft size={13} /> {t.char_action_back}
+                </button>
+                <button onClick={generateHero} disabled={loading} className="btn-primary text-xs ml-auto justify-center">
+                  {loading ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                  {t.char_action_generate_hero}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {step === 'hero' && (
+            <div className="space-y-3">
+              <p className="text-xs text-text-muted">{t.char_step_hero_hint}</p>
+              <div className="flex gap-2 flex-wrap">
+                <button onClick={generateHero} disabled={loading} className="btn-ghost text-xs">
+                  <RefreshCw size={13} /> {t.char_action_regen}
+                </button>
+                <button onClick={() => setStep('style')} className="btn-ghost text-xs">
+                  <ArrowLeft size={13} /> {t.char_action_back}
+                </button>
+                <button onClick={generateSheet} disabled={loading} className="btn-primary text-xs ml-auto">
+                  {loading ? <Loader2 size={13} className="animate-spin" /> : <Check size={13} />}
+                  {t.char_action_generate_sheet}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {step === 'sheet' && (
+            <div className="space-y-3">
+              <p className="text-xs text-text-muted">{t.char_step_sheet_hint}</p>
+              <div className="flex gap-2 flex-wrap">
+                <button onClick={generateSheet} disabled={loading} className="btn-ghost text-xs">
+                  <RefreshCw size={13} /> {t.char_action_regen}
+                </button>
+                <button onClick={() => setStep('hero')} className="btn-ghost text-xs">
+                  <ArrowLeft size={13} /> {t.char_action_back}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {error && <p className="text-xs text-red-400">{error}</p>}
+          {loading && loadingMsg && <p className="text-xs text-text-muted flex items-center gap-2"><Loader2 size={12} className="animate-spin" />{loadingMsg}…</p>}
         </div>
       </div>
 
@@ -402,11 +485,11 @@ export default function Characters() {
             </div>
 
             {/* Description */}
-            {artDirectorMsgs[artDirectorMsgs.length - 1] && (
+            {profile && (
               <div className="bg-bg-elevated rounded-xl p-4">
                 <p className="text-xs font-medium text-text-muted mb-2">{t.char_desc}</p>
-                <p className="text-sm text-text-secondary leading-relaxed">
-                  {artDirectorMsgs[artDirectorMsgs.length - 1].text}
+                <p className="text-sm text-text-secondary leading-relaxed whitespace-pre-wrap">
+                  {profile}
                 </p>
               </div>
             )}
