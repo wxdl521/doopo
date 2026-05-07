@@ -410,6 +410,35 @@ export default function Characters() {
                 </p>
               </div>
             )}
+
+            {/* Prompt Preview */}
+            {Object.values(promptPreview).some(Boolean) && (
+              <div className="bg-bg-elevated rounded-xl p-4 space-y-3">
+                <div className="flex items-center gap-2">
+                  <FileText size={14} className="text-text-muted" />
+                  <p className="text-xs font-medium text-text-muted">{t.char_prompt_preview}</p>
+                </div>
+                <p className="text-[11px] text-text-muted">{t.char_prompt_preview_hint}</p>
+                <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                  {VIEWS.map(v => promptPreview[v] && (
+                    <details key={v} open={v === selectedImage} className="group rounded-lg border border-border bg-bg-base">
+                      <summary className="flex items-center justify-between cursor-pointer px-3 py-2 text-xs text-text-secondary">
+                        <span className="font-medium">{t[`char_view_${v}` as keyof typeof t] ?? v}</span>
+                        <button
+                          onClick={(e) => { e.preventDefault(); navigator.clipboard.writeText(promptPreview[v]) }}
+                          className="text-[10px] text-text-muted hover:text-accent transition"
+                        >
+                          Copy
+                        </button>
+                      </summary>
+                      <pre className="px-3 pb-3 text-[11px] leading-relaxed text-text-secondary whitespace-pre-wrap break-words font-mono">
+                        {promptPreview[v]}
+                      </pre>
+                    </details>
+                  ))}
+                </div>
+              </div>
+            )}
           </>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-center py-20 space-y-4">
