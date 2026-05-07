@@ -1,39 +1,57 @@
-## 目标
+## 剧本导出功能
 
-把 `src/pages/Scripts.tsx` 中的剧本生成 / 优化两个调用，从 `http://43.130.52.57:8080/v1/chat/completions` 切换到 OpenRouter 官方 API（`https://openrouter.ai/api/v1/chat/completions`）。其它模块（首页、角色页等）暂不动。
+在 `/scripts` 页面为每个剧本卡片添加导出按钮，支持 **TXT** 和 **DOCX** 两种格式，导出内容包含完整元信息。
 
-## 关键决策
+### 功能设计
 
-**密钥不放前端**。你给的 `sk-or-v1-...` 是私有 API Key，如果直接写在 React 里会随构建产物公开，任何访问者都能盗用。正确做法：
+每个剧本卡片展开区域新增一个"导出"下拉按钮（位于"优化/复制"旁），点击后选择格式：
+- **导出为 TXT** — 纯文本，UTF-8 编码
+- **导出为 Word (.docx)** — 带格式的 Word 文档
 
-1. 启用 Lovable Cloud（提供后端运行环境）
-2. 将密钥存为后端 secret `OPENROUTER_API_KEY`
-3. 创建一个 TanStack Start 服务端函数 `generateScript`，由它去调 OpenRouter，前端只调这个函数
+文件名格式：`{标题}_{类型}_{创建日期}.{ext}`，自动清理非法字符。
 
-## 实施步骤
+### 导出内容（含元信息）
 
-1. **启用 Lovable Cloud**（用于运行服务端函数 + 存储 secret）。
-2. **添加 secret** `OPENROUTER_API_KEY`，值为你提供的 key。
-3. **新增** `src/lib/openrouter.functions.ts`：
-  - 导出 `generateScript`（createServerFn，POST）
-  - 入参：`{ messages, model?, max_tokens?, temperature? }`
-  - 服务端读取 `process.env.OPENROUTER_API_KEY`，请求 OpenRouter，返回 `{ content }`
-  - 错误时返回友好错误信息（401 / 429 / 网络错误分别处理）
-4. **改造** `src/pages/Scripts.tsx`：
-  - 删除 `PROXY_URL` 常量
-  - `handleGenerate` 与 `handleOptimize` 改用 `useServerFn(generateScript)`
-  - 默认模型：`deepseek/deepseek-chat-v3.1:free`（OpenRouter 上免费，与原模型一致家族）
-5. **验证**：在 `/scripts` 创建一条剧本，确认能正常返回内容；查看 network/console 无报错。
+```
+═══════════════════════════════
+{标题}
+═══════════════════════════════
 
-## 不在范围
+类型：Short Drama
+题材：Drama
+风格：Serious
+创建时间：2026-05-07 14:30
 
-- 不改 `HeroPromptInput`、`Characters` 等其它仍调用旧 PROXY_URL 的模块（如需后续可同样处理）
-- 不引入流式输出（保持现有非流式以最小改动）
-- 不改 i18n 文案
+剧情概要：
+{plot}
 
-## 询问
+───────────────────────────────
+正文：
+───────────────────────────────
 
-确认两点后开始：
+{content}
+```
 
-1. 同意启用 Lovable Cloud 来安全存放 OpenRouter 密钥？ 保证安全情况下同意
-2. 默认模型用 `deepseek/deepseek-chat-v3.1:free`（免费）还是你指定的其它型号？是
+DOCX 版本：标题用 Heading1、元信息表格化、正文用等宽字体保持剧本格式。
+
+### 技术实现
+
+1. **新增依赖**：`docx`（前端打包，生成 .docx Blob）和 `file-saver`（触发下载）。
+2. **新文件 `src/lib/exportScript.ts`**：
+   - `exportScriptAsTxt(script, t)` — 拼接字符串 → `Blob` → 下载
+   - `exportScriptAsDocx(script, t)` — 用 `docx` 库构建 `Document`（标题、元信息段落、正文），`Packer.toBlob()` → 下载
+   - `slugify(name)` 工具，去除文件名非法字符
+3. **修改 `src/pages/Scripts.tsx`**：
+   - 引入新导出函数
+   - 在剧本卡片展开区按钮组添加"导出"按钮 + 下拉菜单（TXT / DOCX 两项）
+   - 点击对应项调用导出函数
+4. **i18n 增加文案**（`zh.ts` / `en.ts`）：
+   - `script_export` / `script_export_txt` / `script_export_docx`
+   - 元信息标签复用现有 `script_type` / `script_genre` / `script_tone` / `script_plot`
+   - 新增 `script_created_at` / `script_content_label`
+
+### 范围
+
+- 仅前端纯客户端实现，无需后端服务函数
+- 仅"单个剧本"导出（按用户确认）
+- 内容为空的剧本，导出按钮禁用
