@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
-import { Plus, Edit2, Trash2, Loader2, Sparkles, Save, X, ChevronDown, MessageSquare, ArrowUp, ArrowDown, Copy, Check } from 'lucide-react'
+import { Plus, Edit2, Trash2, Loader2, Sparkles, Save, X, ChevronDown, MessageSquare, ArrowUp, ArrowDown, Copy, Check, Download, FileText, FileType2 } from 'lucide-react'
 import { useLanguage } from '../i18n/LanguageContext'
 import { useServerFn } from '@tanstack/react-start'
 import { generateScript } from '../lib/openrouter.functions'
+import { exportScriptAsTxt, exportScriptAsDocx } from '../lib/exportScript'
 
 type Script = {
   id: string
@@ -66,6 +67,7 @@ export default function Scripts() {
   const [generating, setGenerating] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [exportMenuId, setExportMenuId] = useState<string | null>(null)
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(scripts))
@@ -149,6 +151,21 @@ Please write a complete ${selectedType.toLowerCase()} drama script in ${lang ===
     navigator.clipboard.writeText(content)
     setCopiedId(id)
     setTimeout(() => setCopiedId(null), 1500)
+  }
+
+  const exportLabels = {
+    type: t.script_type,
+    genre: t.script_genre,
+    tone: t.script_tone,
+    createdAt: t.script_created_at,
+    plot: t.script_plot_label,
+    content: t.script_content_label,
+  }
+
+  const handleExport = async (script: Script, format: 'txt' | 'docx') => {
+    setExportMenuId(null)
+    if (format === 'txt') exportScriptAsTxt(script, exportLabels)
+    else await exportScriptAsDocx(script, exportLabels)
   }
 
   return (
@@ -308,6 +325,34 @@ Please write a complete ${selectedType.toLowerCase()} drama script in ${lang ===
                           <Copy size={13} />
                           {copiedId === script.id ? t.script_copied : t.script_copy}
                         </button>
+                        <div className="relative">
+                          <button
+                            onClick={() => setExportMenuId(exportMenuId === script.id ? null : script.id)}
+                            className="btn-ghost text-xs"
+                          >
+                            <Download size={13} />
+                            {t.script_export}
+                            <ChevronDown size={12} className={`transition-transform ${exportMenuId === script.id ? 'rotate-180' : ''}`} />
+                          </button>
+                          {exportMenuId === script.id && (
+                            <div className="absolute z-10 mt-1 left-0 min-w-[180px] rounded-lg border border-border bg-bg-elevated shadow-lg overflow-hidden">
+                              <button
+                                onClick={() => handleExport(script, 'txt')}
+                                className="w-full flex items-center gap-2 px-3 py-2 text-xs text-text-primary hover:bg-bg-base text-left"
+                              >
+                                <FileText size={13} />
+                                {t.script_export_txt}
+                              </button>
+                              <button
+                                onClick={() => handleExport(script, 'docx')}
+                                className="w-full flex items-center gap-2 px-3 py-2 text-xs text-text-primary hover:bg-bg-base text-left"
+                              >
+                                <FileType2 size={13} />
+                                {t.script_export_docx}
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </>
                   ) : (
