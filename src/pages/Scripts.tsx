@@ -15,9 +15,29 @@ type Script = {
   createdAt: string
 }
 
-const TYPES = ['Micro', 'Short', 'Feature', 'Ad']
-const GENRES = ['Sci-Fi', 'Romance', 'Thriller', 'Comedy', 'Drama', 'Horror', 'Fantasy', 'Historical']
-const TONES = ['Serious', 'Comedy', 'Suspense', 'Romance', 'Horror']
+const TYPES = [
+  { value: 'Micro', key: 'script_type_micro' as const },
+  { value: 'Short', key: 'script_type_short' as const },
+  { value: 'Feature', key: 'script_type_feature' as const },
+  { value: 'Ad', key: 'script_type_ad' as const },
+]
+const GENRES = [
+  { value: 'Sci-Fi', key: 'script_genre_scifi' as const },
+  { value: 'Romance', key: 'script_genre_romance' as const },
+  { value: 'Thriller', key: 'script_genre_thriller' as const },
+  { value: 'Comedy', key: 'script_genre_comedy' as const },
+  { value: 'Drama', key: 'script_genre_drama' as const },
+  { value: 'Horror', key: 'script_genre_horror' as const },
+  { value: 'Fantasy', key: 'script_genre_fantasy' as const },
+  { value: 'Historical', key: 'script_genre_historical' as const },
+]
+const TONES = [
+  { value: 'Serious', key: 'script_tone_serious' as const },
+  { value: 'Comedy', key: 'script_tone_comedy' as const },
+  { value: 'Suspense', key: 'script_tone_suspense' as const },
+  { value: 'Romance', key: 'script_tone_romance' as const },
+  { value: 'Horror', key: 'script_tone_horror' as const },
+]
 
 const MODELS = [
   { id: 'deepseek/deepseek-chat-v3.1:free', label: 'DeepSeek V3.1 (Free)' },
@@ -154,7 +174,7 @@ Please write a complete ${selectedType.toLowerCase()} drama script in ${lang ===
               onChange={e => setSelectedType(e.target.value)}
               className="w-full rounded-lg bg-bg-elevated border border-border text-sm text-text-primary px-3 py-2 focus:outline-none focus:border-accent/50"
             >
-              {TYPES.map(tp => <option key={tp} value={tp}>{tp}</option>)}
+              {TYPES.map(tp => <option key={tp.value} value={tp.value}>{t[tp.key]}</option>)}
             </select>
           </div>
           <div>
@@ -164,7 +184,7 @@ Please write a complete ${selectedType.toLowerCase()} drama script in ${lang ===
               onChange={e => setSelectedGenre(e.target.value)}
               className="w-full rounded-lg bg-bg-elevated border border-border text-sm text-text-primary px-3 py-2 focus:outline-none focus:border-accent/50"
             >
-              {GENRES.map(g => <option key={g} value={g}>{g}</option>)}
+              {GENRES.map(g => <option key={g.value} value={g.value}>{t[g.key]}</option>)}
             </select>
           </div>
           <div>
@@ -174,7 +194,7 @@ Please write a complete ${selectedType.toLowerCase()} drama script in ${lang ===
               onChange={e => setSelectedTone(e.target.value)}
               className="w-full rounded-lg bg-bg-elevated border border-border text-sm text-text-primary px-3 py-2 focus:outline-none focus:border-accent/50"
             >
-              {TONES.map(tn => <option key={tn} value={tn}>{tn}</option>)}
+              {TONES.map(tn => <option key={tn.value} value={tn.value}>{t[tn.key]}</option>)}
             </select>
           </div>
         </div>
