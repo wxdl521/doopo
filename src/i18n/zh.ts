@@ -162,6 +162,7 @@ export const zh = {
   script_genre_fantasy: '奇幻',
   script_genre_historical: '历史',
   script_tone: '风格',
+  script_model: '模型',
   script_tone_serious: '严肃',
   script_tone_comedy: '喜剧',
   script_tone_suspense: '悬疑',
