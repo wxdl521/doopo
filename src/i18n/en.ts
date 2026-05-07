@@ -235,6 +235,8 @@ export const en: Translations = {
   char_system_designer: 'You are a professional character designer AI.',
   char_generation_failed: 'Generation failed, please retry.',
   char_image_generation_failed: 'Image generation failed, please retry or change style.',
+  char_prompt_preview: 'Prompt Preview',
+  char_prompt_preview_hint: 'Final prompt sent to the image model for each view.',
 
   // Pricing
   pricing_title_p1: 'Pricing that scales with your',

@@ -233,6 +233,8 @@ export const zh = {
   char_system_designer: '你是一位专业的角色设计师 AI。',
   char_generation_failed: '生成失败，请重试。',
   char_image_generation_failed: '图片生成失败，请重试或更换风格。',
+  char_prompt_preview: '提示词预览',
+  char_prompt_preview_hint: '即将发送给图像模型的最终提示词（按视图）。',
 
   // ============ Pricing ============
   pricing_title_p1: '随你的故事一起',
