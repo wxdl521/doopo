@@ -23,6 +23,8 @@ export const generateScript = createServerFn({ method: 'POST' })
     }
 
     try {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 55_000)
       const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -37,11 +39,14 @@ export const generateScript = createServerFn({ method: 'POST' })
           max_tokens: data.max_tokens ?? 2000,
           temperature: data.temperature ?? 0.85,
         }),
+        signal: controller.signal,
       })
+      clearTimeout(timeout)
 
       if (!res.ok) {
         const text = await res.text().catch(() => '')
         if (res.status === 401) return { content: '', error: 'OpenRouter authentication failed (401)' }
+        if (res.status === 404) return { content: '', error: `Model not available (404). Please pick another model.` }
         if (res.status === 429) return { content: '', error: 'Rate limit exceeded, please try again later (429)' }
         return { content: '', error: `OpenRouter error ${res.status}: ${text.slice(0, 200)}` }
       }
@@ -50,6 +55,9 @@ export const generateScript = createServerFn({ method: 'POST' })
       const content = json?.choices?.[0]?.message?.content ?? ''
       return { content, error: null as string | null }
     } catch (e) {
+      if (e instanceof Error && e.name === 'AbortError') {
+        return { content: '', error: 'Request timed out. Try a faster model or shorter prompt.' }
+      }
       return { content: '', error: e instanceof Error ? e.message : 'Network error' }
     }
   })
