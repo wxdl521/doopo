@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { Plus, Edit2, Trash2, Loader2, Sparkles, Save, X, ChevronDown, MessageSquare, ArrowUp, ArrowDown, Copy, Check } from 'lucide-react'
 import { useLanguage } from '../i18n/LanguageContext'
-
-const PROXY_URL = 'http://43.130.52.57:8080/v1/chat/completions'
+import { useServerFn } from '@tanstack/react-start'
+import { generateScript } from '../lib/openrouter.functions'
 
 type Script = {
   id: string
@@ -23,6 +23,7 @@ const STORAGE_KEY = 'doopoo_scripts'
 
 export default function Scripts() {
   const { t, lang } = useLanguage()
+  const callGenerate = useServerFn(generateScript)
   const [scripts, setScripts] = useState<Script[]>(() => {
     try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]') } catch { return [] }
   })
@@ -65,22 +66,19 @@ Please write a complete ${selectedType.toLowerCase()} drama script in ${lang ===
     setNewPlot('')
 
     try {
-      const res = await fetch(PROXY_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'deepseek/deepseek-chat-v3',
+      const result = await callGenerate({
+        data: {
           messages: [
             { role: 'system', content: t.script_system_writer },
             { role: 'user', content: aiPrompt },
           ],
           max_tokens: 2000,
           temperature: 0.85,
-        }),
+        },
       })
-      const data = await res.json()
-      const content = data.choices?.[0]?.message?.content || t.script_generation_failed
-
+      const content = result.error
+        ? `${t.script_generation_failed}: ${result.error}`
+        : (result.content || t.script_generation_failed)
       setScripts(prev => prev.map(s => s.id === tempScript.id ? { ...s, content } : s))
     } catch {
       setScripts(prev => prev.map(s => s.id === tempScript.id ? { ...s, content: t.script_network_error } : s))
@@ -92,23 +90,22 @@ Please write a complete ${selectedType.toLowerCase()} drama script in ${lang ===
   const handleOptimize = async (script: Script) => {
     if (!script.content) return
     setGenerating(true)
-    const res = await fetch(PROXY_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'deepseek/deepseek-chat-v3',
-        messages: [
-          { role: 'system', content: t.script_system_optimizer },
-          { role: 'user', content: `Optimize this ${script.type.toLowerCase()} drama script:\n\n${script.content}` },
-        ],
-        max_tokens: 2000,
-        temperature: 0.8,
-      }),
-    })
-    const data = await res.json()
-    const updated = data.choices?.[0]?.message?.content || script.content
-    setScripts(prev => prev.map(s => s.id === script.id ? { ...s, content: updated } : s))
-    setGenerating(false)
+    try {
+      const result = await callGenerate({
+        data: {
+          messages: [
+            { role: 'system', content: t.script_system_optimizer },
+            { role: 'user', content: `Optimize this ${script.type.toLowerCase()} drama script:\n\n${script.content}` },
+          ],
+          max_tokens: 2000,
+          temperature: 0.8,
+        },
+      })
+      const updated = result.error ? script.content : (result.content || script.content)
+      setScripts(prev => prev.map(s => s.id === script.id ? { ...s, content: updated } : s))
+    } finally {
+      setGenerating(false)
+    }
   }
 
   const handleDelete = (id: string) => {
