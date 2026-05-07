@@ -1,4 +1,5 @@
-import { saveAs } from 'file-saver'
+import fileSaver from 'file-saver'
+const { saveAs } = fileSaver
 import { Document, Packer, Paragraph, HeadingLevel, TextRun, AlignmentType } from 'docx'
 
 export type ExportableScript = {
