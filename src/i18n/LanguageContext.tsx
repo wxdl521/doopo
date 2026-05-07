@@ -24,12 +24,13 @@ export function useLanguage() {
 
 export function LanguageProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>(() => {
-    return (localStorage.getItem('doopoo-lang') as Lang) || 'zh'
+    if (typeof window === 'undefined') return 'zh'
+    return (window.localStorage.getItem('doopoo-lang') as Lang) || 'zh'
   })
 
   const setLang = (l: Lang) => {
     setLangState(l)
-    localStorage.setItem('doopoo-lang', l)
+    if (typeof window !== 'undefined') window.localStorage.setItem('doopoo-lang', l)
   }
 
   const toggleLang = () => {
