@@ -1,0 +1,318 @@
+import { useState, useRef } from 'react'
+import { Plus, Loader2, Sparkles, Send, Wand, RefreshCw, Download, Copy, Check, X, ChevronDown, Palette, ImageIcon, MessageSquare, BookOpen, Star, Shirt, SmilePlus, Eye } from 'lucide-react'
+import { useLanguage } from '../i18n/LanguageContext'
+
+const PROXY_URL = 'http://43.130.52.57:8080/v1/chat/completions'
+const IMG_PROXY = 'http://43.130.52.57:8080/v1/images/generations'
+
+type Message = { role: string; text: string }
+type Tab = 'front' | 'side' | 'back' | 'expression' | 'accessory'
+
+const VIEWS = ['front', 'side', 'back', 'expression', 'accessory'] as Tab[]
+
+export default function Characters() {
+  const { t, lang } = useLanguage()
+
+  const [messages, setMessages] = useState<Message[]>([
+    {
+      role: 'art-director',
+      text: lang === 'zh'
+        ? '你好！我是你的专属角色设计师。告诉我你心目中的角色形象，我会为你生成专业的设定集，包括多视角图、配色方案和详细描述。'
+        : "Hi! I'm your personal character designer. Tell me about your character's image, and I'll create a professional profile including multi-view images, color palettes, and detailed descriptions.",
+    },
+  ])
+  const [description, setDescription] = useState('')
+  const [selectedStyle, setSelectedStyle] = useState('Visual Novel')
+  const [generatedImages, setGeneratedImages] = useState<Record<Tab, string>>({ front: '', side: '', back: '', expression: '', accessory: '' })
+  const [selectedImage, setSelectedImage] = useState<Tab>('front')
+  const [activeTab, setActiveTab] = useState<Tab>('front')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const bottomRef = useRef<HTMLDivElement>(null)
+
+  const styles = ['Visual Novel', 'Chibi', 'Ethereal Gothic', 'Realistic', 'Anime']
+
+  const systemPrompt = lang === 'zh'
+    ? `作为专业角色设计师，根据以下描述为角色撰写详细设定（外貌、性格、背景、服装配饰），用中文，200字以内：\n${description}`
+    : `As a professional character designer, write a detailed character profile (appearance, personality, background, costumes and accessories) in English, within 200 words, based on the following description:\n${description}`
+
+  const imagePrompt = lang === 'zh'
+    ? `Character portrait, ${selectedStyle} style, ${description}, full body, front view, clean background, high quality illustration`
+    : `Character portrait, ${selectedStyle} style, ${description}, full body, front view, clean background, high quality illustration`
+
+  const scrollBottom = () => {
+    setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
+  }
+
+  const handleGenerate = async () => {
+    if (!description.trim()) return
+    setLoading(true)
+    setError('')
+    const userMsg = { role: 'user', text: description }
+    setMessages(prev => [...prev, userMsg])
+    setDescription('')
+    scrollBottom()
+
+    try {
+      const res = await fetch(PROXY_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          model: 'deepseek/deepseek-chat-v3',
+          messages: [
+            { role: 'system', content: 'You are a professional character designer AI.' },
+            { role: 'user', content: systemPrompt },
+          ],
+          max_tokens: 600,
+          temperature: 0.8,
+        }),
+      })
+
+      if (!res.ok) throw new Error('API error')
+      const data = await res.json()
+      const reply = data.choices?.[0]?.message?.content || '生成失败，请重试。'
+      const artMsg = { role: 'art-director', text: reply }
+      setMessages(prev => [...prev, artMsg])
+
+      // Generate 5 view images in parallel
+      const views: Tab[] = ['front', 'side', 'back', 'expression', 'accessory']
+      const viewPrompts: Record<Tab, string> = {} as Record<Tab, string>
+      views.forEach(v => {
+        const viewMap: Record<Tab, string> = {
+          front: 'front view',
+          side: 'side profile view',
+          back: 'back view',
+          expression: 'facial expression close-up',
+          accessory: 'character accessory detail view',
+        }
+        viewPrompts[v] = `Character portrait, ${selectedStyle} style, ${description}, ${viewMap[v]}, clean background, high quality illustration`
+      })
+
+      const imgResults = await Promise.allSettled(
+        views.map(async (v) => {
+          const imgRes = await fetch(IMG_PROXY, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              model: 'minimax/image-01',
+              prompt: viewPrompts[v],
+              num_images: 1,
+            }),
+          })
+          if (!imgRes.ok) throw new Error('Image gen failed')
+          const imgData = await imgRes.json()
+          return { view: v, url: imgData.data?.[0]?.url || '' }
+        })
+      )
+
+      const newImages = { ...generatedImages }
+      imgResults.forEach((r) => {
+        if (r.status === 'fulfilled') newImages[r.value.view] = r.value.url
+      })
+      setGeneratedImages(newImages)
+    } catch (e: any) {
+      setError(e.message || 'Error')
+    } finally {
+      setLoading(false)
+      scrollBottom()
+    }
+  }
+
+  const copyPalette = () => {
+    const colors = ['#59C9D5', '#83CBA4', '#B5D684', '#e8f0f6', '#1a3530']
+    navigator.clipboard.writeText(colors.join(', '))
+  }
+
+  const artDirectorMsgs = messages.filter(m => m.role === 'art-director')
+
+  return (
+    <div className="flex flex-col lg:flex-row gap-6 animate-fade-in" style={{ minHeight: 'calc(100vh - 120px)' }}>
+      {/* Left: Chat Panel */}
+      <div className="lg:w-[380px] flex flex-col panel p-5 gap-4">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-cyan-400 to-emerald-500 flex items-center justify-center">
+            <Sparkles size={18} className="text-white" />
+          </div>
+          <div>
+            <h2 className="font-semibold text-text-primary">{t.characters_title}</h2>
+            <p className="text-xs text-text-muted">{t.characters_subtitle}</p>
+          </div>
+        </div>
+
+        {/* Style selector */}
+        <div>
+          <label className="text-xs font-medium text-text-muted mb-2 block">{t.char_style}</label>
+          <div className="flex flex-wrap gap-2">
+            {styles.map(s => (
+              <button
+                key={s}
+                onClick={() => setSelectedStyle(s)}
+                className={`chip text-xs ${selectedStyle === s ? 'chip-active' : ''}`}
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto space-y-4 max-h-[360px] pr-1">
+          {messages.map((msg, i) => (
+            <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
+              {msg.role === 'art-director' && (
+                <div className="w-8 h-8 rounded-full bg-gradient-to-br from-cyan-400 to-emerald-500 flex items-center justify-center flex-shrink-0 mt-1">
+                  <Sparkles size={14} className="text-white" />
+                </div>
+              )}
+              <div className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                msg.role === 'art-director'
+                  ? 'bg-bg-elevated text-text-primary rounded-tl-md'
+                  : 'bg-accent-dim text-text-primary rounded-tr-md'
+              }`}>
+                {msg.text}
+              </div>
+            </div>
+          ))}
+          <div ref={bottomRef} />
+        </div>
+
+        {/* Input */}
+        <div className="space-y-2">
+          <textarea
+            value={description}
+            onChange={e => setDescription(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleGenerate() } }}
+            placeholder={t.char_desc_hint}
+            rows={3}
+            className="w-full rounded-xl bg-bg-elevated border border-border text-sm text-text-primary p-3 resize-none focus:outline-none focus:border-accent/50 transition placeholder:text-text-muted"
+          />
+          <button
+            onClick={handleGenerate}
+            disabled={loading || !description.trim()}
+            className="w-full btn-primary justify-center disabled:opacity-40"
+          >
+            {loading ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
+            {loading ? t.char_generating : t.char_generate}
+          </button>
+          {error && <p className="text-xs text-red-400 text-center">{error}</p>}
+        </div>
+      </div>
+
+      {/* Right: Canvas */}
+      <div className="flex-1 panel p-6 space-y-5">
+        {Object.values(generatedImages).some(Boolean) ? (
+          <>
+            {/* View Tabs */}
+            <div className="flex gap-2 flex-wrap">
+              {VIEWS.map(v => (
+                <button
+                  key={v}
+                  onClick={() => { setActiveTab(v); if (generatedImages[v]) setSelectedImage(v) }}
+                  className={`chip text-xs ${activeTab === v && generatedImages[v] ? 'chip-active' : ''}`}
+                >
+                  {v === 'front' && <Eye size={12} />}
+                  {v === 'side' && <Shirt size={12} />}
+                  {v === 'back' && <BookOpen size={12} />}
+                  {v === 'expression' && <SmilePlus size={12} />}
+                  {v === 'accessory' && <Star size={12} />}
+                  {t[`char_view_${v}` as keyof typeof t] ?? v}
+                </button>
+              ))}
+            </div>
+
+            {/* Main Image */}
+            <div className="relative rounded-2xl overflow-hidden border border-border bg-bg-elevated corner-frame">
+              {generatedImages[selectedImage] ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={generatedImages[selectedImage]}
+                  alt={selectedImage}
+                  className="w-full max-h-[480px] object-contain"
+                />
+              ) : (
+                <div className="w-full h-64 flex items-center justify-center text-text-muted text-sm">
+                  {loading ? t.char_generating : t.char_no_generate}
+                </div>
+              )}
+            </div>
+
+            {/* Thumbnails */}
+            <div className="flex gap-3">
+              {VIEWS.map(v => (
+                generatedImages[v] && (
+                  <button
+                    key={v}
+                    onClick={() => setSelectedImage(v)}
+                    className={`relative rounded-lg overflow-hidden border-2 transition-all ${
+                      selectedImage === v ? 'border-accent scale-105' : 'border-border hover:border-accent/40'
+                    }`}
+                  >
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={generatedImages[v]} alt={v} className="w-20 h-20 object-cover" />
+                  </button>
+                )
+              ))}
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-3">
+              <button
+                onClick={copyPalette}
+                className="btn-ghost text-xs"
+              >
+                <Palette size={14} />
+                {t.char_copy_palette}
+              </button>
+              {generatedImages[selectedImage] && (
+                <a
+                  href={generatedImages[selectedImage]}
+                  download={`character-${selectedImage}.png`}
+                  className="btn-ghost text-xs"
+                >
+                  <Download size={14} />
+                  {t.char_download}
+                </a>
+              )}
+            </div>
+
+            {/* Color Palette */}
+            <div>
+              <p className="text-xs font-medium text-text-muted mb-2">{t.char_color_palette}</p>
+              <div className="flex gap-2">
+                {['#59C9D5', '#83CBA4', '#B5D684', '#e8f0f6', '#1a3530'].map(c => (
+                  <button
+                    key={c}
+                    onClick={() => navigator.clipboard.writeText(c)}
+                    className="w-9 h-9 rounded-lg border border-border shadow-sm hover:scale-110 transition"
+                    style={{ background: c }}
+                    title={c}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {/* Description */}
+            {artDirectorMsgs[artDirectorMsgs.length - 1] && (
+              <div className="bg-bg-elevated rounded-xl p-4">
+                <p className="text-xs font-medium text-text-muted mb-2">{t.char_desc}</p>
+                <p className="text-sm text-text-secondary leading-relaxed">
+                  {artDirectorMsgs[artDirectorMsgs.length - 1].text}
+                </p>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="flex-1 flex flex-col items-center justify-center text-center py-20 space-y-4">
+            <div className="w-20 h-20 rounded-full bg-bg-elevated border border-border flex items-center justify-center">
+              <BookOpen size={32} className="text-text-muted" />
+            </div>
+            <div className="space-y-1">
+              <p className="text-text-secondary font-medium">{t.characters_title}</p>
+              <p className="text-sm text-text-muted">{t.char_no_generate}</p>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
