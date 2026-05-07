@@ -5,7 +5,6 @@ type Input = { prompt: string; model?: string }
 // Preferred order — tried first if present in the live model list.
 const PREFERRED_ORDER = [
   'google/gemini-3.1-flash-image-preview',
-  'google/gemini-2.5-flash-image',
 ]
 
 // Models known to frequently reject normal creative prompts via TOS — skip them.
@@ -14,6 +13,7 @@ const BLOCKED_MODELS = new Set<string>([
   'openai/gpt-5-image-mini',
   'openai/gpt-5.4-image-2',
   'google/gemini-3-pro-image-preview',
+  'google/gemini-2.5-flash-image',
 ])
 
 const RETRYABLE_STATUSES = new Set([403, 404, 429, 502, 503])
