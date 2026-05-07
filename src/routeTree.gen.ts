@@ -9,12 +9,60 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as ZoclawRouteImport } from './routes/zoclaw'
+import { Route as ShowcaseRouteImport } from './routes/showcase'
+import { Route as ScriptsRouteImport } from './routes/scripts'
+import { Route as ProjectsRouteImport } from './routes/projects'
+import { Route as PricingRouteImport } from './routes/pricing'
+import { Route as ModelsRouteImport } from './routes/models'
 import { Route as HomeRouteImport } from './routes/home'
+import { Route as CharactersRouteImport } from './routes/characters'
+import { Route as BasesRouteImport } from './routes/bases'
 import { Route as IndexRouteImport } from './routes/index'
 
+const ZoclawRoute = ZoclawRouteImport.update({
+  id: '/zoclaw',
+  path: '/zoclaw',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ShowcaseRoute = ShowcaseRouteImport.update({
+  id: '/showcase',
+  path: '/showcase',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ScriptsRoute = ScriptsRouteImport.update({
+  id: '/scripts',
+  path: '/scripts',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProjectsRoute = ProjectsRouteImport.update({
+  id: '/projects',
+  path: '/projects',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PricingRoute = PricingRouteImport.update({
+  id: '/pricing',
+  path: '/pricing',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ModelsRoute = ModelsRouteImport.update({
+  id: '/models',
+  path: '/models',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const HomeRoute = HomeRouteImport.update({
   id: '/home',
   path: '/home',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CharactersRoute = CharactersRouteImport.update({
+  id: '/characters',
+  path: '/characters',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const BasesRoute = BasesRouteImport.update({
+  id: '/bases',
+  path: '/bases',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -25,37 +73,156 @@ const IndexRoute = IndexRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/bases': typeof BasesRoute
+  '/characters': typeof CharactersRoute
   '/home': typeof HomeRoute
+  '/models': typeof ModelsRoute
+  '/pricing': typeof PricingRoute
+  '/projects': typeof ProjectsRoute
+  '/scripts': typeof ScriptsRoute
+  '/showcase': typeof ShowcaseRoute
+  '/zoclaw': typeof ZoclawRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/bases': typeof BasesRoute
+  '/characters': typeof CharactersRoute
   '/home': typeof HomeRoute
+  '/models': typeof ModelsRoute
+  '/pricing': typeof PricingRoute
+  '/projects': typeof ProjectsRoute
+  '/scripts': typeof ScriptsRoute
+  '/showcase': typeof ShowcaseRoute
+  '/zoclaw': typeof ZoclawRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/bases': typeof BasesRoute
+  '/characters': typeof CharactersRoute
   '/home': typeof HomeRoute
+  '/models': typeof ModelsRoute
+  '/pricing': typeof PricingRoute
+  '/projects': typeof ProjectsRoute
+  '/scripts': typeof ScriptsRoute
+  '/showcase': typeof ShowcaseRoute
+  '/zoclaw': typeof ZoclawRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/home'
+  fullPaths:
+    | '/'
+    | '/bases'
+    | '/characters'
+    | '/home'
+    | '/models'
+    | '/pricing'
+    | '/projects'
+    | '/scripts'
+    | '/showcase'
+    | '/zoclaw'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/home'
-  id: '__root__' | '/' | '/home'
+  to:
+    | '/'
+    | '/bases'
+    | '/characters'
+    | '/home'
+    | '/models'
+    | '/pricing'
+    | '/projects'
+    | '/scripts'
+    | '/showcase'
+    | '/zoclaw'
+  id:
+    | '__root__'
+    | '/'
+    | '/bases'
+    | '/characters'
+    | '/home'
+    | '/models'
+    | '/pricing'
+    | '/projects'
+    | '/scripts'
+    | '/showcase'
+    | '/zoclaw'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  BasesRoute: typeof BasesRoute
+  CharactersRoute: typeof CharactersRoute
   HomeRoute: typeof HomeRoute
+  ModelsRoute: typeof ModelsRoute
+  PricingRoute: typeof PricingRoute
+  ProjectsRoute: typeof ProjectsRoute
+  ScriptsRoute: typeof ScriptsRoute
+  ShowcaseRoute: typeof ShowcaseRoute
+  ZoclawRoute: typeof ZoclawRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/zoclaw': {
+      id: '/zoclaw'
+      path: '/zoclaw'
+      fullPath: '/zoclaw'
+      preLoaderRoute: typeof ZoclawRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/showcase': {
+      id: '/showcase'
+      path: '/showcase'
+      fullPath: '/showcase'
+      preLoaderRoute: typeof ShowcaseRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/scripts': {
+      id: '/scripts'
+      path: '/scripts'
+      fullPath: '/scripts'
+      preLoaderRoute: typeof ScriptsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/projects': {
+      id: '/projects'
+      path: '/projects'
+      fullPath: '/projects'
+      preLoaderRoute: typeof ProjectsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/pricing': {
+      id: '/pricing'
+      path: '/pricing'
+      fullPath: '/pricing'
+      preLoaderRoute: typeof PricingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/models': {
+      id: '/models'
+      path: '/models'
+      fullPath: '/models'
+      preLoaderRoute: typeof ModelsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/home': {
       id: '/home'
       path: '/home'
       fullPath: '/home'
       preLoaderRoute: typeof HomeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/characters': {
+      id: '/characters'
+      path: '/characters'
+      fullPath: '/characters'
+      preLoaderRoute: typeof CharactersRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/bases': {
+      id: '/bases'
+      path: '/bases'
+      fullPath: '/bases'
+      preLoaderRoute: typeof BasesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -70,7 +237,15 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  BasesRoute: BasesRoute,
+  CharactersRoute: CharactersRoute,
   HomeRoute: HomeRoute,
+  ModelsRoute: ModelsRoute,
+  PricingRoute: PricingRoute,
+  ProjectsRoute: ProjectsRoute,
+  ScriptsRoute: ScriptsRoute,
+  ShowcaseRoute: ShowcaseRoute,
+  ZoclawRoute: ZoclawRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
