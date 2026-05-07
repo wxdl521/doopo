@@ -280,9 +280,12 @@ Please write a complete ${selectedType.toLowerCase()} drama script in ${lang ===
           scripts.map(script => (
             <div key={script.id} className="panel overflow-hidden">
               {/* Summary bar */}
-              <button
-                className="w-full flex items-center justify-between px-5 py-4 hover:bg-bg-elevated/50 transition text-left"
+              <div
+                role="button"
+                tabIndex={0}
+                className="w-full flex items-center justify-between px-5 py-4 hover:bg-bg-elevated/50 transition text-left cursor-pointer"
                 onClick={() => setExpandedId(expandedId === script.id ? null : script.id)}
+                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') setExpandedId(expandedId === script.id ? null : script.id) }}
               >
                 <div className="flex items-center gap-3 min-w-0">
                   <span className={`chip-active chip text-xs flex-shrink-0`}>{script.type}</span>
@@ -306,7 +309,7 @@ Please write a complete ${selectedType.toLowerCase()} drama script in ${lang ===
                   </button>
                   <ChevronDown size={14} className={`text-text-muted transition-transform ${expandedId === script.id ? 'rotate-180' : ''}`} />
                 </div>
-              </button>
+              </div>
 
               {/* Expanded content */}
               {expandedId === script.id && (
