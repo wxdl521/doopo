@@ -10,6 +10,74 @@ type Tab = 'front' | 'side' | 'back' | 'expression' | 'accessory'
 
 const VIEWS = ['front', 'side', 'back', 'expression', 'accessory'] as Tab[]
 
+// Style-specific prompt enhancers to ensure visual consistency across views
+const STYLE_PROMPTS: Record<string, { positive: string; negative: string }> = {
+  'Visual Novel': {
+    positive: 'visual novel CG style, soft cel-shading, clean line art, expressive eyes, anime-influenced lighting, painterly skin tones',
+    negative: 'photo-realistic, 3d render, low quality',
+  },
+  Chibi: {
+    positive: 'super-deformed chibi style, large head small body, cute proportions, bold outlines, pastel colors, kawaii',
+    negative: 'realistic proportions, gritty, dark',
+  },
+  'Ethereal Gothic': {
+    positive: 'ethereal gothic aesthetic, baroque costume, candle lighting, deep shadows, ornate details, moody desaturated palette',
+    negative: 'bright pastel, cartoon, chibi',
+  },
+  Realistic: {
+    positive: 'photorealistic illustration, anatomically accurate, detailed skin texture, cinematic lighting, depth of field',
+    negative: 'cartoon, anime, flat shading',
+  },
+  Anime: {
+    positive: 'modern anime style, vibrant cel-shading, sharp line art, dynamic hair rendering, glossy highlights',
+    negative: 'photo, realistic, western comic',
+  },
+  Watercolor: {
+    positive: 'watercolor painting, soft washes, paper texture, gentle bleeding edges, delicate pastel palette',
+    negative: 'digital flat colors, 3d, sharp vector',
+  },
+  Cyberpunk: {
+    positive: 'cyberpunk style, neon-lit, holographic accents, futuristic streetwear, chromatic glow, night city ambience',
+    negative: 'medieval, pastoral, soft pastel',
+  },
+  'Pixel Art': {
+    positive: '16-bit pixel art, limited palette, crisp pixels, dithering, retro JRPG aesthetic',
+    negative: 'smooth gradients, photo, 3d',
+  },
+  'Oil Painting': {
+    positive: 'classical oil painting, visible brush strokes, rich impasto, chiaroscuro lighting, museum quality',
+    negative: 'digital flat, pixel, anime',
+  },
+  'Ink Wash': {
+    positive: 'East Asian ink wash painting (sumi-e), expressive brushwork, monochrome with subtle color accents, rice paper texture',
+    negative: 'vibrant cgi, neon, photo',
+  },
+  '3D Render': {
+    positive: 'octane 3d render, physically based shading, subsurface scattering, studio HDRI lighting, ultra detailed',
+    negative: 'flat 2d, sketch, low poly',
+  },
+  'Western Comic': {
+    positive: 'western comic book style, bold ink outlines, halftone shading, dynamic poses, saturated primary colors',
+    negative: 'manga, photo, watercolor',
+  },
+}
+
+const COMPOSITION_PROMPTS: Record<string, string> = {
+  portrait: 'tight head-and-shoulders portrait framing, eye-level, centered',
+  half: 'half-body composition from waist up, slight three-quarter angle',
+  full: 'full body composition, head-to-toe, balanced framing',
+  action: 'dynamic action pose, sense of motion, dramatic stance',
+  dynamic: 'dynamic camera angle, low or high perspective, cinematic depth',
+}
+
+const VIEW_PROMPTS: Record<Tab, string> = {
+  front: 'full body front view, T-pose reference sheet style',
+  side: 'full body strict side profile view, orthographic',
+  back: 'full body back view, orthographic, showing hairstyle and costume rear details',
+  expression: 'facial expression sheet, close-up portrait, multiple subtle expressions implied',
+  accessory: 'isolated character accessories and costume parts laid out as a design sheet',
+}
+
 export default function Characters() {
   const { t, lang } = useLanguage()
   const callGenerateText = useServerFn(generateScript)
@@ -25,8 +93,23 @@ export default function Characters() {
     { key: 'Ethereal Gothic', label: t.char_style_gothic },
     { key: 'Realistic', label: t.char_style_realistic },
     { key: 'Anime', label: t.char_style_anime },
+    { key: 'Watercolor', label: t.char_style_watercolor },
+    { key: 'Cyberpunk', label: t.char_style_cyberpunk },
+    { key: 'Pixel Art', label: t.char_style_pixel },
+    { key: 'Oil Painting', label: t.char_style_oil },
+    { key: 'Ink Wash', label: t.char_style_ink },
+    { key: '3D Render', label: t.char_style_3d },
+    { key: 'Western Comic', label: t.char_style_comic },
   ]
   const [selectedStyle, setSelectedStyle] = useState('Visual Novel')
+  const compositions = [
+    { key: 'portrait', label: t.char_comp_portrait },
+    { key: 'half', label: t.char_comp_half },
+    { key: 'full', label: t.char_comp_full },
+    { key: 'action', label: t.char_comp_action },
+    { key: 'dynamic', label: t.char_comp_dynamic },
+  ]
+  const [selectedComposition, setSelectedComposition] = useState('full')
   const [generatedImages, setGeneratedImages] = useState<Record<Tab, string>>({ front: '', side: '', back: '', expression: '', accessory: '' })
   const [selectedImage, setSelectedImage] = useState<Tab>('front')
   const [activeTab, setActiveTab] = useState<Tab>('front')
@@ -70,16 +153,22 @@ export default function Characters() {
 
       // Generate 5 view images in parallel
       const views: Tab[] = ['front', 'side', 'back', 'expression', 'accessory']
-      const viewMap: Record<Tab, string> = {
-        front: 'full body front view',
-        side: 'full body side profile view',
-        back: 'full body back view',
-        expression: 'facial expression close-up portrait',
-        accessory: 'character accessory and costume detail view',
-      }
+      const styleConf = STYLE_PROMPTS[selectedStyle] || { positive: `${selectedStyle} style`, negative: '' }
+      const compConf = COMPOSITION_PROMPTS[selectedComposition] || ''
+      // Consistency anchor: shared seed text helps the model lock identity across views
+      const consistencyAnchor = `consistent character design, same outfit and hairstyle across all views, neutral studio background, character sheet, master reference of: ${desc}`
       const imgResults = await Promise.allSettled(
         views.map(async (v) => {
-          const prompt = `Character portrait, ${selectedStyle} style, ${desc}, ${viewMap[v]}, clean background, high quality illustration`
+          const viewPrompt = VIEW_PROMPTS[v]
+          const composition = v === 'expression' || v === 'accessory' ? '' : compConf
+          const prompt = [
+            consistencyAnchor,
+            styleConf.positive,
+            composition,
+            viewPrompt,
+            'high quality illustration, sharp focus, professional concept art',
+            styleConf.negative ? `Avoid: ${styleConf.negative}.` : '',
+          ].filter(Boolean).join(', ')
           const r = await callGenerateImage({ data: { prompt } })
           return { view: v, url: r.url, error: r.error }
         }),
@@ -139,7 +228,7 @@ export default function Characters() {
         {/* Style selector */}
         <div>
           <label className="text-xs font-medium text-text-muted mb-2 block">{t.char_style}</label>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto pr-1">
             {styles.map(s => (
               <button
             key={s.key}
@@ -147,6 +236,22 @@ export default function Characters() {
             className={`chip text-xs ${selectedStyle === s.key ? 'chip-active' : ''}`}
               >
             {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Composition selector */}
+        <div>
+          <label className="text-xs font-medium text-text-muted mb-2 block">{t.char_composition}</label>
+          <div className="flex flex-wrap gap-2">
+            {compositions.map(c => (
+              <button
+                key={c.key}
+                onClick={() => setSelectedComposition(c.key)}
+                className={`chip text-xs ${selectedComposition === c.key ? 'chip-active' : ''}`}
+              >
+                {c.label}
               </button>
             ))}
           </div>
