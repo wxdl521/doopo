@@ -219,6 +219,7 @@ export const zh = {
   char_no_generate: '描述角色后点击「开始生成」',
   char_system_designer: '你是一位专业的角色设计师 AI。',
   char_generation_failed: '生成失败，请重试。',
+  char_image_generation_failed: '图片生成失败，请重试或更换风格。',
 
   // ============ Pricing ============
   pricing_title_p1: '随你的故事一起',

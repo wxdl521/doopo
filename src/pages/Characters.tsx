@@ -1,9 +1,9 @@
 import { useState, useRef } from 'react'
-import { Plus, Loader2, Sparkles, Send, Wand, RefreshCw, Download, Copy, Check, X, ChevronDown, Palette, ImageIcon, MessageSquare, BookOpen, Star, Shirt, SmilePlus, Eye } from 'lucide-react'
+import { Loader2, Sparkles, Send, Download, Palette, BookOpen, Star, Shirt, SmilePlus, Eye } from 'lucide-react'
+import { useServerFn } from '@tanstack/react-start'
 import { useLanguage } from '../i18n/LanguageContext'
-
-const PROXY_URL = 'http://43.130.52.57:8080/v1/chat/completions'
-const IMG_PROXY = 'http://43.130.52.57:8080/v1/images/generations'
+import { generateScript } from '../lib/openrouter.functions'
+import { generateImage } from '../lib/openrouterImage.functions'
 
 type Message = { role: string; text: string }
 type Tab = 'front' | 'side' | 'back' | 'expression' | 'accessory'
@@ -12,6 +12,8 @@ const VIEWS = ['front', 'side', 'back', 'expression', 'accessory'] as Tab[]
 
 export default function Characters() {
   const { t, lang } = useLanguage()
+  const callGenerateText = useServerFn(generateScript)
+  const callGenerateImage = useServerFn(generateImage)
 
   const [messages, setMessages] = useState<Message[]>([
     { role: 'art-director', text: t.characters_initial_msg },
@@ -32,84 +34,79 @@ export default function Characters() {
   const [error, setError] = useState('')
   const bottomRef = useRef<HTMLDivElement>(null)
 
-  const systemPrompt = lang === 'zh'
-    ? `作为专业角色设计师，根据以下描述为角色撰写详细设定（外貌、性格、背景、服装配饰），用中文，200字以内：\n${description}`
-    : `As a professional character designer, write a detailed character profile (appearance, personality, background, costumes and accessories) in English, within 200 words, based on the following description:\n${description}`
-
-  const imagePrompt = lang === 'zh'
-    ? `Character portrait, ${selectedStyle} style, ${description}, full body, front view, clean background, high quality illustration`
-    : `Character portrait, ${selectedStyle} style, ${description}, full body, front view, clean background, high quality illustration`
-
   const scrollBottom = () => {
     setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100)
   }
 
   const handleGenerate = async () => {
     if (!description.trim()) return
+    const desc = description
+    const userPrompt = lang === 'zh'
+      ? `作为专业角色设计师，根据以下描述为角色撰写详细设定（外貌、性格、背景、服装配饰），用中文，200字以内：\n${desc}`
+      : `As a professional character designer, write a detailed character profile (appearance, personality, background, costumes and accessories) in English, within 200 words, based on the following description:\n${desc}`
     setLoading(true)
     setError('')
-    const userMsg = { role: 'user', text: description }
+    const userMsg = { role: 'user', text: desc }
     setMessages(prev => [...prev, userMsg])
     setDescription('')
     scrollBottom()
 
     try {
-      const res = await fetch(PROXY_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'deepseek/deepseek-chat-v3',
+      const textRes = await callGenerateText({
+        data: {
           messages: [
             { role: 'system', content: t.char_system_designer },
-            { role: 'user', content: systemPrompt },
+            { role: 'user', content: userPrompt },
           ],
           max_tokens: 600,
-          temperature: 0.8,
-        }),
+          temperature: 0.85,
+        },
       })
-
-      if (!res.ok) throw new Error('API error')
-      const data = await res.json()
-      const reply = data.choices?.[0]?.message?.content || t.char_generation_failed
-      const artMsg = { role: 'art-director', text: reply }
-      setMessages(prev => [...prev, artMsg])
+      if (textRes.error && !textRes.content) {
+        setError(textRes.error)
+      }
+      const reply = textRes.content || t.char_generation_failed
+      setMessages(prev => [...prev, { role: 'art-director', text: reply }])
 
       // Generate 5 view images in parallel
       const views: Tab[] = ['front', 'side', 'back', 'expression', 'accessory']
-      const viewPrompts: Record<Tab, string> = {} as Record<Tab, string>
-      views.forEach(v => {
-        const viewMap: Record<Tab, string> = {
-          front: 'front view',
-          side: 'side profile view',
-          back: 'back view',
-          expression: 'facial expression close-up',
-          accessory: 'character accessory detail view',
-        }
-        viewPrompts[v] = `Character portrait, ${selectedStyle} style, ${description}, ${viewMap[v]}, clean background, high quality illustration`
-      })
-
+      const viewMap: Record<Tab, string> = {
+        front: 'full body front view',
+        side: 'full body side profile view',
+        back: 'full body back view',
+        expression: 'facial expression close-up portrait',
+        accessory: 'character accessory and costume detail view',
+      }
       const imgResults = await Promise.allSettled(
         views.map(async (v) => {
-          const imgRes = await fetch(IMG_PROXY, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              model: 'minimax/image-01',
-              prompt: viewPrompts[v],
-              num_images: 1,
-            }),
-          })
-          if (!imgRes.ok) throw new Error('Image gen failed')
-          const imgData = await imgRes.json()
-          return { view: v, url: imgData.data?.[0]?.url || '' }
-        })
+          const prompt = `Character portrait, ${selectedStyle} style, ${desc}, ${viewMap[v]}, clean background, high quality illustration`
+          const r = await callGenerateImage({ data: { prompt } })
+          return { view: v, url: r.url, error: r.error }
+        }),
       )
 
       const newImages = { ...generatedImages }
+      let firstFilled: Tab | null = null
+      let imgError = ''
       imgResults.forEach((r) => {
-        if (r.status === 'fulfilled') newImages[r.value.view] = r.value.url
+        if (r.status === 'fulfilled') {
+          if (r.value.url) {
+            newImages[r.value.view] = r.value.url
+            if (!firstFilled) firstFilled = r.value.view
+          } else if (r.value.error) {
+            imgError = r.value.error
+          }
+        } else {
+          imgError = r.reason?.message || imgError
+        }
       })
       setGeneratedImages(newImages)
+      if (firstFilled) {
+        setSelectedImage(firstFilled)
+        setActiveTab(firstFilled)
+      } else if (imgError) {
+        setError(t.char_image_generation_failed || imgError)
+      }
     } catch (e: any) {
       setError(e.message || 'Error')
     } finally {

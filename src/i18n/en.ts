@@ -221,6 +221,7 @@ export const en: Translations = {
   char_no_generate: 'Describe your character and click "Generate".',
   char_system_designer: 'You are a professional character designer AI.',
   char_generation_failed: 'Generation failed, please retry.',
+  char_image_generation_failed: 'Image generation failed, please retry or change style.',
 
   // Pricing
   pricing_title_p1: 'Pricing that scales with your',
