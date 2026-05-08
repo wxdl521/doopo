@@ -226,7 +226,7 @@ export default function Characters() {
   return (
     <div className="flex flex-col lg:flex-row gap-6 animate-fade-in" style={{ minHeight: 'calc(100vh - 120px)' }}>
       {/* Left: Director workflow */}
-      <div className="lg:w-[420px] flex flex-col panel p-5 gap-4">
+      <div className="lg:w-[420px] flex flex-col panel p-4 md:p-5 gap-4">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-full bg-gradient-to-br from-cyan-400 to-emerald-500 flex items-center justify-center">
             <Sparkles size={18} className="text-white" />

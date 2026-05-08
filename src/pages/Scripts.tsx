@@ -190,7 +190,7 @@ Please write a complete ${selectedType.toLowerCase()} drama script in ${lang ===
           {t.scripts_create_new}
         </h2>
 
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div>
             <label className="text-xs text-text-muted mb-1 block">{t.script_type}</label>
             <select
