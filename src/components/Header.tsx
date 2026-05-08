@@ -16,8 +16,8 @@ export default function Header() {
 
   return (
     <header className="sticky top-0 z-30 backdrop-blur-md bg-bg/70 border-b border-border">
-      <div className="flex items-center justify-between gap-4 px-6 md:px-10 py-3">
-        <div className="flex items-center gap-8">
+      <div className="flex items-center justify-between gap-2 md:gap-4 px-4 sm:px-6 md:px-10 py-3">
+        <div className="flex items-center gap-4 md:gap-8 min-w-0">
           <Logo />
           <nav className="hidden md:flex items-center gap-1 text-sm">
             {topLinks.map((l) => (
@@ -42,7 +42,7 @@ export default function Header() {
           </nav>
         </div>
 
-        <div className="flex items-center gap-2 md:gap-3">
+        <div className="flex items-center gap-1.5 md:gap-3">
           <Link
             to="/zoclaw"
             className="hidden sm:inline-flex items-center justify-center w-9 h-9 rounded-full
@@ -55,17 +55,17 @@ export default function Header() {
 
           <button
             onClick={toggleTheme}
-            className="w-9 h-9 rounded-full flex items-center justify-center border border-border bg-bg-elevated hover:border-accent/50 hover:text-accent text-text-secondary transition"
+            className="w-9 h-9 rounded-full flex items-center justify-center border border-border bg-bg-elevated hover:border-accent/50 hover:text-accent text-text-secondary transition flex-shrink-0"
             title={theme === 'light' ? t.header_theme_to_dark : t.header_theme_to_light}
           >
             {theme === 'light' ? <Moon size={15} /> : <Sun size={15} />}
           </button>
 
           {/* Language Switcher */}
-          <div className="relative group">
-            <button className="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium border border-border bg-bg-elevated hover:border-accent/50 hover:text-accent text-text-secondary transition">
+          <div className="relative group flex-shrink-0">
+            <button className="flex items-center gap-1 md:gap-1.5 px-2.5 md:px-3 py-1.5 rounded-full text-sm font-medium border border-border bg-bg-elevated hover:border-accent/50 hover:text-accent text-text-secondary transition">
               <Globe size={14} />
-              <span>{lang === 'zh' ? t.header_lang_zh : 'EN'}</span>
+              <span className="hidden xs:inline">{lang === 'zh' ? t.header_lang_zh : 'EN'}</span>
               <ChevronDown size={12} className="group-hover:rotate-180 transition-transform" />
             </button>
             <div className="absolute right-0 top-full mt-1.5 py-1.5 rounded-xl border border-border bg-bg-surface shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 min-w-[100px]">
@@ -84,12 +84,12 @@ export default function Header() {
             </div>
           </div>
 
-          <div className="badge-points">
+          <div className="badge-points hidden sm:flex">
             <Sparkles size={14} className="text-accent" />
             <span className="text-text-primary">70</span>
           </div>
 
-          <button className="px-4 py-1.5 rounded-full text-sm font-semibold
+          <button className="hidden sm:inline-flex px-4 py-1.5 rounded-full text-sm font-semibold
                              bg-gradient-to-r from-fuchsia-500 to-orange-400 text-white
                              hover:opacity-90 transition shadow-card">
             {t.header_upgrade}
@@ -97,7 +97,7 @@ export default function Header() {
 
           <button className="w-9 h-9 rounded-full overflow-hidden border border-border
                              bg-gradient-to-br from-emerald-400 to-cyan-500 hover:ring-2
-                             hover:ring-accent/50 transition">
+                             hover:ring-accent/50 transition flex-shrink-0">
             <span className="sr-only">{t.header_account}</span>
           </button>
         </div>
