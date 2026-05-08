@@ -15,6 +15,7 @@ import MainLayout from "../layouts/MainLayout";
 import { useEffect } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { probeImageModels } from "../lib/openrouterImage.functions";
+import { Toaster } from "../components/ui/sonner";
 
 function NotFoundComponent() {
   return (
@@ -147,6 +148,7 @@ function RootComponent() {
           <MainLayout>
             <Outlet />
           </MainLayout>
+          <Toaster />
         </ThemeProvider>
       </LanguageProvider>
     </QueryClientProvider>
