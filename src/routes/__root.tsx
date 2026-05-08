@@ -84,6 +84,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { property: "og:description", content: "Doopoo: an AI-powered creative studio for prompts, scripts, characters and showcases." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
+      { name: "twitter:title", content: "Doopoo — AI creative studio" },
+      { name: "twitter:description", content: "Doopoo: an AI-powered creative studio for prompts, scripts, characters and showcases." },
+      { property: "og:image", content: "https://storage.googleapis.com/gpt-engineer-file-uploads/L58n8pP7EFQDqPdwbZhdkFqRYGs1/social-images/social-1778203983627-doopoo.webp" },
+      { name: "twitter:image", content: "https://storage.googleapis.com/gpt-engineer-file-uploads/L58n8pP7EFQDqPdwbZhdkFqRYGs1/social-images/social-1778203983627-doopoo.webp" },
     ],
     links: [
       {
