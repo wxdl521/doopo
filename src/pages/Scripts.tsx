@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
-import { Plus, Edit2, Trash2, Loader2, Sparkles, Save, X, ChevronDown, MessageSquare, ArrowUp, ArrowDown, Copy, Check, Download, FileText, FileType2 } from 'lucide-react'
+import { Trash2, Loader2, Sparkles, ChevronDown, MessageSquare, Copy, Check, Download, FileText, FileType2, Wand2 } from 'lucide-react'
+import { Link } from '@tanstack/react-router'
 import { useLanguage } from '../i18n/LanguageContext'
 import { useServerFn } from '@tanstack/react-start'
 import { generateScript } from '../lib/openrouter.functions'
@@ -181,6 +182,11 @@ Please write a complete ${selectedType.toLowerCase()} drama script in ${lang ===
       <div className="text-center">
         <h1 className="font-display text-4xl font-bold">{t.scripts_title}</h1>
         <p className="text-text-secondary mt-1">{t.scripts_subtitle}</p>
+        <div className="mt-4 flex justify-center gap-2">
+          <Link to="/scripts/new" className="btn-primary text-sm">
+            <Wand2 size={14} /> {lang === 'zh' ? '智能创作向导' : 'Guided generator'}
+          </Link>
+        </div>
       </div>
 
       {/* Create */}
