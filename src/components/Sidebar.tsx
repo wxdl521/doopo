@@ -9,11 +9,15 @@ import {
   Headphones,
   FileText,
   Users,
+  Shield,
+  Settings2,
+  Gift,
 } from 'lucide-react'
 import { useLanguage } from '../i18n/LanguageContext'
 
 export default function Sidebar() {
-  const { t } = useLanguage()
+  const { t, lang } = useLanguage()
+  const zh = lang === 'zh'
 
   const items = [
     { to: '/home', label: t.nav_home, icon: Home },
@@ -23,6 +27,9 @@ export default function Sidebar() {
     { to: '/bases', label: t.nav_bases, icon: Bookmark },
     { to: '/zoclaw', label: t.nav_zoclaw, icon: WandSparkles },
     { to: '/models', label: t.nav_models, icon: Sparkles },
+    { to: '/team', label: zh ? '团队' : 'Team', icon: Shield },
+    { to: '/rewards', label: zh ? '激励' : 'Rewards', icon: Gift },
+    { to: '/admin', label: zh ? '后台' : 'Admin', icon: Settings2 },
   ]
 
   const footerItems = [

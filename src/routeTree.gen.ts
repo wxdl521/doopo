@@ -19,6 +19,7 @@ import { Route as HomeRouteImport } from './routes/home'
 import { Route as CharactersRouteImport } from './routes/characters'
 import { Route as BasesRouteImport } from './routes/bases'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ScriptsNewRouteImport } from './routes/scripts.new'
 
 const ZoclawRoute = ZoclawRouteImport.update({
   id: '/zoclaw',
@@ -70,6 +71,11 @@ const IndexRoute = IndexRouteImport.update({
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ScriptsNewRoute = ScriptsNewRouteImport.update({
+  id: '/new',
+  path: '/new',
+  getParentRoute: () => ScriptsRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -79,9 +85,10 @@ export interface FileRoutesByFullPath {
   '/models': typeof ModelsRoute
   '/pricing': typeof PricingRoute
   '/projects': typeof ProjectsRoute
-  '/scripts': typeof ScriptsRoute
+  '/scripts': typeof ScriptsRouteWithChildren
   '/showcase': typeof ShowcaseRoute
   '/zoclaw': typeof ZoclawRoute
+  '/scripts/new': typeof ScriptsNewRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -91,9 +98,10 @@ export interface FileRoutesByTo {
   '/models': typeof ModelsRoute
   '/pricing': typeof PricingRoute
   '/projects': typeof ProjectsRoute
-  '/scripts': typeof ScriptsRoute
+  '/scripts': typeof ScriptsRouteWithChildren
   '/showcase': typeof ShowcaseRoute
   '/zoclaw': typeof ZoclawRoute
+  '/scripts/new': typeof ScriptsNewRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -104,9 +112,10 @@ export interface FileRoutesById {
   '/models': typeof ModelsRoute
   '/pricing': typeof PricingRoute
   '/projects': typeof ProjectsRoute
-  '/scripts': typeof ScriptsRoute
+  '/scripts': typeof ScriptsRouteWithChildren
   '/showcase': typeof ShowcaseRoute
   '/zoclaw': typeof ZoclawRoute
+  '/scripts/new': typeof ScriptsNewRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -121,6 +130,7 @@ export interface FileRouteTypes {
     | '/scripts'
     | '/showcase'
     | '/zoclaw'
+    | '/scripts/new'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -133,6 +143,7 @@ export interface FileRouteTypes {
     | '/scripts'
     | '/showcase'
     | '/zoclaw'
+    | '/scripts/new'
   id:
     | '__root__'
     | '/'
@@ -145,6 +156,7 @@ export interface FileRouteTypes {
     | '/scripts'
     | '/showcase'
     | '/zoclaw'
+    | '/scripts/new'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -155,7 +167,7 @@ export interface RootRouteChildren {
   ModelsRoute: typeof ModelsRoute
   PricingRoute: typeof PricingRoute
   ProjectsRoute: typeof ProjectsRoute
-  ScriptsRoute: typeof ScriptsRoute
+  ScriptsRoute: typeof ScriptsRouteWithChildren
   ShowcaseRoute: typeof ShowcaseRoute
   ZoclawRoute: typeof ZoclawRoute
 }
@@ -232,8 +244,26 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/scripts/new': {
+      id: '/scripts/new'
+      path: '/new'
+      fullPath: '/scripts/new'
+      preLoaderRoute: typeof ScriptsNewRouteImport
+      parentRoute: typeof ScriptsRoute
+    }
   }
 }
+
+interface ScriptsRouteChildren {
+  ScriptsNewRoute: typeof ScriptsNewRoute
+}
+
+const ScriptsRouteChildren: ScriptsRouteChildren = {
+  ScriptsNewRoute: ScriptsNewRoute,
+}
+
+const ScriptsRouteWithChildren =
+  ScriptsRoute._addFileChildren(ScriptsRouteChildren)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
@@ -243,7 +273,7 @@ const rootRouteChildren: RootRouteChildren = {
   ModelsRoute: ModelsRoute,
   PricingRoute: PricingRoute,
   ProjectsRoute: ProjectsRoute,
-  ScriptsRoute: ScriptsRoute,
+  ScriptsRoute: ScriptsRouteWithChildren,
   ShowcaseRoute: ShowcaseRoute,
   ZoclawRoute: ZoclawRoute,
 }
