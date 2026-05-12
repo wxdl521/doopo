@@ -1,55 +1,83 @@
-## 角色生成功能完善
+## 需求梳理（来自《网站需求.docx》）
 
-当前 `/characters` 页面直接调用了硬编码的代理服务器 (`http://43.130.52.57:8080`)，且图片接口已不可用。本次将其重构为走项目已有的 OpenRouter 服务函数体系，并接入 OpenRouter 提供的多模态图像生成模型，自动产出 5 个视图。
+平台定位：面向 AI 影视创作者的一体化 SaaS（B/C 双端），覆盖剧本→角色→项目→团队→社区→运营全流程。
 
-### 1. 新增图像生成服务函数
+文档核心模块：剧本创作、角色设计、项目管理、团队协作、运营后台、社区发布、激励体系。
+现有页面已覆盖：Home / Projects / Scripts / Characters / Bases / Showcase / Models / Pricing / ZoClaw。
+**缺口**：剧本生成的多模式向导与版本对比、角色一致性与三视图/角色圣经、团队权限与水印/审批、运营后台、激励体系（积分/等级/变现）、操作日志。
 
-文件：`src/lib/openrouterImage.functions.ts`
+## 本轮交付（前端风格保持现有风格，仅前端 + mock，不接真实后端）
 
-- 使用 `createServerFn({ method: 'POST' })`，输入 `{ prompt: string, model?: string }`。
-- 通过 `OPENROUTER_API_KEY` 调用 `https://openrouter.ai/api/v1/chat/completions`，请求体附带 `modalities: ['image','text']`。
-- 默认模型链（自动回退）：
-  1. `google/gemini-2.5-flash-image-preview`（Nano Banana，OpenRouter 多模态出图主力）
-  2. `google/gemini-2.0-flash-exp:free`（备用，多模态可出图）
-- 解析返回的 `choices[0].message.images[0].image_url.url`（OpenRouter 兼容 OpenAI/Gemini 风格的 base64 data URL）。
-- 复用现有 retry/timeout 模式：`AbortController` 超时 55s，对 403/404/429 自动切换下一模型，401 直接返回错误。
-- 返回 `{ url: string, error: string | null }`，url 为 data URL 可直接 `<img src>`。
+### 1. 剧本创作增强 `src/routes/scripts.new.tsx` → `/scripts/new`
 
-### 2. 文本生成沿用 `generateScript`
+- 创意输入区（一句话 / 梗概 / 上传文本）
+- 三种创作模式 Tab：从零创作 / 灵感扩写 / 风格迁移
+- 快速模板（30s/1min/3min/5min）+ 高级参数（时长滑杆、集数、对话密度、冲突密度）
+- 右侧 mock 生成预览（场景标题 / 动作 / 对白 工业格式）
 
-`src/lib/openrouter.functions.ts` 已具备文本生成 + 模型回退 + 超时处理，无需新写一份；角色描述（200 字以内的设定）调用 `generateScript`，传入：
-- `system`: `t.char_system_designer`
-- `user`: 角色描述提示词
-- `max_tokens: 600, temperature: 0.85`
-- `model: 'google/gemini-2.5-flash'`（同样会自动回退）
+### 2. 剧本详情/版本管理 `src/routes/scripts.$id.tsx` → `/scripts/:id`
 
-### 3. 重构 `src/pages/Characters.tsx`
+- 多版本时间线 + 版本对比（左右两列 diff 高亮 mock）
+- 幕/场景结构树
+- 导出按钮组（PDF / Fountain / JSON）
+- 多轮对话迭代面板
 
-- 删除硬编码 `PROXY_URL`、`IMG_PROXY` 与对应 fetch。
-- 通过 `useServerFn` 引入 `generateScript` 与新的 `generateImage`。
-- `handleGenerate` 流程：
-  1. 把用户描述加入聊天。
-  2. 调 `generateScript` 拿到角色设定文本，加入聊天。
-  3. 并行 `Promise.allSettled` 调 5 次 `generateImage`，分别对应 5 个视图（正/侧/背/表情/配饰），prompt 为 `Character portrait, {style} style, {description}, {viewMap[v]}, clean background, high quality illustration`。
-  4. 任一视图失败则该视图保持空，其他正常显示；全部失败提示错误。
-- 错误处理：把每步的 `error` 字段统一展示在底部红字。
-- 下载按钮已支持 data URL，无需改动。
+### 3. 角色详情 `src/routes/characters.$id.tsx` → `/characters/:id`
 
-### 4. i18n
+- 角色三视图（正/侧/背 mock 占位）
+- 角色圣经字段（外貌、服装、配饰、性格）
+- 一致性锁定开关、参考图上传区
+- 关联场景/道具、表情动作库标签、关系图谱（简易节点图 mock）
 
-仅新增一个文案：
-- `char_image_generation_failed`：「图片生成失败，请重试或更换风格」/ "Image generation failed, please retry or change style".
+### 4. 团队管理 `src/routes/team.tsx` → `/team`
 
-### 5. 安全/密钥
+- 成员列表表格（头像 / 角色 / 用量 / 状态 / 操作）
+- 邀请成员、禁用、删除（mock）
+- 权限矩阵（按文档 5.3 表格渲染）
+- 用量统计卡片 + mock 折线/柱状
 
-`OPENROUTER_API_KEY` 已配置（`generateScript` 在用），无需再加 secret。
+### 5. 操作日志 `src/routes/team.logs.tsx` → `/team/logs`
 
-### 6. 验证
+- 时间线 + 过滤（成员、操作类型、时间范围）
 
-- 调用 `invoke-server-function` 直接打 `/api/openrouter-image`（如果暴露 HTTP 路由的话）或在 UI 触发一次"生成"，检查浏览器网络与服务函数日志。
-- 确认 5 张图按 data URL 形式显示，描述文本正确写入气泡。
+### 6. 资产审批 `src/routes/team.approvals.tsx` → `/team/approvals`
 
-### 范围
+- 待审批资产卡片列表，通过/驳回按钮（mock）
 
-- 仅修改：`src/pages/Characters.tsx`、新增 `src/lib/openrouterImage.functions.ts`、`src/i18n/{zh,en}.ts` 一行文案。
-- 不改 DB、不改样式系统、不动其他页面。
+### 7. 运营后台 `src/routes/admin.tsx` → `/admin`（含子路由）
+
+- `/admin` 总览：企业数、用户数、调用量、收入 mock 卡片
+- `/admin/models` 模型 API 配置：模型名/Provider/Key 状态/启用开关
+- `/admin/tenants` 企业账号审核：开户申请列表
+- `/admin/billing` 计费：套餐 / 发票 mock
+
+### 8. 激励体系 `src/routes/rewards.tsx` → `/rewards`
+
+- 积分余额、等级进度条、签到、任务列表
+- 变现说明（创作者分成 mock 数据）
+
+### 9. 个人中心 `src/routes/account.tsx` → `/account`
+
+- 资料、订阅、API Key、安全设置（标签页）
+
+### 10. 共用增强
+
+- `src/data/mock.ts`：集中 mock（成员/日志/审批/积分/模型/版本…）
+- `src/components/WatermarkOverlay.tsx`：普通员工视图叠加公司名水印（演示开关）
+- `MobileNav` 与 `Header` 增加新入口（Team / Admin / Rewards），在窄屏用「更多」抽屉避免拥挤
+- i18n：`src/i18n/zh.ts` & `en.ts` 添加新增文案 key
+
+## 技术约束
+
+- TanStack Router 文件路由，每个新页面单独路由文件 + `head()` SEO
+- 全部使用现有设计 tokens（`src/styles.css`），不引入硬编码颜色
+- 仅前端 + 内存 mock；不动 Supabase / OpenRouter 调用代码
+- 移动端沿用上一轮的 safe-area 与 `pb-24` 规范
+
+## 暂不在本轮范围
+
+- 真实权限后端、真实计费、真实日志写入
+- AI 调用打通（继续走现有 Characters/Scripts 已实现路径）
+- 关系图谱的复杂可视化库（用静态 SVG 节点占位）
+
+确认后我将按此方案落地，分文件提交。
