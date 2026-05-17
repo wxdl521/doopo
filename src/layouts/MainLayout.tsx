@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react'
+import { useLocation } from '@tanstack/react-router'
 import Sidebar from '../components/Sidebar'
 import Header from '../components/Header'
 import PromoBanner from '../components/PromoBanner'
@@ -7,6 +8,13 @@ import MobileNav from '../components/MobileNav'
 
 export default function MainLayout({ children }: { children: ReactNode }) {
   const [showPromo, setShowPromo] = useState(true)
+  const location = useLocation()
+  const isWorkspace = location.pathname.startsWith('/workspace/')
+
+  if (isWorkspace) {
+    // Workspace owns its own full-screen chrome (top bar + chat panel).
+    return <div className="min-h-screen flex flex-col bg-bg">{children}</div>
+  }
 
   return (
     <div className="min-h-screen flex flex-col">

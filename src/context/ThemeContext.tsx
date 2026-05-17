@@ -24,8 +24,8 @@ const DARK = {
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setTheme] = useState<Theme>(() => {
-    if (typeof window === 'undefined') return 'light'
-    return (window.localStorage.getItem('doopoo-theme') as Theme) || 'light'
+    if (typeof window === 'undefined') return 'dark'
+    return (window.localStorage.getItem('doopoo-theme') as Theme) || 'dark'
   })
 
   const toggleTheme = () => {

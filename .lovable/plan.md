@@ -1,83 +1,106 @@
-## 需求梳理（来自《网站需求.docx》）
+## 现状问题
 
-平台定位：面向 AI 影视创作者的一体化 SaaS（B/C 双端），覆盖剧本→角色→项目→团队→社区→运营全流程。
+- `/scripts` 一次性把 `system + user prompt` 丢给模型，返回单段纯文本，没有结构。
+- 提示词过于简单（仅一句"你是一位专业剧本写作师"），缺少短剧节奏/场次格式/对白规范约束 → 输出质量差且不稳定。
+- 优化按钮只是把整段重写一遍，无法针对某场、某段做局部调整。
+- 详情页 `/scripts/:id` 只读 `mockScripts`，新生成的剧本无法在详情页查看。
+- workspace 已有 `generateStageAi`（结构化 logline / acts / scenes / characters），但 `/scripts` 没复用，两套流程割裂。
+- 没有节奏/冲突等质量信号；没有角色卡；没有分场重写。
 
-文档核心模块：剧本创作、角色设计、项目管理、团队协作、运营后台、社区发布、激励体系。
-现有页面已覆盖：Home / Projects / Scripts / Characters / Bases / Showcase / Models / Pricing / ZoClaw。
-**缺口**：剧本生成的多模式向导与版本对比、角色一致性与三视图/角色圣经、团队权限与水印/审批、运营后台、激励体系（积分/等级/变现）、操作日志。
+## 目标
 
-## 本轮交付（前端风格保持现有风格，仅前端 + mock，不接真实后端）
+把 `/scripts` 改成 **结构化分步创作工作台**：灵感 → 三幕大纲 → 分场（含动作 / beats / 对白） → 角色卡，每一步都可预览、编辑、单步重生。生成结果直接进详情页并可一键带入 workspace。
 
-### 1. 剧本创作增强 `src/routes/scripts.new.tsx` → `/scripts/new`
+## 流程设计
 
-- 创意输入区（一句话 / 梗概 / 上传文本）
-- 三种创作模式 Tab：从零创作 / 灵感扩写 / 风格迁移
-- 快速模板（30s/1min/3min/5min）+ 高级参数（时长滑杆、集数、对话密度、冲突密度）
-- 右侧 mock 生成预览（场景标题 / 动作 / 对白 工业格式）
+```text
+[Step 1 灵感]            [Step 2 大纲]          [Step 3 分场]          [Step 4 角色 & 质量]
+  类型/题材/风格    →     logline               →   N 场                 →  3-5 个角色卡
+  主题 + 概要             三幕 × 3-5 beats          slug/动作/beats/对白    节奏分 / 冲突分
+  模型选择                [重生] [编辑]              [单场重写] [插入]       [保存到剧本库]
+                                                                                ↓
+                                                                       /scripts/:id 详情页
+                                                                       [带入工作台]
+```
 
-### 2. 剧本详情/版本管理 `src/routes/scripts.$id.tsx` → `/scripts/:id`
+进度条 + Stepper 顶部展示当前阶段；上一步、下一步、保存草稿。
 
-- 多版本时间线 + 版本对比（左右两列 diff 高亮 mock）
-- 幕/场景结构树
-- 导出按钮组（PDF / Fountain / JSON）
-- 多轮对话迭代面板
+## 技术方案
 
-### 3. 角色详情 `src/routes/characters.$id.tsx` → `/characters/:id`
+### 服务端：保留 OpenRouter，新增结构化函数
 
-- 角色三视图（正/侧/背 mock 占位）
-- 角色圣经字段（外貌、服装、配饰、性格）
-- 一致性锁定开关、参考图上传区
-- 关联场景/道具、表情动作库标签、关系图谱（简易节点图 mock）
+新增 `src/lib/scriptPipeline.functions.ts`，导出 4 个 `createServerFn`，全部基于现有 `OPENROUTER_API_KEY` + tool calling（OpenRouter 兼容 OpenAI function-calling）：
 
-### 4. 团队管理 `src/routes/team.tsx` → `/team`
+- `genLogline({ type, genre, tone, theme, plot, lang, model })` → `{ logline, premise, themes[] }`
+- `genOutline({ logline, type, genre, tone, lang, model })` → `{ acts: [{title, beats[]}] × 3 }`
+- `genScenes({ logline, acts, type, lang, episodeCount, model })` → `{ scenes: [{ index, slug, location, timeOfDay, action, beats[], dialogue[{role,line,parenthetical?}] }] }`
+- `genCharacters({ logline, scenes, lang, model })` → `{ characters: [{ name, role, roleLabel, age, look, personality, motivation, palette[] }] }`
+- 另加 `rewriteScene({ scene, instruction, lang, model })` → 单场重写
+- 另加 `scoreScript({ scenes })` → `{ pacingScore, conflictScore, dialogueDensity, suggestions[] }`（同样走 tool call）
 
-- 成员列表表格（头像 / 角色 / 用量 / 状态 / 操作）
-- 邀请成员、禁用、删除（mock）
-- 权限矩阵（按文档 5.3 表格渲染）
-- 用量统计卡片 + mock 折线/柱状
+实现要点：
+- 复用 `generateScript` 的多模型 fallback / 超时 / 429-402 错误码处理。
+- 每步用严格 JSON schema + `tool_choice` 强制结构化输出；模型若返回空则 fallback。
+- system prompt 按语言（zh/en）切换；中文短剧 system 强化「场标 INT./EXT. 中文 - 时间」「对白 ≤30 字」「每场至少一个冲突 beat」等规范。
+- prompt 内嵌前序结果（logline → acts → scenes）做 chain-of-thought 引导，避免"重新构思"。
 
-### 5. 操作日志 `src/routes/team.logs.tsx` → `/team/logs`
+### 客户端：重构 `src/pages/Scripts.tsx`
 
-- 时间线 + 过滤（成员、操作类型、时间范围）
+拆分为：
+- `ScriptComposer.tsx`（左侧表单 + Stepper）
+- `steps/LoglineStep.tsx`
+- `steps/OutlineStep.tsx`（acts/beats 可编辑列表）
+- `steps/ScenesStep.tsx`（折叠卡片：场标 + 动作 + 对白；每张卡有「重写本场」「插入新场」「删除」）
+- `steps/CharactersStep.tsx`（角色卡 + 调色板）
+- `ScriptQualityBadge.tsx`（节奏/冲突/对白密度 chips）
 
-### 6. 资产审批 `src/routes/team.approvals.tsx` → `/team/approvals`
+状态机：`'logline' | 'outline' | 'scenes' | 'characters' | 'done'`，每步生成后可编辑；草稿持久化到 `localStorage('doopoo_script_drafts')`，完成后写入 `doopoo_scripts`，结构对齐 `ScriptItem`（scenes / dialogue / versions）。
 
-- 待审批资产卡片列表，通过/驳回按钮（mock）
+### 详情页打通
 
-### 7. 运营后台 `src/routes/admin.tsx` → `/admin`（含子路由）
+- `src/routes/scripts.$scriptId.tsx` 的 loader 改为：先查 `localStorage('doopoo_scripts')`（structured），再回退 `mockScripts`。
+- 详情页头部新增「带入工作台」按钮 → `navigate('/workspace/new', { state: { fromScript: id } })`，workspace 接收后预填 acts/scenes/characters。
+- 顶部新增「质量评分」面板（pacing / conflict / dialogue density + 改进建议）。
 
-- `/admin` 总览：企业数、用户数、调用量、收入 mock 卡片
-- `/admin/models` 模型 API 配置：模型名/Provider/Key 状态/启用开关
-- `/admin/tenants` 企业账号审核：开户申请列表
-- `/admin/billing` 计费：套餐 / 发票 mock
+### 列表页
 
-### 8. 激励体系 `src/routes/rewards.tsx` → `/rewards`
+`scripts` 库改为卡片网格（封面取首场 action 摘要 + 角色调色板渐变），保留复制/导出/删除/优化；点击卡片进入详情页。
 
-- 积分余额、等级进度条、签到、任务列表
-- 变现说明（创作者分成 mock 数据）
+### i18n 新增 key
 
-### 9. 个人中心 `src/routes/account.tsx` → `/account`
+`script_step_logline / outline / scenes / characters / quality_pacing / quality_conflict / scene_rewrite / scene_insert / use_in_workspace / quality_suggestions` 等（zh + en）。
 
-- 资料、订阅、API Key、安全设置（标签页）
+### 质量增强细节
 
-### 10. 共用增强
+1. 中文短剧专用 system prompt 模板（在 `scriptPipeline.functions.ts` 内常量化）：
+   - 场次格式硬约束
+   - 强制每场 ≥1 冲突 beat
+   - 对白节奏：单句 ≤30 字，避免说教
+   - 角色名稳定（生成 scenes 时复用 characters 列表）
+2. 模型温度按步骤分档：logline 0.9，outline 0.8，scenes 0.75，rewrite 0.7。
+3. 单场重写支持指令（更紧张 / 更幽默 / 增加冲突 / 压缩字数）。
+4. 评分仅做本地启发式 + 一次 LLM 复核，避免每改一处都调用。
 
-- `src/data/mock.ts`：集中 mock（成员/日志/审批/积分/模型/版本…）
-- `src/components/WatermarkOverlay.tsx`：普通员工视图叠加公司名水印（演示开关）
-- `MobileNav` 与 `Header` 增加新入口（Team / Admin / Rewards），在窄屏用「更多」抽屉避免拥挤
-- i18n：`src/i18n/zh.ts` & `en.ts` 添加新增文案 key
+## 文件改动概览
 
-## 技术约束
+新增：
+- `src/lib/scriptPipeline.functions.ts`
+- `src/components/scripts/ScriptComposer.tsx`
+- `src/components/scripts/steps/{Logline,Outline,Scenes,Characters}Step.tsx`
+- `src/components/scripts/ScriptQualityBadge.tsx`
+- `src/lib/scriptStorage.ts`（structured 草稿 + 已保存剧本 IO）
 
-- TanStack Router 文件路由，每个新页面单独路由文件 + `head()` SEO
-- 全部使用现有设计 tokens（`src/styles.css`），不引入硬编码颜色
-- 仅前端 + 内存 mock；不动 Supabase / OpenRouter 调用代码
-- 移动端沿用上一轮的 safe-area 与 `pb-24` 规范
+修改：
+- `src/pages/Scripts.tsx`（替换为 Composer + 卡片列表）
+- `src/routes/scripts.$scriptId.tsx`（loader 优先读 localStorage，新增质量面板与"带入工作台"）
+- `src/i18n/zh.ts` + `src/i18n/en.ts`（新增 key）
 
-## 暂不在本轮范围
+不动：
+- `src/lib/openrouter.functions.ts`（保留向后兼容）
+- `src/lib/exportScript.ts`（继续导出，新结构序列化为 fountain-like 文本）
 
-- 真实权限后端、真实计费、真实日志写入
-- AI 调用打通（继续走现有 Characters/Scripts 已实现路径）
-- 关系图谱的复杂可视化库（用静态 SVG 节点占位）
+## 不在本次范围
 
-确认后我将按此方案落地，分文件提交。
+- 不接 Supabase，仍走 localStorage（保持当前架构）。
+- 不切换到 Lovable AI（用户明确保留 OpenRouter 多模型）。
+- 不做协同/版本 diff，仅保留 versions 数组占位。

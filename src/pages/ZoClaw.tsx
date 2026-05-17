@@ -1,7 +1,7 @@
 import { ArrowRight, Bot, Check, Code2, Cpu, Workflow, Sparkles } from 'lucide-react'
 import { useLanguage } from '../i18n/LanguageContext'
 
-export default function ZoClaw() {
+export default function DooClaw() {
   const { t } = useLanguage()
   const features = [
     { icon: Bot, title: t.zoclaw_feature1_title, body: t.zoclaw_feature1_body },
@@ -65,7 +65,7 @@ export default function ZoClaw() {
         <div className="panel p-8 bg-gradient-to-br from-bg-soft via-bg-soft to-bg-surface">
           <h3 className="font-display text-xl font-bold mb-4">{t.zoclaw_api_taste}</h3>
           <pre className="text-xs md:text-sm bg-black/50 border border-border rounded-xl p-4 overflow-x-auto leading-relaxed">
-{`POST /v1/zoclaw/run
+{`POST /v1/dooclaw/run
 {
   "prompt": "A hand-drawn forest spirit greets a lost child at dusk.",
   "model": "kling-03",

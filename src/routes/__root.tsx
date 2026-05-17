@@ -15,6 +15,7 @@ import MainLayout from "../layouts/MainLayout";
 import { useEffect } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { probeImageModels } from "../lib/openrouterImage.functions";
+import { runLegacyMigration } from "../lib/legacyMigrate";
 import { Toaster } from "../components/ui/sonner";
 
 function NotFoundComponent() {
@@ -129,6 +130,7 @@ function RootComponent() {
   const probe = useServerFn(probeImageModels);
 
   useEffect(() => {
+    runLegacyMigration();
     probe()
       .then((r: any) => {
         if (r?.blocked?.length) {

@@ -10,6 +10,8 @@ export default function Header() {
 
   const topLinks = [
     { to: '/zoclaw', label: t.nav_openclaw, accent: true },
+    { to: '/team', label: t.nav_team },
+    { to: '/admin', label: t.nav_admin },
     { to: '/showcase', label: t.nav_showcase },
     { to: '/pricing', label: t.nav_pricing },
   ]
@@ -95,11 +97,12 @@ export default function Header() {
             {t.header_upgrade}
           </button>
 
-          <button className="w-9 h-9 rounded-full overflow-hidden border border-border
-                             bg-gradient-to-br from-emerald-400 to-cyan-500 hover:ring-2
-                             hover:ring-accent/50 transition flex-shrink-0">
+          <Link to="/account"
+                className="w-9 h-9 rounded-full overflow-hidden border border-border
+                           bg-gradient-to-br from-emerald-400 to-cyan-500 hover:ring-2
+                           hover:ring-accent/50 transition flex-shrink-0 grid place-items-center">
             <span className="sr-only">{t.header_account}</span>
-          </button>
+          </Link>
         </div>
       </div>
     </header>
