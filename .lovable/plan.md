@@ -1,106 +1,85 @@
-## 现状问题
-
-- `/scripts` 一次性把 `system + user prompt` 丢给模型，返回单段纯文本，没有结构。
-- 提示词过于简单（仅一句"你是一位专业剧本写作师"），缺少短剧节奏/场次格式/对白规范约束 → 输出质量差且不稳定。
-- 优化按钮只是把整段重写一遍，无法针对某场、某段做局部调整。
-- 详情页 `/scripts/:id` 只读 `mockScripts`，新生成的剧本无法在详情页查看。
-- workspace 已有 `generateStageAi`（结构化 logline / acts / scenes / characters），但 `/scripts` 没复用，两套流程割裂。
-- 没有节奏/冲突等质量信号；没有角色卡；没有分场重写。
-
 ## 目标
 
-把 `/scripts` 改成 **结构化分步创作工作台**：灵感 → 三幕大纲 → 分场（含动作 / beats / 对白） → 角色卡，每一步都可预览、编辑、单步重生。生成结果直接进详情页并可一键带入 workspace。
+把"新建项目 → 角色"里 4 张分散的字段卡（外形/性格/动机/首场）改造成一块统一的**角色档案信息面板**，并补充 1-2 个轻量标签与关系网摘要；同时把侧栏并排显示的断点从 `lg`（≥1024px）降到 `md`（≥768px），让用户在 888px 预览里也能看到主图+档案左右并排。略缩图切换器位置保持现状（在主图正下方），但确认在新断点下不会被压缩。
 
-## 流程设计
+## 当前问题
+
+1. 4 张独立卡片像视觉碎片，无法一眼读完角色档案。
+2. `lg:hidden / lg:flex` 断点把 888px 预览推到了 2×2 底部 fallback，主图两侧空着。
+3. 角色没有关系信息，看不出 4 个角色彼此如何咬合。
+4. 没有 MBTI / 关键道具一类的速读标签。
+
+## 新布局结构
 
 ```text
-[Step 1 灵感]            [Step 2 大纲]          [Step 3 分场]          [Step 4 角色 & 质量]
-  类型/题材/风格    →     logline               →   N 场                 →  3-5 个角色卡
-  主题 + 概要             三幕 × 3-5 beats          slug/动作/beats/对白    节奏分 / 冲突分
-  模型选择                [重生] [编辑]              [单场重写] [插入]       [保存到剧本库]
-                                                                                ↓
-                                                                       /scripts/:id 详情页
-                                                                       [带入工作台]
+┌─────────────────────────────────────────────────────────────┐
+│ ▍林夏  [女主] [高冷学霸] [17 岁] [INFP] [钢笔]   2/4 上下滑动 │
+├──────────────┬──────────────────────┬──────────────────────┤
+│              │                      │ 角色档案              │
+│              │                      │ ─────────────────     │
+│  主图 372×498 │                     │ 外形  ……              │
+│              │                      │ 性格  ……              │
+│              │                      │ 动机  ……              │
+│              │                      │ 首场  ……              │
+│              │                      │ ─────────────────     │
+│              │                      │ 关系网                │
+│              │                      │ ↔ 江野  暗恋 / 互相试探│
+│              │                      │ ↔ 小萌  闺蜜推手       │
+│              │                      │ ↔ 周学姐 上下级压制    │
+├──────────────┴──────────────────────┴──────────────────────┤
+│ [主视图] [多视图]    点击缩略图 / 方向键切换    配色 ●●●●     │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-进度条 + Stepper 顶部展示当前阶段；上一步、下一步、保存草稿。
+要点：
+- **左/中/右三栏取消**，改成「主图 + 右侧单一档案面板」两栏布局。888px 视口右侧约 380px 可放下档案。
+- **档案面板内部**用一个圆角容器、`divide-y` 分隔行，每行 `label · 值` 对齐，去掉 4 张独立卡片的边框堆叠。
+- **关系网摘要**渲染在档案面板下半部分，自动从同一 cast 推导（例：`lead↔lead → 暗恋 / 互相试探`，`lead↔supporting → 闺蜜推手`，`lead↔villain → 上下级压制`，`villain↔supporting → 警告`）。在 mock generator 里加一张关系矩阵，避免每次重新算。
+- **轻量标签**：在 header 右侧 chip 群里新增 2 个 chip
+  - MBTI：根据 `personality` 关键词映射（克制/敏感 → INFP；直球/迟钝 → ESFP；热情/嘴快 → ENFP；强势/控制 → ENTJ）。
+  - 关键道具：从 `debutShot` / `look` 里抽一个关键名词（mock 直接在 generator 里手填一个 `keyProp` 字段最稳）。
+- **断点**：把侧栏的 `hidden lg:flex` 改为 `hidden md:flex`，底部 fallback 改为 `md:hidden`。在 768–1023px 仍能并排。
+- **长文本处理**：档案面板设置 `max-h-[498px] overflow-y-auto`，与主图等高对齐，超长滚动；header chip 全部 `shrink-0 truncate max-w-…`，确保不撑破 372×498 主图区域。
+- **略缩图切换器**：保持 `CharacterStage` 内现状（已在主图正下方，clamp 字号），在新布局下验证 372px 宽度不被新断点挤压。
 
-## 技术方案
+## 技术细节
 
-### 服务端：保留 OpenRouter，新增结构化函数
+1. **`src/data/workspaceGenerators.ts`**
+   - 给 `GenCharacter` 增补两个可选字段：`mbti?: string`、`keyProp?: string`。
+   - 4 个角色补 MBTI 与 keyProp。
+   - 新增 `generateCharacterRelations()` 或在 `generateCharacters()` 返回值里挂 `relations: { targetId, label, summary }[]`，写一张 4×4 关系表（只保留每角色 2–3 条最相关边）。
 
-新增 `src/lib/scriptPipeline.functions.ts`，导出 4 个 `createServerFn`，全部基于现有 `OPENROUTER_API_KEY` + tool calling（OpenRouter 兼容 OpenAI function-calling）：
+2. **`src/routes/workspace.$workspaceId.tsx` → `CharacterView`**
+   - Header chip 行追加 MBTI / keyProp chip（与 role/age chip 一致样式，颜色偏中性）。
+   - 删除三栏 flex 布局，改为两栏 grid：
+     - `grid-cols-[372px_1fr] gap-5 md:grid` 在 ≥md 启用。
+     - 主图列保留 `CharacterStage`（含略缩图切换器）。
+     - 档案列渲染新组件 `CharacterDossier`（同文件内 function）。
+   - 把现有 4-field mobile fallback 改为 `md:hidden`，并在 fallback 里也渲染 `CharacterDossier`（只读同一组件，单列），避免代码分叉。
 
-- `genLogline({ type, genre, tone, theme, plot, lang, model })` → `{ logline, premise, themes[] }`
-- `genOutline({ logline, type, genre, tone, lang, model })` → `{ acts: [{title, beats[]}] × 3 }`
-- `genScenes({ logline, acts, type, lang, episodeCount, model })` → `{ scenes: [{ index, slug, location, timeOfDay, action, beats[], dialogue[{role,line,parenthetical?}] }] }`
-- `genCharacters({ logline, scenes, lang, model })` → `{ characters: [{ name, role, roleLabel, age, look, personality, motivation, palette[] }] }`
-- 另加 `rewriteScene({ scene, instruction, lang, model })` → 单场重写
-- 另加 `scoreScript({ scenes })` → `{ pacingScore, conflictScore, dialogueDensity, suggestions[] }`（同样走 tool call）
+3. **新组件 `CharacterDossier`（在同文件内）**
+   - props: `character: GenCharacter`, `cast: GenCharacter[]`
+   - 上半段：`<dl class="divide-y divide-border/60">`，每个 row `<dt class="text-xs text-text-muted w-16 shrink-0">` + `<dd class="text-sm text-text-secondary leading-relaxed">`。
+   - 中段标题 `关系网` + 列表，每条 `↔ 角色名（chip 颜色取 ROLE_TONE） · 关系标签 · 一行摘要`。
+   - 容器：`rounded-2xl border bg-bg-elevated/40 px-5 py-4 h-[498px] overflow-y-auto`。
 
-实现要点：
-- 复用 `generateScript` 的多模型 fallback / 超时 / 429-402 错误码处理。
-- 每步用严格 JSON schema + `tool_choice` 强制结构化输出；模型若返回空则 fallback。
-- system prompt 按语言（zh/en）切换；中文短剧 system 强化「场标 INT./EXT. 中文 - 时间」「对白 ≤30 字」「每场至少一个冲突 beat」等规范。
-- prompt 内嵌前序结果（logline → acts → scenes）做 chain-of-thought 引导，避免"重新构思"。
+4. **样式细节**
+   - 档案行高度自适应，关键值如「动机」「首场」可以多行，行间 `py-2.5`。
+   - 关系名通过 `<button>` 触发滚动到该角色 section（用 `document.getElementById` + `scrollIntoView({behavior:'smooth'})`），section 已有 `key={c.id}`，加一个 `id={c.id}` 即可。
+   - 在 a11y 上：dossier 用 `<dl>`，关系网用 `<ul role="list">`；按钮带 `aria-label="跳转到角色 江野"`。
 
-### 客户端：重构 `src/pages/Scripts.tsx`
+5. **断点回归**
+   - 验证 888px 视口：372 主图 + 5px gap + 511px dossier，足够；header chip 行用 `flex-wrap` 防溢出。
+   - 验证 ≥1024px 仍美观（dossier 列变宽到 ~700px，关系网两栏化用 `sm:columns-2` 在面板内做轻量两栏）。
+   - 验证 <768px：单列堆叠，dossier 在主图下方，自然滚动。
 
-拆分为：
-- `ScriptComposer.tsx`（左侧表单 + Stepper）
-- `steps/LoglineStep.tsx`
-- `steps/OutlineStep.tsx`（acts/beats 可编辑列表）
-- `steps/ScenesStep.tsx`（折叠卡片：场标 + 动作 + 对白；每张卡有「重写本场」「插入新场」「删除」）
-- `steps/CharactersStep.tsx`（角色卡 + 调色板）
-- `ScriptQualityBadge.tsx`（节奏/冲突/对白密度 chips）
+## 不在范围内
 
-状态机：`'logline' | 'outline' | 'scenes' | 'characters' | 'done'`，每步生成后可编辑；草稿持久化到 `localStorage('doopoo_script_drafts')`，完成后写入 `doopoo_scripts`，结构对齐 `ScriptItem`（scenes / dialogue / versions）。
+- 角色编辑、AI 重生成按钮（沿用现状）。
+- CharacterStage 内部略缩图切换器的样式（已在上轮迭代完成，不再调整）。
+- 关系网的可视化连线图（本轮只做文字摘要）。
 
-### 详情页打通
+## 风险
 
-- `src/routes/scripts.$scriptId.tsx` 的 loader 改为：先查 `localStorage('doopoo_scripts')`（structured），再回退 `mockScripts`。
-- 详情页头部新增「带入工作台」按钮 → `navigate('/workspace/new', { state: { fromScript: id } })`，workspace 接收后预填 acts/scenes/characters。
-- 顶部新增「质量评分」面板（pacing / conflict / dialogue density + 改进建议）。
-
-### 列表页
-
-`scripts` 库改为卡片网格（封面取首场 action 摘要 + 角色调色板渐变），保留复制/导出/删除/优化；点击卡片进入详情页。
-
-### i18n 新增 key
-
-`script_step_logline / outline / scenes / characters / quality_pacing / quality_conflict / scene_rewrite / scene_insert / use_in_workspace / quality_suggestions` 等（zh + en）。
-
-### 质量增强细节
-
-1. 中文短剧专用 system prompt 模板（在 `scriptPipeline.functions.ts` 内常量化）：
-   - 场次格式硬约束
-   - 强制每场 ≥1 冲突 beat
-   - 对白节奏：单句 ≤30 字，避免说教
-   - 角色名稳定（生成 scenes 时复用 characters 列表）
-2. 模型温度按步骤分档：logline 0.9，outline 0.8，scenes 0.75，rewrite 0.7。
-3. 单场重写支持指令（更紧张 / 更幽默 / 增加冲突 / 压缩字数）。
-4. 评分仅做本地启发式 + 一次 LLM 复核，避免每改一处都调用。
-
-## 文件改动概览
-
-新增：
-- `src/lib/scriptPipeline.functions.ts`
-- `src/components/scripts/ScriptComposer.tsx`
-- `src/components/scripts/steps/{Logline,Outline,Scenes,Characters}Step.tsx`
-- `src/components/scripts/ScriptQualityBadge.tsx`
-- `src/lib/scriptStorage.ts`（structured 草稿 + 已保存剧本 IO）
-
-修改：
-- `src/pages/Scripts.tsx`（替换为 Composer + 卡片列表）
-- `src/routes/scripts.$scriptId.tsx`（loader 优先读 localStorage，新增质量面板与"带入工作台"）
-- `src/i18n/zh.ts` + `src/i18n/en.ts`（新增 key）
-
-不动：
-- `src/lib/openrouter.functions.ts`（保留向后兼容）
-- `src/lib/exportScript.ts`（继续导出，新结构序列化为 fountain-like 文本）
-
-## 不在本次范围
-
-- 不接 Supabase，仍走 localStorage（保持当前架构）。
-- 不切换到 Lovable AI（用户明确保留 OpenRouter 多模型）。
-- 不做协同/版本 diff，仅保留 versions 数组占位。
+- MBTI / 关系网是 mock 推导，用户若期待真实 AI 输出需在后续接 `aiGenerate`。本次只保证布局占位真实可读。
+- 把断点从 lg 降到 md 后，旧的 lg 视图需要重新核对密度，文档中已写明在 1024px 以上启用 dossier 内部两栏。
