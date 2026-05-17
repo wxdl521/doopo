@@ -18,6 +18,9 @@ export type GenCharacter = {
   debutShot: string
   palette: string[]
   swatch: string
+  mbti?: string
+  keyProp?: string
+  relations?: { targetId: string; label: string; summary: string }[]
 }
 
 export type GenScene = {
