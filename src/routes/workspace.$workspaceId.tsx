@@ -352,9 +352,10 @@ function WorkspacePage() {
         {sorted.map((c, idx) => (
           <section
             key={c.id}
+            id={c.id}
             className="snap-start h-[calc(100vh-3rem)] flex flex-col px-6 py-5"
           >
-            <div className="flex items-center gap-3 mb-4 shrink-0 min-w-0">
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 mb-4 shrink-0 min-w-0">
               <span
                 className="w-1 h-7 rounded-full shrink-0"
                 style={{ background: c.palette[0] ?? 'var(--accent)' }}
@@ -380,6 +381,16 @@ function WorkspacePage() {
               <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full border border-border bg-bg-elevated/60 text-text-muted">
                 {c.age} 岁
               </span>
+              {c.mbti && (
+                <span className="shrink-0 text-[11px] font-mono px-2 py-0.5 rounded-full border border-border bg-bg-elevated/60 text-text-secondary">
+                  {c.mbti}
+                </span>
+              )}
+              {c.keyProp && (
+                <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full border border-border bg-bg-elevated/60 text-text-muted">
+                  道具 · {c.keyProp}
+                </span>
+              )}
               <span className="ml-auto shrink-0 text-xs text-text-muted tabular-nums hidden sm:inline">
                 {idx + 1} / {sorted.length} · 上下滑动切换
               </span>
@@ -388,29 +399,12 @@ function WorkspacePage() {
               </span>
             </div>
 
-            <div className="flex-1 min-h-0 flex items-center justify-center gap-4">
-              {/* Left column: 性格 / 外形 */}
-              <div className="hidden lg:flex flex-col gap-3 w-full max-w-[240px] h-[498px]">
-                <Field label="性格" value={c.personality} className="flex-1" />
-                <Field label="外形" value={c.look} className="flex-1" />
+            {/* ≥md: 主图 + 档案 两栏；<md: 单列堆叠 */}
+            <div className="flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[372px_minmax(0,1fr)] md:items-start gap-4 md:gap-5">
+              <div className="flex justify-center md:justify-start">
+                <CharacterStage character={c} views={views} onZoom={() => setPreviewChar(c)} />
               </div>
-
-              {/* Center stage */}
-              <CharacterStage character={c} views={views} onZoom={() => setPreviewChar(c)} />
-
-              {/* Right column: 动机 / 首场 */}
-              <div className="hidden lg:flex flex-col gap-3 w-full max-w-[240px] h-[498px]">
-                <Field label="动机" value={c.motivation} className="flex-1" />
-                <Field label="首场" value={c.debutShot} className="flex-1" />
-              </div>
-            </div>
-
-            {/* Tablet/mobile fallback: stacked bible row */}
-            <div className="mt-4 grid grid-cols-2 gap-3 shrink-0 lg:hidden">
-              <Field label="外形" value={c.look} />
-              <Field label="性格" value={c.personality} />
-              <Field label="动机" value={c.motivation} />
-              <Field label="首场" value={c.debutShot} />
+              <CharacterDossier character={c} cast={sorted} />
             </div>
 
             <div className="flex items-center gap-2 mt-3 shrink-0">
@@ -425,11 +419,63 @@ function WorkspacePage() {
     )
   }
 
-  function Field({ label, value, className }: { label: string; value: string; className?: string }) {
+  function CharacterDossier({ character, cast }: { character: GenCharacter; cast: GenCharacter[] }) {
+    const rows: { label: string; value: string }[] = [
+      { label: '外形', value: character.look },
+      { label: '性格', value: character.personality },
+      { label: '动机', value: character.motivation },
+      { label: '首场', value: character.debutShot },
+    ]
+    const nameOf = (id: string) => cast.find((x) => x.id === id)?.name ?? id
+    const roleOf = (id: string) => cast.find((x) => x.id === id)?.role ?? 'supporting'
+    const jumpTo = (id: string) => {
+      const el = document.getElementById(id)
+      el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
     return (
-      <div className={`rounded-xl border border-border bg-bg-elevated/40 px-4 py-3 overflow-hidden ${className ?? ''}`}>
-        <div className="text-xs tracking-wide text-text-muted">{label}</div>
-        <div className="text-sm text-text-secondary mt-1.5 leading-relaxed">{value}</div>
+      <div className="w-full md:h-[498px] md:overflow-y-auto rounded-2xl border border-border bg-bg-elevated/40 px-5 py-4">
+        <div className="flex items-baseline justify-between mb-2">
+          <h3 className="text-xs tracking-[0.18em] uppercase text-text-muted">角色档案</h3>
+          <span className="text-[10px] text-text-muted">Character Bible</span>
+        </div>
+        <dl className="divide-y divide-border/60">
+          {rows.map((r) => (
+            <div key={r.label} className="flex gap-3 py-2.5">
+              <dt className="text-xs text-text-muted shrink-0 w-10 pt-0.5 tracking-wide">{r.label}</dt>
+              <dd className="text-sm text-text-secondary leading-relaxed flex-1 min-w-0 break-words">{r.value}</dd>
+            </div>
+          ))}
+        </dl>
+        {character.relations && character.relations.length > 0 && (
+          <div className="mt-3 pt-3 border-t border-border/60">
+            <div className="flex items-baseline justify-between mb-2">
+              <h4 className="text-xs tracking-[0.18em] uppercase text-text-muted">关系网</h4>
+              <span className="text-[10px] text-text-muted">点击姓名跳转</span>
+            </div>
+            <ul role="list" className="space-y-2">
+              {character.relations.map((r) => {
+                const targetRole = roleOf(r.targetId)
+                return (
+                  <li key={r.targetId} className="flex items-start gap-2 text-sm">
+                    <span className="text-text-muted shrink-0 pt-0.5" aria-hidden>↔</span>
+                    <button
+                      type="button"
+                      onClick={() => jumpTo(r.targetId)}
+                      aria-label={`跳转到角色 ${nameOf(r.targetId)}`}
+                      className={`shrink-0 text-[11px] px-2 py-0.5 rounded-full border transition hover:opacity-80 ${ROLE_TONE[targetRole]}`}
+                    >
+                      {nameOf(r.targetId)}
+                    </button>
+                    <span className="shrink-0 text-[11px] px-1.5 py-0.5 rounded border border-border bg-bg-elevated/60 text-text-muted">
+                      {r.label}
+                    </span>
+                    <span className="text-text-secondary text-[13px] leading-relaxed min-w-0 break-words">{r.summary}</span>
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+        )}
       </div>
     )
   }
