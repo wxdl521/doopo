@@ -1,6 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
 import { Fragment, useState, type ReactNode } from 'react'
-import { toast } from 'sonner'
 import { useServerFn } from '@tanstack/react-start'
 import WorkspaceTopbar, { type WorkspaceTab } from '../components/workspace/WorkspaceTopbar'
 import ZopiaChatPanel from '../components/workspace/ZopiaChatPanel'
@@ -10,7 +9,7 @@ import {
   type Outline, type GenScene, type GenCharacter, type StoryboardPanel, type TimelineData,
 } from '../data/workspaceGenerators'
 import { generateStageAi } from '../lib/aiGenerate.functions'
-import { Maximize2, FileText, Sparkles, Camera, Clock, Users, X, ZoomIn } from 'lucide-react'
+import { Maximize2, FileText, Camera, Clock, Users, X } from 'lucide-react'
 import CharacterPortrait from '../components/workspace/CharacterPortrait'
 
 export const Route = createFileRoute('/workspace/$workspaceId')({
@@ -81,9 +80,6 @@ function WorkspacePage() {
         },
       })
       if (!res.ok) {
-        if (res.error === 'rate_limit') toast.error('AI 限流，已使用示例内容。请稍后再试。')
-        else if (res.error === 'no_credits') toast.error('AI 额度不足，已使用示例内容。请前往 Settings → Workspace → Usage 充值。')
-        else toast.error(`AI 生成失败（${res.error}），已使用示例内容`)
         return null
       }
       const p = res.payload
@@ -139,7 +135,6 @@ function WorkspacePage() {
       return null
     } catch (e) {
       console.error(e)
-      toast.error('AI 调用异常，已使用示例内容')
       return null
     }
   }
@@ -179,7 +174,6 @@ function WorkspacePage() {
     })
     setFlash(stage)
     setTimeout(() => setFlash((f) => (f === stage ? null : f)), 1500)
-    toast.success(aiPatch ? 'AI 生成完成' : t.ws_produced_toast)
   }
 
   return (
@@ -247,12 +241,8 @@ function WorkspacePage() {
   )
 
   function FreshBadge({ stage }: { stage: WorkspaceTab }) {
-    if (flash !== stage) return null
-    return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-accent-dim/60 border border-accent text-accent text-xs animate-pulse">
-        <Sparkles size={10} /> {t.ws_just_generated}
-      </span>
-    )
+    void stage
+    return null
   }
 
   function CanvasView() {
@@ -368,7 +358,6 @@ function WorkspacePage() {
               <h2 className="font-display text-lg font-bold">{c.name}</h2>
               <span className={`text-[10px] px-1.5 py-0.5 rounded border ${ROLE_TONE[c.role]}`}>{c.roleLabel}</span>
               <span className="text-xs text-text-muted">{c.age} 岁</span>
-              <FreshBadge stage="character" />
               <span className="ml-auto text-xs text-text-muted">{idx + 1} / {sorted.length} · 上下滑动切换</span>
             </div>
 
@@ -418,29 +407,19 @@ function WorkspacePage() {
           {mode === 'main' ? (
             <div className="relative w-full h-full">
               <CharacterPortrait character={character} view="front" className="w-full h-full block" />
-              <button
-                type="button"
-                onClick={onZoom}
-                className="absolute top-3 right-3 inline-flex items-center gap-1 px-2 py-1 rounded-md bg-black/40 backdrop-blur-sm border border-white/15 text-[11px] text-white/80 hover:bg-black/60 hover:text-white transition"
-                aria-label="查看大图"
-              >
-                <ZoomIn size={12} /> 查看大图
-              </button>
             </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-2 w-full h-full">
               {views.map((v) => (
-                <button
+                <div
                   key={v.key}
-                  type="button"
-                  onClick={onZoom}
-                  className="relative rounded-xl overflow-hidden border border-border bg-bg-elevated/30 group focus:outline-none focus:ring-2 focus:ring-accent"
+                  className="relative rounded-xl overflow-hidden border border-border bg-bg-elevated/30"
                 >
                   <CharacterPortrait character={character} view={v.key} className="w-full h-full block" />
                   <span className="absolute bottom-0 inset-x-0 px-2 py-1 text-[11px] text-white/90 bg-gradient-to-t from-black/70 to-transparent text-center">
                     {v.label}
                   </span>
-                </button>
+                </div>
               ))}
             </div>
           )}
