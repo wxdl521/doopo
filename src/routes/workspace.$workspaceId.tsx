@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { Fragment, useState, type ReactNode } from 'react'
+import { Fragment, useState } from 'react'
 import { useServerFn } from '@tanstack/react-start'
 import WorkspaceTopbar, { type WorkspaceTab } from '../components/workspace/WorkspaceTopbar'
 import ZopiaChatPanel from '../components/workspace/ZopiaChatPanel'
