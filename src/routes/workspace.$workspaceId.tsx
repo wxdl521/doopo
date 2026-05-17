@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { Fragment, useState } from 'react'
+import { Fragment, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { useServerFn } from '@tanstack/react-start'
 import WorkspaceTopbar, { type WorkspaceTab } from '../components/workspace/WorkspaceTopbar'
@@ -372,27 +372,7 @@ function WorkspacePage() {
               <span className="ml-auto text-xs text-text-muted">{idx + 1} / {sorted.length} · 上下滑动切换</span>
             </div>
 
-            {/* Three-view sheet — directly visible, four orthographic views */}
-            <div className="grid grid-cols-4 gap-3 flex-1 min-h-0">
-              {views.map((v) => (
-                <button
-                  key={v.key}
-                  type="button"
-                  onClick={() => setPreviewChar(c)}
-                  className="card overflow-hidden flex flex-col group focus:outline-none focus:ring-2 focus:ring-accent"
-                >
-                  <div className="flex-1 min-h-0 relative">
-                    <CharacterPortrait character={c} view={v.key} className="w-full h-full block" />
-                    <span className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
-                      <ZoomIn size={20} className="text-white" />
-                    </span>
-                  </div>
-                  <div className="px-3 py-2 text-xs text-text-secondary border-t border-border bg-bg-elevated/40 text-center">
-                    {v.label}
-                  </div>
-                </button>
-              ))}
-            </div>
+            <CharacterStage character={c} views={views} onZoom={() => setPreviewChar(c)} />
 
             {/* Compact bible row */}
             <div className="mt-4 grid grid-cols-2 lg:grid-cols-4 gap-3 shrink-0">
@@ -419,6 +399,107 @@ function WorkspacePage() {
         <div className="text-[10px] uppercase tracking-wide text-text-muted">{label}</div>
         <div className="text-xs text-text-secondary mt-0.5 leading-relaxed">{value}</div>
       </div>
+    )
+  }
+
+  function CharacterStage({
+    character,
+    views,
+    onZoom,
+  }: {
+    character: GenCharacter
+    views: { key: 'front' | 'side' | 'back' | 'expression'; label: string }[]
+    onZoom: () => void
+  }) {
+    const [mode, setMode] = useState<'main' | 'multi'>('main')
+    return (
+      <div className="flex-1 min-h-0 flex flex-col">
+        <div className="flex-1 min-h-0 rounded-2xl border border-border bg-gradient-to-b from-bg-elevated/30 to-bg-surface/60 overflow-hidden relative">
+          {mode === 'main' ? (
+            <button
+              type="button"
+              onClick={onZoom}
+              className="group block w-full h-full focus:outline-none"
+              aria-label="放大主视图"
+            >
+              <CharacterPortrait character={character} view="front" className="w-full h-full block" />
+              <span className="absolute top-3 right-3 inline-flex items-center gap-1 px-2 py-1 rounded-md bg-black/40 backdrop-blur-sm border border-white/15 text-[11px] text-white/80 opacity-0 group-hover:opacity-100 transition-opacity">
+                <ZoomIn size={12} /> 查看大图
+              </span>
+            </button>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-2 w-full h-full">
+              {views.map((v) => (
+                <button
+                  key={v.key}
+                  type="button"
+                  onClick={onZoom}
+                  className="relative rounded-xl overflow-hidden border border-border bg-bg-elevated/30 group focus:outline-none focus:ring-2 focus:ring-accent"
+                >
+                  <CharacterPortrait character={character} view={v.key} className="w-full h-full block" />
+                  <span className="absolute bottom-0 inset-x-0 px-2 py-1 text-[11px] text-white/90 bg-gradient-to-t from-black/70 to-transparent text-center">
+                    {v.label}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        {/* Bottom thumbnail switcher: main view vs multi-view, matching the reference */}
+        <div className="mt-3 flex items-center gap-3 shrink-0">
+          <ViewThumb
+            active={mode === 'main'}
+            onClick={() => setMode('main')}
+            label="主视图"
+          >
+            <CharacterPortrait character={character} view="front" className="w-full h-full block" />
+          </ViewThumb>
+          <ViewThumb
+            active={mode === 'multi'}
+            onClick={() => setMode('multi')}
+            label="多视图"
+          >
+            <div className="grid grid-cols-2 grid-rows-2 w-full h-full gap-px bg-border">
+              {views.map((v) => (
+                <div key={v.key} className="relative overflow-hidden">
+                  <CharacterPortrait character={character} view={v.key} className="w-full h-full block" />
+                </div>
+              ))}
+            </div>
+          </ViewThumb>
+          <div className="ml-auto text-xs text-text-muted">点击主图可放大查看</div>
+        </div>
+      </div>
+    )
+  }
+
+  function ViewThumb({
+    active,
+    onClick,
+    label,
+    children,
+  }: {
+    active: boolean
+    onClick: () => void
+    label: string
+    children: ReactNode
+  }) {
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className={`relative w-20 h-24 rounded-lg overflow-hidden border-2 transition-all ${
+          active ? 'border-accent shadow-[0_0_0_3px_rgba(251,191,36,0.15)]' : 'border-border hover:border-text-muted'
+        }`}
+        aria-pressed={active}
+      >
+        {children}
+        <span className={`absolute bottom-0 inset-x-0 text-[10px] py-0.5 text-center font-medium ${
+          active ? 'bg-accent text-black' : 'bg-black/60 text-white/90'
+        }`}>
+          {label}
+        </span>
+      </button>
     )
   }
 
