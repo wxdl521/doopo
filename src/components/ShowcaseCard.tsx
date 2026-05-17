@@ -1,9 +1,11 @@
 import { Heart, Play } from 'lucide-react'
+import { Link } from '@tanstack/react-router'
 import type { ShowcaseItem } from '../data/showcase'
 
 export default function ShowcaseCard({ item }: { item: ShowcaseItem }) {
   return (
-    <article className="card group cursor-pointer">
+    <Link to="/showcase/$itemId" params={{ itemId: item.id }} className="card group cursor-pointer block">
+      <article>
       <div className={`relative aspect-[16/10] bg-gradient-to-br ${item.gradient} overflow-hidden`}>
         {/* Decorative grid texture */}
         <div className="absolute inset-0 opacity-30 mix-blend-overlay"
@@ -64,6 +66,7 @@ export default function ShowcaseCard({ item }: { item: ShowcaseItem }) {
           <Heart size={16} />
         </button>
       </div>
-    </article>
+      </article>
+    </Link>
   )
 }

@@ -1,17 +1,17 @@
 import { Link } from '@tanstack/react-router'
-import { Home, FolderOpen, FileText, Users, Bookmark, WandSparkles, Sparkles } from 'lucide-react'
+import { Home, FolderOpen, FileText, Users, Bookmark, ShieldCheck, User } from 'lucide-react'
 import { useLanguage } from '../i18n/LanguageContext'
 
 export default function MobileNav() {
   const { t } = useLanguage()
   const items = [
     { to: '/home', label: t.nav_home, icon: Home },
-    { to: '/projects', label: t.nav_projects, icon: FolderOpen },
     { to: '/scripts', label: t.nav_scripts, icon: FileText },
+    { to: '/projects', label: t.nav_projects, icon: FolderOpen },
     { to: '/characters', label: t.nav_characters, icon: Users },
     { to: '/bases', label: t.nav_bases, icon: Bookmark },
-    { to: '/zoclaw', label: t.nav_zoclaw, icon: WandSparkles },
-    { to: '/models', label: t.nav_models, icon: Sparkles },
+    { to: '/team', label: t.nav_team, icon: ShieldCheck },
+    { to: '/account', label: t.nav_me, icon: User },
   ]
   return (
     <nav

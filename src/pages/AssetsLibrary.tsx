@@ -1,0 +1,198 @@
+import { useState } from 'react'
+import { Link } from '@tanstack/react-router'
+import { ChevronDown, Plus } from 'lucide-react'
+import { toast } from 'sonner'
+import { useLanguage } from '../i18n/LanguageContext'
+import {
+  type AssetTab,
+  characterAssets,
+  sceneAssets,
+  propAssets,
+} from '../data/assetsMock'
+
+type Scope = 'personal' | 'team'
+
+export default function AssetsLibrary() {
+  const { t } = useLanguage()
+  const [tab, setTab] = useState<AssetTab>('character')
+  const [scope, setScope] = useState<Scope>('personal')
+  const [scopeOpen, setScopeOpen] = useState(false)
+
+  const tabs: { key: AssetTab; label: string }[] = [
+    { key: 'character', label: t.assets_tab_character },
+    { key: 'scene', label: t.assets_tab_scene },
+    { key: 'prop', label: t.assets_tab_prop },
+  ]
+
+  const renderCards = () => {
+    if (tab === 'character') {
+      if (!characterAssets.length) return <Empty />
+      return (
+        <Grid>
+          {characterAssets.map(c => (
+            <Card key={c.id} tab="character" id={c.id} title={c.name} emoji={c.emoji} gradient={c.gradient} cover={c.cover} summary={c.summary} tags={c.tags}>
+              <Field label={t.assets_field_role} value={c.role} />
+              <Field label={t.assets_field_age} value={c.age} />
+              <Field label={t.assets_field_personality} value={c.personality} />
+            </Card>
+          ))}
+        </Grid>
+      )
+    }
+    if (tab === 'scene') {
+      if (!sceneAssets.length) return <Empty />
+      return (
+        <Grid>
+          {sceneAssets.map(s => (
+            <Card key={s.id} tab="scene" id={s.id} title={s.name} emoji={s.emoji} gradient={s.gradient} summary={s.summary} tags={s.tags}>
+              <Field label={t.assets_field_time} value={s.time} />
+              <Field label={t.assets_field_mood} value={s.mood} />
+              <Field label={t.assets_field_shot} value={s.shot} />
+            </Card>
+          ))}
+        </Grid>
+      )
+    }
+    if (!propAssets.length) return <Empty />
+    return (
+      <Grid>
+        {propAssets.map(p => (
+          <Card key={p.id} tab="prop" id={p.id} title={p.name} emoji={p.emoji} gradient={p.gradient} summary={p.summary} tags={p.tags}>
+            <Field label={t.assets_field_owner} value={p.owner} />
+            <Field label={t.assets_field_appearance} value={p.appearance} />
+            <Field label={t.assets_field_symbol} value={p.symbol} />
+          </Card>
+        ))}
+      </Grid>
+    )
+  }
+
+  function Empty() {
+    return (
+      <div className="flex-1 flex items-center justify-center min-h-[60vh] text-sm text-text-muted">
+        {t.assets_empty}
+      </div>
+    )
+  }
+
+  return (
+    <div className="animate-fade-in flex flex-col gap-6 px-1">
+      {/* Header */}
+      <header className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-3xl md:text-4xl font-bold text-text-primary tracking-tight">
+            {t.assets_title}
+          </h1>
+        </div>
+        <div className="relative">
+          <button
+            onClick={() => setScopeOpen(o => !o)}
+            className="flex items-center justify-between gap-3 min-w-[140px] px-4 py-2.5 rounded-xl bg-bg-elevated border border-border text-sm text-text-primary hover:border-accent/50 transition"
+          >
+            <span>{scope === 'personal' ? t.assets_scope_personal : t.assets_scope_team}</span>
+            <ChevronDown size={14} className={`text-text-muted transition ${scopeOpen ? 'rotate-180' : ''}`} />
+          </button>
+          {scopeOpen && (
+            <div className="absolute right-0 mt-1 min-w-[140px] rounded-xl bg-bg-elevated border border-border shadow-lg overflow-hidden z-10">
+              {(['personal', 'team'] as Scope[]).map(s => (
+                <button
+                  key={s}
+                  onClick={() => { setScope(s); setScopeOpen(false) }}
+                  className={`w-full px-4 py-2 text-sm text-left hover:bg-bg-soft transition ${scope === s ? 'text-accent' : 'text-text-secondary'}`}
+                >
+                  {s === 'personal' ? t.assets_scope_personal : t.assets_scope_team}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </header>
+
+      {/* Tabs + add */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-bg-elevated border border-border">
+          {tabs.map(tb => (
+            <button
+              key={tb.key}
+              onClick={() => setTab(tb.key)}
+              className={`px-4 py-1.5 rounded-lg text-sm transition ${
+                tab === tb.key
+                  ? 'bg-accent text-white shadow-sm'
+                  : 'text-text-muted hover:text-text-primary'
+              }`}
+            >
+              {tb.label}
+            </button>
+          ))}
+        </div>
+        <button
+          onClick={() => toast.info(t.assets_add)}
+          className="btn-ghost text-xs"
+        >
+          <Plus size={14} /> {t.assets_add}
+        </button>
+      </div>
+
+      {/* Body */}
+      {renderCards()}
+    </div>
+  )
+}
+
+function Grid({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+      {children}
+    </div>
+  )
+}
+
+function Card({
+  tab, id, title, emoji, gradient, cover, summary, tags, children,
+}: {
+  tab: AssetTab; id: string; title: string; emoji: string; gradient: string; cover?: string; summary: string; tags: string[]; children: React.ReactNode
+}) {
+  return (
+    <Link
+      to="/assets/$tab/$id"
+      params={{ tab, id }}
+      className="panel overflow-hidden flex flex-col group hover:border-accent/40 hover:-translate-y-0.5 transition"
+    >
+      <div className={`relative h-40 bg-gradient-to-br ${gradient} flex items-center justify-center overflow-hidden`}>
+        {cover ? (
+          <img
+            src={cover}
+            alt={title}
+            loading="lazy"
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+          />
+        ) : (
+          <span className="text-5xl drop-shadow-lg group-hover:scale-110 transition-transform">{emoji}</span>
+        )}
+      </div>
+      <div className="p-4 flex flex-col gap-2 flex-1">
+        <h3 className="font-semibold text-text-primary">{title}</h3>
+        <p className="text-xs text-text-muted line-clamp-2 leading-relaxed">{summary}</p>
+        <div className="flex flex-col gap-1 mt-1">
+          {children}
+        </div>
+        <div className="flex flex-wrap gap-1.5 mt-2">
+          {tags.map(tag => (
+            <span key={tag} className="text-[10px] px-2 py-0.5 rounded-full bg-bg-elevated border border-border text-text-secondary">
+              {tag}
+            </span>
+          ))}
+        </div>
+      </div>
+    </Link>
+  )
+}
+
+function Field({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-baseline gap-2 text-xs">
+      <span className="text-text-muted shrink-0">{label}</span>
+      <span className="text-text-secondary truncate">{value}</span>
+    </div>
+  )
+}

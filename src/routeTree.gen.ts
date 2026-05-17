@@ -10,20 +10,51 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ZoclawRouteImport } from './routes/zoclaw'
+import { Route as TeamRouteImport } from './routes/team'
 import { Route as ShowcaseRouteImport } from './routes/showcase'
 import { Route as ScriptsRouteImport } from './routes/scripts'
+import { Route as RegisterRouteImport } from './routes/register'
 import { Route as ProjectsRouteImport } from './routes/projects'
 import { Route as PricingRouteImport } from './routes/pricing'
 import { Route as ModelsRouteImport } from './routes/models'
+import { Route as LoginRouteImport } from './routes/login'
 import { Route as HomeRouteImport } from './routes/home'
 import { Route as CharactersRouteImport } from './routes/characters'
 import { Route as BasesRouteImport } from './routes/bases'
+import { Route as AssetsRouteImport } from './routes/assets'
+import { Route as AdminRouteImport } from './routes/admin'
+import { Route as AccountRouteImport } from './routes/account'
 import { Route as IndexRouteImport } from './routes/index'
-import { Route as ScriptsNewRouteImport } from './routes/scripts.new'
+import { Route as TeamIndexRouteImport } from './routes/team.index'
+import { Route as AdminIndexRouteImport } from './routes/admin.index'
+import { Route as AccountIndexRouteImport } from './routes/account.index'
+import { Route as WorkspaceWorkspaceIdRouteImport } from './routes/workspace.$workspaceId'
+import { Route as TeamUsageRouteImport } from './routes/team.usage'
+import { Route as TeamMembersRouteImport } from './routes/team.members'
+import { Route as TeamLogsRouteImport } from './routes/team.logs'
+import { Route as TeamApprovalsRouteImport } from './routes/team.approvals'
+import { Route as ShowcaseItemIdRouteImport } from './routes/showcase.$itemId'
+import { Route as ScriptsScriptIdRouteImport } from './routes/scripts.$scriptId'
+import { Route as ProjectsProjectIdRouteImport } from './routes/projects.$projectId'
+import { Route as CharactersRelationsRouteImport } from './routes/characters.relations'
+import { Route as CharactersCharacterIdRouteImport } from './routes/characters.$characterId'
+import { Route as AdminTenantsRouteImport } from './routes/admin.tenants'
+import { Route as AdminModelsRouteImport } from './routes/admin.models'
+import { Route as AdminBillingRouteImport } from './routes/admin.billing'
+import { Route as AccountSubscriptionRouteImport } from './routes/account.subscription'
+import { Route as AccountRewardsRouteImport } from './routes/account.rewards'
+import { Route as AccountNotificationsRouteImport } from './routes/account.notifications'
+import { Route as AccountAssetsRouteImport } from './routes/account.assets'
+import { Route as AssetsTabIdRouteImport } from './routes/assets_.$tab.$id'
 
 const ZoclawRoute = ZoclawRouteImport.update({
   id: '/zoclaw',
   path: '/zoclaw',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TeamRoute = TeamRouteImport.update({
+  id: '/team',
+  path: '/team',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ShowcaseRoute = ShowcaseRouteImport.update({
@@ -34,6 +65,11 @@ const ShowcaseRoute = ShowcaseRouteImport.update({
 const ScriptsRoute = ScriptsRouteImport.update({
   id: '/scripts',
   path: '/scripts',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RegisterRoute = RegisterRouteImport.update({
+  id: '/register',
+  path: '/register',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ProjectsRoute = ProjectsRouteImport.update({
@@ -51,6 +87,11 @@ const ModelsRoute = ModelsRouteImport.update({
   path: '/models',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LoginRoute = LoginRouteImport.update({
+  id: '/login',
+  path: '/login',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const HomeRoute = HomeRouteImport.update({
   id: '/home',
   path: '/home',
@@ -66,110 +107,383 @@ const BasesRoute = BasesRouteImport.update({
   path: '/bases',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AssetsRoute = AssetsRouteImport.update({
+  id: '/assets',
+  path: '/assets',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminRoute = AdminRouteImport.update({
+  id: '/admin',
+  path: '/admin',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AccountRoute = AccountRouteImport.update({
+  id: '/account',
+  path: '/account',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ScriptsNewRoute = ScriptsNewRouteImport.update({
-  id: '/new',
-  path: '/new',
+const TeamIndexRoute = TeamIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => TeamRoute,
+} as any)
+const AdminIndexRoute = AdminIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AccountIndexRoute = AccountIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => AccountRoute,
+} as any)
+const WorkspaceWorkspaceIdRoute = WorkspaceWorkspaceIdRouteImport.update({
+  id: '/workspace/$workspaceId',
+  path: '/workspace/$workspaceId',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TeamUsageRoute = TeamUsageRouteImport.update({
+  id: '/usage',
+  path: '/usage',
+  getParentRoute: () => TeamRoute,
+} as any)
+const TeamMembersRoute = TeamMembersRouteImport.update({
+  id: '/members',
+  path: '/members',
+  getParentRoute: () => TeamRoute,
+} as any)
+const TeamLogsRoute = TeamLogsRouteImport.update({
+  id: '/logs',
+  path: '/logs',
+  getParentRoute: () => TeamRoute,
+} as any)
+const TeamApprovalsRoute = TeamApprovalsRouteImport.update({
+  id: '/approvals',
+  path: '/approvals',
+  getParentRoute: () => TeamRoute,
+} as any)
+const ShowcaseItemIdRoute = ShowcaseItemIdRouteImport.update({
+  id: '/$itemId',
+  path: '/$itemId',
+  getParentRoute: () => ShowcaseRoute,
+} as any)
+const ScriptsScriptIdRoute = ScriptsScriptIdRouteImport.update({
+  id: '/$scriptId',
+  path: '/$scriptId',
   getParentRoute: () => ScriptsRoute,
+} as any)
+const ProjectsProjectIdRoute = ProjectsProjectIdRouteImport.update({
+  id: '/$projectId',
+  path: '/$projectId',
+  getParentRoute: () => ProjectsRoute,
+} as any)
+const CharactersRelationsRoute = CharactersRelationsRouteImport.update({
+  id: '/relations',
+  path: '/relations',
+  getParentRoute: () => CharactersRoute,
+} as any)
+const CharactersCharacterIdRoute = CharactersCharacterIdRouteImport.update({
+  id: '/$characterId',
+  path: '/$characterId',
+  getParentRoute: () => CharactersRoute,
+} as any)
+const AdminTenantsRoute = AdminTenantsRouteImport.update({
+  id: '/tenants',
+  path: '/tenants',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminModelsRoute = AdminModelsRouteImport.update({
+  id: '/models',
+  path: '/models',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AdminBillingRoute = AdminBillingRouteImport.update({
+  id: '/billing',
+  path: '/billing',
+  getParentRoute: () => AdminRoute,
+} as any)
+const AccountSubscriptionRoute = AccountSubscriptionRouteImport.update({
+  id: '/subscription',
+  path: '/subscription',
+  getParentRoute: () => AccountRoute,
+} as any)
+const AccountRewardsRoute = AccountRewardsRouteImport.update({
+  id: '/rewards',
+  path: '/rewards',
+  getParentRoute: () => AccountRoute,
+} as any)
+const AccountNotificationsRoute = AccountNotificationsRouteImport.update({
+  id: '/notifications',
+  path: '/notifications',
+  getParentRoute: () => AccountRoute,
+} as any)
+const AccountAssetsRoute = AccountAssetsRouteImport.update({
+  id: '/assets',
+  path: '/assets',
+  getParentRoute: () => AccountRoute,
+} as any)
+const AssetsTabIdRoute = AssetsTabIdRouteImport.update({
+  id: '/assets_/$tab/$id',
+  path: '/assets/$tab/$id',
+  getParentRoute: () => rootRouteImport,
 } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/account': typeof AccountRouteWithChildren
+  '/admin': typeof AdminRouteWithChildren
+  '/assets': typeof AssetsRoute
   '/bases': typeof BasesRoute
-  '/characters': typeof CharactersRoute
+  '/characters': typeof CharactersRouteWithChildren
   '/home': typeof HomeRoute
+  '/login': typeof LoginRoute
   '/models': typeof ModelsRoute
   '/pricing': typeof PricingRoute
-  '/projects': typeof ProjectsRoute
+  '/projects': typeof ProjectsRouteWithChildren
+  '/register': typeof RegisterRoute
   '/scripts': typeof ScriptsRouteWithChildren
-  '/showcase': typeof ShowcaseRoute
+  '/showcase': typeof ShowcaseRouteWithChildren
+  '/team': typeof TeamRouteWithChildren
   '/zoclaw': typeof ZoclawRoute
-  '/scripts/new': typeof ScriptsNewRoute
+  '/account/assets': typeof AccountAssetsRoute
+  '/account/notifications': typeof AccountNotificationsRoute
+  '/account/rewards': typeof AccountRewardsRoute
+  '/account/subscription': typeof AccountSubscriptionRoute
+  '/admin/billing': typeof AdminBillingRoute
+  '/admin/models': typeof AdminModelsRoute
+  '/admin/tenants': typeof AdminTenantsRoute
+  '/characters/$characterId': typeof CharactersCharacterIdRoute
+  '/characters/relations': typeof CharactersRelationsRoute
+  '/projects/$projectId': typeof ProjectsProjectIdRoute
+  '/scripts/$scriptId': typeof ScriptsScriptIdRoute
+  '/showcase/$itemId': typeof ShowcaseItemIdRoute
+  '/team/approvals': typeof TeamApprovalsRoute
+  '/team/logs': typeof TeamLogsRoute
+  '/team/members': typeof TeamMembersRoute
+  '/team/usage': typeof TeamUsageRoute
+  '/workspace/$workspaceId': typeof WorkspaceWorkspaceIdRoute
+  '/account/': typeof AccountIndexRoute
+  '/admin/': typeof AdminIndexRoute
+  '/team/': typeof TeamIndexRoute
+  '/assets/$tab/$id': typeof AssetsTabIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/assets': typeof AssetsRoute
   '/bases': typeof BasesRoute
-  '/characters': typeof CharactersRoute
+  '/characters': typeof CharactersRouteWithChildren
   '/home': typeof HomeRoute
+  '/login': typeof LoginRoute
   '/models': typeof ModelsRoute
   '/pricing': typeof PricingRoute
-  '/projects': typeof ProjectsRoute
+  '/projects': typeof ProjectsRouteWithChildren
+  '/register': typeof RegisterRoute
   '/scripts': typeof ScriptsRouteWithChildren
-  '/showcase': typeof ShowcaseRoute
+  '/showcase': typeof ShowcaseRouteWithChildren
   '/zoclaw': typeof ZoclawRoute
-  '/scripts/new': typeof ScriptsNewRoute
+  '/account/assets': typeof AccountAssetsRoute
+  '/account/notifications': typeof AccountNotificationsRoute
+  '/account/rewards': typeof AccountRewardsRoute
+  '/account/subscription': typeof AccountSubscriptionRoute
+  '/admin/billing': typeof AdminBillingRoute
+  '/admin/models': typeof AdminModelsRoute
+  '/admin/tenants': typeof AdminTenantsRoute
+  '/characters/$characterId': typeof CharactersCharacterIdRoute
+  '/characters/relations': typeof CharactersRelationsRoute
+  '/projects/$projectId': typeof ProjectsProjectIdRoute
+  '/scripts/$scriptId': typeof ScriptsScriptIdRoute
+  '/showcase/$itemId': typeof ShowcaseItemIdRoute
+  '/team/approvals': typeof TeamApprovalsRoute
+  '/team/logs': typeof TeamLogsRoute
+  '/team/members': typeof TeamMembersRoute
+  '/team/usage': typeof TeamUsageRoute
+  '/workspace/$workspaceId': typeof WorkspaceWorkspaceIdRoute
+  '/account': typeof AccountIndexRoute
+  '/admin': typeof AdminIndexRoute
+  '/team': typeof TeamIndexRoute
+  '/assets/$tab/$id': typeof AssetsTabIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/account': typeof AccountRouteWithChildren
+  '/admin': typeof AdminRouteWithChildren
+  '/assets': typeof AssetsRoute
   '/bases': typeof BasesRoute
-  '/characters': typeof CharactersRoute
+  '/characters': typeof CharactersRouteWithChildren
   '/home': typeof HomeRoute
+  '/login': typeof LoginRoute
   '/models': typeof ModelsRoute
   '/pricing': typeof PricingRoute
-  '/projects': typeof ProjectsRoute
+  '/projects': typeof ProjectsRouteWithChildren
+  '/register': typeof RegisterRoute
   '/scripts': typeof ScriptsRouteWithChildren
-  '/showcase': typeof ShowcaseRoute
+  '/showcase': typeof ShowcaseRouteWithChildren
+  '/team': typeof TeamRouteWithChildren
   '/zoclaw': typeof ZoclawRoute
-  '/scripts/new': typeof ScriptsNewRoute
+  '/account/assets': typeof AccountAssetsRoute
+  '/account/notifications': typeof AccountNotificationsRoute
+  '/account/rewards': typeof AccountRewardsRoute
+  '/account/subscription': typeof AccountSubscriptionRoute
+  '/admin/billing': typeof AdminBillingRoute
+  '/admin/models': typeof AdminModelsRoute
+  '/admin/tenants': typeof AdminTenantsRoute
+  '/characters/$characterId': typeof CharactersCharacterIdRoute
+  '/characters/relations': typeof CharactersRelationsRoute
+  '/projects/$projectId': typeof ProjectsProjectIdRoute
+  '/scripts/$scriptId': typeof ScriptsScriptIdRoute
+  '/showcase/$itemId': typeof ShowcaseItemIdRoute
+  '/team/approvals': typeof TeamApprovalsRoute
+  '/team/logs': typeof TeamLogsRoute
+  '/team/members': typeof TeamMembersRoute
+  '/team/usage': typeof TeamUsageRoute
+  '/workspace/$workspaceId': typeof WorkspaceWorkspaceIdRoute
+  '/account/': typeof AccountIndexRoute
+  '/admin/': typeof AdminIndexRoute
+  '/team/': typeof TeamIndexRoute
+  '/assets_/$tab/$id': typeof AssetsTabIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/account'
+    | '/admin'
+    | '/assets'
     | '/bases'
     | '/characters'
     | '/home'
+    | '/login'
     | '/models'
     | '/pricing'
     | '/projects'
+    | '/register'
     | '/scripts'
     | '/showcase'
+    | '/team'
     | '/zoclaw'
-    | '/scripts/new'
+    | '/account/assets'
+    | '/account/notifications'
+    | '/account/rewards'
+    | '/account/subscription'
+    | '/admin/billing'
+    | '/admin/models'
+    | '/admin/tenants'
+    | '/characters/$characterId'
+    | '/characters/relations'
+    | '/projects/$projectId'
+    | '/scripts/$scriptId'
+    | '/showcase/$itemId'
+    | '/team/approvals'
+    | '/team/logs'
+    | '/team/members'
+    | '/team/usage'
+    | '/workspace/$workspaceId'
+    | '/account/'
+    | '/admin/'
+    | '/team/'
+    | '/assets/$tab/$id'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/assets'
     | '/bases'
     | '/characters'
     | '/home'
+    | '/login'
     | '/models'
     | '/pricing'
     | '/projects'
+    | '/register'
     | '/scripts'
     | '/showcase'
     | '/zoclaw'
-    | '/scripts/new'
+    | '/account/assets'
+    | '/account/notifications'
+    | '/account/rewards'
+    | '/account/subscription'
+    | '/admin/billing'
+    | '/admin/models'
+    | '/admin/tenants'
+    | '/characters/$characterId'
+    | '/characters/relations'
+    | '/projects/$projectId'
+    | '/scripts/$scriptId'
+    | '/showcase/$itemId'
+    | '/team/approvals'
+    | '/team/logs'
+    | '/team/members'
+    | '/team/usage'
+    | '/workspace/$workspaceId'
+    | '/account'
+    | '/admin'
+    | '/team'
+    | '/assets/$tab/$id'
   id:
     | '__root__'
     | '/'
+    | '/account'
+    | '/admin'
+    | '/assets'
     | '/bases'
     | '/characters'
     | '/home'
+    | '/login'
     | '/models'
     | '/pricing'
     | '/projects'
+    | '/register'
     | '/scripts'
     | '/showcase'
+    | '/team'
     | '/zoclaw'
-    | '/scripts/new'
+    | '/account/assets'
+    | '/account/notifications'
+    | '/account/rewards'
+    | '/account/subscription'
+    | '/admin/billing'
+    | '/admin/models'
+    | '/admin/tenants'
+    | '/characters/$characterId'
+    | '/characters/relations'
+    | '/projects/$projectId'
+    | '/scripts/$scriptId'
+    | '/showcase/$itemId'
+    | '/team/approvals'
+    | '/team/logs'
+    | '/team/members'
+    | '/team/usage'
+    | '/workspace/$workspaceId'
+    | '/account/'
+    | '/admin/'
+    | '/team/'
+    | '/assets_/$tab/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AccountRoute: typeof AccountRouteWithChildren
+  AdminRoute: typeof AdminRouteWithChildren
+  AssetsRoute: typeof AssetsRoute
   BasesRoute: typeof BasesRoute
-  CharactersRoute: typeof CharactersRoute
+  CharactersRoute: typeof CharactersRouteWithChildren
   HomeRoute: typeof HomeRoute
+  LoginRoute: typeof LoginRoute
   ModelsRoute: typeof ModelsRoute
   PricingRoute: typeof PricingRoute
-  ProjectsRoute: typeof ProjectsRoute
+  ProjectsRoute: typeof ProjectsRouteWithChildren
+  RegisterRoute: typeof RegisterRoute
   ScriptsRoute: typeof ScriptsRouteWithChildren
-  ShowcaseRoute: typeof ShowcaseRoute
+  ShowcaseRoute: typeof ShowcaseRouteWithChildren
+  TeamRoute: typeof TeamRouteWithChildren
   ZoclawRoute: typeof ZoclawRoute
+  WorkspaceWorkspaceIdRoute: typeof WorkspaceWorkspaceIdRoute
+  AssetsTabIdRoute: typeof AssetsTabIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -179,6 +493,13 @@ declare module '@tanstack/react-router' {
       path: '/zoclaw'
       fullPath: '/zoclaw'
       preLoaderRoute: typeof ZoclawRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/team': {
+      id: '/team'
+      path: '/team'
+      fullPath: '/team'
+      preLoaderRoute: typeof TeamRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/showcase': {
@@ -193,6 +514,13 @@ declare module '@tanstack/react-router' {
       path: '/scripts'
       fullPath: '/scripts'
       preLoaderRoute: typeof ScriptsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/register': {
+      id: '/register'
+      path: '/register'
+      fullPath: '/register'
+      preLoaderRoute: typeof RegisterRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/projects': {
@@ -216,6 +544,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ModelsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/login': {
+      id: '/login'
+      path: '/login'
+      fullPath: '/login'
+      preLoaderRoute: typeof LoginRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/home': {
       id: '/home'
       path: '/home'
@@ -237,6 +572,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BasesRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/assets': {
+      id: '/assets'
+      path: '/assets'
+      fullPath: '/assets'
+      preLoaderRoute: typeof AssetsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin': {
+      id: '/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AdminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/account': {
+      id: '/account'
+      path: '/account'
+      fullPath: '/account'
+      preLoaderRoute: typeof AccountRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -244,39 +600,288 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/scripts/new': {
-      id: '/scripts/new'
-      path: '/new'
-      fullPath: '/scripts/new'
-      preLoaderRoute: typeof ScriptsNewRouteImport
+    '/team/': {
+      id: '/team/'
+      path: '/'
+      fullPath: '/team/'
+      preLoaderRoute: typeof TeamIndexRouteImport
+      parentRoute: typeof TeamRoute
+    }
+    '/admin/': {
+      id: '/admin/'
+      path: '/'
+      fullPath: '/admin/'
+      preLoaderRoute: typeof AdminIndexRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/account/': {
+      id: '/account/'
+      path: '/'
+      fullPath: '/account/'
+      preLoaderRoute: typeof AccountIndexRouteImport
+      parentRoute: typeof AccountRoute
+    }
+    '/workspace/$workspaceId': {
+      id: '/workspace/$workspaceId'
+      path: '/workspace/$workspaceId'
+      fullPath: '/workspace/$workspaceId'
+      preLoaderRoute: typeof WorkspaceWorkspaceIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/team/usage': {
+      id: '/team/usage'
+      path: '/usage'
+      fullPath: '/team/usage'
+      preLoaderRoute: typeof TeamUsageRouteImport
+      parentRoute: typeof TeamRoute
+    }
+    '/team/members': {
+      id: '/team/members'
+      path: '/members'
+      fullPath: '/team/members'
+      preLoaderRoute: typeof TeamMembersRouteImport
+      parentRoute: typeof TeamRoute
+    }
+    '/team/logs': {
+      id: '/team/logs'
+      path: '/logs'
+      fullPath: '/team/logs'
+      preLoaderRoute: typeof TeamLogsRouteImport
+      parentRoute: typeof TeamRoute
+    }
+    '/team/approvals': {
+      id: '/team/approvals'
+      path: '/approvals'
+      fullPath: '/team/approvals'
+      preLoaderRoute: typeof TeamApprovalsRouteImport
+      parentRoute: typeof TeamRoute
+    }
+    '/showcase/$itemId': {
+      id: '/showcase/$itemId'
+      path: '/$itemId'
+      fullPath: '/showcase/$itemId'
+      preLoaderRoute: typeof ShowcaseItemIdRouteImport
+      parentRoute: typeof ShowcaseRoute
+    }
+    '/scripts/$scriptId': {
+      id: '/scripts/$scriptId'
+      path: '/$scriptId'
+      fullPath: '/scripts/$scriptId'
+      preLoaderRoute: typeof ScriptsScriptIdRouteImport
       parentRoute: typeof ScriptsRoute
+    }
+    '/projects/$projectId': {
+      id: '/projects/$projectId'
+      path: '/$projectId'
+      fullPath: '/projects/$projectId'
+      preLoaderRoute: typeof ProjectsProjectIdRouteImport
+      parentRoute: typeof ProjectsRoute
+    }
+    '/characters/relations': {
+      id: '/characters/relations'
+      path: '/relations'
+      fullPath: '/characters/relations'
+      preLoaderRoute: typeof CharactersRelationsRouteImport
+      parentRoute: typeof CharactersRoute
+    }
+    '/characters/$characterId': {
+      id: '/characters/$characterId'
+      path: '/$characterId'
+      fullPath: '/characters/$characterId'
+      preLoaderRoute: typeof CharactersCharacterIdRouteImport
+      parentRoute: typeof CharactersRoute
+    }
+    '/admin/tenants': {
+      id: '/admin/tenants'
+      path: '/tenants'
+      fullPath: '/admin/tenants'
+      preLoaderRoute: typeof AdminTenantsRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/models': {
+      id: '/admin/models'
+      path: '/models'
+      fullPath: '/admin/models'
+      preLoaderRoute: typeof AdminModelsRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/admin/billing': {
+      id: '/admin/billing'
+      path: '/billing'
+      fullPath: '/admin/billing'
+      preLoaderRoute: typeof AdminBillingRouteImport
+      parentRoute: typeof AdminRoute
+    }
+    '/account/subscription': {
+      id: '/account/subscription'
+      path: '/subscription'
+      fullPath: '/account/subscription'
+      preLoaderRoute: typeof AccountSubscriptionRouteImport
+      parentRoute: typeof AccountRoute
+    }
+    '/account/rewards': {
+      id: '/account/rewards'
+      path: '/rewards'
+      fullPath: '/account/rewards'
+      preLoaderRoute: typeof AccountRewardsRouteImport
+      parentRoute: typeof AccountRoute
+    }
+    '/account/notifications': {
+      id: '/account/notifications'
+      path: '/notifications'
+      fullPath: '/account/notifications'
+      preLoaderRoute: typeof AccountNotificationsRouteImport
+      parentRoute: typeof AccountRoute
+    }
+    '/account/assets': {
+      id: '/account/assets'
+      path: '/assets'
+      fullPath: '/account/assets'
+      preLoaderRoute: typeof AccountAssetsRouteImport
+      parentRoute: typeof AccountRoute
+    }
+    '/assets_/$tab/$id': {
+      id: '/assets_/$tab/$id'
+      path: '/assets/$tab/$id'
+      fullPath: '/assets/$tab/$id'
+      preLoaderRoute: typeof AssetsTabIdRouteImport
+      parentRoute: typeof rootRouteImport
     }
   }
 }
 
+interface AccountRouteChildren {
+  AccountAssetsRoute: typeof AccountAssetsRoute
+  AccountNotificationsRoute: typeof AccountNotificationsRoute
+  AccountRewardsRoute: typeof AccountRewardsRoute
+  AccountSubscriptionRoute: typeof AccountSubscriptionRoute
+  AccountIndexRoute: typeof AccountIndexRoute
+}
+
+const AccountRouteChildren: AccountRouteChildren = {
+  AccountAssetsRoute: AccountAssetsRoute,
+  AccountNotificationsRoute: AccountNotificationsRoute,
+  AccountRewardsRoute: AccountRewardsRoute,
+  AccountSubscriptionRoute: AccountSubscriptionRoute,
+  AccountIndexRoute: AccountIndexRoute,
+}
+
+const AccountRouteWithChildren =
+  AccountRoute._addFileChildren(AccountRouteChildren)
+
+interface AdminRouteChildren {
+  AdminBillingRoute: typeof AdminBillingRoute
+  AdminModelsRoute: typeof AdminModelsRoute
+  AdminTenantsRoute: typeof AdminTenantsRoute
+  AdminIndexRoute: typeof AdminIndexRoute
+}
+
+const AdminRouteChildren: AdminRouteChildren = {
+  AdminBillingRoute: AdminBillingRoute,
+  AdminModelsRoute: AdminModelsRoute,
+  AdminTenantsRoute: AdminTenantsRoute,
+  AdminIndexRoute: AdminIndexRoute,
+}
+
+const AdminRouteWithChildren = AdminRoute._addFileChildren(AdminRouteChildren)
+
+interface CharactersRouteChildren {
+  CharactersCharacterIdRoute: typeof CharactersCharacterIdRoute
+  CharactersRelationsRoute: typeof CharactersRelationsRoute
+}
+
+const CharactersRouteChildren: CharactersRouteChildren = {
+  CharactersCharacterIdRoute: CharactersCharacterIdRoute,
+  CharactersRelationsRoute: CharactersRelationsRoute,
+}
+
+const CharactersRouteWithChildren = CharactersRoute._addFileChildren(
+  CharactersRouteChildren,
+)
+
+interface ProjectsRouteChildren {
+  ProjectsProjectIdRoute: typeof ProjectsProjectIdRoute
+}
+
+const ProjectsRouteChildren: ProjectsRouteChildren = {
+  ProjectsProjectIdRoute: ProjectsProjectIdRoute,
+}
+
+const ProjectsRouteWithChildren = ProjectsRoute._addFileChildren(
+  ProjectsRouteChildren,
+)
+
 interface ScriptsRouteChildren {
-  ScriptsNewRoute: typeof ScriptsNewRoute
+  ScriptsScriptIdRoute: typeof ScriptsScriptIdRoute
 }
 
 const ScriptsRouteChildren: ScriptsRouteChildren = {
-  ScriptsNewRoute: ScriptsNewRoute,
+  ScriptsScriptIdRoute: ScriptsScriptIdRoute,
 }
 
 const ScriptsRouteWithChildren =
   ScriptsRoute._addFileChildren(ScriptsRouteChildren)
 
+interface ShowcaseRouteChildren {
+  ShowcaseItemIdRoute: typeof ShowcaseItemIdRoute
+}
+
+const ShowcaseRouteChildren: ShowcaseRouteChildren = {
+  ShowcaseItemIdRoute: ShowcaseItemIdRoute,
+}
+
+const ShowcaseRouteWithChildren = ShowcaseRoute._addFileChildren(
+  ShowcaseRouteChildren,
+)
+
+interface TeamRouteChildren {
+  TeamApprovalsRoute: typeof TeamApprovalsRoute
+  TeamLogsRoute: typeof TeamLogsRoute
+  TeamMembersRoute: typeof TeamMembersRoute
+  TeamUsageRoute: typeof TeamUsageRoute
+  TeamIndexRoute: typeof TeamIndexRoute
+}
+
+const TeamRouteChildren: TeamRouteChildren = {
+  TeamApprovalsRoute: TeamApprovalsRoute,
+  TeamLogsRoute: TeamLogsRoute,
+  TeamMembersRoute: TeamMembersRoute,
+  TeamUsageRoute: TeamUsageRoute,
+  TeamIndexRoute: TeamIndexRoute,
+}
+
+const TeamRouteWithChildren = TeamRoute._addFileChildren(TeamRouteChildren)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AccountRoute: AccountRouteWithChildren,
+  AdminRoute: AdminRouteWithChildren,
+  AssetsRoute: AssetsRoute,
   BasesRoute: BasesRoute,
-  CharactersRoute: CharactersRoute,
+  CharactersRoute: CharactersRouteWithChildren,
   HomeRoute: HomeRoute,
+  LoginRoute: LoginRoute,
   ModelsRoute: ModelsRoute,
   PricingRoute: PricingRoute,
-  ProjectsRoute: ProjectsRoute,
+  ProjectsRoute: ProjectsRouteWithChildren,
+  RegisterRoute: RegisterRoute,
   ScriptsRoute: ScriptsRouteWithChildren,
-  ShowcaseRoute: ShowcaseRoute,
+  ShowcaseRoute: ShowcaseRouteWithChildren,
+  TeamRoute: TeamRouteWithChildren,
   ZoclawRoute: ZoclawRoute,
+  WorkspaceWorkspaceIdRoute: WorkspaceWorkspaceIdRoute,
+  AssetsTabIdRoute: AssetsTabIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}
