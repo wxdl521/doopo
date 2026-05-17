@@ -32,8 +32,19 @@ const PORTRAITS: Record<string, Record<PortraitView, string>> = {
   'gen-ch-zhouxue': { front: zhouxueFront, side: zhouxueSide, back: zhouxueBack, expression: zhouxueExpr },
 }
 
+const FALLBACK_KEYS = ['gen-ch-linxia', 'gen-ch-jiangye', 'gen-ch-mengmeng', 'gen-ch-zhouxue'] as const
+
+function hashString(s: string): number {
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0
+  return Math.abs(h)
+}
+
 export default function CharacterPortrait({ character, className, view = 'front' }: Props) {
-  const src = PORTRAITS[character.id]?.[view]
+  // Real character imagery first; for AI-generated or unknown IDs, deterministically
+  // fall back to one of the bundled portraits so the UI never collapses to a flat swatch.
+  const fallbackKey = FALLBACK_KEYS[hashString(character.id) % FALLBACK_KEYS.length]
+  const src = PORTRAITS[character.id]?.[view] ?? PORTRAITS[fallbackKey][view]
   const accent = character.palette[2] ?? character.palette[0] ?? '#fbbf24'
 
   if (!src) {
