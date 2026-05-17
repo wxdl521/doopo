@@ -32,12 +32,12 @@ export default function CharacterStage({ character, views }: Props) {
     else if (e.key === 'Home') next = 0
     else if (e.key === 'End') next = tabs.length - 1
     const target = tabs[next]
+    // Move focus first so it stays in sync even if React batches the state update.
+    const btn = e.currentTarget.querySelector<HTMLButtonElement>(
+      `[data-view-tab="${target.value}"]`,
+    )
+    btn?.focus()
     setMode(target.value)
-    const root = e.currentTarget
-    requestAnimationFrame(() => {
-      const btn = root.querySelector<HTMLButtonElement>(`[data-view-tab="${target.value}"]`)
-      btn?.focus()
-    })
   }
 
   return (
