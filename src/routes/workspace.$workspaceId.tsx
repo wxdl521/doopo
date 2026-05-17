@@ -416,17 +416,17 @@ function WorkspacePage() {
       <div className="flex-1 min-h-0 flex flex-col">
         <div className="flex-1 min-h-0 rounded-2xl border border-border bg-gradient-to-b from-bg-elevated/30 to-bg-surface/60 overflow-hidden relative">
           {mode === 'main' ? (
-            <button
-              type="button"
-              onClick={onZoom}
-              className="group block w-full h-full focus:outline-none"
-              aria-label="放大主视图"
-            >
+            <div className="relative w-full h-full">
               <CharacterPortrait character={character} view="front" className="w-full h-full block" />
-              <span className="absolute top-3 right-3 inline-flex items-center gap-1 px-2 py-1 rounded-md bg-black/40 backdrop-blur-sm border border-white/15 text-[11px] text-white/80 opacity-0 group-hover:opacity-100 transition-opacity">
+              <button
+                type="button"
+                onClick={onZoom}
+                className="absolute top-3 right-3 inline-flex items-center gap-1 px-2 py-1 rounded-md bg-black/40 backdrop-blur-sm border border-white/15 text-[11px] text-white/80 hover:bg-black/60 hover:text-white transition"
+                aria-label="查看大图"
+              >
                 <ZoomIn size={12} /> 查看大图
-              </span>
-            </button>
+              </button>
+            </div>
           ) : (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-2 w-full h-full">
               {views.map((v) => (
@@ -467,7 +467,7 @@ function WorkspacePage() {
               ))}
             </div>
           </ViewThumb>
-          <div className="ml-auto text-xs text-text-muted">点击主图可放大查看</div>
+          <div className="ml-auto text-xs text-text-muted">点击缩略图切换主视图 / 多视图</div>
         </div>
       </div>
     )
