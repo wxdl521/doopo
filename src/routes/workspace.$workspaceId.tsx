@@ -361,15 +361,31 @@ function WorkspacePage() {
               <span className="ml-auto text-xs text-text-muted">{idx + 1} / {sorted.length} · 上下滑动切换</span>
             </div>
 
-            <CharacterStage character={c} views={views} onZoom={() => setPreviewChar(c)} />
+            <div className="flex-1 min-h-0 flex items-center justify-center gap-4">
+              {/* Left column: 性格 / 外形 */}
+              <div className="hidden md:flex flex-col gap-3 w-full max-w-[260px] h-[498px]">
+                <Field label="性格" value={c.personality} className="flex-1" />
+                <Field label="外形" value={c.look} className="flex-1" />
+              </div>
 
-            {/* Compact bible row */}
-            <div className="mt-4 grid grid-cols-2 lg:grid-cols-4 gap-3 shrink-0">
+              {/* Center stage */}
+              <CharacterStage character={c} views={views} onZoom={() => setPreviewChar(c)} />
+
+              {/* Right column: 动机 / 首场 */}
+              <div className="hidden md:flex flex-col gap-3 w-full max-w-[260px] h-[498px]">
+                <Field label="动机" value={c.motivation} className="flex-1" />
+                <Field label="首场" value={c.debutShot} className="flex-1" />
+              </div>
+            </div>
+
+            {/* Mobile fallback: stacked bible row */}
+            <div className="mt-4 grid grid-cols-2 gap-3 shrink-0 md:hidden">
               <Field label="外形" value={c.look} />
               <Field label="性格" value={c.personality} />
               <Field label="动机" value={c.motivation} />
               <Field label="首场" value={c.debutShot} />
             </div>
+
             <div className="flex items-center gap-2 mt-3 shrink-0">
               <span className="text-xs text-text-muted">配色</span>
               {c.palette.map((p) => (
@@ -382,11 +398,11 @@ function WorkspacePage() {
     )
   }
 
-  function Field({ label, value }: { label: string; value: string }) {
+  function Field({ label, value, className }: { label: string; value: string; className?: string }) {
     return (
-      <div className="rounded-lg border border-border bg-bg-elevated/40 px-3 py-2">
-        <div className="text-[10px] uppercase tracking-wide text-text-muted">{label}</div>
-        <div className="text-xs text-text-secondary mt-0.5 leading-relaxed">{value}</div>
+      <div className={`rounded-xl border border-border bg-bg-elevated/40 px-4 py-3 overflow-hidden ${className ?? ''}`}>
+        <div className="text-xs tracking-wide text-text-muted">{label}</div>
+        <div className="text-sm text-text-secondary mt-1.5 leading-relaxed">{value}</div>
       </div>
     )
   }
