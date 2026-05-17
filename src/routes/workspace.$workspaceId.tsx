@@ -11,6 +11,7 @@ import {
 import { generateStageAi } from '../lib/aiGenerate.functions'
 import { Maximize2, FileText, Camera, Clock, Users, X } from 'lucide-react'
 import CharacterPortrait from '../components/workspace/CharacterPortrait'
+import CharacterStage from '../components/workspace/CharacterStage'
 
 export const Route = createFileRoute('/workspace/$workspaceId')({
   head: ({ params }) => ({ meta: [{ title: `Workspace ${params.workspaceId} — Doopoo` }] }),
