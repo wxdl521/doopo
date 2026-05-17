@@ -470,7 +470,13 @@ function WorkspacePage() {
           )}
         </div>
         {/* Bottom thumbnail switcher: main view vs multi-view, matching the reference */}
-        <div className="mt-3 flex items-end gap-3 shrink-0 w-full" style={{ maxWidth: 372 }}>
+        <div
+          className="mt-3 flex items-end shrink-0 w-full"
+          style={{
+            maxWidth: 372,
+            gap: 'clamp(8px, 1.6vw, 14px)',
+          }}
+        >
           <ViewThumb
             active={mode === 'main'}
             onClick={() => setMode('main')}
@@ -491,7 +497,13 @@ function WorkspacePage() {
               ))}
             </div>
           </ViewThumb>
-          <div className="ml-auto text-[11px] text-text-muted text-right leading-tight hidden sm:block">
+          <div
+            className="ml-auto text-text-muted text-right hidden sm:block"
+            style={{
+              fontSize: 'clamp(10px, 1.1vw, 12px)',
+              lineHeight: 'clamp(12px, 1.4vw, 16px)',
+            }}
+          >
             点击缩略图<br />切换视图
           </div>
         </div>
@@ -514,22 +526,32 @@ function WorkspacePage() {
       <button
         type="button"
         onClick={onClick}
-        className="group flex flex-col items-center gap-1.5 shrink-0"
+        className="group flex flex-col items-center shrink-0"
+        style={{ gap: 'clamp(4px, 0.6vw, 8px)' }}
         aria-pressed={active}
       >
         <span
-          className={`relative block w-20 h-24 rounded-lg overflow-hidden border-2 transition-all ${
+          className={`relative block rounded-lg overflow-hidden border-2 transition-all ${
             active
               ? 'border-accent shadow-[0_0_0_3px_rgba(251,191,36,0.15)]'
               : 'border-border group-hover:border-text-muted'
           }`}
+          style={{
+            width: 'clamp(64px, 7vw, 88px)',
+            height: 'clamp(76px, 8.4vw, 104px)',
+          }}
         >
           {children}
         </span>
         <span
-          className={`text-[11px] leading-none font-medium whitespace-nowrap transition-colors ${
+          className={`font-medium whitespace-nowrap transition-colors ${
             active ? 'text-accent' : 'text-text-muted group-hover:text-text-secondary'
           }`}
+          style={{
+            fontSize: 'clamp(10px, 1.05vw, 12px)',
+            lineHeight: 'clamp(12px, 1.3vw, 15px)',
+            letterSpacing: '0.02em',
+          }}
         >
           {label}
         </span>
