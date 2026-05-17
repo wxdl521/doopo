@@ -443,10 +443,34 @@ function WorkspacePage() {
     onZoom: () => void
   }) {
     const [mode, setMode] = useState<'main' | 'multi'>('main')
+    const tabs: { value: 'main' | 'multi'; label: string; aria: string }[] = [
+      { value: 'main', label: '主视图', aria: `切换到 ${character.name} 主视图（正面全身）` },
+      { value: 'multi', label: '多视图', aria: `切换到 ${character.name} 多视图（正面 / 侧面 / 背面 / 表情）` },
+    ]
+    const onTabsKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight' && e.key !== 'Home' && e.key !== 'End') return
+      e.preventDefault()
+      const idx = tabs.findIndex((t) => t.value === mode)
+      let next = idx
+      if (e.key === 'ArrowLeft') next = (idx - 1 + tabs.length) % tabs.length
+      else if (e.key === 'ArrowRight') next = (idx + 1) % tabs.length
+      else if (e.key === 'Home') next = 0
+      else if (e.key === 'End') next = tabs.length - 1
+      const target = tabs[next]
+      setMode(target.value)
+      const root = e.currentTarget
+      requestAnimationFrame(() => {
+        const btn = root.querySelector<HTMLButtonElement>(`[data-view-tab="${target.value}"]`)
+        btn?.focus()
+      })
+    }
     return (
       <div className="flex-1 min-h-0 flex flex-col items-center">
         <div
           className="rounded-2xl border border-border bg-gradient-to-b from-bg-elevated/30 to-bg-surface/60 overflow-hidden relative shrink-0"
+          role="region"
+          aria-live="polite"
+          aria-label={`${character.name} ${mode === 'main' ? '主视图' : '多视图'}`}
           style={{ width: 372, height: 498 }}
         >
           {mode === 'main' ? (
@@ -472,6 +496,9 @@ function WorkspacePage() {
         {/* Bottom thumbnail switcher: main view vs multi-view, matching the reference */}
         <div
           className="mt-3 flex items-end shrink-0 w-full"
+          role="tablist"
+          aria-label="角色视图切换"
+          onKeyDown={onTabsKeyDown}
           style={{
             maxWidth: 372,
             gap: 'clamp(8px, 1.6vw, 14px)',
@@ -481,6 +508,8 @@ function WorkspacePage() {
             active={mode === 'main'}
             onClick={() => setMode('main')}
             label="主视图"
+            value="main"
+            ariaLabel={tabs[0].aria}
           >
             <CharacterPortrait character={character} view="front" className="w-full h-full block" />
           </ViewThumb>
@@ -488,8 +517,10 @@ function WorkspacePage() {
             active={mode === 'multi'}
             onClick={() => setMode('multi')}
             label="多视图"
+            value="multi"
+            ariaLabel={tabs[1].aria}
           >
-            <div className="grid grid-cols-2 grid-rows-2 w-full h-full gap-px bg-border">
+            <div className="grid grid-cols-2 grid-rows-2 w-full h-full gap-px bg-border" aria-hidden="true">
               {views.map((v) => (
                 <div key={v.key} className="relative overflow-hidden">
                   <CharacterPortrait character={character} view={v.key} className="w-full h-full block" />
@@ -499,14 +530,16 @@ function WorkspacePage() {
           </ViewThumb>
           <div
             className="ml-auto text-text-muted text-right hidden sm:block"
+            aria-hidden="true"
             style={{
               fontSize: 'clamp(10px, 1.1vw, 12px)',
               lineHeight: 'clamp(12px, 1.4vw, 16px)',
             }}
           >
-            点击缩略图<br />切换视图
+            点击缩略图 / 方向键<br />切换视图
           </div>
         </div>
+        <p className="sr-only">使用左右方向键在主视图与多视图之间切换，回车或空格键确认。</p>
       </div>
     )
   }
@@ -515,20 +548,28 @@ function WorkspacePage() {
     active,
     onClick,
     label,
+    value,
+    ariaLabel,
     children,
   }: {
     active: boolean
     onClick: () => void
     label: string
+    value: 'main' | 'multi'
+    ariaLabel: string
     children: ReactNode
   }) {
     return (
       <button
         type="button"
         onClick={onClick}
-        className="group flex flex-col items-center shrink-0"
+        className="group flex flex-col items-center shrink-0 rounded-lg focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background"
         style={{ gap: 'clamp(4px, 0.6vw, 8px)' }}
-        aria-pressed={active}
+        role="tab"
+        aria-selected={active}
+        aria-label={ariaLabel}
+        tabIndex={active ? 0 : -1}
+        data-view-tab={value}
       >
         <span
           className={`relative block rounded-lg overflow-hidden border-2 transition-all ${
@@ -540,6 +581,7 @@ function WorkspacePage() {
             width: 'clamp(64px, 7vw, 88px)',
             height: 'clamp(76px, 8.4vw, 104px)',
           }}
+          aria-hidden="true"
         >
           {children}
         </span>
@@ -552,6 +594,7 @@ function WorkspacePage() {
             lineHeight: 'clamp(12px, 1.3vw, 15px)',
             letterSpacing: '0.02em',
           }}
+          aria-hidden="true"
         >
           {label}
         </span>
