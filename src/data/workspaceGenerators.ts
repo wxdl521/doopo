@@ -179,6 +179,13 @@ export function generateCharacters(): GenCharacter[] {
       debutShot: '黄昏自习室，逆光剪影 + 钢笔特写',
       palette: ['#0f172a', '#475569', '#fbbf24', '#f8fafc'],
       swatch: grad('#1e293b', '#fbbf24'),
+      mbti: 'INFP',
+      keyProp: '钢笔',
+      relations: [
+        { targetId: 'gen-ch-jiangye', label: '暗恋', summary: '互相试探，谁都不肯先开口' },
+        { targetId: 'gen-ch-mengmeng', label: '闺蜜', summary: '被小萌一路推着往前走' },
+        { targetId: 'gen-ch-zhouxue', label: '压制', summary: '被周学姐当反面典型盯上' },
+      ],
     },
     {
       id: 'gen-ch-jiangye',
@@ -192,6 +199,13 @@ export function generateCharacters(): GenCharacter[] {
       debutShot: '广播站推门进入，逆光面部半暗',
       palette: ['#0ea5e9', '#1e3a8a', '#fde68a', '#0f172a'],
       swatch: grad('#0ea5e9', '#1e3a8a'),
+      mbti: 'ESFP',
+      keyProp: '广播稿',
+      relations: [
+        { targetId: 'gen-ch-linxia', label: '暗恋', summary: '迟钝直球，把告白稿藏在广播稿里' },
+        { targetId: 'gen-ch-zhouxue', label: '上下级', summary: '被站长抓现行，差点关广播' },
+        { targetId: 'gen-ch-mengmeng', label: '同盟', summary: '被小萌偷偷传纸条提醒' },
+      ],
     },
     {
       id: 'gen-ch-mengmeng',
@@ -205,6 +219,12 @@ export function generateCharacters(): GenCharacter[] {
       debutShot: '操场尖叫的中近景',
       palette: ['#ec4899', '#f472b6', '#fde68a'],
       swatch: grad('#ec4899', '#f472b6'),
+      mbti: 'ENFP',
+      keyProp: '便签条',
+      relations: [
+        { targetId: 'gen-ch-linxia', label: '闺蜜', summary: '24 小时同步播报林夏心情' },
+        { targetId: 'gen-ch-jiangye', label: '助攻', summary: '偷偷给江野递信号' },
+      ],
     },
     {
       id: 'gen-ch-zhouxue',
@@ -218,6 +238,12 @@ export function generateCharacters(): GenCharacter[] {
       debutShot: '广播站门口冷脸特写',
       palette: ['#1f2937', '#6b7280', '#ef4444'],
       swatch: grad('#1f2937', '#ef4444'),
+      mbti: 'ENTJ',
+      keyProp: '资料夹',
+      relations: [
+        { targetId: 'gen-ch-jiangye', label: '压制', summary: '盯紧江野的每一次开麦' },
+        { targetId: 'gen-ch-linxia', label: '警告', summary: '把林夏列入"重点观察"' },
+      ],
     },
   ]
 }
