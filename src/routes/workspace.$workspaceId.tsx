@@ -442,7 +442,9 @@ function WorkspacePage() {
           {rows.map((r) => (
             <div key={r.label} className="flex gap-3 py-2.5">
               <dt className="text-xs text-text-muted shrink-0 w-10 pt-0.5 tracking-wide">{r.label}</dt>
-              <dd className="text-sm text-text-secondary leading-relaxed flex-1 min-w-0 break-words">{r.value}</dd>
+              <dd className="text-sm text-text-secondary leading-relaxed flex-1 min-w-0 break-words">
+                <ClampText text={r.value} label={r.label} />
+              </dd>
             </div>
           ))}
         </dl>
