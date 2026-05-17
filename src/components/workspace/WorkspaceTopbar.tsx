@@ -43,12 +43,12 @@ export default function WorkspaceTopbar({
         <span className="text-text-secondary">{t.ws_new_workspace}</span>
         <span className="text-text-muted">/</span>
         <div className="relative">
-          <button onClick={() => setEpOpen((v) => !v)} className="inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-bg-elevated">
+          <button onClick={() => { setEpOpen((v) => !v); setMoreOpen(false) }} className="inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-bg-elevated">
             <span className="font-semibold">{t.ws_episode_prefix}{episode}{t.ws_episode_suffix}</span>
             <ChevronDown size={14} />
           </button>
           {epOpen && (
-            <div className="absolute top-full left-0 mt-1 min-w-[140px] bg-bg-surface border border-border rounded-lg shadow-card py-1 z-30">
+            <div className="absolute top-full left-0 mt-1 min-w-[140px] bg-bg-surface border border-border rounded-lg shadow-card py-1 z-[100]">
               {[1, 2, 3].map((n) => (
                 <button key={n} onClick={() => { onEpisodeChange(n); setEpOpen(false) }}
                   className={`w-full text-left px-3 py-1.5 text-sm hover:bg-bg-elevated ${n === episode ? 'text-accent' : ''}`}>
@@ -62,11 +62,11 @@ export default function WorkspaceTopbar({
         </div>
 
         <div className="relative">
-          <button onClick={() => setMoreOpen((v) => !v)} className="p-1 rounded-md hover:bg-bg-elevated text-text-muted">
+          <button onClick={() => { setMoreOpen((v) => !v); setEpOpen(false) }} className="p-1 rounded-md hover:bg-bg-elevated text-text-muted">
             <MoreHorizontal size={16} />
           </button>
           {moreOpen && (
-            <div className="absolute top-full left-0 mt-1 min-w-[180px] bg-bg-surface border border-border rounded-lg shadow-card py-1 z-30" onMouseLeave={() => setMoreOpen(false)}>
+            <div className="absolute top-full left-0 mt-1 min-w-[180px] bg-bg-surface border border-border rounded-lg shadow-card py-1 z-[100]" onMouseLeave={() => setMoreOpen(false)}>
               <NewProjectDialog
                 trigger={
                   <button className="w-full text-left px-3 py-1.5 text-sm hover:bg-bg-elevated inline-flex items-center gap-2">
