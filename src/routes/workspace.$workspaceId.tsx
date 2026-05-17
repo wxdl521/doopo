@@ -372,27 +372,7 @@ function WorkspacePage() {
               <span className="ml-auto text-xs text-text-muted">{idx + 1} / {sorted.length} · 上下滑动切换</span>
             </div>
 
-            {/* Three-view sheet — directly visible, four orthographic views */}
-            <div className="grid grid-cols-4 gap-3 flex-1 min-h-0">
-              {views.map((v) => (
-                <button
-                  key={v.key}
-                  type="button"
-                  onClick={() => setPreviewChar(c)}
-                  className="card overflow-hidden flex flex-col group focus:outline-none focus:ring-2 focus:ring-accent"
-                >
-                  <div className="flex-1 min-h-0 relative">
-                    <CharacterPortrait character={c} view={v.key} className="w-full h-full block" />
-                    <span className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
-                      <ZoomIn size={20} className="text-white" />
-                    </span>
-                  </div>
-                  <div className="px-3 py-2 text-xs text-text-secondary border-t border-border bg-bg-elevated/40 text-center">
-                    {v.label}
-                  </div>
-                </button>
-              ))}
-            </div>
+            <CharacterStage character={c} views={views} onZoom={() => setPreviewChar(c)} />
 
             {/* Compact bible row */}
             <div className="mt-4 grid grid-cols-2 lg:grid-cols-4 gap-3 shrink-0">
