@@ -402,14 +402,17 @@ function WorkspacePage() {
   }) {
     const [mode, setMode] = useState<'main' | 'multi'>('main')
     return (
-      <div className="flex-1 min-h-0 flex flex-col">
-        <div className="flex-1 min-h-0 rounded-2xl border border-border bg-gradient-to-b from-bg-elevated/30 to-bg-surface/60 overflow-hidden relative">
+      <div className="flex-1 min-h-0 flex flex-col items-center">
+        <div
+          className="rounded-2xl border border-border bg-gradient-to-b from-bg-elevated/30 to-bg-surface/60 overflow-hidden relative shrink-0"
+          style={{ width: 372, height: 498 }}
+        >
           {mode === 'main' ? (
             <div className="relative w-full h-full">
               <CharacterPortrait character={character} view="front" className="w-full h-full block" />
             </div>
           ) : (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-2 w-full h-full">
+            <div className="grid grid-cols-2 grid-rows-2 gap-2 p-2 w-full h-full">
               {views.map((v) => (
                 <div
                   key={v.key}
@@ -425,7 +428,7 @@ function WorkspacePage() {
           )}
         </div>
         {/* Bottom thumbnail switcher: main view vs multi-view, matching the reference */}
-        <div className="mt-3 flex items-center gap-3 shrink-0">
+        <div className="mt-3 flex items-center gap-3 shrink-0 w-full" style={{ maxWidth: 372 }}>
           <ViewThumb
             active={mode === 'main'}
             onClick={() => setMode('main')}
