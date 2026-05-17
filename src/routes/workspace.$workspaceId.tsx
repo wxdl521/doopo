@@ -419,6 +419,31 @@ function WorkspacePage() {
     )
   }
 
+  function ClampText({ text, label, maxLines = 3, threshold = 80 }: { text: string; label: string; maxLines?: number; threshold?: number }) {
+    const [expanded, setExpanded] = useState(false)
+    const clampable = text.length > threshold
+    if (!clampable) return <span>{text}</span>
+    return (
+      <div>
+        <p
+          className={expanded ? '' : 'overflow-hidden'}
+          style={expanded ? undefined : { display: '-webkit-box', WebkitLineClamp: maxLines, WebkitBoxOrient: 'vertical' as const }}
+        >
+          {text}
+        </p>
+        <button
+          type="button"
+          onClick={() => setExpanded((v) => !v)}
+          aria-expanded={expanded}
+          aria-label={`${expanded ? '收起' : '展开'} ${label}`}
+          className="mt-1 text-[11px] text-text-muted hover:text-text-primary transition underline-offset-2 hover:underline"
+        >
+          {expanded ? '收起' : '展开全部'}
+        </button>
+      </div>
+    )
+  }
+
   function CharacterDossier({ character, cast }: { character: GenCharacter; cast: GenCharacter[] }) {
     const rows: { label: string; value: string }[] = [
       { label: '外形', value: character.look },
