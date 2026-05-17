@@ -461,7 +461,7 @@ function WorkspacePage() {
                   className="relative rounded-xl overflow-hidden border border-border bg-bg-elevated/30"
                 >
                   <CharacterPortrait character={character} view={v.key} className="w-full h-full block" />
-                  <span className="absolute bottom-0 inset-x-0 px-2 py-1 text-[11px] text-white/90 bg-gradient-to-t from-black/70 to-transparent text-center">
+                  <span className="absolute top-1.5 left-1.5 px-1.5 py-0.5 text-[10px] leading-none rounded-md bg-black/55 text-white/95 backdrop-blur-sm border border-white/10 max-w-[calc(100%-12px)] truncate">
                     {v.label}
                   </span>
                 </div>
@@ -470,7 +470,7 @@ function WorkspacePage() {
           )}
         </div>
         {/* Bottom thumbnail switcher: main view vs multi-view, matching the reference */}
-        <div className="mt-3 flex items-center gap-3 shrink-0 w-full" style={{ maxWidth: 372 }}>
+        <div className="mt-3 flex items-end gap-3 shrink-0 w-full" style={{ maxWidth: 372 }}>
           <ViewThumb
             active={mode === 'main'}
             onClick={() => setMode('main')}
@@ -491,7 +491,9 @@ function WorkspacePage() {
               ))}
             </div>
           </ViewThumb>
-          <div className="ml-auto text-xs text-text-muted">点击缩略图切换主视图 / 多视图</div>
+          <div className="ml-auto text-[11px] text-text-muted text-right leading-tight hidden sm:block">
+            点击缩略图<br />切换视图
+          </div>
         </div>
       </div>
     )
@@ -512,15 +514,23 @@ function WorkspacePage() {
       <button
         type="button"
         onClick={onClick}
-        className={`relative w-20 h-24 rounded-lg overflow-hidden border-2 transition-all ${
-          active ? 'border-accent shadow-[0_0_0_3px_rgba(251,191,36,0.15)]' : 'border-border hover:border-text-muted'
-        }`}
+        className="group flex flex-col items-center gap-1.5 shrink-0"
         aria-pressed={active}
       >
-        {children}
-        <span className={`absolute bottom-0 inset-x-0 text-[10px] py-0.5 text-center font-medium ${
-          active ? 'bg-accent text-black' : 'bg-black/60 text-white/90'
-        }`}>
+        <span
+          className={`relative block w-20 h-24 rounded-lg overflow-hidden border-2 transition-all ${
+            active
+              ? 'border-accent shadow-[0_0_0_3px_rgba(251,191,36,0.15)]'
+              : 'border-border group-hover:border-text-muted'
+          }`}
+        >
+          {children}
+        </span>
+        <span
+          className={`text-[11px] leading-none font-medium whitespace-nowrap transition-colors ${
+            active ? 'text-accent' : 'text-text-muted group-hover:text-text-secondary'
+          }`}
+        >
           {label}
         </span>
       </button>
