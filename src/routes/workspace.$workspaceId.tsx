@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { Fragment, useState } from 'react'
+import { Fragment, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { useServerFn } from '@tanstack/react-start'
 import WorkspaceTopbar, { type WorkspaceTab } from '../components/workspace/WorkspaceTopbar'
@@ -482,7 +482,7 @@ function WorkspacePage() {
     active: boolean
     onClick: () => void
     label: string
-    children: React.ReactNode
+    children: ReactNode
   }) {
     return (
       <button
