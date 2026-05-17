@@ -353,17 +353,43 @@ function WorkspacePage() {
             key={c.id}
             className="snap-start h-[calc(100vh-3rem)] flex flex-col px-6 py-5"
           >
-            <div className="flex items-center gap-3 mb-4 shrink-0">
-              <Users size={16} className="text-accent" />
-              <h2 className="font-display text-lg font-bold">{c.name}</h2>
-              <span className={`text-[10px] px-1.5 py-0.5 rounded border ${ROLE_TONE[c.role]}`}>{c.roleLabel}</span>
-              <span className="text-xs text-text-muted">{c.age} 岁</span>
-              <span className="ml-auto text-xs text-text-muted">{idx + 1} / {sorted.length} · 上下滑动切换</span>
+            <div className="flex items-center gap-3 mb-4 shrink-0 min-w-0">
+              <span
+                className="w-1 h-7 rounded-full shrink-0"
+                style={{ background: c.palette[0] ?? 'var(--accent)' }}
+                aria-hidden
+              />
+              <h2 className="font-display text-xl font-bold tracking-tight truncate">{c.name}</h2>
+              {(() => {
+                const [primary, ...rest] = c.roleLabel.split('·').map((s) => s.trim()).filter(Boolean)
+                const archetype = rest.join(' · ')
+                return (
+                  <>
+                    <span className={`shrink-0 text-[11px] px-2 py-0.5 rounded-full border ${ROLE_TONE[c.role]}`}>
+                      {primary || ROLE_LABEL_FALLBACK[c.role]}
+                    </span>
+                    {archetype && (
+                      <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full border border-border bg-bg-elevated/60 text-text-secondary truncate max-w-[180px]">
+                        {archetype}
+                      </span>
+                    )}
+                  </>
+                )
+              })()}
+              <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full border border-border bg-bg-elevated/60 text-text-muted">
+                {c.age} 岁
+              </span>
+              <span className="ml-auto shrink-0 text-xs text-text-muted tabular-nums hidden sm:inline">
+                {idx + 1} / {sorted.length} · 上下滑动切换
+              </span>
+              <span className="ml-auto shrink-0 text-xs text-text-muted tabular-nums sm:hidden">
+                {idx + 1}/{sorted.length}
+              </span>
             </div>
 
             <div className="flex-1 min-h-0 flex items-center justify-center gap-4">
               {/* Left column: 性格 / 外形 */}
-              <div className="hidden md:flex flex-col gap-3 w-full max-w-[260px] h-[498px]">
+              <div className="hidden lg:flex flex-col gap-3 w-full max-w-[240px] h-[498px]">
                 <Field label="性格" value={c.personality} className="flex-1" />
                 <Field label="外形" value={c.look} className="flex-1" />
               </div>
@@ -372,14 +398,14 @@ function WorkspacePage() {
               <CharacterStage character={c} views={views} onZoom={() => setPreviewChar(c)} />
 
               {/* Right column: 动机 / 首场 */}
-              <div className="hidden md:flex flex-col gap-3 w-full max-w-[260px] h-[498px]">
+              <div className="hidden lg:flex flex-col gap-3 w-full max-w-[240px] h-[498px]">
                 <Field label="动机" value={c.motivation} className="flex-1" />
                 <Field label="首场" value={c.debutShot} className="flex-1" />
               </div>
             </div>
 
-            {/* Mobile fallback: stacked bible row */}
-            <div className="mt-4 grid grid-cols-2 gap-3 shrink-0 md:hidden">
+            {/* Tablet/mobile fallback: stacked bible row */}
+            <div className="mt-4 grid grid-cols-2 gap-3 shrink-0 lg:hidden">
               <Field label="外形" value={c.look} />
               <Field label="性格" value={c.personality} />
               <Field label="动机" value={c.motivation} />
