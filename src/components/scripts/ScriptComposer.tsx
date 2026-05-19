@@ -16,18 +16,17 @@ import { useLanguage } from '../../i18n/LanguageContext'
 import {
   streamSynopsis,
   streamEpisodeScenes,
-  streamCharacters,
 } from '../../lib/scriptAgent.functions'
 import { upsertScript, type SavedScript } from '../../lib/scriptStorage'
 
 // 5 步对话式剧本智能体
-type Stage = 'setup' | 'synopsis' | 'episode' | 'characters' | 'done'
-const STAGES: Stage[] = ['setup', 'synopsis', 'episode', 'characters', 'done']
+type Stage = 'setup' | 'synopsis' | 'episode' | 'episodes' | 'done'
+const STAGES: Stage[] = ['setup', 'synopsis', 'episode', 'episodes', 'done']
 const STAGE_LABELS: Record<Stage, string> = {
   setup: '① 灵感',
   synopsis: '② 故事梗概',
   episode: '③ 分镜脚本',
-  characters: '④ 角色卡',
+  episodes: '④ 多剧集',
   done: '⑤ 完成',
 }
 
@@ -57,7 +56,6 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
   const navigate = useNavigate()
   const callSynopsis = useServerFn(streamSynopsis)
   const callEpisode = useServerFn(streamEpisodeScenes)
-  const callCharacters = useServerFn(streamCharacters)
 
   const [stage, setStage] = useState<Stage>('setup')
   const [loading, setLoading] = useState(false)
@@ -75,8 +73,10 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
 
   // 流式聚合结果
   const [synopsisText, setSynopsisText] = useState('')
-  const [episodeText, setEpisodeText] = useState('')
-  const [charactersText, setCharactersText] = useState('')
+  const [episodes, setEpisodes] = useState<{ epIndex: number; text: string }[]>([])
+  // 下一集要生成的集号 / 分镜数
+  const [nextEpIndex, setNextEpIndex] = useState(2)
+  const [nextSceneCount, setNextSceneCount] = useState(15)
 
   // 聊天气泡
   const [bubbles, setBubbles] = useState<Bubble[]>([
@@ -176,32 +176,61 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
     const stream = (await callEpisode({
       data: { lang, epIndex: 1, sceneCount, synopsisText, model },
     })) as AsyncIterable<StreamChunk>
-    const res = await consume(stream, id, setEpisodeText)
+    const res = await consume(stream, id, (text) => {
+      setEpisodes([{ epIndex: 1, text }])
+    })
     setLoading(false)
-    if (res.ok) setStage('episode')
+    if (res.ok) {
+      setStage('episodes')
+      setNextEpIndex(2)
+    }
   }
 
-  const runCharacters = async () => {
+  // 多剧集：生成下一集
+  const runNextEpisode = async () => {
     if (!synopsisText) return
     setError(null)
     setLoading(true)
-    pushBubble({ role: 'user', text: '✅ 确认分镜，生成角色卡' })
-    const id = pushBubble({ role: 'agent', text: '', streaming: true, stage: 'characters' })
-    const stream = (await callCharacters({
-      data: { lang, synopsisText, episodeText, model },
+    pushBubble({
+      role: 'user',
+      text: `▶︎ 继续生成第 ${nextEpIndex} 集（分镜数：${nextSceneCount}）`,
+    })
+    const id = pushBubble({ role: 'agent', text: '', streaming: true, stage: 'episodes' })
+    // 把已有集合的最后一集摘要喂回去，避免重复
+    const lastEpText = episodes[episodes.length - 1]?.text ?? ''
+    const contextSynopsis = lastEpText
+      ? `${synopsisText}\n\n【上一集（第 ${episodes[episodes.length - 1].epIndex} 集）摘要参考】\n${lastEpText.slice(-2000)}`
+      : synopsisText
+    const stream = (await callEpisode({
+      data: {
+        lang,
+        epIndex: nextEpIndex,
+        sceneCount: nextSceneCount,
+        synopsisText: contextSynopsis,
+        model,
+      },
     })) as AsyncIterable<StreamChunk>
-    const res = await consume(stream, id, setCharactersText)
+    const epIndexNow = nextEpIndex
+    const res = await consume(stream, id, (text) => {
+      setEpisodes((prev) => {
+        const others = prev.filter((e) => e.epIndex !== epIndexNow)
+        return [...others, { epIndex: epIndexNow, text }].sort((a, b) => a.epIndex - b.epIndex)
+      })
+    })
     setLoading(false)
-    if (res.ok) setStage('characters')
+    if (res.ok) setNextEpIndex(epIndexNow + 1)
   }
 
-  const finalize = () => {
+  // 中途保存 / 完成保存（可被多次调用，复用同一 id）
+  const savedIdRef = useRef<string | null>(null)
+  const persist = (markDone: boolean) => {
     const id = `scr-${Date.now()}`
-    // 从 synopsis 文本里提取主标题《...》
+    const finalId = savedIdRef.current ?? id
+    savedIdRef.current = finalId
     const titleMatch = synopsisText.match(/《([^》]+)》/)
     const title = titleMatch?.[1] ?? theme ?? '未命名剧本'
     const item: SavedScript = {
-      id,
+      id: finalId,
       title,
       plot,
       type,
@@ -209,24 +238,29 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
       tone,
       model,
       synopsisText,
-      episodesText: episodeText ? [{ epIndex: 1, text: episodeText }] : undefined,
-      charactersText,
+      episodesText: episodes.length > 0 ? episodes : undefined,
       expectedEpisodes,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }
     upsertScript(item)
     onSaved?.()
-    setStage('done')
-    pushBubble({ role: 'system', text: `✅ 已保存到剧本库：《${title}》` })
-    return id
+    if (markDone) setStage('done')
+    pushBubble({
+      role: 'system',
+      text: markDone
+        ? `✅ 已完成并保存到剧本库：《${title}》（共 ${episodes.length} 集）`
+        : `💾 已保存进度到剧本库：《${title}》（当前 ${episodes.length} 集）`,
+    })
+    return finalId
   }
 
   const reset = () => {
     setStage('setup')
     setSynopsisText('')
-    setEpisodeText('')
-    setCharactersText('')
+    setEpisodes([])
+    setNextEpIndex(2)
+    savedIdRef.current = null
     setBubbles([
       {
         id: 'welcome',
