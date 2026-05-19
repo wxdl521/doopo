@@ -400,34 +400,63 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
             <RefreshCw size={12} /> 重写本集分镜
           </button>
           <button
-            onClick={runCharacters}
+            onClick={() => {
+              setStage('episodes')
+              setNextEpIndex(2)
+              pushBubble({
+                role: 'system',
+                text: '已进入"多剧集"阶段：可指定下一集分镜数并逐集生成，随时保存进度。',
+              })
+            }}
             disabled={loading || !synopsisText}
             className="btn-primary text-xs ml-auto disabled:opacity-40"
           >
             {loading ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
-            确认 · 生成角色卡
+            进入多剧集阶段
           </button>
         </ActionBar>
       )}
 
-      {stage === 'characters' && (
+      {stage === 'episodes' && (
         <ActionBar>
+          <span className="text-xs text-text-muted">
+            已生成 {episodes.length} 集 · 下一集：第 {nextEpIndex} 集
+          </span>
+          <label className="text-xs text-text-muted ml-2">分镜数</label>
+          <input
+            type="number"
+            min={5}
+            max={30}
+            value={nextSceneCount}
+            onChange={(e) =>
+              setNextSceneCount(Math.max(5, Math.min(30, Number(e.target.value) || 15)))
+            }
+            className="w-16 rounded-lg bg-bg-elevated border border-border text-sm text-text-primary px-2 py-1.5 focus:outline-none focus:border-accent/50"
+          />
           <button
-            onClick={runCharacters}
+            onClick={runNextEpisode}
             disabled={loading}
             className="btn-ghost text-xs disabled:opacity-40"
           >
-            <RefreshCw size={12} /> 重新生成角色卡
+            {loading ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+            生成第 {nextEpIndex} 集
+          </button>
+          <button
+            onClick={() => persist(false)}
+            disabled={loading || episodes.length === 0}
+            className="btn-ghost text-xs ml-auto disabled:opacity-40"
+          >
+            <Save size={12} /> 保存进度
           </button>
           <button
             onClick={() => {
-              const id = finalize()
+              const id = persist(true)
               navigate({ to: '/scripts/$scriptId', params: { scriptId: id } })
             }}
-            disabled={loading}
-            className="btn-primary text-xs ml-auto disabled:opacity-40"
+            disabled={loading || episodes.length === 0}
+            className="btn-primary text-xs disabled:opacity-40"
           >
-            <Save size={13} /> 保存并完成
+            <Check size={13} /> 完成并查看
           </button>
         </ActionBar>
       )}
