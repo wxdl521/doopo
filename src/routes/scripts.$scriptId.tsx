@@ -201,9 +201,9 @@ function AgentTextBlock({ title, text }: { title: string; text: string }) {
   return (
     <div>
       <div className="font-display font-bold text-sm mb-2 text-accent">{title}</div>
-      <pre className="whitespace-pre-wrap break-words text-sm leading-relaxed text-text-primary font-mono bg-bg-base/40 border border-border rounded-lg p-3 max-h-[640px] overflow-y-auto">
+      <div className="whitespace-pre-wrap break-words text-sm leading-7 text-text-primary bg-bg-base/40 border border-border rounded-lg p-4 max-h-[640px] overflow-y-auto">
         {text}
-      </pre>
+      </div>
     </div>
   )
 }
