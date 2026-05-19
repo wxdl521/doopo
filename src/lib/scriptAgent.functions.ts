@@ -196,7 +196,7 @@ const SYS_SYNOPSIS_ZH = `你是一位资深短剧爆款编剧。根据用户灵�
 
 const SYS_SYNOPSIS_EN = `You are a seasoned short-drama screenwriter. From the user idea, produce a complete framework: basic info, story outline, chapter table, character dossiers, in plain English markdown text. Always finish with a "Confirmation Checklist" asking how many storyboards the user wants for Episode 1 (default 15-20).`
 
-export const streamSynopsis = createServerFn({ method: 'POST', response: 'raw' })
+export const streamSynopsis = createServerFn({ method: 'POST' })
   .inputValidator((d: unknown) => SynopsisInput.parse(d))
   .handler(async function* ({ data }) {
     const sys = data.lang === 'zh' ? SYS_SYNOPSIS_ZH : SYS_SYNOPSIS_EN
@@ -251,7 +251,7 @@ const SYS_EPISODE_ZH = `你是一位资深短剧分镜师，请基于已确认�
 
 const SYS_EPISODE_EN = `You are a seasoned short-drama storyboarder. Produce Episode N storyboards in plain English following the same structure, then 9-episode rolling summary, then a confirmation question.`
 
-export const streamEpisodeScenes = createServerFn({ method: 'POST', response: 'raw' })
+export const streamEpisodeScenes = createServerFn({ method: 'POST' })
   .inputValidator((d: unknown) => EpisodeInput.parse(d))
   .handler(async function* ({ data }) {
     const sys = (data.lang === 'zh' ? SYS_EPISODE_ZH : SYS_EPISODE_EN)
@@ -293,7 +293,7 @@ const SYS_CHARACTERS_ZH = `你是资深角色设计师，基于已有故事梗�
 
 const SYS_CHARACTERS_EN = `You are a character designer. Output character dossiers in plain English following the same fields.`
 
-export const streamCharacters = createServerFn({ method: 'POST', response: 'raw' })
+export const streamCharacters = createServerFn({ method: 'POST' })
   .inputValidator((d: unknown) => CharactersInput.parse(d))
   .handler(async function* ({ data }) {
     const sys = data.lang === 'zh' ? SYS_CHARACTERS_ZH : SYS_CHARACTERS_EN
