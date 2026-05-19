@@ -11,6 +11,9 @@ import {
   Send,
   Bot,
   User as UserIcon,
+  History,
+  RotateCcw,
+  Pencil,
 } from 'lucide-react'
 import { useLanguage } from '../../i18n/LanguageContext'
 import {
@@ -73,7 +76,7 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
 
   // 流式聚合结果
   const [synopsisText, setSynopsisText] = useState('')
-  const [episodes, setEpisodes] = useState<{ epIndex: number; text: string }[]>([])
+  const [episodes, setEpisodes] = useState<EpisodeItem[]>([])
   // 下一集要生成的集号 / 分镜数
   const [nextEpIndex, setNextEpIndex] = useState(2)
   const [nextSceneCount, setNextSceneCount] = useState(15)
@@ -461,6 +464,14 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
         </ActionBar>
       )}
 
+      {(stage === 'episodes' || stage === 'done') && episodes.length > 0 && (
+        <EpisodeEditor
+          episodes={episodes as EpisodeItem[]}
+          setEpisodes={setEpisodes as React.Dispatch<React.SetStateAction<EpisodeItem[]>>}
+          onSaveSnapshot={() => persist(false)}
+        />
+      )}
+
       {stage === 'done' && (
         <div className="flex justify-center pt-2">
           <button onClick={reset} className="btn-ghost text-xs">
@@ -509,6 +520,145 @@ function ActionBar({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-border pt-3">
       {children}
+    </div>
+  )
+}
+
+// ============ 分集编辑器 ============
+
+type EpisodeVersion = { text: string; savedAt: string; label?: string }
+type EpisodeItem = { epIndex: number; text: string; versions?: EpisodeVersion[] }
+
+function EpisodeEditor({
+  episodes,
+  setEpisodes,
+  onSaveSnapshot,
+}: {
+  episodes: EpisodeItem[]
+  setEpisodes: React.Dispatch<React.SetStateAction<EpisodeItem[]>>
+  onSaveSnapshot: () => void
+}) {
+  return (
+    <div className="space-y-3 pt-3 border-t border-border">
+      <div className="flex items-center gap-2">
+        <Pencil size={14} className="text-accent" />
+        <h3 className="font-semibold text-text-primary text-sm">分集编辑 · 直接修改台词与画面描述</h3>
+        <span className="text-xs text-text-muted">共 {episodes.length} 集 · 每次保存生成一个版本</span>
+      </div>
+      <div className="space-y-3">
+        {episodes.map((ep) => (
+          <EpisodeCard
+            key={ep.epIndex}
+            ep={ep}
+            onChange={(text) =>
+              setEpisodes((prev) =>
+                prev.map((e) => (e.epIndex === ep.epIndex ? { ...e, text } : e)),
+              )
+            }
+            onSaveVersion={(label) => {
+              setEpisodes((prev) =>
+                prev.map((e) => {
+                  if (e.epIndex !== ep.epIndex) return e
+                  const versions = e.versions ? [...e.versions] : []
+                  versions.unshift({
+                    text: e.text,
+                    savedAt: new Date().toISOString(),
+                    label: label || `v${versions.length + 1}`,
+                  })
+                  return { ...e, versions }
+                }),
+              )
+              // 立刻持久化到剧本库
+              setTimeout(onSaveSnapshot, 0)
+            }}
+            onRevert={(versionIndex) => {
+              setEpisodes((prev) =>
+                prev.map((e) => {
+                  if (e.epIndex !== ep.epIndex) return e
+                  const v = e.versions?.[versionIndex]
+                  if (!v) return e
+                  return { ...e, text: v.text }
+                }),
+              )
+            }}
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function EpisodeCard({
+  ep,
+  onChange,
+  onSaveVersion,
+  onRevert,
+}: {
+  ep: EpisodeItem
+  onChange: (text: string) => void
+  onSaveVersion: (label?: string) => void
+  onRevert: (versionIndex: number) => void
+}) {
+  const [showHistory, setShowHistory] = useState(false)
+  const [versionLabel, setVersionLabel] = useState('')
+  return (
+    <div className="rounded-xl border border-border bg-bg-base/40 p-3 space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-sm font-semibold text-text-primary">第 {ep.epIndex} 集</span>
+        <span className="text-[11px] text-text-muted">
+          {ep.text.length} 字 · {ep.versions?.length ?? 0} 个历史版本
+        </span>
+        <div className="ml-auto flex items-center gap-1">
+          <input
+            value={versionLabel}
+            onChange={(e) => setVersionLabel(e.target.value)}
+            placeholder="版本备注（可选）"
+            className="w-36 rounded-md bg-bg-elevated border border-border text-xs text-text-primary px-2 py-1 focus:outline-none focus:border-accent/50 placeholder:text-text-muted"
+          />
+          <button
+            onClick={() => {
+              onSaveVersion(versionLabel.trim() || undefined)
+              setVersionLabel('')
+            }}
+            className="btn-primary text-xs"
+          >
+            <Save size={12} /> 保存版本
+          </button>
+          <button
+            onClick={() => setShowHistory((v) => !v)}
+            disabled={!ep.versions?.length}
+            className="btn-ghost text-xs disabled:opacity-40"
+          >
+            <History size={12} /> 历史
+          </button>
+        </div>
+      </div>
+      <textarea
+        value={ep.text}
+        onChange={(e) => onChange(e.target.value)}
+        rows={12}
+        className="w-full rounded-lg bg-bg-elevated border border-border text-sm text-text-primary p-3 leading-7 font-mono focus:outline-none focus:border-accent/50 resize-y min-h-[200px]"
+      />
+      {showHistory && ep.versions && ep.versions.length > 0 && (
+        <ul className="space-y-1 pt-1 border-t border-border">
+          {ep.versions.map((v, i) => (
+            <li
+              key={i}
+              className="flex items-center gap-2 text-xs text-text-muted rounded-md px-2 py-1 hover:bg-bg-elevated/60"
+            >
+              <span className="text-text-primary font-medium">{v.label ?? `v${ep.versions!.length - i}`}</span>
+              <span>{new Date(v.savedAt).toLocaleString()}</span>
+              <span className="text-text-muted/70">{v.text.length} 字</span>
+              <button
+                onClick={() => onRevert(i)}
+                className="ml-auto inline-flex items-center gap-1 text-accent hover:underline"
+              >
+                <RotateCcw size={11} /> 回滚到此版本
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   )
 }
