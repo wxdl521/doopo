@@ -1,85 +1,95 @@
-## 目标
+# 剧本生成流程升级方案
 
-把"新建项目 → 角色"里 4 张分散的字段卡（外形/性格/动机/首场）改造成一块统一的**角色档案信息面板**，并补充 1-2 个轻量标签与关系网摘要；同时把侧栏并排显示的断点从 `lg`（≥1024px）降到 `md`（≥768px），让用户在 888px 预览里也能看到主图+档案左右并排。略缩图切换器位置保持现状（在主图正下方），但确认在新断点下不会被压缩。
+## 1. 新流程（5 步 + 对话式确认）
 
-## 当前问题
-
-1. 4 张独立卡片像视觉碎片，无法一眼读完角色档案。
-2. `lg:hidden / lg:flex` 断点把 888px 预览推到了 2×2 底部 fallback，主图两侧空着。
-3. 角色没有关系信息，看不出 4 个角色彼此如何咬合。
-4. 没有 MBTI / 关键道具一类的速读标签。
-
-## 新布局结构
-
-```text
-┌─────────────────────────────────────────────────────────────┐
-│ ▍林夏  [女主] [高冷学霸] [17 岁] [INFP] [钢笔]   2/4 上下滑动 │
-├──────────────┬──────────────────────┬──────────────────────┤
-│              │                      │ 角色档案              │
-│              │                      │ ─────────────────     │
-│  主图 372×498 │                     │ 外形  ……              │
-│              │                      │ 性格  ……              │
-│              │                      │ 动机  ……              │
-│              │                      │ 首场  ……              │
-│              │                      │ ─────────────────     │
-│              │                      │ 关系网                │
-│              │                      │ ↔ 江野  暗恋 / 互相试探│
-│              │                      │ ↔ 小萌  闺蜜推手       │
-│              │                      │ ↔ 周学姐 上下级压制    │
-├──────────────┴──────────────────────┴──────────────────────┤
-│ [主视图] [多视图]    点击缩略图 / 方向键切换    配色 ●●●●     │
-└─────────────────────────────────────────────────────────────┘
+```
+① 灵感(Setup)  →  ② 故事梗概/一句话剧情  →  ③ 分镜脚本(第1集)  →  ④ 角色卡  →  ⑤ 完成
 ```
 
-要点：
-- **左/中/右三栏取消**，改成「主图 + 右侧单一档案面板」两栏布局。888px 视口右侧约 380px 可放下档案。
-- **档案面板内部**用一个圆角容器、`divide-y` 分隔行，每行 `label · 值` 对齐，去掉 4 张独立卡片的边框堆叠。
-- **关系网摘要**渲染在档案面板下半部分，自动从同一 cast 推导（例：`lead↔lead → 暗恋 / 互相试探`，`lead↔supporting → 闺蜜推手`，`lead↔villain → 上下级压制`，`villain↔supporting → 警告`）。在 mock generator 里加一张关系矩阵，避免每次重新算。
-- **轻量标签**：在 header 右侧 chip 群里新增 2 个 chip
-  - MBTI：根据 `personality` 关键词映射（克制/敏感 → INFP；直球/迟钝 → ESFP；热情/嘴快 → ENFP；强势/控制 → ENTJ）。
-  - 关键道具：从 `debutShot` / `look` 里抽一个关键名词（mock 直接在 generator 里手填一个 `keyProp` 字段最稳）。
-- **断点**：把侧栏的 `hidden lg:flex` 改为 `hidden md:flex`，底部 fallback 改为 `md:hidden`。在 768–1023px 仍能并排。
-- **长文本处理**：档案面板设置 `max-h-[498px] overflow-y-auto`，与主图等高对齐，超长滚动；header chip 全部 `shrink-0 truncate max-w-…`，确保不撑破 372×498 主图区域。
-- **略缩图切换器**：保持 `CharacterStage` 内现状（已在主图正下方，clamp 字号），在新布局下验证 372px 宽度不被新断点挤压。
+每步在同一聊天面板内推进，AI 以**逐字流式**输出当前阶段内容，结束后给出"📋 同步确认信息清单"，用户回复"确认"或修改建议后才进入下一步。
 
-## 技术细节
+## 2. 各步骤输出内容
 
-1. **`src/data/workspaceGenerators.ts`**
-   - 给 `GenCharacter` 增补两个可选字段：`mbti?: string`、`keyProp?: string`。
-   - 4 个角色补 MBTI 与 keyProp。
-   - 新增 `generateCharacterRelations()` 或在 `generateCharacters()` 返回值里挂 `relations: { targetId, label, summary }[]`，写一张 4×4 关系表（只保留每角色 2–3 条最相关边）。
+**② 故事梗概**（首屏即给出深化框架，纯文本）
+- 剧本基本信息（主标题 / 题材 / 爽点 / 受众 / 集数 / 基调）
+- 故事大纲（一句话卖点 / 三句简介 起承转合 / 完整剧情大纲分段）
+- 章节结构表（按集数范围、标题范例、核心事件、爽点反转、悬念，4 列）
+- 人设档案（主角/反派/女配/男配：外貌/性格/金手指或可恨之处/经典台词）
+- 末尾追问：第 1 集分镜数量？默认 15-20
 
-2. **`src/routes/workspace.$workspaceId.tsx` → `CharacterView`**
-   - Header chip 行追加 MBTI / keyProp chip（与 role/age chip 一致样式，颜色偏中性）。
-   - 删除三栏 flex 布局，改为两栏 grid：
-     - `grid-cols-[372px_1fr] gap-5 md:grid` 在 ≥md 启用。
-     - 主图列保留 `CharacterStage`（含略缩图切换器）。
-     - 档案列渲染新组件 `CharacterDossier`（同文件内 function）。
-   - 把现有 4-field mobile fallback 改为 `md:hidden`，并在 fallback 里也渲染 `CharacterDossier`（只读同一组件，单列），避免代码分叉。
+**③ 分镜脚本**：第 1 集完整分镜（按用户确认数量），每个分镜含场标 + 动作 + 对白；同时输出"后续 2-10 集概要"；末尾追问"是否继续生成第 2 集 / 调整建议"。
 
-3. **新组件 `CharacterDossier`（在同文件内）**
-   - props: `character: GenCharacter`, `cast: GenCharacter[]`
-   - 上半段：`<dl class="divide-y divide-border/60">`，每个 row `<dt class="text-xs text-text-muted w-16 shrink-0">` + `<dd class="text-sm text-text-secondary leading-relaxed">`。
-   - 中段标题 `关系网` + 列表，每条 `↔ 角色名（chip 颜色取 ROLE_TONE） · 关系标签 · 一行摘要`。
-   - 容器：`rounded-2xl border bg-bg-elevated/40 px-5 py-4 h-[498px] overflow-y-auto`。
+**④ 角色卡**：复用 ② 的人设档案 → 升级为可视化角色卡（沿用现有 `PipelineCharacter` 字段 + 新增 mbti/关键道具/经典台词/关系）。
 
-4. **样式细节**
-   - 档案行高度自适应，关键值如「动机」「首场」可以多行，行间 `py-2.5`。
-   - 关系名通过 `<button>` 触发滚动到该角色 section（用 `document.getElementById` + `scrollIntoView({behavior:'smooth'})`），section 已有 `key={c.id}`，加一个 `id={c.id}` 即可。
-   - 在 a11y 上：dossier 用 `<dl>`，关系网用 `<ul role="list">`；按钮带 `aria-label="跳转到角色 江野"`。
+**⑤ 完成**：保存 `SavedScript`，提供按 Markdown 导出选项；UI 展示用纯文本。
 
-5. **断点回归**
-   - 验证 888px 视口：372 主图 + 5px gap + 511px dossier，足够；header chip 行用 `flex-wrap` 防溢出。
-   - 验证 ≥1024px 仍美观（dossier 列变宽到 ~700px，关系网两栏化用 `sm:columns-2` 在面板内做轻量两栏）。
-   - 验证 <768px：单列堆叠，dossier 在主图下方，自然滚动。
+## 3. 前端改造（`src/components/scripts/ScriptComposer.tsx`）
 
-## 不在范围内
+把 6 步分散面板 → **对话式工作台**：
+- 左/上：步骤进度条（① 灵感 → ⑤ 完成）
+- 主区：消息流（AI 流式气泡 + 用户确认气泡），AI 气況内按段渐进追加文本
+- 底部：当前步骤的输入/确认条
+  - ① 主题 + 剧情概要 + 类型/题材/风格/集数
+  - ② "确认 / 重新生成 / 修改建议"
+  - ③ 输入分镜数量 → "确认 / 重写第 N 镜 / 删除"
+  - ④ "确认角色卡 / 重新生成"
+  - ⑤ 保存 + 导出
 
-- 角色编辑、AI 重生成按钮（沿用现状）。
-- CharacterStage 内部略缩图切换器的样式（已在上轮迭代完成，不再调整）。
-- 关系网的可视化连线图（本轮只做文字摘要）。
+**渲染规则**：聊天区按 `whitespace-pre-wrap` 纯文本展示（含 emoji/`#`/`*` 字符），不走 Markdown 渲染；只有"导出"按钮调用现有 `exportScript.ts` 输出 Markdown 文件。
 
-## 风险
+## 4. 后端改造（新文件 + 替换现有 4 个 step fn）
 
-- MBTI / 关系网是 mock 推导，用户若期待真实 AI 输出需在后续接 `aiGenerate`。本次只保证布局占位真实可读。
-- 把断点从 lg 降到 md 后，旧的 lg 视图需要重新核对密度，文档中已写明在 1024px 以上启用 dossier 内部两栏。
+### 4.1 新建流式服务器函数 `src/lib/scriptAgent.functions.ts`
+
+采用 TanStack `createServerFn` + `async function*` 流式输出（参考 knowledge `tanstack-server-functions` 的 AI 流式段），直接 fetch Lovable AI Gateway `chat/completions` 并 `stream: true`，逐 token `yield { delta }`，结尾 `yield { done, structured }`。
+
+导出：
+- `streamSynopsis(input)` → 故事梗概（输出长文本 + 解析后的结构 JSON）
+- `streamEpisodeScenes({ ep, sceneCount, context })` → 第 N 集分镜
+- `streamCharacters({ context })` → 角色卡
+- `streamRewriteScene({ scene, instruction, context })`（保留改写能力）
+
+每个函数：
+1. system prompt 指定**先用纯文本按指定章节标题逐段输出**，最后追加一行 `<<<JSON>>>` 后给出严格 JSON（便于客户端解析为可保存的结构化数据）。
+2. 服务器一边把上游 SSE 切分一边 `yield { delta }`；解析到 `<<<JSON>>>` 后切到 `structuredBuf`；流结束 `JSON.parse(structuredBuf)` 并 `yield { done: true, data }`。
+3. 出错走现有 `rate_limit` / `no_credits` 错误码。
+
+### 4.2 默认模型
+默认 `lovable:google/gemini-3-flash-preview`（最快），保留 OpenRouter 切换。
+
+### 4.3 客户端消费
+```ts
+const stream = await streamSynopsis({ data: input });
+for await (const chunk of stream) {
+  if (chunk.delta) appendToBubble(chunk.delta);
+  else if (chunk.done) setSynopsisData(chunk.data);
+}
+```
+
+### 4.4 老函数处理
+保留 `genLogline / genOutline / genScenes / genCharacters / rewriteScene`（旧 Scripts 详情页可能引用），但新 Composer 不再使用；若发现旧引用一并替换或保留只读。
+
+## 5. 数据模型扩展（`src/lib/scriptStorage.ts`）
+
+`SavedScript` 新增：
+- `basicInfo`：{ subtitleType, hookCore, audience, expectedEpisodes, mood }
+- `chapterTable`：Array<{ range, titles[], coreEvent, hook, suspense }>
+- `episodes`：Array<{ epIndex, scenes: PipelineScene[], summary: string }>
+- `nextEpisodesOutline`：Array<{ epIndex, summary }>
+
+## 6. 任务拆分
+
+1. 写 `scriptAgent.functions.ts`（streaming + 系统提示词 + JSON 解析）。
+2. 重写 `ScriptComposer.tsx` 为对话式 5 步面板（流式追加 + 确认条）。
+3. 扩展 `SavedScript` 与 `exportScript.ts`（按新结构导出 Markdown）。
+4. 更新 `src/pages/Scripts.tsx`（标题/副标题文案对齐"剧本智能体"）。
+5. 兼容：旧 `scripts.$scriptId.tsx` 详情页按可选字段渲染新区块。
+
+## 7. 验证
+
+- 手测：输入"天雷圣子"灵感 → 完成 5 步 → 重载后详情页展示完整结构。
+- 流式：第一次响应 < 1.5s 出首字；中断网络给出错误并保留已输入内容。
+- 导出：Markdown 内含基本信息表 + 章节结构表 + 第 1 集分镜 + 后续概要。
+
+---
+确认无误后，我将按此方案进入实现。如对**流式 UI 形态**（对话气泡 vs 单一文本卡片）或**首屏是否一次性给完整框架**有偏好，请告知。
