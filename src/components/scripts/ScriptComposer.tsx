@@ -11,6 +11,9 @@ import {
   Send,
   Bot,
   User as UserIcon,
+  History,
+  RotateCcw,
+  Pencil,
 } from 'lucide-react'
 import { useLanguage } from '../../i18n/LanguageContext'
 import {
@@ -459,6 +462,14 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
             <Check size={13} /> 完成并查看
           </button>
         </ActionBar>
+      )}
+
+      {(stage === 'episodes' || stage === 'done') && episodes.length > 0 && (
+        <EpisodeEditor
+          episodes={episodes as EpisodeItem[]}
+          setEpisodes={setEpisodes as React.Dispatch<React.SetStateAction<EpisodeItem[]>>}
+          onSaveSnapshot={() => persist(false)}
+        />
       )}
 
       {stage === 'done' && (
