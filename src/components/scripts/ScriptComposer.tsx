@@ -16,6 +16,7 @@ import {
   History,
   RotateCcw,
   Pencil,
+  StopCircle,
 } from 'lucide-react'
 import { useLanguage } from '../../i18n/LanguageContext'
 import {
@@ -82,6 +83,10 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
   // 下一集要生成的集号 / 分镜数
   const [nextEpIndex, setNextEpIndex] = useState(2)
   const [nextSceneCount, setNextSceneCount] = useState(15)
+  // 自动连续生成至第 N 集
+  const [targetEpisode, setTargetEpisode] = useState(10)
+  const [autoRunning, setAutoRunning] = useState(false)
+  const stopAutoRef = useRef(false)
 
   // 聊天气泡
   const [bubbles, setBubbles] = useState<Bubble[]>([
@@ -188,42 +193,107 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
     if (res.ok) {
       setStage('episodes')
       setNextEpIndex(2)
+      setTargetEpisode((v) => Math.max(v, Math.min(expectedEpisodes, 10)))
     }
   }
 
-  // 多剧集：生成下一集
-  const runNextEpisode = async () => {
-    if (!synopsisText) return
-    setError(null)
-    setLoading(true)
+  // 多剧集：生成指定集（可被自动连跑复用，使用入参避免闭包陈旧）
+  async function generateEpisode(opts: {
+    epIndex: number
+    sceneCount: number
+    prevText: string
+    prevEpIndex: number | null
+  }): Promise<{ ok: boolean; text: string }> {
     pushBubble({
       role: 'user',
-      text: `▶︎ 继续生成第 ${nextEpIndex} 集（分镜数：${nextSceneCount}）`,
+      text: `▶︎ 生成第 ${opts.epIndex} 集（分镜数：${opts.sceneCount}）`,
     })
     const id = pushBubble({ role: 'agent', text: '', streaming: true, stage: 'episodes' })
-    // 把已有集合的最后一集摘要喂回去，避免重复
-    const lastEpText = episodes[episodes.length - 1]?.text ?? ''
-    const contextSynopsis = lastEpText
-      ? `${synopsisText}\n\n【上一集（第 ${episodes[episodes.length - 1].epIndex} 集）摘要参考】\n${lastEpText.slice(-2000)}`
+    const contextSynopsis = opts.prevText
+      ? `${synopsisText}\n\n【上一集（第 ${opts.prevEpIndex} 集）摘要参考】\n${opts.prevText.slice(-2000)}`
       : synopsisText
     const stream = (await callEpisode({
       data: {
         lang,
-        epIndex: nextEpIndex,
-        sceneCount: nextSceneCount,
+        epIndex: opts.epIndex,
+        sceneCount: opts.sceneCount,
         synopsisText: contextSynopsis,
         model,
       },
     })) as AsyncIterable<StreamChunk>
-    const epIndexNow = nextEpIndex
-    const res = await consume(stream, id, (text) => {
+    return consume(stream, id, (text) => {
       setEpisodes((prev) => {
-        const others = prev.filter((e) => e.epIndex !== epIndexNow)
-        return [...others, { epIndex: epIndexNow, text }].sort((a, b) => a.epIndex - b.epIndex)
+        const others = prev.filter((e) => e.epIndex !== opts.epIndex)
+        return [...others, { epIndex: opts.epIndex, text }].sort((a, b) => a.epIndex - b.epIndex)
       })
     })
+  }
+
+  const runNextEpisode = async () => {
+    if (!synopsisText) return
+    setError(null)
+    setLoading(true)
+    const last = episodes[episodes.length - 1]
+    const res = await generateEpisode({
+      epIndex: nextEpIndex,
+      sceneCount: nextSceneCount,
+      prevText: last?.text ?? '',
+      prevEpIndex: last?.epIndex ?? null,
+    })
     setLoading(false)
-    if (res.ok) setNextEpIndex(epIndexNow + 1)
+    if (res.ok) setNextEpIndex(nextEpIndex + 1)
+  }
+
+  // 自动连续生成：从当前 nextEpIndex 一路生成到 targetEpisode
+  const runUntilTarget = async () => {
+    if (!synopsisText) return
+    const target = Math.max(nextEpIndex, Math.min(expectedEpisodes, targetEpisode))
+    if (target < nextEpIndex) return
+    setError(null)
+    setAutoRunning(true)
+    setLoading(true)
+    stopAutoRef.current = false
+    pushBubble({
+      role: 'system',
+      text: `🚀 开始自动连续生成第 ${nextEpIndex} ~ ${target} 集（共 ${target - nextEpIndex + 1} 集）`,
+    })
+    let cur = nextEpIndex
+    let prevText = episodes[episodes.length - 1]?.text ?? ''
+    let prevIdx: number | null = episodes[episodes.length - 1]?.epIndex ?? null
+    try {
+      while (cur <= target) {
+        if (stopAutoRef.current) {
+          pushBubble({ role: 'system', text: `⏸ 已停止，已完成至第 ${cur - 1} 集。` })
+          break
+        }
+        const res = await generateEpisode({
+          epIndex: cur,
+          sceneCount: nextSceneCount,
+          prevText,
+          prevEpIndex: prevIdx,
+        })
+        if (!res.ok) {
+          pushBubble({ role: 'system', text: `❌ 第 ${cur} 集生成失败，已中断自动连跑。` })
+          break
+        }
+        prevText = res.text
+        prevIdx = cur
+        setNextEpIndex(cur + 1)
+        cur += 1
+        if ((cur - 1) % 3 === 0) persist(false)
+      }
+      if (cur > target && !stopAutoRef.current) {
+        pushBubble({ role: 'system', text: `🎉 已完成自动连续生成至第 ${target} 集。` })
+        persist(false)
+      }
+    } finally {
+      setAutoRunning(false)
+      setLoading(false)
+    }
+  }
+
+  const stopAuto = () => {
+    stopAutoRef.current = true
   }
 
   // 中途保存 / 完成保存（可被多次调用，复用同一 id）
@@ -440,15 +510,42 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
           />
           <button
             onClick={runNextEpisode}
-            disabled={loading}
+            disabled={loading || autoRunning}
             className="btn-ghost text-xs disabled:opacity-40"
           >
             {loading ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
             生成第 {nextEpIndex} 集
           </button>
+          <label className="text-xs text-text-muted ml-2">连跑至第</label>
+          <input
+            type="number"
+            min={nextEpIndex}
+            max={expectedEpisodes}
+            value={targetEpisode}
+            onChange={(e) =>
+              setTargetEpisode(
+                Math.max(1, Math.min(expectedEpisodes, Number(e.target.value) || nextEpIndex)),
+              )
+            }
+            className="w-16 rounded-lg bg-bg-elevated border border-border text-sm text-text-primary px-2 py-1.5 focus:outline-none focus:border-accent/50"
+          />
+          <span className="text-xs text-text-muted">集（共 {expectedEpisodes}）</span>
+          {autoRunning ? (
+            <button onClick={stopAuto} className="btn-ghost text-xs text-red-300">
+              <StopCircle size={12} /> 停止
+            </button>
+          ) : (
+            <button
+              onClick={runUntilTarget}
+              disabled={loading || targetEpisode < nextEpIndex}
+              className="btn-ghost text-xs disabled:opacity-40"
+            >
+              <Sparkles size={12} /> 自动连续生成
+            </button>
+          )}
           <button
             onClick={() => persist(false)}
-            disabled={loading || episodes.length === 0}
+            disabled={loading || autoRunning || episodes.length === 0}
             className="btn-ghost text-xs ml-auto disabled:opacity-40"
           >
             <Save size={12} /> 保存进度
@@ -458,7 +555,7 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
               const id = persist(true)
               navigate({ to: '/scripts/$scriptId', params: { scriptId: id } })
             }}
-            disabled={loading || episodes.length === 0}
+            disabled={loading || autoRunning || episodes.length === 0}
             className="btn-primary text-xs disabled:opacity-40"
           >
             <Check size={13} /> 完成并查看
