@@ -1,6 +1,8 @@
 import { createFileRoute, Link, notFound } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { ArrowLeft, Download, GitBranch, FileText, Sparkles, Activity, Zap, MessageCircle } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import PageHeader from '../components/PageHeader'
 import { mockScripts, type ScriptItem } from '../data/mock'
 import { useLanguage } from '../i18n/LanguageContext'
@@ -201,8 +203,8 @@ function AgentTextBlock({ title, text }: { title: string; text: string }) {
   return (
     <div>
       <div className="font-display font-bold text-sm mb-2 text-accent">{title}</div>
-      <div className="whitespace-pre-wrap break-words text-sm leading-7 text-text-primary bg-bg-base/40 border border-border rounded-lg p-4 max-h-[640px] overflow-y-auto">
-        {text}
+      <div className="break-words text-sm leading-7 text-text-primary bg-bg-base/40 border border-border rounded-lg p-4 max-h-[640px] overflow-y-auto prose prose-invert prose-sm max-w-none prose-headings:mt-4 prose-headings:mb-2 prose-strong:text-accent">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
       </div>
     </div>
   )
