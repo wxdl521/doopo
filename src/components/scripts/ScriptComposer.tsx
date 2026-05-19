@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { useServerFn } from '@tanstack/react-start'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import {
   Loader2,
   Sparkles,
@@ -493,6 +495,7 @@ function ChatBubble({ bubble }: { bubble: Bubble }) {
       <div className="text-center text-xs text-text-muted py-1">{bubble.text}</div>
     )
   }
+  const isAgent = bubble.role === 'agent'
   return (
     <div className={`flex gap-2 ${isUser ? 'flex-row-reverse' : ''}`}>
       <div
@@ -503,13 +506,21 @@ function ChatBubble({ bubble }: { bubble: Bubble }) {
         {isUser ? <UserIcon size={13} /> : <Bot size={13} />}
       </div>
       <div
-        className={`max-w-[88%] rounded-xl px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap break-words ${
+        className={`max-w-[88%] rounded-xl px-3 py-2 text-sm leading-relaxed break-words ${
           isUser
             ? 'bg-accent text-bg-base'
-            : 'bg-bg-elevated/60 text-text-primary border border-border/60'
+            : 'bg-bg-elevated/60 text-text-primary border border-border/60 prose prose-invert prose-sm max-w-none prose-headings:mt-3 prose-headings:mb-2 prose-p:my-2 prose-li:my-0.5 prose-strong:text-accent'
         }`}
       >
-        {bubble.text || (bubble.streaming ? '…' : '')}
+        {isAgent ? (
+          bubble.text ? (
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{bubble.text}</ReactMarkdown>
+          ) : bubble.streaming ? (
+            '…'
+          ) : null
+        ) : (
+          <span className="whitespace-pre-wrap">{bubble.text}</span>
+        )}
         {bubble.streaming && <span className="inline-block w-1.5 h-3 ml-0.5 bg-accent animate-pulse align-middle" />}
       </div>
     </div>
