@@ -53,7 +53,7 @@ export default function Scripts() {
     <div className="animate-fade-in space-y-6">
       <div className="text-center">
         <h1 className="font-display text-4xl font-bold">{t.scripts_title}</h1>
-        <p className="text-text-secondary mt-1">剧本智能体 · 5 步对话式创作：灵感 → 故事梗概 → 分镜脚本 → 角色卡 → 完成</p>
+        <p className="text-text-secondary mt-1">剧本智能体 · 5 步对话式创作：灵感 → 故事梗概 → 分镜脚本 → 多剧集（逐集生成 · 可中途保存）→ 完成</p>
       </div>
 
       <ScriptComposer
