@@ -497,7 +497,6 @@ function ChatBubble({ bubble }: { bubble: Bubble }) {
             ? 'bg-accent text-bg-base'
             : 'bg-bg-elevated/60 text-text-primary border border-border/60'
         }`}
-        style={isUser ? undefined : { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
       >
         {bubble.text || (bubble.streaming ? '…' : '')}
         {bubble.streaming && <span className="inline-block w-1.5 h-3 ml-0.5 bg-accent animate-pulse align-middle" />}
