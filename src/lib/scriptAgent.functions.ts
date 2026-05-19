@@ -3,7 +3,8 @@ import { z } from 'zod'
 
 // ============================================================
 // 剧本智能体 — 流式生成（Lovable AI Gateway，async generator）
-// 5 步：① 灵感  →  ② 故事梗概  →  ③ 第N集分镜  →  ④ 角色卡  →  ⑤ 完成
+// 5 步：① 灵感 → ② 故事梗概 → ③ 第1集分镜 → ④ 多剧集（逐集生成） → ⑤ 完成
+// 所有 prompt 要求输出"文章/小说式纯文本"，禁止 markdown 标题、表格、列表符号。
 // 每个 step 服务器以 async function* 形式 yield { delta }，
 // 流结束后再 yield { done: true, text }。客户端逐字追加渲染。
 // ============================================================
@@ -140,61 +141,21 @@ const SynopsisInput = z.object({
   model: z.string().optional(),
 })
 
-const SYS_SYNOPSIS_ZH = `你是一位资深短剧爆款编剧。根据用户灵感，输出一份完整的"剧本基本信息 + 故事大纲 + 章节结构表 + 人设档案"的纯文本框架。
+const SYS_SYNOPSIS_ZH = `你是一位资深短剧爆款编剧。请基于用户给出的灵感，以"文章式散文"的方式写出一份完整的故事梗概。
 
-硬性要求：
-1) 全文使用 emoji + Markdown 风格章节标题（# / ## / *），便于阅读，但禁止额外解说；
-2) 严格按以下结构与顺序输出，不要遗漏任何小节：
+严格要求：
+1) 全文使用自然段落散文表达，禁止使用任何 Markdown 符号（# / * / - / | / \`\`\` 等），禁止使用表格、项目符号、emoji；段落之间用空行分隔；
+2) 行文像一篇短篇小说式的策划稿，叙述清晰、富有画面感、节奏紧凑；
+3) 按以下顺序撰写，每部分用一段自然小标题句开头（不加 #），后接 1~3 段散文：
+   一、剧本基本信息：开门见山写出作品名《...》与一句话定位，自然带出题材类型、核心爽点、目标受众、预计集数、情绪基调；
+   二、故事大纲：先用一句话点题，再用一段写"起承转合"，再用一段写完整剧情走向（按 1-5 / 6-10 / 11-30 / 31-60 / 61-90 / 91-末 集分段叙述）；
+   三、章节结构：按集数段（如"第 1-5 集"）分段散文叙述核心事件、爽点反转与悬念，不要使用表格；
+   四、人物小传：对主角、核心反派、关键女配、关键男配各写一段，融入外貌、性格、动机、金手指或可恨之处，以及一句经典台词（用中文引号包裹）；
 
-# 📺 剧本基本信息
-* 主标题：《...》
-* 信息卡片：
-  * 题材类型：
-  * 核心爽点：
-  * 目标受众：
-  * 预计集数：N 集（单集 1-2 分钟）
-  * 情绪基调：
+4) 文末另起一段，写一句确认引导（不加 Markdown 标题，不加列表）：
+   询问用户第 1 集需要几个分镜（默认 15-20 个），让用户回复"确认"或直接给出数字。`
 
-# 📖 故事大纲（深化版）
-* 一句话卖点：
-* 三句话简介：
-  * 起：
-  * 承：
-  * 转/合：
-* 完整剧情大纲：
-  * 第 1-5 集（压抑至觉醒）：...
-  * 第 6-10 集（初露锋芒）：...
-  * 第 11-30 集（青云之巅）：...
-  * 第 31-60 集（王朝风云）：...
-  * 第 61-90 集（诸天战场）：...
-  * 第 91-N 集（终极之战）：...
-
-# 🎬 章节结构表（N 集框架）
-| 集数范围 | 标题范例 | 核心事件 | 爽点/反转 | 悬念 |
-| :--- | :--- | :--- | :--- | :--- |
-| 1-5 | 《...》 | ... | ... | ... |
-（至少 6 行，覆盖全剧）
-
-# 👥 人设档案
-对主角、核心反派、关键女配、关键男配各一段，含：
-* 视觉外貌（年龄/身高/发型/眼神/服饰）
-* 性格
-* 金手指 / 可恨之处 / 特殊设定
-* 经典台词
-
-末尾另起两段，原样输出：
-
----
-
-## 📋 同步确认信息清单
-
-请确认以下信息，以便我开始创作完整剧本：
-
-第 1 集需要几个分镜？（默认 15-20 个，建议 15 个左右以快速进入高潮）
-
-请回复"确认"或直接指定第 1 集分镜数量（例如：15 个）。`
-
-const SYS_SYNOPSIS_EN = `You are a seasoned short-drama screenwriter. From the user idea, produce a complete framework: basic info, story outline, chapter table, character dossiers, in plain English markdown text. Always finish with a "Confirmation Checklist" asking how many storyboards the user wants for Episode 1 (default 15-20).`
+const SYS_SYNOPSIS_EN = `You are a seasoned short-drama writer. Produce a prose-style story brief in flowing paragraphs only — no Markdown headings, no tables, no bullet lists, no emoji. Cover: basic info, story outline (one-line + arc + per-episode-range narrative), chapter structure as prose paragraphs, and short bios for main / antagonist / female lead / male supporting. End with a single prose sentence asking how many storyboards the user wants for Episode 1 (default 15-20).`
 
 export const streamSynopsis = createServerFn({ method: 'POST' })
   .inputValidator((d: unknown) => SynopsisInput.parse(d))
@@ -217,46 +178,23 @@ const EpisodeInput = z.object({
   model: z.string().optional(),
 })
 
-const SYS_EPISODE_ZH = `你是一位资深短剧分镜师，请基于已确认的故事梗概，输出"第 N 集完整分镜脚本"的纯文本。
+const SYS_EPISODE_ZH = `你是一位资深短剧分镜师，请基于已确认的故事梗概，写出第 N 集的完整分镜脚本。
 
-硬性要求：
-1) 用以下结构输出，禁止额外解说：
+严格要求：
+1) 全文使用"文章式散文 + 剧本对白"，禁止使用任何 Markdown 符号（# / * / - / | 等），禁止使用表格、项目符号、emoji；
+2) 开头用一段散文写出"第 N 集 ·《本集副标题》"以及本集情绪与目标（一段话）；
+3) 然后依次写 X 个分镜，每个分镜独立成段，段首另起一行用"分镜 1 / 2 / 3 ..."加中文地点与时段（例如：分镜 1 ｜ 内景 · 林家祠堂 · 黄昏），紧接一段 80-160 字的动作/情绪/画面散文描写；
+4) 对白单独成行，格式为：角色名（情绪）："台词"。每句对白不超过 30 字；
+5) 节奏先抑后扬，至少一次重大反转，最后一个分镜留一个强钩子；
+6) 全集结束后空一行，用一段散文写"后续走向预告"（不少于 100 字），自然提到接下来 3-5 集会发生的关键事件，不要用列表；
+7) 文末另起一段，用一句确认引导（不加 Markdown，不加列表）：询问用户是否继续生成下一集，并欢迎对本集节奏/分镜数量/人设给出调整建议。`
 
-# 🎬 第 N 集完整分镜脚本（X 个分镜）
-《本集副标题》
-
-然后依次输出 X 个分镜，每个分镜独立一段：
-【场标】INT./EXT. 中文地点 — 时段
-（动作/情绪/画面描述，80-160 字）
-对白角色：单句对白 ≤ 30 字
-对白角色：...
-（必要时附 (情绪) 括号提示）
-
-2) 分镜数量严格等于用户指定的 X 个；
-3) 节奏先抑后扬，至少一次重大反转，最后一镜留钩子；
-4) 接着另起一节：
-
-# 💡 后续集数概要（第 N+1 至 N+9 集）
-* 第 N+1 集：...
-* 第 N+2 集：...
-（共 9 集，每集 1-2 句话）
-
-5) 末尾原样输出：
-
----
-
-输出后追问：
-1. 是否继续生成第 N+1 集的完整分镜脚本？
-2. 对本集的节奏、分镜数量或人设是否有调整建议？`
-
-const SYS_EPISODE_EN = `You are a seasoned short-drama storyboarder. Produce Episode N storyboards in plain English following the same structure, then 9-episode rolling summary, then a confirmation question.`
+const SYS_EPISODE_EN = `You are a short-drama storyboarder. Write Episode N in prose paragraphs and screenplay dialogue lines only — no Markdown, no tables, no bullets, no emoji. Open with one paragraph for the episode's title and emotional goal, then X numbered storyboards, each one labeled on its own line ("Scene 1 | INT. ..."), followed by an 80-160-word prose description and dialogue lines formatted as "ROLE (emotion): \\"line\\"". End with a prose paragraph teasing the next 3-5 episodes, then one prose sentence asking the user whether to continue and inviting adjustments.`
 
 export const streamEpisodeScenes = createServerFn({ method: 'POST' })
   .inputValidator((d: unknown) => EpisodeInput.parse(d))
   .handler(async function* ({ data }) {
     const sys = (data.lang === 'zh' ? SYS_EPISODE_ZH : SYS_EPISODE_EN)
-      .replace(/N\+1/g, String(data.epIndex + 1))
-      .replace(/N\+9/g, String(data.epIndex + 9))
       .replace(/第 N /g, `第 ${data.epIndex} `)
       .replace(/Episode N/g, `Episode ${data.epIndex}`)
       .replace(/X/g, String(data.sceneCount))
@@ -267,39 +205,4 @@ export const streamEpisodeScenes = createServerFn({ method: 'POST' })
     yield* streamChat({ model: pickModel(data.model), system: sys, user })
   })
 
-// ============= 3) 角色卡（纯文本档案） =============
-
-const CharactersInput = z.object({
-  lang: Lang,
-  synopsisText: z.string().min(20).max(20000),
-  episodeText: z.string().max(20000).optional(),
-  model: z.string().optional(),
-})
-
-const SYS_CHARACTERS_ZH = `你是资深角色设计师，基于已有故事梗概与第 1 集分镜，输出"角色卡"纯文本档案。
-
-对每位主要角色（主角 / 反派 / 女配 / 男配，至少 4 位）按如下结构输出：
-
-# 👤 角色名（年龄）— 定位（主角/反派/...）
-* MBTI：
-* 关键道具：
-* 视觉外貌：（身高/发色/眼神/服饰，画面感）
-* 性格底色：
-* 动机：
-* 与其他角色关系：1-3 条
-* 经典台词："..."
-
-严禁额外解说。末尾追加"是否需要调整某位角色？"一句。`
-
-const SYS_CHARACTERS_EN = `You are a character designer. Output character dossiers in plain English following the same fields.`
-
-export const streamCharacters = createServerFn({ method: 'POST' })
-  .inputValidator((d: unknown) => CharactersInput.parse(d))
-  .handler(async function* ({ data }) {
-    const sys = data.lang === 'zh' ? SYS_CHARACTERS_ZH : SYS_CHARACTERS_EN
-    const user =
-      data.lang === 'zh'
-        ? `【故事梗概】\n${data.synopsisText.slice(0, 8000)}\n${data.episodeText ? `\n【第 1 集分镜】\n${data.episodeText.slice(0, 6000)}` : ''}`
-        : `[Synopsis]\n${data.synopsisText.slice(0, 8000)}\n${data.episodeText ? `\n[Episode 1]\n${data.episodeText.slice(0, 6000)}` : ''}`
-    yield* streamChat({ model: pickModel(data.model), system: sys, user })
-  })
+// 注：角色信息已并入故事梗概的"人物小传"段，不再单独成步。
