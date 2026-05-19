@@ -97,6 +97,24 @@ function SavedScriptView({ s, t }: { s: SavedScript; t: ReturnType<typeof useLan
       )}
 
       <div className="grid lg:grid-cols-3 gap-6">
+        {(s.synopsisText || s.episodesText?.length || s.charactersText) && (
+          <section className="panel p-5 lg:col-span-3 space-y-5">
+            {s.synopsisText && (
+              <AgentTextBlock title="📖 故事梗概 / 一句话剧情" text={s.synopsisText} />
+            )}
+            {s.episodesText?.map((ep) => (
+              <AgentTextBlock
+                key={ep.epIndex}
+                title={`🎬 第 ${ep.epIndex} 集分镜脚本`}
+                text={ep.text}
+              />
+            ))}
+            {s.charactersText && (
+              <AgentTextBlock title="👥 角色卡" text={s.charactersText} />
+            )}
+          </section>
+        )}
+
         <section className="panel p-5 lg:col-span-2">
           <div className="flex items-center gap-2 mb-4 font-display font-bold">
             <FileText size={16} className="text-accent" /> {t.scd_scenes}
@@ -175,6 +193,17 @@ function SavedScriptView({ s, t }: { s: SavedScript; t: ReturnType<typeof useLan
           )}
         </aside>
       </div>
+    </div>
+  )
+}
+
+function AgentTextBlock({ title, text }: { title: string; text: string }) {
+  return (
+    <div>
+      <div className="font-display font-bold text-sm mb-2 text-accent">{title}</div>
+      <pre className="whitespace-pre-wrap break-words text-sm leading-relaxed text-text-primary font-mono bg-bg-base/40 border border-border rounded-lg p-3 max-h-[640px] overflow-y-auto">
+        {text}
+      </pre>
     </div>
   )
 }

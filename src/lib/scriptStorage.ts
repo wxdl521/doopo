@@ -17,6 +17,11 @@ export type SavedScript = {
   acts?: PipelineAct[]
   scenes?: PipelineScene[]
   characters?: PipelineCharacter[]
+  // ============= 剧本智能体（对话式 5 步流程）原始文本 =============
+  synopsisText?: string
+  episodesText?: { epIndex: number; text: string }[]
+  charactersText?: string
+  expectedEpisodes?: number
   // local quality estimates
   quality?: {
     pacing: number
