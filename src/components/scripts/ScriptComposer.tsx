@@ -1,0 +1,579 @@
+import { useEffect, useRef, useState } from 'react'
+import { useNavigate } from '@tanstack/react-router'
+import { useServerFn } from '@tanstack/react-start'
+import {
+  Loader2,
+  Sparkles,
+  ArrowRight,
+  RefreshCw,
+  Save,
+  Check,
+  Send,
+  Bot,
+  User as UserIcon,
+} from 'lucide-react'
+import { useLanguage } from '../../i18n/LanguageContext'
+import {
+  streamSynopsis,
+  streamEpisodeScenes,
+  streamCharacters,
+} from '../../lib/scriptAgent.functions'
+import { upsertScript, type SavedScript } from '../../lib/scriptStorage'
+
+// 5 步对话式剧本智能体
+type Stage = 'setup' | 'synopsis' | 'episode' | 'characters' | 'done'
+const STAGES: Stage[] = ['setup', 'synopsis', 'episode', 'characters', 'done']
+const STAGE_LABELS: Record<Stage, string> = {
+  setup: '① 灵感',
+  synopsis: '② 故事梗概',
+  episode: '③ 分镜脚本',
+  characters: '④ 角色卡',
+  done: '⑤ 完成',
+}
+
+type Bubble = {
+  id: string
+  role: 'user' | 'agent' | 'system'
+  text: string
+  streaming?: boolean
+  stage?: Stage
+}
+
+type Props = {
+  types: { value: string; key: keyof ReturnType<typeof useLanguage>['t'] }[]
+  genres: { value: string; key: keyof ReturnType<typeof useLanguage>['t'] }[]
+  tones: { value: string; key: keyof ReturnType<typeof useLanguage>['t'] }[]
+  models: { id: string; label: string }[]
+  onSaved?: () => void
+}
+
+type StreamChunk =
+  | { delta: string }
+  | { done: true; text: string }
+  | { error: string }
+
+export default function ScriptComposer({ types, genres, tones, models, onSaved }: Props) {
+  const { t, lang } = useLanguage()
+  const navigate = useNavigate()
+  const callSynopsis = useServerFn(streamSynopsis)
+  const callEpisode = useServerFn(streamEpisodeScenes)
+  const callCharacters = useServerFn(streamCharacters)
+
+  const [stage, setStage] = useState<Stage>('setup')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  // 输入
+  const [type, setType] = useState('Short')
+  const [genre, setGenre] = useState('Drama')
+  const [tone, setTone] = useState('Serious')
+  const [model, setModel] = useState(models[0]?.id ?? '')
+  const [theme, setTheme] = useState('')
+  const [plot, setPlot] = useState('')
+  const [expectedEpisodes, setExpectedEpisodes] = useState(100)
+  const [sceneCount, setSceneCount] = useState(15)
+
+  // 流式聚合结果
+  const [synopsisText, setSynopsisText] = useState('')
+  const [episodeText, setEpisodeText] = useState('')
+  const [charactersText, setCharactersText] = useState('')
+
+  // 聊天气泡
+  const [bubbles, setBubbles] = useState<Bubble[]>([
+    {
+      id: 'welcome',
+      role: 'agent',
+      text: '你好，我是剧本智能体 🎬\n先告诉我你的灵感：题材、主题、剧情概要，我会一步步陪你打磨成完整剧本。',
+    },
+  ])
+  const scrollRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
+  }, [bubbles])
+
+  const pushBubble = (b: Omit<Bubble, 'id'>) => {
+    const id = `b-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+    setBubbles((prev) => [...prev, { ...b, id }])
+    return id
+  }
+  const appendDelta = (id: string, delta: string) => {
+    setBubbles((prev) => prev.map((b) => (b.id === id ? { ...b, text: b.text + delta } : b)))
+  }
+  const finishBubble = (id: string) => {
+    setBubbles((prev) => prev.map((b) => (b.id === id ? { ...b, streaming: false } : b)))
+  }
+
+  const errMsg = (e: string) => {
+    if (e === 'rate_limit') return t.script_pipeline_rate_limit
+    if (e === 'no_credits') return t.script_pipeline_no_credits
+    return `${t.script_pipeline_failed}: ${e}`
+  }
+
+  // 通用：消费 async iterable 流（serverFn 直接返回的 AsyncIterable）
+  async function consume(
+    stream: AsyncIterable<StreamChunk>,
+    bubbleId: string,
+    onText: (text: string) => void,
+  ): Promise<{ ok: boolean; text: string }> {
+    let acc = ''
+    try {
+      for await (const chunk of stream) {
+        if ('error' in chunk) {
+          setError(errMsg(chunk.error))
+          finishBubble(bubbleId)
+          return { ok: false, text: acc }
+        }
+        if ('delta' in chunk) {
+          acc += chunk.delta
+          appendDelta(bubbleId, chunk.delta)
+        } else if ('done' in chunk) {
+          if (chunk.text && chunk.text.length > acc.length) {
+            const tail = chunk.text.slice(acc.length)
+            if (tail) appendDelta(bubbleId, tail)
+            acc = chunk.text
+          }
+          onText(acc)
+          finishBubble(bubbleId)
+          return { ok: true, text: acc }
+        }
+      }
+      // 流自然结束但未 yield done
+      onText(acc)
+      finishBubble(bubbleId)
+      return { ok: true, text: acc }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '流读取失败')
+      finishBubble(bubbleId)
+      return { ok: false, text: acc }
+    }
+  }
+
+  // ============ 阶段动作 ============
+
+  const runSynopsis = async () => {
+    if (!theme.trim() || !plot.trim()) return
+    setError(null)
+    setLoading(true)
+    pushBubble({
+      role: 'user',
+      text: `🎯 灵感\n类型：${type} · 题材：${genre} · 风格：${tone}\n主题：${theme}\n剧情：${plot}\n预计集数：${expectedEpisodes}`,
+    })
+    const id = pushBubble({ role: 'agent', text: '', streaming: true, stage: 'synopsis' })
+    const stream = (await callSynopsis({
+      data: { lang, type, genre, tone, theme, plot, expectedEpisodes, model },
+    })) as AsyncIterable<StreamChunk>
+    const res = await consume(stream, id, setSynopsisText)
+    setLoading(false)
+    if (res.ok) setStage('synopsis')
+  }
+
+  const runEpisode = async () => {
+    if (!synopsisText) return
+    setError(null)
+    setLoading(true)
+    pushBubble({ role: 'user', text: `✅ 确认梗概，第 1 集分镜数：${sceneCount}` })
+    const id = pushBubble({ role: 'agent', text: '', streaming: true, stage: 'episode' })
+    const stream = (await callEpisode({
+      data: { lang, epIndex: 1, sceneCount, synopsisText, model },
+    })) as AsyncIterable<StreamChunk>
+    const res = await consume(stream, id, setEpisodeText)
+    setLoading(false)
+    if (res.ok) setStage('episode')
+  }
+
+  const runCharacters = async () => {
+    if (!synopsisText) return
+    setError(null)
+    setLoading(true)
+    pushBubble({ role: 'user', text: '✅ 确认分镜，生成角色卡' })
+    const id = pushBubble({ role: 'agent', text: '', streaming: true, stage: 'characters' })
+    const stream = (await callCharacters({
+      data: { lang, synopsisText, episodeText, model },
+    })) as AsyncIterable<StreamChunk>
+    const res = await consume(stream, id, setCharactersText)
+    setLoading(false)
+    if (res.ok) setStage('characters')
+  }
+
+  const finalize = () => {
+    const id = `scr-${Date.now()}`
+    // 从 synopsis 文本里提取主标题《...》
+    const titleMatch = synopsisText.match(/《([^》]+)》/)
+    const title = titleMatch?.[1] ?? theme ?? '未命名剧本'
+    const item: SavedScript = {
+      id,
+      title,
+      plot,
+      type,
+      genre,
+      tone,
+      model,
+      synopsisText,
+      episodesText: episodeText ? [{ epIndex: 1, text: episodeText }] : undefined,
+      charactersText,
+      expectedEpisodes,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }
+    upsertScript(item)
+    onSaved?.()
+    setStage('done')
+    pushBubble({ role: 'system', text: `✅ 已保存到剧本库：《${title}》` })
+    return id
+  }
+
+  const reset = () => {
+    setStage('setup')
+    setSynopsisText('')
+    setEpisodeText('')
+    setCharactersText('')
+    setBubbles([
+      {
+        id: 'welcome',
+        role: 'agent',
+        text: '新一轮创作开始 🎬\n请输入你的新灵感。',
+      },
+    ])
+    setError(null)
+  }
+
+  // ============ 渲染 ============
+
+  const stageIdx = STAGES.indexOf(stage)
+
+  return (
+    <div className="panel p-5 sm:p-6 space-y-4">
+      {/* 头部 + 阶段指示 */}
+      <div className="flex flex-wrap items-center gap-3">
+        <h2 className="font-semibold text-text-primary flex items-center gap-2">
+          <Sparkles size={16} className="text-accent" />
+          剧本智能体
+        </h2>
+        <span className="text-xs text-text-muted">对话式 5 步流程 · 流式输出</span>
+        <div className="ml-auto flex flex-wrap items-center gap-1">
+          {STAGES.map((s, i) => {
+            const done = i < stageIdx
+            const active = i === stageIdx
+            return (
+              <div key={s} className="flex items-center gap-1">
+                <span
+                  className={`px-2 py-0.5 rounded-full text-[11px] ${
+                    active
+                      ? 'bg-accent text-bg-base font-medium'
+                      : done
+                        ? 'bg-accent-dim text-accent'
+                        : 'bg-bg-elevated text-text-muted'
+                  }`}
+                >
+                  {done ? <Check size={10} className="inline -mt-0.5" /> : null} {STAGE_LABELS[s]}
+                </span>
+                {i < STAGES.length - 1 && (
+                  <ArrowRight size={10} className="text-text-muted" />
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {error && (
+        <div className="rounded-lg border border-red-500/40 bg-red-500/10 text-red-300 text-sm px-3 py-2">
+          {error}
+        </div>
+      )}
+
+      {/* 聊天区 */}
+      <div
+        ref={scrollRef}
+        className="rounded-xl border border-border bg-bg-base/40 max-h-[560px] min-h-[280px] overflow-y-auto p-3 space-y-3"
+      >
+        {bubbles.map((b) => (
+          <ChatBubble key={b.id} bubble={b} />
+        ))}
+        {loading && (
+          <div className="flex items-center gap-2 text-xs text-text-muted">
+            <Loader2 size={12} className="animate-spin" />
+            智能体思考中…
+          </div>
+        )}
+      </div>
+
+      {/* 阶段输入栏 */}
+      {stage === 'setup' && (
+        <SetupBar
+          type={type}
+          setType={setType}
+          genre={genre}
+          setGenre={setGenre}
+          tone={tone}
+          setTone={setTone}
+          model={model}
+          setModel={setModel}
+          theme={theme}
+          setTheme={setTheme}
+          plot={plot}
+          setPlot={setPlot}
+          expectedEpisodes={expectedEpisodes}
+          setExpectedEpisodes={setExpectedEpisodes}
+          types={types}
+          genres={genres}
+          tones={tones}
+          models={models}
+          t={t}
+          loading={loading}
+          onSubmit={runSynopsis}
+        />
+      )}
+
+      {stage === 'synopsis' && (
+        <ActionBar>
+          <label className="text-xs text-text-muted">第 1 集分镜数</label>
+          <input
+            type="number"
+            min={5}
+            max={30}
+            value={sceneCount}
+            onChange={(e) =>
+              setSceneCount(Math.max(5, Math.min(30, Number(e.target.value) || 15)))
+            }
+            className="w-20 rounded-lg bg-bg-elevated border border-border text-sm text-text-primary px-2 py-1.5 focus:outline-none focus:border-accent/50"
+          />
+          <button
+            onClick={runSynopsis}
+            disabled={loading}
+            className="btn-ghost text-xs disabled:opacity-40"
+          >
+            <RefreshCw size={12} /> 重新生成梗概
+          </button>
+          <button
+            onClick={runEpisode}
+            disabled={loading || !synopsisText}
+            className="btn-primary text-xs ml-auto disabled:opacity-40"
+          >
+            {loading ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+            确认 · 生成第 1 集分镜
+          </button>
+        </ActionBar>
+      )}
+
+      {stage === 'episode' && (
+        <ActionBar>
+          <button
+            onClick={runEpisode}
+            disabled={loading}
+            className="btn-ghost text-xs disabled:opacity-40"
+          >
+            <RefreshCw size={12} /> 重写本集分镜
+          </button>
+          <button
+            onClick={runCharacters}
+            disabled={loading || !synopsisText}
+            className="btn-primary text-xs ml-auto disabled:opacity-40"
+          >
+            {loading ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+            确认 · 生成角色卡
+          </button>
+        </ActionBar>
+      )}
+
+      {stage === 'characters' && (
+        <ActionBar>
+          <button
+            onClick={runCharacters}
+            disabled={loading}
+            className="btn-ghost text-xs disabled:opacity-40"
+          >
+            <RefreshCw size={12} /> 重新生成角色卡
+          </button>
+          <button
+            onClick={() => {
+              const id = finalize()
+              navigate({ to: '/scripts/$scriptId', params: { scriptId: id } })
+            }}
+            disabled={loading}
+            className="btn-primary text-xs ml-auto disabled:opacity-40"
+          >
+            <Save size={13} /> 保存并完成
+          </button>
+        </ActionBar>
+      )}
+
+      {stage === 'done' && (
+        <div className="flex justify-center pt-2">
+          <button onClick={reset} className="btn-ghost text-xs">
+            <Sparkles size={12} /> 开始新的创作
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ============ 子组件 ============
+
+function ChatBubble({ bubble }: { bubble: Bubble }) {
+  const isUser = bubble.role === 'user'
+  const isSystem = bubble.role === 'system'
+  if (isSystem) {
+    return (
+      <div className="text-center text-xs text-text-muted py-1">{bubble.text}</div>
+    )
+  }
+  return (
+    <div className={`flex gap-2 ${isUser ? 'flex-row-reverse' : ''}`}>
+      <div
+        className={`flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center ${
+          isUser ? 'bg-accent/20 text-accent' : 'bg-bg-elevated text-text-muted'
+        }`}
+      >
+        {isUser ? <UserIcon size={13} /> : <Bot size={13} />}
+      </div>
+      <div
+        className={`max-w-[88%] rounded-xl px-3 py-2 text-sm leading-relaxed whitespace-pre-wrap break-words ${
+          isUser
+            ? 'bg-accent text-bg-base'
+            : 'bg-bg-elevated/60 text-text-primary border border-border/60'
+        }`}
+        style={isUser ? undefined : { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+      >
+        {bubble.text || (bubble.streaming ? '…' : '')}
+        {bubble.streaming && <span className="inline-block w-1.5 h-3 ml-0.5 bg-accent animate-pulse align-middle" />}
+      </div>
+    </div>
+  )
+}
+
+function ActionBar({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 pt-1 border-t border-border pt-3">
+      {children}
+    </div>
+  )
+}
+
+function SetupBar(props: {
+  type: string
+  setType: (v: string) => void
+  genre: string
+  setGenre: (v: string) => void
+  tone: string
+  setTone: (v: string) => void
+  model: string
+  setModel: (v: string) => void
+  theme: string
+  setTheme: (v: string) => void
+  plot: string
+  setPlot: (v: string) => void
+  expectedEpisodes: number
+  setExpectedEpisodes: (v: number) => void
+  types: Props['types']
+  genres: Props['genres']
+  tones: Props['tones']
+  models: Props['models']
+  t: ReturnType<typeof useLanguage>['t']
+  loading: boolean
+  onSubmit: () => void
+}) {
+  const { t } = props
+  return (
+    <div className="space-y-3 pt-1">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        <SelectField
+          label={t.script_type}
+          value={props.type}
+          onChange={props.setType}
+          options={props.types.map((x) => ({ value: x.value, label: t[x.key] as string }))}
+        />
+        <SelectField
+          label={t.script_genre}
+          value={props.genre}
+          onChange={props.setGenre}
+          options={props.genres.map((x) => ({ value: x.value, label: t[x.key] as string }))}
+        />
+        <SelectField
+          label={t.script_tone}
+          value={props.tone}
+          onChange={props.setTone}
+          options={props.tones.map((x) => ({ value: x.value, label: t[x.key] as string }))}
+        />
+        <div>
+          <label className="text-xs text-text-muted mb-1 block">预计集数</label>
+          <input
+            type="number"
+            min={1}
+            max={200}
+            value={props.expectedEpisodes}
+            onChange={(e) =>
+              props.setExpectedEpisodes(
+                Math.max(1, Math.min(200, Number(e.target.value) || 100)),
+              )
+            }
+            className="w-full rounded-lg bg-bg-elevated border border-border text-sm text-text-primary px-2 py-2 focus:outline-none focus:border-accent/50"
+          />
+        </div>
+      </div>
+      <SelectField
+        label={t.script_model}
+        value={props.model}
+        onChange={props.setModel}
+        options={props.models.map((m) => ({ value: m.id, label: m.label }))}
+      />
+      <div>
+        <label className="text-xs text-text-muted mb-1 block">{t.script_theme}</label>
+        <input
+          value={props.theme}
+          onChange={(e) => props.setTheme(e.target.value)}
+          placeholder="例如：天雷圣子 / 重生甜妻 / 都市最强医仙"
+          className="w-full rounded-lg bg-bg-elevated border border-border text-sm text-text-primary px-3 py-2 focus:outline-none focus:border-accent/50 placeholder:text-text-muted"
+        />
+      </div>
+      <div>
+        <label className="text-xs text-text-muted mb-1 block">{t.script_plot}</label>
+        <textarea
+          value={props.plot}
+          onChange={(e) => props.setPlot(e.target.value)}
+          rows={3}
+          placeholder="一句话或几句话说清主角处境、爽点钩子……"
+          className="w-full rounded-lg bg-bg-elevated border border-border text-sm text-text-primary p-3 resize-none focus:outline-none focus:border-accent/50 placeholder:text-text-muted"
+        />
+      </div>
+      <button
+        onClick={props.onSubmit}
+        disabled={props.loading || !props.theme.trim() || !props.plot.trim()}
+        className="w-full btn-primary justify-center disabled:opacity-40"
+      >
+        {props.loading ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+        生成故事梗概（流式输出）
+      </button>
+    </div>
+  )
+}
+
+function SelectField({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+  options: { value: string; label: string }[]
+}) {
+  return (
+    <div>
+      <label className="text-xs text-text-muted mb-1 block">{label}</label>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="w-full rounded-lg bg-bg-elevated border border-border text-sm text-text-primary px-2 py-2 focus:outline-none focus:border-accent/50"
+      >
+        {options.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  )
+}
