@@ -36,12 +36,6 @@ const MODELS = [
   { id: 'lovable:openai/gpt-5-mini', label: '⚡ Lovable · GPT-5 Mini' },
   { id: 'lovable:openai/gpt-5', label: '⚡ Lovable · GPT-5' },
   { id: 'lovable:openai/gpt-5.5', label: '⚡ Lovable · GPT-5.5' },
-  // OpenRouter — 可选，更多模型选择
-  { id: 'openrouter:google/gemini-2.5-flash', label: 'OpenRouter · Gemini 2.5 Flash' },
-  { id: 'openrouter:google/gemini-2.5-pro', label: 'OpenRouter · Gemini 2.5 Pro' },
-  { id: 'openrouter:deepseek/deepseek-chat-v3.1', label: 'OpenRouter · DeepSeek V3.1' },
-  { id: 'openrouter:deepseek/deepseek-r1', label: 'OpenRouter · DeepSeek R1' },
-  { id: 'openrouter:meta-llama/llama-3.3-70b-instruct', label: 'OpenRouter · Llama 3.3 70B' },
 ]
 
 export default function Scripts() {
