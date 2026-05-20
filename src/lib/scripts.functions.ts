@@ -52,7 +52,7 @@ export const upsertScriptRemote = createServerFn({ method: 'POST' })
         type: s.type ?? null,
         genre: s.genre ?? null,
         tone: s.tone ?? null,
-        payload: s as unknown as Record<string, unknown>,
+        payload: JSON.parse(JSON.stringify(s)),
       },
       { onConflict: 'id' },
     )
