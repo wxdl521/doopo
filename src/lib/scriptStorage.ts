@@ -56,15 +56,26 @@ export function saveScripts(list: SavedScript[]) {
 }
 
 export function upsertScript(item: SavedScript): SavedScript[] {
+  const { all, next } = writeScript(item)
+  // fire-and-forget 云端持久化（登录后生效；未登录或离线则静默忽略）
+  void cloudUpsert(next)
+  return all
+}
+
+export async function upsertScriptAndCloud(item: SavedScript): Promise<SavedScript[]> {
+  const { all, next } = writeScript(item)
+  await cloudUpsert(next)
+  return all
+}
+
+function writeScript(item: SavedScript): { all: SavedScript[]; next: SavedScript } {
   const all = loadScripts()
   const idx = all.findIndex((s) => s.id === item.id)
   const next: SavedScript = { ...item, updatedAt: new Date().toISOString() }
   if (idx >= 0) all[idx] = next
   else all.unshift(next)
   saveScripts(all)
-  // fire-and-forget 云端持久化（登录后生效；未登录或离线则静默忽略）
-  void cloudUpsert(next)
-  return all
+  return { all, next }
 }
 
 export function removeScript(id: string): SavedScript[] {
@@ -90,14 +101,16 @@ async function hasSession(): Promise<boolean> {
   }
 }
 
-async function cloudUpsert(item: SavedScript) {
-  if (!(await hasSession())) return
+async function cloudUpsert(item: SavedScript): Promise<boolean> {
+  if (!(await hasSession())) return false
   try {
     const { upsertScriptRemote } = await import('./scripts.functions')
     await upsertScriptRemote({ data: { script: item } })
+    return true
   } catch (e) {
     // 未登录 / 网络异常 → 仅本地保存
     console.debug('[scripts] cloud upsert skipped:', e)
+    return false
   }
 }
 
