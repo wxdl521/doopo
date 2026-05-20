@@ -498,14 +498,12 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
       {stage === 'synopsis' && (
         <ActionBar>
           <label className="text-xs text-text-muted">第 1 集分镜数</label>
-          <input
-            type="number"
+          <NumberField
+            value={sceneCount}
             min={5}
             max={30}
-            value={sceneCount}
-            onChange={(e) =>
-              setSceneCount(Math.max(5, Math.min(30, Number(e.target.value) || 15)))
-            }
+            fallback={15}
+            onCommit={setSceneCount}
             className="w-20 rounded-lg bg-bg-elevated border border-border text-sm text-text-primary px-2 py-1.5 focus:outline-none focus:border-accent/50"
           />
           <button
@@ -559,14 +557,12 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
             已生成 {episodes.length} 集 · 下一集：第 {nextEpIndex} 集
           </span>
           <label className="text-xs text-text-muted ml-2">分镜数</label>
-          <input
-            type="number"
+          <NumberField
+            value={nextSceneCount}
             min={5}
             max={30}
-            value={nextSceneCount}
-            onChange={(e) =>
-              setNextSceneCount(Math.max(5, Math.min(30, Number(e.target.value) || 15)))
-            }
+            fallback={15}
+            onCommit={setNextSceneCount}
             className="w-16 rounded-lg bg-bg-elevated border border-border text-sm text-text-primary px-2 py-1.5 focus:outline-none focus:border-accent/50"
           />
           <button
@@ -578,16 +574,12 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
             生成第 {nextEpIndex} 集
           </button>
           <label className="text-xs text-text-muted ml-2">连跑至第</label>
-          <input
-            type="number"
-            min={nextEpIndex}
-            max={expectedEpisodes}
+          <NumberField
             value={targetEpisode}
-            onChange={(e) =>
-              setTargetEpisode(
-                Math.max(1, Math.min(expectedEpisodes, Number(e.target.value) || nextEpIndex)),
-              )
-            }
+            min={1}
+            max={expectedEpisodes}
+            fallback={nextEpIndex}
+            onCommit={setTargetEpisode}
             className="w-16 rounded-lg bg-bg-elevated border border-border text-sm text-text-primary px-2 py-1.5 focus:outline-none focus:border-accent/50"
           />
           <span className="text-xs text-text-muted">集（共 {expectedEpisodes}）</span>
@@ -879,16 +871,12 @@ function SetupBar(props: {
         />
         <div>
           <label className="text-xs text-text-muted mb-1 block">预计集数</label>
-          <input
-            type="number"
+          <NumberField
+            value={props.expectedEpisodes}
             min={1}
             max={200}
-            value={props.expectedEpisodes}
-            onChange={(e) =>
-              props.setExpectedEpisodes(
-                Math.max(1, Math.min(200, Number(e.target.value) || 100)),
-              )
-            }
+            fallback={100}
+            onCommit={props.setExpectedEpisodes}
             className="w-full rounded-lg bg-bg-elevated border border-border text-sm text-text-primary px-2 py-2 focus:outline-none focus:border-accent/50"
           />
         </div>
