@@ -63,6 +63,7 @@ export const zh = {
   header_discord: 'Discord',
   header_upgrade: '升级',
   header_account: '账户',
+  header_logout: '退出登录',
   header_points: '积分',
   header_theme_to_dark: '切换深色模式',
   header_theme_to_light: '切换浅色模式',
