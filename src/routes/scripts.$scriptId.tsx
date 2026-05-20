@@ -35,14 +35,22 @@ function ScriptDetail() {
   const mock = Route.useLoaderData() as ScriptItem | null
   const [saved, setSaved] = useState<SavedScript | null>(null)
   const [hydrated, setHydrated] = useState(false)
+  const [cloudChecked, setCloudChecked] = useState(false)
 
   useEffect(() => {
+    let alive = true
     setSaved(findScript(params.scriptId))
     setHydrated(true)
+    setCloudChecked(false)
     // 云端覆盖（登录后跨设备同步）
     void findScriptWithCloud(params.scriptId).then((s) => {
+      if (!alive) return
       if (s) setSaved(s)
+      setCloudChecked(true)
     })
+    return () => {
+      alive = false
+    }
   }, [params.scriptId])
 
   if (!hydrated && !mock) {
@@ -51,7 +59,7 @@ function ScriptDetail() {
 
   if (hydrated && saved) return <SavedScriptView s={saved} t={t} />
   if (mock) return <MockScriptView s={mock} t={t} />
-  if (hydrated && !saved && !mock) {
+  if (hydrated && cloudChecked && !saved && !mock) {
     throw notFound()
   }
   return <div className="p-10 text-center text-text-muted">…</div>
