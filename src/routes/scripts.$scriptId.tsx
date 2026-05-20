@@ -60,6 +60,12 @@ function ScriptDetail() {
 // ============= Saved (structured) view =============
 
 function SavedScriptView({ s, t }: { s: SavedScript; t: ReturnType<typeof useLanguage>['t'] }) {
+  const hasAgentText = !!(s.synopsisText || s.episodesText?.length || s.charactersText)
+  const hasScenes = !!s.scenes?.length
+  const hasCharacters = !!s.characters?.length
+  const hasActs = !!s.acts?.length
+  const showSideBlocks = hasScenes || hasCharacters || hasActs
+  const episodeCount = s.episodesText?.length ?? 0
   return (
     <div className="animate-fade-in">
       <Link to="/scripts" className="inline-flex items-center gap-1 text-sm text-text-muted hover:text-accent mb-4">
@@ -67,7 +73,7 @@ function SavedScriptView({ s, t }: { s: SavedScript; t: ReturnType<typeof useLan
       </Link>
       <PageHeader
         title={s.title}
-        subtitle={s.logline || s.plot}
+        subtitle={s.logline || s.plot || (s.synopsisText ? s.synopsisText.slice(0, 120) : '')}
         actions={
           <>
             <button className="btn-ghost" disabled><Download size={14} /> {t.scd_pdf}</button>
@@ -80,7 +86,10 @@ function SavedScriptView({ s, t }: { s: SavedScript; t: ReturnType<typeof useLan
         <Stat label={t.scd_type} value={s.type} />
         <Stat label={t.scd_genre} value={s.genre} />
         <Stat label={t.script_tone} value={s.tone} />
-        <Stat label={t.scd_scenes} value={String(s.scenes?.length ?? 0)} />
+        <Stat
+          label={episodeCount > 0 ? '已生成集数' : t.scd_scenes}
+          value={episodeCount > 0 ? `${episodeCount} 集` : String(s.scenes?.length ?? 0)}
+        />
       </div>
 
       {s.quality && (
@@ -102,9 +111,9 @@ function SavedScriptView({ s, t }: { s: SavedScript; t: ReturnType<typeof useLan
         </div>
       )}
 
-      <div className="grid lg:grid-cols-3 gap-6">
-        {(s.synopsisText || s.episodesText?.length || s.charactersText) && (
-          <section className="panel p-5 lg:col-span-3 space-y-5">
+      <div className={`grid gap-6 ${showSideBlocks ? 'lg:grid-cols-3' : 'lg:grid-cols-1'}`}>
+        {hasAgentText && (
+          <section className={`panel p-5 space-y-5 ${showSideBlocks ? 'lg:col-span-3' : ''}`}>
             {s.synopsisText && (
               <AgentTextBlock title="📖 故事梗概 / 一句话剧情" text={s.synopsisText} />
             )}
@@ -121,15 +130,13 @@ function SavedScriptView({ s, t }: { s: SavedScript; t: ReturnType<typeof useLan
           </section>
         )}
 
+        {hasScenes && (
         <section className="panel p-5 lg:col-span-2">
           <div className="flex items-center gap-2 mb-4 font-display font-bold">
             <FileText size={16} className="text-accent" /> {t.scd_scenes}
           </div>
-          {!s.scenes?.length ? (
-            <div className="text-text-muted text-sm">{t.scd_no_scenes}</div>
-          ) : (
-            <ol className="space-y-5">
-              {s.scenes.map((sc) => (
+          <ol className="space-y-5">
+              {s.scenes!.map((sc) => (
                 <li key={sc.index} className="border-l-2 border-accent/40 pl-4">
                   <div className="text-xs text-text-muted font-mono mb-1">SC{sc.index} · {sc.timeOfDay}</div>
                   <div className="font-semibold">{sc.slug}</div>
@@ -151,9 +158,10 @@ function SavedScriptView({ s, t }: { s: SavedScript; t: ReturnType<typeof useLan
                 </li>
               ))}
             </ol>
-          )}
         </section>
+        )}
 
+        {(hasCharacters || hasActs) && (
         <aside className="panel p-5 space-y-4">
           {s.characters && s.characters.length > 0 && (
             <div>
@@ -198,6 +206,7 @@ function SavedScriptView({ s, t }: { s: SavedScript; t: ReturnType<typeof useLan
             </div>
           )}
         </aside>
+        )}
       </div>
     </div>
   )

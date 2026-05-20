@@ -83,13 +83,20 @@ export default function Scripts() {
             {scripts.map((s) => {
               const palette = s.characters?.[0]?.palette ?? ['#7c3aed', '#ec4899', '#f97316']
               const bg = `linear-gradient(135deg, ${palette[0]}, ${palette[palette.length - 1]})`
+              const epCount = s.episodesText?.length ?? 0
+              const sceneCount = s.scenes?.length ?? 0
+              const preview =
+                s.logline ||
+                (s.synopsisText
+                  ? s.synopsisText.replace(/[#*`>_\-]/g, '').replace(/\s+/g, ' ').trim().slice(0, 90)
+                  : s.plot)
               return (
                 <div key={s.id} className="panel overflow-hidden group">
                   <Link to="/scripts/$scriptId" params={{ scriptId: s.id }} className="block">
                     <div className="h-24 relative" style={{ background: bg }}>
                       <span className="absolute top-2 left-2 chip chip-active text-[10px]">{s.type}</span>
                       <span className="absolute top-2 right-2 text-[10px] text-white/80">
-                        {s.scenes?.length ?? 0} 场
+                        {epCount > 0 ? `${epCount} 集` : `${sceneCount} 场`}
                       </span>
                     </div>
                     <div className="p-3 space-y-1.5">
@@ -97,14 +104,18 @@ export default function Scripts() {
                       <div className="text-xs text-text-muted truncate">
                         {s.genre} · {s.tone}
                       </div>
-                      {s.logline && (
-                        <div className="text-xs text-text-secondary line-clamp-2">{s.logline}</div>
+                      {preview && (
+                        <div className="text-xs text-text-secondary line-clamp-2">{preview}</div>
                       )}
-                      {s.quality && (
+                      {s.quality ? (
                         <div className="flex gap-1 pt-1 text-[10px] text-text-muted">
                           <span>♥ {s.quality.pacing}</span>
                           <span>⚡ {s.quality.conflict}</span>
                           <span>💬 {s.quality.dialogueDensity}</span>
+                        </div>
+                      ) : (
+                        <div className="text-[10px] text-text-muted pt-1">
+                          更新于 {new Date(s.updatedAt).toLocaleString()}
                         </div>
                       )}
                     </div>
