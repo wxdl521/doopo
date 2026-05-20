@@ -35,8 +35,8 @@ function Register() {
       toast.success('注册成功')
       navigate({ to: '/scripts' })
     } else {
-      toast.success('注册成功，请前往邮箱确认后再登录')
-      navigate({ to: '/login' })
+      toast.success(`激活邮件已发送至 ${form.email}，请前往邮箱完成激活后再登录`, { duration: 6000 })
+      navigate({ to: '/login', search: { pendingEmail: form.email, activation: 1 } as any })
     }
   }
   const typeLabel: Record<'personal' | 'team', string> = {
