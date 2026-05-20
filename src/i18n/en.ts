@@ -90,6 +90,12 @@ export const en: Translations = {
   hero_upload_script: 'Upload script',
   hero_upload_storyboard: 'Upload storyboard',
   hero_close: 'Close',
+  hero_script_entry: 'Generate Script',
+  hero_script_panel_title: 'Script Options',
+  hero_script_type: 'Type',
+  hero_script_genre: 'Genre',
+  hero_script_tone: 'Tone',
+  hero_script_start: 'Start Writing',
 
   prompt_placeholder_1: 'Describe a cyberpunk city night with neon lights, rainy streets and distant billboards →',
   prompt_placeholder_2: 'Write a dialogue script about AI and human emotion →',
