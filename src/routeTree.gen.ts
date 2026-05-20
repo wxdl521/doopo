@@ -26,6 +26,7 @@ import { Route as AdminRouteImport } from './routes/admin'
 import { Route as AccountRouteImport } from './routes/account'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as TeamIndexRouteImport } from './routes/team.index'
+import { Route as ScriptsIndexRouteImport } from './routes/scripts.index'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as AccountIndexRouteImport } from './routes/account.index'
 import { Route as WorkspaceWorkspaceIdRouteImport } from './routes/workspace.$workspaceId'
@@ -131,6 +132,11 @@ const TeamIndexRoute = TeamIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => TeamRoute,
+} as any)
+const ScriptsIndexRoute = ScriptsIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => ScriptsRoute,
 } as any)
 const AdminIndexRoute = AdminIndexRouteImport.update({
   id: '/',
@@ -269,6 +275,7 @@ export interface FileRoutesByFullPath {
   '/workspace/$workspaceId': typeof WorkspaceWorkspaceIdRoute
   '/account/': typeof AccountIndexRoute
   '/admin/': typeof AdminIndexRoute
+  '/scripts/': typeof ScriptsIndexRoute
   '/team/': typeof TeamIndexRoute
   '/assets/$tab/$id': typeof AssetsTabIdRoute
 }
@@ -283,7 +290,6 @@ export interface FileRoutesByTo {
   '/pricing': typeof PricingRoute
   '/projects': typeof ProjectsRouteWithChildren
   '/register': typeof RegisterRoute
-  '/scripts': typeof ScriptsRouteWithChildren
   '/showcase': typeof ShowcaseRouteWithChildren
   '/zoclaw': typeof ZoclawRoute
   '/account/assets': typeof AccountAssetsRoute
@@ -305,6 +311,7 @@ export interface FileRoutesByTo {
   '/workspace/$workspaceId': typeof WorkspaceWorkspaceIdRoute
   '/account': typeof AccountIndexRoute
   '/admin': typeof AdminIndexRoute
+  '/scripts': typeof ScriptsIndexRoute
   '/team': typeof TeamIndexRoute
   '/assets/$tab/$id': typeof AssetsTabIdRoute
 }
@@ -345,6 +352,7 @@ export interface FileRoutesById {
   '/workspace/$workspaceId': typeof WorkspaceWorkspaceIdRoute
   '/account/': typeof AccountIndexRoute
   '/admin/': typeof AdminIndexRoute
+  '/scripts/': typeof ScriptsIndexRoute
   '/team/': typeof TeamIndexRoute
   '/assets_/$tab/$id': typeof AssetsTabIdRoute
 }
@@ -386,6 +394,7 @@ export interface FileRouteTypes {
     | '/workspace/$workspaceId'
     | '/account/'
     | '/admin/'
+    | '/scripts/'
     | '/team/'
     | '/assets/$tab/$id'
   fileRoutesByTo: FileRoutesByTo
@@ -400,7 +409,6 @@ export interface FileRouteTypes {
     | '/pricing'
     | '/projects'
     | '/register'
-    | '/scripts'
     | '/showcase'
     | '/zoclaw'
     | '/account/assets'
@@ -422,6 +430,7 @@ export interface FileRouteTypes {
     | '/workspace/$workspaceId'
     | '/account'
     | '/admin'
+    | '/scripts'
     | '/team'
     | '/assets/$tab/$id'
   id:
@@ -461,6 +470,7 @@ export interface FileRouteTypes {
     | '/workspace/$workspaceId'
     | '/account/'
     | '/admin/'
+    | '/scripts/'
     | '/team/'
     | '/assets_/$tab/$id'
   fileRoutesById: FileRoutesById
@@ -606,6 +616,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/team/'
       preLoaderRoute: typeof TeamIndexRouteImport
       parentRoute: typeof TeamRoute
+    }
+    '/scripts/': {
+      id: '/scripts/'
+      path: '/'
+      fullPath: '/scripts/'
+      preLoaderRoute: typeof ScriptsIndexRouteImport
+      parentRoute: typeof ScriptsRoute
     }
     '/admin/': {
       id: '/admin/'
@@ -813,10 +830,12 @@ const ProjectsRouteWithChildren = ProjectsRoute._addFileChildren(
 
 interface ScriptsRouteChildren {
   ScriptsScriptIdRoute: typeof ScriptsScriptIdRoute
+  ScriptsIndexRoute: typeof ScriptsIndexRoute
 }
 
 const ScriptsRouteChildren: ScriptsRouteChildren = {
   ScriptsScriptIdRoute: ScriptsScriptIdRoute,
+  ScriptsIndexRoute: ScriptsIndexRoute,
 }
 
 const ScriptsRouteWithChildren =
