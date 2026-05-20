@@ -23,7 +23,7 @@ import {
   streamSynopsis,
   streamEpisodeScenes,
 } from '../../lib/scriptAgent.functions'
-import { upsertScript, type SavedScript } from '../../lib/scriptStorage'
+import { findScript, upsertScript, type SavedScript } from '../../lib/scriptStorage'
 
 // 5 步对话式剧本智能体
 type Stage = 'setup' | 'synopsis' | 'episode' | 'episodes' | 'done'
@@ -365,6 +365,7 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
     savedIdRef.current = finalId
     const titleMatch = synopsisText.match(/《([^》]+)》/)
     const title = titleMatch?.[1] ?? theme ?? '未命名剧本'
+    const existing = findScript(finalId)
     const item: SavedScript = {
       id: finalId,
       title,
@@ -376,7 +377,7 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
       synopsisText,
       episodesText: episodes.length > 0 ? episodes : undefined,
       expectedEpisodes,
-      createdAt: new Date().toISOString(),
+      createdAt: existing?.createdAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }
     upsertScript(item)
