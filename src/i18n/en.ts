@@ -65,6 +65,7 @@ export const en: Translations = {
   header_discord: 'Discord',
   header_upgrade: 'Upgrade',
   header_account: 'Account',
+  header_logout: 'Log Out',
   header_points: 'Points',
   header_theme_to_dark: 'Switch to dark mode',
   header_theme_to_light: 'Switch to light mode',
