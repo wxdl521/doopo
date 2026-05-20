@@ -6,6 +6,14 @@ import { supabaseAdmin } from '@/integrations/supabase/client.server'
 export type PostKind = 'script' | 'character' | 'scene' | 'prop' | 'comic'
 export type PostVisibility = 'public' | 'unlisted' | 'private'
 
+type Json =
+  | string
+  | number
+  | boolean
+  | null
+  | { [key: string]: Json }
+  | Json[]
+
 export type CommunityPost = {
   id: string
   user_id: string
@@ -14,7 +22,7 @@ export type CommunityPost = {
   title: string
   summary: string | null
   cover_gradient: string | null
-  payload: unknown
+  payload: Json
   visibility: PostVisibility
   likes_count: number
   views_count: number
@@ -53,10 +61,10 @@ export const publishPost = createServerFn({ method: 'POST' })
         payload: JSON.parse(JSON.stringify(data.payload ?? {})),
         visibility: data.visibility,
       })
-      .select(FULL_COLS)
+      .select()
       .single()
     if (error) throw new Error(error.message)
-    return row as CommunityPost
+    return row as unknown as CommunityPost
   })
 
 export const updatePostVisibility = createServerFn({ method: 'POST' })
@@ -125,13 +133,13 @@ export const getPost = createServerFn({ method: 'POST' })
   .handler(async ({ data }) => {
     const { data: row, error } = await supabaseAdmin
       .from('community_posts')
-      .select(FULL_COLS)
+      .select()
       .eq('id', data.id)
       .maybeSingle()
     if (error) throw new Error(error.message)
     if (!row) return null
-    if (row.visibility === 'private') return null
-    return row as CommunityPost
+    if ((row as { visibility: string }).visibility === 'private') return null
+    return row as unknown as CommunityPost
   })
 
 export const toggleLike = createServerFn({ method: 'POST' })
