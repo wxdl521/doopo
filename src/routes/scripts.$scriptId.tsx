@@ -68,7 +68,8 @@ function ScriptDetail() {
 // ============= Saved (structured) view =============
 
 function SavedScriptView({ s, t }: { s: SavedScript; t: ReturnType<typeof useLanguage>['t'] }) {
-  const hasAgentText = !!(s.synopsisText || s.episodesText?.length || s.charactersText)
+  const plainContent = s.content || s.premise || s.logline || ''
+  const hasAgentText = !!(s.synopsisText || plainContent || s.episodesText?.length || s.charactersText)
   const hasScenes = !!s.scenes?.length
   const hasCharacters = !!s.characters?.length
   const hasActs = !!s.acts?.length
@@ -122,6 +123,9 @@ function SavedScriptView({ s, t }: { s: SavedScript; t: ReturnType<typeof useLan
       <div className={`grid gap-6 ${showSideBlocks ? 'lg:grid-cols-3' : 'lg:grid-cols-1'}`}>
         {hasAgentText && (
           <section className={`panel p-5 space-y-5 ${showSideBlocks ? 'lg:col-span-3' : ''}`}>
+            {!s.synopsisText && plainContent && (
+              <AgentTextBlock title="📄 已保存剧本内容" text={plainContent} />
+            )}
             {s.synopsisText && (
               <AgentTextBlock title="📖 故事梗概 / 一句话剧情" text={s.synopsisText} />
             )}
