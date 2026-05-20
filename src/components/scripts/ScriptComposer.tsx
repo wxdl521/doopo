@@ -23,7 +23,7 @@ import {
   streamSynopsis,
   streamEpisodeScenes,
 } from '../../lib/scriptAgent.functions'
-import { findScript, upsertScript, type SavedScript } from '../../lib/scriptStorage'
+import { findScript, upsertScriptAndCloud, type SavedScript } from '../../lib/scriptStorage'
 
 // 5 步对话式剧本智能体
 type Stage = 'setup' | 'synopsis' | 'episode' | 'episodes' | 'done'
@@ -321,6 +321,7 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
     let cur = nextEpIndex
     let prevText = episodes[episodes.length - 1]?.text ?? ''
     let prevIdx: number | null = episodes[episodes.length - 1]?.epIndex ?? null
+    let generatedEpisodes = [...episodes]
     try {
       while (cur <= target) {
         if (stopAutoRef.current) {
@@ -337,15 +338,19 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
           pushBubble({ role: 'system', text: `❌ 第 ${cur} 集生成失败，已中断自动连跑。` })
           break
         }
+        generatedEpisodes = [
+          ...generatedEpisodes.filter((e) => e.epIndex !== cur),
+          { epIndex: cur, text: res.text },
+        ].sort((a, b) => a.epIndex - b.epIndex)
         prevText = res.text
         prevIdx = cur
         setNextEpIndex(cur + 1)
         cur += 1
-        if ((cur - 1) % 3 === 0) persist(false)
+        if ((cur - 1) % 3 === 0) void persist(false, generatedEpisodes)
       }
       if (cur > target && !stopAutoRef.current) {
         pushBubble({ role: 'system', text: `🎉 已完成自动连续生成至第 ${target} 集。` })
-        persist(false)
+        void persist(false, generatedEpisodes)
       }
     } finally {
       setAutoRunning(false)
@@ -359,7 +364,7 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
 
   // 中途保存 / 完成保存（可被多次调用，复用同一 id）
   const savedIdRef = useRef<string | null>(null)
-  const persist = (markDone: boolean) => {
+  const persist = async (markDone: boolean, episodesSnapshot = episodes) => {
     const id = `scr-${Date.now()}`
     const finalId = savedIdRef.current ?? id
     savedIdRef.current = finalId
@@ -375,12 +380,12 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
       tone,
       model,
       synopsisText,
-      episodesText: episodes.length > 0 ? episodes : undefined,
+      episodesText: episodesSnapshot.length > 0 ? episodesSnapshot : undefined,
       expectedEpisodes,
       createdAt: existing?.createdAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }
-    upsertScript(item)
+    await upsertScriptAndCloud(item)
     onSaved?.()
     if (markDone) setStage('done')
     pushBubble({
