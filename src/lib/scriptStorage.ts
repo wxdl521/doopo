@@ -1,4 +1,5 @@
 import type { PipelineScene, PipelineAct, PipelineCharacter } from './scriptPipeline.functions'
+import { supabase } from '@/integrations/supabase/client'
 
 export type SavedScript = {
   id: string
@@ -79,8 +80,18 @@ export function findScript(id: string): SavedScript | null {
 
 // ============= Cloud sync =============
 
+async function hasSession(): Promise<boolean> {
+  if (typeof window === 'undefined') return false
+  try {
+    const { data } = await supabase.auth.getSession()
+    return !!data.session?.access_token
+  } catch {
+    return false
+  }
+}
+
 async function cloudUpsert(item: SavedScript) {
-  if (typeof window === 'undefined') return
+  if (!(await hasSession())) return
   try {
     const { upsertScriptRemote } = await import('./scripts.functions')
     await upsertScriptRemote({ data: { script: item } })
@@ -91,7 +102,7 @@ async function cloudUpsert(item: SavedScript) {
 }
 
 async function cloudDelete(id: string) {
-  if (typeof window === 'undefined') return
+  if (!(await hasSession())) return
   try {
     const { deleteScriptRemote } = await import('./scripts.functions')
     await deleteScriptRemote({ data: { id } })
@@ -105,7 +116,7 @@ async function cloudDelete(id: string) {
  * 未登录时静默返回本地列表。
  */
 export async function syncFromCloud(): Promise<SavedScript[]> {
-  if (typeof window === 'undefined') return loadScripts()
+  if (!(await hasSession())) return loadScripts()
   try {
     const { listScriptsRemote } = await import('./scripts.functions')
     const remote = (await listScriptsRemote()) as SavedScript[]
@@ -134,7 +145,7 @@ export async function syncFromCloud(): Promise<SavedScript[]> {
 
 export async function findScriptWithCloud(id: string): Promise<SavedScript | null> {
   const local = findScript(id)
-  if (typeof window === 'undefined') return local
+  if (!(await hasSession())) return local
   try {
     const { getScriptRemote } = await import('./scripts.functions')
     const remote = (await getScriptRemote({ data: { id } })) as SavedScript | null
