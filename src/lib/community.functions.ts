@@ -106,7 +106,7 @@ export const listCommunityPosts = createServerFn({ method: 'GET' })
   .handler(async ({ data }) => {
     let q = supabaseAdmin
       .from('community_posts')
-      .select(PUBLIC_COLS)
+      .select('id,user_id,kind,source_id,title,summary,cover_gradient,visibility,likes_count,views_count,created_at,updated_at')
       .eq('visibility', 'public')
     if (data.kind) q = q.eq('kind', data.kind)
     // Fetch a bit more for hot sort, then re-rank in app.
@@ -115,7 +115,7 @@ export const listCommunityPosts = createServerFn({ method: 'GET' })
     else q = q.order('created_at', { ascending: false })
     const { data: rows, error } = await q.limit(fetchLimit)
     if (error) throw new Error(error.message)
-    let result = (rows ?? []) as Omit<CommunityPost, 'payload'>[]
+    let result = ((rows ?? []) as unknown) as Omit<CommunityPost, 'payload'>[]
     if (data.sort === 'hot') {
       const now = Date.now()
       result = [...result].sort((a, b) => score(b, now) - score(a, now)).slice(0, data.limit)
@@ -211,8 +211,8 @@ export const listMyPosts = createServerFn({ method: 'GET' })
     const { supabase } = context
     const { data, error } = await supabase
       .from('community_posts')
-      .select(PUBLIC_COLS)
+      .select('id,user_id,kind,source_id,title,summary,cover_gradient,visibility,likes_count,views_count,created_at,updated_at')
       .order('created_at', { ascending: false })
     if (error) throw new Error(error.message)
-    return (data ?? []) as Omit<CommunityPost, 'payload'>[]
+    return ((data ?? []) as unknown) as Omit<CommunityPost, 'payload'>[]
   })
