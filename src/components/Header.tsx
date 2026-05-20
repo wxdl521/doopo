@@ -1,5 +1,6 @@
-import { Link } from '@tanstack/react-router'
-import { ChevronDown, MessageCircle, Sparkles, Sun, Moon, Globe } from 'lucide-react'
+import { useState, useRef, useEffect } from 'react'
+import { Link, useNavigate } from '@tanstack/react-router'
+import { ChevronDown, MessageCircle, Sparkles, Sun, Moon, Globe, User, LogOut } from 'lucide-react'
 import Logo from './Logo'
 import { useTheme } from '../context/ThemeContext'
 import { useLanguage } from '../i18n/LanguageContext'
