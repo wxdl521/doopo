@@ -9,7 +9,26 @@ import { useAuth } from '../hooks/useAuth'
 export default function Header() {
   const { theme, toggleTheme } = useTheme()
   const { lang, setLang, t } = useLanguage()
-  const { isAuthenticated, loading } = useAuth()
+  const { isAuthenticated, loading, user, signOut } = useAuth()
+  const navigate = useNavigate()
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const handleLogout = async () => {
+    setMenuOpen(false)
+    await signOut()
+    navigate({ to: '/home' })
+  }
 
   const topLinks = [
     { to: '/zoclaw', label: t.nav_openclaw, accent: true },
