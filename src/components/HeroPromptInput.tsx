@@ -260,3 +260,40 @@ export default function HeroPromptInput() {
     </div>
   )
 }
+
+function ChipRow({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string
+  options: readonly string[]
+  value: string
+  onChange: (v: string) => void
+}) {
+  return (
+    <div>
+      <div className="text-[11px] uppercase tracking-wide text-text-muted mb-1.5">{label}</div>
+      <div className="flex flex-wrap gap-1.5">
+        {options.map((opt) => {
+          const active = opt === value
+          return (
+            <button
+              key={opt}
+              type="button"
+              onClick={() => onChange(opt)}
+              className={`px-2.5 py-1 rounded-full text-xs border transition ${
+                active
+                  ? 'bg-accent text-bg-base border-accent font-medium'
+                  : 'bg-bg-elevated text-text-secondary border-border hover:text-text-primary hover:border-accent/40'
+              }`}
+            >
+              {opt}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
