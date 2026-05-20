@@ -77,6 +77,25 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
   const [expectedEpisodes, setExpectedEpisodes] = useState(100)
   const [sceneCount, setSceneCount] = useState(15)
 
+  // 从首页 Hero 入口带入的预填值（仅一次）
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem('script_prefill')
+      if (!raw) return
+      sessionStorage.removeItem('script_prefill')
+      const data = JSON.parse(raw) as { type?: string; genre?: string; tone?: string; theme?: string; plot?: string }
+      const allowedTypes = types.map((x) => x.value)
+      const allowedGenres = genres.map((x) => x.value)
+      const allowedTones = tones.map((x) => x.value)
+      if (data.type && allowedTypes.includes(data.type)) setType(data.type)
+      if (data.genre && allowedGenres.includes(data.genre)) setGenre(data.genre)
+      if (data.tone && allowedTones.includes(data.tone)) setTone(data.tone)
+      if (data.plot) setPlot((cur) => cur || data.plot!)
+      if (data.theme) setTheme((cur) => cur || data.theme!)
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // 流式聚合结果
   const [synopsisText, setSynopsisText] = useState('')
   const [episodes, setEpisodes] = useState<EpisodeItem[]>([])
