@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Logo from '../components/Logo'
 import { useLanguage } from '../i18n/LanguageContext'
 import { supabase } from '@/integrations/supabase/client'
@@ -16,6 +16,13 @@ function Login() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
+  const [pendingEmail, setPendingEmail] = useState<string | null>(null)
+  useEffect(() => {
+    try {
+      const p = sessionStorage.getItem('pendingActivationEmail')
+      if (p) { setPendingEmail(p); setEmail(p); sessionStorage.removeItem('pendingActivationEmail') }
+    } catch {}
+  }, [])
   const submit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
@@ -34,6 +41,12 @@ function Login() {
         <div className="flex justify-center mb-6"><Logo /></div>
         <h1 className="font-display text-2xl font-bold text-center mb-1">{t.auth_signin_title}</h1>
         <p className="text-sm text-text-muted text-center mb-6">{t.auth_signin_sub}</p>
+        {pendingEmail && (
+          <div className="mb-4 p-3 rounded-lg border border-accent/40 bg-accent-dim text-sm text-text-secondary">
+            <div className="font-medium text-text-primary mb-1">请先激活账户</div>
+            我们已向 <span className="text-accent">{pendingEmail}</span> 发送了激活邮件，请前往邮箱点击链接完成激活后再登录。
+          </div>
+        )}
         <form onSubmit={submit} className="space-y-4">
           <div>
             <label className="text-xs text-text-muted">{t.common_email}</label>
