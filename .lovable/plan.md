@@ -1,95 +1,69 @@
-# 剧本生成流程升级方案
 
-## 1. 新流程（5 步 + 对话式确认）
+## 问题 1：数字输入框的输入 bug
 
-```
-① 灵感(Setup)  →  ② 故事梗概/一句话剧情  →  ③ 分镜脚本(第1集)  →  ④ 角色卡  →  ⑤ 完成
-```
-
-每步在同一聊天面板内推进，AI 以**逐字流式**输出当前阶段内容，结束后给出"📋 同步确认信息清单"，用户回复"确认"或修改建议后才进入下一步。
-
-## 2. 各步骤输出内容
-
-**② 故事梗概**（首屏即给出深化框架，纯文本）
-- 剧本基本信息（主标题 / 题材 / 爽点 / 受众 / 集数 / 基调）
-- 故事大纲（一句话卖点 / 三句简介 起承转合 / 完整剧情大纲分段）
-- 章节结构表（按集数范围、标题范例、核心事件、爽点反转、悬念，4 列）
-- 人设档案（主角/反派/女配/男配：外貌/性格/金手指或可恨之处/经典台词）
-- 末尾追问：第 1 集分镜数量？默认 15-20
-
-**③ 分镜脚本**：第 1 集完整分镜（按用户确认数量），每个分镜含场标 + 动作 + 对白；同时输出"后续 2-10 集概要"；末尾追问"是否继续生成第 2 集 / 调整建议"。
-
-**④ 角色卡**：复用 ② 的人设档案 → 升级为可视化角色卡（沿用现有 `PipelineCharacter` 字段 + 新增 mbti/关键道具/经典台词/关系）。
-
-**⑤ 完成**：保存 `SavedScript`，提供按 Markdown 导出选项；UI 展示用纯文本。
-
-## 3. 前端改造（`src/components/scripts/ScriptComposer.tsx`）
-
-把 6 步分散面板 → **对话式工作台**：
-- 左/上：步骤进度条（① 灵感 → ⑤ 完成）
-- 主区：消息流（AI 流式气泡 + 用户确认气泡），AI 气況内按段渐进追加文本
-- 底部：当前步骤的输入/确认条
-  - ① 主题 + 剧情概要 + 类型/题材/风格/集数
-  - ② "确认 / 重新生成 / 修改建议"
-  - ③ 输入分镜数量 → "确认 / 重写第 N 镜 / 删除"
-  - ④ "确认角色卡 / 重新生成"
-  - ⑤ 保存 + 导出
-
-**渲染规则**：聊天区按 `whitespace-pre-wrap` 纯文本展示（含 emoji/`#`/`*` 字符），不走 Markdown 渲染；只有"导出"按钮调用现有 `exportScript.ts` 输出 Markdown 文件。
-
-## 4. 后端改造（新文件 + 替换现有 4 个 step fn）
-
-### 4.1 新建流式服务器函数 `src/lib/scriptAgent.functions.ts`
-
-采用 TanStack `createServerFn` + `async function*` 流式输出（参考 knowledge `tanstack-server-functions` 的 AI 流式段），直接 fetch Lovable AI Gateway `chat/completions` 并 `stream: true`，逐 token `yield { delta }`，结尾 `yield { done, structured }`。
-
-导出：
-- `streamSynopsis(input)` → 故事梗概（输出长文本 + 解析后的结构 JSON）
-- `streamEpisodeScenes({ ep, sceneCount, context })` → 第 N 集分镜
-- `streamCharacters({ context })` → 角色卡
-- `streamRewriteScene({ scene, instruction, context })`（保留改写能力）
-
-每个函数：
-1. system prompt 指定**先用纯文本按指定章节标题逐段输出**，最后追加一行 `<<<JSON>>>` 后给出严格 JSON（便于客户端解析为可保存的结构化数据）。
-2. 服务器一边把上游 SSE 切分一边 `yield { delta }`；解析到 `<<<JSON>>>` 后切到 `structuredBuf`；流结束 `JSON.parse(structuredBuf)` 并 `yield { done: true, data }`。
-3. 出错走现有 `rate_limit` / `no_credits` 错误码。
-
-### 4.2 默认模型
-默认 `lovable:google/gemini-3-flash-preview`（最快），保留 OpenRouter 切换。
-
-### 4.3 客户端消费
+**根因**：四个 `<input type="number">`（预计集数 / 第 1 集分镜数 / 下一集分镜数 / 连跑至第 N 集）的 `onChange` 都写成
 ```ts
-const stream = await streamSynopsis({ data: input });
-for await (const chunk of stream) {
-  if (chunk.delta) appendToBubble(chunk.delta);
-  else if (chunk.done) setSynopsisData(chunk.data);
-}
+setX(Math.max(min, Math.min(max, Number(e.target.value) || fallback)))
 ```
+导致两类问题：
+1. 用户清空输入框时 `Number('')=0`，触发 `|| fallback`，瞬间跳回默认值（15 / 100），无法删除重输。
+2. 边输边 clamp：min=5 时输入 "2" 立刻被改成 5；min=`nextEpIndex=2` 时输入 "1" 立刻变成 2，导致无法输入两位数（如 20、10）。
 
-### 4.4 老函数处理
-保留 `genLogline / genOutline / genScenes / genCharacters / rewriteScene`（旧 Scripts 详情页可能引用），但新 Composer 不再使用；若发现旧引用一并替换或保留只读。
+**修复**：抽一个轻量 `NumberField` 子组件，内部用 string 本地态：
+- `onChange`：只接受空串或纯数字字符串，原样存入本地态并向上同步 `Number(value)`（空串时不调用 setter 或传 `NaN` 由父级保留旧值）。
+- `onBlur`：解析 → clamp 到 [min, max] → 若为空回填上次有效值或默认值，再 setter + 同步本地态。
+- 替换 `ScriptComposer.tsx` 中 4 处 number input。
 
-## 5. 数据模型扩展（`src/lib/scriptStorage.ts`）
+## 问题 2：保存的剧本会丢失 → 接入云端持久化
 
-`SavedScript` 新增：
-- `basicInfo`：{ subtitleType, hookCore, audience, expectedEpisodes, mood }
-- `chapterTable`：Array<{ range, titles[], coreEvent, hook, suspense }>
-- `episodes`：Array<{ epIndex, scenes: PipelineScene[], summary: string }>
-- `nextEpisodesOutline`：Array<{ epIndex, summary }>
+**根因**：`src/lib/scriptStorage.ts` 只写浏览器 `localStorage`（key=`doopoo_scripts`），清缓存 / 换设备 / 隐私模式都会丢；且 `Scripts.tsx`、`scripts.$scriptId.tsx` 只从 localStorage 读。
 
-## 6. 任务拆分
+**方案**：用户登录后同时落 Supabase；未登录仍走 localStorage（兼容现状）。本地缓存作为云端的镜像，保证离线/即时可读。
 
-1. 写 `scriptAgent.functions.ts`（streaming + 系统提示词 + JSON 解析）。
-2. 重写 `ScriptComposer.tsx` 为对话式 5 步面板（流式追加 + 确认条）。
-3. 扩展 `SavedScript` 与 `exportScript.ts`（按新结构导出 Markdown）。
-4. 更新 `src/pages/Scripts.tsx`（标题/副标题文案对齐"剧本智能体"）。
-5. 兼容：旧 `scripts.$scriptId.tsx` 详情页按可选字段渲染新区块。
+### 数据库迁移（一次性）
 
-## 7. 验证
+新表 `public.scripts`：
+- `id text primary key`（沿用前端生成的 `scr-...` id，便于本地/云端 id 一致）
+- `user_id uuid not null`（写入时由 serverFn 注入 `auth.uid()`，不暴露给客户端）
+- `title text not null`、`type`、`genre`、`tone`、`updated_at timestamptz`（用于列表展示与排序的少量索引列）
+- `payload jsonb not null`（完整 `SavedScript` 结构：synopsisText / episodesText[] / characters / quality 等都塞这里，避免每加字段就改表）
+- `created_at`、`updated_at`，触发器自动更新 `updated_at`
+- 索引：`(user_id, updated_at desc)`
 
-- 手测：输入"天雷圣子"灵感 → 完成 5 步 → 重载后详情页展示完整结构。
-- 流式：第一次响应 < 1.5s 出首字；中断网络给出错误并保留已输入内容。
-- 导出：Markdown 内含基本信息表 + 章节结构表 + 第 1 集分镜 + 后续概要。
+RLS：启用，4 条策略（select/insert/update/delete）均 `using (auth.uid() = user_id)`。
 
----
-确认无误后，我将按此方案进入实现。如对**流式 UI 形态**（对话气泡 vs 单一文本卡片）或**首屏是否一次性给完整框架**有偏好，请告知。
+### 服务端函数（`src/lib/scripts.functions.ts`，全部 `requireSupabaseAuth`）
+
+- `listScriptsRemote()` → `SavedScript[]`：读当前用户全部 payload。
+- `getScriptRemote({ id })` → `SavedScript | null`。
+- `upsertScriptRemote({ script })` → `{ ok: true }`：`upsert` 写 `payload` 并同步 5 个索引列、`user_id = context.userId`。
+- `deleteScriptRemote({ id })` → `{ ok: true }`。
+
+所有 RPC 用 Zod 校验输入。
+
+### 前端改造（最小侵入）
+
+`src/lib/scriptStorage.ts` 新增 async 版本，保留同步 API 兼容：
+- `syncFromCloud()`：登录时拉云端 → 与本地按 `updatedAt` 取较新者合并 → 写回 localStorage。
+- `upsertScript()`：保持现签名（同步写本地），同时 fire-and-forget 调云端 `upsertScriptRemote`，失败仅 console。
+- `removeScript()`：同理双删。
+
+`src/pages/Scripts.tsx`：
+- `useEffect` 中先 `refresh()`（读本地，秒出 UI），再调用 `syncFromCloud()`，完成后再 `refresh()`。
+- 删除按钮调用更新后的 `removeScript`（已自动双删）。
+
+`src/routes/scripts.$scriptId.tsx`：
+- 当前 `useEffect` 中除 `findScript` 外，再调 `getScriptRemote`，云端结果覆盖本地。
+
+`ScriptComposer.tsx` 的 `persist()` 不需要改（它调用 `upsertScript`，已自动双写）。
+
+未登录时：serverFn 直接 401，前端忽略错误，仍正常走 localStorage，体验不变。
+
+## 改动文件清单
+
+- DB migration（新建 `scripts` 表 + RLS + 触发器）
+- 新增 `src/lib/scripts.functions.ts`
+- 编辑 `src/lib/scriptStorage.ts`（双写、合并）
+- 编辑 `src/components/scripts/ScriptComposer.tsx`（NumberField，替换 4 处 input）
+- 编辑 `src/pages/Scripts.tsx`（hydration 后云端同步）
+- 编辑 `src/routes/scripts.$scriptId.tsx`（云端覆盖本地）
