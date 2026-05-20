@@ -61,17 +61,100 @@ export function upsertScript(item: SavedScript): SavedScript[] {
   if (idx >= 0) all[idx] = next
   else all.unshift(next)
   saveScripts(all)
+  // fire-and-forget 云端持久化（登录后生效；未登录或离线则静默忽略）
+  void cloudUpsert(next)
   return all
 }
 
 export function removeScript(id: string): SavedScript[] {
   const all = loadScripts().filter((s) => s.id !== id)
   saveScripts(all)
+  void cloudDelete(id)
   return all
 }
 
 export function findScript(id: string): SavedScript | null {
   return loadScripts().find((s) => s.id === id) ?? null
+}
+
+// ============= Cloud sync =============
+
+async function cloudUpsert(item: SavedScript) {
+  if (typeof window === 'undefined') return
+  try {
+    const { upsertScriptRemote } = await import('./scripts.functions')
+    await upsertScriptRemote({ data: { script: item } })
+  } catch (e) {
+    // 未登录 / 网络异常 → 仅本地保存
+    console.debug('[scripts] cloud upsert skipped:', e)
+  }
+}
+
+async function cloudDelete(id: string) {
+  if (typeof window === 'undefined') return
+  try {
+    const { deleteScriptRemote } = await import('./scripts.functions')
+    await deleteScriptRemote({ data: { id } })
+  } catch (e) {
+    console.debug('[scripts] cloud delete skipped:', e)
+  }
+}
+
+/**
+ * 拉取云端剧本并与本地按 updatedAt 较新者合并，写回 localStorage。
+ * 未登录时静默返回本地列表。
+ */
+export async function syncFromCloud(): Promise<SavedScript[]> {
+  if (typeof window === 'undefined') return loadScripts()
+  try {
+    const { listScriptsRemote } = await import('./scripts.functions')
+    const remote = (await listScriptsRemote()) as SavedScript[]
+    const local = loadScripts()
+    const map = new Map<string, SavedScript>()
+    for (const s of local) map.set(s.id, s)
+    for (const r of remote) {
+      const existing = map.get(r.id)
+      if (!existing) map.set(r.id, r)
+      else {
+        const lu = Date.parse(existing.updatedAt || '') || 0
+        const ru = Date.parse(r.updatedAt || '') || 0
+        map.set(r.id, ru >= lu ? r : existing)
+      }
+    }
+    const merged = Array.from(map.values()).sort(
+      (a, b) => (Date.parse(b.updatedAt || '') || 0) - (Date.parse(a.updatedAt || '') || 0),
+    )
+    saveScripts(merged)
+    return merged
+  } catch (e) {
+    console.debug('[scripts] cloud sync skipped:', e)
+    return loadScripts()
+  }
+}
+
+export async function findScriptWithCloud(id: string): Promise<SavedScript | null> {
+  const local = findScript(id)
+  if (typeof window === 'undefined') return local
+  try {
+    const { getScriptRemote } = await import('./scripts.functions')
+    const remote = (await getScriptRemote({ data: { id } })) as SavedScript | null
+    if (!remote) return local
+    const lu = Date.parse(local?.updatedAt || '') || 0
+    const ru = Date.parse(remote.updatedAt || '') || 0
+    if (ru >= lu) {
+      // 写回本地缓存，避免下次刷新还得拉云端
+      const all = loadScripts()
+      const idx = all.findIndex((s) => s.id === id)
+      if (idx >= 0) all[idx] = remote
+      else all.unshift(remote)
+      saveScripts(all)
+      return remote
+    }
+    return local
+  } catch (e) {
+    console.debug('[scripts] cloud get skipped:', e)
+    return local
+  }
 }
 
 // ============= Quality heuristics =============

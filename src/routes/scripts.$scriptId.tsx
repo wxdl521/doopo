@@ -6,7 +6,7 @@ import remarkGfm from 'remark-gfm'
 import PageHeader from '../components/PageHeader'
 import { mockScripts, type ScriptItem } from '../data/mock'
 import { useLanguage } from '../i18n/LanguageContext'
-import { findScript, type SavedScript } from '../lib/scriptStorage'
+import { findScript, findScriptWithCloud, type SavedScript } from '../lib/scriptStorage'
 
 export const Route = createFileRoute('/scripts/$scriptId')({
   head: ({ params }) => ({ meta: [{ title: `Script ${params.scriptId} — Doopoo` }] }),
@@ -39,6 +39,10 @@ function ScriptDetail() {
   useEffect(() => {
     setSaved(findScript(params.scriptId))
     setHydrated(true)
+    // 云端覆盖（登录后跨设备同步）
+    void findScriptWithCloud(params.scriptId).then((s) => {
+      if (s) setSaved(s)
+    })
   }, [params.scriptId])
 
   if (!hydrated && !mock) {
