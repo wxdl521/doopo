@@ -958,3 +958,60 @@ function SelectField({
     </div>
   )
 }
+
+// ============ 数字输入框（修复边输边 clamp / 清空跳默认值 bug）============
+function NumberField({
+  value,
+  min,
+  max,
+  fallback,
+  onCommit,
+  className,
+}: {
+  value: number
+  min: number
+  max: number
+  fallback?: number
+  onCommit: (v: number) => void
+  className?: string
+}) {
+  const [text, setText] = useState<string>(String(value))
+  // 外部 value 变化时（如自动连跑推进 nextEpIndex）同步
+  useEffect(() => {
+    setText(String(value))
+  }, [value])
+  const commit = () => {
+    if (text === '' || text === '-') {
+      const v = fallback ?? value
+      setText(String(v))
+      if (v !== value) onCommit(v)
+      return
+    }
+    const n = Number(text)
+    if (!Number.isFinite(n)) {
+      setText(String(value))
+      return
+    }
+    const clamped = Math.max(min, Math.min(max, Math.floor(n)))
+    setText(String(clamped))
+    if (clamped !== value) onCommit(clamped)
+  }
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      pattern="[0-9]*"
+      value={text}
+      onChange={(e) => {
+        const v = e.target.value
+        // 允许空串与纯数字，编辑过程中不 clamp，避免无法输入 10/20 等
+        if (v === '' || /^\d+$/.test(v)) setText(v)
+      }}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+      }}
+      className={className}
+    />
+  )
+}
