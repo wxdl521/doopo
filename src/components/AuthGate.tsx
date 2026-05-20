@@ -33,8 +33,6 @@ export default function AuthGate({ children }: { children: ReactNode }) {
   }
   if (isAuthenticated) return <>{children}</>
 
-  const redirectTo = location.pathname + location.search
-
   return (
     <div className="flex items-center justify-center py-16 animate-fade-in">
       <div className="panel max-w-md w-full p-8 text-center border border-accent/30">
@@ -47,18 +45,10 @@ export default function AuthGate({ children }: { children: ReactNode }) {
           首页与社区分享内容无需登录即可浏览。
         </p>
         <div className="flex items-center justify-center gap-2">
-          <Link
-            to="/login"
-            search={{ redirect: redirectTo }}
-            className="btn-primary inline-flex items-center gap-1.5 text-sm"
-          >
+          <Link to="/login" className="btn-primary inline-flex items-center gap-1.5 text-sm">
             <LogIn size={14} /> 登录
           </Link>
-          <Link
-            to="/register"
-            search={{ redirect: redirectTo }}
-            className="btn-secondary inline-flex items-center gap-1.5 text-sm"
-          >
+          <Link to="/register" className="btn-secondary inline-flex items-center gap-1.5 text-sm">
             <UserPlus size={14} /> 注册
           </Link>
         </div>
