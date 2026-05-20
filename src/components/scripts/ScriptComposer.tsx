@@ -603,15 +603,15 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
             </button>
           )}
           <button
-            onClick={() => persist(false)}
+            onClick={() => void persist(false)}
             disabled={loading || autoRunning || episodes.length === 0}
             className="btn-ghost text-xs ml-auto disabled:opacity-40"
           >
             <Save size={12} /> 保存进度
           </button>
           <button
-            onClick={() => {
-              const id = persist(true)
+            onClick={async () => {
+              const id = await persist(true)
               navigate({ to: '/scripts/$scriptId', params: { scriptId: id } })
             }}
             disabled={loading || autoRunning || episodes.length === 0}
@@ -626,7 +626,7 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
         <EpisodeEditor
           episodes={episodes as EpisodeItem[]}
           setEpisodes={setEpisodes as React.Dispatch<React.SetStateAction<EpisodeItem[]>>}
-          onSaveSnapshot={() => persist(false)}
+          onSaveSnapshot={() => void persist(false)}
         />
       )}
 
