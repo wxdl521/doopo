@@ -88,6 +88,12 @@ export const zh = {
   hero_upload_script: '上传脚本',
   hero_upload_storyboard: '上传故事板',
   hero_close: '关闭',
+  hero_script_entry: '剧本生成',
+  hero_script_panel_title: '剧本选项',
+  hero_script_type: '类型',
+  hero_script_genre: '题材',
+  hero_script_tone: '风格',
+  hero_script_start: '开始创作剧本',
 
   prompt_placeholder_1: '描述一个赛博朋克城市夜景，包含霓虹灯、雨后街道与远处的广告牌 →',
   prompt_placeholder_2: '写一段关于 AI 与人类情感的对话脚本 →',

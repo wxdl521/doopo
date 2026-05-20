@@ -1,11 +1,19 @@
-import { useState, useRef } from 'react'
-import { ArrowRight, ChevronDown, FileText, ImagePlus, Loader2, Plus, RefreshCw, Sparkles, X, MessageCircle } from 'lucide-react'
+import { useState, useRef, useEffect } from 'react'
+import { ArrowRight, ChevronDown, FileText, ImagePlus, Loader2, Plus, RefreshCw, Sparkles, X, MessageCircle, Film } from 'lucide-react'
+import { useNavigate } from '@tanstack/react-router'
 import { useLanguage } from '../i18n/LanguageContext'
+import { useAuth } from '../hooks/useAuth'
+
+const SCRIPT_TYPES = ['Micro', 'Short', 'Feature', 'Ad'] as const
+const SCRIPT_GENRES = ['Sci-Fi', 'Romance', 'Thriller', 'Comedy', 'Drama', 'Horror', 'Fantasy', 'Historical'] as const
+const SCRIPT_TONES = ['Serious', 'Comedy', 'Suspense', 'Romance', 'Horror'] as const
 
 const PROXY_URL = 'http://43.130.52.57:8080/v1/chat/completions'
 
 export default function HeroPromptInput() {
   const { t, lang } = useLanguage()
+  const navigate = useNavigate()
+  const { isAuthenticated } = useAuth()
   const AI_MODELS = [
     { id: 'deepseek/deepseek-chat-v3', label: 'DeepSeek Chat', desc: lang === 'zh' ? '快速·中文友好' : 'Fast · Chinese-friendly' },
     { id: 'mistralai/mistral-nemo', label: 'Mistral Nemo', desc: lang === 'zh' ? '均衡·多语言' : 'Balanced · Multilingual' },
@@ -22,6 +30,45 @@ export default function HeroPromptInput() {
   const [error, setError] = useState('')
   const [phIndex] = useState(() => Math.floor(Math.random() * placeholders.length))
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  // 剧本生成面板
+  const [showScriptPanel, setShowScriptPanel] = useState(false)
+  const [scriptType, setScriptType] = useState<string>('Short')
+  const [scriptGenre, setScriptGenre] = useState<string>('Drama')
+  const [scriptTone, setScriptTone] = useState<string>('Serious')
+  const scriptPanelRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!showScriptPanel) return
+    const onDown = (e: MouseEvent) => {
+      if (scriptPanelRef.current && !scriptPanelRef.current.contains(e.target as Node)) {
+        setShowScriptPanel(false)
+      }
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [showScriptPanel])
+
+  const handleStartScript = () => {
+    try {
+      sessionStorage.setItem(
+        'script_prefill',
+        JSON.stringify({
+          type: scriptType,
+          genre: scriptGenre,
+          tone: scriptTone,
+          theme: '',
+          plot: value.trim(),
+        }),
+      )
+    } catch {}
+    setShowScriptPanel(false)
+    if (!isAuthenticated) {
+      navigate({ to: '/login' })
+    } else {
+      navigate({ to: '/scripts' })
+    }
+  }
 
   const handleCreate = async () => {
     if (!value.trim() || loading) return
@@ -84,6 +131,48 @@ export default function HeroPromptInput() {
             <button className="btn-ghost !px-3" title={t.hero_attach}><Plus size={16} /></button>
             <button className="btn-ghost"><FileText size={15} /> {t.hero_upload_script}</button>
             <button className="btn-ghost"><ImagePlus size={15} /> {t.hero_upload_storyboard}</button>
+
+            {/* 剧本生成入口 */}
+            <div className="relative" ref={scriptPanelRef}>
+              <button
+                onClick={() => setShowScriptPanel((s) => !s)}
+                className="btn-ghost"
+              >
+                <Film size={14} className="text-accent" />
+                {t.hero_script_entry}
+                <ChevronDown size={14} className="opacity-60" />
+              </button>
+              {showScriptPanel && (
+                <div className="absolute left-0 top-full mt-2 w-[22rem] panel p-3 z-30 animate-fade-in shadow-glow space-y-3">
+                  <div className="text-xs font-medium text-text-secondary">{t.hero_script_panel_title}</div>
+                  <ChipRow
+                    label={t.hero_script_type}
+                    options={SCRIPT_TYPES as readonly string[]}
+                    value={scriptType}
+                    onChange={setScriptType}
+                  />
+                  <ChipRow
+                    label={t.hero_script_genre}
+                    options={SCRIPT_GENRES as readonly string[]}
+                    value={scriptGenre}
+                    onChange={setScriptGenre}
+                  />
+                  <ChipRow
+                    label={t.hero_script_tone}
+                    options={SCRIPT_TONES as readonly string[]}
+                    value={scriptTone}
+                    onChange={setScriptTone}
+                  />
+                  <button
+                    onClick={handleStartScript}
+                    className="btn-primary w-full justify-center"
+                  >
+                    <Sparkles size={14} /> {t.hero_script_start}
+                    <ArrowRight size={14} />
+                  </button>
+                </div>
+              )}
+            </div>
 
             {/* 模型选择器 */}
             <div className="relative">
@@ -168,6 +257,43 @@ export default function HeroPromptInput() {
           )}
         </div>
       )}
+    </div>
+  )
+}
+
+function ChipRow({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string
+  options: readonly string[]
+  value: string
+  onChange: (v: string) => void
+}) {
+  return (
+    <div>
+      <div className="text-[11px] uppercase tracking-wide text-text-muted mb-1.5">{label}</div>
+      <div className="flex flex-wrap gap-1.5">
+        {options.map((opt) => {
+          const active = opt === value
+          return (
+            <button
+              key={opt}
+              type="button"
+              onClick={() => onChange(opt)}
+              className={`px-2.5 py-1 rounded-full text-xs border transition ${
+                active
+                  ? 'bg-accent text-bg-base border-accent font-medium'
+                  : 'bg-bg-elevated text-text-secondary border-border hover:text-text-primary hover:border-accent/40'
+              }`}
+            >
+              {opt}
+            </button>
+          )
+        })}
+      </div>
     </div>
   )
 }
