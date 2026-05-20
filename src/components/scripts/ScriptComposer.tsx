@@ -106,11 +106,72 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
     setBubbles((prev) => [...prev, { ...b, id }])
     return id
   }
+
+  // —— 逐字"打字机"渲染：把上游每次的大块 delta 拆成小片，平滑追加 ——
+  const pendingRef = useRef<Map<string, { buf: string; done: boolean }>>(new Map())
+  const flushTimerRef = useRef<number | null>(null)
+
+  const ensureFlushTimer = () => {
+    if (flushTimerRef.current != null) return
+    flushTimerRef.current = window.setInterval(() => {
+      const map = pendingRef.current
+      if (map.size === 0) {
+        if (flushTimerRef.current != null) window.clearInterval(flushTimerRef.current)
+        flushTimerRef.current = null
+        return
+      }
+      setBubbles((prev) =>
+        prev.map((b) => {
+          const slot = map.get(b.id)
+          if (!slot) return b
+          if (slot.buf.length === 0) {
+            if (slot.done) {
+              map.delete(b.id)
+              return { ...b, streaming: false }
+            }
+            return b
+          }
+          // 缓冲越大流速越快，避免落后太多；同时保证最低一次 2 字
+          const take = Math.min(slot.buf.length, Math.max(2, Math.ceil(slot.buf.length / 12)))
+          const chunk = slot.buf.slice(0, take)
+          slot.buf = slot.buf.slice(take)
+          const next: Bubble = { ...b, text: b.text + chunk }
+          if (slot.buf.length === 0 && slot.done) {
+            map.delete(b.id)
+            next.streaming = false
+          }
+          return next
+        }),
+      )
+    }, 24) as unknown as number
+  }
+
+  useEffect(() => {
+    return () => {
+      if (flushTimerRef.current != null) {
+        window.clearInterval(flushTimerRef.current)
+        flushTimerRef.current = null
+      }
+    }
+  }, [])
+
   const appendDelta = (id: string, delta: string) => {
-    setBubbles((prev) => prev.map((b) => (b.id === id ? { ...b, text: b.text + delta } : b)))
+    if (!delta) return
+    const map = pendingRef.current
+    const slot = map.get(id) ?? { buf: '', done: false }
+    slot.buf += delta
+    map.set(id, slot)
+    ensureFlushTimer()
   }
   const finishBubble = (id: string) => {
-    setBubbles((prev) => prev.map((b) => (b.id === id ? { ...b, streaming: false } : b)))
+    const map = pendingRef.current
+    const slot = map.get(id)
+    if (slot) {
+      slot.done = true
+      ensureFlushTimer()
+    } else {
+      setBubbles((prev) => prev.map((b) => (b.id === id ? { ...b, streaming: false } : b)))
+    }
   }
 
   const errMsg = (e: string) => {
