@@ -2,6 +2,8 @@ import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useState } from 'react'
 import Logo from '../components/Logo'
 import { useLanguage } from '../i18n/LanguageContext'
+import { supabase } from '@/integrations/supabase/client'
+import { toast } from 'sonner'
 
 export const Route = createFileRoute('/login')({
   head: () => ({ meta: [{ title: 'Sign in — Doopoo' }] }),
@@ -13,9 +15,18 @@ function Login() {
   const navigate = useNavigate()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const submit = (e: React.FormEvent) => {
+  const [loading, setLoading] = useState(false)
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault()
-    navigate({ to: '/home' })
+    setLoading(true)
+    const { error } = await supabase.auth.signInWithPassword({ email, password })
+    setLoading(false)
+    if (error) {
+      toast.error(error.message || '登录失败')
+      return
+    }
+    toast.success('登录成功')
+    navigate({ to: '/scripts' })
   }
   return (
     <div className="min-h-[70vh] flex items-center justify-center animate-fade-in">
@@ -32,7 +43,9 @@ function Login() {
             <label className="text-xs text-text-muted">{t.common_password}</label>
             <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" required className="mt-1 w-full px-3 py-2 rounded-lg bg-bg-elevated border border-border focus:outline-none focus:border-accent/60" />
           </div>
-          <button type="submit" className="btn-primary w-full justify-center">{t.auth_signin_btn}</button>
+          <button type="submit" disabled={loading} className="btn-primary w-full justify-center disabled:opacity-60">
+            {loading ? '登录中…' : t.auth_signin_btn}
+          </button>
         </form>
         <div className="text-center text-sm text-text-muted mt-6">
           {t.auth_no_account} <Link to="/register" className="text-accent hover:underline">{t.auth_to_signup}</Link>
