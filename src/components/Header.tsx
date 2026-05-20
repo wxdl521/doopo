@@ -3,10 +3,12 @@ import { ChevronDown, MessageCircle, Sparkles, Sun, Moon, Globe } from 'lucide-r
 import Logo from './Logo'
 import { useTheme } from '../context/ThemeContext'
 import { useLanguage } from '../i18n/LanguageContext'
+import { useAuth } from '../hooks/useAuth'
 
 export default function Header() {
   const { theme, toggleTheme } = useTheme()
   const { lang, setLang, t } = useLanguage()
+  const { isAuthenticated, loading } = useAuth()
 
   const topLinks = [
     { to: '/zoclaw', label: t.nav_openclaw, accent: true },
@@ -97,12 +99,19 @@ export default function Header() {
             {t.header_upgrade}
           </button>
 
-          <Link to="/account"
-                className="w-9 h-9 rounded-full overflow-hidden border border-border
-                           bg-gradient-to-br from-emerald-400 to-cyan-500 hover:ring-2
-                           hover:ring-accent/50 transition flex-shrink-0 grid place-items-center">
-            <span className="sr-only">{t.header_account}</span>
-          </Link>
+          {!loading && !isAuthenticated ? (
+            <Link to="/login"
+                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-sm font-medium border border-accent/40 text-accent bg-accent-dim hover:bg-accent/20 transition flex-shrink-0">
+              登录
+            </Link>
+          ) : (
+            <Link to="/account"
+                  className="w-9 h-9 rounded-full overflow-hidden border border-border
+                             bg-gradient-to-br from-emerald-400 to-cyan-500 hover:ring-2
+                             hover:ring-accent/50 transition flex-shrink-0 grid place-items-center">
+              <span className="sr-only">{t.header_account}</span>
+            </Link>
+          )}
         </div>
       </div>
     </header>
