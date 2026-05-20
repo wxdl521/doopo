@@ -126,12 +126,42 @@ export default function Header() {
               登录
             </Link>
           ) : (
-            <Link to="/account"
-                  className="w-9 h-9 rounded-full overflow-hidden border border-border
-                             bg-gradient-to-br from-emerald-400 to-cyan-500 hover:ring-2
-                             hover:ring-accent/50 transition flex-shrink-0 grid place-items-center">
-              <span className="sr-only">{t.header_account}</span>
-            </Link>
+            <div className="relative flex-shrink-0" ref={menuRef}>
+              <button
+                onClick={() => setMenuOpen(!menuOpen)}
+                className="w-9 h-9 rounded-full overflow-hidden border border-border
+                           bg-gradient-to-br from-emerald-400 to-cyan-500 hover:ring-2
+                           hover:ring-accent/50 transition grid place-items-center"
+                aria-label={t.header_account}
+              >
+                <User size={16} className="text-white" />
+              </button>
+
+              {menuOpen && (
+                <div className="absolute right-0 top-full mt-2 py-2 rounded-xl border border-border bg-bg-surface shadow-lg min-w-[180px] z-50">
+                  <div className="px-4 py-2 border-b border-border">
+                    <p className="text-sm font-medium text-text-primary truncate max-w-[160px]">
+                      {user?.email || t.header_account}
+                    </p>
+                  </div>
+                  <Link
+                    to="/account"
+                    onClick={() => setMenuOpen(false)}
+                    className="flex items-center gap-2 px-4 py-2 text-sm text-text-secondary hover:bg-bg-elevated hover:text-text-primary transition-colors"
+                  >
+                    <User size={14} />
+                    {t.header_account}
+                  </Link>
+                  <button
+                    onClick={handleLogout}
+                    className="w-full flex items-center gap-2 px-4 py-2 text-sm text-text-secondary hover:bg-bg-elevated hover:text-text-primary transition-colors text-left"
+                  >
+                    <LogOut size={14} />
+                    {t.header_logout}
+                  </button>
+                </div>
+              )}
+            </div>
           )}
         </div>
       </div>
