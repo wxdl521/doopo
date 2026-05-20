@@ -30,10 +30,6 @@ export type CommunityPost = {
   updated_at: string
 }
 
-const PUBLIC_COLS =
-  'id,user_id,kind,source_id,title,summary,cover_gradient,visibility,likes_count,views_count,created_at,updated_at'
-const FULL_COLS = PUBLIC_COLS + ',payload'
-
 const PublishSchema = z.object({
   kind: z.enum(['script', 'character', 'scene', 'prop', 'comic']),
   sourceId: z.string().max(128).optional().nullable(),
