@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
 import { Link } from '@tanstack/react-router'
-import { Trash2, MessageSquare, FileText } from 'lucide-react'
+import { Trash2, MessageSquare, FileText, Cloud, LogIn } from 'lucide-react'
 import { useLanguage } from '../i18n/LanguageContext'
 import ScriptComposer from '../components/scripts/ScriptComposer'
 import { loadScripts, removeScript, syncFromCloud, type SavedScript } from '../lib/scriptStorage'
+import { useAuth } from '../hooks/useAuth'
 
 const TYPES = [
   { value: 'Micro', key: 'script_type_micro' as const },
@@ -41,13 +42,14 @@ const MODELS = [
 export default function Scripts() {
   const { t } = useLanguage()
   const [scripts, setScripts] = useState<SavedScript[]>([])
+  const { isAuthenticated, loading: authLoading, user, signOut } = useAuth()
 
   const refresh = () => setScripts(loadScripts())
   useEffect(() => {
     refresh()
     // 登录后从云端拉取并合并，未登录则静默跳过
     void syncFromCloud().then((merged) => setScripts(merged))
-  }, [])
+  }, [isAuthenticated])
 
   const handleDelete = (id: string) => {
     setScripts(removeScript(id))
@@ -59,6 +61,38 @@ export default function Scripts() {
         <h1 className="font-display text-4xl font-bold">{t.scripts_title}</h1>
         <p className="text-text-secondary mt-1">剧本智能体 · 5 步对话式创作：灵感 → 故事梗概 → 分镜脚本 → 多剧集（逐集生成 · 可中途保存）→ 完成</p>
       </div>
+
+      {!authLoading && !isAuthenticated && (
+        <div className="panel p-4 flex items-center justify-between gap-3 border border-accent/30 bg-accent-dim/40">
+          <div className="flex items-center gap-3 text-sm">
+            <Cloud size={18} className="text-accent shrink-0" />
+            <div>
+              <div className="font-semibold text-text-primary">请先登录以启用云同步</div>
+              <div className="text-text-secondary text-xs mt-0.5">
+                未登录时剧本仅保存在当前浏览器，登录后可在多设备间同步并防止数据丢失。
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <Link to="/login" className="btn-primary inline-flex items-center gap-1.5 text-sm">
+              <LogIn size={14} /> 登录
+            </Link>
+            <Link to="/register" className="text-sm text-accent hover:underline">
+              注册
+            </Link>
+          </div>
+        </div>
+      )}
+
+      {!authLoading && isAuthenticated && (
+        <div className="flex items-center justify-end gap-3 text-xs text-text-muted">
+          <Cloud size={12} className="text-accent" />
+          <span>已登录 {user?.email} · 云同步已启用</span>
+          <button onClick={() => void signOut()} className="text-accent hover:underline">
+            退出
+          </button>
+        </div>
+      )}
 
       <ScriptComposer
         types={TYPES}
