@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
 import { Link } from '@tanstack/react-router'
-import { Trash2, MessageSquare, FileText, Cloud, LogIn } from 'lucide-react'
+import { Trash2, MessageSquare, FileText, Cloud, LogIn, Share2 } from 'lucide-react'
 import { useLanguage } from '../i18n/LanguageContext'
 import ScriptComposer from '../components/scripts/ScriptComposer'
 import { loadScripts, removeScript, syncFromCloud, type SavedScript } from '../lib/scriptStorage'
 import { useAuth } from '../hooks/useAuth'
+import ShareDialog from '../components/community/ShareDialog'
 
 const TYPES = [
   { value: 'Micro', key: 'script_type_micro' as const },
@@ -43,6 +44,7 @@ export default function Scripts() {
   const { t } = useLanguage()
   const [scripts, setScripts] = useState<SavedScript[]>([])
   const { isAuthenticated, loading: authLoading, user, signOut } = useAuth()
+  const [shareScript, setShareScript] = useState<SavedScript | null>(null)
 
   const refresh = () => setScripts(loadScripts())
   useEffect(() => {
@@ -159,10 +161,20 @@ export default function Scripts() {
                       className="text-xs text-accent hover:underline inline-flex items-center gap-1">
                       <FileText size={12} /> {t.script_step_open_detail}
                     </Link>
-                    <button onClick={() => handleDelete(s.id)}
-                      className="p-1.5 rounded hover:bg-bg-elevated text-text-muted hover:text-red-400">
-                      <Trash2 size={13} />
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <button onClick={() => {
+                        if (!isAuthenticated) { alert('请先登录后再分享到社区'); return }
+                        setShareScript(s)
+                      }}
+                        title="分享到社区"
+                        className="p-1.5 rounded hover:bg-bg-elevated text-text-muted hover:text-accent">
+                        <Share2 size={13} />
+                      </button>
+                      <button onClick={() => handleDelete(s.id)}
+                        className="p-1.5 rounded hover:bg-bg-elevated text-text-muted hover:text-red-400">
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
                   </div>
                 </div>
               )
@@ -170,6 +182,22 @@ export default function Scripts() {
           </div>
         )}
       </div>
+
+      {shareScript && (
+        <ShareDialog
+          open
+          onClose={() => setShareScript(null)}
+          kind="script"
+          sourceId={shareScript.id}
+          defaultTitle={shareScript.title}
+          defaultSummary={shareScript.logline || shareScript.premise || ''}
+          coverGradient={(() => {
+            const palette = shareScript.characters?.[0]?.palette ?? ['#7c3aed', '#ec4899', '#f97316']
+            return `linear-gradient(135deg, ${palette[0]}, ${palette[palette.length - 1]})`
+          })()}
+          payload={shareScript}
+        />
+      )}
     </div>
   )
 }

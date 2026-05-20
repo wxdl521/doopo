@@ -19,6 +19,7 @@ import { Route as PricingRouteImport } from './routes/pricing'
 import { Route as ModelsRouteImport } from './routes/models'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as HomeRouteImport } from './routes/home'
+import { Route as CommunityRouteImport } from './routes/community'
 import { Route as CharactersRouteImport } from './routes/characters'
 import { Route as BasesRouteImport } from './routes/bases'
 import { Route as AssetsRouteImport } from './routes/assets'
@@ -27,6 +28,7 @@ import { Route as AccountRouteImport } from './routes/account'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as TeamIndexRouteImport } from './routes/team.index'
 import { Route as ScriptsIndexRouteImport } from './routes/scripts.index'
+import { Route as CommunityIndexRouteImport } from './routes/community.index'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as AccountIndexRouteImport } from './routes/account.index'
 import { Route as WorkspaceWorkspaceIdRouteImport } from './routes/workspace.$workspaceId'
@@ -37,6 +39,7 @@ import { Route as TeamApprovalsRouteImport } from './routes/team.approvals'
 import { Route as ShowcaseItemIdRouteImport } from './routes/showcase.$itemId'
 import { Route as ScriptsScriptIdRouteImport } from './routes/scripts.$scriptId'
 import { Route as ProjectsProjectIdRouteImport } from './routes/projects.$projectId'
+import { Route as CommunityPostIdRouteImport } from './routes/community.$postId'
 import { Route as CharactersRelationsRouteImport } from './routes/characters.relations'
 import { Route as CharactersCharacterIdRouteImport } from './routes/characters.$characterId'
 import { Route as AdminTenantsRouteImport } from './routes/admin.tenants'
@@ -44,6 +47,7 @@ import { Route as AdminModelsRouteImport } from './routes/admin.models'
 import { Route as AdminBillingRouteImport } from './routes/admin.billing'
 import { Route as AccountSubscriptionRouteImport } from './routes/account.subscription'
 import { Route as AccountRewardsRouteImport } from './routes/account.rewards'
+import { Route as AccountPostsRouteImport } from './routes/account.posts'
 import { Route as AccountNotificationsRouteImport } from './routes/account.notifications'
 import { Route as AccountAssetsRouteImport } from './routes/account.assets'
 import { Route as AssetsTabIdRouteImport } from './routes/assets_.$tab.$id'
@@ -98,6 +102,11 @@ const HomeRoute = HomeRouteImport.update({
   path: '/home',
   getParentRoute: () => rootRouteImport,
 } as any)
+const CommunityRoute = CommunityRouteImport.update({
+  id: '/community',
+  path: '/community',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const CharactersRoute = CharactersRouteImport.update({
   id: '/characters',
   path: '/characters',
@@ -137,6 +146,11 @@ const ScriptsIndexRoute = ScriptsIndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => ScriptsRoute,
+} as any)
+const CommunityIndexRoute = CommunityIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => CommunityRoute,
 } as any)
 const AdminIndexRoute = AdminIndexRouteImport.update({
   id: '/',
@@ -188,6 +202,11 @@ const ProjectsProjectIdRoute = ProjectsProjectIdRouteImport.update({
   path: '/$projectId',
   getParentRoute: () => ProjectsRoute,
 } as any)
+const CommunityPostIdRoute = CommunityPostIdRouteImport.update({
+  id: '/$postId',
+  path: '/$postId',
+  getParentRoute: () => CommunityRoute,
+} as any)
 const CharactersRelationsRoute = CharactersRelationsRouteImport.update({
   id: '/relations',
   path: '/relations',
@@ -223,6 +242,11 @@ const AccountRewardsRoute = AccountRewardsRouteImport.update({
   path: '/rewards',
   getParentRoute: () => AccountRoute,
 } as any)
+const AccountPostsRoute = AccountPostsRouteImport.update({
+  id: '/posts',
+  path: '/posts',
+  getParentRoute: () => AccountRoute,
+} as any)
 const AccountNotificationsRoute = AccountNotificationsRouteImport.update({
   id: '/notifications',
   path: '/notifications',
@@ -246,6 +270,7 @@ export interface FileRoutesByFullPath {
   '/assets': typeof AssetsRoute
   '/bases': typeof BasesRoute
   '/characters': typeof CharactersRouteWithChildren
+  '/community': typeof CommunityRouteWithChildren
   '/home': typeof HomeRoute
   '/login': typeof LoginRoute
   '/models': typeof ModelsRoute
@@ -258,6 +283,7 @@ export interface FileRoutesByFullPath {
   '/zoclaw': typeof ZoclawRoute
   '/account/assets': typeof AccountAssetsRoute
   '/account/notifications': typeof AccountNotificationsRoute
+  '/account/posts': typeof AccountPostsRoute
   '/account/rewards': typeof AccountRewardsRoute
   '/account/subscription': typeof AccountSubscriptionRoute
   '/admin/billing': typeof AdminBillingRoute
@@ -265,6 +291,7 @@ export interface FileRoutesByFullPath {
   '/admin/tenants': typeof AdminTenantsRoute
   '/characters/$characterId': typeof CharactersCharacterIdRoute
   '/characters/relations': typeof CharactersRelationsRoute
+  '/community/$postId': typeof CommunityPostIdRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
   '/scripts/$scriptId': typeof ScriptsScriptIdRoute
   '/showcase/$itemId': typeof ShowcaseItemIdRoute
@@ -275,6 +302,7 @@ export interface FileRoutesByFullPath {
   '/workspace/$workspaceId': typeof WorkspaceWorkspaceIdRoute
   '/account/': typeof AccountIndexRoute
   '/admin/': typeof AdminIndexRoute
+  '/community/': typeof CommunityIndexRoute
   '/scripts/': typeof ScriptsIndexRoute
   '/team/': typeof TeamIndexRoute
   '/assets/$tab/$id': typeof AssetsTabIdRoute
@@ -294,6 +322,7 @@ export interface FileRoutesByTo {
   '/zoclaw': typeof ZoclawRoute
   '/account/assets': typeof AccountAssetsRoute
   '/account/notifications': typeof AccountNotificationsRoute
+  '/account/posts': typeof AccountPostsRoute
   '/account/rewards': typeof AccountRewardsRoute
   '/account/subscription': typeof AccountSubscriptionRoute
   '/admin/billing': typeof AdminBillingRoute
@@ -301,6 +330,7 @@ export interface FileRoutesByTo {
   '/admin/tenants': typeof AdminTenantsRoute
   '/characters/$characterId': typeof CharactersCharacterIdRoute
   '/characters/relations': typeof CharactersRelationsRoute
+  '/community/$postId': typeof CommunityPostIdRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
   '/scripts/$scriptId': typeof ScriptsScriptIdRoute
   '/showcase/$itemId': typeof ShowcaseItemIdRoute
@@ -311,6 +341,7 @@ export interface FileRoutesByTo {
   '/workspace/$workspaceId': typeof WorkspaceWorkspaceIdRoute
   '/account': typeof AccountIndexRoute
   '/admin': typeof AdminIndexRoute
+  '/community': typeof CommunityIndexRoute
   '/scripts': typeof ScriptsIndexRoute
   '/team': typeof TeamIndexRoute
   '/assets/$tab/$id': typeof AssetsTabIdRoute
@@ -323,6 +354,7 @@ export interface FileRoutesById {
   '/assets': typeof AssetsRoute
   '/bases': typeof BasesRoute
   '/characters': typeof CharactersRouteWithChildren
+  '/community': typeof CommunityRouteWithChildren
   '/home': typeof HomeRoute
   '/login': typeof LoginRoute
   '/models': typeof ModelsRoute
@@ -335,6 +367,7 @@ export interface FileRoutesById {
   '/zoclaw': typeof ZoclawRoute
   '/account/assets': typeof AccountAssetsRoute
   '/account/notifications': typeof AccountNotificationsRoute
+  '/account/posts': typeof AccountPostsRoute
   '/account/rewards': typeof AccountRewardsRoute
   '/account/subscription': typeof AccountSubscriptionRoute
   '/admin/billing': typeof AdminBillingRoute
@@ -342,6 +375,7 @@ export interface FileRoutesById {
   '/admin/tenants': typeof AdminTenantsRoute
   '/characters/$characterId': typeof CharactersCharacterIdRoute
   '/characters/relations': typeof CharactersRelationsRoute
+  '/community/$postId': typeof CommunityPostIdRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
   '/scripts/$scriptId': typeof ScriptsScriptIdRoute
   '/showcase/$itemId': typeof ShowcaseItemIdRoute
@@ -352,6 +386,7 @@ export interface FileRoutesById {
   '/workspace/$workspaceId': typeof WorkspaceWorkspaceIdRoute
   '/account/': typeof AccountIndexRoute
   '/admin/': typeof AdminIndexRoute
+  '/community/': typeof CommunityIndexRoute
   '/scripts/': typeof ScriptsIndexRoute
   '/team/': typeof TeamIndexRoute
   '/assets_/$tab/$id': typeof AssetsTabIdRoute
@@ -365,6 +400,7 @@ export interface FileRouteTypes {
     | '/assets'
     | '/bases'
     | '/characters'
+    | '/community'
     | '/home'
     | '/login'
     | '/models'
@@ -377,6 +413,7 @@ export interface FileRouteTypes {
     | '/zoclaw'
     | '/account/assets'
     | '/account/notifications'
+    | '/account/posts'
     | '/account/rewards'
     | '/account/subscription'
     | '/admin/billing'
@@ -384,6 +421,7 @@ export interface FileRouteTypes {
     | '/admin/tenants'
     | '/characters/$characterId'
     | '/characters/relations'
+    | '/community/$postId'
     | '/projects/$projectId'
     | '/scripts/$scriptId'
     | '/showcase/$itemId'
@@ -394,6 +432,7 @@ export interface FileRouteTypes {
     | '/workspace/$workspaceId'
     | '/account/'
     | '/admin/'
+    | '/community/'
     | '/scripts/'
     | '/team/'
     | '/assets/$tab/$id'
@@ -413,6 +452,7 @@ export interface FileRouteTypes {
     | '/zoclaw'
     | '/account/assets'
     | '/account/notifications'
+    | '/account/posts'
     | '/account/rewards'
     | '/account/subscription'
     | '/admin/billing'
@@ -420,6 +460,7 @@ export interface FileRouteTypes {
     | '/admin/tenants'
     | '/characters/$characterId'
     | '/characters/relations'
+    | '/community/$postId'
     | '/projects/$projectId'
     | '/scripts/$scriptId'
     | '/showcase/$itemId'
@@ -430,6 +471,7 @@ export interface FileRouteTypes {
     | '/workspace/$workspaceId'
     | '/account'
     | '/admin'
+    | '/community'
     | '/scripts'
     | '/team'
     | '/assets/$tab/$id'
@@ -441,6 +483,7 @@ export interface FileRouteTypes {
     | '/assets'
     | '/bases'
     | '/characters'
+    | '/community'
     | '/home'
     | '/login'
     | '/models'
@@ -453,6 +496,7 @@ export interface FileRouteTypes {
     | '/zoclaw'
     | '/account/assets'
     | '/account/notifications'
+    | '/account/posts'
     | '/account/rewards'
     | '/account/subscription'
     | '/admin/billing'
@@ -460,6 +504,7 @@ export interface FileRouteTypes {
     | '/admin/tenants'
     | '/characters/$characterId'
     | '/characters/relations'
+    | '/community/$postId'
     | '/projects/$projectId'
     | '/scripts/$scriptId'
     | '/showcase/$itemId'
@@ -470,6 +515,7 @@ export interface FileRouteTypes {
     | '/workspace/$workspaceId'
     | '/account/'
     | '/admin/'
+    | '/community/'
     | '/scripts/'
     | '/team/'
     | '/assets_/$tab/$id'
@@ -482,6 +528,7 @@ export interface RootRouteChildren {
   AssetsRoute: typeof AssetsRoute
   BasesRoute: typeof BasesRoute
   CharactersRoute: typeof CharactersRouteWithChildren
+  CommunityRoute: typeof CommunityRouteWithChildren
   HomeRoute: typeof HomeRoute
   LoginRoute: typeof LoginRoute
   ModelsRoute: typeof ModelsRoute
@@ -568,6 +615,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof HomeRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/community': {
+      id: '/community'
+      path: '/community'
+      fullPath: '/community'
+      preLoaderRoute: typeof CommunityRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/characters': {
       id: '/characters'
       path: '/characters'
@@ -623,6 +677,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/scripts/'
       preLoaderRoute: typeof ScriptsIndexRouteImport
       parentRoute: typeof ScriptsRoute
+    }
+    '/community/': {
+      id: '/community/'
+      path: '/'
+      fullPath: '/community/'
+      preLoaderRoute: typeof CommunityIndexRouteImport
+      parentRoute: typeof CommunityRoute
     }
     '/admin/': {
       id: '/admin/'
@@ -694,6 +755,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectIdRouteImport
       parentRoute: typeof ProjectsRoute
     }
+    '/community/$postId': {
+      id: '/community/$postId'
+      path: '/$postId'
+      fullPath: '/community/$postId'
+      preLoaderRoute: typeof CommunityPostIdRouteImport
+      parentRoute: typeof CommunityRoute
+    }
     '/characters/relations': {
       id: '/characters/relations'
       path: '/relations'
@@ -743,6 +811,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AccountRewardsRouteImport
       parentRoute: typeof AccountRoute
     }
+    '/account/posts': {
+      id: '/account/posts'
+      path: '/posts'
+      fullPath: '/account/posts'
+      preLoaderRoute: typeof AccountPostsRouteImport
+      parentRoute: typeof AccountRoute
+    }
     '/account/notifications': {
       id: '/account/notifications'
       path: '/notifications'
@@ -770,6 +845,7 @@ declare module '@tanstack/react-router' {
 interface AccountRouteChildren {
   AccountAssetsRoute: typeof AccountAssetsRoute
   AccountNotificationsRoute: typeof AccountNotificationsRoute
+  AccountPostsRoute: typeof AccountPostsRoute
   AccountRewardsRoute: typeof AccountRewardsRoute
   AccountSubscriptionRoute: typeof AccountSubscriptionRoute
   AccountIndexRoute: typeof AccountIndexRoute
@@ -778,6 +854,7 @@ interface AccountRouteChildren {
 const AccountRouteChildren: AccountRouteChildren = {
   AccountAssetsRoute: AccountAssetsRoute,
   AccountNotificationsRoute: AccountNotificationsRoute,
+  AccountPostsRoute: AccountPostsRoute,
   AccountRewardsRoute: AccountRewardsRoute,
   AccountSubscriptionRoute: AccountSubscriptionRoute,
   AccountIndexRoute: AccountIndexRoute,
@@ -814,6 +891,20 @@ const CharactersRouteChildren: CharactersRouteChildren = {
 
 const CharactersRouteWithChildren = CharactersRoute._addFileChildren(
   CharactersRouteChildren,
+)
+
+interface CommunityRouteChildren {
+  CommunityPostIdRoute: typeof CommunityPostIdRoute
+  CommunityIndexRoute: typeof CommunityIndexRoute
+}
+
+const CommunityRouteChildren: CommunityRouteChildren = {
+  CommunityPostIdRoute: CommunityPostIdRoute,
+  CommunityIndexRoute: CommunityIndexRoute,
+}
+
+const CommunityRouteWithChildren = CommunityRoute._addFileChildren(
+  CommunityRouteChildren,
 )
 
 interface ProjectsRouteChildren {
@@ -878,6 +969,7 @@ const rootRouteChildren: RootRouteChildren = {
   AssetsRoute: AssetsRoute,
   BasesRoute: BasesRoute,
   CharactersRoute: CharactersRouteWithChildren,
+  CommunityRoute: CommunityRouteWithChildren,
   HomeRoute: HomeRoute,
   LoginRoute: LoginRoute,
   ModelsRoute: ModelsRoute,
