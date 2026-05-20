@@ -14,6 +14,7 @@ export default function Header() {
     { to: '/zoclaw', label: t.nav_openclaw, accent: true },
     { to: '/team', label: t.nav_team },
     { to: '/admin', label: t.nav_admin },
+    { to: '/community', label: '社区' },
     { to: '/showcase', label: t.nav_showcase },
     { to: '/pricing', label: t.nav_pricing },
   ]

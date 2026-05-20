@@ -1,69 +1,105 @@
+## 目标
 
-## 问题 1：数字输入框的输入 bug
+让用户把保存的内容（剧本、单独的角色/场景/道具、漫剧）发布到社区，在首页新增「社区精选」区与独立 `/community` 页面展示，登录用户可点赞（每人每作品一次），所有访问自动计数浏览量。原 Showcase 保留为官方示例。
 
-**根因**：四个 `<input type="number">`（预计集数 / 第 1 集分镜数 / 下一集分镜数 / 连跑至第 N 集）的 `onChange` 都写成
-```ts
-setX(Math.max(min, Math.min(max, Number(e.target.value) || fallback)))
+## 信息架构
+
+```text
+首页 /home
+├── Hero
+├── 最近项目
+├── 社区精选（NEW · 最新6条 community_posts where visibility='public'）
+└── 官方示例 Showcase（保留现有 mock）
+
+/community            社区作品列表（公开 + 排序：最新 / 最热 / 点赞）
+/community/$postId    社区作品详情（公开 或 链接可见）
+/account/posts        我的发布（管理可见性 / 删除）
 ```
-导致两类问题：
-1. 用户清空输入框时 `Number('')=0`，触发 `|| fallback`，瞬间跳回默认值（15 / 100），无法删除重输。
-2. 边输边 clamp：min=5 时输入 "2" 立刻被改成 5；min=`nextEpIndex=2` 时输入 "1" 立刻变成 2，导致无法输入两位数（如 20、10）。
 
-**修复**：抽一个轻量 `NumberField` 子组件，内部用 string 本地态：
-- `onChange`：只接受空串或纯数字字符串，原样存入本地态并向上同步 `Number(value)`（空串时不调用 setter 或传 `NaN` 由父级保留旧值）。
-- `onBlur`：解析 → clamp 到 [min, max] → 若为空回填上次有效值或默认值，再 setter + 同步本地态。
-- 替换 `ScriptComposer.tsx` 中 4 处 number input。
+## 数据模型
 
-## 问题 2：保存的剧本会丢失 → 接入云端持久化
+新增 3 张表：
 
-**根因**：`src/lib/scriptStorage.ts` 只写浏览器 `localStorage`（key=`doopoo_scripts`），清缓存 / 换设备 / 隐私模式都会丢；且 `Scripts.tsx`、`scripts.$scriptId.tsx` 只从 localStorage 读。
+**community_posts** — 通用作品载体
+- `id uuid PK`、`user_id uuid not null`
+- `kind text not null` — `'script' | 'character' | 'scene' | 'prop' | 'comic'`
+- `source_id text` — 关联 `scripts.id` 或资产 id（可空，资产可直接序列化进 payload）
+- `title text`、`summary text`、`cover_gradient text`
+- `payload jsonb not null` — 快照内容（避免源被删除后失效）
+- `visibility text not null default 'private'` — `'public' | 'unlisted' | 'private'`
+- `likes_count int not null default 0`、`views_count int not null default 0`
+- `created_at` / `updated_at`
 
-**方案**：用户登录后同时落 Supabase；未登录仍走 localStorage（兼容现状）。本地缓存作为云端的镜像，保证离线/即时可读。
+**post_likes** — `(post_id, user_id)` 复合唯一，触发器维护 `likes_count`
 
-### 数据库迁移（一次性）
+**post_views** — 仅 `(post_id, viewer_key, viewed_at)`，`viewer_key` = user_id 或匿名 session id；按天去重后累加 `views_count`
 
-新表 `public.scripts`：
-- `id text primary key`（沿用前端生成的 `scr-...` id，便于本地/云端 id 一致）
-- `user_id uuid not null`（写入时由 serverFn 注入 `auth.uid()`，不暴露给客户端）
-- `title text not null`、`type`、`genre`、`tone`、`updated_at timestamptz`（用于列表展示与排序的少量索引列）
-- `payload jsonb not null`（完整 `SavedScript` 结构：synopsisText / episodesText[] / characters / quality 等都塞这里，避免每加字段就改表）
-- `created_at`、`updated_at`，触发器自动更新 `updated_at`
-- 索引：`(user_id, updated_at desc)`
+### RLS
 
-RLS：启用，4 条策略（select/insert/update/delete）均 `using (auth.uid() = user_id)`。
+- `community_posts`：
+  - SELECT：`visibility='public'` 任何人可读；`unlisted` 任何人可读（靠 URL 难猜）；`private` 仅 owner
+  - INSERT/UPDATE/DELETE：`auth.uid() = user_id`
+- `post_likes`：SELECT 公开；INSERT/DELETE 仅本人
+- `post_views`：INSERT 公开（含匿名）；SELECT 仅 owner（用于将来统计）
 
-### 服务端函数（`src/lib/scripts.functions.ts`，全部 `requireSupabaseAuth`）
+计数通过 AFTER INSERT/DELETE 触发器原子更新 `community_posts.likes_count` / `views_count`。
 
-- `listScriptsRemote()` → `SavedScript[]`：读当前用户全部 payload。
-- `getScriptRemote({ id })` → `SavedScript | null`。
-- `upsertScriptRemote({ script })` → `{ ok: true }`：`upsert` 写 `payload` 并同步 5 个索引列、`user_id = context.userId`。
-- `deleteScriptRemote({ id })` → `{ ok: true }`。
+## Server Functions（`src/lib/community.functions.ts`）
 
-所有 RPC 用 Zod 校验输入。
+- `publishPost({ kind, sourceId?, title, summary, coverGradient, payload, visibility })` — 需登录；写入 `community_posts`
+- `updatePostVisibility({ id, visibility })` — owner
+- `deletePost({ id })` — owner
+- `listCommunityPosts({ sort: 'recent'|'hot'|'likes', limit, kind? })` — 公开（用 admin client，仅查 `visibility='public'` 与白名单列）
+- `getPost({ id })` — 公开（`public` 或 `unlisted` 均返回；`private` 仅 owner）
+- `toggleLike({ postId })` — 需登录，返回 `{ liked, likesCount }`
+- `recordView({ postId })` — 公开（按天 + viewer_key 去重）
+- `listMyPosts()` — 需登录
 
-### 前端改造（最小侵入）
+公开读取端点用 `supabaseAdmin` 加 WHERE 限定，避免对未登录用户依赖 RLS bearer。
 
-`src/lib/scriptStorage.ts` 新增 async 版本，保留同步 API 兼容：
-- `syncFromCloud()`：登录时拉云端 → 与本地按 `updatedAt` 取较新者合并 → 写回 localStorage。
-- `upsertScript()`：保持现签名（同步写本地），同时 fire-and-forget 调云端 `upsertScriptRemote`，失败仅 console。
-- `removeScript()`：同理双删。
+## UI 改动
 
-`src/pages/Scripts.tsx`：
-- `useEffect` 中先 `refresh()`（读本地，秒出 UI），再调用 `syncFromCloud()`，完成后再 `refresh()`。
-- 删除按钮调用更新后的 `removeScript`（已自动双删）。
+1. **`src/components/community/ShareDialog.tsx`**（新）
+   - 选择可见性（公开 / 仅链接 / 私有）
+   - 编辑标题、简介
+   - 提交后展示作品链接 `/community/{id}`（可复制）
 
-`src/routes/scripts.$scriptId.tsx`：
-- 当前 `useEffect` 中除 `findScript` 外，再调 `getScriptRemote`，云端结果覆盖本地。
+2. **入口按钮**
+   - 剧本卡片 + 剧本详情页（`src/pages/Scripts.tsx`、`src/routes/scripts.$scriptId.tsx`）：「分享到社区」
+   - 角色/场景/道具卡片（`src/pages/Characters.tsx`、`AssetsLibrary.tsx`）：单条「分享」按钮
+   - 漫剧（workspace 输出）：导出后「分享到社区」
 
-`ScriptComposer.tsx` 的 `persist()` 不需要改（它调用 `upsertScript`，已自动双写）。
+3. **`src/components/community/CommunityCard.tsx`**（新）
+   - 复用现有 ShowcaseCard 视觉风格
+   - 显示 kind 角标、标题、作者、♥ likes · 👁 views
 
-未登录时：serverFn 直接 401，前端忽略错误，仍正常走 localStorage，体验不变。
+4. **首页 `src/pages/Home.tsx`**
+   - 在「最近项目」与原 Showcase 之间新增 `社区精选` 区，调 `listCommunityPosts({ sort: 'hot', limit: 6 })`
 
-## 改动文件清单
+5. **新路由**
+   - `src/routes/community.tsx`（layout + Outlet）
+   - `src/routes/community.index.tsx`（列表 + 排序 tabs + kind 过滤）
+   - `src/routes/community.$postId.tsx`（详情：渲染 payload 快照；按 kind 切换布局；点赞按钮调 `toggleLike`；mount 时 `recordView`）
 
-- DB migration（新建 `scripts` 表 + RLS + 触发器）
-- 新增 `src/lib/scripts.functions.ts`
-- 编辑 `src/lib/scriptStorage.ts`（双写、合并）
-- 编辑 `src/components/scripts/ScriptComposer.tsx`（NumberField，替换 4 处 input）
-- 编辑 `src/pages/Scripts.tsx`（hydration 后云端同步）
-- 编辑 `src/routes/scripts.$scriptId.tsx`（云端覆盖本地）
+6. **`src/routes/account.posts.tsx`**（新）—— 我的发布管理（改可见性 / 删除）
+
+7. 原 `/showcase` 与首页 `Showcase` 区不动，保留 mock 官方示例。
+
+## 交互细节
+
+- 未登录点赞：toast「请先登录」+ 跳 `/login`
+- visibility=private 链接被外部访问：显示「该作品未公开」
+- payload 快照在 publish 时序列化（深拷贝），后续删除原剧本不影响社区展示
+- 排序「最热」= `(likes_count * 3 + views_count) / pow(hours_since_created + 2, 1.2)` 在 server fn 内计算
+
+## 任务拆分
+
+1. migration：3 张表 + 触发器 + RLS
+2. `community.functions.ts` 全套 server fn
+3. ShareDialog 组件 + 在剧本/角色/场景/道具/漫剧入口接线
+4. CommunityCard + `/community` 路由（列表 + 详情 + 排序）
+5. 首页新增「社区精选」区
+6. `/account/posts` 管理页 + Header 入口
+7. 详情页 mount 时 `recordView`、点赞乐观更新
+
+完成后可发布。
