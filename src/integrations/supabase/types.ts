@@ -14,6 +14,112 @@ export type Database = {
   }
   public: {
     Tables: {
+      community_posts: {
+        Row: {
+          cover_gradient: string | null
+          created_at: string
+          id: string
+          kind: string
+          likes_count: number
+          payload: Json
+          source_id: string | null
+          summary: string | null
+          title: string
+          updated_at: string
+          user_id: string
+          views_count: number
+          visibility: string
+        }
+        Insert: {
+          cover_gradient?: string | null
+          created_at?: string
+          id?: string
+          kind: string
+          likes_count?: number
+          payload?: Json
+          source_id?: string | null
+          summary?: string | null
+          title?: string
+          updated_at?: string
+          user_id: string
+          views_count?: number
+          visibility?: string
+        }
+        Update: {
+          cover_gradient?: string | null
+          created_at?: string
+          id?: string
+          kind?: string
+          likes_count?: number
+          payload?: Json
+          source_id?: string | null
+          summary?: string | null
+          title?: string
+          updated_at?: string
+          user_id?: string
+          views_count?: number
+          visibility?: string
+        }
+        Relationships: []
+      }
+      post_likes: {
+        Row: {
+          created_at: string
+          post_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          post_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          post_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "post_likes_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "community_posts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      post_views: {
+        Row: {
+          created_at: string
+          id: string
+          post_id: string
+          viewed_on: string
+          viewer_key: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          post_id: string
+          viewed_on?: string
+          viewer_key: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          post_id?: string
+          viewed_on?: string
+          viewer_key?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "post_views_post_id_fkey"
+            columns: ["post_id"]
+            isOneToOne: false
+            referencedRelation: "community_posts"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       scripts: {
         Row: {
           created_at: string
