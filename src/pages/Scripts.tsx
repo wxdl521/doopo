@@ -3,7 +3,7 @@ import { Link } from '@tanstack/react-router'
 import { Trash2, MessageSquare, FileText } from 'lucide-react'
 import { useLanguage } from '../i18n/LanguageContext'
 import ScriptComposer from '../components/scripts/ScriptComposer'
-import { loadScripts, removeScript, type SavedScript } from '../lib/scriptStorage'
+import { loadScripts, removeScript, syncFromCloud, type SavedScript } from '../lib/scriptStorage'
 
 const TYPES = [
   { value: 'Micro', key: 'script_type_micro' as const },
@@ -43,7 +43,11 @@ export default function Scripts() {
   const [scripts, setScripts] = useState<SavedScript[]>([])
 
   const refresh = () => setScripts(loadScripts())
-  useEffect(() => { refresh() }, [])
+  useEffect(() => {
+    refresh()
+    // 登录后从云端拉取并合并，未登录则静默跳过
+    void syncFromCloud().then((merged) => setScripts(merged))
+  }, [])
 
   const handleDelete = (id: string) => {
     setScripts(removeScript(id))
