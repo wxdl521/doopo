@@ -11,16 +11,23 @@ import { z } from 'zod'
 
 const Lang = z.enum(['zh', 'en'])
 
-const ENDPOINT = 'https://ai.gateway.lovable.dev/v1/chat/completions'
-const DEFAULT_MODEL = 'google/gemini-3-flash-preview'
+const LOVABLE_ENDPOINT = 'https://ai.gateway.lovable.dev/v1/chat/completions'
+const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'
+const DEFAULT_MODEL = 'gemini:gemini-3.5-flash'
 
-// 解析模型 id："lovable:xxx" / "openrouter:xxx" / 裸 id，全部走 Lovable Gateway。
-function pickModel(raw?: string): string {
-  const v = raw?.trim()
-  if (!v) return DEFAULT_MODEL
-  if (v.startsWith('lovable:')) return v.slice(8)
-  if (v.startsWith('openrouter:')) return v.slice(11)
-  return v
+type Provider = 'lovable' | 'gemini'
+
+// 解析模型 id：
+//   "gemini:xxx"     → 直接调用 Google Generative Language（使用 Default_Gemini_API_Key）
+//   "lovable:xxx"    → Lovable AI Gateway
+//   "openrouter:xxx" → 仍走 Lovable Gateway（向后兼容，去前缀）
+//   裸 id            → Lovable Gateway
+function pickModel(raw?: string): { provider: Provider; model: string } {
+  const v = (raw ?? '').trim() || DEFAULT_MODEL
+  if (v.startsWith('gemini:')) return { provider: 'gemini', model: v.slice(7) }
+  if (v.startsWith('lovable:')) return { provider: 'lovable', model: v.slice(8) }
+  if (v.startsWith('openrouter:')) return { provider: 'lovable', model: v.slice(11) }
+  return { provider: 'lovable', model: v }
 }
 
 type StreamChunk =
@@ -29,27 +36,37 @@ type StreamChunk =
   | { error: string }
 
 async function* streamChat(opts: {
-  model: string
+  model: { provider: Provider; model: string } | string
   system: string
   user: string
 }): AsyncGenerator<StreamChunk> {
-  const apiKey = process.env.LOVABLE_API_KEY
+  const picked = typeof opts.model === 'string' ? pickModel(opts.model) : opts.model
+  const apiKey =
+    picked.provider === 'gemini'
+      ? process.env.Default_Gemini_API_Key
+      : process.env.LOVABLE_API_KEY
   if (!apiKey) {
-    yield { error: 'LOVABLE_API_KEY 未配置' }
+    yield {
+      error:
+        picked.provider === 'gemini'
+          ? 'Default_Gemini_API_Key 未配置'
+          : 'LOVABLE_API_KEY 未配置',
+    }
     return
   }
+  const endpoint = picked.provider === 'gemini' ? GEMINI_ENDPOINT : LOVABLE_ENDPOINT
 
   const controller = new AbortController()
   let upstream: Response
   try {
-    upstream = await fetch(ENDPOINT, {
+    upstream = await fetch(endpoint, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        model: opts.model,
+        model: picked.model,
         stream: true,
         messages: [
           { role: 'system', content: opts.system },

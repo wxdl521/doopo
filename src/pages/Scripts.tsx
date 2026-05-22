@@ -31,6 +31,10 @@ const TONES = [
   { value: 'Horror', key: 'script_tone_horror' as const },
 ]
 const MODELS = [
+  // 直连 Google Gemini（使用 Default_Gemini_API_Key）
+  { id: 'gemini:gemini-3.5-flash', label: '✨ Gemini 3.5 Flash (默认)' },
+  { id: 'gemini:gemini-2.5-flash', label: '✨ Gemini 2.5 Flash' },
+  { id: 'gemini:gemini-2.5-pro', label: '✨ Gemini 2.5 Pro' },
   // Lovable AI Gateway — 推荐，速度更快、内置额度
   { id: 'lovable:google/gemini-3-flash-preview', label: '⚡ Lovable · Gemini 3 Flash (推荐)' },
   { id: 'lovable:google/gemini-2.5-flash', label: '⚡ Lovable · Gemini 2.5 Flash' },
