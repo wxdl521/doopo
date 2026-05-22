@@ -1,35 +1,27 @@
 ## 目标
-首页 Hero 输入区新增「剧本生成」入口，未登录引导登录，登录后跳转剧本页并自动带入选项。
+将项目中所有 `Zopia / zopia` 相关命名（包括文件名、组件名、i18n key 前缀 `zp_`、用户可见文案）统一替换为 `Doopoo / doopoo / dp_`。
 
-## 改动
+## 涉及文件（4 个）
+- `src/components/workspace/ZopiaChatPanel.tsx` → 重命名为 `DoopooChatPanel.tsx`
+- `src/i18n/zh.ts`（169 处 `zp_` 键 + 文案中的 "Zopia"）
+- `src/i18n/en.ts`（169 处 `zp_` 键 + 文案中的 "Zopia"）
+- `src/routes/workspace.$workspaceId.tsx`（import 与 JSX 使用 `ZopiaChatPanel`）
 
-### 1. `src/components/HeroPromptInput.tsx`
-- 引入 `useAuth`、`useNavigate`、`FilmIcon`（lucide）。
-- 工具栏新增「剧本生成」按钮（与现有 `btn-ghost` 风格一致），点击展开一个浮层小面板（绝对定位，点击外部关闭）。
-- 面板内三组 chip 选择：
-  - 类型 Type：Micro / Short / Feature / Ad（默认 Short）
-  - 题材 Genre：Sci-Fi / Romance / Thriller / Comedy / Drama / Horror / Fantasy / Historical（默认 Drama）
-  - 风格 Tone：Serious / Comedy / Suspense / Romance / Horror（默认 Serious）
-  - 取值与 `src/pages/Scripts.tsx` 中 `TYPES/GENRES/TONES` 保持一致。
-- 面板底部「开始创作剧本」按钮：
-  - 把当前 textarea 内容作为 `plot`（剧情），`theme` 留空让用户在剧本页继续补充；连同 type/genre/tone 一起写入 `sessionStorage.setItem('script_prefill', JSON.stringify({...}))`。
-  - 未登录 → `navigate({ to: '/login' })`（登录页登录成功后会自然回到内部跳转流程；为简单起见仅引导登录，不强行回跳）。
-  - 已登录 → `navigate({ to: '/scripts' })`。
+## 替换规则（批量执行）
+对上述 4 个文件依序执行：
+1. `ZopiaChatPanel` → `DoopooChatPanel`（组件名/导入名）
+2. `Zopia` → `Doopoo`（用户可见文案、注释）
+3. `zopia` → `doopoo`（小写引用）
+4. `zp_` → `dp_`（i18n key 前缀，正则边界 `\bzp_`）
 
-### 2. `src/components/scripts/ScriptComposer.tsx`
-- 新增 `useEffect`（mount 一次）：读取 `sessionStorage.getItem('script_prefill')`，若存在则按白名单校验后调用 `setType / setGenre / setTone`，并把 `plot` 写入 `setPlot`（仅在当前 plot/theme 为空时填入，避免覆盖用户输入）。读取后 `sessionStorage.removeItem('script_prefill')`，仅一次性带入。
+随后：
+- `git mv src/components/workspace/ZopiaChatPanel.tsx src/components/workspace/DoopooChatPanel.tsx`
+- `src/routes/workspace.$workspaceId.tsx` 中 `import ZopiaChatPanel from '../components/workspace/ZopiaChatPanel'` 已通过规则 1 改为 `import DoopooChatPanel from '../components/workspace/DoopooChatPanel'`。
 
-### 3. i18n（`src/i18n/zh.ts`、`src/i18n/en.ts`）
-- 新增按钮与面板文案：`hero_script_entry`（剧本生成 / Generate Script）、`hero_script_panel_title`、三组分类标签、`hero_script_start`（开始创作剧本 / Start Writing）。
+## 验收
+- `grep -rn 'Zopia\|zopia\|zp_' src` 无任何输出。
+- 构建通过，`/workspace/:id` 页面右侧聊天面板正常渲染、文案不变（仅"Zopia"字样改为"Doopoo"），i18n 不出现 missing key。
 
-## 不动的内容
-- 不修改 `scriptStorage`、社区分享、`AuthGate`、数据库。
-- 不改动 `QuickActionChips`。
-- 不改 Hero 主"创建"按钮原有 AI 回复逻辑。
-
-## 数据契约
-`sessionStorage['script_prefill']`：
-```json
-{ "type":"Short","genre":"Drama","tone":"Serious","theme":"","plot":"用户在 Hero 中输入的文本" }
-```
-仅 ScriptComposer 消费一次后清除。
+## 不动
+- 不改 `.lovable/plan.md` 之外的历史规划文档内容；如有 Zopia 引用属于历史记录可保留。
+- 不改业务逻辑、不改样式、不改 API。
