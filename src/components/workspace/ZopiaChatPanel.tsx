@@ -21,57 +21,57 @@ function buildWorkflow(stage: WorkspaceTab, t: any): WorkflowDef {
   switch (stage) {
     case 'canvas':
       return {
-        steps: [t.dp_step_canvas_load, t.dp_step_canvas_expand, t.dp_step_canvas_outline, t.dp_step_canvas_chars],
-        summary: { title: t.dp_summary_canvas_done, detail: t.dp_summary_canvas_detail, next: t.dp_summary_canvas_next },
+        steps: [t.zp_step_canvas_load, t.zp_step_canvas_expand, t.zp_step_canvas_outline, t.zp_step_canvas_chars],
+        summary: { title: t.zp_summary_canvas_done, detail: t.zp_summary_canvas_detail, next: t.zp_summary_canvas_next },
         ctas: [
-          { key: 'to_script', label: t.dp_cta_to_script, target: 'script' },
-          { key: 'to_character', label: t.dp_cta_to_character, target: 'character' },
-          { key: 'refine', label: t.dp_cta_refine, target: 'canvas' },
+          { key: 'to_script', label: t.zp_cta_to_script, target: 'script' },
+          { key: 'to_character', label: t.zp_cta_to_character, target: 'character' },
+          { key: 'refine', label: t.zp_cta_refine, target: 'canvas' },
         ],
       }
     case 'character':
       return {
-        steps: [t.dp_step_char_load, t.dp_step_char_parse, t.dp_step_char_extract, t.dp_step_char_persona, t.dp_step_char_render],
-        summary: { title: t.dp_summary_char_done, detail: t.dp_summary_char_detail, next: t.dp_summary_char_next },
+        steps: [t.zp_step_char_load, t.zp_step_char_parse, t.zp_step_char_extract, t.zp_step_char_persona, t.zp_step_char_render],
+        summary: { title: t.zp_summary_char_done, detail: t.zp_summary_char_detail, next: t.zp_summary_char_next },
         ctas: [
-          { key: 'design', label: t.dp_cta_design, target: 'character' },
-          { key: 'storyboard', label: t.dp_cta_storyboard, target: 'storyboard' },
-          { key: 'refine', label: t.dp_cta_refine, target: 'character' },
+          { key: 'design', label: t.zp_cta_design, target: 'character' },
+          { key: 'storyboard', label: t.zp_cta_storyboard, target: 'storyboard' },
+          { key: 'refine', label: t.zp_cta_refine, target: 'character' },
         ],
       }
     case 'storyboard':
       return {
-        steps: [t.dp_step_sb_load, t.dp_step_sb_parse, t.dp_step_sb_plan, t.dp_step_sb_compose, t.dp_step_sb_render],
-        summary: { title: t.dp_summary_sb_done, detail: t.dp_summary_sb_detail, next: t.dp_summary_sb_next },
+        steps: [t.zp_step_sb_load, t.zp_step_sb_parse, t.zp_step_sb_plan, t.zp_step_sb_compose, t.zp_step_sb_render],
+        summary: { title: t.zp_summary_sb_done, detail: t.zp_summary_sb_detail, next: t.zp_summary_sb_next },
         ctas: [
-          { key: 'to_timeline', label: t.dp_cta_to_timeline, target: 'timeline' },
-          { key: 'refine', label: t.dp_cta_refine, target: 'storyboard' },
+          { key: 'to_timeline', label: t.zp_cta_to_timeline, target: 'timeline' },
+          { key: 'refine', label: t.zp_cta_refine, target: 'storyboard' },
         ],
       }
     case 'timeline':
       return {
-        steps: [t.dp_step_tl_load, t.dp_step_tl_align, t.dp_step_tl_audio, t.dp_step_tl_transition, t.dp_step_tl_preview],
-        summary: { title: t.dp_summary_tl_done, detail: t.dp_summary_tl_detail, next: t.dp_summary_tl_next },
+        steps: [t.zp_step_tl_load, t.zp_step_tl_align, t.zp_step_tl_audio, t.zp_step_tl_transition, t.zp_step_tl_preview],
+        summary: { title: t.zp_summary_tl_done, detail: t.zp_summary_tl_detail, next: t.zp_summary_tl_next },
         ctas: [
-          { key: 'preview', label: t.dp_cta_preview, target: 'timeline' },
-          { key: 'refine', label: t.dp_cta_refine, target: 'timeline' },
+          { key: 'preview', label: t.zp_cta_preview, target: 'timeline' },
+          { key: 'refine', label: t.zp_cta_refine, target: 'timeline' },
         ],
       }
     case 'script':
     default:
       return {
-        steps: [t.dp_step_load_workflow, t.dp_step_load_spec, t.dp_step_query_tools, t.dp_step_check_prev, t.dp_step_write_script],
-        summary: { title: t.dp_summary_done, detail: t.dp_summary_detail, next: t.dp_summary_next },
+        steps: [t.zp_step_load_workflow, t.zp_step_load_spec, t.zp_step_query_tools, t.zp_step_check_prev, t.zp_step_write_script],
+        summary: { title: t.zp_summary_done, detail: t.zp_summary_detail, next: t.zp_summary_next },
         ctas: [
-          { key: 'extract', label: t.dp_cta_extract, target: 'character' },
-          { key: 'design', label: t.dp_cta_design, target: 'character' },
-          { key: 'storyboard', label: t.dp_cta_storyboard, target: 'storyboard' },
+          { key: 'extract', label: t.zp_cta_extract, target: 'character' },
+          { key: 'design', label: t.zp_cta_design, target: 'character' },
+          { key: 'storyboard', label: t.zp_cta_storyboard, target: 'storyboard' },
         ],
       }
   }
 }
 
-export default function DoopooChatPanel({
+export default function ZopiaChatPanel({
   stage, onJumpStage, onProduce, collapsed, onToggleCollapsed,
 }: {
   stage: WorkspaceTab
@@ -105,19 +105,19 @@ export default function DoopooChatPanel({
   }, [messages])
 
   const intro: Record<WorkspaceTab, string> = {
-    canvas: t.dp_intro_canvas,
-    script: t.dp_intro_script,
-    character: t.dp_intro_character,
-    storyboard: t.dp_intro_storyboard,
-    timeline: t.dp_intro_timeline,
+    canvas: t.zp_intro_canvas,
+    script: t.zp_intro_script,
+    character: t.zp_intro_character,
+    storyboard: t.zp_intro_storyboard,
+    timeline: t.zp_intro_timeline,
   }
 
   const presets: Record<WorkspaceTab, string[]> = {
-    canvas: [t.dp_preset_idea, t.dp_preset_design],
-    script: [t.dp_preset_suspense, t.dp_preset_campus, t.dp_preset_idea, t.dp_preset_design],
-    character: [t.dp_preset_lead, t.dp_preset_villain, t.dp_preset_supporting],
-    storyboard: [t.dp_preset_board, t.dp_preset_expand],
-    timeline: [t.dp_preset_arrange, t.dp_preset_transition],
+    canvas: [t.zp_preset_idea, t.zp_preset_design],
+    script: [t.zp_preset_suspense, t.zp_preset_campus, t.zp_preset_idea, t.zp_preset_design],
+    character: [t.zp_preset_lead, t.zp_preset_villain, t.zp_preset_supporting],
+    storyboard: [t.zp_preset_board, t.zp_preset_expand],
+    timeline: [t.zp_preset_arrange, t.zp_preset_transition],
   }
 
   function newChat() {
@@ -208,10 +208,10 @@ export default function DoopooChatPanel({
   }
 
   const quickActions: { key: string; icon: typeof FileText; target: WorkspaceTab; label: string; userText: string }[] = [
-    { key: 'qs', icon: FileText, target: 'script', label: t.dp_quick_script, userText: t.dp_user_quick_script },
-    { key: 'qc', icon: Users, target: 'character', label: t.dp_quick_character, userText: t.dp_user_quick_character },
-    { key: 'qb', icon: Grid3x3, target: 'storyboard', label: t.dp_quick_storyboard, userText: t.dp_user_quick_storyboard },
-    { key: 'qt', icon: Clock, target: 'timeline', label: t.dp_quick_timeline, userText: t.dp_user_quick_timeline },
+    { key: 'qs', icon: FileText, target: 'script', label: t.zp_quick_script, userText: t.zp_user_quick_script },
+    { key: 'qc', icon: Users, target: 'character', label: t.zp_quick_character, userText: t.zp_user_quick_character },
+    { key: 'qb', icon: Grid3x3, target: 'storyboard', label: t.zp_quick_storyboard, userText: t.zp_user_quick_storyboard },
+    { key: 'qt', icon: Clock, target: 'timeline', label: t.zp_quick_timeline, userText: t.zp_user_quick_timeline },
   ]
 
   type ParamField = { key: string; label: string; options: { value: string; label: string }[]; default: string }
@@ -221,112 +221,112 @@ export default function DoopooChatPanel({
     switch (c.key) {
       case 'extract':
         return {
-          baseText: t.dp_user_cta_extract, targetStage: 'character', jumpAfter: true,
+          baseText: t.zp_user_cta_extract, targetStage: 'character', jumpAfter: true,
           fields: [
-            { key: 'scope', label: t.dp_param_f_scope, default: 'supp', options: [
-              { value: 'main', label: t.dp_opt_scope_main },
-              { value: 'supp', label: t.dp_opt_scope_supp },
-              { value: 'all', label: t.dp_opt_scope_all },
+            { key: 'scope', label: t.zp_param_f_scope, default: 'supp', options: [
+              { value: 'main', label: t.zp_opt_scope_main },
+              { value: 'supp', label: t.zp_opt_scope_supp },
+              { value: 'all', label: t.zp_opt_scope_all },
             ]},
-            { key: 'scenes', label: t.dp_param_f_include_scenes, default: 'yes', options: [
-              { value: 'yes', label: t.dp_opt_yes }, { value: 'no', label: t.dp_opt_no },
+            { key: 'scenes', label: t.zp_param_f_include_scenes, default: 'yes', options: [
+              { value: 'yes', label: t.zp_opt_yes }, { value: 'no', label: t.zp_opt_no },
             ]},
           ],
         }
       case 'design':
       case 'to_character':
         return {
-          baseText: c.key === 'design' ? t.dp_user_cta_design : t.dp_user_cta_to_character,
+          baseText: c.key === 'design' ? t.zp_user_cta_design : t.zp_user_cta_to_character,
           targetStage: 'character', jumpAfter: true,
           fields: [
-            { key: 'style', label: t.dp_param_f_style, default: 'real', options: [
-              { value: 'real', label: t.dp_opt_style_real },
-              { value: 'anime', label: t.dp_opt_style_anime },
-              { value: 'illust', label: t.dp_opt_style_illust },
-              { value: 'ink', label: t.dp_opt_style_ink },
+            { key: 'style', label: t.zp_param_f_style, default: 'real', options: [
+              { value: 'real', label: t.zp_opt_style_real },
+              { value: 'anime', label: t.zp_opt_style_anime },
+              { value: 'illust', label: t.zp_opt_style_illust },
+              { value: 'ink', label: t.zp_opt_style_ink },
             ]},
-            { key: 'views', label: t.dp_param_f_views, default: '3', options: [
-              { value: '3', label: t.dp_opt_views_3 },
-              { value: '5', label: t.dp_opt_views_5 },
-              { value: 'full', label: t.dp_opt_views_full },
+            { key: 'views', label: t.zp_param_f_views, default: '3', options: [
+              { value: '3', label: t.zp_opt_views_3 },
+              { value: '5', label: t.zp_opt_views_5 },
+              { value: 'full', label: t.zp_opt_views_full },
             ]},
-            { key: 'count', label: t.dp_param_f_count, default: '5', options: [
-              { value: '3', label: t.dp_opt_count_3 },
-              { value: '5', label: t.dp_opt_count_5 },
-              { value: '8', label: t.dp_opt_count_8 },
+            { key: 'count', label: t.zp_param_f_count, default: '5', options: [
+              { value: '3', label: t.zp_opt_count_3 },
+              { value: '5', label: t.zp_opt_count_5 },
+              { value: '8', label: t.zp_opt_count_8 },
             ]},
-            { key: 'depth', label: t.dp_param_f_depth, default: 'basic', options: [
-              { value: 'basic', label: t.dp_opt_depth_basic },
-              { value: 'deep', label: t.dp_opt_depth_deep },
+            { key: 'depth', label: t.zp_param_f_depth, default: 'basic', options: [
+              { value: 'basic', label: t.zp_opt_depth_basic },
+              { value: 'deep', label: t.zp_opt_depth_deep },
             ]},
           ],
         }
       case 'storyboard':
         return {
-          baseText: t.dp_user_cta_storyboard, targetStage: 'storyboard', jumpAfter: true,
+          baseText: t.zp_user_cta_storyboard, targetStage: 'storyboard', jumpAfter: true,
           fields: [
-            { key: 'shots', label: t.dp_param_f_shots, default: '12', options: [
-              { value: '8', label: t.dp_opt_shots_8 },
-              { value: '12', label: t.dp_opt_shots_12 },
-              { value: '24', label: t.dp_opt_shots_24 },
+            { key: 'shots', label: t.zp_param_f_shots, default: '12', options: [
+              { value: '8', label: t.zp_opt_shots_8 },
+              { value: '12', label: t.zp_opt_shots_12 },
+              { value: '24', label: t.zp_opt_shots_24 },
             ]},
-            { key: 'aspect', label: t.dp_param_f_aspect, default: '9_16', options: [
-              { value: '16_9', label: t.dp_opt_aspect_16_9 },
-              { value: '9_16', label: t.dp_opt_aspect_9_16 },
-              { value: '4_3', label: t.dp_opt_aspect_4_3 },
+            { key: 'aspect', label: t.zp_param_f_aspect, default: '9_16', options: [
+              { value: '16_9', label: t.zp_opt_aspect_16_9 },
+              { value: '9_16', label: t.zp_opt_aspect_9_16 },
+              { value: '4_3', label: t.zp_opt_aspect_4_3 },
             ]},
-            { key: 'lock', label: t.dp_param_f_lock, default: 'strict', options: [
-              { value: 'strict', label: t.dp_opt_lock_strict },
-              { value: 'loose', label: t.dp_opt_lock_loose },
+            { key: 'lock', label: t.zp_param_f_lock, default: 'strict', options: [
+              { value: 'strict', label: t.zp_opt_lock_strict },
+              { value: 'loose', label: t.zp_opt_lock_loose },
             ]},
           ],
         }
       case 'to_script':
         return {
-          baseText: t.dp_user_cta_to_script, targetStage: 'script', jumpAfter: true,
+          baseText: t.zp_user_cta_to_script, targetStage: 'script', jumpAfter: true,
           fields: [
-            { key: 'tone', label: t.dp_param_f_tone, default: 'suspense', options: [
-              { value: 'suspense', label: t.dp_opt_tone_suspense },
-              { value: 'heal', label: t.dp_opt_tone_heal },
-              { value: 'comedy', label: t.dp_opt_tone_comedy },
-              { value: 'campus', label: t.dp_opt_tone_campus },
+            { key: 'tone', label: t.zp_param_f_tone, default: 'suspense', options: [
+              { value: 'suspense', label: t.zp_opt_tone_suspense },
+              { value: 'heal', label: t.zp_opt_tone_heal },
+              { value: 'comedy', label: t.zp_opt_tone_comedy },
+              { value: 'campus', label: t.zp_opt_tone_campus },
             ]},
-            { key: 'len', label: t.dp_param_f_length, default: 'm', options: [
-              { value: 's', label: t.dp_opt_len_s },
-              { value: 'm', label: t.dp_opt_len_m },
-              { value: 'l', label: t.dp_opt_len_l },
+            { key: 'len', label: t.zp_param_f_length, default: 'm', options: [
+              { value: 's', label: t.zp_opt_len_s },
+              { value: 'm', label: t.zp_opt_len_m },
+              { value: 'l', label: t.zp_opt_len_l },
             ]},
           ],
         }
       case 'to_timeline':
         return {
-          baseText: t.dp_user_cta_to_timeline, targetStage: 'timeline', jumpAfter: true,
+          baseText: t.zp_user_cta_to_timeline, targetStage: 'timeline', jumpAfter: true,
           fields: [
-            { key: 'density', label: t.dp_param_f_density, default: 'std', options: [
-              { value: 'tight', label: t.dp_opt_density_tight },
-              { value: 'std', label: t.dp_opt_density_std },
-              { value: 'loose', label: t.dp_opt_density_loose },
+            { key: 'density', label: t.zp_param_f_density, default: 'std', options: [
+              { value: 'tight', label: t.zp_opt_density_tight },
+              { value: 'std', label: t.zp_opt_density_std },
+              { value: 'loose', label: t.zp_opt_density_loose },
             ]},
-            { key: 'audio', label: t.dp_param_f_audio, default: 'full', options: [
-              { value: 'full', label: t.dp_opt_audio_full },
-              { value: 'mute', label: t.dp_opt_audio_mute },
+            { key: 'audio', label: t.zp_param_f_audio, default: 'full', options: [
+              { value: 'full', label: t.zp_opt_audio_full },
+              { value: 'mute', label: t.zp_opt_audio_mute },
             ]},
           ],
         }
       case 'refine':
         return {
-          baseText: t.dp_user_cta_refine, targetStage: c.target, jumpAfter: false,
+          baseText: t.zp_user_cta_refine, targetStage: c.target, jumpAfter: false,
           fields: [
-            { key: 'focus', label: t.dp_param_f_focus, default: 'visual', options: [
-              { value: 'pace', label: t.dp_opt_focus_pace },
-              { value: 'dialog', label: t.dp_opt_focus_dialog },
-              { value: 'visual', label: t.dp_opt_focus_visual },
-              { value: 'emotion', label: t.dp_opt_focus_emotion },
+            { key: 'focus', label: t.zp_param_f_focus, default: 'visual', options: [
+              { value: 'pace', label: t.zp_opt_focus_pace },
+              { value: 'dialog', label: t.zp_opt_focus_dialog },
+              { value: 'visual', label: t.zp_opt_focus_visual },
+              { value: 'emotion', label: t.zp_opt_focus_emotion },
             ]},
-            { key: 'strength', label: t.dp_param_f_strength, default: 'mid', options: [
-              { value: 'light', label: t.dp_opt_strength_light },
-              { value: 'mid', label: t.dp_opt_strength_mid },
-              { value: 'strong', label: t.dp_opt_strength_strong },
+            { key: 'strength', label: t.zp_param_f_strength, default: 'mid', options: [
+              { value: 'light', label: t.zp_opt_strength_light },
+              { value: 'mid', label: t.zp_opt_strength_mid },
+              { value: 'strong', label: t.zp_opt_strength_strong },
             ]},
           ],
         }
@@ -345,13 +345,13 @@ export default function DoopooChatPanel({
   }
 
   function stageTag(c: { key: CtaKey; target: WorkspaceTab }, targetStage: WorkspaceTab): string {
-    if (c.key === 'refine') return t.dp_tag_refine
+    if (c.key === 'refine') return t.zp_tag_refine
     const map: Record<WorkspaceTab, string> = {
-      canvas: t.dp_tag_canvas,
-      script: t.dp_tag_script,
-      character: t.dp_tag_character,
-      storyboard: t.dp_tag_storyboard,
-      timeline: t.dp_tag_timeline,
+      canvas: t.zp_tag_canvas,
+      script: t.zp_tag_script,
+      character: t.zp_tag_character,
+      storyboard: t.zp_tag_storyboard,
+      timeline: t.zp_tag_timeline,
     }
     return map[targetStage]
   }
@@ -362,7 +362,7 @@ export default function DoopooChatPanel({
       const opt = f.options.find((o) => o.value === values[f.key])
       return `- ${f.label}: ${opt?.label ?? values[f.key] ?? ''}`
     })
-    return `【${tag}】${spec.baseText}\n${t.dp_prompt_params_header}\n${lines.join('\n')}`
+    return `【${tag}】${spec.baseText}\n${t.zp_prompt_params_header}\n${lines.join('\n')}`
   }
 
   function confirmPendingCta() {
@@ -378,7 +378,7 @@ export default function DoopooChatPanel({
   if (collapsed) {
     return (
       <div className="w-12 border-l border-border bg-bg-surface flex flex-col items-center py-3 shrink-0">
-        <button onClick={onToggleCollapsed} className="p-2 rounded-md hover:bg-bg-elevated text-text-muted" title={t.dp_expand}>
+        <button onClick={onToggleCollapsed} className="p-2 rounded-md hover:bg-bg-elevated text-text-muted" title={t.zp_expand}>
           <PanelRightOpen size={18} />
         </button>
       </div>
@@ -391,15 +391,15 @@ export default function DoopooChatPanel({
     <aside className="w-[384px] border-l border-border bg-bg-surface flex flex-col shrink-0 min-h-0">
       {/* Header */}
       <div className="h-12 border-b border-border flex items-center px-3 gap-2 shrink-0">
-        <button onClick={onToggleCollapsed} className="p-1 rounded-md hover:bg-bg-elevated text-text-muted" title={t.dp_collapse}>
+        <button onClick={onToggleCollapsed} className="p-1 rounded-md hover:bg-bg-elevated text-text-muted" title={t.zp_collapse}>
           <PanelRightClose size={16} />
         </button>
         <div className="flex-1 px-2 py-1 rounded-md bg-bg-elevated border border-border text-xs inline-flex items-center justify-between">
-          <span>{t.dp_chat_dropdown}</span>
+          <span>{t.zp_chat_dropdown}</span>
           <ChevronDown size={12} />
         </div>
         <button onClick={newChat} className="px-2 py-1 rounded-md bg-bg-elevated border border-border text-xs inline-flex items-center gap-1 hover:border-accent">
-          <Plus size={12} /> {t.dp_new_chat}
+          <Plus size={12} /> {t.zp_new_chat}
         </button>
       </div>
 
@@ -408,13 +408,13 @@ export default function DoopooChatPanel({
         {!hasMessages ? (
           <div className="space-y-3">
             <p className="text-text-secondary leading-relaxed">{intro[stage]}</p>
-            {stage === 'script' && <p className="text-text-secondary text-sm">{t.dp_intro_script_hint}</p>}
+            {stage === 'script' && <p className="text-text-secondary text-sm">{t.zp_intro_script_hint}</p>}
             <ul className="text-text-secondary text-sm list-disc list-inside space-y-1">
               {presets[stage].map((p) => (
                 <li key={p}>"{p}"</li>
               ))}
             </ul>
-            <h3 className="font-display text-2xl font-bold text-text-primary mt-6">{t.dp_today_help}</h3>
+            <h3 className="font-display text-2xl font-bold text-text-primary mt-6">{t.zp_today_help}</h3>
             <div className="space-y-2 pt-2">
               {presets[stage].map((p, i) => (
                 <button key={p} onClick={() => send(p)}
@@ -430,7 +430,7 @@ export default function DoopooChatPanel({
 
             <div className="pt-4">
               <div className="text-xs text-text-muted inline-flex items-center gap-1 mb-2">
-                <Sparkles size={12} className="text-accent" /> {t.dp_quick_title}
+                <Sparkles size={12} className="text-accent" /> {t.zp_quick_title}
               </div>
               <div className="grid grid-cols-2 gap-2">
                 {quickActions.map((q) => {
@@ -449,7 +449,7 @@ export default function DoopooChatPanel({
               </div>
             </div>
 
-            <p className="text-xs text-text-muted pt-3">{t.dp_unsatisfied}</p>
+            <p className="text-xs text-text-muted pt-3">{t.zp_unsatisfied}</p>
           </div>
         ) : (
           messages.map((m) => {
@@ -529,11 +529,11 @@ export default function DoopooChatPanel({
             <div className="flex items-start justify-between gap-2">
               <div>
                 <div className="text-sm font-semibold text-text-primary inline-flex items-center gap-1">
-                  <Sparkles size={12} className="text-accent" /> {t.dp_preview_title}
+                  <Sparkles size={12} className="text-accent" /> {t.zp_preview_title}
                 </div>
-                <p className="text-xs text-text-muted mt-0.5">{t.dp_preview_desc}</p>
+                <p className="text-xs text-text-muted mt-0.5">{t.zp_preview_desc}</p>
               </div>
-              <button onClick={() => setPendingCta(null)} className="text-text-muted hover:text-text-primary -mt-1" title={t.dp_param_cancel}>
+              <button onClick={() => setPendingCta(null)} className="text-text-muted hover:text-text-primary -mt-1" title={t.zp_param_cancel}>
                 <X size={14} />
               </button>
             </div>
@@ -542,10 +542,10 @@ export default function DoopooChatPanel({
             </pre>
             <div className="flex items-center justify-end gap-2 pt-1">
               <button onClick={() => setPendingCta((p) => p ? { ...p, previewing: false } : p)} className="px-3 py-1.5 rounded-md border border-border text-xs text-text-secondary hover:border-accent">
-                {t.dp_preview_back}
+                {t.zp_preview_back}
               </button>
               <button onClick={confirmPendingCta} className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold hover:opacity-90">
-                {t.dp_preview_send}
+                {t.zp_preview_send}
               </button>
             </div>
           </div>
@@ -554,11 +554,11 @@ export default function DoopooChatPanel({
           <div className="flex items-start justify-between gap-2">
             <div>
               <div className="text-sm font-semibold text-text-primary inline-flex items-center gap-1">
-                <Sparkles size={12} className="text-accent" /> {t.dp_param_title}
+                <Sparkles size={12} className="text-accent" /> {t.zp_param_title}
               </div>
-              <p className="text-xs text-text-muted mt-0.5">{t.dp_param_desc}</p>
+              <p className="text-xs text-text-muted mt-0.5">{t.zp_param_desc}</p>
             </div>
-            <button onClick={() => setPendingCta(null)} className="text-text-muted hover:text-text-primary -mt-1" title={t.dp_param_cancel}>
+            <button onClick={() => setPendingCta(null)} className="text-text-muted hover:text-text-primary -mt-1" title={t.zp_param_cancel}>
               <X size={14} />
             </button>
           </div>
@@ -587,10 +587,10 @@ export default function DoopooChatPanel({
           </div>
           <div className="flex items-center justify-end gap-2 pt-1">
             <button onClick={() => setPendingCta(null)} className="px-3 py-1.5 rounded-md border border-border text-xs text-text-secondary hover:border-accent">
-              {t.dp_param_cancel}
+              {t.zp_param_cancel}
             </button>
             <button onClick={() => setPendingCta((p) => p ? { ...p, previewing: true } : p)} className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold hover:opacity-90">
-              {t.dp_param_preview}
+              {t.zp_param_preview}
             </button>
           </div>
         </div>
@@ -600,7 +600,7 @@ export default function DoopooChatPanel({
       {/* Upgrade hint */}
       {showUpgrade && (
         <div className="mx-3 mb-2 px-3 py-2 rounded-lg bg-accent-dim/40 border border-accent/40 text-xs flex items-center justify-between shrink-0">
-          <span className="text-text-primary">✦ {t.dp_upgrade_hint}</span>
+          <span className="text-text-primary">✦ {t.zp_upgrade_hint}</span>
           <button onClick={() => setShowUpgrade(false)} className="text-text-muted hover:text-text-primary"><X size={12} /></button>
         </div>
       )}
@@ -628,7 +628,7 @@ export default function DoopooChatPanel({
                   type="button"
                   onClick={() => removeAttachment(a.id)}
                   className="absolute right-1 top-1/2 -translate-y-1/2 w-4 h-4 rounded-full bg-bg-surface border border-border flex items-center justify-center text-text-muted hover:text-text-primary"
-                  title={t.dp_remove_attachment}
+                  title={t.zp_remove_attachment}
                 >
                   <X size={10} />
                 </button>
@@ -647,7 +647,7 @@ export default function DoopooChatPanel({
               }
             }}
             rows={2}
-            placeholder={t.dp_input_placeholder}
+            placeholder={t.zp_input_placeholder}
             className="w-full bg-transparent px-3 py-2 text-sm resize-none focus:outline-none placeholder:text-text-muted"
           />
           <div className="flex items-center justify-between px-2 pb-2">
@@ -655,7 +655,7 @@ export default function DoopooChatPanel({
               type="button"
               onClick={() => fileInputRef.current?.click()}
               className="w-8 h-8 rounded-md bg-bg-surface border border-border flex items-center justify-center text-text-muted hover:text-accent"
-              title={t.dp_attach}
+              title={t.zp_attach}
             >
               <Paperclip size={14} />
             </button>
@@ -663,7 +663,7 @@ export default function DoopooChatPanel({
               onClick={() => send(input)}
               disabled={!input.trim() && attachments.length === 0}
               className="w-9 h-9 rounded-full bg-accent text-accent-foreground flex items-center justify-center disabled:opacity-40 hover:opacity-90"
-              title={t.dp_send}
+              title={t.zp_send}
             >
               <Send size={14} />
             </button>
