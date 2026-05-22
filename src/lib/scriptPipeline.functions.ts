@@ -45,7 +45,7 @@ export type PipelineCharacter = z.infer<typeof CharacterSchema>
 
 // ============= Provider dispatcher (OpenRouter + Lovable AI Gateway) =============
 
-type Provider = 'openrouter' | 'lovable'
+type Provider = 'openrouter' | 'lovable' | 'gemini'
 
 const OPENROUTER_FALLBACKS = [
   'google/gemini-2.5-flash',
@@ -57,6 +57,12 @@ const LOVABLE_FALLBACKS = [
   'google/gemini-3-flash-preview',
   'google/gemini-2.5-flash',
   'openai/gpt-5-mini',
+] as const
+
+const GEMINI_FALLBACKS = [
+  'gemini-3.5-flash',
+  'gemini-2.5-flash',
+  'gemini-2.5-pro',
 ] as const
 
 const RETRYABLE = new Set([403, 404, 429, 500, 502, 503])
@@ -74,6 +80,7 @@ function parseModel(raw: string | undefined): { provider: Provider; model: strin
   if (!v) return { provider: 'openrouter', model: undefined }
   if (v.startsWith('lovable:')) return { provider: 'lovable', model: v.slice(8) }
   if (v.startsWith('openrouter:')) return { provider: 'openrouter', model: v.slice(11) }
+  if (v.startsWith('gemini:')) return { provider: 'gemini', model: v.slice(7) }
   return { provider: 'openrouter', model: v }
 }
 
@@ -85,20 +92,36 @@ async function callToolCall<T>(opts: {
   temperature: number
 }): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
   const { provider, model } = parseModel(opts.model)
-  const fallbacks = provider === 'lovable' ? LOVABLE_FALLBACKS : OPENROUTER_FALLBACKS
+  const fallbacks =
+    provider === 'lovable'
+      ? LOVABLE_FALLBACKS
+      : provider === 'gemini'
+        ? GEMINI_FALLBACKS
+        : OPENROUTER_FALLBACKS
   const apiKey =
-    provider === 'lovable' ? process.env.LOVABLE_API_KEY : process.env.OPENROUTER_API_KEY
+    provider === 'lovable'
+      ? process.env.LOVABLE_API_KEY
+      : provider === 'gemini'
+        ? process.env.Default_Gemini_API_Key
+        : process.env.OPENROUTER_API_KEY
   if (!apiKey) {
     return {
       ok: false,
-      error: provider === 'lovable' ? 'LOVABLE_API_KEY missing' : 'OPENROUTER_API_KEY missing',
+      error:
+        provider === 'lovable'
+          ? 'LOVABLE_API_KEY missing'
+          : provider === 'gemini'
+            ? 'Default_Gemini_API_Key missing'
+            : 'OPENROUTER_API_KEY missing',
     }
   }
 
   const endpoint =
     provider === 'lovable'
       ? 'https://ai.gateway.lovable.dev/v1/chat/completions'
-      : 'https://openrouter.ai/api/v1/chat/completions'
+      : provider === 'gemini'
+        ? 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'
+        : 'https://openrouter.ai/api/v1/chat/completions'
 
   const headers: Record<string, string> = {
     Authorization: `Bearer ${apiKey}`,
