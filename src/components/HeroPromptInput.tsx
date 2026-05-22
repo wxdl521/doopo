@@ -11,6 +11,9 @@ export default function HeroPromptInput() {
   const navigate = useNavigate()
   const { isAuthenticated } = useAuth()
   const AI_MODELS = [
+    { id: 'gemini-3.5-flash', label: '✨ Gemini 3.5 Flash', desc: lang === 'zh' ? '最新·快·准' : 'Latest · Fast · Precise' },
+    { id: 'gemini-2.5-flash', label: '✨ Gemini 2.5 Flash', desc: lang === 'zh' ? '均衡·多模态' : 'Balanced · Multimodal' },
+    { id: 'gemini-2.5-pro', label: '✨ Gemini 2.5 Pro', desc: lang === 'zh' ? '最强·长上下文' : 'Most capable · Long context' },
     { id: 'deepseek/deepseek-chat-v3', label: 'DeepSeek Chat', desc: lang === 'zh' ? '快速·中文友好' : 'Fast · Chinese-friendly' },
     { id: 'mistralai/mistral-nemo', label: 'Mistral Nemo', desc: lang === 'zh' ? '均衡·多语言' : 'Balanced · Multilingual' },
     { id: 'meta-llama/llama-3.1-8b-instruct', label: 'Llama 3.1', desc: lang === 'zh' ? '开源·推理强' : 'Open Source · Strong Reasoning' },
