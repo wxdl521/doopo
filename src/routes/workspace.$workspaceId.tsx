@@ -2,7 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { Fragment, useState } from 'react'
 import { useServerFn } from '@tanstack/react-start'
 import WorkspaceTopbar, { type WorkspaceTab } from '../components/workspace/WorkspaceTopbar'
-import ZopiaChatPanel from '../components/workspace/ZopiaChatPanel'
+import DoopooChatPanel from '../components/workspace/DoopooChatPanel'
 import { useLanguage } from '../i18n/LanguageContext'
 import {
   generateOutline, generateScript, generateCharacters, generateStoryboard, generateTimeline,
@@ -188,7 +188,7 @@ function WorkspacePage() {
           {tab === 'storyboard' && <StoryboardView />}
           {tab === 'timeline' && <TimelineView />}
         </main>
-        <ZopiaChatPanel
+        <DoopooChatPanel
           stage={tab}
           onJumpStage={setTab}
           onProduce={produce}
