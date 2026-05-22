@@ -65,10 +65,24 @@ export type ProjectConfig = {
   style: string
 }
 
-export function NewProjectDialog({ trigger }: { trigger: ReactNode }) {
+export function NewProjectDialog({
+  trigger,
+  open: openProp,
+  onOpenChange,
+}: {
+  trigger?: ReactNode
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
+}) {
   const { t } = useLanguage()
   const navigate = useNavigate()
-  const [open, setOpen] = useState(false)
+  const [openInner, setOpenInner] = useState(false)
+  const isControlled = openProp !== undefined
+  const open = isControlled ? !!openProp : openInner
+  const setOpen = (v: boolean) => {
+    if (!isControlled) setOpenInner(v)
+    onOpenChange?.(v)
+  }
 
   const [aspect, setAspect] = useState('16:9')
   const [customCover, setCustomCover] = useState<string | null>(null)
@@ -97,7 +111,7 @@ export function NewProjectDialog({ trigger }: { trigger: ReactNode }) {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>{trigger}</DialogTrigger>
+      {trigger && <DialogTrigger asChild>{trigger}</DialogTrigger>}
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto bg-bg-surface border-border">
         <div className="flex items-center justify-between pb-3 border-b border-border">
           <h2 className="font-display text-xl font-bold">{t.np_title}</h2>

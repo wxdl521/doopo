@@ -3,6 +3,7 @@ import { ArrowRight, ChevronDown, FileText, ImagePlus, Loader2, Plus, RefreshCw,
 import { useNavigate } from '@tanstack/react-router'
 import { useLanguage } from '../i18n/LanguageContext'
 import { useAuth } from '../hooks/useAuth'
+import { NewProjectDialog } from './NewProjectDialog'
 
 const PROXY_URL = 'http://43.130.52.57:8080/v1/chat/completions'
 
@@ -32,6 +33,8 @@ export default function HeroPromptInput() {
 
   // 剧本生成模式：开启后点击"创建"直接跳转剧本页
   const [scriptMode, setScriptMode] = useState(false)
+  // 项目创建弹窗开关
+  const [npOpen, setNpOpen] = useState(false)
 
   const goToScripts = () => {
     try {
@@ -53,35 +56,11 @@ export default function HeroPromptInput() {
       goToScripts()
       return
     }
-    setLoading(true)
-    setError('')
-    setResponse('')
-    setShowResponse(true)
-
+    // 将输入文本暂存，供项目创建后 workspace 右侧对话框预填
     try {
-      const res = await fetch(PROXY_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: selectedModel.id,
-          messages: [{ role: 'user', content: value.trim() }],
-          max_tokens: 800,
-          stream: false,
-        }),
-      })
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({}))
-        throw new Error(err?.error?.message || `HTTP ${res.status}`)
-      }
-
-      const data = await res.json()
-      setResponse(data.choices?.[0]?.message?.content || t.hero_no_reply)
-    } catch (e: any) {
-      setError(e.message || t.hero_request_failed)
-    } finally {
-      setLoading(false)
-    }
+      sessionStorage.setItem('workspace_prefill', value.trim())
+    } catch {}
+    setNpOpen(true)
   }
 
   const closeResponse = () => {
@@ -207,6 +186,9 @@ export default function HeroPromptInput() {
           )}
         </div>
       )}
+
+      {/* 项目创建弹窗（受控） */}
+      <NewProjectDialog open={npOpen} onOpenChange={setNpOpen} />
     </div>
   )
 }
