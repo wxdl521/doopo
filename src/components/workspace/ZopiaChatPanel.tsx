@@ -72,13 +72,14 @@ function buildWorkflow(stage: WorkspaceTab, t: any): WorkflowDef {
 }
 
 export default function ZopiaChatPanel({
-  stage, onJumpStage, onProduce, collapsed, onToggleCollapsed,
+  stage, onJumpStage, onProduce, collapsed, onToggleCollapsed, initialInput,
 }: {
   stage: WorkspaceTab
   onJumpStage: (t: WorkspaceTab) => void
   onProduce?: (t: WorkspaceTab, userPrompt?: string) => void | Promise<void>
   collapsed: boolean
   onToggleCollapsed: () => void
+  initialInput?: string
 }) {
   const { t } = useLanguage()
   const [messages, setMessages] = useState<Message[]>([])
@@ -103,6 +104,14 @@ export default function ZopiaChatPanel({
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: 999999, behavior: 'smooth' })
   }, [messages])
+
+  // 从首页带入的预填文本：仅在首次有值时填入输入框
+  useEffect(() => {
+    if (initialInput && initialInput.trim()) {
+      setInput(initialInput)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialInput])
 
   const intro: Record<WorkspaceTab, string> = {
     canvas: t.zp_intro_canvas,

@@ -1,5 +1,5 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { Fragment, useState } from 'react'
+import { Fragment, useState, useEffect } from 'react'
 import { useServerFn } from '@tanstack/react-start'
 import WorkspaceTopbar, { type WorkspaceTab } from '../components/workspace/WorkspaceTopbar'
 import ZopiaChatPanel from '../components/workspace/ZopiaChatPanel'
@@ -65,6 +65,16 @@ function WorkspacePage() {
   const [flash, setFlash] = useState<WorkspaceTab | null>(null)
   const [previewChar, setPreviewChar] = useState<GenCharacter | null>(null)
   const callAi = useServerFn(generateStageAi)
+  const [initialChatInput, setInitialChatInput] = useState<string>('')
+  useEffect(() => {
+    try {
+      const v = sessionStorage.getItem('workspace_prefill')
+      if (v) {
+        setInitialChatInput(v)
+        sessionStorage.removeItem('workspace_prefill')
+      }
+    } catch {}
+  }, [])
 
   async function tryAi(stage: 'canvas' | 'script' | 'character' | 'storyboard', userPrompt: string, currentData: WorkspaceData): Promise<Partial<WorkspaceData> | null> {
     try {
@@ -194,6 +204,7 @@ function WorkspacePage() {
           onProduce={produce}
           collapsed={collapsed}
           onToggleCollapsed={() => setCollapsed((v) => !v)}
+          initialInput={initialChatInput}
         />
       </div>
       {previewChar && (
