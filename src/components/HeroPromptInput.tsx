@@ -1,12 +1,8 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef } from 'react'
 import { ArrowRight, ChevronDown, FileText, ImagePlus, Loader2, Plus, RefreshCw, Sparkles, X, MessageCircle, Film } from 'lucide-react'
 import { useNavigate } from '@tanstack/react-router'
 import { useLanguage } from '../i18n/LanguageContext'
 import { useAuth } from '../hooks/useAuth'
-
-const SCRIPT_TYPES = ['Micro', 'Short', 'Feature', 'Ad'] as const
-const SCRIPT_GENRES = ['Sci-Fi', 'Romance', 'Thriller', 'Comedy', 'Drama', 'Horror', 'Fantasy', 'Historical'] as const
-const SCRIPT_TONES = ['Serious', 'Comedy', 'Suspense', 'Romance', 'Horror'] as const
 
 const PROXY_URL = 'http://43.130.52.57:8080/v1/chat/completions'
 
@@ -31,38 +27,16 @@ export default function HeroPromptInput() {
   const [phIndex] = useState(() => Math.floor(Math.random() * placeholders.length))
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  // 剧本生成面板
-  const [showScriptPanel, setShowScriptPanel] = useState(false)
-  const [scriptType, setScriptType] = useState<string>('Short')
-  const [scriptGenre, setScriptGenre] = useState<string>('Drama')
-  const [scriptTone, setScriptTone] = useState<string>('Serious')
-  const scriptPanelRef = useRef<HTMLDivElement>(null)
+  // 剧本生成模式：开启后点击"创建"直接跳转剧本页
+  const [scriptMode, setScriptMode] = useState(false)
 
-  useEffect(() => {
-    if (!showScriptPanel) return
-    const onDown = (e: MouseEvent) => {
-      if (scriptPanelRef.current && !scriptPanelRef.current.contains(e.target as Node)) {
-        setShowScriptPanel(false)
-      }
-    }
-    document.addEventListener('mousedown', onDown)
-    return () => document.removeEventListener('mousedown', onDown)
-  }, [showScriptPanel])
-
-  const handleStartScript = () => {
+  const goToScripts = () => {
     try {
       sessionStorage.setItem(
         'script_prefill',
-        JSON.stringify({
-          type: scriptType,
-          genre: scriptGenre,
-          tone: scriptTone,
-          theme: '',
-          plot: value.trim(),
-        }),
+        JSON.stringify({ type: '', genre: '', tone: '', theme: '', plot: value.trim() }),
       )
     } catch {}
-    setShowScriptPanel(false)
     if (!isAuthenticated) {
       navigate({ to: '/login' })
     } else {
@@ -72,6 +46,10 @@ export default function HeroPromptInput() {
 
   const handleCreate = async () => {
     if (!value.trim() || loading) return
+    if (scriptMode) {
+      goToScripts()
+      return
+    }
     setLoading(true)
     setError('')
     setResponse('')
@@ -132,50 +110,19 @@ export default function HeroPromptInput() {
             <button className="btn-ghost"><FileText size={15} /> {t.hero_upload_script}</button>
             <button className="btn-ghost"><ImagePlus size={15} /> {t.hero_upload_storyboard}</button>
 
-            {/* 剧本生成入口 */}
-            <div className="relative" ref={scriptPanelRef}>
-              <button
-                onClick={() => setShowScriptPanel((s) => !s)}
-                className="btn-ghost"
-              >
-                <Film size={14} className="text-accent" />
-                {t.hero_script_entry}
-                <ChevronDown size={14} className="opacity-60" />
-              </button>
-              {showScriptPanel && (
-                <div className="absolute left-0 top-full mt-2 w-[22rem] panel p-3 z-30 animate-fade-in shadow-glow space-y-3">
-                  <div className="text-xs font-medium text-text-secondary">{t.hero_script_panel_title}</div>
-                  <ChipRow
-                    label={t.hero_script_type}
-                    options={SCRIPT_TYPES as readonly string[]}
-                    value={scriptType}
-                    onChange={setScriptType}
-                  />
-                  <ChipRow
-                    label={t.hero_script_genre}
-                    options={SCRIPT_GENRES as readonly string[]}
-                    value={scriptGenre}
-                    onChange={setScriptGenre}
-                  />
-                  <ChipRow
-                    label={t.hero_script_tone}
-                    options={SCRIPT_TONES as readonly string[]}
-                    value={scriptTone}
-                    onChange={setScriptTone}
-                  />
-                  <button
-                    onClick={handleStartScript}
-                    className="btn-primary w-full justify-center"
-                  >
-                    <Sparkles size={14} /> {t.hero_script_start}
-                    <ArrowRight size={14} />
-                  </button>
-                </div>
-              )}
-            </div>
+            {/* 剧本生成模式切换 */}
+            <button
+              onClick={() => setScriptMode((s) => !s)}
+              className={`btn-ghost ${scriptMode ? 'border-accent/50 bg-accent-dim text-accent' : ''}`}
+              title={t.hero_script_entry}
+            >
+              <Film size={14} className={scriptMode ? 'text-accent' : 'text-accent'} />
+              {t.hero_script_entry}
+              {scriptMode && <span className="ml-1 text-[10px] opacity-80">●</span>}
+            </button>
 
             {/* 模型选择器 */}
-            <div className="relative">
+            <div className="relative" hidden={scriptMode}>
               <button
                 onClick={() => setShowModels((s) => !s)}
                 className="btn-ghost"
@@ -213,9 +160,9 @@ export default function HeroPromptInput() {
                 {loading ? (
                   <Loader2 size={14} className="animate-spin" />
                 ) : (
-                  <Sparkles size={14} />
+                  scriptMode ? <Film size={14} /> : <Sparkles size={14} />
                 )}
-                {loading ? t.hero_thinking : t.hero_create}
+                {loading ? t.hero_thinking : (scriptMode ? t.hero_script_start : t.hero_create)}
                 {!loading && <ArrowRight size={14} />}
               </button>
             </div>
