@@ -44,6 +44,13 @@ const MODELS = [
   { id: 'lovable:openai/gpt-5.5', label: '⚡ Lovable · GPT-5.5' },
   // MiniMax（使用 MINIMAX_API_KEY）
   { id: 'minimax:MiniMax-M2.7', label: '🔵 MiniMax M2.7（备选）' },
+  // 阿里通义千问（使用 Qwen 密钥，DashScope OpenAI 兼容接口）
+  { id: 'qwen:qwen3-max', label: '🟣 Qwen3 Max（旗舰）' },
+  { id: 'qwen:qwen3-plus', label: '🟣 Qwen3 Plus（均衡）' },
+  { id: 'qwen:qwen3-turbo', label: '🟣 Qwen3 Turbo（高速）' },
+  { id: 'qwen:qwen3-coder-plus', label: '🟣 Qwen3 Coder Plus（代码/结构化）' },
+  { id: 'qwen:qwen-plus', label: '🟣 Qwen Plus（稳定）' },
+  { id: 'qwen:qwen-turbo', label: '🟣 Qwen Turbo（轻量）' },
 ]
 
 export default function Scripts() {
