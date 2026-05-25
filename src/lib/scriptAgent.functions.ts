@@ -14,15 +14,17 @@ const Lang = z.enum(['zh', 'en'])
 const LOVABLE_ENDPOINT = 'https://ai.gateway.lovable.dev/v1/chat/completions'
 const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'
 const MINIMAX_ENDPOINT = 'https://api.minimaxi.com/anthropic/v1/messages'
+const QWEN_ENDPOINT = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions'
 const DEFAULT_MODEL = 'gemini:gemini-3.5-flash'
 
-type Provider = 'lovable' | 'gemini' | 'minimax'
+type Provider = 'lovable' | 'gemini' | 'minimax' | 'qwen'
 
 // 解析模型 id：
 //   "gemini:xxx"     → 直接调用 Google Generative Language（使用 Default_Gemini_API_Key）
 //   "lovable:xxx"    → Lovable AI Gateway
 //   "openrouter:xxx" → 仍走 Lovable Gateway（向后兼容，去前缀）
 //   "minimax:xxx"    → MiniMax API（使用 MINIMAX_API_KEY）
+//   "qwen:xxx"       → 阿里 DashScope（使用 Qwen 密钥，OpenAI 兼容接口）
 //   裸 id            → Lovable Gateway
 function pickModel(raw?: string): { provider: Provider; model: string } {
   const v = (raw ?? '').trim() || DEFAULT_MODEL
@@ -30,6 +32,7 @@ function pickModel(raw?: string): { provider: Provider; model: string } {
   if (v.startsWith('lovable:')) return { provider: 'lovable', model: v.slice(8) }
   if (v.startsWith('openrouter:')) return { provider: 'lovable', model: v.slice(11) }
   if (v.startsWith('minimax:')) return { provider: 'minimax', model: v.slice(8) }
+  if (v.startsWith('qwen:')) return { provider: 'qwen', model: v.slice(5) }
   return { provider: 'lovable', model: v }
 }
 
@@ -49,7 +52,9 @@ async function* streamChat(opts: {
       ? process.env.Default_Gemini_API_Key
       : picked.provider === 'minimax'
         ? process.env.MINIMAX_API_KEY
-        : process.env.LOVABLE_API_KEY
+        : picked.provider === 'qwen'
+          ? process.env.Qwen
+          : process.env.LOVABLE_API_KEY
   if (!apiKey) {
     yield {
       error:
@@ -57,7 +62,9 @@ async function* streamChat(opts: {
           ? 'Default_Gemini_API_Key 未配置'
           : picked.provider === 'minimax'
             ? 'MINIMAX_API_KEY 未配置'
-            : 'LOVABLE_API_KEY 未配置',
+            : picked.provider === 'qwen'
+              ? 'Qwen 密钥未配置'
+              : 'LOVABLE_API_KEY 未配置',
     }
     return
   }
@@ -113,8 +120,13 @@ async function* streamChat(opts: {
     return
   }
 
-  // Lovable / Gemini: SSE 流式响应
-  const endpoint = picked.provider === 'gemini' ? GEMINI_ENDPOINT : LOVABLE_ENDPOINT
+  // Lovable / Gemini / Qwen: OpenAI 兼容 SSE 流式响应
+  const endpoint =
+    picked.provider === 'gemini'
+      ? GEMINI_ENDPOINT
+      : picked.provider === 'qwen'
+        ? QWEN_ENDPOINT
+        : LOVABLE_ENDPOINT
   try {
     upstream = await fetch(endpoint, {
       method: 'POST',
