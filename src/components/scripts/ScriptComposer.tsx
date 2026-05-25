@@ -613,32 +613,24 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
       )}
 
       {stage === 'synopsis' && (
-        <ActionBar>
-          <label className="text-xs text-text-muted">第 1 集分镜数</label>
-          <NumberField
-            value={sceneCount}
-            min={5}
-            max={30}
-            fallback={15}
-            onCommit={setSceneCount}
-            className="w-20 rounded-lg bg-bg-elevated border border-border text-sm text-text-primary px-2 py-1.5 focus:outline-none focus:border-accent/50"
-          />
-          <button
-            onClick={runSynopsis}
-            disabled={loading}
-            className="btn-ghost text-xs disabled:opacity-40"
-          >
-            <RefreshCw size={12} /> 重新生成梗概
-          </button>
-          <button
-            onClick={runEpisode}
-            disabled={loading || !synopsisText}
-            className="btn-primary text-xs ml-auto disabled:opacity-40"
-          >
-            {loading ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
-            确认 · 生成第 1 集分镜
-          </button>
-        </ActionBar>
+        <SynopsisRefinePanel
+          draft={synopsisDraft}
+          setDraft={setSynopsisDraft}
+          candidate={refineCandidate}
+          streaming={refineStreaming}
+          instruction={refineInstruction}
+          setInstruction={setRefineInstruction}
+          onRunRefine={runRefine}
+          onAccept={acceptRefine}
+          onDiscard={discardRefine}
+          onRegenerate={runSynopsis}
+          onConfirm={runEpisode}
+          sceneCount={sceneCount}
+          setSceneCount={setSceneCount}
+          loading={loading}
+          versions={synopsisVersions}
+          onRollback={rollbackVersion}
+        />
       )}
 
       {stage === 'episode' && (
