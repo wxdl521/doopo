@@ -343,3 +343,51 @@ export const streamEpisodeScenes = createServerFn({ method: 'POST' })
   })
 
 // 注：角色信息已并入故事梗概的"人物小传"段，不再单独成步。
+
+// ============= 3) 梗概精修（基于当前梗概 + 用户指令 重写整份梗概）=============
+
+const RefineInput = z.object({
+  lang: Lang,
+  currentSynopsis: z.string().min(20).max(20000),
+  instruction: z.string().min(1).max(2000),
+  history: z
+    .array(z.object({ role: z.enum(['user', 'agent']), content: z.string().max(4000) }))
+    .max(12)
+    .optional()
+    .default([]),
+  model: z.string().optional(),
+})
+
+const SYS_REFINE_ZH = `你是一位资深短剧编剧，正在协助用户精修"故事梗概"。
+
+严格规则：
+1) 必须输出一份**完整的新版梗概全文**（Markdown），不能只输出 diff、补丁或仅写"已修改部分"；
+2) 必须严格保留原梗概的 6 段一级/二级标题骨架：① 故事名称 ② 故事核心 ③ 人物小传 ④ 剧情梗概 ⑤ 章节结构 ⑥ 第 1 集钩子预告——一节都不能少；
+3) 只针对"用户修改要求"做最小必要改动，其余段落尽量保留原文措辞；
+4) 不写任何解释、前言、"以下是修改后的版本"等元话术，直接从一级标题开始输出；
+5) 禁止生成 HTML、表格、代码块；对白仍用中文引号"…"包裹。`
+
+const SYS_REFINE_EN = `You are a senior short-drama writer helping the user refine an existing story synopsis.
+
+Rules:
+1) Output the FULL new synopsis in Markdown — never a diff, patch, or only the changed parts;
+2) Preserve the original 6-section skeleton (Title / Core / Characters / Plot Outline / Chapter Structure / Episode 1 Cliffhanger) — do not drop any;
+3) Make only the minimal necessary changes implied by the user's instruction; keep other paragraphs intact;
+4) No preamble, no explanations like "here is the updated version" — start directly with the H1 heading;
+5) No HTML, tables, or code fences.`
+
+export const refineSynopsis = createServerFn({ method: 'POST' })
+  .inputValidator((d: unknown) => RefineInput.parse(d))
+  .handler(async function* ({ data }) {
+    const sys = data.lang === 'zh' ? SYS_REFINE_ZH : SYS_REFINE_EN
+    const histText =
+      (data.history ?? [])
+        .slice(-8)
+        .map((h) => `${h.role === 'user' ? '用户' : '助手'}：${h.content}`)
+        .join('\n') || '（无）'
+    const user =
+      data.lang === 'zh'
+        ? `【当前梗概】\n${data.currentSynopsis}\n\n【用户本轮修改要求】\n${data.instruction}\n\n【最近精修对话】\n${histText}\n\n请直接输出修改后的完整梗概。`
+        : `[Current synopsis]\n${data.currentSynopsis}\n\n[User instruction]\n${data.instruction}\n\n[Recent dialogue]\n${histText}\n\nOutput the full revised synopsis directly.`
+    yield* streamChat({ model: pickModel(data.model), system: sys, user })
+  })

@@ -20,6 +20,9 @@ export type SavedScript = {
   characters?: PipelineCharacter[]
   // ============= 剧本智能体（对话式 5 步流程）原始文本 =============
   synopsisText?: string
+  synopsisLocked?: boolean
+  synopsisVersions?: { id: string; text: string; source: 'ai-init' | 'ai-refine' | 'manual'; createdAt: string }[]
+  refineHistory?: { role: 'user' | 'agent'; text: string; createdAt: string }[]
   episodesText?: {
     epIndex: number
     text: string
