@@ -24,6 +24,7 @@ import { useLanguage } from '../../i18n/LanguageContext'
 import {
   streamSynopsis,
   streamEpisodeScenes,
+  refineSynopsis,
 } from '../../lib/scriptAgent.functions'
 import { findScript, upsertScriptAndCloud, type SavedScript } from '../../lib/scriptStorage'
 
@@ -67,6 +68,7 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
   const navigate = useNavigate()
   const callSynopsis = useServerFn(streamSynopsis)
   const callEpisode = useServerFn(streamEpisodeScenes)
+  const callRefine = useServerFn(refineSynopsis)
 
   const [stage, setStage] = useState<Stage>('setup')
   const [loading, setLoading] = useState(false)
@@ -104,6 +106,17 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
 
   // 流式聚合结果
   const [synopsisText, setSynopsisText] = useState('')
+  // 可编辑梗概草稿（用户在确认前可以手动改 / AI 精修）
+  const [synopsisDraft, setSynopsisDraft] = useState('')
+  // AI 精修候选（流式中或待采纳）
+  const [refineCandidate, setRefineCandidate] = useState('')
+  const [refineStreaming, setRefineStreaming] = useState(false)
+  const [refineInstruction, setRefineInstruction] = useState('')
+  const [refineHistory, setRefineHistory] = useState<{ role: 'user' | 'agent'; text: string }[]>([])
+  // 梗概版本快照（采纳 AI 改写或重新生成时记录）
+  const [synopsisVersions, setSynopsisVersions] = useState<
+    { id: string; text: string; source: 'ai-init' | 'ai-refine' | 'manual'; createdAt: string }[]
+  >([])
   const [episodes, setEpisodes] = useState<EpisodeItem[]>([])
   // 下一集要生成的集号 / 分镜数
   const [nextEpIndex, setNextEpIndex] = useState(2)
@@ -250,6 +263,8 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
     if (!theme.trim() || !plot.trim()) return
     setError(null)
     setLoading(true)
+    setRefineCandidate('')
+    setRefineHistory([])
     const genreList = selectedTags.filter((t) => genres.some((g) => g.value === t))
     const toneList = selectedTags.filter((t) => tones.some((g) => g.value === t))
     pushBubble({
@@ -260,19 +275,87 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
     const stream = (await callSynopsis({
       data: { lang, type, genre: genreList.join('、'), tone: toneList.join('、'), theme, plot, expectedEpisodes, totalMinutes, model },
     })) as AsyncIterable<StreamChunk>
-    const res = await consume(stream, id, setSynopsisText)
+    const res = await consume(stream, id, (text) => {
+      setSynopsisText(text)
+      setSynopsisDraft(text)
+    })
     setLoading(false)
-    if (res.ok) setStage('synopsis')
+    if (res.ok) {
+      setStage('synopsis')
+      setSynopsisVersions((prev) => [
+        ...prev,
+        { id: `v-${Date.now()}`, text: res.text, source: 'ai-init', createdAt: new Date().toISOString() },
+      ])
+    }
+  }
+
+  // ===== 梗概精修：AI 对话修改 =====
+  const runRefine = async () => {
+    const instr = refineInstruction.trim()
+    if (!instr || !synopsisDraft.trim() || refineStreaming) return
+    setError(null)
+    setRefineStreaming(true)
+    setRefineCandidate('')
+    const userBubbleId = pushBubble({ role: 'user', text: `✏️ 精修指令：${instr}` })
+    const id = pushBubble({ role: 'agent', text: '', streaming: true, stage: 'synopsis' })
+    setRefineHistory((h) => [...h, { role: 'user', text: instr }])
+    const stream = (await callRefine({
+      data: {
+        lang,
+        currentSynopsis: synopsisDraft,
+        instruction: instr,
+        history: refineHistory.slice(-8).map((h) => ({ role: h.role, content: h.text })),
+        model,
+      },
+    })) as AsyncIterable<StreamChunk>
+    const res = await consume(stream, id, (text) => setRefineCandidate(text))
+    setRefineStreaming(false)
+    if (res.ok) {
+      setRefineHistory((h) => [...h, { role: 'agent', text: '（已生成候选版本，等待采纳）' }])
+      setRefineInstruction('')
+    } else {
+      // 失败时移除占位
+      setRefineHistory((h) => h.slice(0, -1))
+    }
+    void userBubbleId
+  }
+
+  const acceptRefine = () => {
+    if (!refineCandidate.trim()) return
+    setSynopsisVersions((prev) => [
+      ...prev,
+      { id: `v-${Date.now()}`, text: refineCandidate, source: 'ai-refine', createdAt: new Date().toISOString() },
+    ])
+    setSynopsisDraft(refineCandidate)
+    setSynopsisText(refineCandidate)
+    setRefineCandidate('')
+    pushBubble({ role: 'system', text: '✅ 已采纳 AI 改写版本' })
+  }
+
+  const discardRefine = () => {
+    setRefineCandidate('')
+    pushBubble({ role: 'system', text: '↩︎ 已丢弃 AI 改写版本' })
+  }
+
+  const rollbackVersion = (vid: string) => {
+    const v = synopsisVersions.find((x) => x.id === vid)
+    if (!v) return
+    setSynopsisDraft(v.text)
+    setSynopsisText(v.text)
+    pushBubble({ role: 'system', text: `↩︎ 已回滚到历史版本（${new Date(v.createdAt).toLocaleString()}）` })
   }
 
   const runEpisode = async () => {
-    if (!synopsisText) return
+    // 用户最终确认的梗概以草稿为准
+    const finalSynopsis = synopsisDraft.trim() || synopsisText
+    if (!finalSynopsis) return
+    if (finalSynopsis !== synopsisText) setSynopsisText(finalSynopsis)
     setError(null)
     setLoading(true)
     pushBubble({ role: 'user', text: `✅ 确认梗概，第 1 集分镜数：${sceneCount}` })
     const id = pushBubble({ role: 'agent', text: '', streaming: true, stage: 'episode' })
     const stream = (await callEpisode({
-      data: { lang, epIndex: 1, sceneCount, synopsisText, model },
+      data: { lang, epIndex: 1, sceneCount, synopsisText: finalSynopsis, model },
     })) as AsyncIterable<StreamChunk>
     const res = await consume(stream, id, (text) => {
       setEpisodes([{ epIndex: 1, text }])
