@@ -6,8 +6,8 @@ export type SavedScript = {
   title: string
   plot: string
   type: string
-  genre: string
-  tone: string
+  genre: string | string[]
+  tone: string | string[]
   model?: string
   // legacy single-text fallback
   content?: string
@@ -27,6 +27,7 @@ export type SavedScript = {
   }[]
   charactersText?: string
   expectedEpisodes?: number
+  totalMinutes?: number
   // local quality estimates
   quality?: {
     pacing: number

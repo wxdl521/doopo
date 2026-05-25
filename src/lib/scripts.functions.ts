@@ -44,14 +44,16 @@ export const upsertScriptRemote = createServerFn({ method: 'POST' })
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context
     const s = data.script as SavedScript
+    const genreVal = Array.isArray(s.genre) ? JSON.stringify(s.genre) : (s.genre ?? null)
+    const toneVal = Array.isArray(s.tone) ? JSON.stringify(s.tone) : (s.tone ?? null)
     const { error } = await supabase.from('scripts').upsert(
       {
         id: s.id,
         user_id: userId,
         title: s.title || '未命名剧本',
         type: s.type ?? null,
-        genre: s.genre ?? null,
-        tone: s.tone ?? null,
+        genre: genreVal,
+        tone: toneVal,
         payload: JSON.parse(JSON.stringify(s)),
       },
       { onConflict: 'id' },

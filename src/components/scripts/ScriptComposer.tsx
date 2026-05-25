@@ -17,6 +17,8 @@ import {
   RotateCcw,
   Pencil,
   StopCircle,
+  ChevronUp,
+  ChevronDown,
 } from 'lucide-react'
 import { useLanguage } from '../../i18n/LanguageContext'
 import {
@@ -52,6 +54,9 @@ type Props = {
   onSaved?: () => void
 }
 
+// 合并后的题材+风格标签类型
+export type TagOption = { value: string; label: string; group: 'genre' | 'tone' }
+
 type StreamChunk =
   | { delta: string }
   | { done: true; text: string }
@@ -69,12 +74,12 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
 
   // 输入
   const [type, setType] = useState('Short')
-  const [genre, setGenre] = useState('Drama')
-  const [tone, setTone] = useState('Serious')
+  const [selectedTags, setSelectedTags] = useState<string[]>(['Drama', 'Serious'])
   const [model, setModel] = useState(models[0]?.id ?? '')
   const [theme, setTheme] = useState('')
   const [plot, setPlot] = useState('')
   const [expectedEpisodes, setExpectedEpisodes] = useState(100)
+  const [totalMinutes, setTotalMinutes] = useState(90)
   const [sceneCount, setSceneCount] = useState(15)
 
   // 从首页 Hero 入口带入的预填值（仅一次）
@@ -85,11 +90,12 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
       sessionStorage.removeItem('script_prefill')
       const data = JSON.parse(raw) as { type?: string; genre?: string; tone?: string; theme?: string; plot?: string }
       const allowedTypes = types.map((x) => x.value)
-      const allowedGenres = genres.map((x) => x.value)
-      const allowedTones = tones.map((x) => x.value)
+      const allowedTags = [...genres, ...tones].map((x) => x.value)
       if (data.type && allowedTypes.includes(data.type)) setType(data.type)
-      if (data.genre && allowedGenres.includes(data.genre)) setGenre(data.genre)
-      if (data.tone && allowedTones.includes(data.tone)) setTone(data.tone)
+      const tagValues: string[] = []
+      if (data.genre && allowedTags.includes(data.genre)) tagValues.push(data.genre)
+      if (data.tone && allowedTags.includes(data.tone)) tagValues.push(data.tone)
+      if (tagValues.length > 0) setSelectedTags(tagValues)
       if (data.plot) setPlot((cur) => cur || data.plot!)
       if (data.theme) setTheme((cur) => cur || data.theme!)
     } catch {}
@@ -244,13 +250,15 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
     if (!theme.trim() || !plot.trim()) return
     setError(null)
     setLoading(true)
+    const genreList = selectedTags.filter((t) => genres.some((g) => g.value === t))
+    const toneList = selectedTags.filter((t) => tones.some((g) => g.value === t))
     pushBubble({
       role: 'user',
-      text: `🎯 灵感\n类型：${type} · 题材：${genre} · 风格：${tone}\n主题：${theme}\n剧情：${plot}\n预计集数：${expectedEpisodes}`,
+      text: `🎯 灵感\n类型：${type} · 题材：${genreList.join('、')} · 风格：${toneList.join('、')}\n总时长：约 ${totalMinutes} 分钟\n主题：${theme}\n剧情：${plot}\n预计集数：${expectedEpisodes}`,
     })
     const id = pushBubble({ role: 'agent', text: '', streaming: true, stage: 'synopsis' })
     const stream = (await callSynopsis({
-      data: { lang, type, genre, tone, theme, plot, expectedEpisodes, model },
+      data: { lang, type, genre: genreList.join('、'), tone: toneList.join('、'), theme, plot, expectedEpisodes, totalMinutes, model },
     })) as AsyncIterable<StreamChunk>
     const res = await consume(stream, id, setSynopsisText)
     setLoading(false)
@@ -395,12 +403,13 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
       title,
       plot,
       type,
-      genre,
-      tone,
+      genre: selectedTags.filter((t) => genres.some((g) => g.value === t)),
+      tone: selectedTags.filter((t) => tones.some((g) => g.value === t)),
       model,
       synopsisText,
       episodesText: episodesSnapshot.length > 0 ? episodesSnapshot : undefined,
       expectedEpisodes,
+      totalMinutes,
       createdAt: existing?.createdAt ?? new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     }
@@ -498,10 +507,8 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
         <SetupBar
           type={type}
           setType={setType}
-          genre={genre}
-          setGenre={setGenre}
-          tone={tone}
-          setTone={setTone}
+          selectedTags={selectedTags}
+          setSelectedTags={setSelectedTags}
           model={model}
           setModel={setModel}
           theme={theme}
@@ -510,6 +517,8 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
           setPlot={setPlot}
           expectedEpisodes={expectedEpisodes}
           setExpectedEpisodes={setExpectedEpisodes}
+          totalMinutes={totalMinutes}
+          setTotalMinutes={setTotalMinutes}
           types={types}
           genres={genres}
           tones={tones}
@@ -724,51 +733,106 @@ function EpisodeEditor({
   setEpisodes: React.Dispatch<React.SetStateAction<EpisodeItem[]>>
   onSaveSnapshot: () => void
 }) {
+  const [focusedEp, setFocusedEp] = useState<number>(episodes[0]?.epIndex ?? 1)
+  const [collapsedList, setCollapsedList] = useState<Set<number>>(new Set())
+
+  const toggleCollapsed = (idx: number) => {
+    setCollapsedList((prev) => {
+      const next = new Set(prev)
+      next.has(idx) ? next.delete(idx) : next.add(idx)
+      return next
+    })
+  }
+
   return (
     <div className="space-y-3 pt-3 border-t border-border">
       <div className="flex items-center gap-2">
         <Pencil size={14} className="text-accent" />
         <h3 className="font-semibold text-text-primary text-sm">分集编辑 · 直接修改台词与画面描述</h3>
         <span className="text-xs text-text-muted">共 {episodes.length} 集 · 每次保存生成一个版本</span>
+        {/* 快速跳转下拉框 */}
+        <label className="ml-auto flex items-center gap-1.5 text-xs text-text-muted">
+          <span>跳转至</span>
+          <select
+            value={focusedEp}
+            onChange={(e) => setFocusedEp(Number(e.target.value))}
+            className="rounded-md bg-bg-elevated border border-border text-text-primary text-xs px-2 py-1 focus:outline-none focus:border-accent/50"
+          >
+            {episodes.map((ep) => (
+              <option key={ep.epIndex} value={ep.epIndex}>
+                第 {ep.epIndex} 集
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
       <div className="space-y-3">
-        {episodes.map((ep) => (
-          <EpisodeCard
-            key={ep.epIndex}
-            ep={ep}
-            onChange={(text) =>
-              setEpisodes((prev) =>
-                prev.map((e) => (e.epIndex === ep.epIndex ? { ...e, text } : e)),
-              )
-            }
-            onSaveVersion={(label) => {
-              setEpisodes((prev) =>
-                prev.map((e) => {
-                  if (e.epIndex !== ep.epIndex) return e
-                  const versions = e.versions ? [...e.versions] : []
-                  versions.unshift({
-                    text: e.text,
-                    savedAt: new Date().toISOString(),
-                    label: label || `v${versions.length + 1}`,
-                  })
-                  return { ...e, versions }
-                }),
-              )
-              // 立刻持久化到剧本库
-              setTimeout(onSaveSnapshot, 0)
-            }}
-            onRevert={(versionIndex) => {
-              setEpisodes((prev) =>
-                prev.map((e) => {
-                  if (e.epIndex !== ep.epIndex) return e
-                  const v = e.versions?.[versionIndex]
-                  if (!v) return e
-                  return { ...e, text: v.text }
-                }),
-              )
-            }}
-          />
-        ))}
+        {episodes.map((ep) => {
+          const isFocused = ep.epIndex === focusedEp
+          const isCollapsed = collapsedList.has(ep.epIndex)
+          return (
+            <div key={ep.epIndex}>
+              {/* 小卡片：未聚焦时显示简要信息，点击跳转 */}
+              {!isFocused && (
+                <div
+                  className="rounded-xl border border-border bg-bg-base/40 px-3 py-2 flex items-center gap-3 cursor-pointer hover:border-accent/50 transition-colors"
+                  onClick={() => setFocusedEp(ep.epIndex)}
+                  title="点击跳转至本集"
+                >
+                  <span className="text-sm font-semibold text-text-primary">第 {ep.epIndex} 集</span>
+                  <span className="text-xs text-text-muted truncate flex-1 min-w-0">
+                    {ep.text.slice(0, 60).replace(/[#*`>_\-]/g, '').replace(/\s+/g, ' ').trim() || '（空）'}
+                  </span>
+                  <span className="text-[11px] text-text-muted shrink-0">{ep.text.length} 字</span>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); toggleCollapsed(ep.epIndex) }}
+                    className="text-text-muted hover:text-text-primary shrink-0"
+                    title={isCollapsed ? '展开' : '收起'}
+                  >
+                    {isCollapsed ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
+                  </button>
+                </div>
+              )}
+              {/* 完整编辑卡片：聚焦时显示 */}
+              {isFocused && (
+                <EpisodeCard
+                  ep={ep}
+                  onChange={(text) =>
+                    setEpisodes((prev) =>
+                      prev.map((e) => (e.epIndex === ep.epIndex ? { ...e, text } : e)),
+                    )
+                  }
+                  onSaveVersion={(label) => {
+                    setEpisodes((prev) =>
+                      prev.map((e) => {
+                        if (e.epIndex !== ep.epIndex) return e
+                        const versions = e.versions ? [...e.versions] : []
+                        versions.unshift({
+                          text: e.text,
+                          savedAt: new Date().toISOString(),
+                          label: label || `v${versions.length + 1}`,
+                        })
+                        return { ...e, versions }
+                      }),
+                    )
+                    setTimeout(onSaveSnapshot, 0)
+                  }}
+                  onRevert={(versionIndex) => {
+                    setEpisodes((prev) =>
+                      prev.map((e) => {
+                        if (e.epIndex !== ep.epIndex) return e
+                        const v = e.versions?.[versionIndex]
+                        if (!v) return e
+                        return { ...e, text: v.text }
+                      }),
+                    )
+                  }}
+                  onCollapse={() => setFocusedEp(-1)}
+                />
+              )}
+            </div>
+          )
+        })}
       </div>
     </div>
   )
@@ -779,11 +843,13 @@ function EpisodeCard({
   onChange,
   onSaveVersion,
   onRevert,
+  onCollapse,
 }: {
   ep: EpisodeItem
   onChange: (text: string) => void
   onSaveVersion: (label?: string) => void
   onRevert: (versionIndex: number) => void
+  onCollapse?: () => void
 }) {
   const [showHistory, setShowHistory] = useState(false)
   const [versionLabel, setVersionLabel] = useState('')
@@ -795,6 +861,11 @@ function EpisodeCard({
           {ep.text.length} 字 · {ep.versions?.length ?? 0} 个历史版本
         </span>
         <div className="ml-auto flex items-center gap-1">
+          {onCollapse && (
+            <button onClick={onCollapse} className="btn-ghost text-xs" title="收起">
+              <ChevronUp size={12} /> 收起
+            </button>
+          )}
           <input
             value={versionLabel}
             onChange={(e) => setVersionLabel(e.target.value)}
@@ -852,10 +923,8 @@ function EpisodeCard({
 function SetupBar(props: {
   type: string
   setType: (v: string) => void
-  genre: string
-  setGenre: (v: string) => void
-  tone: string
-  setTone: (v: string) => void
+  selectedTags: string[]
+  setSelectedTags: (v: string[]) => void
   model: string
   setModel: (v: string) => void
   theme: string
@@ -864,6 +933,8 @@ function SetupBar(props: {
   setPlot: (v: string) => void
   expectedEpisodes: number
   setExpectedEpisodes: (v: number) => void
+  totalMinutes: number
+  setTotalMinutes: (v: number) => void
   types: Props['types']
   genres: Props['genres']
   tones: Props['tones']
@@ -873,6 +944,17 @@ function SetupBar(props: {
   onSubmit: () => void
 }) {
   const { t } = props
+  const allTags = [
+    ...props.genres.map((g) => ({ value: g.value, label: t[g.key] as string, group: '题材' as const })),
+    ...props.tones.map((g) => ({ value: g.value, label: t[g.key] as string, group: '风格' as const })),
+  ]
+  const toggleTag = (value: string) => {
+    if (props.selectedTags.includes(value)) {
+      props.setSelectedTags(props.selectedTags.filter((v) => v !== value))
+    } else {
+      props.setSelectedTags([...props.selectedTags, value])
+    }
+  }
   return (
     <div className="space-y-3 pt-1">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -882,18 +964,30 @@ function SetupBar(props: {
           onChange={props.setType}
           options={props.types.map((x) => ({ value: x.value, label: t[x.key] as string }))}
         />
-        <SelectField
-          label={t.script_genre}
-          value={props.genre}
-          onChange={props.setGenre}
-          options={props.genres.map((x) => ({ value: x.value, label: t[x.key] as string }))}
-        />
-        <SelectField
-          label={t.script_tone}
-          value={props.tone}
-          onChange={props.setTone}
-          options={props.tones.map((x) => ({ value: x.value, label: t[x.key] as string }))}
-        />
+        {/* 合并后的题材+风格多选 */}
+        <div className="col-span-2">
+          <label className="text-xs text-text-muted mb-1 block">题材 / 风格（可多选）</label>
+          <div className="flex flex-wrap gap-1.5 p-2 rounded-lg bg-bg-elevated border border-border min-h-[42px]">
+            {allTags.map((tag) => {
+              const selected = props.selectedTags.includes(tag.value)
+              return (
+                <button
+                  key={tag.value}
+                  type="button"
+                  onClick={() => toggleTag(tag.value)}
+                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border transition-colors ${
+                    selected
+                      ? 'bg-accent/20 border-accent text-accent'
+                      : 'bg-bg-base border-border text-text-muted hover:border-accent/40'
+                  }`}
+                >
+                  {selected && <span className="text-[10px] opacity-60">{tag.group}</span>}
+                  {tag.label}
+                </button>
+              )
+            })}
+          </div>
+        </div>
         <div>
           <label className="text-xs text-text-muted mb-1 block">预计集数</label>
           <NumberField
@@ -906,12 +1000,26 @@ function SetupBar(props: {
           />
         </div>
       </div>
-      <SelectField
-        label={t.script_model}
-        value={props.model}
-        onChange={props.setModel}
-        options={props.models.map((m) => ({ value: m.id, label: m.label }))}
-      />
+      {/* 总时长 */}
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="text-xs text-text-muted mb-1 block">总时长限制（分钟）</label>
+          <NumberField
+            value={props.totalMinutes}
+            min={5}
+            max={600}
+            fallback={90}
+            onCommit={props.setTotalMinutes}
+            className="w-full rounded-lg bg-bg-elevated border border-border text-sm text-text-primary px-2 py-2 focus:outline-none focus:border-accent/50"
+          />
+        </div>
+        <SelectField
+          label={t.script_model}
+          value={props.model}
+          onChange={props.setModel}
+          options={props.models.map((m) => ({ value: m.id, label: m.label }))}
+        />
+      </div>
       <div>
         <label className="text-xs text-text-muted mb-1 block">{t.script_theme}</label>
         <input

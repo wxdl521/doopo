@@ -144,7 +144,7 @@ export default function Scripts() {
                     <div className="p-3 space-y-1.5">
                       <div className="font-semibold text-text-primary truncate">{s.title}</div>
                       <div className="text-xs text-text-muted truncate">
-                        {s.genre} · {s.tone}
+                        {Array.isArray(s.genre) ? s.genre.join('、') : s.genre} · {Array.isArray(s.tone) ? s.tone.join('、') : s.tone}
                       </div>
                       {preview && (
                         <div className="text-xs text-text-secondary line-clamp-2">{preview}</div>

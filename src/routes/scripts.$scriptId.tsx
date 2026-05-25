@@ -1,6 +1,6 @@
 import { createFileRoute, Link, notFound } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
-import { ArrowLeft, Download, GitBranch, FileText, Sparkles, Activity, Zap, MessageCircle } from 'lucide-react'
+import { ArrowLeft, Download, GitBranch, FileText, Sparkles, Activity, Zap, MessageCircle, ChevronUp, ChevronDown } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import PageHeader from '../components/PageHeader'
@@ -75,6 +75,19 @@ function SavedScriptView({ s, t }: { s: SavedScript; t: ReturnType<typeof useLan
   const hasActs = !!s.acts?.length
   const showSideBlocks = hasScenes || hasCharacters || hasActs
   const episodeCount = s.episodesText?.length ?? 0
+
+  // 集数跳转
+  const [focusedEpIdx, setFocusedEpIdx] = useState<number>(-1)
+  const [collapsedEps, setCollapsedEps] = useState<Set<number>>(new Set())
+
+  const toggleEpCollapse = (idx: number) => {
+    setCollapsedEps((prev) => {
+      const next = new Set(prev)
+      next.has(idx) ? next.delete(idx) : next.add(idx)
+      return next
+    })
+  }
+
   return (
     <div className="animate-fade-in">
       <Link to="/scripts" className="inline-flex items-center gap-1 text-sm text-text-muted hover:text-accent mb-4">
@@ -93,8 +106,8 @@ function SavedScriptView({ s, t }: { s: SavedScript; t: ReturnType<typeof useLan
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6 text-sm">
         <Stat label={t.scd_type} value={s.type} />
-        <Stat label={t.scd_genre} value={s.genre} />
-        <Stat label={t.script_tone} value={s.tone} />
+        <Stat label={t.scd_genre} value={Array.isArray(s.genre) ? s.genre.join('、') : s.genre} />
+        <Stat label={t.script_tone} value={Array.isArray(s.tone) ? s.tone.join('、') : s.tone} />
         <Stat
           label={episodeCount > 0 ? '已生成集数' : t.scd_scenes}
           value={episodeCount > 0 ? `${episodeCount} 集` : String(s.scenes?.length ?? 0)}
@@ -129,13 +142,75 @@ function SavedScriptView({ s, t }: { s: SavedScript; t: ReturnType<typeof useLan
             {s.synopsisText && (
               <AgentTextBlock title="📖 故事梗概 / 一句话剧情" text={s.synopsisText} />
             )}
-            {s.episodesText?.map((ep) => (
-              <AgentTextBlock
-                key={ep.epIndex}
-                title={`🎬 第 ${ep.epIndex} 集分镜脚本`}
-                text={ep.text}
-              />
-            ))}
+
+            {/* 剧本集数跳转区 */}
+            {episodeCount > 0 && (
+              <div>
+                <div className="flex items-center gap-2 mb-3 flex-wrap">
+                  <span className="font-display font-bold text-sm">🎬 分镜脚本</span>
+                  <span className="text-xs text-text-muted">共 {episodeCount} 集</span>
+                  <label className="ml-auto flex items-center gap-1.5 text-xs text-text-muted">
+                    <span>跳转至</span>
+                    <select
+                      value={focusedEpIdx}
+                      onChange={(e) => setFocusedEpIdx(Number(e.target.value))}
+                      className="rounded-md bg-bg-elevated border border-border text-text-primary text-xs px-2 py-1 focus:outline-none focus:border-accent/50"
+                    >
+                      <option value={-1}>— 选择集数 —</option>
+                      {s.episodesText!.map((ep) => (
+                        <option key={ep.epIndex} value={ep.epIndex}>第 {ep.epIndex} 集</option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <div className="space-y-2">
+                  {s.episodesText!.map((ep) => {
+                    const isFocused = ep.epIndex === focusedEpIdx
+                    const isCollapsed = collapsedEps.has(ep.epIndex) && !isFocused
+                    if (isCollapsed) {
+                      return (
+                        <div
+                          key={ep.epIndex}
+                          className="rounded-xl border border-border bg-bg-base/40 px-3 py-2 flex items-center gap-3 cursor-pointer hover:border-accent/50 transition-colors"
+                          onClick={() => setFocusedEpIdx(ep.epIndex)}
+                          title="点击跳转至本集"
+                        >
+                          <span className="text-sm font-semibold text-text-primary">第 {ep.epIndex} 集</span>
+                          <span className="text-xs text-text-muted truncate flex-1 min-w-0">
+                            {ep.text.slice(0, 60).replace(/[#*`>_\-]/g, '').replace(/\s+/g, ' ').trim() || '（空）'}
+                          </span>
+                          <span className="text-[11px] text-text-muted shrink-0">{ep.text.length} 字</span>
+                        </div>
+                      )
+                    }
+                    return (
+                      <div key={ep.epIndex} className="rounded-xl border border-border bg-bg-base/40 overflow-hidden">
+                        <div className="flex items-center gap-2 px-3 py-2 bg-bg-elevated/40">
+                          <span className="text-sm font-semibold text-text-primary">第 {ep.epIndex} 集</span>
+                          <span className="text-[11px] text-text-muted">{ep.text.length} 字</span>
+                          <div className="ml-auto flex items-center gap-1">
+                            <button
+                              onClick={() => toggleEpCollapse(ep.epIndex)}
+                              className="text-text-muted hover:text-text-primary"
+                              title="收起"
+                            >
+                              <ChevronUp size={12} />
+                            </button>
+                          </div>
+                        </div>
+                        {isFocused && (
+                          <AgentTextBlock
+                            title=""
+                            text={ep.text}
+                          />
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
             {s.charactersText && (
               <AgentTextBlock title="👥 角色卡" text={s.charactersText} />
             )}

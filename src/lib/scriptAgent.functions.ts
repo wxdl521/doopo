@@ -65,7 +65,7 @@ async function* streamChat(opts: {
   const controller = new AbortController()
   let upstream: Response
 
-  // MiniMax: 非 SSE，一次性返回
+  // MiniMax 使用不同的 API 格式（非 SSE）
   if (picked.provider === 'minimax') {
     try {
       upstream = await fetch(MINIMAX_ENDPOINT, {
@@ -88,27 +88,32 @@ async function* streamChat(opts: {
       yield { error: e instanceof Error ? e.message : '网络错误' }
       return
     }
+
     if (!upstream.ok) {
       const txt = await upstream.text().catch(() => '')
       yield { error: `MiniMax 错误 ${upstream.status}: ${txt.slice(0, 200)}` }
       return
     }
+
     try {
       const json = await upstream.json()
+      // MiniMax 返回格式：content[].type === "text" 或 "thinking"
       const textParts: string[] = []
       for (const block of json.content ?? []) {
-        if (block.type === 'text') textParts.push(block.text)
+        if (block.type === 'text') {
+          textParts.push(block.text)
+        }
       }
       const fullText = textParts.join('')
       if (fullText) yield { delta: fullText }
       yield { done: true, text: fullText }
-    } catch {
+    } catch (e) {
       yield { error: 'MiniMax 响应解析失败' }
     }
     return
   }
 
-  // Gemini / Lovable: SSE 流式
+  // Lovable / Gemini: SSE 流式响应
   const endpoint = picked.provider === 'gemini' ? GEMINI_ENDPOINT : LOVABLE_ENDPOINT
   try {
     upstream = await fetch(endpoint, {
@@ -207,6 +212,7 @@ const SynopsisInput = z.object({
   theme: z.string().min(1).max(200),
   plot: z.string().min(1).max(2000),
   expectedEpisodes: z.number().min(1).max(200).default(100),
+  totalMinutes: z.number().min(5).max(600).default(90),
   model: z.string().optional(),
 })
 
@@ -217,6 +223,7 @@ const SYS_SYNOPSIS_ZH = `你是一位资深短剧爆款编剧。请基于用户�
 2) 段落之间留空行；正文叙述要有画面感、节奏紧凑，每个标题下至少写满 1 段或 3 条要点；
 3) 适度使用 emoji 作为一级标题点缀（如 📖 👥 🎬），但禁止生成 HTML 与表格代码块；
 4) 对白与示例台词用中文引号"…"包裹。
+5) **总时长限制**：全程控制在约 __TOTAL_MINUTES__ 分钟以内，合理分配每集时长，确保集数与总时长匹配。
 
 请严格按下面的骨架输出（保留所有标题与小节顺序）：
 
@@ -289,11 +296,12 @@ End with one line asking how many storyboards the user wants for Episode 1 (defa
 export const streamSynopsis = createServerFn({ method: 'POST' })
   .inputValidator((d: unknown) => SynopsisInput.parse(d))
   .handler(async function* ({ data }) {
-    const sys = data.lang === 'zh' ? SYS_SYNOPSIS_ZH : SYS_SYNOPSIS_EN
+    const sys = (data.lang === 'zh' ? SYS_SYNOPSIS_ZH : SYS_SYNOPSIS_EN)
+      .replace('__TOTAL_MINUTES__', String(data.totalMinutes))
     const user =
       data.lang === 'zh'
-        ? `【类型】${data.type}\n【题材】${data.genre}\n【风格】${data.tone}\n【主题/标题】${data.theme}\n【剧情概要】${data.plot}\n【预计集数】${data.expectedEpisodes} 集`
-        : `[Type] ${data.type}\n[Genre] ${data.genre}\n[Tone] ${data.tone}\n[Theme] ${data.theme}\n[Plot] ${data.plot}\n[Expected episodes] ${data.expectedEpisodes}`
+        ? `【类型】${data.type}\n【题材】${data.genre}\n【风格】${data.tone}\n【主题/标题】${data.theme}\n【剧情概要】${data.plot}\n【预计集数】${data.expectedEpisodes} 集\n【总时长限制】约 ${data.totalMinutes} 分钟`
+        : `[Type] ${data.type}\n[Genre] ${data.genre}\n[Tone] ${data.tone}\n[Theme] ${data.theme}\n[Plot] ${data.plot}\n[Expected episodes] ${data.expectedEpisodes}\n[Total duration] ~${data.totalMinutes} min`
     yield* streamChat({ model: pickModel(data.model), system: sys, user })
   })
 
