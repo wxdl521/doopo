@@ -794,6 +794,188 @@ function ActionBar({ children }: { children: React.ReactNode }) {
   )
 }
 
+// ============ 梗概精修面板（手动编辑 + AI 对话改写 + 版本回滚）============
+
+const QUICK_REFINE_CHIPS = [
+  '更紧凑、节奏更快',
+  '加强第二幕反转',
+  '主角改成女性',
+  '减少到 30 集',
+  '增加爽点与钩子',
+  '人物性格更鲜明',
+]
+
+function SynopsisRefinePanel(props: {
+  draft: string
+  setDraft: (v: string) => void
+  candidate: string
+  streaming: boolean
+  instruction: string
+  setInstruction: (v: string) => void
+  onRunRefine: () => void
+  onAccept: () => void
+  onDiscard: () => void
+  onRegenerate: () => void
+  onConfirm: () => void
+  sceneCount: number
+  setSceneCount: (v: number) => void
+  loading: boolean
+  versions: { id: string; text: string; source: 'ai-init' | 'ai-refine' | 'manual'; createdAt: string }[]
+  onRollback: (id: string) => void
+}) {
+  const [showHistory, setShowHistory] = useState(false)
+  const wordCount = props.draft.length
+  const canConfirm = !props.loading && !props.streaming && wordCount >= 200
+  return (
+    <div className="pt-3 border-t border-border space-y-3">
+      <div className="flex items-center gap-2">
+        <Pencil size={14} className="text-accent" />
+        <h3 className="font-semibold text-text-primary text-sm">梗概精修 · 手动改写或 AI 对话改写</h3>
+        <span className="text-xs text-text-muted">{wordCount} 字 · {props.versions.length} 个历史版本</span>
+        <button
+          onClick={() => setShowHistory((v) => !v)}
+          disabled={props.versions.length === 0}
+          className="ml-auto btn-ghost text-xs disabled:opacity-40"
+        >
+          <History size={12} /> 历史
+        </button>
+        <button onClick={props.onRegenerate} disabled={props.loading || props.streaming} className="btn-ghost text-xs disabled:opacity-40">
+          <RefreshCw size={12} /> 重新生成
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        {/* 左：可编辑梗概 */}
+        <div className="rounded-xl border border-border bg-bg-base/40 p-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-text-muted">📝 梗概草稿（可直接编辑）</span>
+            <span className="text-[11px] text-text-muted">字数 ≥ 200 才能确认</span>
+          </div>
+          <textarea
+            value={props.draft}
+            onChange={(e) => props.setDraft(e.target.value)}
+            rows={18}
+            className="w-full rounded-lg bg-bg-elevated border border-border text-sm text-text-primary p-3 leading-7 font-mono focus:outline-none focus:border-accent/50 resize-y min-h-[360px]"
+            placeholder="AI 生成的梗概会出现在这里，你可以任意修改……"
+          />
+        </div>
+
+        {/* 右：AI 精修对话 */}
+        <div className="rounded-xl border border-border bg-bg-base/40 p-3 space-y-2 flex flex-col">
+          <div className="text-xs text-text-muted flex items-center gap-2">
+            <Bot size={12} /> AI 精修助手 · 用自然语言描述你要的修改
+          </div>
+
+          {/* 候选区 */}
+          {(props.candidate || props.streaming) && (
+            <div className="rounded-lg border border-accent/40 bg-accent/5 p-2 space-y-2">
+              <div className="text-[11px] text-accent flex items-center gap-1">
+                <Sparkles size={11} /> AI 候选版本{props.streaming ? '（生成中…）' : '（待你采纳）'}
+              </div>
+              <div className="max-h-[200px] overflow-y-auto rounded bg-bg-base/60 p-2 text-xs text-text-primary whitespace-pre-wrap leading-6">
+                {props.candidate || '…'}
+                {props.streaming && <span className="inline-block w-1.5 h-3 ml-0.5 bg-accent animate-pulse align-middle" />}
+              </div>
+              {!props.streaming && props.candidate && (
+                <div className="flex gap-2 justify-end">
+                  <button onClick={props.onDiscard} className="btn-ghost text-xs">
+                    丢弃
+                  </button>
+                  <button onClick={props.onAccept} className="btn-primary text-xs">
+                    <Check size={12} /> 采纳此版本
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 快捷指令 */}
+          <div className="flex flex-wrap gap-1.5">
+            {QUICK_REFINE_CHIPS.map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => props.setInstruction(c)}
+                disabled={props.streaming}
+                className="text-[11px] px-2 py-0.5 rounded-full bg-bg-elevated border border-border text-text-muted hover:border-accent/40 hover:text-text-primary disabled:opacity-40"
+              >
+                {c}
+              </button>
+            ))}
+          </div>
+
+          <textarea
+            value={props.instruction}
+            onChange={(e) => props.setInstruction(e.target.value)}
+            rows={3}
+            disabled={props.streaming}
+            placeholder="例如：把主角改成女医生 / 第 5 集加一次身份揭穿 / 整体节奏更紧凑"
+            className="w-full rounded-lg bg-bg-elevated border border-border text-sm text-text-primary p-2 focus:outline-none focus:border-accent/50 placeholder:text-text-muted disabled:opacity-60 resize-none"
+          />
+          <div className="flex justify-end">
+            <button
+              onClick={props.onRunRefine}
+              disabled={props.streaming || !props.instruction.trim() || !props.draft.trim()}
+              className="btn-primary text-xs disabled:opacity-40"
+            >
+              {props.streaming ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+              {props.streaming ? '生成中…' : 'AI 修改'}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* 历史版本 */}
+      {showHistory && props.versions.length > 0 && (
+        <div className="rounded-xl border border-border bg-bg-base/40 p-3">
+          <div className="text-xs text-text-muted mb-2">历史版本（最新在下）</div>
+          <ul className="space-y-1">
+            {props.versions.map((v) => (
+              <li key={v.id} className="flex items-center gap-2 text-xs rounded-md px-2 py-1 hover:bg-bg-elevated/60">
+                <span className="text-text-primary font-medium">
+                  {v.source === 'ai-init' ? '🪄 首版' : v.source === 'ai-refine' ? '✨ AI 改写' : '✍️ 手动'}
+                </span>
+                <span className="text-text-muted">{new Date(v.createdAt).toLocaleString()}</span>
+                <span className="text-text-muted/70">{v.text.length} 字</span>
+                <button
+                  onClick={() => props.onRollback(v.id)}
+                  className="ml-auto inline-flex items-center gap-1 text-accent hover:underline"
+                >
+                  <RotateCcw size={11} /> 回滚
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* 确认栏 */}
+      <ActionBar>
+        <label className="text-xs text-text-muted">第 1 集分镜数</label>
+        <NumberField
+          value={props.sceneCount}
+          min={5}
+          max={30}
+          fallback={15}
+          onCommit={props.setSceneCount}
+          className="w-20 rounded-lg bg-bg-elevated border border-border text-sm text-text-primary px-2 py-1.5 focus:outline-none focus:border-accent/50"
+        />
+        <span className="text-xs text-text-muted ml-auto">
+          {wordCount < 200 ? `还需 ${200 - wordCount} 字才能确认` : '梗概已就绪，可发送到剧本生成 agent'}
+        </span>
+        <button
+          onClick={props.onConfirm}
+          disabled={!canConfirm}
+          className="btn-primary text-xs disabled:opacity-40"
+        >
+          {props.loading ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+          ✅ 确认梗概，生成第 1 集分镜
+        </button>
+      </ActionBar>
+    </div>
+  )
+}
+
 // ============ 分集编辑器 ============
 
 type EpisodeVersion = { text: string; savedAt: string; label?: string }
