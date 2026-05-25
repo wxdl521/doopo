@@ -13,20 +13,23 @@ const Lang = z.enum(['zh', 'en'])
 
 const LOVABLE_ENDPOINT = 'https://ai.gateway.lovable.dev/v1/chat/completions'
 const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'
+const MINIMAX_ENDPOINT = 'https://api.minimaxi.com/anthropic/v1/messages'
 const DEFAULT_MODEL = 'gemini:gemini-3.5-flash'
 
-type Provider = 'lovable' | 'gemini'
+type Provider = 'lovable' | 'gemini' | 'minimax'
 
 // 解析模型 id：
 //   "gemini:xxx"     → 直接调用 Google Generative Language（使用 Default_Gemini_API_Key）
 //   "lovable:xxx"    → Lovable AI Gateway
 //   "openrouter:xxx" → 仍走 Lovable Gateway（向后兼容，去前缀）
+//   "minimax:xxx"    → MiniMax API（使用 MINIMAX_API_KEY）
 //   裸 id            → Lovable Gateway
 function pickModel(raw?: string): { provider: Provider; model: string } {
   const v = (raw ?? '').trim() || DEFAULT_MODEL
   if (v.startsWith('gemini:')) return { provider: 'gemini', model: v.slice(7) }
   if (v.startsWith('lovable:')) return { provider: 'lovable', model: v.slice(8) }
   if (v.startsWith('openrouter:')) return { provider: 'lovable', model: v.slice(11) }
+  if (v.startsWith('minimax:')) return { provider: 'minimax', model: v.slice(8) }
   return { provider: 'lovable', model: v }
 }
 
@@ -44,20 +47,69 @@ async function* streamChat(opts: {
   const apiKey =
     picked.provider === 'gemini'
       ? process.env.Default_Gemini_API_Key
-      : process.env.LOVABLE_API_KEY
+      : picked.provider === 'minimax'
+        ? process.env.MINIMAX_API_KEY
+        : process.env.LOVABLE_API_KEY
   if (!apiKey) {
     yield {
       error:
         picked.provider === 'gemini'
           ? 'Default_Gemini_API_Key 未配置'
-          : 'LOVABLE_API_KEY 未配置',
+          : picked.provider === 'minimax'
+            ? 'MINIMAX_API_KEY 未配置'
+            : 'LOVABLE_API_KEY 未配置',
     }
     return
   }
-  const endpoint = picked.provider === 'gemini' ? GEMINI_ENDPOINT : LOVABLE_ENDPOINT
 
   const controller = new AbortController()
   let upstream: Response
+
+  // MiniMax: 非 SSE，一次性返回
+  if (picked.provider === 'minimax') {
+    try {
+      upstream = await fetch(MINIMAX_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'X-Api-Key': apiKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: picked.model,
+          messages: [
+            { role: 'system', content: opts.system },
+            { role: 'user', content: opts.user },
+          ],
+          max_tokens: 4096,
+        }),
+        signal: controller.signal,
+      })
+    } catch (e) {
+      yield { error: e instanceof Error ? e.message : '网络错误' }
+      return
+    }
+    if (!upstream.ok) {
+      const txt = await upstream.text().catch(() => '')
+      yield { error: `MiniMax 错误 ${upstream.status}: ${txt.slice(0, 200)}` }
+      return
+    }
+    try {
+      const json = await upstream.json()
+      const textParts: string[] = []
+      for (const block of json.content ?? []) {
+        if (block.type === 'text') textParts.push(block.text)
+      }
+      const fullText = textParts.join('')
+      if (fullText) yield { delta: fullText }
+      yield { done: true, text: fullText }
+    } catch {
+      yield { error: 'MiniMax 响应解析失败' }
+    }
+    return
+  }
+
+  // Gemini / Lovable: SSE 流式
+  const endpoint = picked.provider === 'gemini' ? GEMINI_ENDPOINT : LOVABLE_ENDPOINT
   try {
     upstream = await fetch(endpoint, {
       method: 'POST',

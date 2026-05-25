@@ -42,6 +42,8 @@ const MODELS = [
   { id: 'lovable:openai/gpt-5-mini', label: '⚡ Lovable · GPT-5 Mini' },
   { id: 'lovable:openai/gpt-5', label: '⚡ Lovable · GPT-5' },
   { id: 'lovable:openai/gpt-5.5', label: '⚡ Lovable · GPT-5.5' },
+  // MiniMax（使用 MINIMAX_API_KEY）
+  { id: 'minimax:MiniMax-M2.7', label: '🔵 MiniMax M2.7（备选）' },
 ]
 
 export default function Scripts() {
