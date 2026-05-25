@@ -8,8 +8,8 @@ const ScriptSchema = z.object({
   title: z.string().min(1).max(500),
   plot: z.string().max(20000).optional().default(''),
   type: z.string().max(64).optional().default(''),
-  genre: z.string().max(64).optional().default(''),
-  tone: z.string().max(64).optional().default(''),
+  genre: z.union([z.string().max(64), z.array(z.string().max(64)).max(20)]).optional().default(''),
+  tone: z.union([z.string().max(64), z.array(z.string().max(64)).max(20)]).optional().default(''),
 }).passthrough()
 
 export const listScriptsRemote = createServerFn({ method: 'GET' })
