@@ -11,7 +11,9 @@ import {
   type Outline, type GenScene, type GenCharacter, type StoryboardPanel, type TimelineData, type TimelineTrack, type TimelineClip,
 } from '../data/workspaceGenerators'
 import { generateStageAi } from '../lib/aiGenerate.functions'
-import { Maximize2, FileText, Camera, Clock, Users, X } from 'lucide-react'
+import { generateImage } from '../lib/openrouterImage.functions'
+import { getProject, type ProjectConfigRow } from '../lib/projects.functions'
+import { Maximize2, FileText, Camera, Clock, Users, X, Sparkles, Loader2 } from 'lucide-react'
 import CharacterPortrait from '../components/workspace/CharacterPortrait'
 import CharacterStage from '../components/workspace/CharacterStage'
 import { toast } from 'sonner'
@@ -69,6 +71,69 @@ function WorkspacePage() {
   const [flash, setFlash] = useState<WorkspaceTab | null>(null)
   const [previewChar, setPreviewChar] = useState<GenCharacter | null>(null)
   const callAi = useServerFn(generateStageAi)
+  const callImage = useServerFn(generateImage)
+  const loadProject = useServerFn(getProject)
+  const [project, setProject] = useState<ProjectConfigRow | null>(null)
+  const [charImages, setCharImages] = useState<Record<string, string>>({})
+  const [panelImages, setPanelImages] = useState<Record<string, string>>({})
+  const [busyChar, setBusyChar] = useState<string | null>(null)
+  const [busyPanel, setBusyPanel] = useState<string | null>(null)
+  const workspaceId = Route.useParams().workspaceId
+  useEffect(() => {
+    let cancelled = false
+    loadProject({ data: { id: workspaceId } })
+      .then((r) => { if (!cancelled && r.project) setProject(r.project) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [workspaceId, loadProject])
+
+  async function genCharImage(c: GenCharacter) {
+    if (busyChar) return
+    setBusyChar(c.id)
+    try {
+      const prompt = [
+        `${c.name}, ${c.roleLabel}, age ${c.age}`,
+        c.look, c.personality && `personality: ${c.personality}`,
+        c.debutShot && `debut shot: ${c.debutShot}`,
+        'full-body character sheet, front view, cinematic lighting, high detail',
+      ].filter(Boolean).join('. ')
+      const res = await callImage({ data: { prompt, model: project?.sceneModel } })
+      if (res.url) {
+        setCharImages((m) => ({ ...m, [c.id]: res.url }))
+        toast.success(`已生成 ${c.name} 主图`)
+      } else {
+        toast.error(res.error || '生成失败')
+      }
+    } catch (e) {
+      toast.error('生成失败')
+    } finally {
+      setBusyChar(null)
+    }
+  }
+
+  async function genPanelImage(p: StoryboardPanel) {
+    if (busyPanel) return
+    setBusyPanel(p.id)
+    try {
+      const scene = data.scenes.find((s) => s.id === p.sceneId)
+      const prompt = [
+        scene?.slug && `Scene: ${scene.slug}`,
+        `Shot ${p.shot}: ${p.camera}`,
+        p.action, p.emotion && `mood: ${p.emotion}`,
+        'cinematic storyboard panel, dramatic composition, film still',
+      ].filter(Boolean).join('. ')
+      const res = await callImage({ data: { prompt, model: project?.storyboardModel } })
+      if (res.url) {
+        setPanelImages((m) => ({ ...m, [p.id]: res.url }))
+      } else {
+        toast.error(res.error || '生成失败')
+      }
+    } catch {
+      toast.error('生成失败')
+    } finally {
+      setBusyPanel(null)
+    }
+  }
   const [initialChatInput, setInitialChatInput] = useState<string>('')
   useEffect(() => {
     try {
