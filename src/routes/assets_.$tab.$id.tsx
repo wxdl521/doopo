@@ -1,7 +1,8 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
-import { ArrowLeft, Copy, Download } from 'lucide-react'
+import { ArrowLeft, Copy, Download, Sparkles, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
+import { useServerFn } from '@tanstack/react-start'
 import { useLanguage } from '../i18n/LanguageContext'
 import {
   type AssetTab,
@@ -11,6 +12,8 @@ import {
   getAssetById,
 } from '../data/assetsMock'
 import { assetToMarkdown, downloadMarkdown } from '../lib/assetMarkdown'
+import { generateImage } from '../lib/openrouterImage.functions'
+import { IMAGE_MODELS } from '../lib/imageModels'
 
 export const Route = createFileRoute('/assets_/$tab/$id')({
   component: AssetDetailPage,
@@ -188,11 +191,24 @@ function CharacterDetail({ c }: { c: CharacterAsset }) {
 /* ---------------- Scene ---------------- */
 function SceneDetail({ s }: { s: SceneAsset }) {
   const { t } = useLanguage()
+  const prompt = [
+    `Cinematic scene illustration: ${s.name}.`,
+    s.summary,
+    s.time && `Time: ${s.time}.`,
+    s.mood && `Mood: ${s.mood}.`,
+    s.shot && `Shot: ${s.shot}.`,
+    s.lighting && `Lighting: ${s.lighting}.`,
+    s.tags?.length ? `Tags: ${s.tags.join(', ')}.` : '',
+    'High detail, atmospheric, no text, no watermark.',
+  ].filter(Boolean).join(' ')
   return (
     <div className="flex flex-col gap-6">
-      <div className={`panel overflow-hidden bg-gradient-to-br ${s.gradient} h-64 md:h-80 flex items-center justify-center`}>
-        <span className="text-8xl drop-shadow-lg">{s.emoji}</span>
-      </div>
+      <ImageStage
+        prompt={prompt}
+        fallback={<span className="text-8xl drop-shadow-lg">{s.emoji}</span>}
+        gradient={s.gradient}
+        heightClass="h-64 md:h-80"
+      />
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="flex flex-col gap-3">
           <h1 className="text-3xl font-bold text-text-primary tracking-tight">{s.name}</h1>
@@ -221,10 +237,24 @@ function SceneDetail({ s }: { s: SceneAsset }) {
 /* ---------------- Prop ---------------- */
 function PropDetail({ p }: { p: PropAsset }) {
   const { t } = useLanguage()
+  const prompt = [
+    `Product-style illustration of a prop: ${p.name}.`,
+    p.summary,
+    p.detail,
+    p.material && `Material: ${p.material}.`,
+    p.appearance && `Appearance: ${p.appearance}.`,
+    p.tags?.length ? `Tags: ${p.tags.join(', ')}.` : '',
+    'Centered composition, soft studio lighting, no text, no watermark.',
+  ].filter(Boolean).join(' ')
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-      <div className={`lg:col-span-5 panel overflow-hidden bg-gradient-to-br ${p.gradient} aspect-square flex items-center justify-center`}>
-        <span className="text-9xl drop-shadow-lg">{p.emoji}</span>
+      <div className="lg:col-span-5">
+        <ImageStage
+          prompt={prompt}
+          fallback={<span className="text-9xl drop-shadow-lg">{p.emoji}</span>}
+          gradient={p.gradient}
+          heightClass="aspect-square"
+        />
       </div>
       <section className="lg:col-span-7 flex flex-col gap-4">
         <div>
@@ -253,6 +283,73 @@ function PropDetail({ p }: { p: PropAsset }) {
 }
 
 /* ---------------- Shared ---------------- */
+function ImageStage({
+  prompt,
+  fallback,
+  gradient,
+  heightClass,
+}: {
+  prompt: string
+  fallback: React.ReactNode
+  gradient: string
+  heightClass: string
+}) {
+  const callGenerateImage = useServerFn(generateImage)
+  const [model, setModel] = useState<string>('')
+  const [url, setUrl] = useState<string>('')
+  const [loading, setLoading] = useState(false)
+
+  async function handleGenerate() {
+    if (loading) return
+    setLoading(true)
+    try {
+      const r = await callGenerateImage({ data: { prompt, model: model || undefined } })
+      if (r?.url) {
+        setUrl(r.url)
+      } else {
+        toast.error(r?.error || 'Image generation failed')
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Image generation failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className={`panel overflow-hidden bg-gradient-to-br ${gradient} ${heightClass} flex items-center justify-center relative`}>
+        {url ? (
+          <img src={url} alt="" className="w-full h-full object-cover animate-fade-in" />
+        ) : (
+          fallback
+        )}
+        {loading && (
+          <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+            <Loader2 className="animate-spin text-white" size={28} />
+          </div>
+        )}
+      </div>
+      <div className="flex items-center gap-2">
+        <select
+          value={model}
+          onChange={(e) => setModel(e.target.value)}
+          disabled={loading}
+          className="text-xs px-2 py-1.5 rounded-md bg-bg-elevated border border-border text-text-secondary focus:outline-none focus:border-accent"
+        >
+          {IMAGE_MODELS.map((m) => (
+            <option key={m.key} value={m.key}>{m.label}</option>
+          ))}
+        </select>
+        <button onClick={handleGenerate} disabled={loading} className="btn-primary text-xs">
+          {loading ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} />}
+          {url ? 'Regenerate' : 'Generate image'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-baseline gap-3 text-sm">
