@@ -1,6 +1,6 @@
 import { supabase } from '@/integrations/supabase/client'
 import type { GenCharacter, GenScene } from '@/data/workspaceGenerators'
-import type { Tables } from '@/integrations/supabase/types'
+import type { Tables, Json } from '@/integrations/supabase/types'
 
 export type DbCharacter = Tables<'characters'>
 export type DbScene = Tables<'scenes'>

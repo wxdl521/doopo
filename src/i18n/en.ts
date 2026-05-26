@@ -64,6 +64,7 @@ export const en: Translations = {
   // Header
   header_discord: 'Discord',
   header_upgrade: 'Upgrade',
+  ws_save_assets: 'Save to Assets',
   header_account: 'Account',
   header_logout: 'Log Out',
   header_points: 'Points',
