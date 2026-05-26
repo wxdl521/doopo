@@ -4,6 +4,8 @@ import { useServerFn } from '@tanstack/react-start'
 import WorkspaceTopbar, { type WorkspaceTab } from '../components/workspace/WorkspaceTopbar'
 import ZopiaChatPanel from '../components/workspace/ZopiaChatPanel'
 import { useLanguage } from '../i18n/LanguageContext'
+import { useAuth } from '../hooks/useAuth'
+import { saveCharacters, saveScenes } from '../lib/assetsStorage'
 import {
   generateOutline, generateScript, generateCharacters, generateStoryboard, generateTimeline,
   type Outline, type GenScene, type GenCharacter, type StoryboardPanel, type TimelineData, type TimelineTrack, type TimelineClip,
@@ -12,6 +14,7 @@ import { generateStageAi } from '../lib/aiGenerate.functions'
 import { Maximize2, FileText, Camera, Clock, Users, X } from 'lucide-react'
 import CharacterPortrait from '../components/workspace/CharacterPortrait'
 import CharacterStage from '../components/workspace/CharacterStage'
+import { toast } from 'sonner'
 
 export const Route = createFileRoute('/workspace/$workspaceId')({
   head: ({ params }) => ({ meta: [{ title: `Workspace ${params.workspaceId} — Doopoo` }] }),
@@ -58,6 +61,7 @@ const sbGradient = (i: number) => {
 
 function WorkspacePage() {
   const { t } = useLanguage()
+  const { user } = useAuth()
   const [tab, setTab] = useState<WorkspaceTab>('canvas')
   const [episode, setEpisode] = useState(1)
   const [collapsed, setCollapsed] = useState(false)
@@ -75,6 +79,28 @@ function WorkspacePage() {
       }
     } catch {}
   }, [])
+
+  async function handleSaveAssets() {
+    if (!user) {
+      toast.error('请先登录')
+      return
+    }
+    if (data.characters.length > 0) {
+      const { error: charErr } = await saveCharacters(data.characters, user.id)
+      if (charErr) {
+        toast.error('保存角色失败')
+        return
+      }
+    }
+    if (data.scenes.length > 0) {
+      const { error: sceneErr } = await saveScenes(data.scenes, user.id)
+      if (sceneErr) {
+        toast.error('保存场景失败')
+        return
+      }
+    }
+    toast.success('已保存到资产库')
+  }
 
   async function tryAi(stage: 'canvas' | 'script' | 'character' | 'storyboard' | 'timeline', userPrompt: string, currentData: WorkspaceData): Promise<Partial<WorkspaceData> | null> {
     try {
@@ -206,7 +232,7 @@ function WorkspacePage() {
 
   return (
     <div className="h-screen flex flex-col bg-bg overflow-hidden">
-      <WorkspaceTopbar tab={tab} onTabChange={setTab} episode={episode} onEpisodeChange={setEpisode} />
+      <WorkspaceTopbar tab={tab} onTabChange={setTab} episode={episode} onEpisodeChange={setEpisode} onSaveAssets={handleSaveAssets} />
       <div className="flex-1 flex min-h-0">
         <main className="flex-1 min-w-0 overflow-auto p-6">
           {tab === 'canvas' && <CanvasView />}

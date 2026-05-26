@@ -1,22 +1,38 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Link } from '@tanstack/react-router'
 import { ChevronDown, Plus } from 'lucide-react'
 import { toast } from 'sonner'
 import { useLanguage } from '../i18n/LanguageContext'
+import { useAuth } from '../hooks/useAuth'
 import {
   type AssetTab,
-  characterAssets,
-  sceneAssets,
+  characterAssets as mockCharacters,
+  sceneAssets as mockScenes,
   propAssets,
 } from '../data/assetsMock'
+import { loadCharacters, loadScenes } from '../lib/assetsStorage'
 
 type Scope = 'personal' | 'team'
 
 export default function AssetsLibrary() {
   const { t } = useLanguage()
+  const { user, isAuthenticated } = useAuth()
   const [tab, setTab] = useState<AssetTab>('character')
   const [scope, setScope] = useState<Scope>('personal')
   const [scopeOpen, setScopeOpen] = useState(false)
+  const [dbCharacters, setDbCharacters] = useState<any[]>([])
+  const [dbScenes, setDbScenes] = useState<any[]>([])
+
+  useEffect(() => {
+    if (isAuthenticated && user) {
+      loadCharacters(user.id).then(({ data }) => {
+        if (data) setDbCharacters(data)
+      })
+      loadScenes(user.id).then(({ data }) => {
+        if (data) setDbScenes(data)
+      })
+    }
+  }, [isAuthenticated, user])
 
   const tabs: { key: AssetTab; label: string }[] = [
     { key: 'character', label: t.assets_tab_character },
@@ -26,10 +42,36 @@ export default function AssetsLibrary() {
 
   const renderCards = () => {
     if (tab === 'character') {
-      if (!characterAssets.length) return <Empty />
+      const allChars = [
+        ...dbCharacters.map(c => ({
+          id: c.id,
+          name: c.name,
+          emoji: '👤',
+          gradient: c.gradient || 'from-blue-400/40 via-purple-300/30 to-pink-200/30',
+          cover: null,
+          summary: `${c.role_label || c.role} · ${c.personality || ''}`,
+          tags: [c.role, c.mbti ? `MBTI ${c.mbti}` : ''].filter(Boolean),
+          role: c.role_label || c.role,
+          age: String(c.age || ''),
+          personality: c.personality || '',
+        })),
+        ...mockCharacters.map(c => ({
+          id: c.id,
+          name: c.name,
+          emoji: c.emoji,
+          gradient: c.gradient,
+          cover: c.cover,
+          summary: c.summary,
+          tags: c.tags,
+          role: c.role,
+          age: c.age,
+          personality: c.personality,
+        })),
+      ]
+      if (!allChars.length) return <Empty />
       return (
         <Grid>
-          {characterAssets.map(c => (
+          {allChars.map(c => (
             <Card key={c.id} tab="character" id={c.id} title={c.name} emoji={c.emoji} gradient={c.gradient} cover={c.cover} summary={c.summary} tags={c.tags}>
               <Field label={t.assets_field_role} value={c.role} />
               <Field label={t.assets_field_age} value={c.age} />
@@ -40,10 +82,34 @@ export default function AssetsLibrary() {
       )
     }
     if (tab === 'scene') {
-      if (!sceneAssets.length) return <Empty />
+      const allScenes = [
+        ...dbScenes.map(s => ({
+          id: s.id,
+          name: s.name,
+          emoji: '🎬',
+          gradient: s.gradient || 'from-orange-400/40 via-amber-300/30 to-yellow-200/30',
+          summary: s.action?.slice(0, 100) || s.location || '',
+          tags: [s.time_of_day].filter(Boolean),
+          time: s.time_of_day || '',
+          mood: '',
+          shot: '',
+        })),
+        ...mockScenes.map(s => ({
+          id: s.id,
+          name: s.name,
+          emoji: s.emoji,
+          gradient: s.gradient,
+          summary: s.summary,
+          tags: s.tags,
+          time: s.time,
+          mood: s.mood,
+          shot: s.shot,
+        })),
+      ]
+      if (!allScenes.length) return <Empty />
       return (
         <Grid>
-          {sceneAssets.map(s => (
+          {allScenes.map(s => (
             <Card key={s.id} tab="scene" id={s.id} title={s.name} emoji={s.emoji} gradient={s.gradient} summary={s.summary} tags={s.tags}>
               <Field label={t.assets_field_time} value={s.time} />
               <Field label={t.assets_field_mood} value={s.mood} />

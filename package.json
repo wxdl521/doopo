@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "db:push": "npx supabase db push"
   },
   "dependencies": {
     "@cloudflare/vite-plugin": "^1.25.5",

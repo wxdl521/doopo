@@ -1,6 +1,6 @@
 import { useState } from 'react'
 // no Link needed; Logo provides home link
-import { ChevronDown, MoreHorizontal, Layers, FileText, Users, Grid3x3, Clock, Settings, Download } from 'lucide-react'
+import { ChevronDown, MoreHorizontal, Layers, FileText, Users, Grid3x3, Clock, Settings, Download, Save } from 'lucide-react'
 import Logo from '../Logo'
 import { useLanguage } from '../../i18n/LanguageContext'
 import { NewProjectDialog } from '../NewProjectDialog'
@@ -16,12 +16,13 @@ const tabs: { id: WorkspaceTab; icon: typeof Layers }[] = [
 ]
 
 export default function WorkspaceTopbar({
-  tab, onTabChange, episode, onEpisodeChange,
+  tab, onTabChange, episode, onEpisodeChange, onSaveAssets,
 }: {
   tab: WorkspaceTab
   onTabChange: (t: WorkspaceTab) => void
   episode: number
   onEpisodeChange: (n: number) => void
+  onSaveAssets?: () => void
 }) {
   const { t, lang, toggleLang } = useLanguage()
   const [epOpen, setEpOpen] = useState(false)
@@ -109,6 +110,11 @@ export default function WorkspaceTopbar({
         </button>
         <span className="px-2 py-1 text-xs rounded-full bg-bg-elevated border border-border text-accent font-semibold">✦ 73</span>
         <button className="px-3 py-1 text-xs rounded-full bg-gradient-to-r from-rose-500 to-orange-500 text-white font-semibold">{t.header_upgrade}</button>
+        {typeof onSaveAssets === 'function' && (
+          <button onClick={onSaveAssets} className="px-3 py-1 text-xs rounded-full bg-accent text-white font-semibold inline-flex items-center gap-1">
+            <Save size={12} /> {t.ws_save_assets}
+          </button>
+        )}
         <div className="w-8 h-8 rounded-full bg-gradient-to-br from-accent to-accent-mint" />
       </div>
     </header>

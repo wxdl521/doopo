@@ -156,6 +156,99 @@ export type Database = {
         }
         Relationships: []
       }
+      characters: {
+        Row: {
+          id: string
+          user_id: string
+          name: string
+          role: string
+          role_label: string | null
+          age: number | null
+          look: string | null
+          personality: string | null
+          motivation: string | null
+          debut_shot: string | null
+          palette: string[] | null
+          mbti: string | null
+          key_prop: string | null
+          gradient: string | null
+          created_at: string
+        }
+        Insert: {
+          id: string
+          user_id: string
+          name: string
+          role?: string
+          role_label?: string | null
+          age?: number | null
+          look?: string | null
+          personality?: string | null
+          motivation?: string | null
+          debut_shot?: string | null
+          palette?: string[] | null
+          mbti?: string | null
+          key_prop?: string | null
+          gradient?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          name?: string
+          role?: string
+          role_label?: string | null
+          age?: number | null
+          look?: string | null
+          personality?: string | null
+          motivation?: string | null
+          debut_shot?: string | null
+          palette?: string[] | null
+          mbti?: string | null
+          key_prop?: string | null
+          gradient?: string | null
+          created_at?: string
+        }
+        Relationships: []
+      }
+      scenes: {
+        Row: {
+          id: string
+          user_id: string
+          name: string
+          location: string | null
+          time_of_day: string | null
+          action: string | null
+          beats: string[] | null
+          dialogue: Json | null
+          gradient: string | null
+          created_at: string
+        }
+        Insert: {
+          id: string
+          user_id: string
+          name: string
+          location?: string | null
+          time_of_day?: string | null
+          action?: string | null
+          beats?: string[] | null
+          dialogue?: Json | null
+          gradient?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          user_id?: string
+          name?: string
+          location?: string | null
+          time_of_day?: string | null
+          action?: string | null
+          beats?: string[] | null
+          dialogue?: Json | null
+          gradient?: string | null
+          created_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
