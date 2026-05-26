@@ -3,6 +3,7 @@ import { useNavigate } from '@tanstack/react-router'
 import { Sparkles, Grid3x3, GitBranch, Zap, Video, X, Check, Flame, Upload } from 'lucide-react'
 import { Dialog, DialogContent, DialogTrigger } from './ui/dialog'
 import { useLanguage } from '../i18n/LanguageContext'
+import { IMAGE_MODELS } from '../lib/imageModels'
 import style3dCg from '../assets/styles/3d-cg.jpg'
 import styleAnimeJp from '../assets/styles/anime-jp.jpg'
 import stylePixar from '../assets/styles/pixar.jpg'
@@ -21,16 +22,46 @@ const aspects = [
   { id: '9:16', label: '9:16 · 1k · 720p', cost: 11 },
   { id: '1:1', label: '1:1 · 1k', cost: 9 },
 ]
-const storyboardModels = [
-  { id: 'nano-2', label: 'Nano Banana 2', sub: 'Lightweight' },
-  { id: 'gpt-image-2', label: 'GPT Image 2', sub: 'Premium' },
-  { id: 'gemini-flash', label: 'Gemini Flash Image', sub: 'Fast' },
+// Image models for storyboard / scene — sourced from the shared catalog
+// (Gemini Nano Banana, GPT Image, Qwen-Image, Wan/Wanx t2i series)
+const imageModelOptions = [
+  { id: 'google/gemini-3.1-flash-image-preview', label: 'Gemini Nano Banana 2', sub: 'Fast · Gemini 3.1' },
+  { id: 'google/gemini-3-pro-image-preview', label: 'Gemini 3 Pro Image', sub: 'Premium · Gemini' },
+  { id: 'google/gemini-2.5-flash-image', label: 'Gemini Nano Banana', sub: 'Gemini 2.5' },
+  { id: 'openai/gpt-image-2', label: 'GPT Image 2', sub: 'OpenAI · Premium' },
+  { id: 'openai/gpt-image-1-mini', label: 'GPT Image 1 Mini', sub: 'OpenAI · Fast' },
+  { id: 'qwen-image-max', label: 'Qwen Image Max', sub: '通义千问 · 旗舰' },
+  { id: 'qwen-image-2.0-pro', label: 'Qwen Image 2.0 Pro', sub: '通义千问 · 同步' },
+  { id: 'qwen-image-2.0', label: 'Qwen Image 2.0', sub: '通义千问' },
+  { id: 'qwen-image-plus', label: 'Qwen Image Plus', sub: '通义千问 · 高清' },
+  { id: 'qwen-image', label: 'Qwen Image', sub: '通义千问 · 基础' },
+  { id: 'wan2.6-t2i', label: '万相 2.6 文生图', sub: 'Wan · 推荐' },
+  { id: 'wan2.5-t2i-preview', label: '万相 2.5 文生图 Preview', sub: 'Wan · 自由尺寸' },
+  { id: 'wan2.2-t2i-flash', label: '万相 2.2 极速版', sub: 'Wan · 速度优先' },
+  { id: 'wan2.2-t2i-plus', label: '万相 2.2 专业版', sub: 'Wan · 稳定性高' },
+  { id: 'wanx2.1-t2i-turbo', label: '万相 2.1 极速版', sub: 'Wanx' },
+  { id: 'wanx2.1-t2i-plus', label: '万相 2.1 专业版', sub: 'Wanx' },
+  { id: 'wanx2.0-t2i-turbo', label: '万相 2.0 极速版', sub: 'Wanx' },
 ]
-const sceneModels = storyboardModels
+void IMAGE_MODELS
+const storyboardModels = imageModelOptions
+const sceneModels = imageModelOptions
+// Video models — includes Wan 文生视频 / 图生视频 / 图生动作 + 主流闭源
 const videoModels = [
+  { id: 'wan2.5-i2v-preview', label: '万相 2.5 图生视频 Preview', sub: 'Wan · I2V' },
+  { id: 'wan2.2-i2v-plus', label: '万相 2.2 图生视频 专业版', sub: 'Wan · I2V' },
+  { id: 'wan2.2-i2v-flash', label: '万相 2.2 图生视频 极速版', sub: 'Wan · I2V' },
+  { id: 'wanx2.1-i2v-plus', label: '万相 2.1 图生视频 专业版', sub: 'Wanx · I2V' },
+  { id: 'wanx2.1-i2v-turbo', label: '万相 2.1 图生视频 极速版', sub: 'Wanx · I2V' },
+  { id: 'wan2.2-t2v-plus', label: '万相 2.2 文生视频 专业版', sub: 'Wan · T2V' },
+  { id: 'wanx2.1-t2v-plus', label: '万相 2.1 文生视频 专业版', sub: 'Wanx · T2V' },
+  { id: 'wanx2.1-t2v-turbo', label: '万相 2.1 文生视频 极速版', sub: 'Wanx · T2V' },
+  { id: 'wan-animate', label: '万相 图生动作 (Animate)', sub: 'Wan · 动作驱动' },
   { id: 'kling-o3', label: 'Kling O3', sub: '10s ≈ 112 ✦' },
-  { id: 'sora-1', label: 'Sora 1.0', sub: '10s ≈ 220 ✦' },
-  { id: 'veo-3', label: 'Veo 3', sub: '10s ≈ 180 ✦' },
+  { id: 'sora-1', label: 'Sora 1.0', sub: 'OpenAI · 10s ≈ 220 ✦' },
+  { id: 'veo-3', label: 'Veo 3', sub: 'Google · 10s ≈ 180 ✦' },
+  { id: 'minimax/minimax-i2v', label: 'MiniMax I2V', sub: '图像转视频' },
+  { id: 'minimax/minimax-t2v', label: 'MiniMax T2V', sub: '文字转视频' },
 ]
 
 const workflows = [
@@ -87,9 +118,9 @@ export function NewProjectDialog({
   const [aspect, setAspect] = useState('16:9')
   const [customCover, setCustomCover] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [storyboardModel, setStoryboardModel] = useState('nano-2')
-  const [sceneModel, setSceneModel] = useState('gpt-image-2')
-  const [videoModel, setVideoModel] = useState('kling-o3')
+  const [storyboardModel, setStoryboardModel] = useState('google/gemini-3.1-flash-image-preview')
+  const [sceneModel, setSceneModel] = useState('qwen-image-max')
+  const [videoModel, setVideoModel] = useState('wan2.5-i2v-preview')
   const [audio, setAudio] = useState<'auto' | 'on' | 'off'>('auto')
   const [workflow, setWorkflow] = useState('grid')
   const [style, setStyle] = useState('3d-cg')
