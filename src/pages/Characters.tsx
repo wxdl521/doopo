@@ -172,7 +172,7 @@ export default function Characters() {
     const prompt = buildPrompt(v, profile || brief)
     setPromptPreview(p => ({ ...p, [v]: prompt }))
     try {
-      const r = await callGenerateImage({ data: { prompt } })
+      const r = await callGenerateImage({ data: { prompt, model: imageModel || undefined } })
       if (r.url) {
         setGeneratedImages(prev => ({ ...prev, front: r.url }))
         setSelectedImage('front'); setActiveTab('front')
@@ -194,7 +194,7 @@ export default function Characters() {
     setPromptPreview(p => ({ ...p, ...previews }))
     try {
       const results = await Promise.allSettled(
-        restViews.map(async v => ({ v, ...(await callGenerateImage({ data: { prompt: previews[v] } })) })),
+        restViews.map(async v => ({ v, ...(await callGenerateImage({ data: { prompt: previews[v], model: imageModel || undefined } })) })),
       )
       const next = { ...generatedImages }
       let imgError = ''
