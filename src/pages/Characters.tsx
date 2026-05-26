@@ -110,6 +110,15 @@ export default function Characters() {
     { key: 'dynamic', label: t.char_comp_dynamic },
   ]
   const [selectedComposition, setSelectedComposition] = useState('full')
+  const IMAGE_MODELS: { key: string; label: string }[] = [
+    { key: '', label: 'Gemini (auto)' },
+    { key: 'google/gemini-3.1-flash-image-preview', label: 'Gemini 3.1 Flash 🟢' },
+    { key: 'qwen-image-2.0-pro', label: 'Qwen Image 2.0 Pro 🟣' },
+    { key: 'qwen-image-2.0', label: 'Qwen Image 2.0 🟣' },
+    { key: 'qwen-image-max', label: 'Qwen Image Max 🟣' },
+    { key: 'qwen-image-plus', label: 'Qwen Image Plus 🟣' },
+  ]
+  const [imageModel, setImageModel] = useState<string>('')
   const [generatedImages, setGeneratedImages] = useState<Record<Tab, string>>({ front: '', side: '', back: '', expression: '', accessory: '' })
   const [promptPreview, setPromptPreview] = useState<Record<Tab, string>>({ front: '', side: '', back: '', expression: '', accessory: '' })
   const [selectedImage, setSelectedImage] = useState<Tab>('front')
