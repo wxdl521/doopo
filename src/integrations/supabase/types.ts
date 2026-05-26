@@ -174,6 +174,54 @@ export type Database = {
           },
         ]
       }
+      projects: {
+        Row: {
+          aspect: string
+          audio: string
+          created_at: string
+          custom_cover: string | null
+          id: string
+          name: string
+          scene_model: string
+          storyboard_model: string
+          style: string
+          updated_at: string
+          user_id: string
+          video_model: string
+          workflow: string
+        }
+        Insert: {
+          aspect?: string
+          audio?: string
+          created_at?: string
+          custom_cover?: string | null
+          id: string
+          name?: string
+          scene_model?: string
+          storyboard_model?: string
+          style?: string
+          updated_at?: string
+          user_id: string
+          video_model?: string
+          workflow?: string
+        }
+        Update: {
+          aspect?: string
+          audio?: string
+          created_at?: string
+          custom_cover?: string | null
+          id?: string
+          name?: string
+          scene_model?: string
+          storyboard_model?: string
+          style?: string
+          updated_at?: string
+          user_id?: string
+          video_model?: string
+          workflow?: string
+        }
+        Relationships: []
+      }
       scenes: {
         Row: {
           action: string | null

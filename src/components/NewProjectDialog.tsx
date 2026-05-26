@@ -1,9 +1,12 @@
 import { useRef, useState, type ReactNode } from 'react'
 import { useNavigate } from '@tanstack/react-router'
+import { useServerFn } from '@tanstack/react-start'
 import { Sparkles, Grid3x3, GitBranch, Zap, Video, X, Check, Flame, Upload } from 'lucide-react'
 import { Dialog, DialogContent, DialogTrigger } from './ui/dialog'
 import { useLanguage } from '../i18n/LanguageContext'
 import { IMAGE_MODELS } from '../lib/imageModels'
+import { upsertProject } from '../lib/projects.functions'
+import { toast } from 'sonner'
 import style3dCg from '../assets/styles/3d-cg.jpg'
 import styleAnimeJp from '../assets/styles/anime-jp.jpg'
 import stylePixar from '../assets/styles/pixar.jpg'
@@ -107,6 +110,7 @@ export function NewProjectDialog({
 }) {
   const { t } = useLanguage()
   const navigate = useNavigate()
+  const saveProject = useServerFn(upsertProject)
   const [openInner, setOpenInner] = useState(false)
   const isControlled = openProp !== undefined
   const open = isControlled ? !!openProp : openInner
@@ -127,8 +131,30 @@ export function NewProjectDialog({
 
   const estimate = (aspects.find((a) => a.id === aspect)?.cost ?? 11)
 
-  function confirm() {
+  async function confirm() {
     const id = `ws-${Date.now().toString(36)}`
+    try {
+      const res = await saveProject({
+        data: {
+          id,
+          aspect,
+          storyboardModel,
+          sceneModel,
+          videoModel,
+          audio,
+          workflow,
+          style,
+          customCover: customCover ?? null,
+        },
+      })
+      if (!res.ok) {
+        toast.error('保存项目配置失败: ' + res.error)
+        return
+      }
+    } catch (e) {
+      toast.error('保存项目配置失败，请先登录')
+      return
+    }
     setOpen(false)
     navigate({ to: '/workspace/$workspaceId', params: { workspaceId: id } })
   }

@@ -11,7 +11,9 @@ import {
   type Outline, type GenScene, type GenCharacter, type StoryboardPanel, type TimelineData, type TimelineTrack, type TimelineClip,
 } from '../data/workspaceGenerators'
 import { generateStageAi } from '../lib/aiGenerate.functions'
-import { Maximize2, FileText, Camera, Clock, Users, X } from 'lucide-react'
+import { generateImage } from '../lib/openrouterImage.functions'
+import { getProject, type ProjectConfigRow } from '../lib/projects.functions'
+import { Maximize2, FileText, Camera, Clock, Users, X, Sparkles, Loader2 } from 'lucide-react'
 import CharacterPortrait from '../components/workspace/CharacterPortrait'
 import CharacterStage from '../components/workspace/CharacterStage'
 import { toast } from 'sonner'
@@ -69,6 +71,69 @@ function WorkspacePage() {
   const [flash, setFlash] = useState<WorkspaceTab | null>(null)
   const [previewChar, setPreviewChar] = useState<GenCharacter | null>(null)
   const callAi = useServerFn(generateStageAi)
+  const callImage = useServerFn(generateImage)
+  const loadProject = useServerFn(getProject)
+  const [project, setProject] = useState<ProjectConfigRow | null>(null)
+  const [charImages, setCharImages] = useState<Record<string, string>>({})
+  const [panelImages, setPanelImages] = useState<Record<string, string>>({})
+  const [busyChar, setBusyChar] = useState<string | null>(null)
+  const [busyPanel, setBusyPanel] = useState<string | null>(null)
+  const workspaceId = Route.useParams().workspaceId
+  useEffect(() => {
+    let cancelled = false
+    loadProject({ data: { id: workspaceId } })
+      .then((r) => { if (!cancelled && r.project) setProject(r.project) })
+      .catch(() => {})
+    return () => { cancelled = true }
+  }, [workspaceId, loadProject])
+
+  async function genCharImage(c: GenCharacter) {
+    if (busyChar) return
+    setBusyChar(c.id)
+    try {
+      const prompt = [
+        `${c.name}, ${c.roleLabel}, age ${c.age}`,
+        c.look, c.personality && `personality: ${c.personality}`,
+        c.debutShot && `debut shot: ${c.debutShot}`,
+        'full-body character sheet, front view, cinematic lighting, high detail',
+      ].filter(Boolean).join('. ')
+      const res = await callImage({ data: { prompt, model: project?.sceneModel } })
+      if (res.url) {
+        setCharImages((m) => ({ ...m, [c.id]: res.url }))
+        toast.success(`已生成 ${c.name} 主图`)
+      } else {
+        toast.error(res.error || '生成失败')
+      }
+    } catch (e) {
+      toast.error('生成失败')
+    } finally {
+      setBusyChar(null)
+    }
+  }
+
+  async function genPanelImage(p: StoryboardPanel) {
+    if (busyPanel) return
+    setBusyPanel(p.id)
+    try {
+      const scene = data.scenes.find((s) => s.id === p.sceneId)
+      const prompt = [
+        scene?.slug && `Scene: ${scene.slug}`,
+        `Shot ${p.shot}: ${p.camera}`,
+        p.action, p.emotion && `mood: ${p.emotion}`,
+        'cinematic storyboard panel, dramatic composition, film still',
+      ].filter(Boolean).join('. ')
+      const res = await callImage({ data: { prompt, model: project?.storyboardModel } })
+      if (res.url) {
+        setPanelImages((m) => ({ ...m, [p.id]: res.url }))
+      } else {
+        toast.error(res.error || '生成失败')
+      }
+    } catch {
+      toast.error('生成失败')
+    } finally {
+      setBusyPanel(null)
+    }
+  }
   const [initialChatInput, setInitialChatInput] = useState<string>('')
   useEffect(() => {
     try {
@@ -456,7 +521,25 @@ function WorkspacePage() {
             {/* ≥md: 档案在左(小) + 主图在右(大)；<md: 单列堆叠 */}
             <div className="flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[240px_1fr] md:items-start gap-4 md:gap-5">
               <CharacterDossier character={c} cast={sorted} />
-              <CharacterStage character={c} views={views} onZoom={() => setPreviewChar(c)} />
+              <div className="relative flex-1 min-h-0">
+                {charImages[c.id] ? (
+                  <div className="rounded-2xl overflow-hidden border border-border bg-bg-elevated/30" style={{ height: 'calc(100vh - 200px)', maxHeight: 600 }}>
+                    <img src={charImages[c.id]} alt={c.name} className="w-full h-full object-contain" />
+                  </div>
+                ) : (
+                  <CharacterStage character={c} views={views} onZoom={() => setPreviewChar(c)} />
+                )}
+                <button
+                  type="button"
+                  onClick={() => genCharImage(c)}
+                  disabled={busyChar === c.id}
+                  className="absolute top-2 right-2 z-10 inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-accent text-accent-foreground text-xs font-semibold shadow hover:opacity-90 disabled:opacity-60"
+                  title={`使用 ${project?.sceneModel || '默认'} 生成`}
+                >
+                  {busyChar === c.id ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                  生成主图
+                </button>
+              </div>
             </div>
 
             <div className="flex items-center gap-2 mt-3 shrink-0">
@@ -588,9 +671,22 @@ function WorkspacePage() {
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                 {panels.map((p) => (
                   <div key={p.id} className="card overflow-hidden">
-                    <div className="aspect-video relative" style={{ background: p.gradient }}>
+                    <div className="aspect-video relative overflow-hidden" style={{ background: p.gradient }}>
+                      {panelImages[p.id] && (
+                        <img src={panelImages[p.id]} alt={p.action} className="absolute inset-0 w-full h-full object-cover" />
+                      )}
                       <span className="absolute top-1.5 left-1.5 text-[10px] font-mono text-white/80">#{p.index} {p.shot}</span>
                       <span className="absolute bottom-1.5 right-1.5 text-[10px] font-mono text-white/70">{p.durationSec}s</span>
+                      <button
+                        type="button"
+                        onClick={() => genPanelImage(p)}
+                        disabled={busyPanel === p.id}
+                        className="absolute top-1.5 right-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-black/60 text-white text-[10px] hover:bg-black/80 disabled:opacity-60"
+                        title={`使用 ${project?.storyboardModel || '默认'} 生成`}
+                      >
+                        {busyPanel === p.id ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />}
+                        生成
+                      </button>
                     </div>
                     <div className="p-2 text-xs space-y-0.5">
                       <div className="text-text-primary line-clamp-2">{p.action}</div>
