@@ -110,6 +110,15 @@ export default function Characters() {
     { key: 'dynamic', label: t.char_comp_dynamic },
   ]
   const [selectedComposition, setSelectedComposition] = useState('full')
+  const IMAGE_MODELS: { key: string; label: string }[] = [
+    { key: '', label: 'Gemini (auto)' },
+    { key: 'google/gemini-3.1-flash-image-preview', label: 'Gemini 3.1 Flash 🟢' },
+    { key: 'qwen-image-2.0-pro', label: 'Qwen Image 2.0 Pro 🟣' },
+    { key: 'qwen-image-2.0', label: 'Qwen Image 2.0 🟣' },
+    { key: 'qwen-image-max', label: 'Qwen Image Max 🟣' },
+    { key: 'qwen-image-plus', label: 'Qwen Image Plus 🟣' },
+  ]
+  const [imageModel, setImageModel] = useState<string>('')
   const [generatedImages, setGeneratedImages] = useState<Record<Tab, string>>({ front: '', side: '', back: '', expression: '', accessory: '' })
   const [promptPreview, setPromptPreview] = useState<Record<Tab, string>>({ front: '', side: '', back: '', expression: '', accessory: '' })
   const [selectedImage, setSelectedImage] = useState<Tab>('front')
@@ -163,7 +172,7 @@ export default function Characters() {
     const prompt = buildPrompt(v, profile || brief)
     setPromptPreview(p => ({ ...p, [v]: prompt }))
     try {
-      const r = await callGenerateImage({ data: { prompt } })
+      const r = await callGenerateImage({ data: { prompt, model: imageModel || undefined } })
       if (r.url) {
         setGeneratedImages(prev => ({ ...prev, front: r.url }))
         setSelectedImage('front'); setActiveTab('front')
@@ -185,7 +194,7 @@ export default function Characters() {
     setPromptPreview(p => ({ ...p, ...previews }))
     try {
       const results = await Promise.allSettled(
-        restViews.map(async v => ({ v, ...(await callGenerateImage({ data: { prompt: previews[v] } })) })),
+        restViews.map(async v => ({ v, ...(await callGenerateImage({ data: { prompt: previews[v], model: imageModel || undefined } })) })),
       )
       const next = { ...generatedImages }
       let imgError = ''
@@ -341,6 +350,18 @@ export default function Characters() {
                       className={`chip text-xs ${selectedComposition === c.key ? 'chip-active' : ''}`}>{c.label}</button>
                   ))}
                 </div>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-text-muted mb-2 block">Image Model</label>
+                <select
+                  value={imageModel}
+                  onChange={e => setImageModel(e.target.value)}
+                  className="w-full rounded-lg bg-bg-elevated border border-border text-xs text-text-primary px-3 py-2 focus:outline-none focus:border-accent/50"
+                >
+                  {IMAGE_MODELS.map(m => (
+                    <option key={m.key} value={m.key}>{m.label}</option>
+                  ))}
+                </select>
               </div>
               <div className="flex gap-2 pt-2">
                 <button onClick={() => setStep('profile')} className="btn-ghost text-xs">
