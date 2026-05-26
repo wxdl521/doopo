@@ -62,6 +62,7 @@ export const zh = {
   // ============ Header ============
   header_discord: 'Discord',
   header_upgrade: '升级',
+  ws_save_assets: '保存到资产',
   header_account: '账户',
   header_logout: '退出登录',
   header_points: '积分',

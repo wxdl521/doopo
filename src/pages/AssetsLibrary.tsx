@@ -48,7 +48,7 @@ export default function AssetsLibrary() {
           name: c.name,
           emoji: '👤',
           gradient: c.gradient || 'from-blue-400/40 via-purple-300/30 to-pink-200/30',
-          cover: null,
+          cover: undefined,
           summary: `${c.role_label || c.role} · ${c.personality || ''}`,
           tags: [c.role, c.mbti ? `MBTI ${c.mbti}` : ''].filter(Boolean),
           role: c.role_label || c.role,
