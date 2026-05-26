@@ -351,6 +351,18 @@ export default function Characters() {
                   ))}
                 </div>
               </div>
+              <div>
+                <label className="text-xs font-medium text-text-muted mb-2 block">Image Model</label>
+                <select
+                  value={imageModel}
+                  onChange={e => setImageModel(e.target.value)}
+                  className="w-full rounded-lg bg-bg-elevated border border-border text-xs text-text-primary px-3 py-2 focus:outline-none focus:border-accent/50"
+                >
+                  {IMAGE_MODELS.map(m => (
+                    <option key={m.key} value={m.key}>{m.label}</option>
+                  ))}
+                </select>
+              </div>
               <div className="flex gap-2 pt-2">
                 <button onClick={() => setStep('profile')} className="btn-ghost text-xs">
                   <ArrowLeft size={13} /> {t.char_action_back}
