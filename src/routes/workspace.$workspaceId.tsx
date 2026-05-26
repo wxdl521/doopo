@@ -671,9 +671,22 @@ function WorkspacePage() {
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
                 {panels.map((p) => (
                   <div key={p.id} className="card overflow-hidden">
-                    <div className="aspect-video relative" style={{ background: p.gradient }}>
+                    <div className="aspect-video relative overflow-hidden" style={{ background: p.gradient }}>
+                      {panelImages[p.id] && (
+                        <img src={panelImages[p.id]} alt={p.action} className="absolute inset-0 w-full h-full object-cover" />
+                      )}
                       <span className="absolute top-1.5 left-1.5 text-[10px] font-mono text-white/80">#{p.index} {p.shot}</span>
                       <span className="absolute bottom-1.5 right-1.5 text-[10px] font-mono text-white/70">{p.durationSec}s</span>
+                      <button
+                        type="button"
+                        onClick={() => genPanelImage(p)}
+                        disabled={busyPanel === p.id}
+                        className="absolute top-1.5 right-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-black/60 text-white text-[10px] hover:bg-black/80 disabled:opacity-60"
+                        title={`使用 ${project?.storyboardModel || '默认'} 生成`}
+                      >
+                        {busyPanel === p.id ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />}
+                        生成
+                      </button>
                     </div>
                     <div className="p-2 text-xs space-y-0.5">
                       <div className="text-text-primary line-clamp-2">{p.action}</div>
