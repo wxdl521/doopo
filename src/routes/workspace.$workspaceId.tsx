@@ -521,7 +521,25 @@ function WorkspacePage() {
             {/* ≥md: 档案在左(小) + 主图在右(大)；<md: 单列堆叠 */}
             <div className="flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[240px_1fr] md:items-start gap-4 md:gap-5">
               <CharacterDossier character={c} cast={sorted} />
-              <CharacterStage character={c} views={views} onZoom={() => setPreviewChar(c)} />
+              <div className="relative flex-1 min-h-0">
+                {charImages[c.id] ? (
+                  <div className="rounded-2xl overflow-hidden border border-border bg-bg-elevated/30" style={{ height: 'calc(100vh - 200px)', maxHeight: 600 }}>
+                    <img src={charImages[c.id]} alt={c.name} className="w-full h-full object-contain" />
+                  </div>
+                ) : (
+                  <CharacterStage character={c} views={views} onZoom={() => setPreviewChar(c)} />
+                )}
+                <button
+                  type="button"
+                  onClick={() => genCharImage(c)}
+                  disabled={busyChar === c.id}
+                  className="absolute top-2 right-2 z-10 inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-accent text-accent-foreground text-xs font-semibold shadow hover:opacity-90 disabled:opacity-60"
+                  title={`使用 ${project?.sceneModel || '默认'} 生成`}
+                >
+                  {busyChar === c.id ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                  生成主图
+                </button>
+              </div>
             </div>
 
             <div className="flex items-center gap-2 mt-3 shrink-0">
