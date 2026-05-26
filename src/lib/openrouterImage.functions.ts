@@ -24,6 +24,14 @@ const QWEN_ASYNC_MODELS = new Set([
   'qwen-image-plus',
   'qwen-image-plus-2026-01-09',
   'qwen-image',
+  // Wan (Tongyi Wanxiang) series — async-only via image-synthesis endpoint
+  'wan2.6-t2i',
+  'wan2.5-t2i-preview',
+  'wan2.2-t2i-flash',
+  'wan2.2-t2i-plus',
+  'wanx2.1-t2i-turbo',
+  'wanx2.1-t2i-plus',
+  'wanx2.0-t2i-turbo',
 ])
 
 async function callQwenSync(model: string, prompt: string, size: string, apiKey: string) {
@@ -86,8 +94,8 @@ async function callQwenAsync(model: string, prompt: string, size: string, apiKey
   return { url: '', error: `[${model}] timed out` }
 }
 
-function isQwenModel(id: string) {
-  return id.startsWith('qwen')
+function isDashScopeModel(id: string) {
+  return id.startsWith('qwen') || id.startsWith('wan')
 }
 
 // Preferred order — tried first if present in the live model list.
@@ -209,12 +217,14 @@ export const generateImage = createServerFn({ method: 'POST' })
   .handler(async ({ data }) => {
     // Route Qwen image models through DashScope when requested.
     const requested = (data.model || '').trim()
-    if (requested && isQwenModel(requested)) {
+    if (requested && isDashScopeModel(requested)) {
       const qwenKey = process.env.Qwen || process.env.DASHSCOPE_API_KEY
       if (!qwenKey) {
         return { url: '', error: 'Qwen (DashScope) API key is not configured', model: requested }
       }
-      const size = data.size || (QWEN_SYNC_MODELS.has(requested) ? '2048*2048' : '1664*928')
+      const isWan = requested.startsWith('wan')
+      const defaultSize = isWan ? '1024*1024' : (QWEN_SYNC_MODELS.has(requested) ? '2048*2048' : '1664*928')
+      const size = data.size || defaultSize
       const result = QWEN_ASYNC_MODELS.has(requested)
         ? await callQwenAsync(requested, data.prompt, size, qwenKey)
         : await callQwenSync(requested, data.prompt, size, qwenKey)
