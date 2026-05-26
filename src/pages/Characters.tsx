@@ -4,6 +4,7 @@ import { useServerFn } from '@tanstack/react-start'
 import { useLanguage } from '../i18n/LanguageContext'
 import { generateScript } from '../lib/openrouter.functions'
 import { generateImage } from '../lib/openrouterImage.functions'
+import { IMAGE_MODELS } from '../lib/imageModels'
 
 type Tab = 'front' | 'side' | 'back' | 'expression' | 'accessory'
 type Step = 'brief' | 'profile' | 'style' | 'hero' | 'sheet'
