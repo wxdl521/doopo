@@ -78,6 +78,7 @@ function WorkspacePage() {
   const [panelImages, setPanelImages] = useState<Record<string, string>>({})
   const [busyChar, setBusyChar] = useState<string | null>(null)
   const [busyPanel, setBusyPanel] = useState<string | null>(null)
+  const [autoGen, setAutoGen] = useState(true)
   const workspaceId = Route.useParams().workspaceId
   useEffect(() => {
     let cancelled = false
@@ -134,6 +135,34 @@ function WorkspacePage() {
       setBusyPanel(null)
     }
   }
+
+  // Auto-generate real images for newly produced characters / storyboard panels
+  // using the project's configured model. Sequential to avoid rate limits.
+  useEffect(() => {
+    if (!autoGen) return
+    const pending = data.characters.filter((c) => !charImages[c.id])
+    if (!pending.length || busyChar) return
+    void (async () => {
+      for (const c of pending) {
+        // eslint-disable-next-line no-await-in-loop
+        await genCharImage(c)
+      }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.characters, autoGen])
+
+  useEffect(() => {
+    if (!autoGen) return
+    const pending = data.storyboard.filter((p) => !panelImages[p.id])
+    if (!pending.length || busyPanel) return
+    void (async () => {
+      for (const p of pending) {
+        // eslint-disable-next-line no-await-in-loop
+        await genPanelImage(p)
+      }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.storyboard, autoGen])
   const [initialChatInput, setInitialChatInput] = useState<string>('')
   useEffect(() => {
     try {
