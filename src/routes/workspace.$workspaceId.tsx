@@ -79,6 +79,7 @@ function WorkspacePage() {
   const [busyChar, setBusyChar] = useState<string | null>(null)
   const [busyPanel, setBusyPanel] = useState<string | null>(null)
   const [autoGen, setAutoGen] = useState(true)
+  void setAutoGen
   const workspaceId = Route.useParams().workspaceId
   useEffect(() => {
     let cancelled = false
