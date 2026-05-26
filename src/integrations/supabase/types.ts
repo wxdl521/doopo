@@ -14,6 +14,60 @@ export type Database = {
   }
   public: {
     Tables: {
+      characters: {
+        Row: {
+          age: number | null
+          created_at: string | null
+          debut_shot: string | null
+          gradient: string | null
+          id: string
+          key_prop: string | null
+          look: string | null
+          mbti: string | null
+          motivation: string | null
+          name: string
+          palette: string[] | null
+          personality: string | null
+          role: string
+          role_label: string | null
+          user_id: string
+        }
+        Insert: {
+          age?: number | null
+          created_at?: string | null
+          debut_shot?: string | null
+          gradient?: string | null
+          id: string
+          key_prop?: string | null
+          look?: string | null
+          mbti?: string | null
+          motivation?: string | null
+          name: string
+          palette?: string[] | null
+          personality?: string | null
+          role?: string
+          role_label?: string | null
+          user_id: string
+        }
+        Update: {
+          age?: number | null
+          created_at?: string | null
+          debut_shot?: string | null
+          gradient?: string | null
+          id?: string
+          key_prop?: string | null
+          look?: string | null
+          mbti?: string | null
+          motivation?: string | null
+          name?: string
+          palette?: string[] | null
+          personality?: string | null
+          role?: string
+          role_label?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       community_posts: {
         Row: {
           cover_gradient: string | null
@@ -120,6 +174,45 @@ export type Database = {
           },
         ]
       }
+      scenes: {
+        Row: {
+          action: string | null
+          beats: string[] | null
+          created_at: string | null
+          dialogue: Json | null
+          gradient: string | null
+          id: string
+          location: string | null
+          name: string
+          time_of_day: string | null
+          user_id: string
+        }
+        Insert: {
+          action?: string | null
+          beats?: string[] | null
+          created_at?: string | null
+          dialogue?: Json | null
+          gradient?: string | null
+          id: string
+          location?: string | null
+          name: string
+          time_of_day?: string | null
+          user_id: string
+        }
+        Update: {
+          action?: string | null
+          beats?: string[] | null
+          created_at?: string | null
+          dialogue?: Json | null
+          gradient?: string | null
+          id?: string
+          location?: string | null
+          name?: string
+          time_of_day?: string | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       scripts: {
         Row: {
           created_at: string
@@ -153,99 +246,6 @@ export type Database = {
           type?: string | null
           updated_at?: string
           user_id?: string
-        }
-        Relationships: []
-      }
-      characters: {
-        Row: {
-          id: string
-          user_id: string
-          name: string
-          role: string
-          role_label: string | null
-          age: number | null
-          look: string | null
-          personality: string | null
-          motivation: string | null
-          debut_shot: string | null
-          palette: string[] | null
-          mbti: string | null
-          key_prop: string | null
-          gradient: string | null
-          created_at: string
-        }
-        Insert: {
-          id: string
-          user_id: string
-          name: string
-          role?: string
-          role_label?: string | null
-          age?: number | null
-          look?: string | null
-          personality?: string | null
-          motivation?: string | null
-          debut_shot?: string | null
-          palette?: string[] | null
-          mbti?: string | null
-          key_prop?: string | null
-          gradient?: string | null
-          created_at?: string
-        }
-        Update: {
-          id?: string
-          user_id?: string
-          name?: string
-          role?: string
-          role_label?: string | null
-          age?: number | null
-          look?: string | null
-          personality?: string | null
-          motivation?: string | null
-          debut_shot?: string | null
-          palette?: string[] | null
-          mbti?: string | null
-          key_prop?: string | null
-          gradient?: string | null
-          created_at?: string
-        }
-        Relationships: []
-      }
-      scenes: {
-        Row: {
-          id: string
-          user_id: string
-          name: string
-          location: string | null
-          time_of_day: string | null
-          action: string | null
-          beats: string[] | null
-          dialogue: Json | null
-          gradient: string | null
-          created_at: string
-        }
-        Insert: {
-          id: string
-          user_id: string
-          name: string
-          location?: string | null
-          time_of_day?: string | null
-          action?: string | null
-          beats?: string[] | null
-          dialogue?: Json | null
-          gradient?: string | null
-          created_at?: string
-        }
-        Update: {
-          id?: string
-          user_id?: string
-          name?: string
-          location?: string | null
-          time_of_day?: string | null
-          action?: string | null
-          beats?: string[] | null
-          dialogue?: Json | null
-          gradient?: string | null
-          created_at?: string
         }
         Relationships: []
       }
