@@ -6,7 +6,7 @@ import ZopiaChatPanel from '../components/workspace/ZopiaChatPanel'
 import { useLanguage } from '../i18n/LanguageContext'
 import {
   generateOutline, generateScript, generateCharacters, generateStoryboard, generateTimeline,
-  type Outline, type GenScene, type GenCharacter, type StoryboardPanel, type TimelineData,
+  type Outline, type GenScene, type GenCharacter, type StoryboardPanel, type TimelineData, type TimelineTrack, type TimelineClip,
 } from '../data/workspaceGenerators'
 import { generateStageAi } from '../lib/aiGenerate.functions'
 import { Maximize2, FileText, Camera, Clock, Users, X } from 'lucide-react'
@@ -76,7 +76,7 @@ function WorkspacePage() {
     } catch {}
   }, [])
 
-  async function tryAi(stage: 'canvas' | 'script' | 'character' | 'storyboard', userPrompt: string, currentData: WorkspaceData): Promise<Partial<WorkspaceData> | null> {
+  async function tryAi(stage: 'canvas' | 'script' | 'character' | 'storyboard' | 'timeline', userPrompt: string, currentData: WorkspaceData): Promise<Partial<WorkspaceData> | null> {
     try {
       const res = await callAi({
         data: {
@@ -142,6 +142,22 @@ function WorkspacePage() {
           }))
           return { storyboard: panels }
         }
+        case 'timeline': {
+          const tracks: TimelineTrack[] = (p.tracks ?? []).map((t: any) => ({
+            kind: t.kind as 'video' | 'audio' | 'subtitle',
+            label: t.label ?? '',
+            clips: (t.clips ?? []).map((c: any, i: number): TimelineClip => ({
+              id: `tl-${t.kind}-${i}-${Date.now()}`,
+              startSec: typeof c.startSec === 'number' ? c.startSec : 0,
+              durationSec: typeof c.durationSec === 'number' ? c.durationSec : 3,
+              label: c.label ?? '',
+              panelId: c.panelIndex ? currentData.storyboard.find((pan) => pan.index === c.panelIndex)?.id : undefined,
+            })),
+          }))
+          const transitionsAt: number[] = Array.isArray(p.transitionsAt) ? p.transitionsAt : []
+          const totalSec = tracks[0]?.clips.reduce((sum, c) => sum + (c.durationSec ?? 0), 0) ?? 0
+          return { timeline: { totalSec, tracks, transitionsAt } }
+        }
       }
       return null
     } catch (e) {
@@ -155,7 +171,7 @@ function WorkspacePage() {
     const meaningful = (userPrompt ?? '').trim().length >= 4
     // Snapshot current data so the server call sees consistent context.
     const snapshot = data
-    if (meaningful && (stage === 'canvas' || stage === 'script' || stage === 'character' || stage === 'storyboard')) {
+    if (meaningful && (stage === 'canvas' || stage === 'script' || stage === 'character' || stage === 'storyboard' || stage === 'timeline')) {
       aiPatch = await tryAi(stage, userPrompt!.trim(), snapshot)
     }
 
@@ -177,7 +193,8 @@ function WorkspacePage() {
         case 'timeline': {
           const scenes = d.scenes.length ? d.scenes : generateScript()
           const panels = d.storyboard.length ? d.storyboard : generateStoryboard(scenes)
-          return { ...d, scenes, storyboard: panels, timeline: generateTimeline(panels) }
+          const timelineAi = aiPatch?.timeline ?? null
+          return { ...d, scenes, storyboard: panels, timeline: timelineAi ?? generateTimeline(panels) }
         }
         default:
           return d
@@ -410,12 +427,10 @@ function WorkspacePage() {
               </span>
             </div>
 
-            {/* ≥md: 主图 + 档案 两栏；<md: 单列堆叠 */}
-            <div className="flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[372px_minmax(0,1fr)] md:items-start gap-4 md:gap-5">
-              <div className="flex justify-center md:justify-start">
-                <CharacterStage character={c} views={views} onZoom={() => setPreviewChar(c)} />
-              </div>
+            {/* ≥md: 档案在左(小) + 主图在右(大)；<md: 单列堆叠 */}
+            <div className="flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[240px_1fr] md:items-start gap-4 md:gap-5">
               <CharacterDossier character={c} cast={sorted} />
+              <CharacterStage character={c} views={views} onZoom={() => setPreviewChar(c)} />
             </div>
 
             <div className="flex items-center gap-2 mt-3 shrink-0">
@@ -469,7 +484,7 @@ function WorkspacePage() {
       el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     }
     return (
-      <div className="w-full md:h-[498px] md:overflow-y-auto rounded-2xl border border-border bg-bg-elevated/40 px-5 py-4">
+      <div className="w-full md:max-h-[600px] md:overflow-y-auto rounded-2xl border border-border bg-bg-elevated/40 px-5 py-4">
         <div className="flex items-baseline justify-between mb-2">
           <h3 className="text-xs tracking-[0.18em] uppercase text-text-muted">角色档案</h3>
           <span className="text-[10px] text-text-muted">Character Bible</span>

@@ -23,16 +23,15 @@ export default function CharacterStage({ character, views }: Props) {
   ]
 
   const onTabsKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return
+    if (!['ArrowUp', 'ArrowDown', 'Home', 'End'].includes(e.key)) return
     e.preventDefault()
     const idx = tabs.findIndex((t) => t.value === mode)
     let next = idx
-    if (e.key === 'ArrowLeft') next = (idx - 1 + tabs.length) % tabs.length
-    else if (e.key === 'ArrowRight') next = (idx + 1) % tabs.length
+    if (e.key === 'ArrowUp') next = (idx - 1 + tabs.length) % tabs.length
+    else if (e.key === 'ArrowDown') next = (idx + 1) % tabs.length
     else if (e.key === 'Home') next = 0
     else if (e.key === 'End') next = tabs.length - 1
     const target = tabs[next]
-    // Move focus first so it stays in sync even if React batches the state update.
     const btn = e.currentTarget.querySelector<HTMLButtonElement>(
       `[data-view-tab="${target.value}"]`,
     )
@@ -41,13 +40,14 @@ export default function CharacterStage({ character, views }: Props) {
   }
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col items-center">
+    <div className="flex-1 min-h-0 flex items-start gap-3">
+      {/* 主图区域 */}
       <div
-        className="rounded-2xl border border-border bg-gradient-to-b from-bg-elevated/30 to-bg-surface/60 overflow-hidden relative shrink-0"
+        className="flex-1 rounded-2xl border border-border bg-gradient-to-b from-bg-elevated/30 to-bg-surface/60 overflow-hidden relative"
         role="region"
         aria-live="polite"
         aria-label={`${character.name} ${mode === 'main' ? '主视图' : '多视图'}`}
-        style={{ width: 372, height: 498 }}
+        style={{ height: 'calc(100vh - 200px)', maxHeight: '600px' }}
       >
         {mode === 'main' ? (
           <div className="relative w-full h-full">
@@ -70,12 +70,12 @@ export default function CharacterStage({ character, views }: Props) {
         )}
       </div>
 
+      {/* 右侧视图切换 */}
       <div
-        className="mt-3 flex items-end shrink-0 w-full"
+        className="flex flex-col gap-3 shrink-0"
         role="tablist"
         aria-label="角色视图切换"
         onKeyDown={onTabsKeyDown}
-        style={{ maxWidth: 372, gap: 'clamp(8px, 1.6vw, 14px)' }}
       >
         <ViewThumb
           active={mode === 'main'}
@@ -101,18 +101,8 @@ export default function CharacterStage({ character, views }: Props) {
             ))}
           </div>
         </ViewThumb>
-        <div
-          className="ml-auto text-text-muted text-right hidden sm:block"
-          aria-hidden="true"
-          style={{
-            fontSize: 'clamp(10px, 1.1vw, 12px)',
-            lineHeight: 'clamp(12px, 1.4vw, 16px)',
-          }}
-        >
-          点击缩略图 / 方向键<br />切换视图
-        </div>
       </div>
-      <p className="sr-only">使用左右方向键在主视图与多视图之间切换，回车或空格键确认。</p>
+      <p className="sr-only">使用上下方向键在主视图与多视图之间切换，回车或空格键确认。</p>
     </div>
   )
 }

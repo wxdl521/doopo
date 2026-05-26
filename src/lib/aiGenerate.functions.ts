@@ -1,7 +1,7 @@
 import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
 
-const StageEnum = z.enum(['canvas', 'script', 'character', 'storyboard'])
+const StageEnum = z.enum(['canvas', 'script', 'character', 'storyboard', 'timeline'])
 
 const InputSchema = z.object({
   stage: StageEnum,
@@ -182,15 +182,56 @@ function stageSpec(stage: Input['stage']) {
           additionalProperties: false,
         },
       }
+    case 'timeline':
+      return {
+        toolName: 'emit_timeline',
+        system:
+          '你是一名影视剪辑师。基于已有的分镜面板（panels）和剧本次序，设计完整的时间轴规划。包含视频轨（每张分镜对应一个视频片段）、音频轨（BGM/SFX 建议）、字幕轨（关键台词）、过渡点（场景切换位置）。每个视频片段 durationSec 需与分镜一致。仅工具调用返回。',
+        schema: {
+          type: 'object',
+          properties: {
+            tracks: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  kind: { type: 'string', enum: ['video', 'audio', 'subtitle'] },
+                  label: { type: 'string' },
+                  clips: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        startSec: { type: 'number' },
+                        durationSec: { type: 'number' },
+                        label: { type: 'string' },
+                        panelIndex: { type: 'number', description: '对应分镜面板序号，仅 video 类型需要' },
+                      },
+                      required: ['startSec', 'durationSec', 'label'],
+                      additionalProperties: false,
+                    },
+                  },
+                },
+                required: ['kind', 'label', 'clips'],
+                additionalProperties: false,
+              },
+            },
+            transitionsAt: {
+              type: 'array',
+              description: '过渡点时间轴位置（秒）',
+              items: { type: 'number' },
+            },
+          },
+          required: ['tracks', 'transitionsAt'],
+          additionalProperties: false,
+        },
+      }
   }
 }
 
 export const generateStageAi = createServerFn({ method: 'POST' })
   .inputValidator((d: unknown) => InputSchema.parse(d))
   .handler(async ({ data }) => {
-    const apiKey = process.env.LOVABLE_API_KEY
-    if (!apiKey) return { ok: false as const, error: 'LOVABLE_API_KEY missing' }
-
     const spec = stageSpec(data.stage)
     const ctxParts: string[] = []
     if (data.context?.logline) ctxParts.push(`【已有 logline】${data.context.logline}`)
@@ -215,62 +256,152 @@ export const generateStageAi = createServerFn({ method: 'POST' })
       .filter(Boolean)
       .join('\n\n')
 
-    try {
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), 55_000)
-      const res = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: 'google/gemini-3-flash-preview',
-          messages: [
-            { role: 'system', content: spec.system },
-            { role: 'user', content: userContent },
-          ],
-          tools: [
-            {
-              type: 'function',
-              function: {
-                name: spec.toolName,
-                description: `Return structured ${data.stage} data.`,
-                parameters: spec.schema,
-              },
-            },
-          ],
-          tool_choice: { type: 'function', function: { name: spec.toolName } },
-        }),
-        signal: controller.signal,
-      })
-      clearTimeout(timeout)
+    // Try Lovable first
+    const lovableKey = process.env.LOVABLE_API_KEY
+    if (lovableKey) {
+      const lovableResult = await tryLovable(lovableKey, spec, userContent, data.stage)
+      if (lovableResult.ok) return lovableResult
+    }
 
-      if (!res.ok) {
-        const text = await res.text().catch(() => '')
-        if (res.status === 429) return { ok: false as const, error: 'rate_limit' }
-        if (res.status === 402) return { ok: false as const, error: 'no_credits' }
-        return { ok: false as const, error: `gateway ${res.status}: ${text.slice(0, 200)}` }
-      }
-      const json = await res.json()
-      const argsStr = json?.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments
-      if (!argsStr) return { ok: false as const, error: 'empty tool call' }
-      let parsed: any
-      try {
-        parsed = JSON.parse(argsStr)
-      } catch {
-        return { ok: false as const, error: 'parse error' }
-      }
-      return { ok: true as const, stage: data.stage, payload: parsed }
-    } catch (e) {
-      return {
-        ok: false as const,
-        error:
-          e instanceof Error && e.name === 'AbortError'
-            ? 'timeout'
-            : e instanceof Error
-              ? e.message
-              : 'unknown',
+    // Fallback to MiniMax
+    const minimaxKey = process.env.MINIMAX_API_KEY
+    if (minimaxKey) {
+      const minimaxResult = await tryMiniMax(minimaxKey, spec, userContent, data.stage)
+      if (minimaxResult.ok) return minimaxResult
+    }
+
+    return { ok: false as const, error: 'no API key available' }
+  })
+
+async function tryLovable(apiKey: string, spec: ReturnType<typeof stageSpec>, userContent: string, stage: string) {
+  try {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 55_000)
+    const res = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'google/gemini-3-flash-preview',
+        messages: [
+          { role: 'system', content: spec.system },
+          { role: 'user', content: userContent },
+        ],
+        tools: [
+          {
+            type: 'function',
+            function: {
+              name: spec.toolName,
+              description: `Return structured ${stage} data.`,
+              parameters: spec.schema,
+            },
+          },
+        ],
+        tool_choice: { type: 'function', function: { name: spec.toolName } },
+      }),
+      signal: controller.signal,
+    })
+    clearTimeout(timeout)
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      if (res.status === 429) return { ok: false as const, error: 'rate_limit' }
+      if (res.status === 402) return { ok: false as const, error: 'no_credits' }
+      return { ok: false as const, error: `gateway ${res.status}: ${text.slice(0, 200)}` }
+    }
+    const json = await res.json()
+    const argsStr = json?.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments
+    if (!argsStr) return { ok: false as const, error: 'empty tool call' }
+    let parsed: any
+    try {
+      parsed = JSON.parse(argsStr)
+    } catch {
+      return { ok: false as const, error: 'parse error' }
+    }
+    return { ok: true as const, stage, payload: parsed }
+  } catch (e) {
+    return {
+      ok: false as const,
+      error:
+        e instanceof Error && e.name === 'AbortError'
+          ? 'timeout'
+          : e instanceof Error
+            ? e.message
+            : 'unknown',
+    }
+  }
+}
+
+async function tryMiniMax(apiKey: string, spec: ReturnType<typeof stageSpec>, userContent: string, stage: string) {
+  // MiniMax doesn't support tool calling, so we ask for JSON-only response
+  const systemWithJson = spec.system + '\n\n重要：只返回 JSON 对象，不要输出任何其他文字，不要用 markdown 代码块包裹，直接输出纯 JSON。'
+  try {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 55_000)
+    const res = await fetch('https://api.minimaxi.com/anthropic/v1/messages', {
+      method: 'POST',
+      headers: {
+        'X-Api-Key': apiKey,
+        'Content-Type': 'application/json',
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify({
+        model: 'MiniMax-Text-01',
+        messages: [
+          { role: 'system', content: systemWithJson },
+          { role: 'user', content: userContent },
+        ],
+        max_tokens: 4096,
+      }),
+      signal: controller.signal,
+    })
+    clearTimeout(timeout)
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      return { ok: false as const, error: `minimax ${res.status}: ${text.slice(0, 200)}` }
+    }
+    const json = await res.json()
+    // MiniMax returns content[].type === "text"
+    const textParts: string[] = []
+    for (const block of json.content ?? []) {
+      if (block.type === 'text') {
+        textParts.push(block.text)
       }
     }
-  })
+    const fullText = textParts.join('').trim()
+    if (!fullText) return { ok: false as const, error: 'minimax empty response' }
+
+    // Try to extract JSON from the response
+    let parsed: any
+    try {
+      // Try direct parse first
+      parsed = JSON.parse(fullText)
+    } catch {
+      // Try to extract JSON from potential markdown code blocks
+      const jsonMatch = fullText.match(/\{[\s\S]*\}/)
+      if (jsonMatch) {
+        try {
+          parsed = JSON.parse(jsonMatch[0])
+        } catch {
+          return { ok: false as const, error: 'minimax parse error' }
+        }
+      } else {
+        return { ok: false as const, error: 'minimax parse error' }
+      }
+    }
+    return { ok: true as const, stage, payload: parsed }
+  } catch (e) {
+    return {
+      ok: false as const,
+      error:
+        e instanceof Error && e.name === 'AbortError'
+          ? 'timeout'
+          : e instanceof Error
+            ? e.message
+            : 'unknown',
+    }
+  }
+}

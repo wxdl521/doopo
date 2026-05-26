@@ -90,22 +90,24 @@ export default function Header() {
           <div className="relative group flex-shrink-0">
             <button className="flex items-center gap-1 md:gap-1.5 px-2.5 md:px-3 py-1.5 rounded-full text-sm font-medium border border-border bg-bg-elevated hover:border-accent/50 hover:text-accent text-text-secondary transition">
               <Globe size={14} />
-              <span>{lang === 'zh' ? t.header_lang_zh : 'EN'}</span>
+              <span>{lang === 'zh' ? '中文' : lang === 'en' ? 'EN' : lang}</span>
               <ChevronDown size={12} className="group-hover:rotate-180 transition-transform" />
             </button>
-            <div className="absolute right-0 top-full mt-1.5 py-1.5 rounded-xl border border-border bg-bg-surface shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 min-w-[100px]">
-              <button
-                onClick={() => setLang('zh')}
-                className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === 'zh' ? 'text-accent font-semibold' : 'text-text-secondary'}`}
-              >
-                {t.header_lang_zh}
-              </button>
-              <button
-                onClick={() => setLang('en')}
-                className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === 'en' ? 'text-accent font-semibold' : 'text-text-secondary'}`}
-              >
-                {t.header_lang_en}
-              </button>
+            <div className="absolute right-0 top-full mt-1.5 py-1.5 rounded-xl border border-border bg-bg-surface shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 min-w-[120px] max-h-[300px] overflow-y-auto">
+              <button onClick={() => setLang('zh')} className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === 'zh' ? 'text-accent font-semibold' : 'text-text-secondary'}`}>中文</button>
+              <button onClick={() => setLang('en')} className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === 'en' ? 'text-accent font-semibold' : 'text-text-secondary'}`}>EN</button>
+              <button onClick={() => setLang('ja')} className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === 'ja' ? 'text-accent font-semibold' : 'text-text-secondary'}`}>日本語</button>
+              <button onClick={() => setLang('ko')} className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === 'ko' ? 'text-accent font-semibold' : 'text-text-secondary'}`}>한국어</button>
+              <button onClick={() => setLang('fr')} className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === 'fr' ? 'text-accent font-semibold' : 'text-text-secondary'}`}>Français</button>
+              <button onClick={() => setLang('es')} className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === 'es' ? 'text-accent font-semibold' : 'text-text-secondary'}`}>Español</button>
+              <button onClick={() => setLang('de')} className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === 'de' ? 'text-accent font-semibold' : 'text-text-secondary'}`}>Deutsch</button>
+              <button onClick={() => setLang('pt')} className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === 'pt' ? 'text-accent font-semibold' : 'text-text-secondary'}`}>Português</button>
+              <button onClick={() => setLang('it')} className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === 'it' ? 'text-accent font-semibold' : 'text-text-secondary'}`}>Italiano</button>
+              <button onClick={() => setLang('ru')} className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === 'ru' ? 'text-accent font-semibold' : 'text-text-secondary'}`}>Русский</button>
+              <button onClick={() => setLang('ar')} className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === 'ar' ? 'text-accent font-semibold' : 'text-text-secondary'}`}>العربية</button>
+              <button onClick={() => setLang('th')} className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === 'th' ? 'text-accent font-semibold' : 'text-text-secondary'}`}>ไทย</button>
+              <button onClick={() => setLang('vi')} className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === 'vi' ? 'text-accent font-semibold' : 'text-text-secondary'}`}>Tiếng Việt</button>
+              <button onClick={() => setLang('id')} className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === 'id' ? 'text-accent font-semibold' : 'text-text-secondary'}`}>Indonesia</button>
             </div>
           </div>
 

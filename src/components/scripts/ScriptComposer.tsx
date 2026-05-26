@@ -677,7 +677,7 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
           <button
             onClick={runNextEpisode}
             disabled={loading || autoRunning}
-            className="btn-ghost text-xs disabled:opacity-40"
+            className="btn-primary text-xs disabled:opacity-40"
           >
             {loading ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
             生成第 {nextEpIndex} 集
@@ -700,7 +700,7 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
             <button
               onClick={runUntilTarget}
               disabled={loading || targetEpisode < nextEpIndex}
-              className="btn-ghost text-xs disabled:opacity-40"
+              className="btn-primary text-xs disabled:opacity-40"
             >
               <Sparkles size={12} /> 自动连续生成
             </button>

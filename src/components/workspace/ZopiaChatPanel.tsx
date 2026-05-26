@@ -169,11 +169,9 @@ export default function ZopiaChatPanel({
   function send(text: string, opts?: { targetStage?: WorkspaceTab; jumpAfter?: boolean }) {
     const trimmed = text.trim()
     if (!trimmed && attachments.length === 0) return
-    // Free-text input on the canvas stage (no explicit CTA) is treated as a
-    // script-generation request, mirroring the "生成剧本" quick action so the
-    // animation + summary + CTA flow stays consistent for the user.
-    const inferredJump = opts?.jumpAfter ?? (opts?.targetStage === undefined && stage === 'canvas')
-    const targetStage = opts?.targetStage ?? (stage === 'canvas' ? 'script' : stage)
+    // On canvas stage, generate canvas content (not script)
+    const inferredJump = opts?.jumpAfter ?? false
+    const targetStage = opts?.targetStage ?? stage
     const userMsg: Message = {
       id: `u-${Date.now()}`,
       kind: 'user',

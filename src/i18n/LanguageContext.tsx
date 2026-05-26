@@ -2,7 +2,11 @@ import { createContext, useContext, useState, useEffect, type ReactNode } from '
 import { zh, type Translations, type Lang } from './zh'
 import { en } from './en'
 
-const translations: Record<Lang, Translations> = { zh, en }
+const translations: Partial<Record<Lang, Translations>> = { zh, en }
+
+function getTranslation(lang: Lang): Translations {
+  return translations[lang] ?? en
+}
 
 interface LanguageContextType {
   lang: Lang
@@ -25,7 +29,9 @@ export function useLanguage() {
 export function LanguageProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>(() => {
     if (typeof window === 'undefined') return 'zh'
-    return (window.localStorage.getItem('doopoo-lang') as Lang) || 'zh'
+    const saved = window.localStorage.getItem('doopoo-lang')
+    if (saved && (saved as Lang) in translations) return saved as Lang
+    return 'zh'
   })
 
   const setLang = (l: Lang) => {
@@ -42,7 +48,7 @@ export function LanguageProvider({ children }: { children: ReactNode }) {
   }, [lang])
 
   return (
-    <LanguageContext.Provider value={{ lang, t: translations[lang], setLang, toggleLang }}>
+    <LanguageContext.Provider value={{ lang, t: getTranslation(lang), setLang, toggleLang }}>
       {children}
     </LanguageContext.Provider>
   )

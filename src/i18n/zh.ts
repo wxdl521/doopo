@@ -974,5 +974,5 @@ export const zh = {
 }
 
 export type Translations = typeof zh
-export const languages = ['中文', 'EN'] as const
-export type Lang = 'zh' | 'en'
+export const languages = ['中文', 'EN', '日本語', '한국어', 'Français', 'Español', 'Deutsch', 'Português', 'Italiano', 'Русский', 'العربية', 'ไทย', 'Tiếng Việt', 'Indonesia'] as const
+export type Lang = 'zh' | 'en' | 'ja' | 'ko' | 'fr' | 'es' | 'de' | 'pt' | 'it' | 'ru' | 'ar' | 'th' | 'vi' | 'id'
