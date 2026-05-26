@@ -1,6 +1,94 @@
 import { createServerFn } from '@tanstack/react-start'
 
-type Input = { prompt: string; model?: string }
+type Input = { prompt: string; model?: string; size?: string }
+
+// ---------- Qwen (DashScope) image generation ----------
+const QWEN_ENDPOINT =
+  'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation'
+const QWEN_ASYNC_CREATE =
+  'https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis'
+const QWEN_TASK_GET = 'https://dashscope.aliyuncs.com/api/v1/tasks/'
+
+// Models that use the sync multimodal endpoint
+const QWEN_SYNC_MODELS = new Set([
+  'qwen-image-2.0',
+  'qwen-image-2.0-pro',
+  'qwen-image-2.0-pro-2026-04-22',
+  'qwen-image-2.0-pro-2026-03-03',
+  'qwen-image-2.0-2026-03-03',
+  'qwen-image-max',
+  'qwen-image-max-2025-12-30',
+])
+// Async-only models
+const QWEN_ASYNC_MODELS = new Set([
+  'qwen-image-plus',
+  'qwen-image-plus-2026-01-09',
+  'qwen-image',
+])
+
+async function callQwenSync(model: string, prompt: string, size: string, apiKey: string) {
+  const res = await fetch(QWEN_ENDPOINT, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+    body: JSON.stringify({
+      model,
+      input: { messages: [{ role: 'user', content: [{ text: prompt }] }] },
+      parameters: { size, n: 1, prompt_extend: true, watermark: false },
+    }),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    return { url: '', error: `[${model}] ${res.status}: ${text.slice(0, 200)}` }
+  }
+  const json: any = await res.json()
+  const url: string = json?.output?.choices?.[0]?.message?.content?.[0]?.image || ''
+  return url
+    ? { url, error: null as string | null }
+    : { url: '', error: `[${model}] ${json?.message || 'no image returned'}` }
+}
+
+async function callQwenAsync(model: string, prompt: string, size: string, apiKey: string) {
+  const create = await fetch(QWEN_ASYNC_CREATE, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+      'X-DashScope-Async': 'enable',
+    },
+    body: JSON.stringify({
+      model,
+      input: { prompt },
+      parameters: { size, n: 1, prompt_extend: true, watermark: false },
+    }),
+  })
+  if (!create.ok) {
+    const text = await create.text().catch(() => '')
+    return { url: '', error: `[${model}] create ${create.status}: ${text.slice(0, 200)}` }
+  }
+  const cj: any = await create.json()
+  const taskId: string = cj?.output?.task_id
+  if (!taskId) return { url: '', error: `[${model}] missing task_id` }
+  const deadline = Date.now() + 90_000
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 4000))
+    const q = await fetch(QWEN_TASK_GET + taskId, { headers: { Authorization: `Bearer ${apiKey}` } })
+    if (!q.ok) continue
+    const qj: any = await q.json()
+    const status: string = qj?.output?.task_status
+    if (status === 'SUCCEEDED') {
+      const url: string = qj?.output?.results?.[0]?.url || ''
+      return url ? { url, error: null as string | null } : { url: '', error: `[${model}] no url` }
+    }
+    if (status === 'FAILED' || status === 'CANCELED' || status === 'UNKNOWN') {
+      return { url: '', error: `[${model}] ${status}: ${qj?.output?.message || qj?.message || ''}` }
+    }
+  }
+  return { url: '', error: `[${model}] timed out` }
+}
+
+function isQwenModel(id: string) {
+  return id.startsWith('qwen')
+}
 
 // Preferred order — tried first if present in the live model list.
 const PREFERRED_ORDER = [
@@ -119,6 +207,20 @@ export const generateImage = createServerFn({ method: 'POST' })
     return input
   })
   .handler(async ({ data }) => {
+    // Route Qwen image models through DashScope when requested.
+    const requested = (data.model || '').trim()
+    if (requested && isQwenModel(requested)) {
+      const qwenKey = process.env.Qwen || process.env.DASHSCOPE_API_KEY
+      if (!qwenKey) {
+        return { url: '', error: 'Qwen (DashScope) API key is not configured', model: requested }
+      }
+      const size = data.size || (QWEN_SYNC_MODELS.has(requested) ? '2048*2048' : '1664*928')
+      const result = QWEN_ASYNC_MODELS.has(requested)
+        ? await callQwenAsync(requested, data.prompt, size, qwenKey)
+        : await callQwenSync(requested, data.prompt, size, qwenKey)
+      return { ...result, model: requested }
+    }
+
     const apiKey = process.env.OPENROUTER_API_KEY
     if (!apiKey) {
       return { url: '', error: 'OPENROUTER_API_KEY is not configured', model: '' }
