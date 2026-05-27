@@ -210,7 +210,9 @@ async function callLovableGatewayImage(prompt: string) {
     try {
       const url = extractImageUrl(JSON.parse(payload));
       if (url) return { url, error: null as string | null, model };
-    } catch {}
+    } catch {
+      // Ignore non-JSON stream keepalive lines.
+    }
   }
   const inlineUrl = text.match(/data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/)?.[0] || "";
   return inlineUrl
@@ -252,13 +254,14 @@ async function fetchImageModels(apiKey: string): Promise<string[]> {
       headers: { Authorization: `Bearer ${apiKey}` },
     });
     if (!res.ok) return [];
-    const json: any = await res.json();
-    const ids: string[] = (json?.data ?? [])
-      .filter((m: any) => {
-        const out = m?.architecture?.output_modalities ?? [];
+    const json = (await res.json()) as { data?: ImageModelInfo[] };
+    const ids: string[] = (json.data ?? [])
+      .filter((m) => {
+        const out = m.architecture?.output_modalities ?? [];
         return Array.isArray(out) && out.includes("image");
       })
-      .map((m: any) => m.id)
+      .map((m) => m.id)
+      .filter((id): id is string => typeof id === "string")
       .filter((id: string) => id && !id.startsWith("openrouter/"));
     cachedModels = { ids, ts: Date.now() };
     return ids;
@@ -416,8 +419,10 @@ export const generateImage = createServerFn({ method: "POST" })
           return { url: "", error: lastError, model };
         }
 
-        const json: any = await res.json();
-        const msg = json?.choices?.[0]?.message;
+        const json = (await res.json()) as {
+          choices?: Array<{ message?: { images?: Array<{ image_url?: { url?: string }; url?: string }> } }>;
+        };
+        const msg = json.choices?.[0]?.message;
         const url: string = msg?.images?.[0]?.image_url?.url || msg?.images?.[0]?.url || "";
         if (url) return { url, error: null as string | null, model };
         lastError = `[${model}] returned no image`;
