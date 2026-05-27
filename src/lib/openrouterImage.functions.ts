@@ -9,21 +9,23 @@ const QWEN_ASYNC_CREATE =
   'https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis'
 const QWEN_TASK_GET = 'https://dashscope.aliyuncs.com/api/v1/tasks/'
 
-// Models that use the sync multimodal endpoint
-const QWEN_SYNC_MODELS = new Set([
+// Sync multimodal endpoint is only safe for the fastest small models.
+// qwen-image-max / qwen-image-2.0-pro routinely exceed the 60s Worker
+// request budget, so they are forced through the async polling path.
+const QWEN_SYNC_MODELS = new Set<string>([
   'qwen-image-2.0',
-  'qwen-image-2.0-pro',
-  'qwen-image-2.0-pro-2026-04-22',
-  'qwen-image-2.0-pro-2026-03-03',
   'qwen-image-2.0-2026-03-03',
-  'qwen-image-max',
-  'qwen-image-max-2025-12-30',
 ])
-// Async-only models
-const QWEN_ASYNC_MODELS = new Set([
+// Async-only (or async-preferred) models
+const QWEN_ASYNC_MODELS = new Set<string>([
   'qwen-image-plus',
   'qwen-image-plus-2026-01-09',
   'qwen-image',
+  'qwen-image-2.0-pro',
+  'qwen-image-2.0-pro-2026-04-22',
+  'qwen-image-2.0-pro-2026-03-03',
+  'qwen-image-max',
+  'qwen-image-max-2025-12-30',
   // Wan (Tongyi Wanxiang) series — async-only via image-synthesis endpoint
   'wan2.6-t2i',
   'wan2.5-t2i-preview',
@@ -35,6 +37,8 @@ const QWEN_ASYNC_MODELS = new Set([
 ])
 
 async function callQwenSync(model: string, prompt: string, size: string, apiKey: string) {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 50_000)
   const res = await fetch(QWEN_ENDPOINT, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
@@ -43,7 +47,12 @@ async function callQwenSync(model: string, prompt: string, size: string, apiKey:
       input: { messages: [{ role: 'user', content: [{ text: prompt }] }] },
       parameters: { size, n: 1, prompt_extend: true, watermark: false },
     }),
+    signal: controller.signal,
+  }).catch(e => {
+    clearTimeout(timeout)
+    throw e
   })
+  clearTimeout(timeout)
   if (!res.ok) {
     const text = await res.text().catch(() => '')
     return { url: '', error: `[${model}] ${res.status}: ${text.slice(0, 200)}` }
@@ -76,11 +85,14 @@ async function callQwenAsync(model: string, prompt: string, size: string, apiKey
   const cj: any = await create.json()
   const taskId: string = cj?.output?.task_id
   if (!taskId) return { url: '', error: `[${model}] missing task_id` }
-  const deadline = Date.now() + 90_000
+  const deadline = Date.now() + 50_000
+  await new Promise(r => setTimeout(r, 2000))
   while (Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, 4000))
     const q = await fetch(QWEN_TASK_GET + taskId, { headers: { Authorization: `Bearer ${apiKey}` } })
-    if (!q.ok) continue
+    if (!q.ok) {
+      await new Promise(r => setTimeout(r, 3000))
+      continue
+    }
     const qj: any = await q.json()
     const status: string = qj?.output?.task_status
     if (status === 'SUCCEEDED') {
@@ -90,8 +102,9 @@ async function callQwenAsync(model: string, prompt: string, size: string, apiKey
     if (status === 'FAILED' || status === 'CANCELED' || status === 'UNKNOWN') {
       return { url: '', error: `[${model}] ${status}: ${qj?.output?.message || qj?.message || ''}` }
     }
+    await new Promise(r => setTimeout(r, 3000))
   }
-  return { url: '', error: `[${model}] timed out` }
+  return { url: '', error: `[${model}] timed out (task ${taskId} still running)` }
 }
 
 function isDashScopeModel(id: string) {
