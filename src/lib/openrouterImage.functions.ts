@@ -85,11 +85,14 @@ async function callQwenAsync(model: string, prompt: string, size: string, apiKey
   const cj: any = await create.json()
   const taskId: string = cj?.output?.task_id
   if (!taskId) return { url: '', error: `[${model}] missing task_id` }
-  const deadline = Date.now() + 90_000
+  const deadline = Date.now() + 50_000
+  await new Promise(r => setTimeout(r, 2000))
   while (Date.now() < deadline) {
-    await new Promise(r => setTimeout(r, 4000))
     const q = await fetch(QWEN_TASK_GET + taskId, { headers: { Authorization: `Bearer ${apiKey}` } })
-    if (!q.ok) continue
+    if (!q.ok) {
+      await new Promise(r => setTimeout(r, 3000))
+      continue
+    }
     const qj: any = await q.json()
     const status: string = qj?.output?.task_status
     if (status === 'SUCCEEDED') {
@@ -99,8 +102,9 @@ async function callQwenAsync(model: string, prompt: string, size: string, apiKey
     if (status === 'FAILED' || status === 'CANCELED' || status === 'UNKNOWN') {
       return { url: '', error: `[${model}] ${status}: ${qj?.output?.message || qj?.message || ''}` }
     }
+    await new Promise(r => setTimeout(r, 3000))
   }
-  return { url: '', error: `[${model}] timed out` }
+  return { url: '', error: `[${model}] timed out (task ${taskId} still running)` }
 }
 
 function isDashScopeModel(id: string) {
