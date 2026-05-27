@@ -65,22 +65,33 @@ async function callQwenSync(model: string, prompt: string, size: string, apiKey:
 }
 
 async function callQwenAsync(model: string, prompt: string, size: string, apiKey: string) {
-  const create = await fetch(QWEN_ASYNC_CREATE, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-      'X-DashScope-Async': 'enable',
-    },
-    body: JSON.stringify({
-      model,
-      input: { prompt },
-      parameters: { size, n: 1, prompt_extend: true, watermark: false },
-    }),
-  })
-  if (!create.ok) {
-    const text = await create.text().catch(() => '')
-    return { url: '', error: `[${model}] create ${create.status}: ${text.slice(0, 200)}` }
+  // qwen-image-* async endpoint rejects extra params with "url error";
+  // wan* accepts the full param set. Build a minimal body per family.
+  const isQwen = model.startsWith('qwen')
+  const body = isQwen
+    ? { model, input: { prompt }, parameters: { size } }
+    : { model, input: { prompt }, parameters: { size, n: 1, prompt_extend: true, watermark: false } }
+
+  // Retry create on 429 (DashScope per-account RPM is very low for qwen-image-max).
+  let create: Response | null = null
+  let lastBody = ''
+  for (let attempt = 0; attempt < 3; attempt++) {
+    create = await fetch(QWEN_ASYNC_CREATE, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+        'X-DashScope-Async': 'enable',
+      },
+      body: JSON.stringify(body),
+    })
+    if (create.ok) break
+    lastBody = await create.text().catch(() => '')
+    if (create.status !== 429) break
+    await new Promise(r => setTimeout(r, 4000 + attempt * 4000))
+  }
+  if (!create || !create.ok) {
+    return { url: '', error: `[${model}] create ${create?.status ?? 0}: ${lastBody.slice(0, 200)}` }
   }
   const cj: any = await create.json()
   const taskId: string = cj?.output?.task_id
@@ -230,27 +241,37 @@ export const generateImage = createServerFn({ method: 'POST' })
   .handler(async ({ data }) => {
     // Route Qwen image models through DashScope when requested.
     const requested = (data.model || '').trim()
+    let dashScopeError: string | null = null
     if (requested && isDashScopeModel(requested)) {
       const qwenKey = process.env.Qwen || process.env.DASHSCOPE_API_KEY
-      if (!qwenKey) {
-        return { url: '', error: 'Qwen (DashScope) API key is not configured', model: requested }
+      if (qwenKey) {
+        const isWan = requested.startsWith('wan')
+        const defaultSize = isWan ? '1024*1024' : (QWEN_SYNC_MODELS.has(requested) ? '1328*1328' : '1328*1328')
+        const size = data.size || defaultSize
+        const result = QWEN_ASYNC_MODELS.has(requested)
+          ? await callQwenAsync(requested, data.prompt, size, qwenKey)
+          : await callQwenSync(requested, data.prompt, size, qwenKey)
+        if (result.url) return { ...result, model: requested }
+        dashScopeError = result.error
+        // Fall through to OpenRouter (Gemini) fallback so the UI still gets an image.
+      } else {
+        dashScopeError = 'Qwen (DashScope) API key is not configured'
       }
-      const isWan = requested.startsWith('wan')
-      const defaultSize = isWan ? '1024*1024' : (QWEN_SYNC_MODELS.has(requested) ? '2048*2048' : '1664*928')
-      const size = data.size || defaultSize
-      const result = QWEN_ASYNC_MODELS.has(requested)
-        ? await callQwenAsync(requested, data.prompt, size, qwenKey)
-        : await callQwenSync(requested, data.prompt, size, qwenKey)
-      return { ...result, model: requested }
     }
 
     const apiKey = process.env.OPENROUTER_API_KEY
     if (!apiKey) {
-      return { url: '', error: 'OPENROUTER_API_KEY is not configured', model: '' }
+      return {
+        url: '',
+        error: dashScopeError || 'OPENROUTER_API_KEY is not configured',
+        model: requested,
+      }
     }
 
     const available = await fetchImageModels(apiKey)
-    const attempts = buildAttempts(data.model, available)
+    // If we fell back from DashScope, don't ask OpenRouter for the Qwen model.
+    const fallbackModel = dashScopeError ? undefined : data.model
+    const attempts = buildAttempts(fallbackModel, available)
     let lastError = 'Image generation failed'
 
     for (const model of attempts) {
@@ -298,5 +319,8 @@ export const generateImage = createServerFn({ method: 'POST' })
       }
     }
 
-    return { url: '', error: lastError, model: '' }
+    const finalError = dashScopeError
+      ? `${dashScopeError}；备用渠道也失败: ${lastError}`
+      : lastError
+    return { url: '', error: finalError, model: '' }
   })
