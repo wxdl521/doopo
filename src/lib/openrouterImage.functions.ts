@@ -420,7 +420,9 @@ export const generateImage = createServerFn({ method: "POST" })
         }
 
         const json = (await res.json()) as {
-          choices?: Array<{ message?: { images?: Array<{ image_url?: { url?: string }; url?: string }> } }>;
+          choices?: Array<{
+            message?: { images?: Array<{ image_url?: { url?: string }; url?: string }> };
+          }>;
         };
         const msg = json.choices?.[0]?.message;
         const url: string = msg?.images?.[0]?.image_url?.url || msg?.images?.[0]?.url || "";
