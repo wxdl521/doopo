@@ -65,22 +65,33 @@ async function callQwenSync(model: string, prompt: string, size: string, apiKey:
 }
 
 async function callQwenAsync(model: string, prompt: string, size: string, apiKey: string) {
-  const create = await fetch(QWEN_ASYNC_CREATE, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-      'X-DashScope-Async': 'enable',
-    },
-    body: JSON.stringify({
-      model,
-      input: { prompt },
-      parameters: { size, n: 1, prompt_extend: true, watermark: false },
-    }),
-  })
-  if (!create.ok) {
-    const text = await create.text().catch(() => '')
-    return { url: '', error: `[${model}] create ${create.status}: ${text.slice(0, 200)}` }
+  // qwen-image-* async endpoint rejects extra params with "url error";
+  // wan* accepts the full param set. Build a minimal body per family.
+  const isQwen = model.startsWith('qwen')
+  const body = isQwen
+    ? { model, input: { prompt }, parameters: { size } }
+    : { model, input: { prompt }, parameters: { size, n: 1, prompt_extend: true, watermark: false } }
+
+  // Retry create on 429 (DashScope per-account RPM is very low for qwen-image-max).
+  let create: Response | null = null
+  let lastBody = ''
+  for (let attempt = 0; attempt < 3; attempt++) {
+    create = await fetch(QWEN_ASYNC_CREATE, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+        'X-DashScope-Async': 'enable',
+      },
+      body: JSON.stringify(body),
+    })
+    if (create.ok) break
+    lastBody = await create.text().catch(() => '')
+    if (create.status !== 429) break
+    await new Promise(r => setTimeout(r, 4000 + attempt * 4000))
+  }
+  if (!create || !create.ok) {
+    return { url: '', error: `[${model}] create ${create?.status ?? 0}: ${lastBody.slice(0, 200)}` }
   }
   const cj: any = await create.json()
   const taskId: string = cj?.output?.task_id
