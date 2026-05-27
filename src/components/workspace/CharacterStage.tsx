@@ -47,11 +47,7 @@ export default function CharacterStage({ character, views }: Props) {
         role="region"
         aria-live="polite"
         aria-label={`${character.name} ${mode === 'main' ? '主视图' : '多视图'}`}
-<<<<<<< HEAD
-        style={{ height: 'calc(100vh - 200px)', maxHeight: '600px' }}
-=======
-        style={{ height: 'calc(100vh - 180px)' }}
->>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
+style={{ height: 'calc(100vh - 180px)' }}
       >
         {mode === 'main' ? (
           <div className="relative w-full h-full">

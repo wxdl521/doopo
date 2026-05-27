@@ -875,28 +875,16 @@ export const zh = {
   zp_preset_arrange: '自动排时序',
   zp_preset_transition: '补齐转场',
 
-<<<<<<< HEAD
-  // Workflow steps (校园恋爱示例)
-=======
-  // Workflow steps
->>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
+// Workflow steps
   zp_step_load_workflow: '加载短剧工作流',
   zp_step_load_spec: '加载剧本创作规范',
   zp_step_query_tools: '查询剧本工具',
   zp_step_check_prev: '检查前序剧集状态',
-<<<<<<< HEAD
-  zp_step_write_script: '写入校园恋爱短剧剧本',
-
-  zp_summary_done: '校园恋爱短剧这一集已经写好了，已经存到当前第1集里。',
-  zp_summary_detail: '这一集走的是"高冷误会 + 暗恋掉马 + 广播告白"的节奏，适合做高情绪密度的短视频开篇。你可以直接去剧本面板看正文。',
-  zp_summary_next: '下一步我建议继续把角色和场景提取出来，这样就能马上进入设定图和分镜阶段。',
-=======
-  zp_step_write_script: '写入剧本',
+zp_step_write_script: '写入剧本',
 
   zp_summary_done: '这一集已经写好了，已经存到当前第1集里。',
   zp_summary_detail: '已按要求生成剧本内容，直接去剧本面板查看正文。',
   zp_summary_next: '下一步建议继续把角色和场景提取出来，这样就能马上进入设定图和分镜阶段。',
->>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
 
   zp_cta_extract: '继续提取角色和场景',
   zp_cta_design: '进入设定图阶段',
@@ -906,10 +894,7 @@ export const zh = {
   zp_cta_to_timeline: '进入时间轴阶段',
   zp_cta_refine: '继续精修',
   zp_cta_preview: '查看预览',
-<<<<<<< HEAD
-=======
-  zp_cta_save_assets: '保存为资产',
->>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
+zp_cta_save_assets: '保存为资产',
 
   // Canvas workflow
   zp_step_canvas_load: '加载创意工作流',

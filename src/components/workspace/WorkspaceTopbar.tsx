@@ -110,11 +110,6 @@ export default function WorkspaceTopbar({
         </button>
         <span className="px-2 py-1 text-xs rounded-full bg-bg-elevated border border-border text-accent font-semibold">✦ 73</span>
         <button className="px-3 py-1 text-xs rounded-full bg-gradient-to-r from-rose-500 to-orange-500 text-white font-semibold">{t.header_upgrade}</button>
-        {typeof onSaveAssets === 'function' && (
-          <button onClick={onSaveAssets} className="px-3 py-1 text-xs rounded-full bg-accent text-white font-semibold inline-flex items-center gap-1">
-            <Save size={12} /> {t.ws_save_assets}
-          </button>
-        )}
         <div className="w-8 h-8 rounded-full bg-gradient-to-br from-accent to-accent-mint" />
       </div>
     </header>

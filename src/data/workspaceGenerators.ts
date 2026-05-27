@@ -1,5 +1,5 @@
 // Mock generators that return realistically structured workspace artifacts
-// for the "校园恋爱短剧 第1集 · 广播室告白" demo episode.
+// for the demo workspace.
 
 export type Outline = {
   logline: string

@@ -256,22 +256,90 @@ export const generateStageAi = createServerFn({ method: 'POST' })
       .filter(Boolean)
       .join('\n\n')
 
-    // Try Lovable first
-    const lovableKey = process.env.LOVABLE_API_KEY
-    if (lovableKey) {
-      const lovableResult = await tryLovable(lovableKey, spec, userContent, data.stage)
-      if (lovableResult.ok) return lovableResult
+    // Use Qwen API
+    const qwenKey = process.env.Qwen
+    if (qwenKey) {
+      const qwenResult = await tryQwen(qwenKey, spec, userContent, data.stage)
+      if (qwenResult.ok) return qwenResult
     }
 
-    // Fallback to MiniMax
-    const minimaxKey = process.env.MINIMAX_API_KEY
-    if (minimaxKey) {
-      const minimaxResult = await tryMiniMax(minimaxKey, spec, userContent, data.stage)
-      if (minimaxResult.ok) return minimaxResult
-    }
+    // // Try Lovable first
+    // const lovableKey = process.env.LOVABLE_API_KEY
+    // if (lovableKey) {
+    //   const lovableResult = await tryLovable(lovableKey, spec, userContent, data.stage)
+    //   if (lovableResult.ok) return lovableResult
+    // }
+
+    // // Fallback to MiniMax
+    // const minimaxKey = process.env.MINIMAX_API_KEY
+    // if (minimaxKey) {
+    //   const minimaxResult = await tryMiniMax(minimaxKey, spec, userContent, data.stage)
+    //   if (minimaxResult.ok) return minimaxResult
+    // }
 
     return { ok: false as const, error: 'no API key available' }
   })
+
+async function tryQwen(apiKey: string, spec: ReturnType<typeof stageSpec>, userContent: string, stage: string) {
+  try {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 55_000)
+    const res = await fetch('https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'qwen-plus',
+        messages: [
+          { role: 'system', content: spec.system },
+          { role: 'user', content: userContent },
+        ],
+        tools: [
+          {
+            type: 'function',
+            function: {
+              name: spec.toolName,
+              description: `Return structured ${stage} data.`,
+              parameters: spec.schema,
+            },
+          },
+        ],
+        tool_choice: { type: 'function', function: { name: spec.toolName } },
+      }),
+      signal: controller.signal,
+    })
+    clearTimeout(timeout)
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      if (res.status === 429) return { ok: false as const, error: 'rate_limit' }
+      if (res.status === 402) return { ok: false as const, error: 'no_credits' }
+      return { ok: false as const, error: `qwen ${res.status}: ${text.slice(0, 200)}` }
+    }
+    const json = await res.json()
+    const argsStr = json?.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments
+    if (!argsStr) return { ok: false as const, error: 'empty tool call' }
+    let parsed: any
+    try {
+      parsed = JSON.parse(argsStr)
+    } catch {
+      return { ok: false as const, error: 'parse error' }
+    }
+    return { ok: true as const, stage, payload: parsed }
+  } catch (e) {
+    return {
+      ok: false as const,
+      error:
+        e instanceof Error && e.name === 'AbortError'
+          ? 'timeout'
+          : e instanceof Error
+            ? e.message
+            : 'unknown',
+    }
+  }
+}
 
 async function tryLovable(apiKey: string, spec: ReturnType<typeof stageSpec>, userContent: string, stage: string) {
   try {

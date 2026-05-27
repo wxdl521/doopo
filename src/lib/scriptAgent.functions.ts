@@ -2,7 +2,7 @@ import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
 
 // ============================================================
-// 剧本智能体 — 流式生成（Lovable AI Gateway，async generator）
+// 剧本智能体 — 流式生成（Qwen API，async generator）
 // 5 步：① 灵感 → ② 故事梗概 → ③ 第1集分镜 → ④ 多剧集（逐集生成） → ⑤ 完成
 // 所有 prompt 要求输出"文章/小说式纯文本"，禁止 markdown 标题、表格、列表符号。
 // 每个 step 服务器以 async function* 形式 yield { delta }，
@@ -11,11 +11,11 @@ import { z } from 'zod'
 
 const Lang = z.enum(['zh', 'en'])
 
-const LOVABLE_ENDPOINT = 'https://ai.gateway.lovable.dev/v1/chat/completions'
-const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'
-const MINIMAX_ENDPOINT = 'https://api.minimaxi.com/anthropic/v1/messages'
+// const LOVABLE_ENDPOINT = 'https://ai.gateway.lovable.dev/v1/chat/completions'
+// const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'
+// const MINIMAX_ENDPOINT = 'https://api.minimaxi.com/anthropic/v1/messages'
 const QWEN_ENDPOINT = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions'
-const DEFAULT_MODEL = 'gemini:gemini-3.5-flash'
+// const DEFAULT_MODEL = 'gemini:gemini-3.5-flash'
 
 type Provider = 'lovable' | 'gemini' | 'minimax' | 'qwen'
 
@@ -25,15 +25,15 @@ type Provider = 'lovable' | 'gemini' | 'minimax' | 'qwen'
 //   "openrouter:xxx" → 仍走 Lovable Gateway（向后兼容，去前缀）
 //   "minimax:xxx"    → MiniMax API（使用 MINIMAX_API_KEY）
 //   "qwen:xxx"       → 阿里 DashScope（使用 Qwen 密钥，OpenAI 兼容接口）
-//   裸 id            → Lovable Gateway
+//   裸 id            → Qwen
 function pickModel(raw?: string): { provider: Provider; model: string } {
-  const v = (raw ?? '').trim() || DEFAULT_MODEL
-  if (v.startsWith('gemini:')) return { provider: 'gemini', model: v.slice(7) }
-  if (v.startsWith('lovable:')) return { provider: 'lovable', model: v.slice(8) }
-  if (v.startsWith('openrouter:')) return { provider: 'lovable', model: v.slice(11) }
-  if (v.startsWith('minimax:')) return { provider: 'minimax', model: v.slice(8) }
+  const v = (raw ?? '').trim() || 'qwen-plus'
+  // if (v.startsWith('gemini:')) return { provider: 'gemini', model: v.slice(7) }
+  // if (v.startsWith('lovable:')) return { provider: 'lovable', model: v.slice(8) }
+  // if (v.startsWith('openrouter:')) return { provider: 'lovable', model: v.slice(11) }
+  // if (v.startsWith('minimax:')) return { provider: 'minimax', model: v.slice(8) }
   if (v.startsWith('qwen:')) return { provider: 'qwen', model: v.slice(5) }
-  return { provider: 'lovable', model: v }
+  return { provider: 'qwen', model: v }
 }
 
 type StreamChunk =
@@ -47,24 +47,18 @@ async function* streamChat(opts: {
   user: string
 }): AsyncGenerator<StreamChunk> {
   const picked = typeof opts.model === 'string' ? pickModel(opts.model) : opts.model
-  const apiKey =
-    picked.provider === 'gemini'
-      ? process.env.Default_Gemini_API_Key
-      : picked.provider === 'minimax'
-        ? process.env.MINIMAX_API_KEY
-        : picked.provider === 'qwen'
-          ? process.env.Qwen
-          : process.env.LOVABLE_API_KEY
+  // const apiKey =
+  //   picked.provider === 'gemini'
+  //     ? process.env.Default_Gemini_API_Key
+  //     : picked.provider === 'minimax'
+  //       ? process.env.MINIMAX_API_KEY
+  //       : picked.provider === 'qwen'
+  //         ? process.env.Qwen
+  //         : process.env.LOVABLE_API_KEY
+  const apiKey = process.env.Qwen
   if (!apiKey) {
     yield {
-      error:
-        picked.provider === 'gemini'
-          ? 'Default_Gemini_API_Key 未配置'
-          : picked.provider === 'minimax'
-            ? 'MINIMAX_API_KEY 未配置'
-            : picked.provider === 'qwen'
-              ? 'Qwen 密钥未配置'
-              : 'LOVABLE_API_KEY 未配置',
+      error: 'Qwen 密钥未配置',
     }
     return
   }
@@ -72,61 +66,62 @@ async function* streamChat(opts: {
   const controller = new AbortController()
   let upstream: Response
 
-  // MiniMax 使用不同的 API 格式（非 SSE）
-  if (picked.provider === 'minimax') {
-    try {
-      upstream = await fetch(MINIMAX_ENDPOINT, {
-        method: 'POST',
-        headers: {
-          'X-Api-Key': apiKey,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          model: picked.model,
-          messages: [
-            { role: 'system', content: opts.system },
-            { role: 'user', content: opts.user },
-          ],
-          max_tokens: 4096,
-        }),
-        signal: controller.signal,
-      })
-    } catch (e) {
-      yield { error: e instanceof Error ? e.message : '网络错误' }
-      return
-    }
+  // // MiniMax 使用不同的 API 格式（非 SSE）
+  // if (picked.provider === 'minimax') {
+  //   try {
+  //     upstream = await fetch(MINIMAX_ENDPOINT, {
+  //       method: 'POST',
+  //       headers: {
+  //         'X-Api-Key': apiKey,
+  //         'Content-Type': 'application/json',
+  //       },
+  //       body: JSON.stringify({
+  //         model: picked.model,
+  //         messages: [
+  //           { role: 'system', content: opts.system },
+  //           { role: 'user', content: opts.user },
+  //         ],
+  //         max_tokens: 4096,
+  //       }),
+  //       signal: controller.signal,
+  //     })
+  //   } catch (e) {
+  //     yield { error: e instanceof Error ? e.message : '网络错误' }
+  //     return
+  //   }
 
-    if (!upstream.ok) {
-      const txt = await upstream.text().catch(() => '')
-      yield { error: `MiniMax 错误 ${upstream.status}: ${txt.slice(0, 200)}` }
-      return
-    }
+  //   if (!upstream.ok) {
+  //     const txt = await upstream.text().catch(() => '')
+  //     yield { error: `MiniMax 错误 ${upstream.status}: ${txt.slice(0, 200)}` }
+  //     return
+  //   }
 
-    try {
-      const json = await upstream.json()
-      // MiniMax 返回格式：content[].type === "text" 或 "thinking"
-      const textParts: string[] = []
-      for (const block of json.content ?? []) {
-        if (block.type === 'text') {
-          textParts.push(block.text)
-        }
-      }
-      const fullText = textParts.join('')
-      if (fullText) yield { delta: fullText }
-      yield { done: true, text: fullText }
-    } catch (e) {
-      yield { error: 'MiniMax 响应解析失败' }
-    }
-    return
-  }
+  //   try {
+  //     const json = await upstream.json()
+  //     // MiniMax 返回格式：content[].type === "text" 或 "thinking"
+  //     const textParts: string[] = []
+  //     for (const block of json.content ?? []) {
+  //       if (block.type === 'text') {
+  //         textParts.push(block.text)
+  //       }
+  //     }
+  //     const fullText = textParts.join('')
+  //     if (fullText) yield { delta: fullText }
+  //     yield { done: true, text: fullText }
+  //   } catch (e) {
+  //     yield { error: 'MiniMax 响应解析失败' }
+  //   }
+  //   return
+  // }
 
-  // Lovable / Gemini / Qwen: OpenAI 兼容 SSE 流式响应
-  const endpoint =
-    picked.provider === 'gemini'
-      ? GEMINI_ENDPOINT
-      : picked.provider === 'qwen'
-        ? QWEN_ENDPOINT
-        : LOVABLE_ENDPOINT
+  // Qwen: OpenAI 兼容 SSE 流式响应
+  // const endpoint =
+  //   picked.provider === 'gemini'
+  //     ? GEMINI_ENDPOINT
+  //     : picked.provider === 'qwen'
+  //       ? QWEN_ENDPOINT
+  //       : LOVABLE_ENDPOINT
+  const endpoint = QWEN_ENDPOINT
   try {
     upstream = await fetch(endpoint, {
       method: 'POST',

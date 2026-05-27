@@ -11,11 +11,7 @@ import {
   type Outline, type GenScene, type GenCharacter, type StoryboardPanel, type TimelineData, type TimelineTrack, type TimelineClip,
 } from '../data/workspaceGenerators'
 import { generateStageAi } from '../lib/aiGenerate.functions'
-<<<<<<< HEAD
-import { generateImage } from '../lib/openrouterImage.functions'
-=======
 import { generateImage, repaintCharacterImage } from '../lib/openrouterImage.functions'
->>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
 import { getProject, type ProjectConfigRow } from '../lib/projects.functions'
 import { Maximize2, FileText, Camera, Clock, Users, X, Loader2 } from 'lucide-react'
 import CharacterPortrait from '../components/workspace/CharacterPortrait'
@@ -76,20 +72,16 @@ function WorkspacePage() {
   const [previewChar, setPreviewChar] = useState<GenCharacter | null>(null)
   const callAi = useServerFn(generateStageAi)
   const callImage = useServerFn(generateImage)
-<<<<<<< HEAD
-=======
-  const callRepaint = useServerFn(repaintCharacterImage)
->>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
+const callRepaint = useServerFn(repaintCharacterImage)
   const loadProject = useServerFn(getProject)
   const [project, setProject] = useState<ProjectConfigRow | null>(null)
-  const [charImages, setCharImages] = useState<Record<string, string>>({})
+  const [charImages, setCharImages] = useState<Record<string, string[]>>({})
   const [panelImages, setPanelImages] = useState<Record<string, string>>({})
   const [busyChar, setBusyChar] = useState<string | null>(null)
   const [busyPanel, setBusyPanel] = useState<string | null>(null)
-<<<<<<< HEAD
-=======
-  const [repaintingChar, setRepaintingChar] = useState<string | null>(null)
->>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
+  const [generatingMultiView, setGeneratingMultiView] = useState<string | null>(null)
+const [repaintingChar, setRepaintingChar] = useState<string | null>(null)
+  const [selectedViewCount, setSelectedViewCount] = useState<string>('3')
   const [autoGen, setAutoGen] = useState(true)
   void setAutoGen
   const workspaceId = Route.useParams().workspaceId
@@ -105,8 +97,6 @@ function WorkspacePage() {
     if (busyChar) return
     setBusyChar(c.id)
     try {
-      // Build a prompt that strictly mirrors the character profile shown in the UI,
-      // so the rendered image stays consistent with the description fields.
       const paletteLine = c.palette?.length
         ? `signature color palette (must appear in clothing / lighting / accessories): ${c.palette.join(', ')}`
         : ''
@@ -120,7 +110,7 @@ function WorkspacePage() {
       ].filter(Boolean).join(' ')
       const res = await callImage({ data: { prompt, model: project?.sceneModel } })
       if (res.url) {
-        setCharImages((m) => ({ ...m, [c.id]: res.url }))
+        setCharImages((m) => ({ ...m, [c.id]: [res.url, '', '', ''] }))
         toast.success(`已生成 ${c.name} 主图`)
       } else {
         toast.error(res.error || '生成失败')
@@ -129,6 +119,65 @@ function WorkspacePage() {
       toast.error('生成失败')
     } finally {
       setBusyChar(null)
+    }
+  }
+
+  async function genCharMultiView(c: GenCharacter) {
+    if (generatingMultiView) return
+    setGeneratingMultiView(c.id)
+    try {
+      const paletteLine = c.palette?.length
+        ? `signature color palette (must appear in clothing / lighting / accessories): ${c.palette.join(', ')}`
+        : ''
+      let viewsConfig: { key: string; label: string; prompt: string }[]
+      if (selectedViewCount === '3') {
+        viewsConfig = [
+          { key: 'front', label: '正面', prompt: 'Full-body, front view, neutral studio background, consistent character design, same person, cinematic lighting, high detail, no text, no watermark.' },
+          { key: 'side', label: '侧面', prompt: 'Full-body, side profile view, neutral studio background, consistent character design, same person, cinematic lighting, high detail, no text, no watermark.' },
+          { key: 'back', label: '背面', prompt: 'Full-body, back view, neutral studio background, consistent character design, same person, cinematic lighting, high detail, no text, no watermark.' },
+        ]
+      } else if (selectedViewCount === '5') {
+        viewsConfig = [
+          { key: 'front', label: '正面', prompt: 'Full-body, front view, neutral studio background, consistent character design, same person, cinematic lighting, high detail, no text, no watermark.' },
+          { key: 'side', label: '侧面', prompt: 'Full-body, side profile view, neutral studio background, consistent character design, same person, cinematic lighting, high detail, no text, no watermark.' },
+          { key: 'back', label: '背面', prompt: 'Full-body, back view, neutral studio background, consistent character design, same person, cinematic lighting, high detail, no text, no watermark.' },
+          { key: 'three-quarter', label: '四分之三侧', prompt: 'Full-body, three-quarter view, neutral studio background, consistent character design, same person, cinematic lighting, high detail, no text, no watermark.' },
+          { key: 'expression', label: '表情', prompt: 'Close-up on face, expression detail, neutral studio background, consistent character design, same person, showing facial expression and emotion, cinematic lighting, high detail, no text, no watermark.' },
+        ]
+      } else {
+        viewsConfig = [
+          { key: 'front', label: '正面', prompt: 'Full-body, front view, neutral studio background, consistent character design, same person, cinematic lighting, high detail, no text, no watermark.' },
+          { key: 'side', label: '侧面', prompt: 'Full-body, side profile view, neutral studio background, consistent character design, same person, cinematic lighting, high detail, no text, no watermark.' },
+          { key: 'back', label: '背面', prompt: 'Full-body, back view, neutral studio background, consistent character design, same person, cinematic lighting, high detail, no text, no watermark.' },
+          { key: 'expression', label: '表情', prompt: 'Close-up on face, expression detail, neutral studio background, consistent character design, same person, showing facial expression and emotion, cinematic lighting, high detail, no text, no watermark.' },
+          { key: 'outfit', label: '服装', prompt: 'Full-body, front view showing outfit details, neutral studio background, consistent character design, same person, detailed costume design, high detail, no text, no watermark.' },
+          { key: 'detail', label: '细节', prompt: 'Close-up on hands and accessories, neutral studio background, consistent character design, same person, detailed props and accessories, high detail, no text, no watermark.' },
+        ]
+      }
+      const newUrls: string[] = []
+      for (let i = 0; i < viewsConfig.length; i++) {
+        const v = viewsConfig[i]
+        setBusyChar(`${c.id}-${v.key}`)
+        const prompt = [
+          `Character reference sheet of "${c.name}" — ${c.roleLabel}, age ${c.age}.`,
+          `Appearance (strictly follow): ${c.look}.`,
+          c.personality && `Personality vibe to convey through expression and posture: ${c.personality}.`,
+          c.debutShot && `Inspired by debut shot: ${c.debutShot}.`,
+          paletteLine,
+          v.prompt,
+        ].filter(Boolean).join(' ')
+        const res = await callImage({ data: { prompt, model: project?.sceneModel } })
+        if (res.url) {
+          newUrls[i] = res.url
+        }
+        setBusyChar(null)
+      }
+      if (newUrls.some((u) => u)) {
+        setCharImages((m) => ({ ...m, [c.id]: newUrls }))
+        toast.success(`已生成 ${c.name} 多视图`)
+      }
+    } finally {
+      setGeneratingMultiView(null)
     }
   }
 
@@ -156,17 +205,17 @@ function WorkspacePage() {
     }
   }
 
-<<<<<<< HEAD
-=======
-  async function repaintCharImage(charId: string, styleIndex: number) {
+async function repaintCharImage(charId: string, styleIndex: number) {
     if (repaintingChar) return
-    const currentUrl = charImages[charId]
-    if (!currentUrl) return
+    const urls = charImages[charId]
+    if (!urls || !urls.length || !urls[0]) return
     setRepaintingChar(charId)
     try {
-      const res = await callRepaint({ data: { imageUrl: currentUrl, styleIndex } })
+      const res = await callRepaint({ data: { imageUrl: urls[0], styleIndex } })
       if (res.url) {
-        setCharImages((m) => ({ ...m, [charId]: res.url }))
+        const newUrls = [...urls]
+        newUrls[0] = res.url
+        setCharImages((m) => ({ ...m, [charId]: newUrls }))
         toast.success('风格重绘完成')
       } else {
         toast.error(res.error || '重绘失败')
@@ -178,12 +227,11 @@ function WorkspacePage() {
     }
   }
 
->>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
   // Auto-generate real images for newly produced characters / storyboard panels
   // using the project's configured model. Sequential to avoid rate limits.
   useEffect(() => {
     if (!autoGen) return
-    const pending = data.characters.filter((c) => !charImages[c.id])
+    const pending = data.characters.filter((c) => !charImages[c.id] || !charImages[c.id][0])
     if (!pending.length || busyChar) return
     void (async () => {
       for (const c of pending) {
@@ -332,11 +380,19 @@ function WorkspacePage() {
   async function produce(stage: WorkspaceTab, userPrompt?: string) {
     let aiPatch: Partial<WorkspaceData> | null = null
     const meaningful = (userPrompt ?? '').trim().length >= 4
-<<<<<<< HEAD
-    // Snapshot current data so the server call sees consistent context.
-=======
-    // Snapshot current current currentData so the server call sees consistent context.
->>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
+    // Extract view count from prompt (e.g. "视角数量: 三视图" or "Views: 3-view sheet")
+    if (stage === 'character' && userPrompt) {
+      const viewMatch = userPrompt.match(/视角数量[：:]\s*(三视图|五视图|三视图\+表情\+服装)/i) ||
+        userPrompt.match(/Views[：:]\s*(3-view sheet|5-view sheet|3-view \+ expressions \+ outfits)/i)
+      if (viewMatch) {
+        const viewMap: Record<string, string> = {
+          '三视图': '3', '五视图': '5', '三视图+表情+服装': 'full',
+          '3-view sheet': '3', '5-view sheet': '5', '3-view + expressions + outfits': 'full',
+        }
+        const matched = viewMatch[1] || viewMatch[2]
+        setSelectedViewCount(viewMap[matched] ?? '3')
+      }
+    }
     const snapshot = data
     if (meaningful && (stage === 'canvas' || stage === 'script' || stage === 'character' || stage === 'storyboard' || stage === 'timeline')) {
       aiPatch = await tryAi(stage, userPrompt!.trim(), snapshot)
@@ -371,8 +427,6 @@ function WorkspacePage() {
     setTimeout(() => setFlash((f) => (f === stage ? null : f)), 1500)
   }
 
-<<<<<<< HEAD
-=======
   async function saveAssets() {
     if (!user) {
       toast.error('请先登录')
@@ -395,7 +449,6 @@ function WorkspacePage() {
     toast.success('已保存到资产库')
   }
 
->>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
   return (
     <div className="h-screen flex flex-col bg-bg overflow-hidden">
       <WorkspaceTopbar tab={tab} onTabChange={setTab} episode={episode} onEpisodeChange={setEpisode} onSaveAssets={handleSaveAssets} />
@@ -414,10 +467,7 @@ function WorkspacePage() {
           collapsed={collapsed}
           onToggleCollapsed={() => setCollapsed((v) => !v)}
           initialInput={initialChatInput}
-<<<<<<< HEAD
-=======
           onSaveAssets={saveAssets}
->>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
         />
       </div>
       {previewChar && (
@@ -522,11 +572,7 @@ function WorkspacePage() {
       <div className="max-w-4xl mx-auto space-y-4">
         <div className="panel p-5 flex items-start justify-between gap-3">
           <div>
-<<<<<<< HEAD
-            <h2 className="font-display text-xl font-bold">校园恋爱短剧 · 第{episode}集 · 广播室告白</h2>
-=======
-            <h2 className="font-display text-xl font-bold">{data.outline?.logline ? `${data.outline.logline} · 第${episode}集` : `第${episode}集`}</h2>
->>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
+<h2 className="font-display text-xl font-bold">{data.outline?.logline ? `${data.outline.logline} · 第${episode}集` : `第${episode}集`}</h2>
             <p className="text-text-secondary text-sm mt-1">{data.outline?.logline}</p>
           </div>
           <FreshBadge stage="script" />
@@ -631,53 +677,87 @@ function WorkspacePage() {
             <div className="flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[240px_1fr] md:items-start gap-4 md:gap-5">
               <CharacterDossier character={c} cast={sorted} />
               <div className="relative flex-1 min-h-0">
-<<<<<<< HEAD
-                {charImages[c.id] ? (
-                  <div className="rounded-2xl overflow-hidden border border-border bg-bg-elevated/30" style={{ height: 'calc(100vh - 200px)', maxHeight: 600 }}>
-                    <img src={charImages[c.id]} alt={c.name} className="w-full h-full object-contain" />
-=======
-                {busyChar === c.id ? (
+                {(busyChar?.startsWith(c.id) || generatingMultiView === c.id) ? (
                   <div className="relative rounded-2xl overflow-hidden border border-border bg-bg-elevated/30 flex items-center justify-center" style={{ height: 'calc(100vh - 200px)', maxHeight: 600 }}>
                     <div className="flex flex-col items-center gap-3">
                       <Loader2 size={32} className="animate-spin text-accent" />
                       <span className="text-sm text-text-muted">AI 生成中，请稍候…</span>
                     </div>
                   </div>
-                ) : charImages[c.id] ? (
-                  <div className="relative rounded-2xl overflow-hidden border border-border bg-bg-elevated/30" style={{ height: 'calc(100vh - 200px)', maxHeight: 600 }}>
-                    <img src={charImages[c.id]} alt={c.name} className="w-full h-full object-contain" />
-                    {repaintingChar === c.id && (
-                      <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-                        <Loader2 size={24} className="animate-spin text-white" />
+                ) : charImages[c.id] && charImages[c.id][0] ? (
+                  <div className="relative flex flex-col h-full" style={{ height: 'calc(100vh - 200px)', maxHeight: 600 }}>
+                    <div className="flex-1 rounded-2xl overflow-hidden border border-border bg-bg-elevated/30 relative">
+                      <img src={charImages[c.id][0]} alt={`${c.name} 正面`} className="w-full h-full object-contain" />
+                      {repaintingChar === c.id && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+                          <Loader2 size={24} className="animate-spin text-white" />
+                        </div>
+                      )}
+                      <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1.5">
+                        {[0, 1, 2, 3, 4, 5].map((idx) => (
+                          <button
+                            key={idx}
+                            onClick={() => repaintCharImage(c.id, idx)}
+                            disabled={repaintingChar === c.id}
+                            title={`风格 ${idx + 1}`}
+                            className="w-8 h-8 rounded-full bg-black/60 border border-white/20 text-white text-xs hover:bg-black/80 disabled:opacity-40 transition"
+                          >
+                            {idx + 1}
+                          </button>
+                        ))}
                       </div>
-                    )}
-                    <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1.5">
-                      {[0, 1, 2, 3, 4, 5].map((idx) => (
-                        <button
-                          key={idx}
-                          onClick={() => repaintCharImage(c.id, idx)}
-                          disabled={repaintingChar === c.id}
-                          title={`风格 ${idx + 1}`}
-                          className="w-8 h-8 rounded-full bg-black/60 border border-white/20 text-white text-xs hover:bg-black/80 disabled:opacity-40 transition"
-                        >
-                          {idx + 1}
-                        </button>
-                      ))}
                     </div>
->>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
+                    {generatingMultiView === c.id ? (
+                      <div className="mt-2 py-2 rounded-lg bg-accent/70 text-white text-sm font-semibold flex items-center justify-center gap-2">
+                        <Loader2 size={14} className="animate-spin" /> 生成中…
+                      </div>
+                    ) : charImages[c.id].length > 1 && charImages[c.id].slice(1).some((u) => u) ? (
+                      <>
+                        <div className="grid grid-cols-2 gap-1 mt-1 flex-1 overflow-hidden rounded-lg border border-border">
+                          {charImages[c.id].slice(1).map((url, vi) => {
+                            const labels = selectedViewCount === '5'
+                              ? ['侧面', '背面', '四分之三侧', '表情']
+                              : selectedViewCount === 'full'
+                                ? ['表情', '服装', '细节']
+                                : ['侧面', '背面']
+                            return url ? (
+                              <div key={vi} className="relative overflow-hidden bg-bg-elevated/30 rounded">
+                                <img src={url} alt={labels[vi]} className="w-full h-full object-contain" />
+                                <span className="absolute bottom-0.5 left-0.5 text-[9px] px-1 py-0.5 rounded bg-black/60 text-white">{labels[vi]}</span>
+                              </div>
+                            ) : (
+                              <div key={vi} className="relative bg-bg-elevated/30 flex items-center justify-center rounded">
+                                <Loader2 size={12} className="animate-spin text-text-muted" />
+                              </div>
+                            )
+                          })}
+                        </div>
+                        <button
+                          onClick={() => genCharMultiView(c)}
+                          disabled={generatingMultiView === c.id}
+                          className="mt-2 w-full py-2 rounded-lg bg-accent text-white text-sm font-semibold hover:opacity-90 disabled:opacity-50 transition"
+                        >
+                          重新生成多视图
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        onClick={() => genCharMultiView(c)}
+                        disabled={generatingMultiView === c.id}
+                        className="mt-2 w-full py-2 rounded-lg bg-accent text-white text-sm font-semibold hover:opacity-90 disabled:opacity-50 transition"
+                      >
+                        生成{selectedViewCount === '3' ? '三视图' : selectedViewCount === '5' ? '五视图' : '全视图'}
+                      </button>
+                    )}
                   </div>
                 ) : (
-                  <CharacterStage character={c} views={views} onZoom={() => setPreviewChar(c)} />
-                )}
-<<<<<<< HEAD
-                {busyChar === c.id && (
-                  <div className="absolute top-2 right-2 z-10 inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-black/60 text-white text-xs">
-                    <Loader2 size={12} className="animate-spin" />
-                    生成中
+                  <div className="relative rounded-2xl overflow-hidden border border-border bg-bg-elevated/30 flex items-center justify-center" style={{ height: 'calc(100vh - 200px)', maxHeight: 600 }}>
+                    <div className="flex flex-col items-center gap-3">
+                      <Loader2 size={32} className="animate-spin text-accent" />
+                      <span className="text-sm text-text-muted">AI 生成中，请稍候…</span>
+                    </div>
                   </div>
                 )}
-=======
->>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
               </div>
             </div>
 
