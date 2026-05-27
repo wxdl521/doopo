@@ -329,18 +329,28 @@ export const generateImage = createServerFn({ method: 'POST' })
     if (requested && isDashScopeModel(requested)) {
       const qwenKey = process.env.Qwen || process.env.DASHSCOPE_API_KEY
       if (qwenKey) {
-        const isWan = requested.startsWith('wan')
-        const defaultSize = isWan ? '1024*1024' : (QWEN_SYNC_MODELS.has(requested) ? '1328*1328' : '1328*1328')
-        const size = data.size || defaultSize
-        const result = QWEN_ASYNC_MODELS.has(requested)
-          ? await callQwenAsync(requested, data.prompt, size, qwenKey)
-          : await callQwenSync(requested, data.prompt, size, qwenKey)
-        if (result.url) return { ...result, model: requested }
-        dashScopeError = result.error
+        const errors: string[] = []
+        for (const model of dashScopeAttempts(requested)) {
+          const isWan = model.startsWith('wan')
+          const defaultSize = isWan ? '1024*1024' : '1328*1328'
+          const size = normalizeDashScopeSize(model, data.size || defaultSize)
+          const result = QWEN_ASYNC_MODELS.has(model)
+            ? await callQwenAsync(model, data.prompt, size, qwenKey)
+            : await callQwenSync(model, data.prompt, size, qwenKey)
+          if (result.url) return { ...result, model }
+          if (result.error) errors.push(result.error)
+        }
+        dashScopeError = errors.join('；') || `[${requested}] Image generation failed`
         // Fall through to OpenRouter (Gemini) fallback so the UI still gets an image.
       } else {
         dashScopeError = 'Qwen (DashScope) API key is not configured'
       }
+    }
+
+    if (dashScopeError) {
+      const lovableResult = await callLovableGatewayImage(data.prompt)
+      if (lovableResult.url) return lovableResult
+      dashScopeError = `${dashScopeError}；Lovable AI 备用渠道失败: ${lovableResult.error}`
     }
 
     const apiKey = process.env.OPENROUTER_API_KEY
