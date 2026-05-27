@@ -319,5 +319,8 @@ export const generateImage = createServerFn({ method: 'POST' })
       }
     }
 
-    return { url: '', error: lastError, model: '' }
+    const finalError = dashScopeError
+      ? `${dashScopeError}；备用渠道也失败: ${lastError}`
+      : lastError
+    return { url: '', error: finalError, model: '' }
   })
