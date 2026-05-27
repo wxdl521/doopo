@@ -36,6 +36,30 @@ const QWEN_ASYNC_MODELS = new Set<string>([
   'wanx2.0-t2i-turbo',
 ])
 
+const QWEN_SUPPORTED_SIZES = new Set([
+  '1664*928',
+  '1472*1104',
+  '1328*1328',
+  '1104*1472',
+  '928*1664',
+])
+
+function normalizeDashScopeSize(model: string, size: string) {
+  if (model.startsWith('qwen-image') && !QWEN_SUPPORTED_SIZES.has(size)) return '1328*1328'
+  return size
+}
+
+function dashScopeAttempts(requested: string) {
+  const fallbacks: Record<string, string[]> = {
+    'qwen-image-max': ['qwen-image-plus', 'qwen-image'],
+    'qwen-image-max-2025-12-30': ['qwen-image-plus', 'qwen-image'],
+    'qwen-image-2.0-pro': ['qwen-image-2.0', 'qwen-image-plus', 'qwen-image'],
+    'qwen-image-2.0-pro-2026-04-22': ['qwen-image-2.0', 'qwen-image-plus', 'qwen-image'],
+    'qwen-image-2.0-pro-2026-03-03': ['qwen-image-2.0', 'qwen-image-plus', 'qwen-image'],
+  }
+  return [...new Set([requested, ...(fallbacks[requested] ?? [])])]
+}
+
 async function callQwenSync(model: string, prompt: string, size: string, apiKey: string) {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), 50_000)
@@ -116,6 +140,66 @@ async function callQwenAsync(model: string, prompt: string, size: string, apiKey
     await new Promise(r => setTimeout(r, 3000))
   }
   return { url: '', error: `[${model}] timed out (task ${taskId} still running)` }
+}
+
+function extractImageUrl(value: unknown): string {
+  if (!value) return ''
+  if (typeof value === 'string') return value.startsWith('data:image/') ? value : ''
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const url = extractImageUrl(item)
+      if (url) return url
+    }
+    return ''
+  }
+  if (typeof value === 'object') {
+    const obj = value as Record<string, unknown>
+    const direct =
+      (typeof obj.url === 'string' && obj.url.startsWith('data:image/') ? obj.url : '') ||
+      (typeof obj.image === 'string' && obj.image.startsWith('data:image/') ? obj.image : '')
+    if (direct) return direct
+    for (const key of ['image_url', 'images', 'content', 'message', 'delta', 'choices']) {
+      const url = extractImageUrl(obj[key])
+      if (url) return url
+    }
+  }
+  return ''
+}
+
+async function callLovableGatewayImage(prompt: string) {
+  const apiKey = process.env.LOVABLE_API_KEY
+  if (!apiKey) return { url: '', error: 'LOVABLE_API_KEY is not configured', model: '' }
+  const model = 'google/gemini-3.1-flash-image-preview'
+  const res = await fetch('https://ai.gateway.lovable.dev/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: 'user', content: prompt }],
+      modalities: ['image', 'text'],
+      stream: true,
+    }),
+  })
+  const text = await res.text().catch(() => '')
+  if (!res.ok) return { url: '', error: `[${model}] ${res.status}: ${text.slice(0, 180)}`, model }
+
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed.startsWith('data:')) continue
+    const payload = trimmed.slice(5).trim()
+    if (!payload || payload === '[DONE]') continue
+    try {
+      const url = extractImageUrl(JSON.parse(payload))
+      if (url) return { url, error: null as string | null, model }
+    } catch {}
+  }
+  const inlineUrl = text.match(/data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+/)?.[0] || ''
+  return inlineUrl
+    ? { url: inlineUrl, error: null as string | null, model }
+    : { url: '', error: `[${model}] returned no image`, model }
 }
 
 function isDashScopeModel(id: string) {
