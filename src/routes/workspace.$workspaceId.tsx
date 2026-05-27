@@ -13,7 +13,7 @@ import {
 import { generateStageAi } from '../lib/aiGenerate.functions'
 import { generateImage } from '../lib/openrouterImage.functions'
 import { getProject, type ProjectConfigRow } from '../lib/projects.functions'
-import { Maximize2, FileText, Camera, Clock, Users, X, Sparkles, Loader2 } from 'lucide-react'
+import { Maximize2, FileText, Camera, Clock, Users, X, Loader2 } from 'lucide-react'
 import CharacterPortrait from '../components/workspace/CharacterPortrait'
 import CharacterStage from '../components/workspace/CharacterStage'
 import { toast } from 'sonner'
@@ -559,16 +559,12 @@ function WorkspacePage() {
                 ) : (
                   <CharacterStage character={c} views={views} onZoom={() => setPreviewChar(c)} />
                 )}
-                <button
-                  type="button"
-                  onClick={() => genCharImage(c)}
-                  disabled={busyChar === c.id}
-                  className="absolute top-2 right-2 z-10 inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-accent text-accent-foreground text-xs font-semibold shadow hover:opacity-90 disabled:opacity-60"
-                  title={`使用 ${project?.sceneModel || '默认'} 生成`}
-                >
-                  {busyChar === c.id ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
-                  生成主图
-                </button>
+                {busyChar === c.id && (
+                  <div className="absolute top-2 right-2 z-10 inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-black/60 text-white text-xs">
+                    <Loader2 size={12} className="animate-spin" />
+                    生成中
+                  </div>
+                )}
               </div>
             </div>
 
@@ -707,16 +703,12 @@ function WorkspacePage() {
                       )}
                       <span className="absolute top-1.5 left-1.5 text-[10px] font-mono text-white/80">#{p.index} {p.shot}</span>
                       <span className="absolute bottom-1.5 right-1.5 text-[10px] font-mono text-white/70">{p.durationSec}s</span>
-                      <button
-                        type="button"
-                        onClick={() => genPanelImage(p)}
-                        disabled={busyPanel === p.id}
-                        className="absolute top-1.5 right-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-black/60 text-white text-[10px] hover:bg-black/80 disabled:opacity-60"
-                        title={`使用 ${project?.storyboardModel || '默认'} 生成`}
-                      >
-                        {busyPanel === p.id ? <Loader2 size={10} className="animate-spin" /> : <Sparkles size={10} />}
-                        生成
-                      </button>
+                      {busyPanel === p.id && (
+                        <div className="absolute top-1.5 right-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-black/60 text-white text-[10px]">
+                          <Loader2 size={10} className="animate-spin" />
+                          生成中
+                        </div>
+                      )}
                     </div>
                     <div className="p-2 text-xs space-y-0.5">
                       <div className="text-text-primary line-clamp-2">{p.action}</div>
