@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 
 type Input = { prompt: string; model?: string; size?: string };
+type ImageModelInfo = { id?: unknown; architecture?: { output_modalities?: unknown } };
 
 // ---------- Qwen (DashScope) image generation ----------
 const QWEN_ENDPOINT =
@@ -78,8 +79,11 @@ async function callQwenSync(model: string, prompt: string, size: string, apiKey:
     const text = await res.text().catch(() => "");
     return { url: "", error: `[${model}] ${res.status}: ${text.slice(0, 200)}` };
   }
-  const json: any = await res.json();
-  const url: string = json?.output?.choices?.[0]?.message?.content?.[0]?.image || "";
+  const json = (await res.json()) as {
+    output?: { choices?: Array<{ message?: { content?: Array<{ image?: string }> } }> };
+    message?: string;
+  };
+  const url: string = json.output?.choices?.[0]?.message?.content?.[0]?.image || "";
   return url
     ? { url, error: null as string | null }
     : { url: "", error: `[${model}] ${json?.message || "no image returned"}` };
@@ -121,8 +125,8 @@ async function callQwenAsync(model: string, prompt: string, size: string, apiKey
       error: `[${model}] create ${create?.status ?? 0}: ${lastBody.slice(0, 200)}`,
     };
   }
-  const cj: any = await create.json();
-  const taskId: string = cj?.output?.task_id;
+  const cj = (await create.json()) as { output?: { task_id?: string } };
+  const taskId: string = cj.output?.task_id || "";
   if (!taskId) return { url: "", error: `[${model}] missing task_id` };
   const deadline = Date.now() + 50_000;
   await new Promise((r) => setTimeout(r, 2000));
@@ -134,16 +138,19 @@ async function callQwenAsync(model: string, prompt: string, size: string, apiKey
       await new Promise((r) => setTimeout(r, 3000));
       continue;
     }
-    const qj: any = await q.json();
-    const status: string = qj?.output?.task_status;
+    const qj = (await q.json()) as {
+      output?: { task_status?: string; results?: Array<{ url?: string }>; message?: string };
+      message?: string;
+    };
+    const status: string = qj.output?.task_status || "";
     if (status === "SUCCEEDED") {
-      const url: string = qj?.output?.results?.[0]?.url || "";
+      const url: string = qj.output?.results?.[0]?.url || "";
       return url ? { url, error: null as string | null } : { url: "", error: `[${model}] no url` };
     }
     if (status === "FAILED" || status === "CANCELED" || status === "UNKNOWN") {
       return {
         url: "",
-        error: `[${model}] ${status}: ${qj?.output?.message || qj?.message || ""}`,
+        error: `[${model}] ${status}: ${qj.output?.message || qj.message || ""}`,
       };
     }
     await new Promise((r) => setTimeout(r, 3000));
