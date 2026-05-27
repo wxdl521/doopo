@@ -93,12 +93,19 @@ function WorkspacePage() {
     if (busyChar) return
     setBusyChar(c.id)
     try {
+      // Build a prompt that strictly mirrors the character profile shown in the UI,
+      // so the rendered image stays consistent with the description fields.
+      const paletteLine = c.palette?.length
+        ? `signature color palette (must appear in clothing / lighting / accessories): ${c.palette.join(', ')}`
+        : ''
       const prompt = [
-        `${c.name}, ${c.roleLabel}, age ${c.age}`,
-        c.look, c.personality && `personality: ${c.personality}`,
-        c.debutShot && `debut shot: ${c.debutShot}`,
-        'full-body character sheet, front view, cinematic lighting, high detail',
-      ].filter(Boolean).join('. ')
+        `Character reference sheet of "${c.name}" — ${c.roleLabel}, age ${c.age}.`,
+        `Appearance (strictly follow): ${c.look}.`,
+        c.personality && `Personality vibe to convey through expression and posture: ${c.personality}.`,
+        c.debutShot && `Inspired by debut shot: ${c.debutShot}.`,
+        paletteLine,
+        'Full-body, front view, neutral studio background, consistent character design, faithful to the description above, cinematic lighting, high detail, no text, no watermark.',
+      ].filter(Boolean).join(' ')
       const res = await callImage({ data: { prompt, model: project?.sceneModel } })
       if (res.url) {
         setCharImages((m) => ({ ...m, [c.id]: res.url }))
