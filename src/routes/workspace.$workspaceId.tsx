@@ -13,7 +13,7 @@ import {
 import { generateStageAi } from '../lib/aiGenerate.functions'
 import { generateImage } from '../lib/openrouterImage.functions'
 import { getProject, type ProjectConfigRow } from '../lib/projects.functions'
-import { Maximize2, FileText, Camera, Clock, Users, X, Sparkles, Loader2 } from 'lucide-react'
+import { Maximize2, FileText, Camera, Clock, Users, X, Loader2 } from 'lucide-react'
 import CharacterPortrait from '../components/workspace/CharacterPortrait'
 import CharacterStage from '../components/workspace/CharacterStage'
 import { toast } from 'sonner'
