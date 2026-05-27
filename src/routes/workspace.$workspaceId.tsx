@@ -11,7 +11,11 @@ import {
   type Outline, type GenScene, type GenCharacter, type StoryboardPanel, type TimelineData, type TimelineTrack, type TimelineClip,
 } from '../data/workspaceGenerators'
 import { generateStageAi } from '../lib/aiGenerate.functions'
+<<<<<<< HEAD
 import { generateImage } from '../lib/openrouterImage.functions'
+=======
+import { generateImage, repaintCharacterImage } from '../lib/openrouterImage.functions'
+>>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
 import { getProject, type ProjectConfigRow } from '../lib/projects.functions'
 import { Maximize2, FileText, Camera, Clock, Users, X, Loader2 } from 'lucide-react'
 import CharacterPortrait from '../components/workspace/CharacterPortrait'
@@ -72,12 +76,20 @@ function WorkspacePage() {
   const [previewChar, setPreviewChar] = useState<GenCharacter | null>(null)
   const callAi = useServerFn(generateStageAi)
   const callImage = useServerFn(generateImage)
+<<<<<<< HEAD
+=======
+  const callRepaint = useServerFn(repaintCharacterImage)
+>>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
   const loadProject = useServerFn(getProject)
   const [project, setProject] = useState<ProjectConfigRow | null>(null)
   const [charImages, setCharImages] = useState<Record<string, string>>({})
   const [panelImages, setPanelImages] = useState<Record<string, string>>({})
   const [busyChar, setBusyChar] = useState<string | null>(null)
   const [busyPanel, setBusyPanel] = useState<string | null>(null)
+<<<<<<< HEAD
+=======
+  const [repaintingChar, setRepaintingChar] = useState<string | null>(null)
+>>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
   const [autoGen, setAutoGen] = useState(true)
   void setAutoGen
   const workspaceId = Route.useParams().workspaceId
@@ -144,6 +156,29 @@ function WorkspacePage() {
     }
   }
 
+<<<<<<< HEAD
+=======
+  async function repaintCharImage(charId: string, styleIndex: number) {
+    if (repaintingChar) return
+    const currentUrl = charImages[charId]
+    if (!currentUrl) return
+    setRepaintingChar(charId)
+    try {
+      const res = await callRepaint({ data: { imageUrl: currentUrl, styleIndex } })
+      if (res.url) {
+        setCharImages((m) => ({ ...m, [charId]: res.url }))
+        toast.success('风格重绘完成')
+      } else {
+        toast.error(res.error || '重绘失败')
+      }
+    } catch {
+      toast.error('重绘失败')
+    } finally {
+      setRepaintingChar(null)
+    }
+  }
+
+>>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
   // Auto-generate real images for newly produced characters / storyboard panels
   // using the project's configured model. Sequential to avoid rate limits.
   useEffect(() => {
@@ -297,7 +332,11 @@ function WorkspacePage() {
   async function produce(stage: WorkspaceTab, userPrompt?: string) {
     let aiPatch: Partial<WorkspaceData> | null = null
     const meaningful = (userPrompt ?? '').trim().length >= 4
+<<<<<<< HEAD
     // Snapshot current data so the server call sees consistent context.
+=======
+    // Snapshot current current currentData so the server call sees consistent context.
+>>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
     const snapshot = data
     if (meaningful && (stage === 'canvas' || stage === 'script' || stage === 'character' || stage === 'storyboard' || stage === 'timeline')) {
       aiPatch = await tryAi(stage, userPrompt!.trim(), snapshot)
@@ -332,6 +371,31 @@ function WorkspacePage() {
     setTimeout(() => setFlash((f) => (f === stage ? null : f)), 1500)
   }
 
+<<<<<<< HEAD
+=======
+  async function saveAssets() {
+    if (!user) {
+      toast.error('请先登录')
+      return
+    }
+    if (data.characters.length > 0) {
+      const { error: charErr } = await saveCharacters(data.characters, user.id)
+      if (charErr) {
+        toast.error('保存角色失败')
+        return
+      }
+    }
+    if (data.scenes.length > 0) {
+      const { error: sceneErr } = await saveScenes(data.scenes, user.id)
+      if (sceneErr) {
+        toast.error('保存场景失败')
+        return
+      }
+    }
+    toast.success('已保存到资产库')
+  }
+
+>>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
   return (
     <div className="h-screen flex flex-col bg-bg overflow-hidden">
       <WorkspaceTopbar tab={tab} onTabChange={setTab} episode={episode} onEpisodeChange={setEpisode} onSaveAssets={handleSaveAssets} />
@@ -350,6 +414,10 @@ function WorkspacePage() {
           collapsed={collapsed}
           onToggleCollapsed={() => setCollapsed((v) => !v)}
           initialInput={initialChatInput}
+<<<<<<< HEAD
+=======
+          onSaveAssets={saveAssets}
+>>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
         />
       </div>
       {previewChar && (
@@ -454,7 +522,11 @@ function WorkspacePage() {
       <div className="max-w-4xl mx-auto space-y-4">
         <div className="panel p-5 flex items-start justify-between gap-3">
           <div>
+<<<<<<< HEAD
             <h2 className="font-display text-xl font-bold">校园恋爱短剧 · 第{episode}集 · 广播室告白</h2>
+=======
+            <h2 className="font-display text-xl font-bold">{data.outline?.logline ? `${data.outline.logline} · 第${episode}集` : `第${episode}集`}</h2>
+>>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
             <p className="text-text-secondary text-sm mt-1">{data.outline?.logline}</p>
           </div>
           <FreshBadge stage="script" />
@@ -559,19 +631,53 @@ function WorkspacePage() {
             <div className="flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[240px_1fr] md:items-start gap-4 md:gap-5">
               <CharacterDossier character={c} cast={sorted} />
               <div className="relative flex-1 min-h-0">
+<<<<<<< HEAD
                 {charImages[c.id] ? (
                   <div className="rounded-2xl overflow-hidden border border-border bg-bg-elevated/30" style={{ height: 'calc(100vh - 200px)', maxHeight: 600 }}>
                     <img src={charImages[c.id]} alt={c.name} className="w-full h-full object-contain" />
+=======
+                {busyChar === c.id ? (
+                  <div className="relative rounded-2xl overflow-hidden border border-border bg-bg-elevated/30 flex items-center justify-center" style={{ height: 'calc(100vh - 200px)', maxHeight: 600 }}>
+                    <div className="flex flex-col items-center gap-3">
+                      <Loader2 size={32} className="animate-spin text-accent" />
+                      <span className="text-sm text-text-muted">AI 生成中，请稍候…</span>
+                    </div>
+                  </div>
+                ) : charImages[c.id] ? (
+                  <div className="relative rounded-2xl overflow-hidden border border-border bg-bg-elevated/30" style={{ height: 'calc(100vh - 200px)', maxHeight: 600 }}>
+                    <img src={charImages[c.id]} alt={c.name} className="w-full h-full object-contain" />
+                    {repaintingChar === c.id && (
+                      <div className="absolute inset-0 flex items-center justify-center bg-black/50">
+                        <Loader2 size={24} className="animate-spin text-white" />
+                      </div>
+                    )}
+                    <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1.5">
+                      {[0, 1, 2, 3, 4, 5].map((idx) => (
+                        <button
+                          key={idx}
+                          onClick={() => repaintCharImage(c.id, idx)}
+                          disabled={repaintingChar === c.id}
+                          title={`风格 ${idx + 1}`}
+                          className="w-8 h-8 rounded-full bg-black/60 border border-white/20 text-white text-xs hover:bg-black/80 disabled:opacity-40 transition"
+                        >
+                          {idx + 1}
+                        </button>
+                      ))}
+                    </div>
+>>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
                   </div>
                 ) : (
                   <CharacterStage character={c} views={views} onZoom={() => setPreviewChar(c)} />
                 )}
+<<<<<<< HEAD
                 {busyChar === c.id && (
                   <div className="absolute top-2 right-2 z-10 inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-black/60 text-white text-xs">
                     <Loader2 size={12} className="animate-spin" />
                     生成中
                   </div>
                 )}
+=======
+>>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
               </div>
             </div>
 

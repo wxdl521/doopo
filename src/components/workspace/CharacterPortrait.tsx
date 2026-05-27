@@ -53,11 +53,17 @@ export default function CharacterPortrait({ character, className, view = 'front'
     )
   }
 
+<<<<<<< HEAD
   // Full-figure views use contain to keep the whole character visible and centered.
   // Expression view zooms into the face via cover + tuned object-position.
   const isExpression = view === 'expression'
   const fit = isExpression ? 'object-cover' : 'object-contain'
   const objectPosition = isExpression ? 'center 22%' : 'center center'
+=======
+  // Use contain so the image scales to fit without cropping, centered in the parent.
+  const fit = 'object-contain'
+  const objectPosition = 'center center'
+>>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
 
   return (
     <div

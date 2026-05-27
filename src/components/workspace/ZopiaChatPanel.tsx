@@ -5,7 +5,11 @@ import type { WorkspaceTab } from './WorkspaceTopbar'
 
 type Attachment = { id: string; name: string; size: number; type: string; url?: string }
 
+<<<<<<< HEAD
 type CtaKey = 'extract' | 'design' | 'storyboard' | 'to_script' | 'to_character' | 'to_timeline' | 'refine' | 'preview'
+=======
+type CtaKey = 'extract' | 'design' | 'storyboard' | 'to_script' | 'to_character' | 'to_timeline' | 'refine' | 'preview' | 'save_assets'
+>>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
 
 type Message =
   | { id: string; kind: 'user'; text: string; attachments?: Attachment[] }
@@ -26,6 +30,10 @@ function buildWorkflow(stage: WorkspaceTab, t: any): WorkflowDef {
         ctas: [
           { key: 'to_script', label: t.zp_cta_to_script, target: 'script' },
           { key: 'to_character', label: t.zp_cta_to_character, target: 'character' },
+<<<<<<< HEAD
+=======
+          { key: 'save_assets', label: t.zp_cta_save_assets, target: 'character' },
+>>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
           { key: 'refine', label: t.zp_cta_refine, target: 'canvas' },
         ],
       }
@@ -34,6 +42,10 @@ function buildWorkflow(stage: WorkspaceTab, t: any): WorkflowDef {
         steps: [t.zp_step_char_load, t.zp_step_char_parse, t.zp_step_char_extract, t.zp_step_char_persona, t.zp_step_char_render],
         summary: { title: t.zp_summary_char_done, detail: t.zp_summary_char_detail, next: t.zp_summary_char_next },
         ctas: [
+<<<<<<< HEAD
+=======
+          { key: 'save_assets', label: t.zp_cta_save_assets, target: 'character' },
+>>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
           { key: 'design', label: t.zp_cta_design, target: 'character' },
           { key: 'storyboard', label: t.zp_cta_storyboard, target: 'storyboard' },
           { key: 'refine', label: t.zp_cta_refine, target: 'character' },
@@ -72,7 +84,11 @@ function buildWorkflow(stage: WorkspaceTab, t: any): WorkflowDef {
 }
 
 export default function ZopiaChatPanel({
+<<<<<<< HEAD
   stage, onJumpStage, onProduce, collapsed, onToggleCollapsed, initialInput,
+=======
+  stage, onJumpStage, onProduce, collapsed, onToggleCollapsed, initialInput, onSaveAssets,
+>>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
 }: {
   stage: WorkspaceTab
   onJumpStage: (t: WorkspaceTab) => void
@@ -80,6 +96,10 @@ export default function ZopiaChatPanel({
   collapsed: boolean
   onToggleCollapsed: () => void
   initialInput?: string
+<<<<<<< HEAD
+=======
+  onSaveAssets?: () => void | Promise<void>
+>>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
 }) {
   const { t } = useLanguage()
   const [messages, setMessages] = useState<Message[]>([])
@@ -344,6 +364,10 @@ export default function ZopiaChatPanel({
 
   function handleCta(c: { key: CtaKey; label: string; target: WorkspaceTab }) {
     if (c.key === 'preview') { onJumpStage(c.target); return }
+<<<<<<< HEAD
+=======
+    if (c.key === 'save_assets') { onSaveAssets?.(); return }
+>>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
     const spec = getParamSpec(c)
     if (!spec) return
     const defaults: Record<string, string> = {}

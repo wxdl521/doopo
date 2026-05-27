@@ -15,6 +15,12 @@ dist-ssr
 .tanstack/**
 .nitro
 *.local
+<<<<<<< HEAD
+=======
+.env
+.env.local
+.env.*.local
+>>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
 
 # Wrangler / Cloudflare
 .wrangler/

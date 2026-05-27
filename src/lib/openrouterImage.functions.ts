@@ -8,6 +8,11 @@ const QWEN_ENDPOINT =
   "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
 const QWEN_ASYNC_CREATE =
   "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis";
+<<<<<<< HEAD
+=======
+const WAN2_PRO_ENDPOINT =
+  "https://dashscope.aliyuncs.com/api/v1/services/aigc/image-generation/generation";
+>>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
 const QWEN_TASK_GET = "https://dashscope.aliyuncs.com/api/v1/tasks/";
 
 // Sync multimodal endpoint is only safe for the fastest small models.
@@ -33,6 +38,13 @@ const QWEN_ASYNC_MODELS = new Set<string>([
   "wanx2.1-t2i-plus",
   "wanx2.0-t2i-turbo",
 ]);
+<<<<<<< HEAD
+=======
+// Wan 2.7 Pro uses the new image-generation endpoint with messages format
+const WAN2_PRO_MODELS = new Set<string>([
+  "wan2.7-image-pro",
+]);
+>>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
 
 const QWEN_SUPPORTED_SIZES = new Set([
   "1664*928",
@@ -158,6 +170,138 @@ async function callQwenAsync(model: string, prompt: string, size: string, apiKey
   return { url: "", error: `[${model}] timed out (task ${taskId} still running)` };
 }
 
+<<<<<<< HEAD
+=======
+async function callWan2Pro(prompt: string, size: string, apiKey: string) {
+  // Wan 2.7 Pro uses the new image-generation endpoint with messages format.
+  let create: Response | null = null;
+  let lastBody = "";
+  for (let attempt = 0; attempt < 3; attempt++) {
+    create = await fetch(WAN2_PRO_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+        "X-DashScope-Async": "enable",
+      },
+      body: JSON.stringify({
+        model: "wan2.7-image-pro",
+        input: {
+          messages: [
+            {
+              role: "user",
+              content: [{ text: prompt }],
+            },
+          ],
+        },
+        parameters: { size, n: 1, watermark: false, thinking_mode: true },
+      }),
+    });
+    if (create.ok) break;
+    lastBody = await create.text().catch(() => "");
+    if (create.status !== 429) break;
+    await new Promise((r) => setTimeout(r, 4000 + attempt * 4000));
+  }
+  if (!create || !create.ok) {
+    return { url: "", error: `[wan2.7-image-pro] create ${create?.status ?? 0}: ${lastBody.slice(0, 200)}` };
+  }
+  const cj = (await create.json()) as { output?: { task_id?: string } };
+  const taskId: string = cj.output?.task_id || "";
+  if (!taskId) return { url: "", error: `[wan2.7-image-pro] missing task_id` };
+
+  const deadline = Date.now() + 50_000;
+  await new Promise((r) => setTimeout(r, 3000));
+  while (Date.now() < deadline) {
+    const q = await fetch(QWEN_TASK_GET + taskId, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    if (!q.ok) {
+      await new Promise((r) => setTimeout(r, 3000));
+      continue;
+    }
+    const qj = (await q.json()) as {
+      output?: { task_status?: string; results?: Array<{ url?: string }>; message?: string };
+      message?: string;
+    };
+    const status: string = qj.output?.task_status || "";
+    if (status === "SUCCEEDED") {
+      const url: string = qj.output?.results?.[0]?.url || "";
+      return url ? { url, error: null as string | null } : { url: "", error: `[wan2.7-image-pro] no url` };
+    }
+    if (status === "FAILED" || status === "CANCELED" || status === "UNKNOWN") {
+      return {
+        url: "",
+        error: `[wan2.7-image-pro] ${status}: ${qj.output?.message || qj.message || ""}`,
+      };
+    }
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+  return { url: "", error: `[wan2.7-image-pro] timed out (task ${taskId} still running)` };
+}
+
+async function callWanxStyleRepaint(imageUrl: string, styleIndex: number, apiKey: string) {
+  const WANX_STYLE_ENDPOINT = "https://dashscope.aliyuncs.com/api/v1/services/aigc/image-generation/generation";
+  let create: Response | null = null;
+  let lastBody = "";
+  for (let attempt = 0; attempt < 3; attempt++) {
+    create = await fetch(WANX_STYLE_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+        "X-DashScope-Async": "enable",
+      },
+      body: JSON.stringify({
+        model: "wanx-style-repaint-v1",
+        input: {
+          image_url: imageUrl,
+          style_index: styleIndex,
+        },
+      }),
+    });
+    if (create.ok) break;
+    lastBody = await create.text().catch(() => "");
+    if (create.status !== 429) break;
+    await new Promise((r) => setTimeout(r, 4000 + attempt * 4000));
+  }
+  if (!create || !create.ok) {
+    return { url: "", error: `[wanx-style-repaint-v1] create ${create?.status ?? 0}: ${lastBody.slice(0, 200)}` };
+  }
+  const cj = (await create.json()) as { output?: { task_id?: string } };
+  const taskId: string = cj.output?.task_id || "";
+  if (!taskId) return { url: "", error: `[wanx-style-repaint-v1] missing task_id` };
+
+  const deadline = Date.now() + 50_000;
+  await new Promise((r) => setTimeout(r, 3000));
+  while (Date.now() < deadline) {
+    const q = await fetch(QWEN_TASK_GET + taskId, {
+      headers: { Authorization: `Bearer ${apiKey}` },
+    });
+    if (!q.ok) {
+      await new Promise((r) => setTimeout(r, 3000));
+      continue;
+    }
+    const qj = (await q.json()) as {
+      output?: { task_status?: string; results?: Array<{ url?: string }>; message?: string };
+      message?: string;
+    };
+    const status: string = qj.output?.task_status || "";
+    if (status === "SUCCEEDED") {
+      const url: string = qj.output?.results?.[0]?.url || "";
+      return url ? { url, error: null as string | null } : { url: "", error: `[wanx-style-repaint-v1] no url` };
+    }
+    if (status === "FAILED" || status === "CANCELED" || status === "UNKNOWN") {
+      return {
+        url: "",
+        error: `[wanx-style-repaint-v1] ${status}: ${qj.output?.message || qj.message || ""}`,
+      };
+    }
+    await new Promise((r) => setTimeout(r, 3000));
+  }
+  return { url: "", error: `[wanx-style-repaint-v1] timed out (task ${taskId} still running)` };
+}
+
+>>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
 function extractImageUrl(value: unknown): string {
   if (!value) return "";
   if (typeof value === "string") return value.startsWith("data:image/") ? value : "";
@@ -350,6 +494,7 @@ export const generateImage = createServerFn({ method: "POST" })
       const qwenKey = process.env.Qwen || process.env.DASHSCOPE_API_KEY;
       if (qwenKey) {
         const errors: string[] = [];
+<<<<<<< HEAD
         for (const model of dashScopeAttempts(requested)) {
           const isWan = model.startsWith("wan");
           const defaultSize = isWan ? "1024*1024" : "1328*1328";
@@ -359,6 +504,25 @@ export const generateImage = createServerFn({ method: "POST" })
             : await callQwenSync(model, data.prompt, size, qwenKey);
           if (result.url) return { ...result, model };
           if (result.error) errors.push(result.error);
+=======
+        // Wan 2.7 Pro uses the new image-generation endpoint with messages format.
+        if (WAN2_PRO_MODELS.has(requested)) {
+          const size = data.size || "2K";
+          const result = await callWan2Pro(data.prompt, size, qwenKey);
+          if (result.url) return { ...result, model: requested };
+          if (result.error) errors.push(result.error);
+        } else {
+          for (const model of dashScopeAttempts(requested)) {
+            const isWan = model.startsWith("wan");
+            const defaultSize = isWan ? "1024*1024" : "1328*1328";
+            const size = normalizeDashScopeSize(model, data.size || defaultSize);
+            const result = QWEN_ASYNC_MODELS.has(model)
+              ? await callQwenAsync(model, data.prompt, size, qwenKey)
+              : await callQwenSync(model, data.prompt, size, qwenKey);
+            if (result.url) return { ...result, model };
+            if (result.error) errors.push(result.error);
+          }
+>>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
         }
         dashScopeError = errors.join("；") || `[${requested}] Image generation failed`;
         // Fall through to OpenRouter (Gemini) fallback so the UI still gets an image.
@@ -441,3 +605,22 @@ export const generateImage = createServerFn({ method: "POST" })
       : lastError;
     return { url: "", error: finalError, model: "" };
   });
+<<<<<<< HEAD
+=======
+
+export const repaintCharacterImage = createServerFn({ method: "POST" })
+  .inputValidator((input: { imageUrl: string; styleIndex: number }) => {
+    if (!input || typeof input.imageUrl !== "string" || !input.imageUrl.trim()) {
+      throw new Error("imageUrl required");
+    }
+    if (typeof input.styleIndex !== "number" || input.styleIndex < 0) {
+      throw new Error("styleIndex must be a non-negative number");
+    }
+    return input;
+  })
+  .handler(async ({ data }) => {
+    const qwenKey = process.env.Qwen || process.env.DASHSCOPE_API_KEY;
+    if (!qwenKey) return { url: "", error: "Qwen (DashScope) API key is not configured" };
+    return callWanxStyleRepaint(data.imageUrl, data.styleIndex, qwenKey);
+  });
+>>>>>>> fbc9110 (feat(workspace): add Wan 2.7 Pro image generation and Wanx style repaint)
