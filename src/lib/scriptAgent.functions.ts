@@ -15,23 +15,29 @@ const Lang = z.enum(['zh', 'en'])
 // const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'
 // const MINIMAX_ENDPOINT = 'https://api.minimaxi.com/anthropic/v1/messages'
 const QWEN_ENDPOINT = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions'
-// const DEFAULT_MODEL = 'gemini:gemini-3.5-flash'
+const LOVABLE_ENDPOINT = 'https://ai.gateway.lovable.dev/v1/chat/completions'
 
-type Provider = 'lovable' | 'gemini' | 'minimax' | 'qwen'
+type Provider = 'lovable' | 'qwen'
 
-// 解析模型 id：
-//   "gemini:xxx"     → 直接调用 Google Generative Language（使用 Default_Gemini_API_Key）
-//   "lovable:xxx"    → Lovable AI Gateway
-//   "openrouter:xxx" → 仍走 Lovable Gateway（向后兼容，去前缀）
-//   "minimax:xxx"    → MiniMax API（使用 MINIMAX_API_KEY）
-//   "qwen:xxx"       → 阿里 DashScope（使用 Qwen 密钥，OpenAI 兼容接口）
-//   裸 id            → Qwen
+// 解析模型 id 并归一化为目标 provider：
+//   "lovable:xxx"     → Lovable AI Gateway，model = xxx（前端已传完整路径）
+//   "gemini:xxx"      → Lovable AI Gateway，自动补 "google/" 前缀
+//   "gpt:xxx" / "openai:xxx" → Lovable AI Gateway，自动补 "openai/" 前缀
+//   "openrouter:xxx"  → Lovable AI Gateway（向后兼容）
+//   "qwen:xxx"        → 阿里 DashScope
+//   裸 id             → Qwen 默认
 function pickModel(raw?: string): { provider: Provider; model: string } {
   const v = (raw ?? '').trim() || 'qwen-plus'
-  // if (v.startsWith('gemini:')) return { provider: 'gemini', model: v.slice(7) }
-  // if (v.startsWith('lovable:')) return { provider: 'lovable', model: v.slice(8) }
-  // if (v.startsWith('openrouter:')) return { provider: 'lovable', model: v.slice(11) }
-  // if (v.startsWith('minimax:')) return { provider: 'minimax', model: v.slice(8) }
+  if (v.startsWith('lovable:')) return { provider: 'lovable', model: v.slice(8) }
+  if (v.startsWith('openrouter:')) return { provider: 'lovable', model: v.slice(11) }
+  if (v.startsWith('gemini:')) {
+    const m = v.slice(7)
+    return { provider: 'lovable', model: m.includes('/') ? m : `google/${m}` }
+  }
+  if (v.startsWith('gpt:') || v.startsWith('openai:')) {
+    const m = v.slice(v.indexOf(':') + 1)
+    return { provider: 'lovable', model: m.includes('/') ? m : `openai/${m}` }
+  }
   if (v.startsWith('qwen:')) return { provider: 'qwen', model: v.slice(5) }
   return { provider: 'qwen', model: v }
 }
@@ -55,10 +61,14 @@ async function* streamChat(opts: {
   //       : picked.provider === 'qwen'
   //         ? process.env.Qwen
   //         : process.env.LOVABLE_API_KEY
-  const apiKey = process.env.Qwen
+  const apiKey =
+    picked.provider === 'lovable' ? process.env.LOVABLE_API_KEY : process.env.Qwen
   if (!apiKey) {
     yield {
-      error: 'Qwen 密钥未配置',
+      error:
+        picked.provider === 'lovable'
+          ? 'LOVABLE_API_KEY 未配置'
+          : 'Qwen 密钥未配置',
     }
     return
   }
@@ -121,7 +131,7 @@ async function* streamChat(opts: {
   //     : picked.provider === 'qwen'
   //       ? QWEN_ENDPOINT
   //       : LOVABLE_ENDPOINT
-  const endpoint = QWEN_ENDPOINT
+  const endpoint = picked.provider === 'lovable' ? LOVABLE_ENDPOINT : QWEN_ENDPOINT
   try {
     upstream = await fetch(endpoint, {
       method: 'POST',
