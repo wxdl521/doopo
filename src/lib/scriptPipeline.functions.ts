@@ -323,7 +323,7 @@ export const genLogline = createServerFn({ method: 'POST' })
     return callToolCall<{ logline: string; premise: string; themes: string[] }>({
       model: data.model,
       system: sys,
-      user,
+      user: wrapFictionUser(data.lang, user),
       temperature: 0.9,
       tool: {
         name: 'emit_logline',
@@ -373,7 +373,7 @@ export const genOutline = createServerFn({ method: 'POST' })
     return callToolCall<{ acts: PipelineAct[] }>({
       model: data.model,
       system: sys,
-      user,
+      user: wrapFictionUser(data.lang, user),
       temperature: 0.8,
       tool: {
         name: 'emit_outline',
@@ -445,7 +445,7 @@ export const genScenes = createServerFn({ method: 'POST' })
     return callToolCall<{ scenes: PipelineScene[] }>({
       model: data.model,
       system: sys,
-      user,
+      user: wrapFictionUser(data.lang, user),
       temperature: 0.75,
       tool: {
         name: 'emit_scenes',
@@ -530,7 +530,7 @@ export const genCharacters = createServerFn({ method: 'POST' })
     return callToolCall<{ characters: PipelineCharacter[] }>({
       model: data.model,
       system: sys,
-      user,
+      user: wrapFictionUser(data.lang, user),
       temperature: 0.85,
       tool: {
         name: 'emit_characters',
@@ -598,7 +598,7 @@ export const rewriteScene = createServerFn({ method: 'POST' })
     return callToolCall<{ scene: PipelineScene }>({
       model: data.model,
       system: sys,
-      user,
+      user: wrapFictionUser(data.lang, user),
       temperature: 0.7,
       tool: {
         name: 'emit_scene',
