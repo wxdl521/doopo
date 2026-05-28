@@ -227,7 +227,11 @@ async function callToolCall<T>(opts: {
           if (RETRYABLE.has(res.status)) continue
           return { ok: false, error: lastError }
         }
+        if (res.status === 403 && /terms of service|prohibited|policy/i.test(txt)) {
+          lastError = 'content_policy'
+        } else {
         lastError = `${provider} ${res.status}: ${txt.slice(0, 200)}`
+        }
         if (RETRYABLE.has(res.status)) continue
         return { ok: false, error: lastError }
       }
@@ -255,6 +259,18 @@ async function callToolCall<T>(opts: {
             : 'Network error'
     }
   }
+
+  // Cross-provider fallback: if blocked by ToS / content policy on the chosen provider,
+  // retry with Lovable Gateway Gemini which is more permissive for creative writing.
+  if (lastError === 'content_policy' && provider !== 'lovable' && process.env.LOVABLE_API_KEY) {
+    const fallbackRes = await callToolCall<T>({
+      ...opts,
+      model: 'lovable:google/gemini-3-flash-preview',
+    })
+    if (fallbackRes.ok) return fallbackRes
+    return { ok: false, error: 'content_policy' }
+  }
+
   return { ok: false, error: lastError }
 }
 
