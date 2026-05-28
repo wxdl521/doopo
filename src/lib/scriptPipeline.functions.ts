@@ -287,7 +287,7 @@ const SYS_EN_BASE =
   '3) Every scene has at least one conflict beat; 4) Character names stay consistent; 5) Vivid, visual action lines.'
 
 const sysFor = (lang: 'zh' | 'en', extra: string) =>
-  (lang === 'zh' ? SYS_ZH_BASE : SYS_EN_BASE) + '\n' + extra
+  wrapFictionSystem(lang, (lang === 'zh' ? SYS_ZH_BASE : SYS_EN_BASE) + '\n' + extra)
 
 // ============= 1) Logline =============
 
