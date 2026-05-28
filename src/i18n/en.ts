@@ -878,6 +878,7 @@ export const en: Translations = {
   zp_cta_to_timeline: 'Go to timeline',
   zp_cta_refine: 'Keep refining',
   zp_cta_preview: 'Preview',
+  zp_cta_save_assets: 'Save as asset',
 
   zp_step_canvas_load: 'Loading idea workflow',
   zp_step_canvas_expand: 'Expanding the premise',
