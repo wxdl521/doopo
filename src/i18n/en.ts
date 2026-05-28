@@ -948,6 +948,7 @@ export const en: Translations = {
   script_pipeline_failed: 'Generation failed',
   script_pipeline_rate_limit: 'Rate limited. Try again shortly.',
   script_pipeline_no_credits: 'Out of AI credits.',
+  script_pipeline_content_policy: 'The selected model refused this content (sensitive or against provider policy). Auto-retried other models without luck — try a Gemini / DeepSeek model, or soften the plot description.',
   script_legacy_mode: 'Quick one-shot (legacy)',
   script_pipeline_mode: 'Stepwise pipeline (recommended)',
   script_scene_action: 'Action',

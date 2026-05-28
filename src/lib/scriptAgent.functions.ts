@@ -199,6 +199,23 @@ async function* streamChat(opts: {
       return
     }
     const txt = await upstream.text().catch(() => '')
+    // 403 ToS / 内容审核：跨服务商回退到 Lovable Gateway Gemini（对创作更宽松）
+    if (
+      upstream.status === 403 &&
+      /terms of service|prohibited|policy|moderation/i.test(txt) &&
+      picked.provider !== 'lovable' &&
+      process.env.LOVABLE_API_KEY
+    ) {
+      yield* streamChat({
+        ...opts,
+        model: { provider: 'lovable', model: 'google/gemini-3-flash-preview' },
+      })
+      return
+    }
+    if (upstream.status === 403) {
+      yield { error: 'content_policy' }
+      return
+    }
     yield { error: `网关错误 ${upstream.status}: ${txt.slice(0, 200)}` }
     return
   }
