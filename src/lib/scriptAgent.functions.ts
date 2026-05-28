@@ -16,8 +16,9 @@ const Lang = z.enum(['zh', 'en'])
 // const MINIMAX_ENDPOINT = 'https://api.minimaxi.com/anthropic/v1/messages'
 const QWEN_ENDPOINT = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions'
 const LOVABLE_ENDPOINT = 'https://ai.gateway.lovable.dev/v1/chat/completions'
+const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions'
 
-type Provider = 'lovable' | 'qwen'
+type Provider = 'lovable' | 'qwen' | 'openrouter'
 
 // 解析模型 id 并归一化为目标 provider：
 //   "lovable:xxx"     → Lovable AI Gateway，model = xxx（前端已传完整路径）
@@ -29,7 +30,7 @@ type Provider = 'lovable' | 'qwen'
 function pickModel(raw?: string): { provider: Provider; model: string } {
   const v = (raw ?? '').trim() || 'qwen-plus'
   if (v.startsWith('lovable:')) return { provider: 'lovable', model: v.slice(8) }
-  if (v.startsWith('openrouter:')) return { provider: 'lovable', model: v.slice(11) }
+  if (v.startsWith('openrouter:')) return { provider: 'openrouter', model: v.slice(11) }
   if (v.startsWith('gemini:')) {
     const m = v.slice(7)
     return { provider: 'lovable', model: m.includes('/') ? m : `google/${m}` }
@@ -37,6 +38,26 @@ function pickModel(raw?: string): { provider: Provider; model: string } {
   if (v.startsWith('gpt:') || v.startsWith('openai:')) {
     const m = v.slice(v.indexOf(':') + 1)
     return { provider: 'lovable', model: m.includes('/') ? m : `openai/${m}` }
+  }
+  if (v.startsWith('anthropic:') || v.startsWith('claude:')) {
+    const m = v.slice(v.indexOf(':') + 1)
+    return { provider: 'openrouter', model: m.includes('/') ? m : `anthropic/${m}` }
+  }
+  if (v.startsWith('deepseek:')) {
+    const m = v.slice(9)
+    return { provider: 'openrouter', model: m.includes('/') ? m : `deepseek/${m}` }
+  }
+  if (v.startsWith('meta:') || v.startsWith('llama:')) {
+    const m = v.slice(v.indexOf(':') + 1)
+    return { provider: 'openrouter', model: m.includes('/') ? m : `meta-llama/${m}` }
+  }
+  if (v.startsWith('mistral:')) {
+    const m = v.slice(8)
+    return { provider: 'openrouter', model: m.includes('/') ? m : `mistralai/${m}` }
+  }
+  if (v.startsWith('xai:') || v.startsWith('grok:')) {
+    const m = v.slice(v.indexOf(':') + 1)
+    return { provider: 'openrouter', model: m.includes('/') ? m : `x-ai/${m}` }
   }
   if (v.startsWith('qwen:')) return { provider: 'qwen', model: v.slice(5) }
   return { provider: 'qwen', model: v }
@@ -62,13 +83,19 @@ async function* streamChat(opts: {
   //         ? process.env.Qwen
   //         : process.env.LOVABLE_API_KEY
   const apiKey =
-    picked.provider === 'lovable' ? process.env.LOVABLE_API_KEY : process.env.Qwen
+    picked.provider === 'lovable'
+      ? process.env.LOVABLE_API_KEY
+      : picked.provider === 'openrouter'
+        ? process.env.OPENROUTER_API_KEY
+        : process.env.Qwen
   if (!apiKey) {
     yield {
       error:
         picked.provider === 'lovable'
           ? 'LOVABLE_API_KEY 未配置'
-          : 'Qwen 密钥未配置',
+          : picked.provider === 'openrouter'
+            ? 'OPENROUTER_API_KEY 未配置'
+            : 'Qwen 密钥未配置',
     }
     return
   }
@@ -131,13 +158,21 @@ async function* streamChat(opts: {
   //     : picked.provider === 'qwen'
   //       ? QWEN_ENDPOINT
   //       : LOVABLE_ENDPOINT
-  const endpoint = picked.provider === 'lovable' ? LOVABLE_ENDPOINT : QWEN_ENDPOINT
+  const endpoint =
+    picked.provider === 'lovable'
+      ? LOVABLE_ENDPOINT
+      : picked.provider === 'openrouter'
+        ? OPENROUTER_ENDPOINT
+        : QWEN_ENDPOINT
   try {
     upstream = await fetch(endpoint, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
+        ...(picked.provider === 'openrouter'
+          ? { 'HTTP-Referer': 'https://doopoo.app', 'X-Title': 'Doopoo' }
+          : {}),
       },
       body: JSON.stringify({
         model: picked.model,

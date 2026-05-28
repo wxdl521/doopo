@@ -45,7 +45,7 @@ export type PipelineCharacter = z.infer<typeof CharacterSchema>
 
 // ============= Provider dispatcher (OpenRouter + Lovable AI Gateway) =============
 
-type Provider = 'qwen' | 'lovable'
+type Provider = 'qwen' | 'lovable' | 'openrouter'
 
 // const OPENROUTER_FALLBACKS = [
 //   'google/gemini-2.5-flash',
@@ -77,6 +77,12 @@ const LOVABLE_FALLBACKS = [
   'google/gemini-2.5-pro',
 ] as const
 
+const OPENROUTER_FALLBACKS = [
+  'google/gemini-2.5-flash',
+  'deepseek/deepseek-chat-v3.1',
+  'meta-llama/llama-3.3-70b-instruct',
+] as const
+
 const RETRYABLE = new Set([403, 404, 429, 500, 502, 503])
 
 type ToolSpec = {
@@ -91,7 +97,7 @@ function parseModel(raw: string | undefined): { provider: Provider; model: strin
   const v = raw?.trim()
   if (!v) return { provider: 'qwen', model: undefined }
   if (v.startsWith('lovable:')) return { provider: 'lovable', model: v.slice(8) }
-  if (v.startsWith('openrouter:')) return { provider: 'lovable', model: v.slice(11) }
+  if (v.startsWith('openrouter:')) return { provider: 'openrouter', model: v.slice(11) }
   if (v.startsWith('gemini:')) {
     const m = v.slice(7)
     return { provider: 'lovable', model: m.includes('/') ? m : `google/${m}` }
@@ -99,6 +105,26 @@ function parseModel(raw: string | undefined): { provider: Provider; model: strin
   if (v.startsWith('gpt:') || v.startsWith('openai:')) {
     const m = v.slice(v.indexOf(':') + 1)
     return { provider: 'lovable', model: m.includes('/') ? m : `openai/${m}` }
+  }
+  if (v.startsWith('anthropic:') || v.startsWith('claude:')) {
+    const m = v.slice(v.indexOf(':') + 1)
+    return { provider: 'openrouter', model: m.includes('/') ? m : `anthropic/${m}` }
+  }
+  if (v.startsWith('deepseek:')) {
+    const m = v.slice(9)
+    return { provider: 'openrouter', model: m.includes('/') ? m : `deepseek/${m}` }
+  }
+  if (v.startsWith('meta:') || v.startsWith('llama:')) {
+    const m = v.slice(v.indexOf(':') + 1)
+    return { provider: 'openrouter', model: m.includes('/') ? m : `meta-llama/${m}` }
+  }
+  if (v.startsWith('mistral:')) {
+    const m = v.slice(8)
+    return { provider: 'openrouter', model: m.includes('/') ? m : `mistralai/${m}` }
+  }
+  if (v.startsWith('xai:') || v.startsWith('grok:')) {
+    const m = v.slice(v.indexOf(':') + 1)
+    return { provider: 'openrouter', model: m.includes('/') ? m : `x-ai/${m}` }
   }
   if (v.startsWith('qwen:')) return { provider: 'qwen', model: v.slice(5) }
   return { provider: 'qwen', model: v }
@@ -118,30 +144,45 @@ async function callToolCall<T>(opts: {
   //     : provider === 'gemini'
   //       ? GEMINI_FALLBACKS
   //       : OPENROUTER_FALLBACKS
-  const fallbacks = provider === 'lovable' ? LOVABLE_FALLBACKS : QWEN_FALLBACKS
+  const fallbacks =
+    provider === 'lovable'
+      ? LOVABLE_FALLBACKS
+      : provider === 'openrouter'
+        ? OPENROUTER_FALLBACKS
+        : QWEN_FALLBACKS
   const apiKey =
-    provider === 'lovable' ? process.env.LOVABLE_API_KEY : process.env.Qwen
+    provider === 'lovable'
+      ? process.env.LOVABLE_API_KEY
+      : provider === 'openrouter'
+        ? process.env.OPENROUTER_API_KEY
+        : process.env.Qwen
   if (!apiKey) {
     return {
       ok: false,
       error:
-        provider === 'lovable' ? 'LOVABLE_API_KEY missing' : 'Qwen API key missing',
+        provider === 'lovable'
+          ? 'LOVABLE_API_KEY missing'
+          : provider === 'openrouter'
+            ? 'OPENROUTER_API_KEY missing'
+            : 'Qwen API key missing',
     }
   }
 
   const endpoint =
     provider === 'lovable'
       ? 'https://ai.gateway.lovable.dev/v1/chat/completions'
-      : 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions'
+      : provider === 'openrouter'
+        ? 'https://openrouter.ai/api/v1/chat/completions'
+        : 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions'
 
   const headers: Record<string, string> = {
     Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
   }
-  // if (provider === 'openrouter') {
-  //   headers['HTTP-Referer'] = 'https://doopoo.app'
-  //   headers['X-Title'] = 'Doopoo'
-  // }
+  if (provider === 'openrouter') {
+    headers['HTTP-Referer'] = 'https://doopoo.app'
+    headers['X-Title'] = 'Doopoo'
+  }
 
   const attempts = [...new Set([model, ...fallbacks].filter(Boolean))] as string[]
   let lastError = 'Generation failed'
