@@ -1,5 +1,6 @@
 import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
+import { wrapFictionSystem, wrapFictionUser } from './promptSafety'
 
 // ============================================================
 // 剧本智能体 — 流式生成（Qwen API，async generator）
@@ -365,12 +366,14 @@ End with one line asking how many storyboards the user wants for Episode 1 (defa
 export const streamSynopsis = createServerFn({ method: 'POST' })
   .inputValidator((d: unknown) => SynopsisInput.parse(d))
   .handler(async function* ({ data }) {
-    const sys = (data.lang === 'zh' ? SYS_SYNOPSIS_ZH : SYS_SYNOPSIS_EN)
+    const rawSys = (data.lang === 'zh' ? SYS_SYNOPSIS_ZH : SYS_SYNOPSIS_EN)
       .replace('__TOTAL_MINUTES__', String(data.totalMinutes))
-    const user =
+    const sys = wrapFictionSystem(data.lang, rawSys)
+    const rawUser =
       data.lang === 'zh'
         ? `【类型】${data.type}\n【题材】${data.genre}\n【风格】${data.tone}\n【主题/标题】${data.theme}\n【剧情概要】${data.plot}\n【预计集数】${data.expectedEpisodes} 集\n【总时长限制】约 ${data.totalMinutes} 分钟`
         : `[Type] ${data.type}\n[Genre] ${data.genre}\n[Tone] ${data.tone}\n[Theme] ${data.theme}\n[Plot] ${data.plot}\n[Expected episodes] ${data.expectedEpisodes}\n[Total duration] ~${data.totalMinutes} min`
+    const user = wrapFictionUser(data.lang, rawUser)
     yield* streamChat({ model: pickModel(data.model), system: sys, user })
   })
 
@@ -400,14 +403,16 @@ const SYS_EPISODE_EN = `You are a short-drama storyboarder. Write Episode N in p
 export const streamEpisodeScenes = createServerFn({ method: 'POST' })
   .inputValidator((d: unknown) => EpisodeInput.parse(d))
   .handler(async function* ({ data }) {
-    const sys = (data.lang === 'zh' ? SYS_EPISODE_ZH : SYS_EPISODE_EN)
+    const rawSys = (data.lang === 'zh' ? SYS_EPISODE_ZH : SYS_EPISODE_EN)
       .replace(/第 N /g, `第 ${data.epIndex} `)
       .replace(/Episode N/g, `Episode ${data.epIndex}`)
       .replace(/X/g, String(data.sceneCount))
-    const user =
+    const sys = wrapFictionSystem(data.lang, rawSys)
+    const rawUser =
       data.lang === 'zh'
         ? `【目标集数】第 ${data.epIndex} 集\n【分镜数量】${data.sceneCount} 个\n【故事梗概参考】\n${data.synopsisText.slice(0, 8000)}`
         : `[Episode] ${data.epIndex}\n[Storyboards] ${data.sceneCount}\n[Synopsis]\n${data.synopsisText.slice(0, 8000)}`
+    const user = wrapFictionUser(data.lang, rawUser)
     yield* streamChat({ model: pickModel(data.model), system: sys, user })
   })
 
@@ -448,15 +453,16 @@ Rules:
 export const refineSynopsis = createServerFn({ method: 'POST' })
   .inputValidator((d: unknown) => RefineInput.parse(d))
   .handler(async function* ({ data }) {
-    const sys = data.lang === 'zh' ? SYS_REFINE_ZH : SYS_REFINE_EN
+    const sys = wrapFictionSystem(data.lang, data.lang === 'zh' ? SYS_REFINE_ZH : SYS_REFINE_EN)
     const histText =
       (data.history ?? [])
         .slice(-8)
         .map((h) => `${h.role === 'user' ? '用户' : '助手'}：${h.content}`)
         .join('\n') || '（无）'
-    const user =
+    const rawUser =
       data.lang === 'zh'
         ? `【当前梗概】\n${data.currentSynopsis}\n\n【用户本轮修改要求】\n${data.instruction}\n\n【最近精修对话】\n${histText}\n\n请直接输出修改后的完整梗概。`
         : `[Current synopsis]\n${data.currentSynopsis}\n\n[User instruction]\n${data.instruction}\n\n[Recent dialogue]\n${histText}\n\nOutput the full revised synopsis directly.`
+    const user = wrapFictionUser(data.lang, rawUser)
     yield* streamChat({ model: pickModel(data.model), system: sys, user })
   })

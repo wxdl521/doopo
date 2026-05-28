@@ -1,5 +1,6 @@
 import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
+import { wrapFictionSystem, wrapFictionUser } from './promptSafety'
 
 // ============= Shared types =============
 
@@ -287,7 +288,7 @@ const SYS_EN_BASE =
   '3) Every scene has at least one conflict beat; 4) Character names stay consistent; 5) Vivid, visual action lines.'
 
 const sysFor = (lang: 'zh' | 'en', extra: string) =>
-  (lang === 'zh' ? SYS_ZH_BASE : SYS_EN_BASE) + '\n' + extra
+  wrapFictionSystem(lang, (lang === 'zh' ? SYS_ZH_BASE : SYS_EN_BASE) + '\n' + extra)
 
 // ============= 1) Logline =============
 
@@ -322,7 +323,7 @@ export const genLogline = createServerFn({ method: 'POST' })
     return callToolCall<{ logline: string; premise: string; themes: string[] }>({
       model: data.model,
       system: sys,
-      user,
+      user: wrapFictionUser(data.lang, user),
       temperature: 0.9,
       tool: {
         name: 'emit_logline',
@@ -372,7 +373,7 @@ export const genOutline = createServerFn({ method: 'POST' })
     return callToolCall<{ acts: PipelineAct[] }>({
       model: data.model,
       system: sys,
-      user,
+      user: wrapFictionUser(data.lang, user),
       temperature: 0.8,
       tool: {
         name: 'emit_outline',
@@ -444,7 +445,7 @@ export const genScenes = createServerFn({ method: 'POST' })
     return callToolCall<{ scenes: PipelineScene[] }>({
       model: data.model,
       system: sys,
-      user,
+      user: wrapFictionUser(data.lang, user),
       temperature: 0.75,
       tool: {
         name: 'emit_scenes',
@@ -529,7 +530,7 @@ export const genCharacters = createServerFn({ method: 'POST' })
     return callToolCall<{ characters: PipelineCharacter[] }>({
       model: data.model,
       system: sys,
-      user,
+      user: wrapFictionUser(data.lang, user),
       temperature: 0.85,
       tool: {
         name: 'emit_characters',
@@ -597,7 +598,7 @@ export const rewriteScene = createServerFn({ method: 'POST' })
     return callToolCall<{ scene: PipelineScene }>({
       model: data.model,
       system: sys,
-      user,
+      user: wrapFictionUser(data.lang, user),
       temperature: 0.7,
       tool: {
         name: 'emit_scene',
