@@ -97,7 +97,7 @@ function parseModel(raw: string | undefined): { provider: Provider; model: strin
   const v = raw?.trim()
   if (!v) return { provider: 'qwen', model: undefined }
   if (v.startsWith('lovable:')) return { provider: 'lovable', model: v.slice(8) }
-  if (v.startsWith('openrouter:')) return { provider: 'lovable', model: v.slice(11) }
+  if (v.startsWith('openrouter:')) return { provider: 'openrouter', model: v.slice(11) }
   if (v.startsWith('gemini:')) {
     const m = v.slice(7)
     return { provider: 'lovable', model: m.includes('/') ? m : `google/${m}` }
@@ -105,6 +105,26 @@ function parseModel(raw: string | undefined): { provider: Provider; model: strin
   if (v.startsWith('gpt:') || v.startsWith('openai:')) {
     const m = v.slice(v.indexOf(':') + 1)
     return { provider: 'lovable', model: m.includes('/') ? m : `openai/${m}` }
+  }
+  if (v.startsWith('anthropic:') || v.startsWith('claude:')) {
+    const m = v.slice(v.indexOf(':') + 1)
+    return { provider: 'openrouter', model: m.includes('/') ? m : `anthropic/${m}` }
+  }
+  if (v.startsWith('deepseek:')) {
+    const m = v.slice(9)
+    return { provider: 'openrouter', model: m.includes('/') ? m : `deepseek/${m}` }
+  }
+  if (v.startsWith('meta:') || v.startsWith('llama:')) {
+    const m = v.slice(v.indexOf(':') + 1)
+    return { provider: 'openrouter', model: m.includes('/') ? m : `meta-llama/${m}` }
+  }
+  if (v.startsWith('mistral:')) {
+    const m = v.slice(8)
+    return { provider: 'openrouter', model: m.includes('/') ? m : `mistralai/${m}` }
+  }
+  if (v.startsWith('xai:') || v.startsWith('grok:')) {
+    const m = v.slice(v.indexOf(':') + 1)
+    return { provider: 'openrouter', model: m.includes('/') ? m : `x-ai/${m}` }
   }
   if (v.startsWith('qwen:')) return { provider: 'qwen', model: v.slice(5) }
   return { provider: 'qwen', model: v }
