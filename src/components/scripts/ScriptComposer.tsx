@@ -215,6 +215,7 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
   const errMsg = (e: string) => {
     if (e === 'rate_limit') return t.script_pipeline_rate_limit
     if (e === 'no_credits') return t.script_pipeline_no_credits
+    if (e === 'content_policy') return t.script_pipeline_content_policy
     return `${t.script_pipeline_failed}: ${e}`
   }
 
