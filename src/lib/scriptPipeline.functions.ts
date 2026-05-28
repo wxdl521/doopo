@@ -1,5 +1,6 @@
 import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
+import { wrapFictionSystem, wrapFictionUser } from './promptSafety'
 
 // ============= Shared types =============
 
