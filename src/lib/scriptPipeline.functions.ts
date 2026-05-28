@@ -45,7 +45,7 @@ export type PipelineCharacter = z.infer<typeof CharacterSchema>
 
 // ============= Provider dispatcher (OpenRouter + Lovable AI Gateway) =============
 
-type Provider = 'qwen' | 'lovable'
+type Provider = 'qwen' | 'lovable' | 'openrouter'
 
 // const OPENROUTER_FALLBACKS = [
 //   'google/gemini-2.5-flash',
@@ -75,6 +75,12 @@ const LOVABLE_FALLBACKS = [
   'google/gemini-3-flash-preview',
   'google/gemini-2.5-flash',
   'google/gemini-2.5-pro',
+] as const
+
+const OPENROUTER_FALLBACKS = [
+  'google/gemini-2.5-flash',
+  'deepseek/deepseek-chat-v3.1',
+  'meta-llama/llama-3.3-70b-instruct',
 ] as const
 
 const RETRYABLE = new Set([403, 404, 429, 500, 502, 503])
