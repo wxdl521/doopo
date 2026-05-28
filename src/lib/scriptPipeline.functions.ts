@@ -45,8 +45,7 @@ export type PipelineCharacter = z.infer<typeof CharacterSchema>
 
 // ============= Provider dispatcher (OpenRouter + Lovable AI Gateway) =============
 
-// type Provider = 'openrouter' | 'lovable' | 'gemini'
-type Provider = 'qwen'
+type Provider = 'qwen' | 'lovable'
 
 // const OPENROUTER_FALLBACKS = [
 //   'google/gemini-2.5-flash',
@@ -72,6 +71,12 @@ const QWEN_FALLBACKS = [
   'qwen-turbo',
 ] as const
 
+const LOVABLE_FALLBACKS = [
+  'google/gemini-3-flash-preview',
+  'google/gemini-2.5-flash',
+  'google/gemini-2.5-pro',
+] as const
+
 const RETRYABLE = new Set([403, 404, 429, 500, 502, 503])
 
 type ToolSpec = {
@@ -85,9 +90,16 @@ type ToolSpec = {
 function parseModel(raw: string | undefined): { provider: Provider; model: string | undefined } {
   const v = raw?.trim()
   if (!v) return { provider: 'qwen', model: undefined }
-  // if (v.startsWith('lovable:')) return { provider: 'lovable', model: v.slice(8) }
-  // if (v.startsWith('openrouter:')) return { provider: 'openrouter', model: v.slice(11) }
-  // if (v.startsWith('gemini:')) return { provider: 'gemini', model: v.slice(7) }
+  if (v.startsWith('lovable:')) return { provider: 'lovable', model: v.slice(8) }
+  if (v.startsWith('openrouter:')) return { provider: 'lovable', model: v.slice(11) }
+  if (v.startsWith('gemini:')) {
+    const m = v.slice(7)
+    return { provider: 'lovable', model: m.includes('/') ? m : `google/${m}` }
+  }
+  if (v.startsWith('gpt:') || v.startsWith('openai:')) {
+    const m = v.slice(v.indexOf(':') + 1)
+    return { provider: 'lovable', model: m.includes('/') ? m : `openai/${m}` }
+  }
   if (v.startsWith('qwen:')) return { provider: 'qwen', model: v.slice(5) }
   return { provider: 'qwen', model: v }
 }
@@ -106,34 +118,21 @@ async function callToolCall<T>(opts: {
   //     : provider === 'gemini'
   //       ? GEMINI_FALLBACKS
   //       : OPENROUTER_FALLBACKS
-  const fallbacks = QWEN_FALLBACKS
-  // const apiKey =
-  //   provider === 'lovable'
-  //     ? process.env.LOVABLE_API_KEY
-  //     : provider === 'gemini'
-  //       ? process.env.Default_Gemini_API_Key
-  //       : process.env.OPENROUTER_API_KEY
-  const apiKey = process.env.Qwen
+  const fallbacks = provider === 'lovable' ? LOVABLE_FALLBACKS : QWEN_FALLBACKS
+  const apiKey =
+    provider === 'lovable' ? process.env.LOVABLE_API_KEY : process.env.Qwen
   if (!apiKey) {
     return {
       ok: false,
       error:
-        // provider === 'lovable'
-        //   ? 'LOVABLE_API_KEY missing'
-        //   : provider === 'gemini'
-        //     ? 'Default_Gemini_API_Key missing'
-        //     : 'OPENROUTER_API_KEY missing',
-        'Qwen API key missing',
+        provider === 'lovable' ? 'LOVABLE_API_KEY missing' : 'Qwen API key missing',
     }
   }
 
-  // const endpoint =
-  //   provider === 'lovable'
-  //     ? 'https://ai.gateway.lovable.dev/v1/chat/completions'
-  //     : provider === 'gemini'
-  //       ? 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'
-  //       : 'https://openrouter.ai/api/v1/chat/completions'
-  const endpoint = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions'
+  const endpoint =
+    provider === 'lovable'
+      ? 'https://ai.gateway.lovable.dev/v1/chat/completions'
+      : 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions'
 
   const headers: Record<string, string> = {
     Authorization: `Bearer ${apiKey}`,
