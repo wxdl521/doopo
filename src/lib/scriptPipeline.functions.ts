@@ -144,30 +144,45 @@ async function callToolCall<T>(opts: {
   //     : provider === 'gemini'
   //       ? GEMINI_FALLBACKS
   //       : OPENROUTER_FALLBACKS
-  const fallbacks = provider === 'lovable' ? LOVABLE_FALLBACKS : QWEN_FALLBACKS
+  const fallbacks =
+    provider === 'lovable'
+      ? LOVABLE_FALLBACKS
+      : provider === 'openrouter'
+        ? OPENROUTER_FALLBACKS
+        : QWEN_FALLBACKS
   const apiKey =
-    provider === 'lovable' ? process.env.LOVABLE_API_KEY : process.env.Qwen
+    provider === 'lovable'
+      ? process.env.LOVABLE_API_KEY
+      : provider === 'openrouter'
+        ? process.env.OPENROUTER_API_KEY
+        : process.env.Qwen
   if (!apiKey) {
     return {
       ok: false,
       error:
-        provider === 'lovable' ? 'LOVABLE_API_KEY missing' : 'Qwen API key missing',
+        provider === 'lovable'
+          ? 'LOVABLE_API_KEY missing'
+          : provider === 'openrouter'
+            ? 'OPENROUTER_API_KEY missing'
+            : 'Qwen API key missing',
     }
   }
 
   const endpoint =
     provider === 'lovable'
       ? 'https://ai.gateway.lovable.dev/v1/chat/completions'
-      : 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions'
+      : provider === 'openrouter'
+        ? 'https://openrouter.ai/api/v1/chat/completions'
+        : 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions'
 
   const headers: Record<string, string> = {
     Authorization: `Bearer ${apiKey}`,
     'Content-Type': 'application/json',
   }
-  // if (provider === 'openrouter') {
-  //   headers['HTTP-Referer'] = 'https://doopoo.app'
-  //   headers['X-Title'] = 'Doopoo'
-  // }
+  if (provider === 'openrouter') {
+    headers['HTTP-Referer'] = 'https://doopoo.app'
+    headers['X-Title'] = 'Doopoo'
+  }
 
   const attempts = [...new Set([model, ...fallbacks].filter(Boolean))] as string[]
   let lastError = 'Generation failed'
