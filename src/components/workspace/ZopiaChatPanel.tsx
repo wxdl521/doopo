@@ -5,7 +5,7 @@ import type { WorkspaceTab } from './WorkspaceTopbar'
 
 type Attachment = { id: string; name: string; size: number; type: string; url?: string }
 
-type CtaKey = 'extract' | 'design' | 'storyboard' | 'to_script' | 'to_character' | 'to_timeline' | 'refine' | 'preview' | 'save_assets'
+type CtaKey = 'extract' | 'design' | 'storyboard' | 'to_script' | 'to_character' | 'to_timeline' | 'refine' | 'preview' | 'save_assets' | 'generate_script' | 'script_continue' | 'script_episode' | 'script_next' | 'select_episodes' | 'episode_modify'
 
 type Message =
   | { id: string; kind: 'user'; text: string; attachments?: Attachment[] }
@@ -24,10 +24,7 @@ function buildWorkflow(stage: WorkspaceTab, t: any): WorkflowDef {
         steps: [t.zp_step_canvas_load, t.zp_step_canvas_expand, t.zp_step_canvas_outline, t.zp_step_canvas_chars],
         summary: { title: t.zp_summary_canvas_done, detail: t.zp_summary_canvas_detail, next: t.zp_summary_canvas_next },
         ctas: [
-          { key: 'to_script', label: t.zp_cta_to_script, target: 'script' },
-          { key: 'to_character', label: t.zp_cta_to_character, target: 'character' },
-          { key: 'save_assets', label: t.zp_cta_save_assets, target: 'character' },
-          { key: 'refine', label: t.zp_cta_refine, target: 'canvas' },
+          { key: 'generate_script', label: t.zp_cta_generate_script, target: 'script' },
         ],
       }
     case 'character':
@@ -60,29 +57,51 @@ function buildWorkflow(stage: WorkspaceTab, t: any): WorkflowDef {
         ],
       }
     case 'script':
+      return {
+        steps: [t.zp_step_load_workflow, t.zp_step_load_spec, t.zp_step_query_tools, t.zp_step_check_prev, t.zp_step_write_script],
+        summary: { title: t.zp_summary_done, detail: t.zp_summary_detail, next: t.zp_summary_next },
+        ctas: [
+          { key: 'script_next', label: t.zp_cta_script_next, target: 'script' },
+          { key: 'script_continue', label: t.zp_cta_script_continue, target: 'script' },
+          { key: 'script_episode', label: t.zp_cta_script_episode, target: 'script' },
+          { key: 'select_episodes', label: t.zp_cta_select_episodes, target: 'episodes' },
+        ],
+      }
+    case 'episodes':
+      return {
+        steps: [t.zp_step_episodes_load, t.zp_step_episodes_preview, t.zp_step_episodes_pacing, t.zp_step_episodes_extract, t.zp_step_episodes_next],
+        summary: { title: t.zp_summary_episodes_done, detail: t.zp_summary_episodes_detail, next: t.zp_summary_episodes_next },
+        ctas: [
+          { key: 'episode_modify', label: t.zp_cta_episode_modify, target: 'episodes' },
+          { key: 'extract', label: t.zp_cta_extract, target: 'character' },
+        ],
+      }
     default:
       return {
         steps: [t.zp_step_load_workflow, t.zp_step_load_spec, t.zp_step_query_tools, t.zp_step_check_prev, t.zp_step_write_script],
         summary: { title: t.zp_summary_done, detail: t.zp_summary_detail, next: t.zp_summary_next },
         ctas: [
-          { key: 'extract', label: t.zp_cta_extract, target: 'character' },
-          { key: 'design', label: t.zp_cta_design, target: 'character' },
-          { key: 'storyboard', label: t.zp_cta_storyboard, target: 'storyboard' },
+          { key: 'script_next', label: t.zp_cta_script_next, target: 'script' },
+          { key: 'script_continue', label: t.zp_cta_script_continue, target: 'script' },
+          { key: 'script_episode', label: t.zp_cta_script_episode, target: 'script' },
+          { key: 'select_episodes', label: t.zp_cta_select_episodes, target: 'episodes' },
         ],
       }
   }
 }
 
 export default function ZopiaChatPanel({
-  stage, onJumpStage, onProduce, collapsed, onToggleCollapsed, initialInput, onSaveAssets,
+  stage, onJumpStage, onProduce, collapsed, onToggleCollapsed, initialInput, onSaveAssets, locked, selectedEpisodeIndex,
 }: {
   stage: WorkspaceTab
   onJumpStage: (t: WorkspaceTab) => void
-  onProduce?: (t: WorkspaceTab, userPrompt?: string) => void | Promise<void>
+  onProduce?: (t: WorkspaceTab, userPrompt?: string) => void | Promise<void> | Promise<unknown>
   collapsed: boolean
   onToggleCollapsed: () => void
   initialInput?: string
   onSaveAssets?: () => void | Promise<void>
+  locked?: boolean
+  selectedEpisodeIndex?: number
 }) {
   const { t } = useLanguage()
   const [messages, setMessages] = useState<Message[]>([])
@@ -101,8 +120,11 @@ export default function ZopiaChatPanel({
     values: Record<string, string>
     previewing: boolean
   }>(null)
+  const [episodeEditMode, setEpisodeEditMode] = useState<number | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const [synopsisEditMode, setSynopsisEditMode] = useState(false)
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: 999999, behavior: 'smooth' })
@@ -119,6 +141,7 @@ export default function ZopiaChatPanel({
   const intro: Record<WorkspaceTab, string> = {
     canvas: t.zp_intro_canvas,
     script: t.zp_intro_script,
+    episodes: t.zp_intro_episodes,
     character: t.zp_intro_character,
     storyboard: t.zp_intro_storyboard,
     timeline: t.zp_intro_timeline,
@@ -127,6 +150,7 @@ export default function ZopiaChatPanel({
   const presets: Record<WorkspaceTab, string[]> = {
     canvas: [t.zp_preset_idea, t.zp_preset_design],
     script: [t.zp_preset_suspense, t.zp_preset_campus, t.zp_preset_idea, t.zp_preset_design],
+    episodes: [t.zp_preset_episodes_refine, t.zp_preset_episodes_extract],
     character: [t.zp_preset_lead, t.zp_preset_villain, t.zp_preset_supporting],
     storyboard: [t.zp_preset_board, t.zp_preset_expand],
     timeline: [t.zp_preset_arrange, t.zp_preset_transition],
@@ -169,10 +193,28 @@ export default function ZopiaChatPanel({
     return `${(bytes / 1024 / 1024).toFixed(1)} MB`
   }
 
-  function send(text: string, opts?: { targetStage?: WorkspaceTab; jumpAfter?: boolean }) {
-    const trimmed = text.trim()
+  function send(text: string, opts?: { targetStage?: WorkspaceTab; jumpAfter?: boolean; simple?: boolean }) {
+    let trimmed = text.trim()
     if (!trimmed && attachments.length === 0) return
-    // On canvas stage, generate canvas content (not script)
+
+    // If in synopsis edit mode, prepend the instruction prefix
+    // and use simple mode (streaming shows in main area)
+    let isSynopsisModify = false
+    if (synopsisEditMode && trimmed) {
+      trimmed = `修改剧本梗概\n${trimmed}`
+      setSynopsisEditMode(false)
+      isSynopsisModify = true
+    }
+
+    // If in episode edit mode, prepend "修改第 X 集剧本\n" prefix
+    // and use simple mode (no workflow animation, streaming shows in main area)
+    let isEpisodeModify = false
+    if (episodeEditMode != null && trimmed) {
+      trimmed = `修改第 ${episodeEditMode} 集剧本\n${trimmed}`
+      setEpisodeEditMode(null)
+      isEpisodeModify = true
+    }
+
     const inferredJump = opts?.jumpAfter ?? false
     const targetStage = opts?.targetStage ?? stage
     const userMsg: Message = {
@@ -181,29 +223,60 @@ export default function ZopiaChatPanel({
       text: trimmed,
       attachments: attachments.length ? attachments : undefined,
     }
+
+    // Simple mode: only add user message, no workflow animation or summary
+    // Used for episode/synopsis modifications where streaming content appears in the main area
+    if (opts?.simple || isEpisodeModify || isSynopsisModify) {
+      // Show a "modifying" status message in chat
+      const statusId = `s-${Date.now()}`
+      const statusLabel = isEpisodeModify ? '正在修改剧本…' : '正在修改故事梗概…'
+      setMessages((m) => [...m, userMsg, { id: statusId, kind: 'workflow', steps: [statusLabel], doneCount: 0 }])
+      setInput('')
+      setAttachments([])
+      // Wait for produce to complete, then update status with CTAs
+      const produceResult = onProduce?.(targetStage, trimmed)
+      Promise.resolve(produceResult).then(() => {
+        const ctas: { key: CtaKey; label: string; target: WorkspaceTab }[] = isEpisodeModify
+          ? [
+              { key: 'episode_modify', label: '修改本集剧本', target: 'episodes' },
+              { key: 'extract', label: '提取本集角色和场景', target: 'character' },
+            ]
+          : []
+        setMessages((prev) => prev.map((msg) =>
+          msg.id === statusId && msg.kind === 'workflow'
+            ? { ...msg, doneCount: 1, summary: { title: '修改完成', detail: isEpisodeModify ? '剧本已更新，可在上方查看修改后的内容。' : '故事梗概已更新。', next: isEpisodeModify ? '可以继续修改或提取角色和场景。' : '如需继续调整，请直接输入修改意见。' }, ctas }
+            : msg,
+        ))
+      })
+      return
+    }
+
     const wfId = `w-${Date.now()}`
     const wf = buildWorkflow(targetStage, t)
     setMessages((m) => [...m, userMsg, { id: wfId, kind: 'workflow', steps: wf.steps, doneCount: 0 }])
     setInput('')
     setAttachments([])
 
-    // Animate steps progressively (cosmetic) while AI runs in parallel.
     const stepDelay = 700
     const lastStepIndex = wf.steps.length - 1
     wf.steps.forEach((_, i) => {
-      // Don't auto-finish the final step until AI returns; cap at lastStepIndex.
       if (i === lastStepIndex) return
       setTimeout(() => {
         setMessages((prev) => prev.map((msg) => (msg.id === wfId && msg.kind === 'workflow' ? { ...msg, doneCount: i + 1 } : msg)))
       }, (i + 1) * stepDelay)
     })
 
-    // Kick off the actual generation. produce may be async (calls Lovable AI).
     const minDuration = wf.steps.length * stepDelay
     const startedAt = Date.now()
-    Promise.resolve(onProduce?.(targetStage, trimmed))
-      .catch(() => {})
-      .then(() => {
+
+    // Always wait for onProduce to finish before completing workflow
+    const produceResult = onProduce?.(targetStage, trimmed)
+    Promise.resolve(produceResult)
+      .then(async () => {
+        // If produce returned a promise (streaming script), wait for it
+        if (produceResult) {
+          await Promise.resolve(produceResult)
+        }
         const elapsed = Date.now() - startedAt
         const wait = Math.max(0, minDuration - elapsed)
         setTimeout(() => {
@@ -224,7 +297,7 @@ export default function ZopiaChatPanel({
     { key: 'qt', icon: Clock, target: 'timeline', label: t.zp_quick_timeline, userText: t.zp_user_quick_timeline },
   ]
 
-  type ParamField = { key: string; label: string; options: { value: string; label: string }[]; default: string }
+  type ParamField = { key: string; label: string; options: { value: string; label: string }[]; default: string; multiSelect?: boolean }
   type ParamSpec = { baseText: string; targetStage: WorkspaceTab; jumpAfter: boolean; fields: ParamField[] }
 
   function getParamSpec(c: { key: CtaKey; target: WorkspaceTab }): ParamSpec | null {
@@ -308,6 +381,82 @@ export default function ZopiaChatPanel({
             ]},
           ],
         }
+      case 'generate_script':
+        return {
+          baseText: t.zp_user_cta_generate_script, targetStage: 'script', jumpAfter: false,
+          fields: [
+            { key: 'type', label: t.script_type, default: 'Short', options: [
+              { value: 'Micro', label: t.script_type_micro },
+              { value: 'Short', label: t.script_type_short },
+              { value: 'Feature', label: t.script_type_feature },
+              { value: 'Ad', label: t.script_type_ad },
+            ]},
+            { key: 'genre', label: t.script_genre, default: 'Drama', multiSelect: true, options: [
+              { value: 'Sci-Fi', label: t.script_genre_scifi },
+              { value: 'Romance', label: t.script_genre_romance },
+              { value: 'Thriller', label: t.script_genre_thriller },
+              { value: 'Comedy', label: t.script_genre_comedy },
+              { value: 'Drama', label: t.script_genre_drama },
+              { value: 'Horror', label: t.script_genre_horror },
+              { value: 'Fantasy', label: t.script_genre_fantasy },
+              { value: 'Historical', label: t.script_genre_historical },
+            ]},
+            { key: 'tone', label: t.script_tone, default: 'Serious', multiSelect: true, options: [
+              { value: 'Serious', label: t.script_tone_serious },
+              { value: 'Comedy', label: t.script_tone_comedy },
+              { value: 'Suspense', label: t.script_tone_suspense },
+              { value: 'Romance', label: t.script_tone_romance },
+              { value: 'Horror', label: t.script_tone_horror },
+            ]},
+            { key: 'expectedEpisodes', label: '预计集数', default: '30', options: [
+              { value: '30', label: '30 集' },
+              { value: '60', label: '60 集' },
+              { value: '100', label: '100 集' },
+              { value: '150', label: '150 集' },
+            ]},
+            { key: 'totalMinutes', label: '总时长（分钟）', default: '90', options: [
+              { value: '30', label: '30 分钟' },
+              { value: '60', label: '60 分钟' },
+              { value: '90', label: '90 分钟' },
+              { value: '180', label: '180 分钟' },
+            ]},
+          ],
+        }
+      case 'script_continue':
+        return {
+          baseText: t.zp_user_cta_script_continue, targetStage: 'script', jumpAfter: false,
+          fields: [
+            { key: 'targetEp', label: '连跑至第', default: '10', options: [
+              { value: '5', label: '第 5 集' },
+              { value: '10', label: '第 10 集' },
+              { value: '20', label: '第 20 集' },
+              { value: '30', label: '第 30 集' },
+            ]},
+            { key: 'sceneCount', label: '每集分镜数', default: '5', options: [
+              { value: '3', label: '3 个' },
+              { value: '5', label: '5 个' },
+              { value: '7', label: '7 个' },
+              { value: '9', label: '9 个' },
+            ]},
+          ],
+        }
+      case 'script_next':
+        return {
+          baseText: t.zp_user_cta_script_next, targetStage: 'script', jumpAfter: false,
+          fields: [
+            { key: 'sceneCount', label: '每集分镜数', default: '5', options: [
+              { value: '3', label: '3 个' },
+              { value: '5', label: '5 个' },
+              { value: '7', label: '7 个' },
+              { value: '9', label: '9 个' },
+            ]},
+          ],
+        }
+      case 'script_episode':
+        return {
+          baseText: t.zp_user_cta_script_episode, targetStage: 'script', jumpAfter: false,
+          fields: [],
+        }
       case 'to_timeline':
         return {
           baseText: t.zp_user_cta_to_timeline, targetStage: 'timeline', jumpAfter: true,
@@ -348,6 +497,28 @@ export default function ZopiaChatPanel({
   function handleCta(c: { key: CtaKey; label: string; target: WorkspaceTab }) {
     if (c.key === 'preview') { onJumpStage(c.target); return }
     if (c.key === 'save_assets') { onSaveAssets?.(); return }
+    if (c.key === 'select_episodes') { send(t.zp_user_cta_select_episodes, { targetStage: 'episodes', jumpAfter: true }); return }
+    if (c.key === 'script_episode') {
+      setSynopsisEditMode(true)
+      setInput('')
+      setTimeout(() => textareaRef.current?.focus(), 50)
+      setTimeout(() => scrollRef.current?.scrollTo({ top: 999999, behavior: 'smooth' }), 50)
+      return
+    }
+    if (c.key === 'episode_modify') {
+      const epIdx = selectedEpisodeIndex ?? 1
+      setEpisodeEditMode(epIdx)
+      setInput('')
+      setTimeout(() => textareaRef.current?.focus(), 50)
+      setTimeout(() => scrollRef.current?.scrollTo({ top: 999999, behavior: 'smooth' }), 50)
+      return
+    }
+    // extract: from episodes tab → directly send (skip param panel), extract characters + scenes from current episode
+    if (c.key === 'extract' && stage === 'episodes') {
+      const epIdx = selectedEpisodeIndex ?? 1
+      send(`从第 ${epIdx} 集提取角色和场景`, { targetStage: 'character', jumpAfter: true })
+      return
+    }
     const spec = getParamSpec(c)
     if (!spec) return
     const defaults: Record<string, string> = {}
@@ -360,6 +531,7 @@ export default function ZopiaChatPanel({
     const map: Record<WorkspaceTab, string> = {
       canvas: t.zp_tag_canvas,
       script: t.zp_tag_script,
+      episodes: t.zp_tag_episodes,
       character: t.zp_tag_character,
       storyboard: t.zp_tag_storyboard,
       timeline: t.zp_tag_timeline,
@@ -368,6 +540,20 @@ export default function ZopiaChatPanel({
   }
 
   function buildPrompt(spec: ParamSpec, values: Record<string, string>, tag: string): string {
+    // For streaming script CTAs, build the full prompt with all parameters inline
+    if (spec.fields[0]?.key === 'type') {
+      const lines = spec.fields.map((f) => {
+        const v = values[f.key]
+        let display: string
+        if (f.multiSelect && Array.isArray(v)) {
+          display = v.map((val) => f.options.find((o) => o.value === val)?.label ?? val).join('、')
+        } else {
+          display = f.options.find((o) => o.value === v)?.label ?? v ?? ''
+        }
+        return `- ${f.label}: ${display}`
+      })
+      return `【${tag}】${spec.baseText}\n${lines.join('\n')}`
+    }
     // Order is fixed by spec.fields declaration order — canonical per stage.
     const lines = spec.fields.map((f) => {
       const opt = f.options.find((o) => o.value === values[f.key])
@@ -380,6 +566,34 @@ export default function ZopiaChatPanel({
     if (!pendingCta) return
     const { spec, values, cta } = pendingCta
     const tag = stageTag(cta, spec.targetStage)
+
+    // For generate_script, use send() workflow to show loading animation, jump after completion
+    if (cta.key === 'generate_script') {
+      setPendingCta(null)
+      const text = buildPrompt(spec, values, tag)
+      send(text, { targetStage: 'script', jumpAfter: true })
+      return
+    }
+
+    // For script_next (generate one episode), send with scene count
+    if (cta.key === 'script_next') {
+      setPendingCta(null)
+      const sceneCount = values.sceneCount ?? '5'
+      const text = `生成本集分镜\n分镜数：${sceneCount}`
+      send(text, { targetStage: 'script', jumpAfter: false })
+      return
+    }
+
+    // For script_continue (auto-run episodes), send with target and scene count
+    if (cta.key === 'script_continue') {
+      setPendingCta(null)
+      const targetEp = values.targetEp ?? '10'
+      const sceneCount = values.sceneCount ?? '5'
+      const text = `自动连跑多集\n连跑至第 ${targetEp} 集\n分镜数：${sceneCount}`
+      send(text, { targetStage: 'script', jumpAfter: false })
+      return
+    }
+
     const text = buildPrompt(spec, values, tag)
     setPendingCta(null)
     send(text, { targetStage: spec.targetStage, jumpAfter: spec.jumpAfter })
@@ -579,11 +793,27 @@ export default function ZopiaChatPanel({
                 <div className="text-xs text-text-secondary">{f.label}</div>
                 <div className="flex flex-wrap gap-1.5">
                   {f.options.map((o) => {
-                    const active = pendingCta.values[f.key] === o.value
+                    const val = pendingCta.values[f.key]
+                    const isMulti = f.multiSelect
+                    const active = isMulti
+                      ? Array.isArray(val) && val.includes(o.value)
+                      : val === o.value
                     return (
                       <button
                         key={o.value}
-                        onClick={() => setPendingCta((p) => p ? { ...p, values: { ...p.values, [f.key]: o.value } } : p)}
+                        onClick={() => setPendingCta((p) => p ? {
+                          ...p,
+                          values: {
+                            ...p.values,
+                            [f.key]: isMulti
+                              ? Array.isArray(val)
+                                ? val.includes(o.value)
+                                  ? val.filter((v: string) => v !== o.value)
+                                  : [...val, o.value]
+                                : [o.value]
+                              : o.value
+                          }
+                        } : p)}
                         className={`px-2.5 py-1 rounded-full border text-xs transition ${
                           active ? 'bg-accent-dim/60 border-accent text-text-primary' : 'bg-bg-surface border-border text-text-secondary hover:border-accent'
                         }`}
@@ -647,8 +877,25 @@ export default function ZopiaChatPanel({
             ))}
           </div>
         )}
-        <div className="rounded-xl border border-border bg-bg-elevated focus-within:border-accent">
+        {(synopsisEditMode || episodeEditMode != null) && (
+          <div className="mb-2 flex items-center justify-between px-3 py-2 rounded-lg bg-accent-dim/40 border border-accent/50 text-xs">
+            <span className="text-accent inline-flex items-center gap-1">
+              <Sparkles size={12} />
+              {synopsisEditMode
+                ? '正在修改故事梗概 — 输入修改意见后回车发送'
+                : `正在修改第 ${episodeEditMode} 集剧本 — 输入修改意见后回车发送`}
+            </span>
+            <button
+              onClick={() => { setSynopsisEditMode(false); setEpisodeEditMode(null) }}
+              className="text-text-muted hover:text-text-primary"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
+        <div className={`rounded-xl border bg-bg-elevated focus-within:border-accent ${(synopsisEditMode || episodeEditMode != null) ? 'border-accent/60' : 'border-border'}`}>
           <textarea
+            ref={textareaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
@@ -656,10 +903,23 @@ export default function ZopiaChatPanel({
                 e.preventDefault()
                 send(input)
               }
+              if (e.key === 'Escape') {
+                if (synopsisEditMode) setSynopsisEditMode(false)
+                if (episodeEditMode != null) setEpisodeEditMode(null)
+              }
             }}
             rows={2}
-            placeholder={t.zp_input_placeholder}
-            className="w-full bg-transparent px-3 py-2 text-sm resize-none focus:outline-none placeholder:text-text-muted"
+            placeholder={
+              locked
+                ? t.zp_input_placeholder_locked
+                : synopsisEditMode
+                  ? '输入修改意见，例如：把女主角改成更强势的性格，增加悬疑元素…'
+                  : episodeEditMode != null
+                    ? `输入对第 ${episodeEditMode} 集的修改意见，例如：加强结尾悬念，让对白更紧凑…`
+                    : t.zp_input_placeholder
+            }
+            disabled={locked}
+            className={`w-full bg-transparent px-3 py-2 text-sm resize-none focus:outline-none placeholder:text-text-muted disabled:text-text-muted ${(synopsisEditMode || episodeEditMode != null) ? 'placeholder:text-accent/60' : ''}`}
           />
           <div className="flex items-center justify-between px-2 pb-2">
             <button
@@ -672,7 +932,7 @@ export default function ZopiaChatPanel({
             </button>
             <button
               onClick={() => send(input)}
-              disabled={!input.trim() && attachments.length === 0}
+              disabled={(!input.trim() && attachments.length === 0) || locked}
               className="w-9 h-9 rounded-full bg-accent text-accent-foreground flex items-center justify-center disabled:opacity-40 hover:opacity-90"
               title={t.zp_send}
             >

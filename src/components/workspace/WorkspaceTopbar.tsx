@@ -1,15 +1,16 @@
 import { useState } from 'react'
 // no Link needed; Logo provides home link
-import { ChevronDown, MoreHorizontal, Layers, FileText, Users, Grid3x3, Clock, Settings, Download, Save } from 'lucide-react'
+import { ChevronDown, MoreHorizontal, Layers, FileText, ListOrdered, Users, Grid3x3, Clock, Settings, Download, Save } from 'lucide-react'
 import Logo from '../Logo'
 import { useLanguage } from '../../i18n/LanguageContext'
 import { NewProjectDialog } from '../NewProjectDialog'
 
-export type WorkspaceTab = 'canvas' | 'script' | 'character' | 'storyboard' | 'timeline'
+export type WorkspaceTab = 'canvas' | 'script' | 'episodes' | 'character' | 'storyboard' | 'timeline'
 
 const tabs: { id: WorkspaceTab; icon: typeof Layers }[] = [
   { id: 'canvas', icon: Layers },
   { id: 'script', icon: FileText },
+  { id: 'episodes', icon: ListOrdered },
   { id: 'character', icon: Users },
   { id: 'storyboard', icon: Grid3x3 },
   { id: 'timeline', icon: Clock },
@@ -31,6 +32,7 @@ export default function WorkspaceTopbar({
   const tabLabel: Record<WorkspaceTab, string> = {
     canvas: t.ws_tab_canvas,
     script: t.ws_tab_script,
+    episodes: t.ws_tab_episodes,
     character: t.ws_tab_character,
     storyboard: t.ws_tab_storyboard,
     timeline: t.ws_tab_timeline,

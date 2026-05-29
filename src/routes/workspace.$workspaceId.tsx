@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { Fragment, useState, useEffect } from 'react'
+import { Fragment, useState, useEffect, useRef } from 'react'
 import { useServerFn } from '@tanstack/react-start'
+import ReactMarkdown from 'react-markdown'
 import WorkspaceTopbar, { type WorkspaceTab } from '../components/workspace/WorkspaceTopbar'
 import ZopiaChatPanel from '../components/workspace/ZopiaChatPanel'
 import { useLanguage } from '../i18n/LanguageContext'
@@ -11,9 +12,10 @@ import {
   type Outline, type GenScene, type GenCharacter, type StoryboardPanel, type TimelineData, type TimelineTrack, type TimelineClip,
 } from '../data/workspaceGenerators'
 import { generateStageAi } from '../lib/aiGenerate.functions'
-import { generateImage, repaintCharacterImage } from '../lib/openrouterImage.functions'
+import { generateImage } from '../lib/openrouterImage.functions'
 import { getProject, type ProjectConfigRow } from '../lib/projects.functions'
-import { Maximize2, FileText, Camera, Clock, Users, X, Loader2 } from 'lucide-react'
+import { streamSynopsis, streamEpisodeScenes, refineSynopsis, refineEpisodeScenes } from '../lib/scriptAgent.functions'
+import { Maximize2, FileText, Camera, Clock, Users, X, Loader2, Sparkles, Send } from 'lucide-react'
 import CharacterPortrait from '../components/workspace/CharacterPortrait'
 import CharacterStage from '../components/workspace/CharacterStage'
 import { toast } from 'sonner'
@@ -29,6 +31,10 @@ type WorkspaceData = {
   characters: GenCharacter[]
   storyboard: StoryboardPanel[]
   timeline: TimelineData | null
+  synopsisText: string
+  episodeTexts: { epIndex: number; text: string }[]
+  nextEpIndex: number
+  nextSceneCount: number
 }
 
 const emptyData: WorkspaceData = {
@@ -37,6 +43,10 @@ const emptyData: WorkspaceData = {
   characters: [],
   storyboard: [],
   timeline: null,
+  synopsisText: '',
+  episodeTexts: [],
+  nextEpIndex: 1,
+  nextSceneCount: 15,
 }
 
 const ROLE_TONE: Record<GenCharacter['role'], string> = {
@@ -72,18 +82,41 @@ function WorkspacePage() {
   const [previewChar, setPreviewChar] = useState<GenCharacter | null>(null)
   const callAi = useServerFn(generateStageAi)
   const callImage = useServerFn(generateImage)
-const callRepaint = useServerFn(repaintCharacterImage)
+  const callSynopsis = useServerFn(streamSynopsis)
+  const callEpisode = useServerFn(streamEpisodeScenes)
+  const callRefine = useServerFn(refineSynopsis)
+  const callRefineEpisode = useServerFn(refineEpisodeScenes)
   const loadProject = useServerFn(getProject)
   const [project, setProject] = useState<ProjectConfigRow | null>(null)
   const [charImages, setCharImages] = useState<Record<string, string[]>>({})
   const [panelImages, setPanelImages] = useState<Record<string, string>>({})
+  const [sceneImages, setSceneImages] = useState<Record<string, string>>({})
   const [busyChar, setBusyChar] = useState<string | null>(null)
   const [busyPanel, setBusyPanel] = useState<string | null>(null)
+  const [busyScene, setBusyScene] = useState<string | null>(null)
   const [generatingMultiView, setGeneratingMultiView] = useState<string | null>(null)
-const [repaintingChar, setRepaintingChar] = useState<string | null>(null)
   const [selectedViewCount, setSelectedViewCount] = useState<string>('3')
   const [autoGen, setAutoGen] = useState(true)
   void setAutoGen
+  // 流式剧本生成状态
+  const [synopsisText, setSynopsisText] = useState('')
+  const [synopsisDraft, setSynopsisDraft] = useState('')
+  const [expandedEpisodes, setExpandedEpisodes] = useState<Set<number>>(new Set([1]))
+  const [synopsisStreaming, setSynopsisStreaming] = useState(false)
+  const [episodeStreaming, setEpisodeStreaming] = useState(false)
+  const [synopsisBubbles, setSynopsisBubbles] = useState<{ id: string; text: string }[]>([])
+  const [episodeBubbles, setEpisodeBubbles] = useState<{ id: string; text: string }[]>([])
+  const synopsisPendingRef = useRef<Map<string, { buf: string; done: boolean }>>(new Map())
+  const synopsisFlushRef = useRef<number | null>(null)
+  const episodePendingRef = useRef<Map<string, { buf: string; done: boolean }>>(new Map())
+  const episodeFlushRef = useRef<number | null>(null)
+  const [streamingBubbleId, setStreamingBubbleId] = useState<string | null>(null)
+  const episodeRefs = useRef<Record<number, HTMLDetailsElement | null>>({})
+  const shownAutoCompleteToastRef = useRef(false)
+  const autoRunTargetRef = useRef<number | null>(null)
+  const [autoRunCompleteTarget, setAutoRunCompleteTarget] = useState<number | null>(null)
+  const [selectedEpisodeIndex, setSelectedEpisodeIndex] = useState<number>(1)
+  const [charViewTab, setCharViewTab] = useState<'characters' | 'scenes'>('characters')
   const workspaceId = Route.useParams().workspaceId
   useEffect(() => {
     let cancelled = false
@@ -93,20 +126,88 @@ const [repaintingChar, setRepaintingChar] = useState<string | null>(null)
     return () => { cancelled = true }
   }, [workspaceId, loadProject])
 
+  // Expand character visual description from script profiles before image generation
+  async function expandCharacterLook(c: GenCharacter): Promise<string> {
+    // Combine all detailed description fields
+    const combined = [
+      c.gender && `性别：${c.gender}`,
+      `年龄：${c.age}`,
+      c.faceDescription && `面部特征：${c.faceDescription}`,
+      c.bodyDescription && `身材体型：${c.bodyDescription}`,
+      c.clothingDescription && `服装配饰：${c.clothingDescription}`,
+      c.palette?.length && `配色：${c.palette.join(', ')}`,
+    ].filter(Boolean).join('\n')
+
+    // If already detailed enough (>200 chars), use as-is
+    if (combined.length > 200) return combined
+
+    try {
+      const res = await callAi({
+        data: {
+          stage: 'character',
+          userPrompt: `基于以下角色信息，扩写一份详细的外形视觉描述（仅描述外貌、穿着、体态、发型、配饰等视觉元素，不要写性格和剧情）。控制在 300 字以内。\n\n角色名：${c.name}\n角色定位：${c.roleLabel}\n${combined}`,
+          context: {},
+        },
+      })
+      // The AI returns structured data; combine the description fields
+      if (res?.ok && res.payload?.characters?.[0]) {
+        const ch = res.payload.characters[0]
+        const expanded = [
+          ch.gender && `性别：${ch.gender}`,
+          `年龄：${ch.age}`,
+          ch.faceDescription && `面部特征：${ch.faceDescription}`,
+          ch.bodyDescription && `身材体型：${ch.bodyDescription}`,
+          ch.clothingDescription && `服装配饰：${ch.clothingDescription}`,
+        ].filter(Boolean).join('\n')
+        if (expanded.length > combined.length) {
+          return expanded
+        }
+      }
+    } catch {
+      // Fall through to original
+    }
+    return combined
+  }
+
+  async function genSceneImage(s: GenScene) {
+    if (busyScene) return
+    setBusyScene(s.id)
+    try {
+      const prompt = [
+        `Location: ${s.slug}`,
+        s.location && `${s.location}`,
+        `Time: ${s.timeOfDay === 'DAY' ? 'daytime' : s.timeOfDay === 'NIGHT' ? 'nighttime' : s.timeOfDay === 'DUSK' ? 'dusk, golden hour' : 'dawn'}`,
+        'Empty scene, no people, no characters, no figures, no silhouettes.',
+        'Cinematic environment photography, wide establishing shot, detailed architecture and props, atmospheric lighting, film still quality.',
+      ].filter(Boolean).join('. ')
+      const res = await callImage({ data: { prompt, model: project?.sceneModel } })
+      if (res.url) {
+        setSceneImages((m) => ({ ...m, [s.id]: res.url }))
+      } else {
+        toast.error(res.error || '场景图生成失败')
+      }
+    } catch {
+      toast.error('场景图生成失败')
+    } finally {
+      setBusyScene(null)
+    }
+  }
+
   async function genCharImage(c: GenCharacter) {
     if (busyChar) return
     setBusyChar(c.id)
     try {
+      // Expand character visual description first
+      const expandedLook = await expandCharacterLook(c)
       const paletteLine = c.palette?.length
-        ? `signature color palette (must appear in clothing / lighting / accessories): ${c.palette.join(', ')}`
+        ? `signature color palette (must appear in clothing / accessories): ${c.palette.join(', ')}`
         : ''
       const prompt = [
         `Character reference sheet of "${c.name}" — ${c.roleLabel}, age ${c.age}.`,
-        `Appearance (strictly follow): ${c.look}.`,
-        c.personality && `Personality vibe to convey through expression and posture: ${c.personality}.`,
-        c.debutShot && `Inspired by debut shot: ${c.debutShot}.`,
+        `Appearance (strictly follow): ${expandedLook}.`,
+        c.personality && `Personality vibe: ${c.personality}.`,
         paletteLine,
-        'Full-body, front view, neutral studio background, consistent character design, faithful to the description above, cinematic lighting, high detail, no text, no watermark.',
+        'Full-body, standing upright facing camera, arms naturally at sides, pure white background, clean studio lighting, no shadows on background, consistent character design, high detail, no text, no watermark, no props, no other people.',
       ].filter(Boolean).join(' ')
       const res = await callImage({ data: { prompt, model: project?.sceneModel } })
       if (res.url) {
@@ -126,32 +227,34 @@ const [repaintingChar, setRepaintingChar] = useState<string | null>(null)
     if (generatingMultiView) return
     setGeneratingMultiView(c.id)
     try {
+      const expandedLook = await expandCharacterLook(c)
       const paletteLine = c.palette?.length
-        ? `signature color palette (must appear in clothing / lighting / accessories): ${c.palette.join(', ')}`
+        ? `signature color palette (must appear in clothing / accessories): ${c.palette.join(', ')}`
         : ''
+      const base = 'pure white background, clean studio lighting, no shadows on background, consistent character design, same person, high detail, no text, no watermark, no props, no other people.'
       let viewsConfig: { key: string; label: string; prompt: string }[]
       if (selectedViewCount === '3') {
         viewsConfig = [
-          { key: 'front', label: '正面', prompt: 'Full-body, front view, neutral studio background, consistent character design, same person, cinematic lighting, high detail, no text, no watermark.' },
-          { key: 'side', label: '侧面', prompt: 'Full-body, side profile view, neutral studio background, consistent character design, same person, cinematic lighting, high detail, no text, no watermark.' },
-          { key: 'back', label: '背面', prompt: 'Full-body, back view, neutral studio background, consistent character design, same person, cinematic lighting, high detail, no text, no watermark.' },
+          { key: 'front', label: '全身', prompt: `Full-body, standing upright facing camera, arms naturally at sides, ${base}` },
+          { key: 'upper', label: '半身', prompt: `Upper body shot, facing camera, ${base}` },
+          { key: 'closeup', label: '特写', prompt: `Close-up on face and shoulders, facing camera, ${base}` },
         ]
       } else if (selectedViewCount === '5') {
         viewsConfig = [
-          { key: 'front', label: '正面', prompt: 'Full-body, front view, neutral studio background, consistent character design, same person, cinematic lighting, high detail, no text, no watermark.' },
-          { key: 'side', label: '侧面', prompt: 'Full-body, side profile view, neutral studio background, consistent character design, same person, cinematic lighting, high detail, no text, no watermark.' },
-          { key: 'back', label: '背面', prompt: 'Full-body, back view, neutral studio background, consistent character design, same person, cinematic lighting, high detail, no text, no watermark.' },
-          { key: 'three-quarter', label: '四分之三侧', prompt: 'Full-body, three-quarter view, neutral studio background, consistent character design, same person, cinematic lighting, high detail, no text, no watermark.' },
-          { key: 'expression', label: '表情', prompt: 'Close-up on face, expression detail, neutral studio background, consistent character design, same person, showing facial expression and emotion, cinematic lighting, high detail, no text, no watermark.' },
+          { key: 'front', label: '全身', prompt: `Full-body, standing upright facing camera, arms naturally at sides, ${base}` },
+          { key: 'upper', label: '半身', prompt: `Upper body shot, facing camera, ${base}` },
+          { key: 'closeup', label: '面部', prompt: `Close-up on face, facing camera, ${base}` },
+          { key: 'expression', label: '表情', prompt: `Close-up on face, showing emotion and expression, facing camera, ${base}` },
+          { key: 'outfit', label: '服装', prompt: `Full-body, front view showing outfit details, facing camera, ${base}` },
         ]
       } else {
         viewsConfig = [
-          { key: 'front', label: '正面', prompt: 'Full-body, front view, neutral studio background, consistent character design, same person, cinematic lighting, high detail, no text, no watermark.' },
-          { key: 'side', label: '侧面', prompt: 'Full-body, side profile view, neutral studio background, consistent character design, same person, cinematic lighting, high detail, no text, no watermark.' },
-          { key: 'back', label: '背面', prompt: 'Full-body, back view, neutral studio background, consistent character design, same person, cinematic lighting, high detail, no text, no watermark.' },
-          { key: 'expression', label: '表情', prompt: 'Close-up on face, expression detail, neutral studio background, consistent character design, same person, showing facial expression and emotion, cinematic lighting, high detail, no text, no watermark.' },
-          { key: 'outfit', label: '服装', prompt: 'Full-body, front view showing outfit details, neutral studio background, consistent character design, same person, detailed costume design, high detail, no text, no watermark.' },
-          { key: 'detail', label: '细节', prompt: 'Close-up on hands and accessories, neutral studio background, consistent character design, same person, detailed props and accessories, high detail, no text, no watermark.' },
+          { key: 'front', label: '全身', prompt: `Full-body, standing upright facing camera, arms naturally at sides, ${base}` },
+          { key: 'upper', label: '半身', prompt: `Upper body shot, facing camera, ${base}` },
+          { key: 'closeup', label: '面部', prompt: `Close-up on face, facing camera, ${base}` },
+          { key: 'expression', label: '表情', prompt: `Close-up on face, showing emotion and expression, facing camera, ${base}` },
+          { key: 'outfit', label: '服装', prompt: `Full-body, front view showing outfit details, facing camera, ${base}` },
+          { key: 'detail', label: '细节', prompt: `Close-up on hands and accessories, front view, ${base}` },
         ]
       }
       const newUrls: string[] = []
@@ -160,9 +263,8 @@ const [repaintingChar, setRepaintingChar] = useState<string | null>(null)
         setBusyChar(`${c.id}-${v.key}`)
         const prompt = [
           `Character reference sheet of "${c.name}" — ${c.roleLabel}, age ${c.age}.`,
-          `Appearance (strictly follow): ${c.look}.`,
-          c.personality && `Personality vibe to convey through expression and posture: ${c.personality}.`,
-          c.debutShot && `Inspired by debut shot: ${c.debutShot}.`,
+          `Appearance (strictly follow): ${expandedLook}.`,
+          c.personality && `Personality vibe: ${c.personality}.`,
           paletteLine,
           v.prompt,
         ].filter(Boolean).join(' ')
@@ -205,28 +307,6 @@ const [repaintingChar, setRepaintingChar] = useState<string | null>(null)
     }
   }
 
-async function repaintCharImage(charId: string, styleIndex: number) {
-    if (repaintingChar) return
-    const urls = charImages[charId]
-    if (!urls || !urls.length || !urls[0]) return
-    setRepaintingChar(charId)
-    try {
-      const res = await callRepaint({ data: { imageUrl: urls[0], styleIndex } })
-      if (res.url) {
-        const newUrls = [...urls]
-        newUrls[0] = res.url
-        setCharImages((m) => ({ ...m, [charId]: newUrls }))
-        toast.success('风格重绘完成')
-      } else {
-        toast.error(res.error || '重绘失败')
-      }
-    } catch {
-      toast.error('重绘失败')
-    } finally {
-      setRepaintingChar(null)
-    }
-  }
-
   // Auto-generate real images for newly produced characters / storyboard panels
   // using the project's configured model. Sequential to avoid rate limits.
   useEffect(() => {
@@ -254,6 +334,21 @@ async function repaintCharImage(charId: string, styleIndex: number) {
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.storyboard, autoGen])
+
+  // Auto-generate scene images for newly produced scenes
+  useEffect(() => {
+    if (!autoGen) return
+    const pending = data.scenes.filter((s) => !sceneImages[s.id])
+    if (!pending.length || busyScene) return
+    void (async () => {
+      for (const s of pending) {
+        // eslint-disable-next-line no-await-in-loop
+        await genSceneImage(s)
+      }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.scenes, autoGen])
+
   const [initialChatInput, setInitialChatInput] = useState<string>('')
   useEffect(() => {
     try {
@@ -330,7 +425,11 @@ async function repaintCharImage(charId: string, styleIndex: number) {
               role: (['lead', 'supporting', 'villain'] as const).includes(c.role) ? c.role : 'supporting',
               roleLabel: c.roleLabel ?? ROLE_LABEL_FALLBACK[c.role as GenCharacter['role']] ?? '配角',
               age: typeof c.age === 'number' ? c.age : 18,
-              look: c.look ?? '', personality: c.personality ?? '', motivation: c.motivation ?? '', debutShot: c.debutShot ?? '',
+              gender: c.gender ?? '',
+              faceDescription: c.faceDescription ?? '',
+              bodyDescription: c.bodyDescription ?? '',
+              clothingDescription: c.clothingDescription ?? '',
+              personality: c.personality ?? '',
               palette,
               swatch: `linear-gradient(135deg, ${palette[0]}, ${palette[palette.length - 1]})`,
             }
@@ -377,9 +476,288 @@ async function repaintCharImage(charId: string, styleIndex: number) {
     }
   }
 
-  async function produce(stage: WorkspaceTab, userPrompt?: string) {
+  // ===== 剧本流式生成辅助 =====
+  function ensureSynopsisFlush() {
+    if (synopsisFlushRef.current != null) return
+    synopsisFlushRef.current = window.setInterval(() => {
+      const map = synopsisPendingRef.current
+      if (map.size === 0) {
+        if (synopsisFlushRef.current != null) window.clearInterval(synopsisFlushRef.current)
+        synopsisFlushRef.current = null
+        return
+      }
+      setSynopsisBubbles((prev) =>
+        prev.map((b) => {
+          const slot = map.get(b.id)
+          if (!slot) return b
+          if (slot.buf.length === 0) {
+            if (slot.done) { map.delete(b.id); return { ...b, text: b.text } }
+            return b
+          }
+          const take = Math.min(slot.buf.length, Math.max(2, Math.ceil(slot.buf.length / 12)))
+          const chunk = slot.buf.slice(0, take)
+          slot.buf = slot.buf.slice(take)
+          const next = { ...b, text: b.text + chunk }
+          if (slot.buf.length === 0 && slot.done) { map.delete(b.id) }
+          return next
+        }),
+      )
+    }, 24) as unknown as number
+  }
+
+  function ensureEpisodeFlush() {
+    if (episodeFlushRef.current != null) return
+    episodeFlushRef.current = window.setInterval(() => {
+      const map = episodePendingRef.current
+      if (map.size === 0) {
+        if (episodeFlushRef.current != null) window.clearInterval(episodeFlushRef.current)
+        episodeFlushRef.current = null
+        return
+      }
+      setEpisodeBubbles((prev) =>
+        prev.map((b) => {
+          const slot = map.get(b.id)
+          if (!slot) return b
+          if (slot.buf.length === 0) {
+            if (slot.done) { map.delete(b.id); return { ...b, text: b.text } }
+            return b
+          }
+          const take = Math.min(slot.buf.length, Math.max(2, Math.ceil(slot.buf.length / 12)))
+          const chunk = slot.buf.slice(0, take)
+          slot.buf = slot.buf.slice(take)
+          const next = { ...b, text: b.text + chunk }
+          if (slot.buf.length === 0 && slot.done) { map.delete(b.id) }
+          return next
+        }),
+      )
+    }, 24) as unknown as number
+  }
+
+  async function runScriptSynopsis(opts: {
+    type: string; genre: string; tone: string; theme: string; plot: string
+    expectedEpisodes: number; totalMinutes: number; lang: 'zh' | 'en'; model?: string
+  }): Promise<void> {
+    setSynopsisStreaming(true)
+    setSynopsisBubbles([])
+    setSynopsisText('')
+    const id = `sn-${Date.now()}`
+    setSynopsisBubbles([{ id, text: '' }])
+    try {
+      const stream = await callSynopsis({ data: { ...opts, lang: opts.lang ?? 'zh' } }) as AsyncIterable<{ delta?: string; done?: boolean; text?: string; error?: string }>
+      for await (const chunk of stream) {
+        if ('error' in chunk) { toast.error(chunk.error); break }
+        if ('delta' in chunk && chunk.delta) {
+          const map = synopsisPendingRef.current
+          const slot = map.get(id) ?? { buf: '', done: false }
+          slot.buf += chunk.delta
+          map.set(id, slot)
+          ensureSynopsisFlush()
+        } else if ('done' in chunk) {
+          const map = synopsisPendingRef.current
+          const slot = map.get(id)
+          if (slot) { slot.done = true; ensureSynopsisFlush() }
+          else { setSynopsisBubbles((prev) => prev.map((b) => b.id === id ? { ...b, text: chunk.text ?? '' } : b)) }
+          setSynopsisText(chunk.text ?? '')
+          setSynopsisDraft(chunk.text ?? '')
+        }
+      }
+    } catch (e) {
+      toast.error('生成失败')
+    } finally {
+      setSynopsisStreaming(false)
+    }
+  }
+
+  async function runRefineSynopsis(opts: {
+    instruction: string; lang: 'zh' | 'en'; model?: string
+  }): Promise<void> {
+    const currentSynopsis = synopsisDraft || synopsisText
+    if (!currentSynopsis.trim()) {
+      toast.error('请先生成故事梗概')
+      return
+    }
+    setSynopsisStreaming(true)
+    const id = `sn-${Date.now()}`
+    setSynopsisBubbles([{ id, text: '' }])
+    try {
+      const stream = await callRefine({
+        data: {
+          currentSynopsis,
+          instruction: opts.instruction,
+          lang: opts.lang,
+          model: opts.model,
+        },
+      }) as AsyncIterable<{ delta?: string; done?: boolean; text?: string; error?: string }>
+      for await (const chunk of stream) {
+        if ('error' in chunk) { toast.error(chunk.error); break }
+        if ('delta' in chunk && chunk.delta) {
+          const map = synopsisPendingRef.current
+          const slot = map.get(id) ?? { buf: '', done: false }
+          slot.buf += chunk.delta
+          map.set(id, slot)
+          ensureSynopsisFlush()
+        } else if ('done' in chunk) {
+          const map = synopsisPendingRef.current
+          const slot = map.get(id)
+          if (slot) { slot.done = true; ensureSynopsisFlush() }
+          else { setSynopsisBubbles((prev) => prev.map((b) => b.id === id ? { ...b, text: chunk.text ?? '' } : b)) }
+          setSynopsisText(chunk.text ?? '')
+          setSynopsisDraft(chunk.text ?? '')
+          toast.success('故事梗概已更新')
+        }
+      }
+    } catch (e) {
+      toast.error('修改失败')
+    } finally {
+      setSynopsisStreaming(false)
+    }
+  }
+
+  async function runScriptEpisode(opts: {
+    epIndex: number; sceneCount: number; lang: 'zh' | 'en'; model?: string; autoRunTarget?: number
+  }): Promise<void> {
+    const { autoRunTarget } = opts
+    setEpisodeStreaming(true)
+    const id = `ep-${Date.now()}`
+    setStreamingBubbleId(id)
+    setEpisodeBubbles([{ id, text: '' }])
+    // Pre-expand so the episode is visible as soon as it appears
+    setExpandedEpisodes((prev) => {
+      const next = new Set(prev)
+      next.add(opts.epIndex)
+      return next
+    })
+    try {
+      const stream = await callEpisode({ data: { ...opts, synopsisText: synopsisText || synopsisDraft } }) as AsyncIterable<{ delta?: string; done?: boolean; text?: string; error?: string }>
+      for await (const chunk of stream) {
+        if ('error' in chunk) { toast.error(chunk.error); break }
+        if ('delta' in chunk && chunk.delta) {
+          const map = episodePendingRef.current
+          const slot = map.get(id) ?? { buf: '', done: false }
+          slot.buf += chunk.delta
+          map.set(id, slot)
+          ensureEpisodeFlush()
+        } else if ('done' in chunk) {
+          const map = episodePendingRef.current
+          const slot = map.get(id)
+          if (slot) { slot.done = true; ensureEpisodeFlush() }
+          else { setEpisodeBubbles((prev) => prev.map((b) => b.id === id ? { ...b, text: chunk.text ?? '' } : b)) }
+          setData((d) => {
+            const others = d.episodeTexts.filter((e) => e.epIndex !== opts.epIndex)
+            return {
+              ...d,
+              episodeTexts: [...others, { epIndex: opts.epIndex, text: chunk.text ?? '' }].sort((a, b) => a.epIndex - b.epIndex),
+              nextEpIndex: opts.epIndex + 1,
+            }
+          })
+          // Auto-continue — use autoRunTarget from parameter (NOT data._autoRunTarget which is stale closure)
+          if (autoRunTarget && opts.epIndex < autoRunTarget) {
+            setTimeout(() => {
+              runScriptEpisode({ epIndex: opts.epIndex + 1, sceneCount: opts.sceneCount, lang: opts.lang, autoRunTarget })
+            }, 500)
+          } else if (autoRunTarget && opts.epIndex >= autoRunTarget && !shownAutoCompleteToastRef.current) {
+            shownAutoCompleteToastRef.current = true
+            toast.success(`已连续生成至第 ${autoRunTarget} 集，生成完毕`)
+          }
+          // Auto-scroll to the new episode card
+          setTimeout(() => {
+            const el = episodeRefs.current[opts.epIndex]
+            el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          }, 100)
+          // Mark new episodes as expanded so they show content immediately
+          setExpandedEpisodes((prev) => {
+            const next = new Set(prev)
+            next.add(opts.epIndex)
+            return next
+          })
+        }
+      }
+    } catch (e) {
+      toast.error('生成失败')
+    } finally {
+      setEpisodeStreaming(false)
+      setStreamingBubbleId(null)
+      // When auto-run completes, set the completion target for the banner
+      if (autoRunTarget && opts.epIndex >= autoRunTarget) {
+        setAutoRunCompleteTarget(autoRunTarget)
+        autoRunTargetRef.current = null
+      }
+    }
+  }
+
+  // Build concatenated text of all episodes before the given index (for context)
+  function buildPreviousEpisodesText(epIndex: number): string {
+    const prevEps = data.episodeTexts
+      .filter((e) => e.epIndex < epIndex)
+      .sort((a, b) => a.epIndex - b.epIndex)
+    if (!prevEps.length) return ''
+    return prevEps.map((e) => `—— 第 ${e.epIndex} 集 ——\n${e.text}`).join('\n\n')
+  }
+
+  async function runScriptModify(opts: {
+    epIndex: number; instruction: string; currentText: string; synopsisText?: string; previousEpisodesText?: string; lang: 'zh' | 'en'; model?: string
+  }): Promise<void> {
+    setEpisodeStreaming(true)
+    const id = `ep-${Date.now()}`
+    setStreamingBubbleId(id)
+    setEpisodeBubbles([{ id, text: '' }])
+    try {
+      const stream = await callRefineEpisode({ data: { ...opts } }) as AsyncIterable<{ delta?: string; done?: boolean; text?: string; error?: string }>
+      for await (const chunk of stream) {
+        if ('error' in chunk) { toast.error(chunk.error); break }
+        if ('delta' in chunk && chunk.delta) {
+          const map = episodePendingRef.current
+          const slot = map.get(id) ?? { buf: '', done: false }
+          slot.buf += chunk.delta
+          map.set(id, slot)
+          ensureEpisodeFlush()
+        } else if ('done' in chunk) {
+          const map = episodePendingRef.current
+          const slot = map.get(id)
+          if (slot) { slot.done = true; ensureEpisodeFlush() }
+          else { setEpisodeBubbles((prev) => prev.map((b) => b.id === id ? { ...b, text: chunk.text ?? '' } : b)) }
+          setData((d) => {
+            const others = d.episodeTexts.filter((e) => e.epIndex !== opts.epIndex)
+            const updated = { ...d, episodeTexts: [...others, { epIndex: opts.epIndex, text: chunk.text ?? '' }].sort((a, b) => a.epIndex - b.epIndex) }
+            return updated
+          })
+          toast.success(`第 ${opts.epIndex} 集剧本已修改`)
+        }
+      }
+    } catch (e) {
+      toast.error('修改失败')
+    } finally {
+      setEpisodeStreaming(false)
+      setStreamingBubbleId(null)
+    }
+  }
+
+  async function produce(stage: WorkspaceTab, userPrompt?: string): Promise<unknown> {
     let aiPatch: Partial<WorkspaceData> | null = null
-    const meaningful = (userPrompt ?? '').trim().length >= 4
+    const trimmed = (userPrompt ?? '').trim()
+    const meaningful = trimmed.length >= 4
+
+    // Compute nextEpIndex from existing episodes (survives page refresh)
+    const nextEpIndex = data.episodeTexts.length > 0
+      ? Math.max(...data.episodeTexts.map((e) => e.epIndex)) + 1
+      : 1
+
+    // Check if this is a streaming script generation request (bypass tryAi)
+    const isGenerateScript = trimmed.includes('generate_script') || trimmed.includes('生成剧本')
+    const isRefineSynopsis = trimmed.startsWith('修改剧本梗概') || trimmed.startsWith('修改梗概')
+    // isModifyEpisodeScript: "修改第 X 集剧本" — must be checked before isScriptModify
+    const isModifyEpisodeScript = /^修改第\s*\d+\s*集剧本/.test(trimmed)
+    const isScriptEpisode = trimmed.includes('生成分镜') || trimmed.includes('生成本集') || trimmed.includes('script_episode') || trimmed.includes('【分场剧本】根据梗概')
+    const isScriptContinue = trimmed.includes('连跑') || trimmed.includes('auto_run') || trimmed.includes('自动连跑')
+    // isScriptModify must NOT match "修改剧本梗概" or "修改第 X 集剧本"
+    const isScriptModify = !isRefineSynopsis && !isModifyEpisodeScript && (trimmed.startsWith('修改剧本') || trimmed.startsWith('修改脚本'))
+    const isStreamingScript = isGenerateScript || isRefineSynopsis || isModifyEpisodeScript || isScriptEpisode || isScriptContinue || isScriptModify
+
+    // Detect "从第 X 集提取角色和场景" pattern (used by episodes tab extract button)
+    const isExtractFromEpisode = /^从第\s*\d+\s*集提取/.test(trimmed)
+    const extractEpMatch = trimmed.match(/^从第\s*(\d+)\s*集提取/)
+    const extractEpIndex = extractEpMatch ? Number(extractEpMatch[1]) : 0
+
     // Extract view count from prompt (e.g. "视角数量: 三视图" or "Views: 3-view sheet")
     if (stage === 'character' && userPrompt) {
       const viewMatch = userPrompt.match(/视角数量[：:]\s*(三视图|五视图|三视图\+表情\+服装)/i) ||
@@ -394,8 +772,96 @@ async function repaintCharImage(charId: string, styleIndex: number) {
       }
     }
     const snapshot = data
-    if (meaningful && (stage === 'canvas' || stage === 'script' || stage === 'character' || stage === 'storyboard' || stage === 'timeline')) {
-      aiPatch = await tryAi(stage, userPrompt!.trim(), snapshot)
+
+    // For streaming script generations, capture the promise before setState
+    let scriptPromise: Promise<void> | undefined
+    // Allow modify operations from both 'script' and 'episodes' tabs
+    const isModifyOp = isModifyEpisodeScript || isRefineSynopsis
+    if (isStreamingScript && (stage === 'script' || (isModifyOp && stage === 'episodes'))) {
+      if (isGenerateScript) {
+        const typeMatch = trimmed.match(/类型[：:]\s*([^\n，,]+)/) ?? trimmed.match(/Type[：:]\s*([^\n，,]+)/)
+        const genreLineMatch = trimmed.match(/题材[：:]\s*([^\n]+)/) ?? trimmed.match(/Genre[：:]\s*([^\n]+)/)
+        const toneLineMatch = trimmed.match(/风格[：:]\s*([^\n]+)/) ?? trimmed.match(/Tone[：:]\s*([^\n]+)/)
+        const epMatch = trimmed.match(/预计集数[：:]\s*(\d+)/) ?? trimmed.match(/Expected episodes[：:]\s*(\d+)/)
+        const minMatch = trimmed.match(/总时长[：:]\s*(\d+)/) ?? trimmed.match(/Total duration[：:]\s*(\d+)/)
+        const themeMatch = trimmed.match(/主题[：:]\s*([^\n，,]+)/) ?? trimmed.match(/Theme[：:]\s*([^\n，,]+)/)
+        const plotMatch = trimmed.match(/剧情[：:]\s*([^\n]+)/) ?? trimmed.match(/Plot[：:]\s*([^\n]+)/)
+        scriptPromise = runScriptSynopsis({
+          type: typeMatch?.[1] ?? 'Short',
+          genre: genreLineMatch?.[1] ?? 'Drama',
+          tone: toneLineMatch?.[1] ?? 'Serious',
+          theme: themeMatch?.[1] ?? data.outline?.logline ?? '',
+          plot: plotMatch?.[1] ?? trimmed,
+          expectedEpisodes: Number(epMatch?.[1]) || 30,
+          totalMinutes: Number(minMatch?.[1]) || 90,
+          lang: 'zh',
+        })
+      } else if (isScriptEpisode) {
+        const scMatch = trimmed.match(/分镜数[：:]\s*(\d+)/) ?? trimmed.match(/Storyboards[：:]\s*(\d+)/)
+        const sceneCount = Number(scMatch?.[1]) || data.nextSceneCount
+        scriptPromise = runScriptEpisode({ epIndex: nextEpIndex, sceneCount, lang: 'zh' })
+      } else if (isModifyEpisodeScript) {
+        const epMatch = trimmed.match(/^修改第\s*(\d+)\s*集剧本\n?/)
+        const epIndex = Number(epMatch?.[1]) || selectedEpisodeIndex
+        const instruction = trimmed.replace(/^修改第\s*\d+\s*集剧本\n?/, '')
+        const currentEp = data.episodeTexts.find((e) => e.epIndex === epIndex)
+        if (currentEp) {
+          scriptPromise = runScriptModify({
+            epIndex, instruction, currentText: currentEp.text,
+            synopsisText: synopsisText || synopsisDraft,
+            previousEpisodesText: buildPreviousEpisodesText(epIndex),
+            lang: 'zh',
+          })
+        }
+      } else if (isRefineSynopsis) {
+        const instruction = trimmed.replace(/^修改剧本梗概\n?/, '').replace(/^修改梗概\n?/, '')
+        scriptPromise = runRefineSynopsis({ instruction, lang: 'zh' })
+      } else if (isScriptContinue) {
+        shownAutoCompleteToastRef.current = false
+        setAutoRunCompleteTarget(null) // Clear previous completion state
+        const targetEpMatch = trimmed.match(/连跑至第?\s*(\d+)/) ?? trimmed.match(/targetEp[：:]\s*(\d+)/)
+        const targetEp = Number(targetEpMatch?.[1]) || Math.min(nextEpIndex + 4, 30)
+        // Extract scene count from prompt (e.g. "分镜数：5" or "分镜数: 5")
+        const scMatch = trimmed.match(/分镜数[：:]\s*(\d+)/) ?? trimmed.match(/Storyboards[：:]\s*(\d+)/)
+        const sceneCount = Number(scMatch?.[1]) || data.nextSceneCount
+        // Store in ref so it can be read without stale closure
+        autoRunTargetRef.current = targetEp
+        // Pass autoRunTarget as parameter to avoid stale closure bug
+        scriptPromise = runScriptEpisode({ epIndex: nextEpIndex, sceneCount, lang: 'zh', autoRunTarget: targetEp })
+      } else if (isScriptModify) {
+        const instruction = trimmed.replace(/^修改剧本\n?/, '').replace(/^修改脚本\n?/, '')
+        const epIndex = nextEpIndex > 1 ? nextEpIndex - 1 : 1
+        const currentEp = data.episodeTexts.find((e) => e.epIndex === epIndex)
+        if (currentEp) {
+          scriptPromise = runScriptModify({
+            epIndex, instruction, currentText: currentEp.text,
+            synopsisText: synopsisText || synopsisDraft,
+            previousEpisodesText: buildPreviousEpisodesText(epIndex),
+            lang: 'zh',
+          })
+        }
+      }
+    }
+
+    // Skip tryAi for streaming script generations — those are handled separately above
+    if (meaningful && !isStreamingScript && (stage === 'canvas' || stage === 'script' || stage === 'character' || stage === 'storyboard' || stage === 'timeline')) {
+      aiPatch = await tryAi(stage, trimmed, snapshot)
+    }
+
+    // Extract characters + scenes from a specific episode (dual AI calls)
+    if (isExtractFromEpisode && extractEpIndex > 0) {
+      const epText = data.episodeTexts.find((e) => e.epIndex === extractEpIndex)?.text ?? ''
+      if (epText) {
+        const extractPrompt = `以下是第 ${extractEpIndex} 集的剧本内容，请只提取本集中出现的角色和主要场景：\n\n${epText}`
+        const [charResult, sceneResult] = await Promise.all([
+          tryAi('character', extractPrompt, snapshot),
+          tryAi('script', extractPrompt, snapshot),
+        ])
+        aiPatch = {
+          ...(charResult ?? {}),
+          ...(sceneResult ?? {}),
+        }
+      }
     }
 
     setData((d) => {
@@ -403,11 +869,24 @@ async function repaintCharImage(charId: string, styleIndex: number) {
         case 'canvas':
           return { ...d, outline: aiPatch?.outline ?? generateOutline() }
         case 'script': {
-          const scenes = aiPatch?.scenes ?? generateScript()
-          return { ...d, scenes, outline: d.outline ?? generateOutline() }
+          if (isGenerateScript || isRefineSynopsis || isModifyEpisodeScript || isScriptEpisode || isScriptContinue || isScriptModify) {
+            return d
+          }
+          return d
         }
-        case 'character':
+        case 'episodes': {
+          return d
+        }
+        case 'character': {
+          // Extract from episode: apply both characters and scenes
+          if (isExtractFromEpisode && aiPatch) {
+            const patch: Partial<WorkspaceData> = {}
+            if (aiPatch.characters) patch.characters = aiPatch.characters
+            if (aiPatch.scenes) patch.scenes = aiPatch.scenes
+            return { ...d, ...patch }
+          }
           return { ...d, characters: aiPatch?.characters ?? generateCharacters() }
+        }
         case 'storyboard': {
           const scenes = d.scenes.length ? d.scenes : generateScript()
           const panels = aiPatch?.storyboard ?? generateStoryboard(scenes)
@@ -425,6 +904,8 @@ async function repaintCharImage(charId: string, styleIndex: number) {
     })
     setFlash(stage)
     setTimeout(() => setFlash((f) => (f === stage ? null : f)), 1500)
+
+    return scriptPromise
   }
 
   async function saveAssets() {
@@ -456,6 +937,7 @@ async function repaintCharImage(charId: string, styleIndex: number) {
         <main className="flex-1 min-w-0 overflow-auto p-6">
           {tab === 'canvas' && <CanvasView />}
           {tab === 'script' && <ScriptView />}
+          {tab === 'episodes' && <EpisodesView />}
           {tab === 'character' && <CharacterView />}
           {tab === 'storyboard' && <StoryboardView />}
           {tab === 'timeline' && <TimelineView />}
@@ -468,6 +950,8 @@ async function repaintCharImage(charId: string, styleIndex: number) {
           onToggleCollapsed={() => setCollapsed((v) => !v)}
           initialInput={initialChatInput}
           onSaveAssets={saveAssets}
+          locked={episodeStreaming && autoRunTargetRef.current != null}
+          selectedEpisodeIndex={selectedEpisodeIndex}
         />
       </div>
       {previewChar && (
@@ -498,10 +982,12 @@ async function repaintCharImage(charId: string, styleIndex: number) {
                 <div className="text-sm text-text-muted mt-0.5">{previewChar.roleLabel} · {previewChar.age} 岁</div>
               </div>
               <dl className="space-y-2 text-sm">
-                <div><dt className="text-xs uppercase tracking-wide text-text-muted">外形</dt><dd className="text-text-secondary mt-0.5">{previewChar.look}</dd></div>
+                <div><dt className="text-xs uppercase tracking-wide text-text-muted">性别</dt><dd className="text-text-secondary mt-0.5">{previewChar.gender}</dd></div>
+                <div><dt className="text-xs uppercase tracking-wide text-text-muted">年龄</dt><dd className="text-text-secondary mt-0.5">{previewChar.age}</dd></div>
+                <div><dt className="text-xs uppercase tracking-wide text-text-muted">面部</dt><dd className="text-text-secondary mt-0.5">{previewChar.faceDescription}</dd></div>
+                <div><dt className="text-xs uppercase tracking-wide text-text-muted">身材</dt><dd className="text-text-secondary mt-0.5">{previewChar.bodyDescription}</dd></div>
+                <div><dt className="text-xs uppercase tracking-wide text-text-muted">服装</dt><dd className="text-text-secondary mt-0.5">{previewChar.clothingDescription}</dd></div>
                 <div><dt className="text-xs uppercase tracking-wide text-text-muted">性格</dt><dd className="text-text-secondary mt-0.5">{previewChar.personality}</dd></div>
-                <div><dt className="text-xs uppercase tracking-wide text-text-muted">动机</dt><dd className="text-text-secondary mt-0.5">{previewChar.motivation}</dd></div>
-                <div><dt className="text-xs uppercase tracking-wide text-text-muted">首场</dt><dd className="text-text-secondary mt-0.5">{previewChar.debutShot}</dd></div>
               </dl>
               <div className="flex gap-1.5 pt-1">
                 {previewChar.palette.map((p) => (
@@ -561,57 +1047,178 @@ async function repaintCharImage(charId: string, styleIndex: number) {
   }
 
   function ScriptView() {
-    if (data.scenes.length === 0) {
+    const hasSynopsis = synopsisText || synopsisDraft
+    const hasEpisodes = data.episodeTexts.length > 0
+    const isAutoRunning = autoRunCompleteTarget != null && !episodeStreaming
+    // Find the currently streaming episode's bubble text
+    const streamingBubble = streamingBubbleId ? episodeBubbles.find((b) => b.id === streamingBubbleId) : null
+
+    if (!hasSynopsis && !hasEpisodes) {
       return (
         <div className="max-w-4xl mx-auto panel p-10 text-center">
           <p className="text-text-muted text-sm">{t.ws_script_empty}</p>
         </div>
       )
     }
+
     return (
-      <div className="max-w-4xl mx-auto space-y-4">
-        <div className="panel p-5 flex items-start justify-between gap-3">
-          <div>
-<h2 className="font-display text-xl font-bold">{data.outline?.logline ? `${data.outline.logline} · 第${episode}集` : `第${episode}集`}</h2>
-            <p className="text-text-secondary text-sm mt-1">{data.outline?.logline}</p>
+      <div className="max-w-5xl mx-auto space-y-6 pb-4">
+        {/* 故事梗概 */}
+        {hasSynopsis && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-display text-lg font-bold">故事梗概</h3>
+              {synopsisStreaming && (
+                <span className="inline-flex items-center gap-1.5 text-xs text-accent">
+                  <Loader2 size={11} className="animate-spin" /> 生成中…
+                </span>
+              )}
+            </div>
+            <textarea
+              value={synopsisDraft}
+              onChange={(e) => setSynopsisDraft(e.target.value)}
+              rows={24}
+              className="w-full rounded-lg bg-bg-elevated border border-border text-sm text-text-primary p-3 leading-7 font-mono focus:outline-none focus:border-accent/50 resize-y overflow-auto"
+              style={{ maxHeight: '70vh' }}
+              placeholder="编辑故事梗概…"
+            />
           </div>
-          <FreshBadge stage="script" />
-        </div>
-        {data.scenes.map((sc) => (
-          <div key={sc.id} className="panel p-5">
-            <div className="text-xs font-mono text-text-muted">SCENE {sc.index} · {sc.timeOfDay}</div>
-            <div className="font-semibold mt-1">{sc.slug}</div>
-            <p className="text-sm text-text-secondary mt-2 leading-relaxed">{sc.action}</p>
-            {sc.beats.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 mt-3">
-                {sc.beats.map((b, i) => (
-                  <span key={i} className="text-[11px] px-2 py-0.5 rounded-full border border-border bg-bg-elevated text-text-muted">{b}</span>
-                ))}
+        )}
+
+        {/* 自动连跑完成提示 */}
+        {isAutoRunning && autoRunCompleteTarget && (
+          <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-accent/20 border border-accent/40 text-sm text-accent">
+            <Sparkles size={14} />
+            <span>已连续生成至第 {autoRunCompleteTarget} 集，生成完毕</span>
+          </div>
+        )}
+
+        {/* 分集内容 — 纯 div + React state 控制折叠，onClick 仅在 header 上，无嵌套交互元素 */}
+        {data.episodeTexts.map((ep) => {
+          // Show streaming bubble text if this episode is currently streaming
+          const computedNextEp = data.episodeTexts.length > 0 ? Math.max(...data.episodeTexts.map((e) => e.epIndex)) + 1 : 1
+          const isThisStreaming = episodeStreaming && !!streamingBubble && ep.epIndex === computedNextEp - 1
+          const displayText = isThisStreaming && streamingBubble?.text
+            ? streamingBubble.text
+            : ep.text
+          const isExpanded = expandedEpisodes.has(ep.epIndex)
+          return (
+            <div
+              key={ep.epIndex}
+              ref={(el) => { episodeRefs.current[ep.epIndex] = el as HTMLDetailsElement | null }}
+              className="panel p-0"
+            >
+              <div
+                role="button"
+                tabIndex={0}
+                className="flex items-center gap-2 px-5 py-4 cursor-pointer text-base font-semibold hover:bg-bg-elevated select-none"
+                onClick={() => {
+                  setExpandedEpisodes((prev) => {
+                    const next = new Set(prev)
+                    if (next.has(ep.epIndex)) next.delete(ep.epIndex)
+                    else next.add(ep.epIndex)
+                    return next
+                  })
+                }}
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') e.currentTarget.click() }}
+              >
+                <span className={`text-accent shrink-0 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
+                <span className="flex-1">第 {ep.epIndex} 集</span>
+                {isThisStreaming && (
+                  <span className="inline-flex items-center gap-1 text-xs text-accent">
+                    <Loader2 size={10} className="animate-spin" /> 生成中…
+                  </span>
+                )}
+                <span className="px-2 py-1 rounded-md bg-bg-elevated border border-border text-text-muted text-xs">
+                  {isExpanded ? '折叠' : '展开'}
+                </span>
               </div>
-            )}
-            <div className="mt-3 space-y-1.5">
-              {sc.dialogue.map((d, i) => (
-                <div key={i} className="text-sm">
-                  <span className="text-accent font-semibold">{d.role}: </span>
-                  {d.parenthetical && <span className="text-text-muted italic">（{d.parenthetical}）</span>}
-                  <span>{d.line}</span>
+              {isExpanded && displayText ? (
+                <div className="px-5 pb-5 prose prose-invert prose-sm max-w-none text-text-primary whitespace-pre-wrap leading-relaxed text-sm">
+                  <ReactMarkdown>{displayText}</ReactMarkdown>
                 </div>
-              ))}
+              ) : null}
+            </div>
+          )
+        })}
+      </div>
+    )
+  }
+
+  function EpisodesView() {
+    const episodes = data.episodeTexts
+    // Auto-select latest episode when entering this tab
+    useEffect(() => {
+      if (episodes.length > 0 && !episodes.some((ep) => ep.epIndex === selectedEpisodeIndex)) {
+        setSelectedEpisodeIndex(episodes[episodes.length - 1].epIndex)
+      }
+    }, [episodes, selectedEpisodeIndex])
+
+    if (!episodes.length) {
+      return (
+        <div className="max-w-4xl mx-auto panel p-10 text-center">
+          <p className="text-text-muted text-sm">{t.ws_episodes_empty}</p>
+        </div>
+      )
+    }
+
+    const selectedEp = episodes.find((ep) => ep.epIndex === selectedEpisodeIndex) ?? episodes[episodes.length - 1]
+
+    return (
+      <div className="max-w-5xl mx-auto space-y-6 pb-4">
+        {/* 集数选择网格 */}
+        <div>
+          <h3 className="font-display text-lg font-bold mb-3">{t.ws_episodes_select}</h3>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+            {episodes.map((ep) => {
+              const active = ep.epIndex === selectedEp.epIndex
+              const preview = ep.text.slice(0, 80)
+              return (
+                <button
+                  key={ep.epIndex}
+                  onClick={() => setSelectedEpisodeIndex(ep.epIndex)}
+                  className={`p-3 rounded-xl border text-left transition ${
+                    active
+                      ? 'border-accent bg-accent-dim/40 shadow-glow'
+                      : 'border-border bg-bg-elevated/60 hover:border-accent/50'
+                  }`}
+                >
+                  <div className="font-semibold text-sm mb-1">第 {ep.epIndex} 集</div>
+                  <div className="text-xs text-text-muted line-clamp-3 leading-relaxed">{preview}…</div>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+
+        {/* 选中集数的完整剧本 */}
+        {selectedEp && (
+          <div className="panel p-0">
+            <div className="flex items-center gap-2 px-5 py-4 border-b border-border">
+              <span className="text-accent font-bold">▶</span>
+              <span className="font-display text-base font-semibold">第 {selectedEp.epIndex} 集 · {t.ws_episodes_script}</span>
+            </div>
+            <div className="px-5 pb-5 pt-4 prose prose-invert prose-sm max-w-none text-text-primary whitespace-pre-wrap leading-relaxed text-sm">
+              <ReactMarkdown>{selectedEp.text}</ReactMarkdown>
             </div>
           </div>
-        ))}
+        )}
       </div>
     )
   }
 
   function CharacterView() {
-    if (data.characters.length === 0) {
+    const hasChars = data.characters.length > 0
+    const hasScenes = data.scenes.length > 0
+
+    if (!hasChars && !hasScenes) {
       return (
         <div className="max-w-4xl mx-auto panel p-10 text-center">
           <p className="text-text-muted text-sm">{t.ws_character_empty}</p>
         </div>
       )
     }
+
     // Lead → supporting → villain so the protagonist is shown first.
     const order: Record<GenCharacter['role'], number> = { lead: 0, supporting: 1, villain: 2 }
     const sorted = [...data.characters].sort((a, b) => order[a.role] - order[b.role])
@@ -621,8 +1228,98 @@ async function repaintCharImage(charId: string, styleIndex: number) {
       { key: 'back', label: '背面' },
       { key: 'expression', label: '表情' },
     ]
+
+    const SCENE_TIME_LABELS: Record<string, string> = { DAY: '日', NIGHT: '夜', DUSK: '黄昏', DAWN: '黎明' }
+
     return (
-      <div className="-m-6 h-[calc(100vh-3rem)] overflow-y-auto snap-y snap-mandatory">
+      <div className="-m-6 h-[calc(100vh-3rem)] flex flex-col">
+        {/* Toggle bar */}
+        <div className="flex items-center gap-2 px-6 pt-4 pb-2 shrink-0">
+          <button
+            onClick={() => setCharViewTab('characters')}
+            className={`px-4 py-1.5 rounded-full text-sm font-semibold transition border ${
+              charViewTab === 'characters'
+                ? 'bg-accent-dim text-accent border-accent'
+                : 'border-border text-text-secondary hover:text-text-primary hover:bg-bg-elevated'
+            }`}
+          >
+            角色 {hasChars && `(${data.characters.length})`}
+          </button>
+          <button
+            onClick={() => setCharViewTab('scenes')}
+            className={`px-4 py-1.5 rounded-full text-sm font-semibold transition border ${
+              charViewTab === 'scenes'
+                ? 'bg-accent-dim text-accent border-accent'
+                : 'border-border text-text-secondary hover:text-text-primary hover:bg-bg-elevated'
+            }`}
+          >
+            场景 {hasScenes && `(${data.scenes.length})`}
+          </button>
+        </div>
+
+        {/* Content area */}
+        <div className="flex-1 overflow-y-auto snap-y snap-mandatory min-h-0">
+          {charViewTab === 'scenes' ? (
+            /* Scenes view */
+            hasScenes ? (
+              <div className="px-6 py-4 space-y-4">
+                {data.scenes.map((s) => (
+                  <div key={s.id} className="panel p-5 space-y-3">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-mono text-xs text-text-muted">SC {s.index}</span>
+                      <h3 className="font-display text-lg font-bold text-text-primary">{s.slug}</h3>
+                      <span className="text-xs px-2 py-0.5 rounded-full border border-border bg-bg-elevated text-text-muted">
+                        {SCENE_TIME_LABELS[s.timeOfDay] ?? s.timeOfDay}
+                      </span>
+                      {busyScene === s.id && (
+                        <span className="inline-flex items-center gap-1 text-xs text-accent">
+                          <Loader2 size={10} className="animate-spin" /> 生成中…
+                        </span>
+                      )}
+                    </div>
+                    {/* Scene image — location only, no characters */}
+                    {sceneImages[s.id] ? (
+                      <div className="rounded-lg overflow-hidden border border-border">
+                        <img src={sceneImages[s.id]} alt={s.slug} className="w-full aspect-video object-cover" />
+                      </div>
+                    ) : !busyScene ? (
+                      <button
+                        onClick={() => genSceneImage(s)}
+                        className="w-full aspect-video rounded-lg border-2 border-dashed border-border flex items-center justify-center text-text-muted text-sm hover:border-accent hover:text-accent transition"
+                      >
+                        点击生成场景图
+                      </button>
+                    ) : null}
+                    <p className="text-sm text-text-secondary leading-relaxed">{s.action}</p>
+                    {s.beats.length > 0 && (
+                      <ul className="space-y-1 text-sm">
+                        {s.beats.map((b, i) => (
+                          <li key={i} className="flex gap-2 text-text-secondary"><span className="text-accent shrink-0">·</span><span>{b}</span></li>
+                        ))}
+                      </ul>
+                    )}
+                    {s.dialogue.length > 0 && (
+                      <div className="space-y-1.5 pt-1 border-t border-border/50">
+                        {s.dialogue.map((d, i) => (
+                          <div key={i} className="text-sm">
+                            <span className="font-semibold text-text-primary">{d.role}</span>
+                            {d.parenthetical && <span className="text-text-muted text-xs ml-1">({d.parenthetical})</span>}
+                            <span className="text-text-secondary">："{d.line}"</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-full">
+                <p className="text-text-muted text-sm">暂无场景数据，请先提取角色和场景。</p>
+              </div>
+            )
+          ) : hasChars ? (
+            /* Characters view (existing) */
+            <>
         {sorted.map((c, idx) => (
           <section
             key={c.id}
@@ -688,24 +1385,6 @@ async function repaintCharImage(charId: string, styleIndex: number) {
                   <div className="relative flex flex-col h-full" style={{ height: 'calc(100vh - 200px)', maxHeight: 600 }}>
                     <div className="flex-1 rounded-2xl overflow-hidden border border-border bg-bg-elevated/30 relative">
                       <img src={charImages[c.id][0]} alt={`${c.name} 正面`} className="w-full h-full object-contain" />
-                      {repaintingChar === c.id && (
-                        <div className="absolute inset-0 flex items-center justify-center bg-black/50">
-                          <Loader2 size={24} className="animate-spin text-white" />
-                        </div>
-                      )}
-                      <div className="absolute bottom-2 left-1/2 -translate-x-1/2 flex gap-1.5">
-                        {[0, 1, 2, 3, 4, 5].map((idx) => (
-                          <button
-                            key={idx}
-                            onClick={() => repaintCharImage(c.id, idx)}
-                            disabled={repaintingChar === c.id}
-                            title={`风格 ${idx + 1}`}
-                            className="w-8 h-8 rounded-full bg-black/60 border border-white/20 text-white text-xs hover:bg-black/80 disabled:opacity-40 transition"
-                          >
-                            {idx + 1}
-                          </button>
-                        ))}
-                      </div>
                     </div>
                     {generatingMultiView === c.id ? (
                       <div className="mt-2 py-2 rounded-lg bg-accent/70 text-white text-sm font-semibold flex items-center justify-center gap-2">
@@ -716,10 +1395,10 @@ async function repaintCharImage(charId: string, styleIndex: number) {
                         <div className="grid grid-cols-2 gap-1 mt-1 flex-1 overflow-hidden rounded-lg border border-border">
                           {charImages[c.id].slice(1).map((url, vi) => {
                             const labels = selectedViewCount === '5'
-                              ? ['侧面', '背面', '四分之三侧', '表情']
+                              ? ['半身', '面部', '表情', '服装']
                               : selectedViewCount === 'full'
-                                ? ['表情', '服装', '细节']
-                                : ['侧面', '背面']
+                                ? ['半身', '面部', '表情', '服装', '细节']
+                                : ['半身', '特写']
                             return url ? (
                               <div key={vi} className="relative overflow-hidden bg-bg-elevated/30 rounded">
                                 <img src={url} alt={labels[vi]} className="w-full h-full object-contain" />
@@ -769,6 +1448,13 @@ async function repaintCharImage(charId: string, styleIndex: number) {
             </div>
           </section>
         ))}
+        </>
+      ) : (
+        <div className="flex items-center justify-center h-full">
+          <p className="text-text-muted text-sm">暂无角色数据，请先提取角色和场景。</p>
+        </div>
+      )}
+        </div>
       </div>
     )
   }
@@ -800,11 +1486,13 @@ async function repaintCharImage(charId: string, styleIndex: number) {
 
   function CharacterDossier({ character, cast }: { character: GenCharacter; cast: GenCharacter[] }) {
     const rows: { label: string; value: string }[] = [
-      { label: '外形', value: character.look },
+      { label: '性别', value: character.gender },
+      { label: '年龄', value: String(character.age) },
+      { label: '面部', value: character.faceDescription },
+      { label: '身材', value: character.bodyDescription },
+      { label: '服装', value: character.clothingDescription },
       { label: '性格', value: character.personality },
-      { label: '动机', value: character.motivation },
-      { label: '首场', value: character.debutShot },
-    ]
+    ].filter((r) => r.value)
     const nameOf = (id: string) => cast.find((x) => x.id === id)?.name ?? id
     const roleOf = (id: string) => cast.find((x) => x.id === id)?.role ?? 'supporting'
     const jumpTo = (id: string) => {

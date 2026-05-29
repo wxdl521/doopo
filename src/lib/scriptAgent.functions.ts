@@ -418,7 +418,64 @@ export const streamEpisodeScenes = createServerFn({ method: 'POST' })
 
 // 注：角色信息已并入故事梗概的"人物小传"段，不再单独成步。
 
-// ============= 3) 梗概精修（基于当前梗概 + 用户指令 重写整份梗概）=============
+// ============= 3) 修改指定集数（在现有剧本基础上修改）============
+
+const RefineEpisodeInput = z.object({
+  lang: Lang,
+  epIndex: z.number().min(1).max(200).default(1),
+  currentText: z.string().min(20).max(50000),
+  instruction: z.string().min(1).max(2000),
+  synopsisText: z.string().max(20000).optional().default(''),
+  previousEpisodesText: z.string().max(50000).optional().default(''),
+  model: z.string().optional(),
+})
+
+const SYS_REFINE_EPISODE_ZH = `你是一位资深短剧分镜师，正在协助用户修改指定集数的剧本。
+
+你将收到：故事梗概、前面若干集的剧本（如有）、当前集剧本、以及用户的修改要求。
+修改时必须确保本集与故事梗概的人设/剧情一致，并与前序集数在剧情、人物状态、悬念钩子方面保持连贯。
+
+严格规则：
+1) 必须输出**完整的修改后剧本全文**，不能只输出 diff 或补丁；
+2) 严格保留原文的分镜格式：分镜序号 + 地点时段，对白格式为"角色（情绪）：台词"，禁止使用 Markdown 符号；
+3) 只针对"用户修改要求"做改动，其余内容尽量保留原文措辞；
+4) 不写任何解释、前言，直接输出修改后的剧本正文。`
+
+const SYS_REFINE_EPISODE_EN = `You are a senior short-drama storyboarder helping the user revise a specific episode script.
+
+You will receive: the story synopsis, previous episodes' scripts (if any), the current episode script, and the user's revision instruction.
+Ensure the revised episode is consistent with the synopsis (characters/plot) and maintains continuity with previous episodes (plot progression, character states, cliffhangers).
+
+Rules:
+1) Output the FULL revised episode — never a diff or patch;
+2) Preserve the original format: scene numbers + location/time, dialogue as "ROLE (emotion): line", no Markdown;
+3) Make only changes implied by the user's instruction; keep other parts intact;
+4) No preamble, start directly with the revised content.`
+
+export const refineEpisodeScenes = createServerFn({ method: 'POST' })
+  .inputValidator((d: unknown) => RefineEpisodeInput.parse(d))
+  .handler(async function* ({ data }) {
+    const sys = (data.lang === 'zh' ? SYS_REFINE_EPISODE_ZH : SYS_REFINE_EPISODE_EN)
+      .replace(/第 N /g, `第 ${data.epIndex} `)
+      .replace(/Episode N/g, `Episode ${data.epIndex}`)
+    const synopsisBlock = data.synopsisText
+      ? data.lang === 'zh'
+        ? `【故事梗概】\n${data.synopsisText.slice(0, 8000)}\n\n`
+        : `[Synopsis]\n${data.synopsisText.slice(0, 8000)}\n\n`
+      : ''
+    const prevBlock = data.previousEpisodesText
+      ? data.lang === 'zh'
+        ? `【前序剧集内容】（仅供理解上下文，不要输出这些内容）\n${data.previousEpisodesText.slice(0, 30000)}\n\n`
+        : `[Previous episodes — for context only, do NOT output this]\n${data.previousEpisodesText.slice(0, 30000)}\n\n`
+      : ''
+    const user =
+      data.lang === 'zh'
+        ? `${synopsisBlock}${prevBlock}【目标集数】第 ${data.epIndex} 集\n【当前剧本】\n${data.currentText}\n\n【用户修改要求】\n${data.instruction}\n\n请直接输出修改后的第 ${data.epIndex} 集剧本。`
+        : `${synopsisBlock}${prevBlock}[Episode] ${data.epIndex}\n[Current script]\n${data.currentText}\n\n[User instruction]\n${data.instruction}\n\nOutput the full revised Episode ${data.epIndex} script.`
+    yield* streamChat({ model: pickModel(data.model), system: sys, user })
+  })
+
+// ============= 4) 梗概精修（基于当前梗概 + 用户指令 重写整份梗概）=============
 
 const RefineInput = z.object({
   lang: Lang,

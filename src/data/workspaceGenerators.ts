@@ -12,10 +12,11 @@ export type GenCharacter = {
   role: 'lead' | 'supporting' | 'villain'
   roleLabel: string
   age: number
-  look: string
+  gender: string
+  faceDescription: string
+  bodyDescription: string
+  clothingDescription: string
   personality: string
-  motivation: string
-  debutShot: string
   palette: string[]
   swatch: string
   mbti?: string
@@ -173,10 +174,11 @@ export function generateCharacters(): GenCharacter[] {
       role: 'lead',
       roleLabel: '女主 · 高冷学霸',
       age: 17,
-      look: '齐耳短发，校服外套半挂，常戴细框眼镜',
+      gender: '女',
+      faceDescription: '清秀瓜子脸，细框眼镜，齐耳短发乌黑柔顺，皮肤白皙，眼神清冷',
+      bodyDescription: '身高 165cm，体型纤细，姿态挺拔，常微微低头看书',
+      clothingDescription: '校服外套半挂在肩上，内搭白色衬衫，下着深蓝色百褶裙，脚穿白色帆布鞋',
       personality: '克制、敏感、嘴硬心软',
-      motivation: '想守住自己的节奏，又害怕错过江野',
-      debutShot: '黄昏自习室，逆光剪影 + 钢笔特写',
       palette: ['#0f172a', '#475569', '#fbbf24', '#f8fafc'],
       swatch: grad('#1e293b', '#fbbf24'),
       mbti: 'INFP',
@@ -193,10 +195,11 @@ export function generateCharacters(): GenCharacter[] {
       role: 'lead',
       roleLabel: '男主 · 阳光体育委员',
       age: 17,
-      look: '运动外套挂在椅背，校服袖口随意卷起，发梢微乱',
+      gender: '男',
+      faceDescription: '阳光帅气，剑眉星目，短发微乱，肤色健康偏黑，笑起来露出整齐牙齿',
+      bodyDescription: '身高 180cm，体型健壮，肩宽腰窄，姿态放松随意',
+      clothingDescription: '运动外套挂在椅背，校服袖口随意卷起，下着运动裤，脚穿篮球鞋',
       personality: '直球、迟钝、关键时刻爆发',
-      motivation: '一直暗恋林夏，又怕被她讨厌',
-      debutShot: '广播站推门进入，逆光面部半暗',
       palette: ['#0ea5e9', '#1e3a8a', '#fde68a', '#0f172a'],
       swatch: grad('#0ea5e9', '#1e3a8a'),
       mbti: 'ESFP',
@@ -213,10 +216,11 @@ export function generateCharacters(): GenCharacter[] {
       role: 'supporting',
       roleLabel: '配角 · 八卦闺蜜',
       age: 17,
-      look: '高马尾，校服里藏着粉色卫衣',
+      gender: '女',
+      faceDescription: '圆脸可爱，大眼睛灵动，高马尾扎起，皮肤粉嫩，表情丰富',
+      bodyDescription: '身高 160cm，体型娇小，动作活泼，喜欢蹦跳',
+      clothingDescription: '校服里藏着粉色卫衣，下着短裙，脚穿白色运动鞋，常挂便签条',
       personality: '热情、嘴快、永远在线',
-      motivation: '推林夏一把，顺便嗑一口糖',
-      debutShot: '操场尖叫的中近景',
       palette: ['#ec4899', '#f472b6', '#fde68a'],
       swatch: grad('#ec4899', '#f472b6'),
       mbti: 'ENFP',
@@ -232,10 +236,11 @@ export function generateCharacters(): GenCharacter[] {
       role: 'villain',
       roleLabel: '反派 · 广播站站长',
       age: 18,
-      look: '黑色卫衣 + 工牌，常抱着资料夹',
+      gender: '女',
+      faceDescription: '冷峻面容，高颧骨，黑发扎成利落马尾，眼神锐利，表情严肃',
+      bodyDescription: '身高 170cm，体型高挑，姿态挺拔，走路带风',
+      clothingDescription: '黑色卫衣外搭工牌，常抱着资料夹，下着黑色长裤，脚穿黑色靴子',
       personality: '强势、控制欲强、表面公事公办',
-      motivation: '维护广播站秩序，对江野的"私货"零容忍',
-      debutShot: '广播站门口冷脸特写',
       palette: ['#1f2937', '#6b7280', '#ef4444'],
       swatch: grad('#1f2937', '#ef4444'),
       mbti: 'ENTJ',

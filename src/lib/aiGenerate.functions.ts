@@ -116,7 +116,7 @@ function stageSpec(stage: Input['stage']) {
       return {
         toolName: 'emit_characters',
         system:
-          '你是一名动漫角色设计师 + 编剧。结合用户输入、logline / acts / scenes 提取或新建 3-5 位角色（至少 1 主角，可含配角与反派）。每位需要：名字、role(lead/supporting/villain)、roleLabel(中文短描述如"女主 · 高冷学霸")、age、look(外形)、personality(性格)、motivation(动机)、debutShot(首场镜头描述)、palette(3-4 个 hex 颜色，匹配角色调性)。仅工具调用返回。',
+          '你是一名动漫角色设计师 + 编剧。结合用户输入、logline / acts / scenes 提取或新建 3-5 位角色（至少 1 主角，可含配角与反派）。每位需要：名字、role(lead/supporting/villain)、roleLabel(中文短描述如"女主 · 高冷学霸")、age、gender(性别)、faceDescription(面部特征详细描述，包括脸型、五官、肤色、发型发色等)、bodyDescription(身材体型描述，包括身高、体型、姿态等)、clothingDescription(服装配饰详细描述，包括款式、颜色、材质、配饰等)、personality(性格)、palette(3-4 个 hex 颜色，匹配角色调性)。仅工具调用返回。',
         schema: {
           type: 'object',
           properties: {
@@ -131,10 +131,11 @@ function stageSpec(stage: Input['stage']) {
                   role: { type: 'string', enum: ['lead', 'supporting', 'villain'] },
                   roleLabel: { type: 'string' },
                   age: { type: 'number' },
-                  look: { type: 'string' },
+                  gender: { type: 'string' },
+                  faceDescription: { type: 'string', description: '面部特征详细描述' },
+                  bodyDescription: { type: 'string', description: '身材体型描述' },
+                  clothingDescription: { type: 'string', description: '服装配饰描述' },
                   personality: { type: 'string' },
-                  motivation: { type: 'string' },
-                  debutShot: { type: 'string' },
                   palette: {
                     type: 'array',
                     minItems: 3,
@@ -142,7 +143,7 @@ function stageSpec(stage: Input['stage']) {
                     items: { type: 'string', description: 'hex like #1e293b' },
                   },
                 },
-                required: ['name', 'role', 'roleLabel', 'age', 'look', 'personality', 'motivation', 'debutShot', 'palette'],
+                required: ['name', 'role', 'roleLabel', 'age', 'gender', 'faceDescription', 'bodyDescription', 'clothingDescription', 'personality', 'palette'],
                 additionalProperties: false,
               },
             },
