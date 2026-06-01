@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react'
 import { Link } from '@tanstack/react-router'
 import { Trash2, MessageSquare, FileText, Cloud, LogIn, Share2 } from 'lucide-react'
+import { useServerFn } from '@tanstack/react-start'
 import { useLanguage } from '../i18n/LanguageContext'
 import ScriptComposer from '../components/scripts/ScriptComposer'
-import { loadScripts, removeScript, syncFromCloud, type SavedScript } from '../lib/scriptStorage'
+import { loadScripts, removeScript, syncFromCloud, ensureScriptCover, type SavedScript } from '../lib/scriptStorage'
+import { uploadScriptCover } from '../lib/scripts.covers.functions'
 import { useAuth } from '../hooks/useAuth'
 import ShareDialog from '../components/community/ShareDialog'
 
@@ -22,6 +24,8 @@ const GENRES = [
   { value: 'Horror', key: 'script_genre_horror' as const },
   { value: 'Fantasy', key: 'script_genre_fantasy' as const },
   { value: 'Historical', key: 'script_genre_historical' as const },
+  { value: 'Violence', key: 'script_genre_scifi' as const, locked: true, label: '暴力' },
+  { value: 'Erotic', key: 'script_genre_scifi' as const, locked: true, label: '情色' },
 ]
 const TONES = [
   { value: 'Serious', key: 'script_tone_serious' as const },
@@ -78,6 +82,7 @@ export default function Scripts() {
   const [scripts, setScripts] = useState<SavedScript[]>([])
   const { isAuthenticated, loading: authLoading, user, signOut } = useAuth()
   const [shareScript, setShareScript] = useState<SavedScript | null>(null)
+  const callImage = useServerFn(uploadScriptCover)
 
   const refresh = () => setScripts(loadScripts())
   useEffect(() => {
@@ -85,6 +90,21 @@ export default function Scripts() {
     // 登录后从云端拉取并合并，未登录则静默跳过
     void syncFromCloud().then((merged) => setScripts(merged))
   }, [isAuthenticated])
+
+  // Backfill covers for any script that doesn't have one yet (old scripts saved
+  // before this feature). One generation per id — the helper dedupes.
+  useEffect(() => {
+    const missing = scripts.filter((s) => !s.coverUrl && (s.title || s.synopsisText || s.plot))
+    if (missing.length === 0) return
+    for (const s of missing) {
+      void ensureScriptCover({
+        script: s,
+        uploadCover: callImage as any,
+        onUpdate: () => refresh(),
+      })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scripts.length, isAuthenticated])
 
   const handleDelete = (id: string) => {
     setScripts(removeScript(id))
@@ -162,9 +182,25 @@ export default function Scripts() {
               return (
                 <div key={s.id} className="panel overflow-hidden group">
                   <Link to="/scripts/$scriptId" params={{ scriptId: s.id }} className="block">
-                    <div className="h-24 relative" style={{ background: bg }}>
+                    <div className="h-24 relative overflow-hidden" style={s.coverUrl ? undefined : { background: bg }}>
+                      {s.coverUrl ? (
+                        <img
+                          src={s.coverUrl}
+                          alt={s.title}
+                          loading="lazy"
+                          className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.05]"
+                        />
+                      ) : (
+                        <div className="absolute inset-0 opacity-30 mix-blend-overlay"
+                             style={{
+                               backgroundImage:
+                                 'linear-gradient(0deg, rgba(255,255,255,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px)',
+                               backgroundSize: '20px 20px',
+                             }} />
+                      )}
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent" />
                       <span className="absolute top-2 left-2 chip chip-active text-[10px]">{s.type}</span>
-                      <span className="absolute top-2 right-2 text-[10px] text-white/80">
+                      <span className="absolute top-2 right-2 text-[10px] text-white/90 px-1.5 py-0.5 rounded bg-black/40 backdrop-blur-sm">
                         {epCount > 0 ? `${epCount} 集` : `${sceneCount} 场`}
                       </span>
                     </div>

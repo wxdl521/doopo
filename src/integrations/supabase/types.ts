@@ -178,6 +178,7 @@ export type Database = {
         Row: {
           aspect: string
           audio: string
+          completed_stages: string[]
           created_at: string
           custom_cover: string | null
           id: string
@@ -189,10 +190,12 @@ export type Database = {
           user_id: string
           video_model: string
           workflow: string
+          workspace_data: Json
         }
         Insert: {
           aspect?: string
           audio?: string
+          completed_stages?: string[]
           created_at?: string
           custom_cover?: string | null
           id: string
@@ -204,10 +207,12 @@ export type Database = {
           user_id: string
           video_model?: string
           workflow?: string
+          workspace_data?: Json
         }
         Update: {
           aspect?: string
           audio?: string
+          completed_stages?: string[]
           created_at?: string
           custom_cover?: string | null
           id?: string
@@ -219,6 +224,7 @@ export type Database = {
           user_id?: string
           video_model?: string
           workflow?: string
+          workspace_data?: Json
         }
         Relationships: []
       }

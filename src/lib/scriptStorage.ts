@@ -11,6 +11,9 @@ export type SavedScript = {
   model?: string
   // legacy single-text fallback
   content?: string
+  // AI-generated cover image URL (persisted inside payload as jsonb, no DB migration needed)
+  coverUrl?: string
+  coverPrompt?: string
   // structured pipeline output
   logline?: string
   premise?: string
@@ -250,4 +253,85 @@ export function scriptToPlainText(s: SavedScript): string {
     return lines.join('\n')
   }
   return s.content || ''
+}
+
+// ============= Cover image generation =============
+//
+// Auto-generate a cover image for a script based on its title + logline/premise.
+// Strategy:
+//   1. If the script already has a `coverUrl` and `force !== true`, return it.
+//   2. Otherwise build a cinematic prompt from title + logline + premise,
+//      call the `uploadScriptCover` server fn (which generates, downloads,
+//      and re-hosts the image into the user's `script-covers` bucket in
+//      Supabase Storage), then write the resulting permanent URL back to
+//      localStorage + scripts.payload.
+//   3. Dedupe concurrent calls per id with an in-memory Map so the same
+//      script never triggers two generations at once (e.g. fire-and-forget
+//      from save + fire-and-forget from the list view).
+
+export type UploadCoverFn = (input: { data: { scriptId: string; prompt: string } }) => Promise<{ url?: string; error?: string }>
+
+const inflightCover = new Map<string, Promise<string | null>>()
+
+export function buildCoverPrompt(s: Pick<SavedScript, 'title' | 'logline' | 'premise' | 'plot' | 'synopsisText' | 'genre' | 'tone' | 'type'>): string {
+  const ctx = [s.logline, s.premise, s.plot, s.synopsisText?.slice(0, 200)]
+    .filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+    .join(' / ')
+  const meta = [
+    Array.isArray(s.genre) ? s.genre.join(' ') : s.genre,
+    Array.isArray(s.tone) ? s.tone.join(' ') : s.tone,
+    s.type,
+  ].filter(Boolean).join(', ')
+  // Cinematic, text-free, 16:9 — most reliable prompt pattern for 3D-realistic covers.
+  return [
+    `Cinematic movie poster cover for the script titled "${s.title}".`,
+    ctx && `Story: ${ctx}.`,
+    meta && `Genre and tone: ${meta}.`,
+    'Composition: dramatic key visual, no text, no title, no watermarks, no logos, no people close-up faces in focus, atmospheric lighting, depth of field, film grain, ultra-detailed, 3D realistic render style.',
+  ].filter(Boolean).join(' ')
+}
+
+export function ensureScriptCover(opts: {
+  script: SavedScript
+  uploadCover: UploadCoverFn
+  onUpdate?: (s: SavedScript) => void
+  force?: boolean
+}): Promise<string | null> {
+  const { script, uploadCover, onUpdate, force } = opts
+  if (!force && script.coverUrl) return Promise.resolve(script.coverUrl)
+
+  // Dedupe: if a generation is already running for this id, attach to it.
+  const existing = inflightCover.get(script.id)
+  if (existing) return existing
+
+  const promise = (async (): Promise<string | null> => {
+    try {
+      const prompt = buildCoverPrompt(script)
+      const res = await uploadCover({ data: { scriptId: script.id, prompt } })
+      const url = res?.url
+      if (!url) {
+        console.warn('[cover] storage upload returned no url:', res?.error)
+        return null
+      }
+      // Write back to localStorage + cloud. Don't await cloud for caller speed.
+      const all = loadScripts()
+      const idx = all.findIndex((s) => s.id === script.id)
+      if (idx >= 0) {
+        all[idx] = { ...all[idx], coverUrl: url, coverPrompt: prompt, updatedAt: new Date().toISOString() }
+        saveScripts(all)
+        onUpdate?.(all[idx])
+        // fire-and-forget cloud upsert
+        void cloudUpsert(all[idx])
+      }
+      return url
+    } catch (e) {
+      console.warn('[cover] generation failed:', e)
+      return null
+    } finally {
+      inflightCover.delete(script.id)
+    }
+  })()
+
+  inflightCover.set(script.id, promise)
+  return promise
 }

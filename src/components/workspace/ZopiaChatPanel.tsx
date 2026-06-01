@@ -125,6 +125,7 @@ export default function ZopiaChatPanel({
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [synopsisEditMode, setSynopsisEditMode] = useState(false)
+  const [lockModal, setLockModal] = useState<string | null>(null)
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: 999999, behavior: 'smooth' })
@@ -238,7 +239,7 @@ export default function ZopiaChatPanel({
       Promise.resolve(produceResult).then(() => {
         const ctas: { key: CtaKey; label: string; target: WorkspaceTab }[] = isEpisodeModify
           ? [
-              { key: 'episode_modify', label: '修改本集剧本', target: 'episodes' },
+              { key: 'episode_modify', label: 'AI修改本集剧本', target: 'episodes' },
               { key: 'extract', label: '提取本集角色和场景', target: 'character' },
             ]
           : []
@@ -297,7 +298,7 @@ export default function ZopiaChatPanel({
     { key: 'qt', icon: Clock, target: 'timeline', label: t.zp_quick_timeline, userText: t.zp_user_quick_timeline },
   ]
 
-  type ParamField = { key: string; label: string; options: { value: string; label: string }[]; default: string; multiSelect?: boolean }
+  type ParamField = { key: string; label: string; options: { value: string; label: string; locked?: boolean }[]; default: string; multiSelect?: boolean; custom?: boolean }
   type ParamSpec = { baseText: string; targetStage: WorkspaceTab; jumpAfter: boolean; fields: ParamField[] }
 
   function getParamSpec(c: { key: CtaKey; target: WorkspaceTab }): ParamSpec | null {
@@ -408,13 +409,13 @@ export default function ZopiaChatPanel({
               { value: 'Romance', label: t.script_tone_romance },
               { value: 'Horror', label: t.script_tone_horror },
             ]},
-            { key: 'expectedEpisodes', label: '预计集数', default: '30', options: [
+            { key: 'expectedEpisodes', label: '预计集数', default: '30', custom: true, options: [
               { value: '30', label: '30 集' },
               { value: '60', label: '60 集' },
               { value: '100', label: '100 集' },
               { value: '150', label: '150 集' },
             ]},
-            { key: 'totalMinutes', label: '总时长（分钟）', default: '90', options: [
+            { key: 'totalMinutes', label: '总时长（分钟）', default: '90', custom: true, options: [
               { value: '30', label: '30 分钟' },
               { value: '60', label: '60 分钟' },
               { value: '90', label: '90 分钟' },
@@ -432,7 +433,7 @@ export default function ZopiaChatPanel({
               { value: '20', label: '第 20 集' },
               { value: '30', label: '第 30 集' },
             ]},
-            { key: 'sceneCount', label: '每集分镜数', default: '5', options: [
+            { key: 'sceneCount', label: '每集分镜数', default: '5', custom: true, options: [
               { value: '3', label: '3 个' },
               { value: '5', label: '5 个' },
               { value: '7', label: '7 个' },
@@ -791,13 +792,24 @@ export default function ZopiaChatPanel({
             {pendingCta.spec.fields.map((f) => (
               <div key={f.key} className="space-y-1">
                 <div className="text-xs text-text-secondary">{f.label}</div>
-                <div className="flex flex-wrap gap-1.5">
+                <div className="flex flex-wrap items-center gap-1.5">
                   {f.options.map((o) => {
                     const val = pendingCta.values[f.key]
                     const isMulti = f.multiSelect
                     const active = isMulti
                       ? Array.isArray(val) && val.includes(o.value)
                       : val === o.value
+                    if (o.locked) {
+                      return (
+                        <button
+                          key={o.value}
+                          onClick={() => setLockModal(o.label)}
+                          className="px-2.5 py-1 rounded-full border border-border text-xs text-text-muted hover:border-rose-500/50 hover:text-rose-400 transition inline-flex items-center gap-1"
+                        >
+                          🔒 {o.label}
+                        </button>
+                      )
+                    }
                     return (
                       <button
                         key={o.value}
@@ -822,6 +834,22 @@ export default function ZopiaChatPanel({
                       </button>
                     )
                   })}
+                  {f.custom && (
+                    <input
+                      type="text"
+                      value={
+                        !f.options.some((o) => o.value === pendingCta.values[f.key])
+                          ? pendingCta.values[f.key] ?? ''
+                          : ''
+                      }
+                      placeholder="自定义"
+                      onChange={(e) => setPendingCta((p) => p ? {
+                        ...p,
+                        values: { ...p.values, [f.key]: e.target.value }
+                      } : p)}
+                      className="w-16 px-2 py-1 rounded-md border border-border bg-bg-surface text-xs text-text-primary focus:border-accent focus:outline-none placeholder:text-text-muted"
+                    />
+                  )}
                 </div>
               </div>
             ))}
@@ -941,6 +969,42 @@ export default function ZopiaChatPanel({
           </div>
         </div>
       </div>
+
+      {/* Locked genre modal */}
+      {lockModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setLockModal(null)}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="relative bg-bg-surface border border-border rounded-2xl overflow-hidden max-w-sm w-full shadow-2xl p-6 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setLockModal(null)}
+              className="absolute top-3 right-3 p-1 rounded-md hover:bg-bg-elevated text-text-muted"
+            >
+              <X size={16} />
+            </button>
+            <div className="text-center space-y-2">
+              <div className="text-4xl">🔒</div>
+              <h3 className="font-display text-lg font-bold text-text-primary">题材解锁申请</h3>
+              <p className="text-sm text-text-secondary leading-relaxed">
+                「{lockModal}」为用户定制题材，请您在遵守所在地区法律法规的前提下，向管理员申请解锁该题材。
+              </p>
+            </div>
+            <button
+              onClick={() => setLockModal(null)}
+              className="w-full py-2.5 rounded-lg bg-accent text-accent-foreground text-sm font-semibold hover:opacity-90 transition"
+            >
+              我知道了
+            </button>
+          </div>
+        </div>
+      )}
     </aside>
   )
 }

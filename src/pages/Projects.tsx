@@ -21,14 +21,14 @@ import {
 } from '../components/ui/dialog'
 
 const initialAll: ProjectMeta[] = [
-  { id: '1', title: 'Lighthouse Reverie', thumbnail: 'from-indigo-700 via-violet-800 to-slate-950', status: 'rendering', updated: '2 min ago' },
-  { id: '2', title: 'Founder Story Pitch', thumbnail: 'from-amber-500 via-rose-700 to-zinc-950', status: 'ready', updated: 'yesterday' },
-  { id: '3', title: 'Cyberpunk Cafe MV', thumbnail: 'from-fuchsia-600 via-purple-800 to-indigo-950', status: 'draft', updated: '3 days ago' },
-  { id: '4', title: 'Mountain Cabin Ad', thumbnail: 'from-emerald-600 via-teal-800 to-slate-950', status: 'ready', updated: 'last week' },
-  { id: '5', title: 'Aurora Lullaby', thumbnail: 'from-sky-500 via-indigo-600 to-violet-900', status: 'draft', updated: 'last week' },
-  { id: '6', title: 'Robot Origin Doc', thumbnail: 'from-amber-500 via-orange-700 to-zinc-900', status: 'ready', updated: '2 weeks ago' },
-  { id: '7', title: 'Kelp Forest Promo', thumbnail: 'from-teal-500 via-cyan-700 to-slate-900', status: 'rendering', updated: '3 weeks ago' },
-  { id: '8', title: 'Late Night Train', thumbnail: 'from-rose-700 via-blue-800 to-indigo-950', status: 'draft', updated: 'last month' },
+  { id: '1', title: 'Lighthouse Reverie', thumbnail: 'https://images.unsplash.com/photo-1507413245164-6160d8298b31?w=1200&h=750&fit=crop&q=80', status: 'rendering', updated: '2 min ago' },
+  { id: '2', title: 'Founder Story Pitch', thumbnail: 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=1200&h=750&fit=crop&q=80', status: 'ready', updated: 'yesterday' },
+  { id: '3', title: 'Cyberpunk Cafe MV', thumbnail: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?w=1200&h=750&fit=crop&q=80', status: 'draft', updated: '3 days ago' },
+  { id: '4', title: 'Mountain Cabin Ad', thumbnail: 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=1200&h=750&fit=crop&q=80', status: 'ready', updated: 'last week' },
+  { id: '5', title: 'Aurora Lullaby', thumbnail: 'https://images.unsplash.com/photo-1483347756197-71ef80e95f73?w=1200&h=750&fit=crop&q=80', status: 'draft', updated: 'last week' },
+  { id: '6', title: 'Robot Origin Doc', thumbnail: 'https://images.unsplash.com/photo-1518770660439-4636190af475?w=1200&h=750&fit=crop&q=80', status: 'ready', updated: '2 weeks ago' },
+  { id: '7', title: 'Kelp Forest Promo', thumbnail: 'https://images.unsplash.com/photo-1505142468610-359e7d316be0?w=1200&h=750&fit=crop&q=80', status: 'rendering', updated: '3 weeks ago' },
+  { id: '8', title: 'Late Night Train', thumbnail: 'https://images.unsplash.com/photo-1614624532983-4ce03382d63d?w=1200&h=750&fit=crop&q=80', status: 'draft', updated: 'last month' },
 ]
 
 const TAB_KEYS = ['All', 'Rendering', 'Drafts', 'Ready'] as const

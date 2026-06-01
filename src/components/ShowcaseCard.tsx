@@ -6,15 +6,25 @@ export default function ShowcaseCard({ item }: { item: ShowcaseItem }) {
   return (
     <Link to="/showcase/$itemId" params={{ itemId: item.id }} className="card group cursor-pointer block">
       <article>
-      <div className={`relative aspect-[16/10] bg-gradient-to-br ${item.gradient} overflow-hidden`}>
-        {/* Decorative grid texture */}
-        <div className="absolute inset-0 opacity-30 mix-blend-overlay"
-             style={{
-               backgroundImage:
-                 'linear-gradient(0deg, rgba(255,255,255,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px)',
-               backgroundSize: '24px 24px',
-             }} />
-        {/* Subtle vignette */}
+      <div className="relative aspect-[16/10] overflow-hidden bg-bg-elevated">
+        {/^https?:\/\//.test(item.gradient) ? (
+          <img
+            src={item.gradient}
+            alt={item.title}
+            loading="lazy"
+            className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.05]"
+          />
+        ) : (
+          <div className={`absolute inset-0 bg-gradient-to-br ${item.gradient}`}>
+            <div className="absolute inset-0 opacity-30 mix-blend-overlay"
+                 style={{
+                   backgroundImage:
+                     'linear-gradient(0deg, rgba(255,255,255,0.06) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.06) 1px, transparent 1px)',
+                   backgroundSize: '24px 24px',
+                 }} />
+          </div>
+        )}
+        {/* Subtle vignette — always on top to keep title/overlay readable */}
         <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
 
         {/* Title overlay */}

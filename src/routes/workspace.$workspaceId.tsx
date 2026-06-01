@@ -13,9 +13,9 @@ import {
 } from '../data/workspaceGenerators'
 import { generateStageAi } from '../lib/aiGenerate.functions'
 import { generateImage } from '../lib/openrouterImage.functions'
-import { getProject, type ProjectConfigRow } from '../lib/projects.functions'
+import { getProject, saveWorkspaceData, loadWorkspaceData, type ProjectConfigRow } from '../lib/projects.functions'
 import { streamSynopsis, streamEpisodeScenes, refineSynopsis, refineEpisodeScenes } from '../lib/scriptAgent.functions'
-import { Maximize2, FileText, Camera, Clock, Users, X, Loader2, Sparkles, Send } from 'lucide-react'
+import { Maximize2, FileText, Camera, Clock, Users, X, Loader2, Sparkles, Send, CheckCircle2, Pencil, Check } from 'lucide-react'
 import CharacterPortrait from '../components/workspace/CharacterPortrait'
 import CharacterStage from '../components/workspace/CharacterStage'
 import { toast } from 'sonner'
@@ -71,11 +71,103 @@ const sbGradient = (i: number) => {
   return palette[i % palette.length]
 }
 
+// Module-scope: defined once, stable component identity across renders.
+// Defining these inside WorkspacePage made them "new" components on every render,
+// which caused React to unmount/remount and lose textarea cursor + IME state.
+function ClampText({ text, label, maxLines = 3, threshold = 80 }: { text: string; label: string; maxLines?: number; threshold?: number }) {
+  const [expanded, setExpanded] = useState(false)
+  const clampable = text.length > threshold
+  if (!clampable) return <span>{text}</span>
+  return (
+    <div>
+      <p
+        className={expanded ? '' : 'overflow-hidden'}
+        style={expanded ? undefined : { display: '-webkit-box', WebkitLineClamp: maxLines, WebkitBoxOrient: 'vertical' as const }}
+      >
+        {text}
+      </p>
+      <button
+        type="button"
+        onClick={() => setExpanded((v) => !v)}
+        aria-expanded={expanded}
+        aria-label={`${expanded ? '收起' : '展开'} ${label}`}
+        className="mt-1 text-[11px] text-text-muted hover:text-text-primary transition underline-offset-2 hover:underline"
+      >
+        {expanded ? '收起' : '展开全部'}
+      </button>
+    </div>
+  )
+}
+
+function CharacterDossier({ character, cast }: { character: GenCharacter; cast: GenCharacter[] }) {
+  const rows: { label: string; value: string }[] = [
+    { label: '性别', value: character.gender },
+    { label: '年龄', value: String(character.age) },
+    { label: '面部', value: character.faceDescription },
+    { label: '身材', value: character.bodyDescription },
+    { label: '服装', value: character.clothingDescription },
+    { label: '性格', value: character.personality },
+  ].filter((r) => r.value)
+  const nameOf = (id: string) => cast.find((x) => x.id === id)?.name ?? id
+  const roleOf = (id: string) => cast.find((x) => x.id === id)?.role ?? 'supporting'
+  const jumpTo = (id: string) => {
+    const el = document.getElementById(id)
+    el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
+  return (
+    <div className="w-full md:max-h-[600px] md:overflow-y-auto rounded-2xl border border-border bg-bg-elevated/40 px-5 py-4">
+      <div className="flex items-baseline justify-between mb-2">
+        <h3 className="text-xs tracking-[0.18em] uppercase text-text-muted">角色档案</h3>
+        <span className="text-[10px] text-text-muted">Character Bible</span>
+      </div>
+      <dl className="divide-y divide-border/60">
+        {rows.map((r) => (
+          <div key={r.label} className="flex gap-3 py-2.5">
+            <dt className="text-xs text-text-muted shrink-0 w-10 pt-0.5 tracking-wide">{r.label}</dt>
+            <dd className="text-sm text-text-secondary leading-relaxed flex-1 min-w-0 break-words">
+              <ClampText text={r.value} label={r.label} />
+            </dd>
+          </div>
+        ))}
+      </dl>
+      {character.relations && character.relations.length > 0 && (
+        <div className="mt-3 pt-3 border-t border-border/60">
+          <div className="flex items-baseline justify-between mb-2">
+            <h4 className="text-xs tracking-[0.18em] uppercase text-text-muted">关系网</h4>
+            <span className="text-[10px] text-text-muted">点击姓名跳转</span>
+          </div>
+          <ul role="list" className="space-y-2">
+            {character.relations.map((r) => {
+              const targetRole = roleOf(r.targetId)
+              return (
+                <li key={r.targetId} className="flex items-start gap-2 text-sm">
+                  <span className="text-text-muted shrink-0 pt-0.5" aria-hidden>↔</span>
+                  <button
+                    type="button"
+                    onClick={() => jumpTo(r.targetId)}
+                    aria-label={`跳转到角色 ${nameOf(r.targetId)}`}
+                    className={`shrink-0 text-[11px] px-2 py-0.5 rounded-full border transition hover:opacity-80 ${ROLE_TONE[targetRole]}`}
+                  >
+                    {nameOf(r.targetId)}
+                  </button>
+                  <span className="shrink-0 text-[11px] px-1.5 py-0.5 rounded border border-border bg-bg-elevated/60 text-text-muted">
+                    {r.label}
+                  </span>
+                  <span className="text-text-secondary text-[13px] leading-relaxed min-w-0 break-words">{r.summary}</span>
+                </li>
+              )
+            })}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function WorkspacePage() {
   const { t } = useLanguage()
   const { user } = useAuth()
   const [tab, setTab] = useState<WorkspaceTab>('canvas')
-  const [episode, setEpisode] = useState(1)
   const [collapsed, setCollapsed] = useState(false)
   const [data, setData] = useState<WorkspaceData>(emptyData)
   const [flash, setFlash] = useState<WorkspaceTab | null>(null)
@@ -87,7 +179,13 @@ function WorkspacePage() {
   const callRefine = useServerFn(refineSynopsis)
   const callRefineEpisode = useServerFn(refineEpisodeScenes)
   const loadProject = useServerFn(getProject)
+  const callSaveWorkspace = useServerFn(saveWorkspaceData)
+  const callLoadWorkspace = useServerFn(loadWorkspaceData)
   const [project, setProject] = useState<ProjectConfigRow | null>(null)
+  const [savingWorkspace, setSavingWorkspace] = useState(false)
+  const [savedWorkspace, setSavedWorkspace] = useState(false)
+  const [dataLoaded, setDataLoaded] = useState(false)
+  const autoSavedRef = useRef(false)
   const [charImages, setCharImages] = useState<Record<string, string[]>>({})
   const [panelImages, setPanelImages] = useState<Record<string, string>>({})
   const [sceneImages, setSceneImages] = useState<Record<string, string>>({})
@@ -101,7 +199,12 @@ function WorkspacePage() {
   // 流式剧本生成状态
   const [synopsisText, setSynopsisText] = useState('')
   const [synopsisDraft, setSynopsisDraft] = useState('')
+  const [synopsisEditing, setSynopsisEditing] = useState(false)
+  const synopsisEditRef = useRef<HTMLTextAreaElement>(null)
   const [expandedEpisodes, setExpandedEpisodes] = useState<Set<number>>(new Set([1]))
+  const [episodeEditing, setEpisodeEditing] = useState<number | null>(null)
+  const [episodeDraft, setEpisodeDraft] = useState('')
+  const episodeEditRef = useRef<HTMLTextAreaElement>(null)
   const [synopsisStreaming, setSynopsisStreaming] = useState(false)
   const [episodeStreaming, setEpisodeStreaming] = useState(false)
   const [synopsisBubbles, setSynopsisBubbles] = useState<{ id: string; text: string }[]>([])
@@ -112,6 +215,7 @@ function WorkspacePage() {
   const episodeFlushRef = useRef<number | null>(null)
   const [streamingBubbleId, setStreamingBubbleId] = useState<string | null>(null)
   const episodeRefs = useRef<Record<number, HTMLDetailsElement | null>>({})
+  const episodeCardRefs = useRef<Record<number, HTMLButtonElement | null>>({})
   const shownAutoCompleteToastRef = useRef(false)
   const autoRunTargetRef = useRef<number | null>(null)
   const [autoRunCompleteTarget, setAutoRunCompleteTarget] = useState<number | null>(null)
@@ -123,8 +227,32 @@ function WorkspacePage() {
     loadProject({ data: { id: workspaceId } })
       .then((r) => { if (!cancelled && r.project) setProject(r.project) })
       .catch(() => {})
+    // Load persisted workspace data
+    callLoadWorkspace({ data: { id: workspaceId } })
+      .then((r: any) => {
+        if (cancelled || r.error || !r.workspaceData) return
+        const wd = r.workspaceData as Record<string, any>
+        if (wd.outline) setData((d) => ({ ...d, outline: wd.outline as WorkspaceData['outline'] }))
+        if (Array.isArray(wd.scenes) && wd.scenes.length) setData((d) => ({ ...d, scenes: wd.scenes as GenScene[] }))
+        if (Array.isArray(wd.characters) && wd.characters.length) setData((d) => ({ ...d, characters: wd.characters as GenCharacter[] }))
+        if (Array.isArray(wd.storyboard) && wd.storyboard.length) setData((d) => ({ ...d, storyboard: wd.storyboard as StoryboardPanel[] }))
+        if (wd.timeline) setData((d) => ({ ...d, timeline: wd.timeline as WorkspaceData['timeline'] }))
+        if (typeof wd.synopsisText === 'string' && wd.synopsisText) {
+          setSynopsisText(wd.synopsisText)
+          setSynopsisDraft(wd.synopsisText)
+        }
+        if (Array.isArray(wd.episodeTexts) && wd.episodeTexts.length) {
+          setData((d) => ({ ...d, episodeTexts: wd.episodeTexts as WorkspaceData['episodeTexts'] }))
+        }
+        if (wd.charImages) setCharImages(wd.charImages as Record<string, string[]>)
+        if (wd.panelImages) setPanelImages(wd.panelImages as Record<string, string>)
+        if (wd.sceneImages) setSceneImages(wd.sceneImages as Record<string, string>)
+        if (typeof wd.selectedViewCount === 'string') setSelectedViewCount(wd.selectedViewCount)
+        setDataLoaded(true)
+      })
+      .catch(() => { setDataLoaded(true) })
     return () => { cancelled = true }
-  }, [workspaceId, loadProject])
+  }, [workspaceId, loadProject, callLoadWorkspace])
 
   // Expand character visual description from script profiles before image generation
   async function expandCharacterLook(c: GenCharacter): Promise<string> {
@@ -381,6 +509,93 @@ function WorkspacePage() {
     }
     toast.success('已保存到资产库')
   }
+
+  // ===== Workspace data persistence =====
+  const completedStages = (() => {
+    const stages = new Set<WorkspaceTab>()
+    if (data.outline && data.outline.acts.length > 0) stages.add('canvas')
+    if (synopsisText || data.episodeTexts.length > 0) stages.add('script')
+    if (data.characters.length > 0) stages.add('character')
+    if (data.storyboard.length > 0) stages.add('storyboard')
+    if (data.timeline) stages.add('timeline')
+    return stages
+  })()
+
+  const ALL_STAGES: WorkspaceTab[] = ['canvas', 'script', 'character', 'storyboard', 'timeline']
+
+  async function handleSaveWorkspace() {
+    if (!user) {
+      toast.error('请先登录')
+      return
+    }
+    setSavingWorkspace(true)
+    setSavedWorkspace(false)
+    try {
+      const workspaceData: Record<string, unknown> = {
+        outline: data.outline,
+        scenes: data.scenes,
+        characters: data.characters,
+        storyboard: data.storyboard,
+        timeline: data.timeline,
+        synopsisText: synopsisText || synopsisDraft,
+        episodeTexts: data.episodeTexts,
+        charImages,
+        panelImages,
+        sceneImages,
+        selectedViewCount,
+      }
+      const res = await callSaveWorkspace({
+        data: {
+          id: workspaceId,
+          workspaceData,
+          completedStages: Array.from(completedStages),
+        },
+      })
+      if (res.ok) {
+        setSavedWorkspace(true)
+        toast.success('工作区已保存')
+        // Reset "saved" badge after 3 seconds
+        setTimeout(() => setSavedWorkspace(false), 3000)
+      } else {
+        toast.error(res.error || '保存失败')
+      }
+    } catch {
+      toast.error('保存失败')
+    } finally {
+      setSavingWorkspace(false)
+    }
+  }
+
+  // Auto-save when all stages are complete (only trigger once)
+  const completedKey = ALL_STAGES.map((s) => completedStages.has(s) ? '1' : '0').join('')
+  useEffect(() => {
+    if (autoSavedRef.current) return
+    if (!dataLoaded) return
+    if (completedKey === '11111') {
+      autoSavedRef.current = true
+      void handleSaveWorkspace()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [completedKey, dataLoaded])
+
+  // EpisodesView: Auto-select latest episode when episodes change
+  useEffect(() => {
+    const episodes = data.episodeTexts
+    if (tab === 'episodes' && episodes.length > 0 && !episodes.some((ep) => ep.epIndex === selectedEpisodeIndex)) {
+      setSelectedEpisodeIndex(episodes[episodes.length - 1].epIndex)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.episodeTexts, selectedEpisodeIndex, tab])
+
+  // EpisodesView: Scroll selected episode card into view when selectedEpisodeIndex changes
+  useEffect(() => {
+    if (tab === 'episodes') {
+      const el = episodeCardRefs.current[selectedEpisodeIndex]
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })
+      }
+    }
+  }, [selectedEpisodeIndex, tab])
 
   async function tryAi(stage: 'canvas' | 'script' | 'character' | 'storyboard' | 'timeline', userPrompt: string, currentData: WorkspaceData): Promise<Partial<WorkspaceData> | null> {
     try {
@@ -932,15 +1147,645 @@ function WorkspacePage() {
 
   return (
     <div className="h-screen flex flex-col bg-bg overflow-hidden">
-      <WorkspaceTopbar tab={tab} onTabChange={setTab} episode={episode} onEpisodeChange={setEpisode} onSaveAssets={handleSaveAssets} />
+      <WorkspaceTopbar tab={tab} onTabChange={setTab} episodeCount={data.episodeTexts.length} selectedEpisodeIndex={selectedEpisodeIndex} onEpisodeIndexChange={setSelectedEpisodeIndex} onSaveAssets={handleSaveAssets} onSave={handleSaveWorkspace} saving={savingWorkspace} saved={savedWorkspace} completedStages={completedStages} />
       <div className="flex-1 flex min-h-0">
         <main className="flex-1 min-w-0 overflow-auto p-6">
-          {tab === 'canvas' && <CanvasView />}
-          {tab === 'script' && <ScriptView />}
-          {tab === 'episodes' && <EpisodesView />}
-          {tab === 'character' && <CharacterView />}
-          {tab === 'storyboard' && <StoryboardView />}
-          {tab === 'timeline' && <TimelineView />}
+          {tab === 'canvas' && (
+            <div className="relative max-w-4xl mx-auto rounded-2xl border-2 border-dashed border-accent/50 bg-bg-surface p-6 min-h-[500px]">
+              <div className="flex items-center justify-between mb-3">
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-bg-elevated text-xs border border-border">
+                  <FileText size={12} /> {t.ws_tab_canvas}
+                </span>
+                <div className="flex items-center gap-2">
+                  {completedStages.has('canvas') && <span className="inline-flex items-center gap-0.5 text-xs text-emerald-400"><CheckCircle2 size={12} /> 已完成</span>}
+                  <button className="p-1 rounded-md hover:bg-bg-elevated text-text-muted"><Maximize2 size={14} /></button>
+                </div>
+              </div>
+              {data.outline ? (
+                <div className="space-y-5">
+                  <div>
+                    <div className="text-xs text-text-muted">Logline</div>
+                    <p className="text-text-primary mt-1 leading-relaxed">{data.outline.logline}</p>
+                  </div>
+                  <div className="space-y-4">
+                    {data.outline.acts.map((a, i) => (
+                      <div key={i} className="rounded-xl border border-border bg-bg-elevated/40 p-4">
+                        <h4 className="font-semibold text-text-primary mb-2">{a.title}</h4>
+                        <ul className="space-y-1.5 text-sm text-text-secondary">
+                          {a.beats.map((b, k) => (
+                            <li key={k} className="flex gap-2"><span className="text-accent shrink-0">·</span><span>{b}</span></li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-border bg-bg-elevated/40 p-6 min-h-[380px]">
+                  <p className="text-text-muted text-sm">{t.ws_canvas_placeholder}</p>
+                </div>
+              )}
+            </div>
+          )}
+          {tab === 'script' && (() => {
+            const hasSynopsis = synopsisText || synopsisDraft
+            const hasEpisodes = data.episodeTexts.length > 0
+            const isAutoRunning = autoRunCompleteTarget != null && !episodeStreaming
+            const streamingBubble = streamingBubbleId ? episodeBubbles.find((b) => b.id === streamingBubbleId) : null
+
+            if (!hasSynopsis && !hasEpisodes) {
+              return (
+                <div className="max-w-4xl mx-auto panel p-10 text-center">
+                  <p className="text-text-muted text-sm">{t.ws_script_empty}</p>
+                </div>
+              )
+            }
+
+            return (
+              <div className="max-w-5xl mx-auto space-y-6 pb-4">
+                {hasSynopsis && (
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-display text-lg font-bold">故事梗概</h3>
+                      <div className="flex items-center gap-2">
+                        {synopsisStreaming && (
+                          <span className="inline-flex items-center gap-1.5 text-xs text-accent">
+                            <Loader2 size={11} className="animate-spin" /> 生成中…
+                          </span>
+                        )}
+                        <button
+                          onClick={() => {
+                            if (synopsisEditing) {
+                              setSynopsisText(synopsisDraft)
+                              setSynopsisEditing(false)
+                            } else {
+                              setSynopsisEditing(true)
+                            }
+                          }}
+                          className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold transition ${
+                            synopsisEditing
+                              ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25'
+                              : 'border border-border text-text-secondary hover:text-text-primary hover:border-accent hover:bg-bg-elevated'
+                          }`}
+                        >
+                          {synopsisEditing ? <><Check size={13} /> 完成</> : <><Pencil size={13} /> 编辑</>}
+                        </button>
+                      </div>
+                    </div>
+                    {synopsisEditing ? (
+                      <textarea
+                        key="synopsis-edit-textarea"
+                        ref={synopsisEditRef}
+                        value={synopsisDraft}
+                        onChange={(e) => setSynopsisDraft(e.target.value)}
+                        rows={24}
+                        className="w-full rounded-lg bg-bg-elevated border border-accent/50 text-sm text-text-primary p-3 leading-7 font-mono focus:outline-none focus:border-accent resize-y overflow-auto"
+                        style={{ maxHeight: '70vh' }}
+                        placeholder="编辑故事梗概…"
+                      />
+                    ) : (
+                      <div className="rounded-lg bg-bg-elevated border border-border p-4 prose prose-invert prose-sm max-w-none text-text-primary whitespace-pre-wrap leading-relaxed text-sm">
+                        <ReactMarkdown>{synopsisDraft}</ReactMarkdown>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {isAutoRunning && autoRunCompleteTarget && (
+                  <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-accent/20 border border-accent/40 text-sm text-accent">
+                    <Sparkles size={14} />
+                    <span>已连续生成至第 {autoRunCompleteTarget} 集，生成完毕</span>
+                  </div>
+                )}
+
+                {data.episodeTexts.map((ep) => {
+                  const computedNextEp = data.episodeTexts.length > 0 ? Math.max(...data.episodeTexts.map((e) => e.epIndex)) + 1 : 1
+                  const isThisStreaming = episodeStreaming && !!streamingBubble && ep.epIndex === computedNextEp - 1
+                  const displayText = isThisStreaming && streamingBubble?.text
+                    ? streamingBubble.text
+                    : ep.text
+                  const isExpanded = expandedEpisodes.has(ep.epIndex)
+                  return (
+                    <div
+                      key={ep.epIndex}
+                      ref={(el) => { episodeRefs.current[ep.epIndex] = el as HTMLDetailsElement | null }}
+                      className="panel p-0"
+                    >
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        className="flex items-center gap-2 px-5 py-4 cursor-pointer text-base font-semibold hover:bg-bg-elevated select-none"
+                        onClick={() => {
+                          setExpandedEpisodes((prev) => {
+                            const next = new Set(prev)
+                            if (next.has(ep.epIndex)) next.delete(ep.epIndex)
+                            else next.add(ep.epIndex)
+                            return next
+                          })
+                        }}
+                        onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') e.currentTarget.click() }}
+                      >
+                        <span className={`text-accent shrink-0 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
+                        <span className="flex-1">第 {ep.epIndex} 集</span>
+                        {isThisStreaming && (
+                          <span className="inline-flex items-center gap-1 text-xs text-accent">
+                            <Loader2 size={10} className="animate-spin" /> 生成中…
+                          </span>
+                        )}
+                        {isExpanded && !isThisStreaming && (
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              if (episodeEditing === ep.epIndex) {
+                                setData((d) => ({
+                                  ...d,
+                                  episodeTexts: d.episodeTexts.map((et) =>
+                                    et.epIndex === ep.epIndex ? { ...et, text: episodeDraft } : et
+                                  ),
+                                }))
+                                setEpisodeEditing(null)
+                                setEpisodeDraft('')
+                              } else {
+                                setEpisodeEditing(ep.epIndex)
+                                setEpisodeDraft(ep.text)
+                              }
+                            }}
+                            className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold transition shrink-0 ${
+                              episodeEditing === ep.epIndex
+                                ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25'
+                                : 'border border-border text-text-muted hover:text-text-primary hover:border-accent hover:bg-bg-elevated'
+                            }`}
+                          >
+                            {episodeEditing === ep.epIndex ? <><Check size={11} /> 完成</> : <><Pencil size={11} /> 编辑</>}
+                          </button>
+                        )}
+                        <span className="px-2 py-1 rounded-md bg-bg-elevated border border-border text-text-muted text-xs">
+                          {isExpanded ? '折叠' : '展开'}
+                        </span>
+                      </div>
+                      {isExpanded && displayText ? (
+                        episodeEditing === ep.epIndex ? (
+                          <div className="px-5 pb-5">
+                            <textarea
+                              key={`episode-edit-textarea-${ep.epIndex}`}
+                              ref={episodeEditRef}
+                              value={episodeDraft}
+                              onChange={(e) => setEpisodeDraft(e.target.value)}
+                              rows={20}
+                              className="w-full rounded-lg bg-bg-elevated border border-accent/50 text-sm text-text-primary p-3 leading-7 font-mono focus:outline-none focus:border-accent resize-y overflow-auto"
+                              style={{ maxHeight: '70vh' }}
+                              placeholder="编辑剧本…"
+                            />
+                          </div>
+                        ) : (
+                          <div className="px-5 pb-5 prose prose-invert prose-sm max-w-none text-text-primary whitespace-pre-wrap leading-relaxed text-sm">
+                            <ReactMarkdown>{displayText}</ReactMarkdown>
+                          </div>
+                        )
+                      ) : null}
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          })()}
+          {tab === 'episodes' && (() => {
+            const episodes = data.episodeTexts
+            if (!episodes.length) {
+              return (
+                <div className="max-w-4xl mx-auto panel p-10 text-center">
+                  <p className="text-text-muted text-sm">{t.ws_episodes_empty}</p>
+                </div>
+              )
+            }
+            const selectedEp = episodes.find((ep) => ep.epIndex === selectedEpisodeIndex) ?? episodes[episodes.length - 1]
+
+            return (
+              <div className="max-w-5xl mx-auto space-y-6 pb-4">
+                <div>
+                  <h3 className="font-display text-lg font-bold mb-3">{t.ws_episodes_select}</h3>
+                  <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-thin">
+                    {episodes.map((ep) => {
+                      const active = ep.epIndex === selectedEp.epIndex
+                      const preview = ep.text.slice(0, 80)
+                      return (
+                        <button
+                          key={ep.epIndex}
+                          ref={(el) => { episodeCardRefs.current[ep.epIndex] = el }}
+                          onClick={() => setSelectedEpisodeIndex(ep.epIndex)}
+                          className={`min-w-[160px] max-w-[160px] p-3 rounded-xl border text-left transition shrink-0 ${
+                            active
+                              ? 'border-accent bg-accent-dim/40 shadow-glow'
+                              : 'border-border bg-bg-elevated/60 hover:border-accent/50'
+                          }`}
+                        >
+                          <div className="font-semibold text-sm mb-1">第 {ep.epIndex} 集</div>
+                          <div className="text-xs text-text-muted line-clamp-3 leading-relaxed">{preview}…</div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                {selectedEp && (
+                  <div className="panel p-0">
+                    <div className="flex items-center gap-2 px-5 py-4 border-b border-border">
+                      <span className="text-accent font-bold">▶</span>
+                      <span className="flex-1 font-display text-base font-semibold">第 {selectedEp.epIndex} 集 · {t.ws_episodes_script}</span>
+                      <button
+                        onClick={() => {
+                          if (episodeEditing === selectedEp.epIndex) {
+                            setData((d) => ({
+                              ...d,
+                              episodeTexts: d.episodeTexts.map((et) =>
+                                et.epIndex === selectedEp.epIndex ? { ...et, text: episodeDraft } : et
+                              ),
+                            }))
+                            setEpisodeEditing(null)
+                            setEpisodeDraft('')
+                          } else {
+                            setEpisodeEditing(selectedEp.epIndex)
+                            setEpisodeDraft(selectedEp.text)
+                          }
+                        }}
+                        className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold transition shrink-0 ${
+                          episodeEditing === selectedEp.epIndex
+                            ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-500/25'
+                            : 'border border-border text-text-secondary hover:text-text-primary hover:border-accent hover:bg-bg-elevated'
+                        }`}
+                      >
+                        {episodeEditing === selectedEp.epIndex ? <><Check size={11} /> 完成</> : <><Pencil size={11} /> 编辑</>}
+                      </button>
+                    </div>
+                    {episodeEditing === selectedEp.epIndex ? (
+                      <div className="px-5 pb-5 pt-4">
+                        <textarea
+                          key={`episodes-view-edit-textarea-${selectedEp.epIndex}`}
+                          ref={episodeEditRef}
+                          value={episodeDraft}
+                          onChange={(e) => setEpisodeDraft(e.target.value)}
+                          rows={20}
+                          className="w-full rounded-lg bg-bg-elevated border border-accent/50 text-sm text-text-primary p-3 leading-7 font-mono focus:outline-none focus:border-accent resize-y overflow-auto"
+                          style={{ maxHeight: '70vh' }}
+                          placeholder="编辑剧本…"
+                        />
+                      </div>
+                    ) : (
+                      <div className="px-5 pb-5 pt-4 prose prose-invert prose-sm max-w-none text-text-primary whitespace-pre-wrap leading-relaxed text-sm">
+                        <ReactMarkdown>{selectedEp.text}</ReactMarkdown>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )
+          })()}
+          {tab === 'character' && (() => {
+            const hasChars = data.characters.length > 0
+            const hasScenes = data.scenes.length > 0
+
+            if (!hasChars && !hasScenes) {
+              return (
+                <div className="max-w-4xl mx-auto panel p-10 text-center">
+                  <p className="text-text-muted text-sm">{t.ws_character_empty}</p>
+                </div>
+              )
+            }
+
+            const order: Record<GenCharacter['role'], number> = { lead: 0, supporting: 1, villain: 2 }
+            const sorted = [...data.characters].sort((a, b) => order[a.role] - order[b.role])
+            const SCENE_TIME_LABELS: Record<string, string> = { DAY: '日', NIGHT: '夜', DUSK: '黄昏', DAWN: '黎明' }
+
+            return (
+              <div className="-m-6 h-[calc(100vh-3rem)] flex flex-col">
+                <div className="flex items-center gap-2 px-6 pt-4 pb-2 shrink-0">
+                  <button
+                    onClick={() => setCharViewTab('characters')}
+                    className={`px-4 py-1.5 rounded-full text-sm font-semibold transition border ${
+                      charViewTab === 'characters'
+                        ? 'bg-accent-dim text-accent border-accent'
+                        : 'border-border text-text-secondary hover:text-text-primary hover:bg-bg-elevated'
+                    }`}
+                  >
+                    角色 {hasChars && `(${data.characters.length})`}
+                  </button>
+                  <button
+                    onClick={() => setCharViewTab('scenes')}
+                    className={`px-4 py-1.5 rounded-full text-sm font-semibold transition border ${
+                      charViewTab === 'scenes'
+                        ? 'bg-accent-dim text-accent border-accent'
+                        : 'border-border text-text-secondary hover:text-text-primary hover:bg-bg-elevated'
+                    }`}
+                  >
+                    场景 {hasScenes && `(${data.scenes.length})`}
+                  </button>
+                </div>
+
+                <div className="flex-1 overflow-y-auto snap-y snap-mandatory min-h-0">
+                  {charViewTab === 'scenes' ? (
+                    hasScenes ? (
+                      <div className="px-6 py-4 space-y-4">
+                        {data.scenes.map((s) => (
+                          <div key={s.id} className="panel p-5 space-y-3">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-mono text-xs text-text-muted">SC {s.index}</span>
+                              <h3 className="font-display text-lg font-bold text-text-primary">{s.slug}</h3>
+                              <span className="text-xs px-2 py-0.5 rounded-full border border-border bg-bg-elevated text-text-muted">
+                                {SCENE_TIME_LABELS[s.timeOfDay] ?? s.timeOfDay}
+                              </span>
+                              {busyScene === s.id && (
+                                <span className="inline-flex items-center gap-1 text-xs text-accent">
+                                  <Loader2 size={10} className="animate-spin" /> 生成中…
+                                </span>
+                              )}
+                            </div>
+                            {sceneImages[s.id] ? (
+                              <div className="rounded-lg overflow-hidden border border-border">
+                                <img src={sceneImages[s.id]} alt={s.slug} className="w-full aspect-video object-cover" />
+                              </div>
+                            ) : !busyScene ? (
+                              <button
+                                onClick={() => genSceneImage(s)}
+                                className="w-full aspect-video rounded-lg border-2 border-dashed border-border flex items-center justify-center text-text-muted text-sm hover:border-accent hover:text-accent transition"
+                              >
+                                点击生成场景图
+                              </button>
+                            ) : null}
+                            <p className="text-sm text-text-secondary leading-relaxed">{s.action}</p>
+                            {s.beats.length > 0 && (
+                              <ul className="space-y-1 text-sm">
+                                {s.beats.map((b, i) => (
+                                  <li key={i} className="flex gap-2 text-text-secondary"><span className="text-accent shrink-0">·</span><span>{b}</span></li>
+                                ))}
+                              </ul>
+                            )}
+                            {s.dialogue.length > 0 && (
+                              <div className="space-y-1.5 pt-1 border-t border-border/50">
+                                {s.dialogue.map((d, i) => (
+                                  <div key={i} className="text-sm">
+                                    <span className="font-semibold text-text-primary">{d.role}</span>
+                                    {d.parenthetical && <span className="text-text-muted text-xs ml-1">({d.parenthetical})</span>}
+                                    <span className="text-text-secondary">："{d.line}"</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-center h-full">
+                        <p className="text-text-muted text-sm">暂无场景数据，请先提取角色和场景。</p>
+                      </div>
+                    )
+                  ) : hasChars ? (
+                    <>
+                      {sorted.map((c, idx) => (
+                        <section
+                          key={c.id}
+                          id={c.id}
+                          className="snap-start h-[calc(100vh-3rem)] flex flex-col px-6 py-5"
+                        >
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 mb-4 shrink-0 min-w-0">
+                            <span
+                              className="w-1 h-7 rounded-full shrink-0"
+                              style={{ background: c.palette[0] ?? 'var(--accent)' }}
+                              aria-hidden
+                            />
+                            <h2 className="font-display text-xl font-bold tracking-tight truncate">{c.name}</h2>
+                            {(() => {
+                              const [primary, ...rest] = c.roleLabel.split('·').map((s) => s.trim()).filter(Boolean)
+                              const archetype = rest.join(' · ')
+                              return (
+                                <>
+                                  <span className={`shrink-0 text-[11px] px-2 py-0.5 rounded-full border ${ROLE_TONE[c.role]}`}>
+                                    {primary || ROLE_LABEL_FALLBACK[c.role]}
+                                  </span>
+                                  {archetype && (
+                                    <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full border border-border bg-bg-elevated/60 text-text-secondary truncate max-w-[180px]">
+                                      {archetype}
+                                    </span>
+                                  )}
+                                </>
+                              )
+                            })()}
+                            <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full border border-border bg-bg-elevated/60 text-text-muted">
+                              {c.age} 岁
+                            </span>
+                            {c.mbti && (
+                              <span className="shrink-0 text-[11px] font-mono px-2 py-0.5 rounded-full border border-border bg-bg-elevated/60 text-text-secondary">
+                                {c.mbti}
+                              </span>
+                            )}
+                            {c.keyProp && (
+                              <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full border border-border bg-bg-elevated/60 text-text-muted">
+                                道具 · {c.keyProp}
+                              </span>
+                            )}
+                            <span className="ml-auto shrink-0 text-xs text-text-muted tabular-nums hidden sm:inline">
+                              {idx + 1} / {sorted.length} · 上下滑动切换
+                            </span>
+                            <span className="ml-auto shrink-0 text-xs text-text-muted tabular-nums sm:hidden">
+                              {idx + 1}/{sorted.length}
+                            </span>
+                          </div>
+
+                          <div className="flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[240px_1fr] md:items-start gap-4 md:gap-5">
+                            <CharacterDossier character={c} cast={sorted} />
+                            <div className="relative flex-1 min-h-0">
+                              {(busyChar?.startsWith(c.id) || generatingMultiView === c.id) ? (
+                                <div className="relative rounded-2xl overflow-hidden border border-border bg-bg-elevated/30 flex items-center justify-center" style={{ height: 'calc(100vh - 200px)', maxHeight: 600 }}>
+                                  <div className="flex flex-col items-center gap-3">
+                                    <Loader2 size={32} className="animate-spin text-accent" />
+                                    <span className="text-sm text-text-muted">AI 生成中，请稍候…</span>
+                                  </div>
+                                </div>
+                              ) : charImages[c.id] && charImages[c.id][0] ? (
+                                <div className="relative flex flex-col h-full" style={{ height: 'calc(100vh - 200px)', maxHeight: 600 }}>
+                                  <div className="flex-1 rounded-2xl overflow-hidden border border-border bg-bg-elevated/30 relative">
+                                    <img src={charImages[c.id][0]} alt={`${c.name} 正面`} className="w-full h-full object-contain" />
+                                  </div>
+                                  {generatingMultiView === c.id ? (
+                                    <div className="mt-2 py-2 rounded-lg bg-accent/70 text-white text-sm font-semibold flex items-center justify-center gap-2">
+                                      <Loader2 size={14} className="animate-spin" /> 生成中…
+                                    </div>
+                                  ) : charImages[c.id].length > 1 && charImages[c.id].slice(1).some((u) => u) ? (
+                                    <>
+                                      <div className="grid grid-cols-2 gap-1 mt-1 flex-1 overflow-hidden rounded-lg border border-border">
+                                        {charImages[c.id].slice(1).map((url, vi) => {
+                                          const labels = selectedViewCount === '5'
+                                            ? ['半身', '面部', '表情', '服装']
+                                            : selectedViewCount === 'full'
+                                              ? ['半身', '面部', '表情', '服装', '细节']
+                                              : ['半身', '特写']
+                                          return url ? (
+                                            <div key={vi} className="relative overflow-hidden bg-bg-elevated/30 rounded">
+                                              <img src={url} alt={labels[vi]} className="w-full h-full object-contain" />
+                                              <span className="absolute bottom-0.5 left-0.5 text-[9px] px-1 py-0.5 rounded bg-black/60 text-white">{labels[vi]}</span>
+                                            </div>
+                                          ) : (
+                                            <div key={vi} className="relative bg-bg-elevated/30 flex items-center justify-center rounded">
+                                              <Loader2 size={12} className="animate-spin text-text-muted" />
+                                            </div>
+                                          )
+                                        })}
+                                      </div>
+                                      <button
+                                        onClick={() => genCharMultiView(c)}
+                                        disabled={generatingMultiView === c.id}
+                                        className="mt-2 w-full py-2 rounded-lg bg-accent text-white text-sm font-semibold hover:opacity-90 disabled:opacity-50 transition"
+                                      >
+                                        重新生成多视图
+                                      </button>
+                                    </>
+                                  ) : (
+                                    <button
+                                      onClick={() => genCharMultiView(c)}
+                                      disabled={generatingMultiView === c.id}
+                                      className="mt-2 w-full py-2 rounded-lg bg-accent text-white text-sm font-semibold hover:opacity-90 disabled:opacity-50 transition"
+                                    >
+                                      生成{selectedViewCount === '3' ? '三视图' : selectedViewCount === '5' ? '五视图' : '全视图'}
+                                    </button>
+                                  )}
+                                </div>
+                              ) : (
+                                <div className="relative rounded-2xl overflow-hidden border border-border bg-bg-elevated/30 flex items-center justify-center" style={{ height: 'calc(100vh - 200px)', maxHeight: 600 }}>
+                                  <div className="flex flex-col items-center gap-3">
+                                    <Loader2 size={32} className="animate-spin text-accent" />
+                                    <span className="text-sm text-text-muted">AI 生成中，请稍候…</span>
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 mt-3 shrink-0">
+                            <span className="text-xs text-text-muted">配色</span>
+                            {c.palette.map((p) => (
+                              <span key={p} className="w-5 h-5 rounded border border-border" style={{ background: p }} title={p} />
+                            ))}
+                          </div>
+                        </section>
+                      ))}
+                    </>
+                  ) : (
+                    <div className="flex items-center justify-center h-full">
+                      <p className="text-text-muted text-sm">暂无角色数据，请先提取角色和场景。</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          })()}
+          {tab === 'storyboard' && (() => {
+            if (data.storyboard.length === 0) {
+              return (
+                <div className="max-w-4xl mx-auto panel p-10 text-center">
+                  <p className="text-text-muted text-sm">{t.ws_storyboard_empty}</p>
+                </div>
+              )
+            }
+            const groups = new Map<string, StoryboardPanel[]>()
+            data.storyboard.forEach((p) => {
+              const arr = groups.get(p.sceneId) ?? []
+              arr.push(p)
+              groups.set(p.sceneId, arr)
+            })
+            return (
+              <div className="max-w-5xl mx-auto space-y-5">
+                <div className="flex items-center justify-between">
+                  <h2 className="font-display text-lg font-bold inline-flex items-center gap-2"><Camera size={16} /> {t.ws_tab_storyboard} · {data.storyboard.length}</h2>
+                  {completedStages.has('storyboard') && <span className="inline-flex items-center gap-0.5 text-xs text-emerald-400"><CheckCircle2 size={12} /> 已完成</span>}
+                </div>
+                {Array.from(groups.entries()).map(([sceneId, panels]) => {
+                  const scene = data.scenes.find((s) => s.id === sceneId)
+                  return (
+                    <div key={sceneId} className="space-y-2">
+                      {scene && <div className="text-xs font-mono text-text-muted">SCENE {scene.index} · {scene.slug}</div>}
+                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                        {panels.map((p) => (
+                          <div key={p.id} className="card overflow-hidden">
+                            <div className="aspect-video relative overflow-hidden" style={{ background: p.gradient }}>
+                              {panelImages[p.id] && (
+                                <img src={panelImages[p.id]} alt={p.action} className="absolute inset-0 w-full h-full object-cover" />
+                              )}
+                              <span className="absolute top-1.5 left-1.5 text-[10px] font-mono text-white/80">#{p.index} {p.shot}</span>
+                              <span className="absolute bottom-1.5 right-1.5 text-[10px] font-mono text-white/70">{p.durationSec}s</span>
+                              {busyPanel === p.id && (
+                                <div className="absolute top-1.5 right-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-black/60 text-white text-[10px]">
+                                  <Loader2 size={10} className="animate-spin" />
+                                  生成中
+                                </div>
+                              )}
+                            </div>
+                            <div className="p-2 text-xs space-y-0.5">
+                              <div className="text-text-primary line-clamp-2">{p.action}</div>
+                              <div className="text-text-muted">{p.camera}</div>
+                              <div className="text-accent">{p.emotion}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          })()}
+          {tab === 'timeline' && (() => {
+            if (!data.timeline) {
+              return (
+                <div className="max-w-4xl mx-auto panel p-10 text-center">
+                  <p className="text-text-muted text-sm">{t.ws_timeline_empty}</p>
+                </div>
+              )
+            }
+            const tl = data.timeline
+            const TRACK_TONES: Record<string, string> = {
+              video: 'from-accent to-accent-mint',
+              audio: 'from-amber-400 to-rose-500',
+              subtitle: 'from-emerald-400 to-cyan-500',
+            }
+            return (
+              <div className="space-y-3 max-w-5xl mx-auto">
+                <div className="flex items-center justify-between">
+                  <h2 className="font-display text-lg font-bold inline-flex items-center gap-2"><Clock size={16} /> {t.ws_tab_timeline} · {tl.totalSec.toFixed(0)}s</h2>
+                  {completedStages.has('timeline') && <span className="inline-flex items-center gap-0.5 text-xs text-emerald-400"><CheckCircle2 size={12} /> 已完成</span>}
+                </div>
+                <div className="relative h-5 px-1 text-[10px] font-mono text-text-muted">
+                  {Array.from({ length: Math.ceil(tl.totalSec / 10) + 1 }).map((_, i) => (
+                    <span key={i} className="absolute -translate-x-1/2" style={{ left: `${(i * 10 / tl.totalSec) * 100}%` }}>{i * 10}s</span>
+                  ))}
+                </div>
+                {tl.tracks.map((tr) => (
+                  <div key={tr.kind} className="panel p-3">
+                    <div className="text-xs text-text-muted mb-2">{tr.label}</div>
+                    <div className="relative h-10 bg-bg-elevated/40 rounded">
+                      {tr.clips.map((c) => (
+                        <div
+                          key={c.id}
+                          className={`absolute top-0 bottom-0 rounded bg-gradient-to-r ${TRACK_TONES[tr.kind]} text-[10px] font-mono text-white/90 px-1.5 flex items-center overflow-hidden`}
+                          style={{ left: `${(c.startSec / tl.totalSec) * 100}%`, width: `${(c.durationSec / tl.totalSec) * 100}%` }}
+                          title={`${c.label} (${c.startSec.toFixed(1)}s → ${(c.startSec + c.durationSec).toFixed(1)}s)`}
+                        >
+                          <span className="truncate">{c.label}</span>
+                        </div>
+                      ))}
+                      {tr.kind === 'video' && tl.transitionsAt.map((sec, i) => (
+                        <Fragment key={i}>
+                          <div
+                            className="absolute top-0 bottom-0 w-0.5 bg-accent"
+                            style={{ left: `${(sec / tl.totalSec) * 100}%` }}
+                            title={`transition @ ${sec.toFixed(1)}s`}
+                          />
+                        </Fragment>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )
+          })()}
         </main>
         <ZopiaChatPanel
           stage={tab}
@@ -1000,665 +1845,4 @@ function WorkspacePage() {
       )}
     </div>
   )
-
-  function FreshBadge({ stage }: { stage: WorkspaceTab }) {
-    void stage
-    return null
-  }
-
-  function CanvasView() {
-    return (
-      <div className="relative max-w-4xl mx-auto rounded-2xl border-2 border-dashed border-accent/50 bg-bg-surface p-6 min-h-[500px]">
-        <div className="flex items-center justify-between mb-3">
-          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-bg-elevated text-xs border border-border">
-            <FileText size={12} /> {t.ws_tab_canvas}
-          </span>
-          <div className="flex items-center gap-2">
-            <FreshBadge stage="canvas" />
-            <button className="p-1 rounded-md hover:bg-bg-elevated text-text-muted"><Maximize2 size={14} /></button>
-          </div>
-        </div>
-        {data.outline ? (
-          <div className="space-y-5">
-            <div>
-              <div className="text-xs text-text-muted">Logline</div>
-              <p className="text-text-primary mt-1 leading-relaxed">{data.outline.logline}</p>
-            </div>
-            <div className="space-y-4">
-              {data.outline.acts.map((a, i) => (
-                <div key={i} className="rounded-xl border border-border bg-bg-elevated/40 p-4">
-                  <h4 className="font-semibold text-text-primary mb-2">{a.title}</h4>
-                  <ul className="space-y-1.5 text-sm text-text-secondary">
-                    {a.beats.map((b, k) => (
-                      <li key={k} className="flex gap-2"><span className="text-accent shrink-0">·</span><span>{b}</span></li>
-                    ))}
-                  </ul>
-                </div>
-              ))}
-            </div>
-          </div>
-        ) : (
-          <div className="rounded-xl border border-border bg-bg-elevated/40 p-6 min-h-[380px]">
-            <p className="text-text-muted text-sm">{t.ws_canvas_placeholder}</p>
-          </div>
-        )}
-      </div>
-    )
-  }
-
-  function ScriptView() {
-    const hasSynopsis = synopsisText || synopsisDraft
-    const hasEpisodes = data.episodeTexts.length > 0
-    const isAutoRunning = autoRunCompleteTarget != null && !episodeStreaming
-    // Find the currently streaming episode's bubble text
-    const streamingBubble = streamingBubbleId ? episodeBubbles.find((b) => b.id === streamingBubbleId) : null
-
-    if (!hasSynopsis && !hasEpisodes) {
-      return (
-        <div className="max-w-4xl mx-auto panel p-10 text-center">
-          <p className="text-text-muted text-sm">{t.ws_script_empty}</p>
-        </div>
-      )
-    }
-
-    return (
-      <div className="max-w-5xl mx-auto space-y-6 pb-4">
-        {/* 故事梗概 */}
-        {hasSynopsis && (
-          <div className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="font-display text-lg font-bold">故事梗概</h3>
-              {synopsisStreaming && (
-                <span className="inline-flex items-center gap-1.5 text-xs text-accent">
-                  <Loader2 size={11} className="animate-spin" /> 生成中…
-                </span>
-              )}
-            </div>
-            <textarea
-              value={synopsisDraft}
-              onChange={(e) => setSynopsisDraft(e.target.value)}
-              rows={24}
-              className="w-full rounded-lg bg-bg-elevated border border-border text-sm text-text-primary p-3 leading-7 font-mono focus:outline-none focus:border-accent/50 resize-y overflow-auto"
-              style={{ maxHeight: '70vh' }}
-              placeholder="编辑故事梗概…"
-            />
-          </div>
-        )}
-
-        {/* 自动连跑完成提示 */}
-        {isAutoRunning && autoRunCompleteTarget && (
-          <div className="flex items-center gap-2 px-4 py-3 rounded-lg bg-accent/20 border border-accent/40 text-sm text-accent">
-            <Sparkles size={14} />
-            <span>已连续生成至第 {autoRunCompleteTarget} 集，生成完毕</span>
-          </div>
-        )}
-
-        {/* 分集内容 — 纯 div + React state 控制折叠，onClick 仅在 header 上，无嵌套交互元素 */}
-        {data.episodeTexts.map((ep) => {
-          // Show streaming bubble text if this episode is currently streaming
-          const computedNextEp = data.episodeTexts.length > 0 ? Math.max(...data.episodeTexts.map((e) => e.epIndex)) + 1 : 1
-          const isThisStreaming = episodeStreaming && !!streamingBubble && ep.epIndex === computedNextEp - 1
-          const displayText = isThisStreaming && streamingBubble?.text
-            ? streamingBubble.text
-            : ep.text
-          const isExpanded = expandedEpisodes.has(ep.epIndex)
-          return (
-            <div
-              key={ep.epIndex}
-              ref={(el) => { episodeRefs.current[ep.epIndex] = el as HTMLDetailsElement | null }}
-              className="panel p-0"
-            >
-              <div
-                role="button"
-                tabIndex={0}
-                className="flex items-center gap-2 px-5 py-4 cursor-pointer text-base font-semibold hover:bg-bg-elevated select-none"
-                onClick={() => {
-                  setExpandedEpisodes((prev) => {
-                    const next = new Set(prev)
-                    if (next.has(ep.epIndex)) next.delete(ep.epIndex)
-                    else next.add(ep.epIndex)
-                    return next
-                  })
-                }}
-                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') e.currentTarget.click() }}
-              >
-                <span className={`text-accent shrink-0 transition-transform duration-200 ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
-                <span className="flex-1">第 {ep.epIndex} 集</span>
-                {isThisStreaming && (
-                  <span className="inline-flex items-center gap-1 text-xs text-accent">
-                    <Loader2 size={10} className="animate-spin" /> 生成中…
-                  </span>
-                )}
-                <span className="px-2 py-1 rounded-md bg-bg-elevated border border-border text-text-muted text-xs">
-                  {isExpanded ? '折叠' : '展开'}
-                </span>
-              </div>
-              {isExpanded && displayText ? (
-                <div className="px-5 pb-5 prose prose-invert prose-sm max-w-none text-text-primary whitespace-pre-wrap leading-relaxed text-sm">
-                  <ReactMarkdown>{displayText}</ReactMarkdown>
-                </div>
-              ) : null}
-            </div>
-          )
-        })}
-      </div>
-    )
-  }
-
-  function EpisodesView() {
-    const episodes = data.episodeTexts
-    // Auto-select latest episode when entering this tab
-    useEffect(() => {
-      if (episodes.length > 0 && !episodes.some((ep) => ep.epIndex === selectedEpisodeIndex)) {
-        setSelectedEpisodeIndex(episodes[episodes.length - 1].epIndex)
-      }
-    }, [episodes, selectedEpisodeIndex])
-
-    if (!episodes.length) {
-      return (
-        <div className="max-w-4xl mx-auto panel p-10 text-center">
-          <p className="text-text-muted text-sm">{t.ws_episodes_empty}</p>
-        </div>
-      )
-    }
-
-    const selectedEp = episodes.find((ep) => ep.epIndex === selectedEpisodeIndex) ?? episodes[episodes.length - 1]
-
-    return (
-      <div className="max-w-5xl mx-auto space-y-6 pb-4">
-        {/* 集数选择网格 */}
-        <div>
-          <h3 className="font-display text-lg font-bold mb-3">{t.ws_episodes_select}</h3>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-            {episodes.map((ep) => {
-              const active = ep.epIndex === selectedEp.epIndex
-              const preview = ep.text.slice(0, 80)
-              return (
-                <button
-                  key={ep.epIndex}
-                  onClick={() => setSelectedEpisodeIndex(ep.epIndex)}
-                  className={`p-3 rounded-xl border text-left transition ${
-                    active
-                      ? 'border-accent bg-accent-dim/40 shadow-glow'
-                      : 'border-border bg-bg-elevated/60 hover:border-accent/50'
-                  }`}
-                >
-                  <div className="font-semibold text-sm mb-1">第 {ep.epIndex} 集</div>
-                  <div className="text-xs text-text-muted line-clamp-3 leading-relaxed">{preview}…</div>
-                </button>
-              )
-            })}
-          </div>
-        </div>
-
-        {/* 选中集数的完整剧本 */}
-        {selectedEp && (
-          <div className="panel p-0">
-            <div className="flex items-center gap-2 px-5 py-4 border-b border-border">
-              <span className="text-accent font-bold">▶</span>
-              <span className="font-display text-base font-semibold">第 {selectedEp.epIndex} 集 · {t.ws_episodes_script}</span>
-            </div>
-            <div className="px-5 pb-5 pt-4 prose prose-invert prose-sm max-w-none text-text-primary whitespace-pre-wrap leading-relaxed text-sm">
-              <ReactMarkdown>{selectedEp.text}</ReactMarkdown>
-            </div>
-          </div>
-        )}
-      </div>
-    )
-  }
-
-  function CharacterView() {
-    const hasChars = data.characters.length > 0
-    const hasScenes = data.scenes.length > 0
-
-    if (!hasChars && !hasScenes) {
-      return (
-        <div className="max-w-4xl mx-auto panel p-10 text-center">
-          <p className="text-text-muted text-sm">{t.ws_character_empty}</p>
-        </div>
-      )
-    }
-
-    // Lead → supporting → villain so the protagonist is shown first.
-    const order: Record<GenCharacter['role'], number> = { lead: 0, supporting: 1, villain: 2 }
-    const sorted = [...data.characters].sort((a, b) => order[a.role] - order[b.role])
-    const views: { key: 'front' | 'side' | 'back' | 'expression'; label: string }[] = [
-      { key: 'front', label: '正面' },
-      { key: 'side', label: '侧面' },
-      { key: 'back', label: '背面' },
-      { key: 'expression', label: '表情' },
-    ]
-
-    const SCENE_TIME_LABELS: Record<string, string> = { DAY: '日', NIGHT: '夜', DUSK: '黄昏', DAWN: '黎明' }
-
-    return (
-      <div className="-m-6 h-[calc(100vh-3rem)] flex flex-col">
-        {/* Toggle bar */}
-        <div className="flex items-center gap-2 px-6 pt-4 pb-2 shrink-0">
-          <button
-            onClick={() => setCharViewTab('characters')}
-            className={`px-4 py-1.5 rounded-full text-sm font-semibold transition border ${
-              charViewTab === 'characters'
-                ? 'bg-accent-dim text-accent border-accent'
-                : 'border-border text-text-secondary hover:text-text-primary hover:bg-bg-elevated'
-            }`}
-          >
-            角色 {hasChars && `(${data.characters.length})`}
-          </button>
-          <button
-            onClick={() => setCharViewTab('scenes')}
-            className={`px-4 py-1.5 rounded-full text-sm font-semibold transition border ${
-              charViewTab === 'scenes'
-                ? 'bg-accent-dim text-accent border-accent'
-                : 'border-border text-text-secondary hover:text-text-primary hover:bg-bg-elevated'
-            }`}
-          >
-            场景 {hasScenes && `(${data.scenes.length})`}
-          </button>
-        </div>
-
-        {/* Content area */}
-        <div className="flex-1 overflow-y-auto snap-y snap-mandatory min-h-0">
-          {charViewTab === 'scenes' ? (
-            /* Scenes view */
-            hasScenes ? (
-              <div className="px-6 py-4 space-y-4">
-                {data.scenes.map((s) => (
-                  <div key={s.id} className="panel p-5 space-y-3">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-mono text-xs text-text-muted">SC {s.index}</span>
-                      <h3 className="font-display text-lg font-bold text-text-primary">{s.slug}</h3>
-                      <span className="text-xs px-2 py-0.5 rounded-full border border-border bg-bg-elevated text-text-muted">
-                        {SCENE_TIME_LABELS[s.timeOfDay] ?? s.timeOfDay}
-                      </span>
-                      {busyScene === s.id && (
-                        <span className="inline-flex items-center gap-1 text-xs text-accent">
-                          <Loader2 size={10} className="animate-spin" /> 生成中…
-                        </span>
-                      )}
-                    </div>
-                    {/* Scene image — location only, no characters */}
-                    {sceneImages[s.id] ? (
-                      <div className="rounded-lg overflow-hidden border border-border">
-                        <img src={sceneImages[s.id]} alt={s.slug} className="w-full aspect-video object-cover" />
-                      </div>
-                    ) : !busyScene ? (
-                      <button
-                        onClick={() => genSceneImage(s)}
-                        className="w-full aspect-video rounded-lg border-2 border-dashed border-border flex items-center justify-center text-text-muted text-sm hover:border-accent hover:text-accent transition"
-                      >
-                        点击生成场景图
-                      </button>
-                    ) : null}
-                    <p className="text-sm text-text-secondary leading-relaxed">{s.action}</p>
-                    {s.beats.length > 0 && (
-                      <ul className="space-y-1 text-sm">
-                        {s.beats.map((b, i) => (
-                          <li key={i} className="flex gap-2 text-text-secondary"><span className="text-accent shrink-0">·</span><span>{b}</span></li>
-                        ))}
-                      </ul>
-                    )}
-                    {s.dialogue.length > 0 && (
-                      <div className="space-y-1.5 pt-1 border-t border-border/50">
-                        {s.dialogue.map((d, i) => (
-                          <div key={i} className="text-sm">
-                            <span className="font-semibold text-text-primary">{d.role}</span>
-                            {d.parenthetical && <span className="text-text-muted text-xs ml-1">({d.parenthetical})</span>}
-                            <span className="text-text-secondary">："{d.line}"</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="flex items-center justify-center h-full">
-                <p className="text-text-muted text-sm">暂无场景数据，请先提取角色和场景。</p>
-              </div>
-            )
-          ) : hasChars ? (
-            /* Characters view (existing) */
-            <>
-        {sorted.map((c, idx) => (
-          <section
-            key={c.id}
-            id={c.id}
-            className="snap-start h-[calc(100vh-3rem)] flex flex-col px-6 py-5"
-          >
-            <div className="flex flex-wrap items-center gap-x-3 gap-y-2 mb-4 shrink-0 min-w-0">
-              <span
-                className="w-1 h-7 rounded-full shrink-0"
-                style={{ background: c.palette[0] ?? 'var(--accent)' }}
-                aria-hidden
-              />
-              <h2 className="font-display text-xl font-bold tracking-tight truncate">{c.name}</h2>
-              {(() => {
-                const [primary, ...rest] = c.roleLabel.split('·').map((s) => s.trim()).filter(Boolean)
-                const archetype = rest.join(' · ')
-                return (
-                  <>
-                    <span className={`shrink-0 text-[11px] px-2 py-0.5 rounded-full border ${ROLE_TONE[c.role]}`}>
-                      {primary || ROLE_LABEL_FALLBACK[c.role]}
-                    </span>
-                    {archetype && (
-                      <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full border border-border bg-bg-elevated/60 text-text-secondary truncate max-w-[180px]">
-                        {archetype}
-                      </span>
-                    )}
-                  </>
-                )
-              })()}
-              <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full border border-border bg-bg-elevated/60 text-text-muted">
-                {c.age} 岁
-              </span>
-              {c.mbti && (
-                <span className="shrink-0 text-[11px] font-mono px-2 py-0.5 rounded-full border border-border bg-bg-elevated/60 text-text-secondary">
-                  {c.mbti}
-                </span>
-              )}
-              {c.keyProp && (
-                <span className="shrink-0 text-[11px] px-2 py-0.5 rounded-full border border-border bg-bg-elevated/60 text-text-muted">
-                  道具 · {c.keyProp}
-                </span>
-              )}
-              <span className="ml-auto shrink-0 text-xs text-text-muted tabular-nums hidden sm:inline">
-                {idx + 1} / {sorted.length} · 上下滑动切换
-              </span>
-              <span className="ml-auto shrink-0 text-xs text-text-muted tabular-nums sm:hidden">
-                {idx + 1}/{sorted.length}
-              </span>
-            </div>
-
-            {/* ≥md: 档案在左(小) + 主图在右(大)；<md: 单列堆叠 */}
-            <div className="flex-1 min-h-0 flex flex-col md:grid md:grid-cols-[240px_1fr] md:items-start gap-4 md:gap-5">
-              <CharacterDossier character={c} cast={sorted} />
-              <div className="relative flex-1 min-h-0">
-                {(busyChar?.startsWith(c.id) || generatingMultiView === c.id) ? (
-                  <div className="relative rounded-2xl overflow-hidden border border-border bg-bg-elevated/30 flex items-center justify-center" style={{ height: 'calc(100vh - 200px)', maxHeight: 600 }}>
-                    <div className="flex flex-col items-center gap-3">
-                      <Loader2 size={32} className="animate-spin text-accent" />
-                      <span className="text-sm text-text-muted">AI 生成中，请稍候…</span>
-                    </div>
-                  </div>
-                ) : charImages[c.id] && charImages[c.id][0] ? (
-                  <div className="relative flex flex-col h-full" style={{ height: 'calc(100vh - 200px)', maxHeight: 600 }}>
-                    <div className="flex-1 rounded-2xl overflow-hidden border border-border bg-bg-elevated/30 relative">
-                      <img src={charImages[c.id][0]} alt={`${c.name} 正面`} className="w-full h-full object-contain" />
-                    </div>
-                    {generatingMultiView === c.id ? (
-                      <div className="mt-2 py-2 rounded-lg bg-accent/70 text-white text-sm font-semibold flex items-center justify-center gap-2">
-                        <Loader2 size={14} className="animate-spin" /> 生成中…
-                      </div>
-                    ) : charImages[c.id].length > 1 && charImages[c.id].slice(1).some((u) => u) ? (
-                      <>
-                        <div className="grid grid-cols-2 gap-1 mt-1 flex-1 overflow-hidden rounded-lg border border-border">
-                          {charImages[c.id].slice(1).map((url, vi) => {
-                            const labels = selectedViewCount === '5'
-                              ? ['半身', '面部', '表情', '服装']
-                              : selectedViewCount === 'full'
-                                ? ['半身', '面部', '表情', '服装', '细节']
-                                : ['半身', '特写']
-                            return url ? (
-                              <div key={vi} className="relative overflow-hidden bg-bg-elevated/30 rounded">
-                                <img src={url} alt={labels[vi]} className="w-full h-full object-contain" />
-                                <span className="absolute bottom-0.5 left-0.5 text-[9px] px-1 py-0.5 rounded bg-black/60 text-white">{labels[vi]}</span>
-                              </div>
-                            ) : (
-                              <div key={vi} className="relative bg-bg-elevated/30 flex items-center justify-center rounded">
-                                <Loader2 size={12} className="animate-spin text-text-muted" />
-                              </div>
-                            )
-                          })}
-                        </div>
-                        <button
-                          onClick={() => genCharMultiView(c)}
-                          disabled={generatingMultiView === c.id}
-                          className="mt-2 w-full py-2 rounded-lg bg-accent text-white text-sm font-semibold hover:opacity-90 disabled:opacity-50 transition"
-                        >
-                          重新生成多视图
-                        </button>
-                      </>
-                    ) : (
-                      <button
-                        onClick={() => genCharMultiView(c)}
-                        disabled={generatingMultiView === c.id}
-                        className="mt-2 w-full py-2 rounded-lg bg-accent text-white text-sm font-semibold hover:opacity-90 disabled:opacity-50 transition"
-                      >
-                        生成{selectedViewCount === '3' ? '三视图' : selectedViewCount === '5' ? '五视图' : '全视图'}
-                      </button>
-                    )}
-                  </div>
-                ) : (
-                  <div className="relative rounded-2xl overflow-hidden border border-border bg-bg-elevated/30 flex items-center justify-center" style={{ height: 'calc(100vh - 200px)', maxHeight: 600 }}>
-                    <div className="flex flex-col items-center gap-3">
-                      <Loader2 size={32} className="animate-spin text-accent" />
-                      <span className="text-sm text-text-muted">AI 生成中，请稍候…</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 mt-3 shrink-0">
-              <span className="text-xs text-text-muted">配色</span>
-              {c.palette.map((p) => (
-                <span key={p} className="w-5 h-5 rounded border border-border" style={{ background: p }} title={p} />
-              ))}
-            </div>
-          </section>
-        ))}
-        </>
-      ) : (
-        <div className="flex items-center justify-center h-full">
-          <p className="text-text-muted text-sm">暂无角色数据，请先提取角色和场景。</p>
-        </div>
-      )}
-        </div>
-      </div>
-    )
-  }
-
-  function ClampText({ text, label, maxLines = 3, threshold = 80 }: { text: string; label: string; maxLines?: number; threshold?: number }) {
-    const [expanded, setExpanded] = useState(false)
-    const clampable = text.length > threshold
-    if (!clampable) return <span>{text}</span>
-    return (
-      <div>
-        <p
-          className={expanded ? '' : 'overflow-hidden'}
-          style={expanded ? undefined : { display: '-webkit-box', WebkitLineClamp: maxLines, WebkitBoxOrient: 'vertical' as const }}
-        >
-          {text}
-        </p>
-        <button
-          type="button"
-          onClick={() => setExpanded((v) => !v)}
-          aria-expanded={expanded}
-          aria-label={`${expanded ? '收起' : '展开'} ${label}`}
-          className="mt-1 text-[11px] text-text-muted hover:text-text-primary transition underline-offset-2 hover:underline"
-        >
-          {expanded ? '收起' : '展开全部'}
-        </button>
-      </div>
-    )
-  }
-
-  function CharacterDossier({ character, cast }: { character: GenCharacter; cast: GenCharacter[] }) {
-    const rows: { label: string; value: string }[] = [
-      { label: '性别', value: character.gender },
-      { label: '年龄', value: String(character.age) },
-      { label: '面部', value: character.faceDescription },
-      { label: '身材', value: character.bodyDescription },
-      { label: '服装', value: character.clothingDescription },
-      { label: '性格', value: character.personality },
-    ].filter((r) => r.value)
-    const nameOf = (id: string) => cast.find((x) => x.id === id)?.name ?? id
-    const roleOf = (id: string) => cast.find((x) => x.id === id)?.role ?? 'supporting'
-    const jumpTo = (id: string) => {
-      const el = document.getElementById(id)
-      el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    }
-    return (
-      <div className="w-full md:max-h-[600px] md:overflow-y-auto rounded-2xl border border-border bg-bg-elevated/40 px-5 py-4">
-        <div className="flex items-baseline justify-between mb-2">
-          <h3 className="text-xs tracking-[0.18em] uppercase text-text-muted">角色档案</h3>
-          <span className="text-[10px] text-text-muted">Character Bible</span>
-        </div>
-        <dl className="divide-y divide-border/60">
-          {rows.map((r) => (
-            <div key={r.label} className="flex gap-3 py-2.5">
-              <dt className="text-xs text-text-muted shrink-0 w-10 pt-0.5 tracking-wide">{r.label}</dt>
-              <dd className="text-sm text-text-secondary leading-relaxed flex-1 min-w-0 break-words">
-                <ClampText text={r.value} label={r.label} />
-              </dd>
-            </div>
-          ))}
-        </dl>
-        {character.relations && character.relations.length > 0 && (
-          <div className="mt-3 pt-3 border-t border-border/60">
-            <div className="flex items-baseline justify-between mb-2">
-              <h4 className="text-xs tracking-[0.18em] uppercase text-text-muted">关系网</h4>
-              <span className="text-[10px] text-text-muted">点击姓名跳转</span>
-            </div>
-            <ul role="list" className="space-y-2">
-              {character.relations.map((r) => {
-                const targetRole = roleOf(r.targetId)
-                return (
-                  <li key={r.targetId} className="flex items-start gap-2 text-sm">
-                    <span className="text-text-muted shrink-0 pt-0.5" aria-hidden>↔</span>
-                    <button
-                      type="button"
-                      onClick={() => jumpTo(r.targetId)}
-                      aria-label={`跳转到角色 ${nameOf(r.targetId)}`}
-                      className={`shrink-0 text-[11px] px-2 py-0.5 rounded-full border transition hover:opacity-80 ${ROLE_TONE[targetRole]}`}
-                    >
-                      {nameOf(r.targetId)}
-                    </button>
-                    <span className="shrink-0 text-[11px] px-1.5 py-0.5 rounded border border-border bg-bg-elevated/60 text-text-muted">
-                      {r.label}
-                    </span>
-                    <span className="text-text-secondary text-[13px] leading-relaxed min-w-0 break-words">{r.summary}</span>
-                  </li>
-                )
-              })}
-            </ul>
-          </div>
-        )}
-      </div>
-    )
-  }
-
-  function StoryboardView() {
-    if (data.storyboard.length === 0) {
-      return (
-        <div className="max-w-4xl mx-auto panel p-10 text-center">
-          <p className="text-text-muted text-sm">{t.ws_storyboard_empty}</p>
-        </div>
-      )
-    }
-    // Group by scene
-    const groups = new Map<string, StoryboardPanel[]>()
-    data.storyboard.forEach((p) => {
-      const arr = groups.get(p.sceneId) ?? []
-      arr.push(p)
-      groups.set(p.sceneId, arr)
-    })
-    return (
-      <div className="max-w-5xl mx-auto space-y-5">
-        <div className="flex items-center justify-between">
-          <h2 className="font-display text-lg font-bold inline-flex items-center gap-2"><Camera size={16} /> {t.ws_tab_storyboard} · {data.storyboard.length}</h2>
-          <FreshBadge stage="storyboard" />
-        </div>
-        {Array.from(groups.entries()).map(([sceneId, panels]) => {
-          const scene = data.scenes.find((s) => s.id === sceneId)
-          return (
-            <div key={sceneId} className="space-y-2">
-              {scene && <div className="text-xs font-mono text-text-muted">SCENE {scene.index} · {scene.slug}</div>}
-              <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                {panels.map((p) => (
-                  <div key={p.id} className="card overflow-hidden">
-                    <div className="aspect-video relative overflow-hidden" style={{ background: p.gradient }}>
-                      {panelImages[p.id] && (
-                        <img src={panelImages[p.id]} alt={p.action} className="absolute inset-0 w-full h-full object-cover" />
-                      )}
-                      <span className="absolute top-1.5 left-1.5 text-[10px] font-mono text-white/80">#{p.index} {p.shot}</span>
-                      <span className="absolute bottom-1.5 right-1.5 text-[10px] font-mono text-white/70">{p.durationSec}s</span>
-                      {busyPanel === p.id && (
-                        <div className="absolute top-1.5 right-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-black/60 text-white text-[10px]">
-                          <Loader2 size={10} className="animate-spin" />
-                          生成中
-                        </div>
-                      )}
-                    </div>
-                    <div className="p-2 text-xs space-y-0.5">
-                      <div className="text-text-primary line-clamp-2">{p.action}</div>
-                      <div className="text-text-muted">{p.camera}</div>
-                      <div className="text-accent">{p.emotion}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )
-        })}
-      </div>
-    )
-  }
-
-  function TimelineView() {
-    if (!data.timeline) {
-      return (
-        <div className="max-w-4xl mx-auto panel p-10 text-center">
-          <p className="text-text-muted text-sm">{t.ws_timeline_empty}</p>
-        </div>
-      )
-    }
-    const tl = data.timeline
-    const TRACK_TONES: Record<string, string> = {
-      video: 'from-accent to-accent-mint',
-      audio: 'from-amber-400 to-rose-500',
-      subtitle: 'from-emerald-400 to-cyan-500',
-    }
-    return (
-      <div className="space-y-3 max-w-5xl mx-auto">
-        <div className="flex items-center justify-between">
-          <h2 className="font-display text-lg font-bold inline-flex items-center gap-2"><Clock size={16} /> {t.ws_tab_timeline} · {tl.totalSec.toFixed(0)}s</h2>
-          <FreshBadge stage="timeline" />
-        </div>
-        {/* Ruler */}
-        <div className="relative h-5 px-1 text-[10px] font-mono text-text-muted">
-          {Array.from({ length: Math.ceil(tl.totalSec / 10) + 1 }).map((_, i) => (
-            <span key={i} className="absolute -translate-x-1/2" style={{ left: `${(i * 10 / tl.totalSec) * 100}%` }}>{i * 10}s</span>
-          ))}
-        </div>
-        {tl.tracks.map((tr) => (
-          <div key={tr.kind} className="panel p-3">
-            <div className="text-xs text-text-muted mb-2">{tr.label}</div>
-            <div className="relative h-10 bg-bg-elevated/40 rounded">
-              {tr.clips.map((c) => (
-                <div
-                  key={c.id}
-                  className={`absolute top-0 bottom-0 rounded bg-gradient-to-r ${TRACK_TONES[tr.kind]} text-[10px] font-mono text-white/90 px-1.5 flex items-center overflow-hidden`}
-                  style={{ left: `${(c.startSec / tl.totalSec) * 100}%`, width: `${(c.durationSec / tl.totalSec) * 100}%` }}
-                  title={`${c.label} (${c.startSec.toFixed(1)}s → ${(c.startSec + c.durationSec).toFixed(1)}s)`}
-                >
-                  <span className="truncate">{c.label}</span>
-                </div>
-              ))}
-              {tr.kind === 'video' && tl.transitionsAt.map((sec, i) => (
-                <Fragment key={i}>
-                  <div
-                    className="absolute top-0 bottom-0 w-0.5 bg-accent"
-                    style={{ left: `${(sec / tl.totalSec) * 100}%` }}
-                    title={`transition @ ${sec.toFixed(1)}s`}
-                  />
-                </Fragment>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-    )
-  }
 }

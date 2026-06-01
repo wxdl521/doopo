@@ -1,29 +1,35 @@
 import { useState } from 'react'
 // no Link needed; Logo provides home link
-import { ChevronDown, MoreHorizontal, Layers, FileText, ListOrdered, Users, Grid3x3, Clock, Settings, Download, Save } from 'lucide-react'
+import { ChevronDown, MoreHorizontal, Layers, FileText, Users, Grid3x3, Clock, Settings, Download, Loader2, CheckCircle2, Save } from 'lucide-react'
 import Logo from '../Logo'
 import { useLanguage } from '../../i18n/LanguageContext'
 import { NewProjectDialog } from '../NewProjectDialog'
 
 export type WorkspaceTab = 'canvas' | 'script' | 'episodes' | 'character' | 'storyboard' | 'timeline'
 
-const tabs: { id: WorkspaceTab; icon: typeof Layers }[] = [
+// 'episodes' is intentionally excluded from the workflow bar — it is accessed via the top-left episode dropdown
+const tabs: { id: Exclude<WorkspaceTab, 'episodes'>; icon: typeof Layers }[] = [
   { id: 'canvas', icon: Layers },
   { id: 'script', icon: FileText },
-  { id: 'episodes', icon: ListOrdered },
   { id: 'character', icon: Users },
   { id: 'storyboard', icon: Grid3x3 },
   { id: 'timeline', icon: Clock },
 ]
 
 export default function WorkspaceTopbar({
-  tab, onTabChange, episode, onEpisodeChange, onSaveAssets,
+  tab, onTabChange, episodeCount, selectedEpisodeIndex, onEpisodeIndexChange, onSaveAssets,
+  onSave, saving, saved, completedStages,
 }: {
   tab: WorkspaceTab
   onTabChange: (t: WorkspaceTab) => void
-  episode: number
-  onEpisodeChange: (n: number) => void
+  episodeCount: number
+  selectedEpisodeIndex: number
+  onEpisodeIndexChange: (n: number) => void
   onSaveAssets?: () => void
+  onSave?: () => void
+  saving?: boolean
+  saved?: boolean
+  completedStages?: Set<WorkspaceTab>
 }) {
   const { t, lang, toggleLang } = useLanguage()
   const [epOpen, setEpOpen] = useState(false)
@@ -47,22 +53,42 @@ export default function WorkspaceTopbar({
         <span className="text-text-muted">/</span>
         <div className="relative">
           <button onClick={() => { setEpOpen((v) => !v); setMoreOpen(false) }} className="inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-bg-elevated">
-            <span className="font-semibold">{t.ws_episode_prefix}{episode}{t.ws_episode_suffix}</span>
+            <span className="font-semibold">{episodeCount > 0 ? `${t.ws_episode_prefix}${selectedEpisodeIndex}${t.ws_episode_suffix}` : t.ws_tab_episodes}</span>
             <ChevronDown size={14} />
           </button>
           {epOpen && (
-            <div className="absolute top-full left-0 mt-1 min-w-[140px] bg-bg-surface border border-border rounded-lg shadow-card py-1 z-[100]">
-              {[1, 2, 3].map((n) => (
-                <button key={n} onClick={() => { onEpisodeChange(n); setEpOpen(false) }}
-                  className={`w-full text-left px-3 py-1.5 text-sm hover:bg-bg-elevated ${n === episode ? 'text-accent' : ''}`}>
-                  {t.ws_episode_prefix}{n}{t.ws_episode_suffix}
-                </button>
-              ))}
-              <div className="border-t border-border my-1" />
-              <button className="w-full text-left px-3 py-1.5 text-sm text-text-muted hover:bg-bg-elevated">{t.ws_episode_new}</button>
+            <div className="absolute top-full left-0 mt-1 min-w-[160px] max-h-[320px] overflow-y-auto bg-bg-surface border border-border rounded-lg shadow-card py-1 z-[100]">
+              {episodeCount > 0 ? (
+                <>
+                  {Array.from({ length: episodeCount }, (_, i) => i + 1).map((n) => (
+                    <button key={n} onClick={() => { onEpisodeIndexChange(n); onTabChange('episodes'); setEpOpen(false) }}
+                      className={`w-full text-left px-3 py-1.5 text-sm hover:bg-bg-elevated ${n === selectedEpisodeIndex ? 'text-accent font-semibold' : ''}`}>
+                      {t.ws_episode_prefix}{n}{t.ws_episode_suffix}
+                    </button>
+                  ))}
+                </>
+              ) : (
+                <div className="px-3 py-2 text-xs text-text-muted">暂无集数</div>
+              )}
             </div>
           )}
         </div>
+
+        {/* Save button */}
+        {onSave && (
+          <button
+            onClick={onSave}
+            disabled={saving}
+            className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold transition ${
+              saved
+                ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
+                : 'border border-border text-text-secondary hover:text-text-primary hover:border-accent hover:bg-bg-elevated'
+            } disabled:opacity-60`}
+          >
+            {saving ? <Loader2 size={13} className="animate-spin" /> : saved ? <CheckCircle2 size={13} /> : <Save size={13} />}
+            {saving ? t.ws_saving : saved ? t.ws_saved : t.ws_save}
+          </button>
+        )}
 
         <div className="relative">
           <button onClick={() => { setMoreOpen((v) => !v); setEpOpen(false) }} className="p-1 rounded-md hover:bg-bg-elevated text-text-muted">
@@ -99,6 +125,7 @@ export default function WorkspaceTopbar({
                     : 'border-transparent text-text-secondary hover:text-text-primary hover:bg-bg-elevated'
                 }`}>
                 <Icon size={14} /> {tabLabel[tt.id]}
+                {completedStages?.has(tt.id) && <CheckCircle2 size={12} className="text-emerald-400 shrink-0" />}
               </button>
               {i < tabs.length - 1 && <span className="text-text-muted/40 text-xs">·····</span>}
             </div>

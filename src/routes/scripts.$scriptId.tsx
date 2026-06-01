@@ -1,12 +1,14 @@
 import { createFileRoute, Link, notFound } from '@tanstack/react-router'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
+import { useServerFn } from '@tanstack/react-start'
 import { ArrowLeft, Download, GitBranch, FileText, Sparkles, Activity, Zap, MessageCircle, ChevronUp, ChevronDown } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import PageHeader from '../components/PageHeader'
 import { mockScripts, type ScriptItem } from '../data/mock'
 import { useLanguage } from '../i18n/LanguageContext'
-import { findScript, findScriptWithCloud, type SavedScript } from '../lib/scriptStorage'
+import { findScript, findScriptWithCloud, ensureScriptCover, type SavedScript } from '../lib/scriptStorage'
+import { uploadScriptCover } from '../lib/scripts.covers.functions'
 
 export const Route = createFileRoute('/scripts/$scriptId')({
   head: ({ params }) => ({ meta: [{ title: `Script ${params.scriptId} — Doopoo` }] }),
@@ -36,6 +38,7 @@ function ScriptDetail() {
   const [saved, setSaved] = useState<SavedScript | null>(null)
   const [hydrated, setHydrated] = useState(false)
   const [cloudChecked, setCloudChecked] = useState(false)
+  const callImage = useServerFn(uploadScriptCover)
 
   useEffect(() => {
     let alive = true
@@ -52,6 +55,21 @@ function ScriptDetail() {
       alive = false
     }
   }, [params.scriptId])
+
+  // Backfill: if this script has no coverUrl, kick off generation.
+  // The helper dedupes — safe to call from list and detail page simultaneously.
+  const coverTriedRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!saved || saved.coverUrl) return
+    if (coverTriedRef.current === saved.id) return
+    coverTriedRef.current = saved.id
+    void ensureScriptCover({
+      script: saved,
+      uploadCover: callImage as any,
+      onUpdate: (s) => setSaved(s),
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [saved?.id, saved?.coverUrl])
 
   if (!hydrated && !mock) {
     return <div className="p-10 text-center text-text-muted">…</div>
@@ -93,6 +111,18 @@ function SavedScriptView({ s, t }: { s: SavedScript; t: ReturnType<typeof useLan
       <Link to="/scripts" className="inline-flex items-center gap-1 text-sm text-text-muted hover:text-accent mb-4">
         <ArrowLeft size={14} /> {t.scd_back}
       </Link>
+
+      {s.coverUrl && (
+        <div className="relative aspect-[21/9] rounded-2xl overflow-hidden border border-border mb-6">
+          <img
+            src={s.coverUrl}
+            alt={s.title}
+            className="absolute inset-0 w-full h-full object-cover"
+          />
+          <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/10 to-transparent" />
+        </div>
+      )}
+
       <PageHeader
         title={s.title}
         subtitle={s.logline || s.plot || (s.synopsisText ? s.synopsisText.slice(0, 120) : '')}

@@ -13,21 +13,21 @@ const recent: ProjectMeta[] = [
   {
     id: '1',
     title: 'Lighthouse Reverie',
-    thumbnail: 'from-indigo-700 via-violet-800 to-slate-950',
+    thumbnail: 'https://images.unsplash.com/photo-1507413245164-6160d8298b31?w=1200&h=750&fit=crop&q=80',
     status: 'rendering',
     updated: '2 min ago',
   },
   {
     id: '2',
     title: 'Founder Story Pitch',
-    thumbnail: 'from-amber-500 via-rose-700 to-zinc-950',
+    thumbnail: 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=1200&h=750&fit=crop&q=80',
     status: 'ready',
     updated: 'yesterday',
   },
   {
     id: '3',
     title: 'Cyberpunk Cafe MV',
-    thumbnail: 'from-fuchsia-600 via-purple-800 to-indigo-950',
+    thumbnail: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?w=1200&h=750&fit=crop&q=80',
     status: 'draft',
     updated: '3 days ago',
   },
@@ -46,7 +46,22 @@ export default function Home() {
   return (
     <div className="space-y-16 animate-fade-in">
       {/* Hero */}
-      <section className="pt-6">
+      <section className="relative pt-6 pb-10 -mx-6 px-6 overflow-hidden">
+        <div className="absolute inset-0 -z-10">
+          <img
+            src="https://images.unsplash.com/photo-1534796636912-3b95b3ab5986?w=2400&h=1000&fit=crop&q=80"
+            alt=""
+            className="w-full h-full object-cover"
+          />
+          <div className="absolute inset-0 bg-gradient-to-b from-bg/70 via-bg/85 to-bg" />
+          <div className="absolute inset-0 opacity-30 mix-blend-overlay"
+               style={{
+                 backgroundImage:
+                   'linear-gradient(0deg, rgba(255,255,255,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px)',
+                 backgroundSize: '32px 32px',
+               }} />
+        </div>
+
         <div className="text-center mb-8 space-y-3">
           <h1 className="font-display text-4xl md:text-5xl font-bold tracking-tight">
             {t.hero_title_line1}{' '}

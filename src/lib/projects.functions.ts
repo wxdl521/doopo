@@ -77,3 +77,46 @@ export const getProject = createServerFn({ method: 'POST' })
     }
     return { project, error: null as string | null }
   })
+
+// ===== Workspace data persistence =====
+
+export const saveWorkspaceData = createServerFn({ method: 'POST' })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z.object({
+      id: z.string().min(1).max(64),
+      workspaceData: z.record(z.string(), z.unknown()),
+      completedStages: z.array(z.string()),
+    }).parse(input)
+  )
+  .handler(async ({ data, context }) => {
+    const { supabase } = context
+    const { error } = await supabase
+      .from('projects')
+      .update({
+        workspace_data: data.workspaceData as any,
+        completed_stages: data.completedStages,
+      })
+      .eq('id', data.id)
+    if (error) return { ok: false as const, error: error.message }
+    return { ok: true as const, error: null as string | null }
+  })
+
+export const loadWorkspaceData = createServerFn({ method: 'POST' })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => z.object({ id: z.string().min(1).max(64) }).parse(input))
+  .handler(async ({ data, context }) => {
+    const { supabase } = context
+    const { data: row, error } = await supabase
+      .from('projects')
+      .select('workspace_data,completed_stages')
+      .eq('id', data.id)
+      .maybeSingle()
+    if (error) return { workspaceData: null as Record<string, string> | null, completedStages: null as string[] | null, error: error.message }
+    if (!row) return { workspaceData: null as Record<string, string> | null, completedStages: null as string[] | null, error: null as string | null }
+    return {
+      workspaceData: (row.workspace_data ?? {}) as unknown as Record<string, string>,
+      completedStages: (row.completed_stages ?? []) as string[],
+      error: null as string | null,
+    }
+  })

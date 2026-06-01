@@ -19,6 +19,7 @@ import {
   StopCircle,
   ChevronUp,
   ChevronDown,
+  X,
 } from 'lucide-react'
 import { useLanguage } from '../../i18n/LanguageContext'
 import {
@@ -26,7 +27,8 @@ import {
   streamEpisodeScenes,
   refineSynopsis,
 } from '../../lib/scriptAgent.functions'
-import { findScript, upsertScriptAndCloud, type SavedScript } from '../../lib/scriptStorage'
+import { findScript, upsertScriptAndCloud, ensureScriptCover, type SavedScript } from '../../lib/scriptStorage'
+import { uploadScriptCover } from '../../lib/scripts.covers.functions'
 
 // 5 步对话式剧本智能体
 type Stage = 'setup' | 'synopsis' | 'episode' | 'episodes' | 'done'
@@ -49,14 +51,14 @@ type Bubble = {
 
 type Props = {
   types: { value: string; key: keyof ReturnType<typeof useLanguage>['t'] }[]
-  genres: { value: string; key: keyof ReturnType<typeof useLanguage>['t'] }[]
+  genres: { value: string; key: keyof ReturnType<typeof useLanguage>['t']; locked?: boolean; label?: string }[]
   tones: { value: string; key: keyof ReturnType<typeof useLanguage>['t'] }[]
   models: { id: string; label: string }[]
   onSaved?: () => void
 }
 
 // 合并后的题材+风格标签类型
-export type TagOption = { value: string; label: string; group: 'genre' | 'tone' }
+export type TagOption = { value: string; label: string; group: 'genre' | 'tone'; locked?: boolean }
 
 type StreamChunk =
   | { delta: string }
@@ -69,6 +71,7 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
   const callSynopsis = useServerFn(streamSynopsis)
   const callEpisode = useServerFn(streamEpisodeScenes)
   const callRefine = useServerFn(refineSynopsis)
+  const callUploadCover = useServerFn(uploadScriptCover)
 
   const [stage, setStage] = useState<Stage>('setup')
   const [loading, setLoading] = useState(false)
@@ -499,6 +502,16 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
     }
     await upsertScriptAndCloud(item)
     onSaved?.()
+    // Fire-and-forget cover generation. Doesn't block save; if a cover
+    // already exists (re-save of same id) this is a no-op. onUpdate refreshes
+    // the parent list so the new cover shows up without a manual reload.
+    if (!item.coverUrl) {
+      void ensureScriptCover({
+        script: item,
+        uploadCover: callUploadCover as any,
+        onUpdate: () => onSaved?.(),
+      })
+    }
     if (markDone) setStage('done')
     pushBubble({
       role: 'system',
@@ -1202,9 +1215,10 @@ function SetupBar(props: {
   onSubmit: () => void
 }) {
   const { t } = props
-  const allTags = [
-    ...props.genres.map((g) => ({ value: g.value, label: t[g.key] as string, group: '题材' as const })),
-    ...props.tones.map((g) => ({ value: g.value, label: t[g.key] as string, group: '风格' as const })),
+  const [lockModal, setLockModal] = useState<string | null>(null)
+  const allTags: TagOption[] = [
+    ...props.genres.map((g) => ({ value: g.value, label: (g.locked && g.label ? g.label : t[g.key] as string), group: 'genre' as const, locked: g.locked })),
+    ...props.tones.map((g) => ({ value: g.value, label: t[g.key] as string, group: 'tone' as const })),
   ]
   const toggleTag = (value: string) => {
     if (props.selectedTags.includes(value)) {
@@ -1228,6 +1242,18 @@ function SetupBar(props: {
           <div className="flex flex-wrap gap-1.5 p-2 rounded-lg bg-bg-elevated border border-border min-h-[42px]">
             {allTags.map((tag) => {
               const selected = props.selectedTags.includes(tag.value)
+              if (tag.locked) {
+                return (
+                  <button
+                    key={tag.value}
+                    type="button"
+                    onClick={() => setLockModal(tag.label)}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border transition-colors bg-bg-base border-border text-text-muted hover:border-rose-500/50 hover:text-rose-400"
+                  >
+                    🔒 {tag.label}
+                  </button>
+                )
+              }
               return (
                 <button
                   key={tag.value}
@@ -1239,7 +1265,7 @@ function SetupBar(props: {
                       : 'bg-bg-base border-border text-text-muted hover:border-accent/40'
                   }`}
                 >
-                  {selected && <span className="text-[10px] opacity-60">{tag.group}</span>}
+                  {selected && <span className="text-[10px] opacity-60">{tag.group === 'genre' ? '题材' : '风格'}</span>}
                   {tag.label}
                 </button>
               )
@@ -1305,6 +1331,42 @@ function SetupBar(props: {
         {props.loading ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
         生成故事梗概（流式输出）
       </button>
+
+      {/* Locked genre modal */}
+      {lockModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setLockModal(null)}
+          role="dialog"
+          aria-modal="true"
+        >
+          <div
+            className="relative bg-bg-surface border border-border rounded-2xl overflow-hidden max-w-sm w-full shadow-2xl p-6 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              type="button"
+              onClick={() => setLockModal(null)}
+              className="absolute top-3 right-3 p-1 rounded-md hover:bg-bg-elevated text-text-muted"
+            >
+              <X size={16} />
+            </button>
+            <div className="text-center space-y-2">
+              <div className="text-4xl">🔒</div>
+              <h3 className="font-display text-lg font-bold text-text-primary">题材解锁申请</h3>
+              <p className="text-sm text-text-secondary leading-relaxed">
+                「{lockModal}」为用户定制题材，请您在遵守所在地区法律法规的前提下，向管理员申请解锁该题材。
+              </p>
+            </div>
+            <button
+              onClick={() => setLockModal(null)}
+              className="w-full py-2.5 rounded-lg bg-accent text-accent-foreground text-sm font-semibold hover:opacity-90 transition"
+            >
+              我知道了
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

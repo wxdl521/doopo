@@ -38,7 +38,7 @@ export function NewProjectCard({ label }: { to?: string; label?: string }) {
 export type ProjectMeta = {
   id: string
   title: string
-  thumbnail: string // gradient classes
+  thumbnail: string // Tailwind gradient classes OR absolute image URL (http/https)
   status?: 'draft' | 'rendering' | 'ready'
   updated?: string
 }
@@ -66,13 +66,24 @@ export function ProjectCard({
   return (
     <div className="card group cursor-pointer relative">
       <Link to="/projects/$projectId" params={{ projectId: project.id }} className="block">
-        <div className={`relative aspect-[16/10] bg-gradient-to-br ${project.thumbnail}`}>
-          <div className="absolute inset-0 opacity-30 mix-blend-overlay"
-               style={{
-                 backgroundImage:
-                   'linear-gradient(0deg, rgba(255,255,255,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px)',
-                 backgroundSize: '24px 24px',
-               }} />
+        <div className="relative aspect-[16/10] overflow-hidden bg-bg-elevated">
+          {/^https?:\/\//.test(project.thumbnail) ? (
+            <img
+              src={project.thumbnail}
+              alt={project.title}
+              loading="lazy"
+              className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
+            />
+          ) : (
+            <div className={`absolute inset-0 bg-gradient-to-br ${project.thumbnail}`}>
+              <div className="absolute inset-0 opacity-30 mix-blend-overlay"
+                   style={{
+                     backgroundImage:
+                       'linear-gradient(0deg, rgba(255,255,255,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px)',
+                     backgroundSize: '24px 24px',
+                   }} />
+            </div>
+          )}
           {project.status && (
             <span className={`absolute top-3 right-3 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider border ${statusColors[project.status]}`}>
               {statusLabels[project.status]}
