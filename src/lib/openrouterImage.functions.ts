@@ -128,18 +128,25 @@ async function callQwenAsync(model: string, prompt: string, size: string, apiKey
       };
 
   // Retry create on 429 (DashScope per-account RPM is very low for qwen-image-max).
+  // try/catch 包裹 fetch 本身是为了把网络层异常(DNS / TLS / ECONNRESET /
+  // aborted)也走 fallback 链,而不是让整个 generateImage 在顶层崩。
   let create: Response | null = null;
   let lastBody = "";
   for (let attempt = 0; attempt < 3; attempt++) {
-    create = await fetch(QWEN_ASYNC_CREATE, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-        "X-DashScope-Async": "enable",
-      },
-      body: JSON.stringify(body),
-    });
+    try {
+      create = await fetch(QWEN_ASYNC_CREATE, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+          "X-DashScope-Async": "enable",
+        },
+        body: JSON.stringify(body),
+      });
+    } catch (e) {
+      lastBody = e instanceof Error ? e.message : "network error";
+      return { url: "", error: `[${model}] network: ${lastBody.slice(0, 200)}` };
+    }
     if (create.ok) break;
     lastBody = await create.text().catch(() => "");
     if (create.status !== 429) break;
@@ -510,10 +517,21 @@ export const generateImage = createServerFn({ method: "POST" })
       const size = data.size || "2048*2048";
 
       // ---- 第一次尝试(用用户选定的 model)----
-      const callOnce = async (m: string, s: string) =>
-        QWEN_ASYNC_MODELS.has(m)
-          ? await callQwenAsync(m, data.prompt, s, qwenKey)
-          : await callQwenSync(m, data.prompt, s, qwenKey)
+      // try/catch 兜底:即便 callQwenAsync / callQwenSync 内部有各自的 try/catch,
+      // 这里再包一层把"抛出来的意外"统一转成 { url: "", error },否则
+      // generateImage 整体 reject,前端看到的就是 "This operation was aborted" 之类。
+      const callOnce = async (m: string, s: string): Promise<{ url: string; error: string | null }> => {
+        try {
+          return QWEN_ASYNC_MODELS.has(m)
+            ? await callQwenAsync(m, data.prompt, s, qwenKey)
+            : await callQwenSync(m, data.prompt, s, qwenKey)
+        } catch (e) {
+          return {
+            url: "",
+            error: `[${m}] network: ${e instanceof Error ? e.message : "fetch failed"}`,
+          }
+        }
+      }
 
       // ---- 429 / 5xx 重试同一 model(指数退避)----
       // 关键:并行调用时第一个请求成功后,后续请求经常被 Qwen 短时限速。
