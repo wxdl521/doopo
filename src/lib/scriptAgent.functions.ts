@@ -28,7 +28,7 @@ type Provider = 'lovable' | 'qwen' | 'openrouter'
 //   "openrouter:xxx"  → Lovable AI Gateway（向后兼容）
 //   "qwen:xxx"        → 阿里 DashScope
 //   裸 id             → Qwen 默认
-function pickModel(raw?: string): { provider: Provider; model: string } {
+export function pickModel(raw?: string): { provider: Provider; model: string } {
   const v = (raw ?? '').trim() || 'qwen-plus'
   if (v.startsWith('lovable:')) return { provider: 'lovable', model: v.slice(8) }
   if (v.startsWith('openrouter:')) return { provider: 'openrouter', model: v.slice(11) }
@@ -335,12 +335,7 @@ const SYS_SYNOPSIS_ZH = `你是一位资深短剧爆款编剧。请基于用户�
 
 ## 5. 章节结构（按集数段）
 
-- **第 1-5 集**：核心事件 / 爽点 / 悬念
-- **第 6-10 集**：…
-- **第 11-30 集**：…
-- **第 31-60 集**：…
-- **第 61-90 集**：…
-- **第 91-末集**：…
+__CHAPTER_RANGES__
 
 ## 6. 第 1 集钩子预告
 
@@ -358,7 +353,7 @@ const SYS_SYNOPSIS_EN = `You are a seasoned short-drama writer. Output a full st
 ## 2. Core Concept
 ## 3. Characters (Protagonist / Antagonist / Female Lead / Male Supporting — each with surface identity, true identity, personality, signature line)
 ## 4. Plot Outline (Setup / Rising / Twist / Resolution)
-## 5. Chapter Structure (per episode ranges: 1-5, 6-10, 11-30, 31-60, 61-90, 91-end)
+## 5. Chapter Structure (per episode ranges: __CHAPTER_RANGES_EN__)
 ## 6. Episode 1 Cliffhanger
 
 End with one line asking how many storyboards the user wants for Episode 1 (default 15-20).`
@@ -366,8 +361,28 @@ End with one line asking how many storyboards the user wants for Episode 1 (defa
 export const streamSynopsis = createServerFn({ method: 'POST' })
   .inputValidator((d: unknown) => SynopsisInput.parse(d))
   .handler(async function* ({ data }) {
+    // Build chapter range buckets that fit the requested episode count,
+    // instead of the previous hardcoded 100-episode template.
+    const total = Math.max(1, Math.floor(data.expectedEpisodes))
+    const buckets = total <= 15 ? 3 : total <= 30 ? 4 : total <= 60 ? 5 : 6
+    const size = Math.max(1, Math.ceil(total / buckets))
+    const ranges: { start: number; end: number }[] = []
+    for (let i = 0; i < buckets; i++) {
+      const start = i * size + 1
+      if (start > total) break
+      const end = i === buckets - 1 ? total : Math.min((i + 1) * size, total)
+      ranges.push({ start, end })
+    }
+    const rangesZh = ranges
+      .map((r) => `- **第 ${r.start}-${r.end} 集**：…`)
+      .join('\n')
+    const rangesEn = ranges
+      .map((r) => `Episodes ${r.start}-${r.end}`)
+      .join(', ')
     const rawSys = (data.lang === 'zh' ? SYS_SYNOPSIS_ZH : SYS_SYNOPSIS_EN)
       .replace('__TOTAL_MINUTES__', String(data.totalMinutes))
+      .replace('__CHAPTER_RANGES__', rangesZh)
+      .replace('__CHAPTER_RANGES_EN__', rangesEn)
     const sys = wrapFictionSystem(data.lang, rawSys)
     const rawUser =
       data.lang === 'zh'
@@ -384,6 +399,7 @@ const EpisodeInput = z.object({
   epIndex: z.number().min(1).max(200).default(1),
   sceneCount: z.number().min(3).max(40).default(16),
   synopsisText: z.string().min(20).max(20000),
+  expectedEpisodes: z.number().min(1).max(200).optional(),
   model: z.string().optional(),
 })
 
@@ -395,18 +411,37 @@ const SYS_EPISODE_ZH = `你是一位资深短剧分镜师，请基于已确认�
 3) 然后依次写 X 个分镜，每个分镜独立成段，段首另起一行用"分镜 1 / 2 / 3 ..."加中文地点与时段（例如：分镜 1 ｜ 内景 · 林家祠堂 · 黄昏），紧接一段 80-160 字的动作/情绪/画面散文描写；
 4) 对白单独成行，格式为：角色名（情绪）："台词"。每句对白不超过 30 字；
 5) 节奏先抑后扬，至少一次重大反转，最后一个分镜留一个强钩子；
-6) 全集结束后空一行，用一段散文写"后续走向预告"（不少于 100 字），自然提到接下来 3-5 集会发生的关键事件，不要用列表；
+6) 全集结束后空一行，用一段散文写"后续走向预告"（不少于 100 字），自然提到 __NEXT_HINT_ZH__ 会发生的关键事件，不要用列表；
 7) 文末另起一段，用一句确认引导（不加 Markdown，不加列表）：询问用户是否继续生成下一集，并欢迎对本集节奏/分镜数量/人设给出调整建议。`
 
-const SYS_EPISODE_EN = `You are a short-drama storyboarder. Write Episode N in prose paragraphs and screenplay dialogue lines only — no Markdown, no tables, no bullets, no emoji. Open with one paragraph for the episode's title and emotional goal, then X numbered storyboards, each one labeled on its own line ("Scene 1 | INT. ..."), followed by an 80-160-word prose description and dialogue lines formatted as "ROLE (emotion): \\"line\\"". End with a prose paragraph teasing the next 3-5 episodes, then one prose sentence asking the user whether to continue and inviting adjustments.`
+const SYS_EPISODE_EN = `You are a short-drama storyboarder. Write Episode N in prose paragraphs and screenplay dialogue lines only — no Markdown, no tables, no bullets, no emoji. Open with one paragraph for the episode's title and emotional goal, then X numbered storyboards, each one labeled on its own line ("Scene 1 | INT. ..."), followed by an 80-160-word prose description and dialogue lines formatted as "ROLE (emotion): \\"line\\"". End with a prose paragraph teasing __NEXT_HINT_EN__, then one prose sentence asking the user whether to continue and inviting adjustments.`
 
 export const streamEpisodeScenes = createServerFn({ method: 'POST' })
   .inputValidator((d: unknown) => EpisodeInput.parse(d))
   .handler(async function* ({ data }) {
+    // Tailor the "next episodes to tease" hint to how many are actually left,
+    // instead of always saying "3-5" even when the user is on/near the finale.
+    const remaining = data.expectedEpisodes != null
+      ? Math.max(0, data.expectedEpisodes - data.epIndex)
+      : null
+    const nextHintZh =
+      remaining === null ? '接下来 3-5 集'
+        : remaining === 0 ? '下一段（这是本季的收束，直接写"全集完"作结，不再预告后续）'
+        : remaining === 1 ? '接下来 1 集（大结局）'
+        : remaining <= 3 ? `接下来 ${remaining} 集`
+        : '接下来 3-5 集'
+    const nextHintEn =
+      remaining === null ? 'the next 3-5 episodes'
+        : remaining === 0 ? 'no further episodes (this is the season finale — end with "The End")'
+        : remaining === 1 ? 'the final episode'
+        : remaining <= 3 ? `the final ${remaining} episodes`
+        : 'the next 3-5 episodes'
     const rawSys = (data.lang === 'zh' ? SYS_EPISODE_ZH : SYS_EPISODE_EN)
       .replace(/第 N /g, `第 ${data.epIndex} `)
       .replace(/Episode N/g, `Episode ${data.epIndex}`)
       .replace(/X/g, String(data.sceneCount))
+      .replace('__NEXT_HINT_ZH__', nextHintZh)
+      .replace('__NEXT_HINT_EN__', nextHintEn)
     const sys = wrapFictionSystem(data.lang, rawSys)
     const rawUser =
       data.lang === 'zh'

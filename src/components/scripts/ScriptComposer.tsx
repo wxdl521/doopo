@@ -393,6 +393,7 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
         epIndex: opts.epIndex,
         sceneCount: opts.sceneCount,
         synopsisText: contextSynopsis,
+        expectedEpisodes,
         model,
       },
     })) as AsyncIterable<StreamChunk>

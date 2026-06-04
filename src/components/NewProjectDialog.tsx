@@ -123,7 +123,10 @@ export function NewProjectDialog({
   const [customCover, setCustomCover] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [storyboardModel, setStoryboardModel] = useState('google/gemini-3.1-flash-image-preview')
-  const [sceneModel, setSceneModel] = useState('qwen-image-max')
+  // 默认值改成实际可用模型(根据 docs/qwen.md):用户订阅的图生图只有
+  // qwen-image-2.0 / qwen-image-2.0-pro / wan2.7-image / wan2.7-image-pro,
+  // qwen-image-max 不在订阅里,直接用会 400 "url error"。
+  const [sceneModel, setSceneModel] = useState('qwen-image-2.0-pro')
   const [videoModel, setVideoModel] = useState('wan2.5-i2v-preview')
   const [audio, setAudio] = useState<'auto' | 'on' | 'off'>('auto')
   const [workflow, setWorkflow] = useState('grid')

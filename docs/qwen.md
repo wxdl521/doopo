@@ -333,3 +333,162 @@ curl -X GET https://dashscope.aliyuncs.com/api/v1/tasks/{task_id} \
         "image_count": 1
     }
 }
+qwen图像编辑
+curl --location 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation' \
+--header 'Content-Type: application/json' \
+--header "Authorization: Bearer $DASHSCOPE_API_KEY" \
+--data '{
+    "model": "qwen-image-2.0-pro",
+    "input": {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "image": "https://help-static-aliyun-doc.aliyuncs.com/file-manage-files/zh-CN/20260310/jiydyi/image+%2818%29-2026-03-10-16-39-59.webp"
+                    },
+                    {
+                        "text": "在画面右下角石板路旁、靠近树干根部的位置，以浅灰墨色手写体题写一首七言绝句，字体为行楷风格，笔触自然流畅、略带飞白，大小适中（约占画面高度1/10），与整体水墨淡雅氛围协调。诗文内容为：“青石桥畔柳风轻， 素手拈花闭目听。 一水碧痕浮旧梦， 半篙烟雨入空舲。”诗句横向排列，四句分两行书写（前两句一行，后两句一行），末句“舲”字右下角钤一枚朱红小印，印文为“江南”二字篆书，尺寸约等于单字高度的1/3。"
+                    }
+                ]
+            }
+        ]
+    },
+    "parameters": {
+        "n": 1,
+        "negative_prompt": " ",
+        "prompt_extend": true,
+        "watermark": false,
+        "size": "2048*2048"
+    }
+}'
+任务成功
+{
+    "output": {
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "message": {
+                    "content": [
+                        {
+                            "image": "https://dashscope-result-sz.oss-cn-shenzhen.aliyuncs.com/xxx.png?Expires=xxx"
+                        }
+                    ],
+                    "role": "assistant"
+                }
+            }
+        ]
+    },
+    "usage": {
+        "height": 2048,
+        "image_count": 1,
+        "width": 2048
+    },
+    "request_id": "571ae02f-5c9d-436c-83c2-f221e6df0xxx"
+}
+
+wanxiang图像编辑
+curl --location 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation' \
+--header 'Content-Type: application/json' \
+--header "Authorization: Bearer $DASHSCOPE_API_KEY" \
+--data '{
+    "model": "wan2.7-image-pro",
+    "input": {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"image": "https://help-static-aliyun-doc.aliyuncs.com/file-manage-files/zh-CN/20251229/pjeqdf/car.webp"},
+                    {"image": "https://help-static-aliyun-doc.aliyuncs.com/file-manage-files/zh-CN/20251229/xsunlm/paint.webp"},
+                    {"text": "把图2的涂鸦喷绘在图1的汽车上"}
+                ]
+            }
+        ]
+    },
+    "parameters": {
+        "size": "2K",
+        "n": 1,
+        "watermark": false
+    }
+}'
+任务成功
+{
+    "output": {
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "message": {
+                    "content": [
+                        {
+                            "image": "https://dashscope-xxx.oss-xxx.aliyuncs.com/xxx.png?Expires=xxx",
+                            "type": "image"
+                        }
+                    ],
+                    "role": "assistant"
+                }
+            }
+        ],
+        "finished": true
+    },
+    "usage": {
+        "image_count": 1,
+        "input_tokens": 10867,
+        "output_tokens": 2,
+        "size": "1488*704",
+        "total_tokens": 10869
+    },
+    "request_id": "71dfc3c6-f796-9972-97e4-bc4efc4faxxx"
+}
+wanxiang交互式编辑
+curl --location 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation' \
+--header 'Content-Type: application/json' \
+--header "Authorization: Bearer $DASHSCOPE_API_KEY" \
+--data '{
+    "model": "wan2.7-image-pro",
+    "input": {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"image": "https://img.alicdn.com/imgextra/i3/O1CN0157XGE51l6iL9441yX_!!6000000004770-49-tps-1104-1472.webp"},
+                    {"image": "https://img.alicdn.com/imgextra/i3/O1CN01SfG4J41UYn9WNt4X1_!!6000000002530-49-tps-1696-960.webp"},
+                    {"text": "把图1的闹钟放在图2的框选的位置，保持场景和光线融合自然"}
+                ]
+            }
+        ]
+    },
+    "parameters": {
+        "bbox_list": [[],[[989, 515, 1138, 681]]],
+        "size": "2K",
+        "n": 1,
+        "watermark": false
+    }
+}'
+任务成功
+{
+    "output": {
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "message": {
+                    "content": [
+                        {
+                            "image": "https://dashscope-xxx.oss-xxx.aliyuncs.com/xxx.png?Expires=xxx",
+                            "type": "image"
+                        }
+                    ],
+                    "role": "assistant"
+                }
+            }
+        ],
+        "finished": true
+    },
+    "usage": {
+        "image_count": 1,
+        "input_tokens": 10867,
+        "output_tokens": 2,
+        "size": "1488*704",
+        "total_tokens": 10869
+    },
+    "request_id": "71dfc3c6-f796-9972-97e4-bc4efc4faxxx"
+}

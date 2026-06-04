@@ -6,6 +6,18 @@ export type Outline = {
   acts: { title: string; beats: string[] }[]
 }
 
+export type GenCharacterLook = {
+  /** unique id, used as image storage key. Convention: ${characterId}::${id} */
+  id: string
+  /** 短标签,如 "医生"、"穿越"、"默认";用于卡片标题 "男主角-医生" */
+  label: string
+  faceDescription: string
+  bodyDescription: string
+  clothingDescription: string
+  /** 已生成的形象图 URL(同步持久化到 charImages,key=${characterId}::${id}) */
+  imageUrl?: string
+}
+
 export type GenCharacter = {
   id: string
   name: string
@@ -22,6 +34,13 @@ export type GenCharacter = {
   mbti?: string
   keyProp?: string
   relations?: { targetId: string; label: string; summary: string }[]
+  /**
+   * 同角色不同造型/身份/服装下的"变体卡片"。例如:
+   *   男主角-医生(白大褂)、男主角-穿越(古装)
+   * 没有 looks 时,UI 把默认 appearance 作为唯一的"默认"卡片渲染。
+   * 每个 look 走独立的图片生成 call,key 为 `${characterId}::${look.id}`。
+   */
+  looks?: GenCharacterLook[]
 }
 
 export type GenScene = {

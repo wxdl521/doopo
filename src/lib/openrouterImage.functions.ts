@@ -1,7 +1,27 @@
 import { createServerFn } from "@tanstack/react-start";
 
-type Input = { prompt: string; model?: string; size?: string };
+type Input = {
+  prompt: string
+  model?: string
+  size?: string
+  /**
+   * 锁定用户选定的 model:被 rate-limit(429)时**只重试同一个 model**
+   * (1s/2s/4s 退避,最多 3 次),不再降级到不同 model。
+   *
+   * 不锁定(默认)的旧行为:429 立即降级到 fallback model。
+   *   ↓ 这就是并行生成角色时,不同角色风格/构图/背景不一致的根因
+   *     (qwen-image-2.0-pro vs qwen-image-2.0 vs qwen-image-plus 是不同的
+   *      视觉模型,art medium / 色彩 / 线条处理都不同)。
+   *
+   * 角色图严格保持一致性,应该 noFallback: true。
+   */
+  noFallback?: boolean
+};
 type ImageModelInfo = { id?: unknown; architecture?: { output_modalities?: unknown } };
+
+// 429 / 5xx 退避序列(指数退避,3 次后放弃)
+const RETRY_BACKOFF_MS = [1_000, 2_000, 4_000] as const
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
 // ---------- Qwen (DashScope) image generation ----------
 const QWEN_ENDPOINT =
@@ -480,6 +500,7 @@ export const generateImage = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const qwenKey = process.env.Qwen || process.env.DASHSCOPE_API_KEY;
     const requested = (data.model || "").trim();
+    const noFallback = data.noFallback === true;
 
     // Use Qwen image generation API
     if (qwenKey) {
@@ -487,26 +508,71 @@ export const generateImage = createServerFn({ method: "POST" })
       // Default to qwen-image-2.0-pro for high quality
       const model = requested || "qwen-image-2.0-pro";
       const size = data.size || "2048*2048";
-      const result = QWEN_ASYNC_MODELS.has(model)
-        ? await callQwenAsync(model, data.prompt, size, qwenKey)
-        : await callQwenSync(model, data.prompt, size, qwenKey);
+
+      // ---- 第一次尝试(用用户选定的 model)----
+      const callOnce = async (m: string, s: string) =>
+        QWEN_ASYNC_MODELS.has(m)
+          ? await callQwenAsync(m, data.prompt, s, qwenKey)
+          : await callQwenSync(m, data.prompt, s, qwenKey)
+
+      // ---- 429 / 5xx 重试同一 model(指数退避)----
+      // 关键:并行调用时第一个请求成功后,后续请求经常被 Qwen 短时限速。
+      // 之前立即 fallback 到 qwen-image-2.0 / qwen-image-plus 等不同模型,
+      // 导致视觉风格/构图/背景约束不一致(noFallback=true 时尤其需要这个)。
+      const result = await (async () => {
+        let lastErr: string | null = null
+        const attempts = [model, ...RETRY_BACKOFF_MS.map(() => model)]
+        for (let i = 0; i < attempts.length; i++) {
+          const r = await callOnce(model, size)
+          if (r.url) return r
+          lastErr = r.error
+          // 429 / 5xx 才重试,其他错误(400 内容、401 鉴权)立即放弃
+          const isRetryable = /429|502|503|504|timed out|aborted|ECONNRESET/i.test(r.error ?? "")
+          if (!isRetryable) return r
+          if (i < attempts.length - 1) {
+            await sleep(RETRY_BACKOFF_MS[i] ?? 1_000)
+          }
+        }
+        return { url: "", error: lastErr } as { url: string; error: string | null }
+      })()
+
       if (result.url) return { ...result, model };
       if (result.error) errors.push(result.error);
 
-      // Try fallback models
-      for (const fallback of dashScopeAttempts(requested)) {
-        if (fallback === model) continue;
-        const isWan = fallback.startsWith("wan");
-        const defaultSize = isWan ? "1024*1024" : "1328*1328";
-        const fallbackSize = normalizeDashScopeSize(fallback, data.size || defaultSize);
-        const fbResult = QWEN_ASYNC_MODELS.has(fallback)
-          ? await callQwenAsync(fallback, data.prompt, fallbackSize, qwenKey)
-          : await callQwenSync(fallback, data.prompt, fallbackSize, qwenKey);
-        if (fbResult.url) return { ...fbResult, model: fallback };
-        if (fbResult.error) errors.push(fbResult.error);
+      // ---- Fallback models(只对 noFallback=false 走)----
+      if (!noFallback) {
+        for (const fallback of dashScopeAttempts(requested)) {
+          if (fallback === model) continue;
+          const isWan = fallback.startsWith("wan");
+          const defaultSize = isWan ? "1024*1024" : "1328*1328";
+          const fallbackSize = normalizeDashScopeSize(fallback, data.size || defaultSize);
+          // fallback 自身也带 429 重试
+          let fbResult: { url: string; error: string | null } = { url: "", error: null }
+          let fbLastErr: string | null = null
+          for (let i = 0; i <= RETRY_BACKOFF_MS.length; i++) {
+            const r = await (QWEN_ASYNC_MODELS.has(fallback)
+              ? await callQwenAsync(fallback, data.prompt, fallbackSize, qwenKey)
+              : await callQwenSync(fallback, data.prompt, fallbackSize, qwenKey))
+            if (r.url) { fbResult = r; break }
+            fbLastErr = r.error
+            const isRetryable = /429|502|503|504|timed out|aborted|ECONNRESET/i.test(r.error ?? "")
+            if (!isRetryable) { fbResult = r; break }
+            if (i < RETRY_BACKOFF_MS.length) await sleep(RETRY_BACKOFF_MS[i] ?? 1_000)
+          }
+          if (fbResult.url) return { ...fbResult, model: fallback };
+          if (fbResult.error) errors.push(fbResult.error);
+          else if (fbLastErr) errors.push(fbLastErr);
+        }
       }
 
-      return { url: "", error: errors.join("；") || "Qwen image generation failed", model };
+      const lastErr = errors.join("；") || "Qwen image generation failed"
+      return {
+        url: "",
+        error: noFallback
+          ? `${lastErr} (model locked: ${model}, no fallback used)`
+          : lastErr,
+        model,
+      };
     }
 
     // // Fallback to Lovable AI

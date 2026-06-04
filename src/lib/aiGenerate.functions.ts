@@ -1,7 +1,7 @@
 import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
 
-const StageEnum = z.enum(['canvas', 'script', 'character', 'storyboard', 'timeline'])
+const StageEnum = z.enum(['canvas', 'script', 'scene', 'character', 'character-extract', 'storyboard', 'timeline'])
 
 const InputSchema = z.object({
   stage: StageEnum,
@@ -112,11 +112,118 @@ function stageSpec(stage: Input['stage']) {
           additionalProperties: false,
         },
       }
+    case 'scene':
+      return {
+        toolName: 'emit_scenes',
+        system:
+          '你是一名中文短剧场景提取师。基于用户提供的剧本文本（可能是小说、剧本或分集内容），**只做一件事：识别并提取文本中实际出现的所有主要场景/地点**。' +
+          '要求：每个场景是物理空间（房间/街道/办公室/餐厅等），不是情节；' +
+          'location 用简短中文名（2-6 字），slug 用"INT./EXT. 中文名 — 时间"格式；' +
+          'timeOfDay 取 DAY/NIGHT/DUSK/DAWN；' +
+          'action 用 30-60 字描写该场景的环境与氛围（不要重复剧本中的对白/动作）。' +
+          '同一地点在不同时段出现算 1 个场景；只在文本中真实出现的场景才提取，不要编造。' +
+          '若文本完全没有场景描写（例如纯对白），返回空数组。' +
+          '仅以工具调用返回结构化结果。',
+        schema: {
+          type: 'object',
+          properties: {
+            scenes: {
+              type: 'array',
+              maxItems: 20,
+              items: {
+                type: 'object',
+                properties: {
+                  index: { type: 'number', description: '1-based 顺序号' },
+                  slug: { type: 'string', description: '如 "INT. 林家祠堂 — 黄昏"' },
+                  location: { type: 'string' },
+                  timeOfDay: { type: 'string', enum: ['DAY', 'NIGHT', 'DUSK', 'DAWN'] },
+                  action: { type: 'string', description: '30-60 字的环境/氛围描写' },
+                  beats: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    description: '可省略；提取时可填 1-2 个该场景的关键事件标签',
+                  },
+                },
+                required: ['index', 'slug', 'location', 'timeOfDay', 'action'],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ['scenes'],
+          additionalProperties: false,
+        },
+      }
+    case 'character-extract':
+      return {
+        toolName: 'emit_characters_extract',
+        system:
+          '你是一名中文短剧角色提取师。**只做一件事**:从用户提供的剧本文本中,识别并提取**实际出现**的所有角色。' +
+          '要求:不创建虚构角色,只列文本里出现过的;有台词、有动作、有名字的都算;' +
+          'role 尽量从 lead/supporting/villain 中选,如果出场少或身份模糊可标 supporting;' +
+          'palette(3-4 个 hex 颜色)按角色整体气质推断(深色沉稳/亮色活泼等),不是必须从原文出现;' +
+          '**faceDescription**:只写脸型/五官/肤色/发型发色等中性结构,**不要写任何表情/情绪/神态**。' +
+          '**looks 数组(变体造型)**:如果同一角色在文本中明显换了不同身份/服装(例:男主角在现代是医生、回忆里是学生),在 looks 里**额外**输出 1-3 个变体,每个有 label(短中文,如"医生"/"学生")和 clothingDescription。' +
+          '只在**真正不同**的造型时才加 looks,同一套衣服不要重复列。' +
+          '单集通常 1-5 个角色,不要为了凑数虚构。仅工具调用返回。',
+        schema: {
+          type: 'object',
+          properties: {
+            characters: {
+              type: 'array',
+              minItems: 1,
+              maxItems: 12,
+              items: {
+                type: 'object',
+                properties: {
+                  name: { type: 'string' },
+                  role: { type: 'string', enum: ['lead', 'supporting', 'villain'] },
+                  roleLabel: { type: 'string' },
+                  age: { type: 'number' },
+                  gender: { type: 'string' },
+                  faceDescription: { type: 'string', description: '面部结构(脸型/五官/肤色/发型发色),不要写任何表情/情绪' },
+                  bodyDescription: { type: 'string' },
+                  clothingDescription: { type: 'string' },
+                  personality: { type: 'string' },
+                  palette: {
+                    type: 'array',
+                    minItems: 3,
+                    maxItems: 4,
+                    items: { type: 'string' },
+                  },
+                  looks: {
+                    type: 'array',
+                    description: '同角色不同造型/身份下的变体(可选)',
+                    maxItems: 3,
+                    items: {
+                      type: 'object',
+                      properties: {
+                        label: { type: 'string' },
+                        clothingDescription: { type: 'string' },
+                      },
+                      required: ['label', 'clothingDescription'],
+                      additionalProperties: false,
+                    },
+                  },
+                },
+                required: ['name', 'role', 'roleLabel', 'age', 'gender', 'faceDescription', 'bodyDescription', 'clothingDescription', 'personality', 'palette'],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ['characters'],
+          additionalProperties: false,
+        },
+      }
     case 'character':
       return {
         toolName: 'emit_characters',
         system:
-          '你是一名动漫角色设计师 + 编剧。结合用户输入、logline / acts / scenes 提取或新建 3-5 位角色（至少 1 主角，可含配角与反派）。每位需要：名字、role(lead/supporting/villain)、roleLabel(中文短描述如"女主 · 高冷学霸")、age、gender(性别)、faceDescription(面部特征详细描述，包括脸型、五官、肤色、发型发色等)、bodyDescription(身材体型描述，包括身高、体型、姿态等)、clothingDescription(服装配饰详细描述，包括款式、颜色、材质、配饰等)、personality(性格)、palette(3-4 个 hex 颜色，匹配角色调性)。仅工具调用返回。',
+          '你是一名动漫角色设计师 + 编剧。结合用户输入、logline / acts / scenes 提取或新建 3-5 位角色（至少 1 主角，可含配角与反派）。' +
+          '**faceDescription 严格要求**:只写脸型/五官/肤色/发型发色等中性结构,**不要写任何表情、情绪、神态、动作**（如"微笑"、"皱眉"、"冷峻的眼神"都是禁止的）。生成图必须保持"无表情"中性状态。' +
+          '**personality 字段**:可以填,但下游生成图 prompt 不会使用它,只在 UI 描述里展示。' +
+          '**looks 数组(变体造型)**:如果同一角色在不同剧情阶段/身份下有明显不同的造型(医生 vs 穿越者 vs 学生时期),请在 looks 里**额外**输出 1-3 个变体,每个变体有独立的 label(短中文,如"医生"/"穿越"/"学生")和 clothingDescription(只改这个,脸和身材沿用主条目)。' +
+          '**不要**为同一套衣服重复列 looks。只有造型明显不同时才加。' +
+          '每位需要：名字、role(lead/supporting/villain)、roleLabel(中文短描述如"女主 · 高冷学霸")、age、gender(性别)、faceDescription、bodyDescription、clothingDescription、personality(性格)、palette(3-4 个 hex 颜色，匹配角色调性)、可选 looks。仅工具调用返回。',
         schema: {
           type: 'object',
           properties: {
@@ -132,15 +239,29 @@ function stageSpec(stage: Input['stage']) {
                   roleLabel: { type: 'string' },
                   age: { type: 'number' },
                   gender: { type: 'string' },
-                  faceDescription: { type: 'string', description: '面部特征详细描述' },
+                  faceDescription: { type: 'string', description: '面部结构(脸型/五官/肤色/发型发色),不要写任何表情/情绪' },
                   bodyDescription: { type: 'string', description: '身材体型描述' },
-                  clothingDescription: { type: 'string', description: '服装配饰描述' },
+                  clothingDescription: { type: 'string', description: '默认造型下的服装配饰描述' },
                   personality: { type: 'string' },
                   palette: {
                     type: 'array',
                     minItems: 3,
                     maxItems: 4,
                     items: { type: 'string', description: 'hex like #1e293b' },
+                  },
+                  looks: {
+                    type: 'array',
+                    description: '同角色不同造型/身份下的变体(可选)。每个变体走独立图片生成 call。',
+                    maxItems: 3,
+                    items: {
+                      type: 'object',
+                      properties: {
+                        label: { type: 'string', description: '短中文标签,如 "医生" / "穿越" / "学生时期"' },
+                        clothingDescription: { type: 'string', description: '该变体的服装配饰描述;脸和身材沿用主条目' },
+                      },
+                      required: ['label', 'clothingDescription'],
+                      additionalProperties: false,
+                    },
                   },
                 },
                 required: ['name', 'role', 'roleLabel', 'age', 'gender', 'faceDescription', 'bodyDescription', 'clothingDescription', 'personality', 'palette'],

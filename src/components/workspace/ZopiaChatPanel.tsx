@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
-import { Plus, Send, ChevronDown, X, Check, PanelRightClose, PanelRightOpen, ChevronUp, Paperclip, FileIcon, FileText, Users, Grid3x3, Clock, Sparkles } from 'lucide-react'
+import { useServerFn } from '@tanstack/react-start'
+import { Plus, Send, ChevronDown, X, Check, PanelRightClose, PanelRightOpen, ChevronUp, Paperclip, FileIcon, FileText, Users, Grid3x3, Clock, Sparkles, Upload, Loader2 } from 'lucide-react'
 import { useLanguage } from '../../i18n/LanguageContext'
 import type { WorkspaceTab } from './WorkspaceTopbar'
+import { parseImportedScript, type ImportedScriptResult, type ParseStreamEvent } from '../../lib/parseImportedScript.functions'
 
 type Attachment = { id: string; name: string; size: number; type: string; url?: string }
 
@@ -91,7 +93,7 @@ function buildWorkflow(stage: WorkspaceTab, t: any): WorkflowDef {
 }
 
 export default function ZopiaChatPanel({
-  stage, onJumpStage, onProduce, collapsed, onToggleCollapsed, initialInput, onSaveAssets, locked, selectedEpisodeIndex,
+  stage, onJumpStage, onProduce, collapsed, onToggleCollapsed, initialInput, onSaveAssets, locked, selectedEpisodeIndex, onImportScript, streaming,
 }: {
   stage: WorkspaceTab
   onJumpStage: (t: WorkspaceTab) => void
@@ -102,8 +104,11 @@ export default function ZopiaChatPanel({
   onSaveAssets?: () => void | Promise<void>
   locked?: boolean
   selectedEpisodeIndex?: number
+  onImportScript?: (result: ImportedScriptResult) => void
+  streaming?: boolean
 }) {
-  const { t } = useLanguage()
+  const { t, lang } = useLanguage()
+  const callParseScript = useServerFn(parseImportedScript)
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [attachments, setAttachments] = useState<Attachment[]>([])
@@ -126,6 +131,15 @@ export default function ZopiaChatPanel({
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [synopsisEditMode, setSynopsisEditMode] = useState(false)
   const [lockModal, setLockModal] = useState<string | null>(null)
+  // Import script modal state
+  const [importModal, setImportModal] = useState<
+    | null
+    | { stage: 'paste'; text: string; fileName: string | null }
+    | { stage: 'parsing'; progress: string }
+    | { stage: 'error'; message: string }
+  >(null)
+  const [importDragging, setImportDragging] = useState(false)
+  const importFileInputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: 999999, behavior: 'smooth' })
@@ -155,6 +169,20 @@ export default function ZopiaChatPanel({
     character: [t.zp_preset_lead, t.zp_preset_villain, t.zp_preset_supporting],
     storyboard: [t.zp_preset_board, t.zp_preset_expand],
     timeline: [t.zp_preset_arrange, t.zp_preset_transition],
+  }
+
+  // 某些阶段的"无消息"空状态应该直接展示功能性 CTA 按钮(走 handleCta),
+  // 而不是文本预设(只是 send(p) 的占位文案)。典型场景:导入剧本后或
+  // AI 生成完一集后,回到 episodes 标签,应该看到和 AI 工作流收尾时
+  // 完全一样的"AI 修改本集" / "提取本集角色和场景"按钮,而不是无关的
+  // 文本提示。其他阶段保持文本预设。
+  const presetCtas: Record<WorkspaceTab, { key: CtaKey; label: string; target: WorkspaceTab }[] | null> = {
+    canvas: null,
+    script: null,
+    episodes: buildWorkflow('episodes', t).ctas,
+    character: null,
+    storyboard: null,
+    timeline: null,
   }
 
   function newChat() {
@@ -192,6 +220,103 @@ export default function ZopiaChatPanel({
     if (bytes < 1024) return `${bytes} B`
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
     return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  }
+
+  // ============= Import script flow =============
+  // Read a File into plain text. .txt uses FileReader, .docx is parsed via mammoth
+  // (lazy-loaded to keep the .docx dependency out of the initial bundle).
+  async function readFileToText(file: File): Promise<string> {
+    const lower = file.name.toLowerCase()
+    if (lower.endsWith('.txt')) return await file.text()
+    if (lower.endsWith('.docx')) {
+      const mod: any = await import('mammoth')
+      const mammoth = mod.default ?? mod
+      const result = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() })
+      if (!result?.value || !result.value.trim()) throw new Error(t.zp_import_error_corrupt)
+      return result.value
+    }
+    throw new Error(t.zp_import_error_format)
+  }
+
+  function openImportModal() {
+    // Close any other modal to avoid z-50 stacking
+    setPendingCta(null)
+    setImportModal({ stage: 'paste', text: '', fileName: null })
+  }
+
+  function closeImportModal() {
+    if (importModal?.stage === 'parsing') return // ignore close while in-flight
+    setImportModal(null)
+    setImportDragging(false)
+  }
+
+  async function handleImportFilePicked(file: File | null | undefined) {
+    if (!file) return
+    if (file.size > 10 * 1024 * 1024) {
+      setImportModal({ stage: 'error', message: t.zp_import_error_too_big })
+      return
+    }
+    if (!/\.(docx|txt)$/i.test(file.name)) {
+      setImportModal({ stage: 'error', message: t.zp_import_error_format })
+      return
+    }
+    try {
+      const text = await readFileToText(file)
+      setImportModal({ stage: 'paste', text, fileName: file.name })
+    } catch (e) {
+      setImportModal({ stage: 'error', message: e instanceof Error && e.message ? e.message : t.zp_import_error_read })
+    }
+    if (importFileInputRef.current) importFileInputRef.current.value = ''
+  }
+
+  function onImportFilePickedEvent(e: React.ChangeEvent<HTMLInputElement>) {
+    void handleImportFilePicked(e.target.files?.[0])
+  }
+
+  function onImportFileDropped(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault()
+    setImportDragging(false)
+    const file = e.dataTransfer.files?.[0]
+    void handleImportFilePicked(file)
+  }
+
+  async function onImportSubmit() {
+    if (!importModal || importModal.stage !== 'paste') return
+    const text = importModal.text.trim()
+    if (text.length < 20) {
+      setImportModal({ stage: 'error', message: t.zp_import_error_short })
+      return
+    }
+    setImportModal({ stage: 'parsing', progress: t.zp_import_parsing })
+    try {
+      // 消费流式 server fn：阶段 1 提交时即开始 yield，UI 实时刷新进度文案，
+      // 避免长任务下"球状 spinner 静止 60s 再抛 AbortError"的死等感。
+      const stream = (await callParseScript({
+        data: { lang, rawText: text },
+      })) as AsyncIterable<ParseStreamEvent>
+      for await (const ev of stream) {
+        if (ev.kind === 'progress') {
+          setImportModal({ stage: 'parsing', progress: ev.message })
+        } else if (ev.kind === 'error') {
+          setImportModal({ stage: 'error', message: ev.message })
+          return
+        } else if (ev.kind === 'done') {
+          onImportScript?.(ev.result)
+          setImportModal(null)
+          setImportDragging(false)
+          // toast handled by parent (workspace) so the count can be shown
+          return
+        }
+      }
+    } catch (e) {
+      // for-await 外的网络/解包错误（如 server fn 自身抛 AbortError）
+      const err = e as { name?: string; message?: string }
+      const msg =
+        err?.name === 'AbortError'
+          ? t.zp_import_error_timeout
+          : err?.message || t.zp_import_error_unknown
+      setImportModal({ stage: 'error', message: msg })
+    }
   }
 
   function send(text: string, opts?: { targetStage?: WorkspaceTab; jumpAfter?: boolean; simple?: boolean }) {
@@ -635,24 +760,64 @@ export default function ZopiaChatPanel({
           <div className="space-y-3">
             <p className="text-text-secondary leading-relaxed">{intro[stage]}</p>
             {stage === 'script' && <p className="text-text-secondary text-sm">{t.zp_intro_script_hint}</p>}
-            <ul className="text-text-secondary text-sm list-disc list-inside space-y-1">
-              {presets[stage].map((p) => (
-                <li key={p}>"{p}"</li>
-              ))}
-            </ul>
+            {presetCtas[stage] ? (
+              // 该阶段的空状态用工作流 CTA(导入剧本后或 AI 生成一集后回到此页)
+              <div className="text-text-secondary text-sm space-y-1">
+                {presetCtas[stage]!.map((c) => (
+                  <div key={c.key} className="flex items-center gap-2">
+                    <Sparkles size={12} className="text-accent shrink-0" />
+                    <span>{c.label}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <ul className="text-text-secondary text-sm list-disc list-inside space-y-1">
+                {presets[stage].map((p) => (
+                  <li key={p}>"{p}"</li>
+                ))}
+              </ul>
+            )}
+
+            {/* Import script CTA — primary action, available on every tab */}
+            <button
+              onClick={openImportModal}
+              disabled={streaming}
+              className="w-full px-4 py-3 rounded-lg border-2 border-accent bg-accent-dim/40 text-sm font-semibold text-text-primary inline-flex items-center gap-2 hover:bg-accent-dim/60 disabled:opacity-50 disabled:cursor-not-allowed transition"
+            >
+              <Upload size={16} className="text-accent shrink-0" />
+              <span>{t.zp_cta_import_script}</span>
+              <span className="ml-auto text-[11px] text-text-muted font-normal truncate">{t.zp_cta_import_script_hint}</span>
+            </button>
             <h3 className="font-display text-2xl font-bold text-text-primary mt-6">{t.zp_today_help}</h3>
-            <div className="space-y-2 pt-2">
-              {presets[stage].map((p, i) => (
-                <button key={p} onClick={() => send(p)}
-                  className={`w-full text-left px-4 py-3 rounded-lg border text-sm transition ${
-                    i === 0
-                      ? 'bg-accent-dim/40 border-accent text-text-primary hover:bg-accent-dim/60'
-                      : 'bg-bg-elevated border-border hover:border-accent'
-                  }`}>
-                  {p}
-                </button>
-              ))}
-            </div>
+            {presetCtas[stage] ? (
+              // CTA 按钮区:点击直接调 handleCta(走工作流完成后的逻辑),
+              // 而非 send(p) 的占位文案。和 AI 生成一集后看到的 CTA 完全一致。
+              <div className="space-y-2 pt-2">
+                {presetCtas[stage]!.map((c, i) => (
+                  <button key={c.key} onClick={() => handleCta(c)}
+                    className={`w-full px-4 py-3 rounded-lg border text-sm font-semibold transition ${
+                      i === 0
+                        ? 'bg-accent-dim/40 border-accent text-text-primary hover:bg-accent-dim/60'
+                        : 'bg-bg-elevated border-border hover:border-accent'
+                    }`}>
+                    {c.label}
+                  </button>
+                ))}
+              </div>
+            ) : (
+              <div className="space-y-2 pt-2">
+                {presets[stage].map((p, i) => (
+                  <button key={p} onClick={() => send(p)}
+                    className={`w-full text-left px-4 py-3 rounded-lg border text-sm transition ${
+                      i === 0
+                        ? 'bg-accent-dim/40 border-accent text-text-primary hover:bg-accent-dim/60'
+                        : 'bg-bg-elevated border-border hover:border-accent'
+                    }`}>
+                    {p}
+                  </button>
+                ))}
+              </div>
+            )}
 
             <div className="pt-4">
               <div className="text-xs text-text-muted inline-flex items-center gap-1 mb-2">
@@ -1005,6 +1170,138 @@ export default function ZopiaChatPanel({
           </div>
         </div>
       )}
+
+      {/* Import script modal — full-viewport overlay. Bypasses the chat workflow; the
+          workspace state is written via the onImportScript prop callback. */}
+      {importModal && (
+      <div
+        className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+        onClick={closeImportModal}
+        role="dialog"
+        aria-modal="true"
+      >
+        <div
+          className="relative bg-bg-surface border border-border rounded-2xl w-full max-w-2xl shadow-2xl flex flex-col max-h-[85vh]"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between px-5 py-4 border-b border-border shrink-0">
+            <h2 className="font-display text-lg font-bold inline-flex items-center gap-2">
+              <Upload size={18} className="text-accent" /> {t.zp_cta_import_script}
+            </h2>
+            <button
+              type="button"
+              onClick={closeImportModal}
+              disabled={importModal.stage === 'parsing'}
+              className="p-1.5 rounded-md hover:bg-bg-elevated text-text-muted disabled:opacity-30 disabled:cursor-not-allowed"
+              aria-label={t.zp_import_cancel}
+            >
+              <X size={16} />
+            </button>
+          </div>
+
+          {/* Body */}
+          <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4 min-h-0">
+            {importModal.stage === 'parsing' ? (
+              <div className="py-12 flex flex-col items-center gap-3 text-text-muted">
+                <Loader2 size={32} className="animate-spin text-accent" />
+                {/* 实时显示 server fn 各阶段 yield 的 progress 事件，
+                    替换原来的静态 "正在解析..." 文案 */}
+                <p className="text-sm text-text-secondary min-h-[1.25rem] text-center px-4">
+                  {importModal.progress}
+                </p>
+                <p className="text-xs text-text-muted">{t.zp_import_parsing_hint}</p>
+              </div>
+            ) : (
+              <>
+                <p className="text-sm text-text-secondary leading-relaxed">{t.zp_import_hint}</p>
+
+                {/* Drag-drop / click-to-pick area */}
+                <div
+                  onDragOver={(e) => { e.preventDefault(); setImportDragging(true) }}
+                  onDragLeave={() => setImportDragging(false)}
+                  onDrop={onImportFileDropped}
+                  onClick={() => importFileInputRef.current?.click()}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') importFileInputRef.current?.click() }}
+                  className={`rounded-xl border-2 border-dashed px-4 py-6 text-center text-sm cursor-pointer transition ${
+                    importDragging
+                      ? 'border-accent bg-accent-dim/30'
+                      : 'border-border hover:border-accent text-text-muted'
+                  }`}
+                >
+                  {importModal.stage === 'paste' && importModal.fileName ? (
+                    <span className="text-text-primary inline-flex items-center gap-2">
+                      <FileText size={18} className="text-accent shrink-0" />
+                      <span className="truncate">{t.zp_import_drop_loaded}{importModal.fileName}</span>
+                    </span>
+                  ) : (
+                    <span className="inline-flex flex-col items-center gap-1">
+                      <FileText size={28} className="text-text-muted" />
+                      <span>
+                        {t.zp_import_drop_idle}
+                        <span className="text-accent underline ml-1">{t.zp_import_drop_click}</span>
+                      </span>
+                    </span>
+                  )}
+                  <input
+                    ref={importFileInputRef}
+                    type="file"
+                    accept=".docx,.txt"
+                    className="hidden"
+                    onChange={onImportFilePickedEvent}
+                  />
+                </div>
+
+                <div className="flex items-center gap-3 text-xs text-text-muted">
+                  <div className="flex-1 h-px bg-border" />
+                  <span>{t.zp_import_paste_label}</span>
+                  <div className="flex-1 h-px bg-border" />
+                </div>
+
+                <textarea
+                  value={importModal.stage === 'paste' ? importModal.text : ''}
+                  onChange={(e) => {
+                    if (importModal.stage !== 'paste') return
+                    setImportModal({ ...importModal, text: e.target.value, fileName: null })
+                  }}
+                  rows={10}
+                  placeholder={t.zp_import_paste_placeholder}
+                  className="w-full rounded-lg bg-bg-elevated border border-border text-sm font-mono p-3 resize-y focus:border-accent focus:outline-none"
+                  style={{ minHeight: 200, maxHeight: 360 }}
+                />
+
+                {importModal.stage === 'error' && (
+                  <div className="px-3 py-2 rounded-lg bg-rose-500/10 border border-rose-500/30 text-sm text-rose-400">
+                    {importModal.message}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* Footer */}
+          {importModal.stage !== 'parsing' && (
+            <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-border shrink-0">
+              <button
+                onClick={closeImportModal}
+                className="px-3 py-1.5 rounded-md border border-border text-xs text-text-secondary hover:border-accent transition"
+              >
+                {t.zp_import_cancel}
+              </button>
+              <button
+                onClick={onImportSubmit}
+                disabled={importModal.stage !== 'paste' || importModal.text.trim().length < 20}
+                className="px-4 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition"
+              >
+                {t.zp_import_submit}
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    )}
     </aside>
   )
 }
