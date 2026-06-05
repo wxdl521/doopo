@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { ArrowRight, ChevronDown, FileText, ImagePlus, Loader2, Plus, RefreshCw, Sparkles, X, MessageCircle, Film } from 'lucide-react'
 import { useNavigate } from '@tanstack/react-router'
 import { useLanguage } from '../i18n/LanguageContext'
@@ -28,7 +28,14 @@ export default function HeroPromptInput() {
   const [response, setResponse] = useState('')
   const [showResponse, setShowResponse] = useState(false)
   const [error, setError] = useState('')
-  const [phIndex] = useState(() => Math.floor(Math.random() * placeholders.length))
+  // ⚠️ 必须 SSR-safe:初值用 0(跟服务端 HTML 一致),挂载后再随机。
+  // 用 useState(() => Math.random()) 会让 server 渲染一个 placeholder,client
+  // 渲染另一个,触发 React hydration mismatch warning。
+  const [phIndex, setPhIndex] = useState(0)
+  useEffect(() => {
+    setPhIndex(Math.floor(Math.random() * placeholders.length))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // 剧本生成模式：开启后点击"创建"直接跳转剧本页

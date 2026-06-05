@@ -7,7 +7,7 @@ import { parseImportedScript, type ImportedScriptResult, type ParseStreamEvent }
 
 type Attachment = { id: string; name: string; size: number; type: string; url?: string }
 
-type CtaKey = 'extract' | 'design' | 'storyboard' | 'to_script' | 'to_character' | 'to_timeline' | 'refine' | 'preview' | 'save_assets' | 'generate_script' | 'script_continue' | 'script_episode' | 'script_next' | 'select_episodes' | 'episode_modify'
+type CtaKey = 'extract' | 'design' | 'storyboard' | 'enter_storyboard' | 'to_script' | 'to_character' | 'to_timeline' | 'refine' | 'preview' | 'save_assets' | 'generate_script' | 'script_continue' | 'script_episode' | 'script_next' | 'select_episodes' | 'episode_modify'
 
 type Message =
   | { id: string; kind: 'user'; text: string; attachments?: Attachment[] }
@@ -34,6 +34,7 @@ function buildWorkflow(stage: WorkspaceTab, t: any): WorkflowDef {
         steps: [t.zp_step_char_load, t.zp_step_char_parse, t.zp_step_char_extract, t.zp_step_char_persona, t.zp_step_char_render],
         summary: { title: t.zp_summary_char_done, detail: t.zp_summary_char_detail, next: t.zp_summary_char_next },
         ctas: [
+          { key: 'enter_storyboard', label: t.zp_cta_enter_storyboard, target: 'storyboard' },
           { key: 'save_assets', label: t.zp_cta_save_assets, target: 'character' },
           { key: 'design', label: t.zp_cta_design, target: 'character' },
           { key: 'storyboard', label: t.zp_cta_storyboard, target: 'storyboard' },
@@ -93,7 +94,7 @@ function buildWorkflow(stage: WorkspaceTab, t: any): WorkflowDef {
 }
 
 export default function ZopiaChatPanel({
-  stage, onJumpStage, onProduce, collapsed, onToggleCollapsed, initialInput, onSaveAssets, locked, selectedEpisodeIndex, onImportScript, streaming,
+  stage, onJumpStage, onProduce, collapsed, onToggleCollapsed, initialInput, onSaveAssets, locked, selectedEpisodeIndex, onImportScript, streaming, onEnterStoryboard,
 }: {
   stage: WorkspaceTab
   onJumpStage: (t: WorkspaceTab) => void
@@ -106,6 +107,12 @@ export default function ZopiaChatPanel({
   selectedEpisodeIndex?: number
   onImportScript?: (result: ImportedScriptResult) => void
   streaming?: boolean
+  /**
+   * 在角色流程里点"进入分镜"按钮的回调。
+   * 跟其他 CTA 不一样,这个不走 send / param sheet —— 它直接跳过分镜阶段,
+   * 把当集剧情发给 AI 切分成多组 StoryboardGroup。
+   */
+  onEnterStoryboard?: () => void | Promise<void>
 }) {
   const { t, lang } = useLanguage()
   const callParseScript = useServerFn(parseImportedScript)
@@ -114,15 +121,22 @@ export default function ZopiaChatPanel({
   const [attachments, setAttachments] = useState<Attachment[]>([])
   const [showUpgrade, setShowUpgrade] = useState(true)
   const [ctasCollapsed, setCtasCollapsed] = useState(false)
+  // ParamField/ParamSpec 必须定义在 useState 之前 —— forward reference 对 type
+  // alias 在 TS 里 OK,但 pendingCta 的 fields 之前是内联窄类型,推不出
+  // multiSelect / locked / custom 这些可选字段,触发 TS2339。改成显式
+  // ParamField[] 一次性解决。
+  type ParamField = { key: string; label: string; options: { value: string; label: string; locked?: boolean }[]; default: string; multiSelect?: boolean; custom?: boolean }
+  type ParamSpec = { baseText: string; targetStage: WorkspaceTab; jumpAfter: boolean; fields: ParamField[] }
   const [pendingCta, setPendingCta] = useState<null | {
     cta: { key: CtaKey; label: string; target: WorkspaceTab }
     spec: {
       baseText: string
       targetStage: WorkspaceTab
       jumpAfter: boolean
-      fields: { key: string; label: string; default: string; options: { value: string; label: string }[] }[]
+      fields: ParamField[]
     }
-    values: Record<string, string>
+    // values:对于 multiSelect 字段是 string[],其余是 string
+    values: Record<string, string | string[]>
     previewing: boolean
   }>(null)
   const [episodeEditMode, setEpisodeEditMode] = useState<number | null>(null)
@@ -175,12 +189,17 @@ export default function ZopiaChatPanel({
   // 而不是文本预设(只是 send(p) 的占位文案)。典型场景:导入剧本后或
   // AI 生成完一集后,回到 episodes 标签,应该看到和 AI 工作流收尾时
   // 完全一样的"AI 修改本集" / "提取本集角色和场景"按钮,而不是无关的
-  // 文本提示。其他阶段保持文本预设。
+  // 文本提示。character 阶段也用 CTA,把"进入分镜(AI 切分多组)"放最前,
+  // 方便用户点一下就走完整剧情→分镜组流程,不需要发消息。
   const presetCtas: Record<WorkspaceTab, { key: CtaKey; label: string; target: WorkspaceTab }[] | null> = {
     canvas: null,
     script: null,
     episodes: buildWorkflow('episodes', t).ctas,
-    character: null,
+    character: [
+      { key: 'enter_storyboard', label: t.zp_cta_enter_storyboard, target: 'storyboard' },
+      { key: 'save_assets', label: t.zp_cta_save_assets, target: 'character' },
+      { key: 'design', label: t.zp_cta_design, target: 'character' },
+    ],
     storyboard: null,
     timeline: null,
   }
@@ -423,9 +442,8 @@ export default function ZopiaChatPanel({
     { key: 'qt', icon: Clock, target: 'timeline', label: t.zp_quick_timeline, userText: t.zp_user_quick_timeline },
   ]
 
-  type ParamField = { key: string; label: string; options: { value: string; label: string; locked?: boolean }[]; default: string; multiSelect?: boolean; custom?: boolean }
-  type ParamSpec = { baseText: string; targetStage: WorkspaceTab; jumpAfter: boolean; fields: ParamField[] }
-
+  // ParamField / ParamSpec 已在 useState 之前定义(见上面),
+  // 这里不再重复声明,直接用。
   function getParamSpec(c: { key: CtaKey; target: WorkspaceTab }): ParamSpec | null {
     switch (c.key) {
       case 'extract':
@@ -623,6 +641,12 @@ export default function ZopiaChatPanel({
   function handleCta(c: { key: CtaKey; label: string; target: WorkspaceTab }) {
     if (c.key === 'preview') { onJumpStage(c.target); return }
     if (c.key === 'save_assets') { onSaveAssets?.(); return }
+    // enter_storyboard:在对话框点"进入分镜",走专门的剧情→分镜组流程,
+    // 不经过 send / param sheet(那个是老的旧分镜流程)。
+    if (c.key === 'enter_storyboard') {
+      onEnterStoryboard?.()
+      return
+    }
     if (c.key === 'select_episodes') { send(t.zp_user_cta_select_episodes, { targetStage: 'episodes', jumpAfter: true }); return }
     if (c.key === 'script_episode') {
       setSynopsisEditMode(true)
@@ -647,7 +671,7 @@ export default function ZopiaChatPanel({
     }
     const spec = getParamSpec(c)
     if (!spec) return
-    const defaults: Record<string, string> = {}
+    const defaults: Record<string, string | string[]> = {}
     spec.fields.forEach((f) => { defaults[f.key] = f.default })
     setPendingCta({ cta: c, spec, values: defaults, previewing: false })
   }
@@ -665,7 +689,7 @@ export default function ZopiaChatPanel({
     return map[targetStage]
   }
 
-  function buildPrompt(spec: ParamSpec, values: Record<string, string>, tag: string): string {
+  function buildPrompt(spec: ParamSpec, values: Record<string, string | string[]>, tag: string): string {
     // For streaming script CTAs, build the full prompt with all parameters inline
     if (spec.fields[0]?.key === 'type') {
       const lines = spec.fields.map((f) => {

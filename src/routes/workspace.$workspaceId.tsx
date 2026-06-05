@@ -10,15 +10,17 @@ import { saveCharacters, saveScenes } from '../lib/assetsStorage'
 import {
   generateOutline, generateScript, generateCharacters, generateStoryboard, generateTimeline,
   type Outline, type GenScene, type GenCharacter, type GenCharacterLook, type StoryboardPanel, type TimelineData, type TimelineTrack, type TimelineClip,
+  type StoryboardGroup, type StoryboardShot, type ShotType,
 } from '../data/workspaceGenerators'
 import { generateStageAi } from '../lib/aiGenerate.functions'
 import { generateImage } from '../lib/openrouterImage.functions'
 import { regenerateCharacterLook } from '../lib/characterRegen.functions'
+import { generateStoryboardFromPlot, generateStoryboardShotImage } from '../lib/storyboard.functions'
 import { getProject, saveWorkspaceData, loadWorkspaceData, type ProjectConfigRow } from '../lib/projects.functions'
 import { streamSynopsis, streamEpisodeScenes, refineSynopsis, refineEpisodeScenes } from '../lib/scriptAgent.functions'
 import type { ImportedScriptResult } from '../lib/parseImportedScript.functions'
 import { resolveProjectStyle, resolveT2IModel, resolveI2IModel } from '../lib/visualStyles'
-import { Maximize2, FileText, Camera, Clock, Users, X, Loader2, Sparkles, Send, CheckCircle2, Pencil, Check, Image as ImageIcon, LayoutGrid } from 'lucide-react'
+import { Maximize2, FileText, Camera, Clock, Users, X, Loader2, Sparkles, Send, CheckCircle2, Pencil, Check, Image as ImageIcon, LayoutGrid, RefreshCw } from 'lucide-react'
 import CharacterPortrait from '../components/workspace/CharacterPortrait'
 import { toast } from 'sonner'
 
@@ -32,6 +34,11 @@ type WorkspaceData = {
   scenes: GenScene[]
   characters: GenCharacter[]
   storyboard: StoryboardPanel[]
+  /**
+   * 由 AI 从当集剧情切分出来的分镜组(每组 1~3 个镜头)。这是新的"分镜编辑"
+   * 流程的主数据,跟旧 storyboard 字段并存,UI 上替换了 storyboard 视图。
+   */
+  storyboardGroups: StoryboardGroup[]
   timeline: TimelineData | null
   synopsisText: string
   episodeTexts: { epIndex: number; text: string }[]
@@ -44,6 +51,7 @@ const emptyData: WorkspaceData = {
   scenes: [],
   characters: [],
   storyboard: [],
+  storyboardGroups: [],
   timeline: null,
   synopsisText: '',
   episodeTexts: [],
@@ -200,6 +208,8 @@ function WorkspacePage() {
   const callAi = useServerFn(generateStageAi)
   const callImage = useServerFn(generateImage)
   const callRegenCharacter = useServerFn(regenerateCharacterLook)
+  const callGenerateStoryboard = useServerFn(generateStoryboardFromPlot)
+  const callGenerateShotImage = useServerFn(generateStoryboardShotImage)
   const callSynopsis = useServerFn(streamSynopsis)
   const callEpisode = useServerFn(streamEpisodeScenes)
   const callRefine = useServerFn(refineSynopsis)
@@ -234,6 +244,17 @@ function WorkspacePage() {
   const [busyChars, setBusyChars] = useState<Set<string>>(new Set())
   const [busyPanel, setBusyPanel] = useState<string | null>(null)
   const [busyScene, setBusyScene] = useState<string | null>(null)
+  // 新的"分镜组"流程:正在生成 StoryboardGroup(整集切分)的标识
+  const [busyStoryboardGen, setBusyStoryboardGen] = useState(false)
+  // 正在跑"对某个分镜组的某张分镜图做多图融合"的 key,格式 `${groupId}::${shotId}`
+  const [busyShotImages, setBusyShotImages] = useState<Set<string>>(new Set())
+  // I2I 重生(按意见重生 / 三视图 / 多维资产)正在跑的卡片 imageKey → mode 映射。
+  // 跟 activeImageKey(T2I 通道)是两套独立的状态,因为它们发生在不同时间窗口:
+  //   T2I:首张图还没出,用户进不去 regen
+  //   I2I:首张图已出,用户点三视图/多维资产/修改
+  // 在 regen 期间给对应卡片加黑屏遮罩(spinner + "正在生成三视图" 等),
+  // 防止用户重复点 / 让进度可感知。value 存 mode 用来显示对应的提示文字。
+  const [regenBusyKeys, setRegenBusyKeys] = useState<Map<string, 'modify' | 'three-view' | 'multi-asset'>>(new Map())
   const [autoGen, setAutoGen] = useState(true)
   void setAutoGen
   // 流式剧本生成状态
@@ -276,6 +297,9 @@ function WorkspacePage() {
         if (Array.isArray(wd.scenes) && wd.scenes.length) setData((d) => ({ ...d, scenes: wd.scenes as GenScene[] }))
         if (Array.isArray(wd.characters) && wd.characters.length) setData((d) => ({ ...d, characters: wd.characters as GenCharacter[] }))
         if (Array.isArray(wd.storyboard) && wd.storyboard.length) setData((d) => ({ ...d, storyboard: wd.storyboard as StoryboardPanel[] }))
+        if (Array.isArray(wd.storyboardGroups) && wd.storyboardGroups.length) {
+          setData((d) => ({ ...d, storyboardGroups: wd.storyboardGroups as StoryboardGroup[] }))
+        }
         if (wd.timeline) setData((d) => ({ ...d, timeline: wd.timeline as WorkspaceData['timeline'] }))
         if (typeof wd.synopsisText === 'string' && wd.synopsisText) {
           setSynopsisText(wd.synopsisText)
@@ -392,81 +416,114 @@ function WorkspacePage() {
           : ''
         const cardTitle = ls.label === '默认' ? c.name : `${c.name} · ${ls.label}`
         // ====================================================================
-        // 角色图片生成 prompt 结构(强化版)
-        //   OVERVIEW(任务一句话,放最前,模型第一时间看到)
-        //   5 条 CRITICAL RULES(强约束,每条都"如果违反=拒绝")
-        //   VISUAL STYLE(用户选定的项目风格,显式标注 REQUIRED/MANDATORY)
-        //   CHARACTER BRIEF(脸/身材/服装)
-        //   FINAL CHECKLIST(交付前自检清单,把关键约束再重复一遍)
+        // 角色主视图 prompt(v3 —— 强制版)
+        //   设计要点(解决反复出现的"半身 / 切脚 / 无腿"问题):
+        //   1) 用电影/摄影术语 "full shot / long shot / full-length portrait",
+        //      这些词在模型训练数据里出现频率高,语义明确,比抽象的
+        //      "head-to-toe" 触发全身构图的成功率更高。
+        //   2) 用"character occupies 85-95% of canvas height"等比例语言,模型
+        //      对百分比比绝对像素更敏感。
+        //   3) 把画布几何用坐标 (y=80 head, y=1392 feet) 写出来,模型按此
+        //      排版时几乎不会切脚。
+        //   4) 用"step-by-step"让模型先生成画布再放人物,而不是默认塞中间。
+        //   5) 末尾"FINAL CHECK"让模型生成前做一次自检,自检不通过就重画。
+        //   6) negative_prompt 把"半身/切脚"近义词全覆盖,多写一份冗余。
         // ====================================================================
         const prompt = [
-          // —— 任务总览(让模型在第一秒就知道核心需求)——
-          `[MISSION] Generate ONE character reference sheet image of "${cardTitle}" — a ${c.roleLabel}, age ${c.age}. ` +
-          `This image is part of a multi-outfit character sheet, so it MUST be (a) rendered in the user's selected visual style "${styleSpec.label}", (b) full-body head-to-toe front view (no other angle), (c) on a 100% pure white #FFFFFF background, (d) expressionless neutral face, (e) with the EXACT same face as all other outfit variants of "${c.name}".`,
+          // 任务一句话(强指令,放最前)
+          `Generate ONE full-body head-to-toe character reference image of "${cardTitle}" — a ${c.roleLabel}, age ${c.age}.`,
+          ``,
+          // 摄影术语 + 镜头类型
+          `SHOT TYPE: Full shot (FS) / long shot (LS) / full-length portrait — the same framing used in fashion catalog full-body shots, character design turnaround sheets, model sheets, and costume reference sheets.`,
+          ``,
+          // 画布几何(显式坐标)
+          `CANVAS GEOMETRY: The image is a 3:4 portrait-orientation canvas (taller than wide), 1104 wide × 1472 tall. The character's full standing figure occupies 85-95% of the canvas height — from y≈80 (top of head) to y≈1392 (soles of feet). The remaining 5-15% is split as small white margin above the head AND below the feet. The figure does NOT touch the top or bottom edge of the frame.`,
+          ``,
+          // 构图步骤
+          `COMPOSITION STEPS (apply in this order):
+  1. Reserve a 3:4 portrait canvas (taller than wide).
+  2. Place the character dead-center horizontally.
+  3. Place the top of the head at y ≈ 80 pixels (5% margin from the top).
+  4. Place the soles of the feet at y ≈ 1392 pixels (5% margin from the bottom).
+  5. The character body is 1312 pixels tall — a full-body figure that fills the vertical axis.
+  6. Both feet are clearly visible at the bottom of the frame. Both hands are visible at the sides.`,
+          ``,
+          // 硬约束(列出所有失败模式)
+          `HARD CONSTRAINTS — the image is REJECTED if ANY of these is true:
+  • The image is a half-body, waist-up, hip-up, chest-up, shoulder-up, knee-up, cowboy shot, or head-and-shoulders crop.
+  • The head or top of the hair is cut off at the top of the frame.
+  • The feet or shoes are cut off at the bottom of the frame.
+  • The character is floating with no visible feet, or the lower body fades into the background.
+  • The body extends beyond the frame edge.
+  • The character occupies less than 80% of the canvas height.
+  • The body touches the top or bottom edge of the image.`,
+          ``,
+          // 镜头角度
+          `CAMERA: Dead-on front view, eye-level. Both eyes fully visible, looking at the camera. Arms relaxed at the sides, feet slightly apart. No low angle, no worm's-eye view, no high angle, no tilted camera.`,
+          ``,
+          // 表情
+          `EXPRESSION: Neutral, expressionless, like a passport photo. No smile, no frown, no emotion, eyes open.`,
+          ``,
+          // 背景
+          `BACKGROUND: 100% pure white #FFFFFF. No scenery, no floor, no shadow, no gradient, no vignette, no horizon line.`,
+          ``,
+          // 视觉风格
+          `VISUAL STYLE: ${styleSpec.label}. Render the character in this exact style. ${styleSpec.positive}. Avoid: ${styleSpec.negative}.`,
+          ``,
+          // 多 outfit 一致性
+          `FACE / BODY LOCK: "${c.name}" has multiple outfit variants. The face and body MUST remain identical across all variants. Only the outfit changes. Treat the FACE / BODY descriptions below as the single source of truth.`,
+          ``,
+          // 角色描述
+          `CHARACTER:
+  Name: ${c.name} (${c.roleLabel}, age ${c.age})
+  Variant: ${ls.label}
+  ${paletteLine ? paletteLine + '\n  ' : ''}Face: ${ls.data.faceDescription}
+  Body: ${ls.data.bodyDescription}
+  Outfit (this variant): ${ls.data.clothingDescription}`,
+          ``,
+          // 终检
+          `FINAL CHECK — before submitting the output, verify every item is true. If any is false, REGENERATE the image:
+  [ ] Full body is visible from head to feet (yes)
+  [ ] Both feet are clearly visible at the bottom of the frame (yes)
+  [ ] Character occupies 85-95% of canvas height (yes)
+  [ ] Nothing is cut off — no half-body, no waist-up, no knee-up, no close-up (yes)
+  [ ] Style matches "${styleSpec.label}" (yes)
+  [ ] Background is pure white #FFFFFF (yes)
+  [ ] Expression is neutral (yes)
+  [ ] Camera is dead-on front view, eye-level (yes)`,
+          ``,
+          `Begin. Output the full-body image.`,
+        ].filter(Boolean).join('\n')
 
-          // —— 5 条硬约束(每条都明确"违反=拒绝")——
-          `[CRITICAL RULES — output is REJECTED if ANY of these is violated. Do not compromise.]`,
+        // ====================================================================
+        // 强 negative_prompt(显式下发到 DashScope parameters.negative_prompt)
+        // 把"半身 / 切脚 / 浮空无脚"的所有近义词/同义词全部覆盖,冗余但有效。
+        // 关键:用 cinematic / photography 术语模型识别度更高,比中文更稳。
+        // ====================================================================
+        const negativePrompt = [
+          // —— 摄影 / 镜头(半身特写)——
+          'medium shot, medium close-up, MCU, MS, mid-shot, mid close-up, half body, half-body, half-length, three-quarter body, 3/4 body, three-quarter length, cowboy shot, american shot, knee-up shot, knee-up, mid-thigh shot, thigh-up, hip-up, waist-up shot, waist-up, midriff-up, chest-up shot, chest-up, shoulder-up, head and shoulders, head-and-shoulders, head only, headshot, head shot, tight headshot, tight crop, tight framing, close-up, close up, CU, extreme close-up, ECU, bust shot, bust, portrait crop, portrait shot, passport photo, ID photo, avatar crop, profile picture crop, pfp crop',
+          // —— 切边 / 切脚 / 切头——
+          'cropped at knees, cropped at calves, cropped at shins, cropped at ankles, cropped at waist, cropped at hips, cropped at thighs, cropped at chest, cropped at shoulders, cropped at neck, head cut off, top of head cut off, top of head clipped, hair cut off, feet cut off, shoes cut off, hands cut off at frame edge, body extending beyond frame, body touching frame edge, body touching top of frame, body touching bottom of frame, figure touching top of frame, figure touching bottom of frame, out of frame on top, out of frame on bottom',
+          // —— 部位缺失 / 浮空——
+          'missing feet, missing shoes, missing head, missing legs, missing lower body, missing upper body, missing arms, missing hands, head only, torso only, legs only, partial body, incomplete body, amputated limbs, no legs, no feet, legless, feet-less, lower body cut off, lower body fading out, lower body blended with background, character floating with no feet, floating in air, character shown only from the waist up, from waist up only, from chest up only, from hips up only, from knees up only',
+          // —— 摄像机角度(仰视 / 侧视)——
+          'low angle, low-angle shot, worm\'s eye view, worm eye view, hero shot, looking up at subject, upward camera, upward tilt, camera below subject, dutch angle, dutch tilt, tilted camera, canted angle, fisheye, wide-angle distortion, 3/4 view, three-quarter view, side view, profile view, back view, rear view, over-the-shoulder, looking sideways, glance to the side, head turned, body turned, asymmetric pose, top-down, bird\'s eye view, bottom-up',
+          // —— 画幅 / 比例(方形特写)——
+          'square crop, square framing, 1:1 aspect, instagram portrait crop, tiktok portrait, headshot-style crop, landscape orientation, 16:9 widescreen',
+          // —— 边缘人 / 多余元素——
+          'two people, multiple people, extra person in background, bystander, crowd, two characters, three characters',
+          // —— 风格漂移——
+          'photorealistic when input is anime, anime when input is realistic, 3D render when input is 2D, different art style, style drift',
+          // —— 杂项——
+          'watermark, logo, text, signature, label, panel number, caption, annotation, extra limbs, deformed hands, extra fingers, blurred face, low quality',
+        ].join(', ')
 
-          `RULE 1 — FRONT VIEW (no exceptions): subject MUST be standing upright, facing the camera DEAD-ON. ` +
-          `CAMERA POSITION: eye-level, dead horizontal, dead vertical to the character. ` +
-          `FORBIDDEN ANGLES (any of these = rejected): 3/4 angle, side view, profile, back view, tilted head, looking up, looking down, top-down/bird's-eye, bottom-up/hero shot, pan left/pan right. ` +
-          `Eyes must look directly into the camera lens, both eyes fully visible and open. ` +
-          `Arms relaxed naturally at the sides, feet slightly apart.`,
+        // 显式传 portrait 画幅给 Qwen,锁死竖向构图(用 prompt 反复强调"全身"
+        // 仍会偶发切脚,但 3:4 画幅从结构上让模型必须把人物铺满纵向画布)。
+        const characterSize = '1104*1472'
 
-          `RULE 2 — HEAD-TO-TOE FRAMING (no exceptions): the FULL BODY must be visible — from the top of the head to the soles of the feet, with a small margin of whitespace above the head and below the feet. ` +
-          `FORBIDDEN CROPPING (any of these = rejected): cropping at the knees, cropping at the waist, cropping at the thighs, cropping at the chest, head cut off, feet cut off. ` +
-          `The whole figure is in view, top to bottom.`,
-
-          `RULE 3 — NEUTRAL FACIAL EXPRESSION (no exceptions): expressionless face, like a passport photo. ` +
-          `FORBIDDEN EXPRESSIONS (any of these = rejected): smile, smirk, grin, frown, scowl, angry eyes, sad eyes, laughing, crying, pouting, raised eyebrow, looking sideways, eyes closed, eyes squinting, teeth showing. ` +
-          `The character is standing still, not posing emotionally.`,
-
-          `RULE 4 — PURE WHITE #FFFFFF BACKGROUND (no exceptions): the entire background outside the character's silhouette MUST be a single uniform #FFFFFF color (hex #FFFFFF, RGB 255,255,255). ` +
-          `FORBIDDEN BACKGROUND ARTIFACTS (any of these = rejected): off-white, cream, ivory, beige, light grey, mid grey, dark grey, black, gradient, vignette, pattern, scenery, furniture, props, ground texture, horizon line, floor, wall, sky, shadow cast onto any surface, floor reflection, color cast. ` +
-          `The background is FLAT WHITE, period. Nothing else.`,
-
-          `RULE 5 — FACE LOCK ACROSS ALL OUTFIT VARIANTS (no exceptions): "${c.name}" has multiple outfit variants. The ONLY difference between "${c.name} · 默认" and "${c.name} · ${ls.label}" (and any other variant) MUST be the outfit. ` +
-          `FORBIDDEN FACE CHANGES (any of these across variants = rejected): different face shape, different eye shape, different eye color, different nose, different mouth, different eyebrow shape, different skin tone, different hairstyle, different hair color, different hair length, different facial proportions, different age appearance. ` +
-          `When the user places multiple variants side by side, the faces must be PIXEL-IDENTICAL except for clothing. Treat the face description below as the single source of truth for all variants.`,
-
-          // —— 项目视觉风格(用户选定的,REQUIRED)——
-          `[VISUAL STYLE — USER-SELECTED, REQUIRED, MANDATORY. Do not drift to any other style. The user explicitly picked this style for this project; outputting any other style = rejected.]`,
-          `Style name: ${styleSpec.label}`,
-          `Style (REQUIRED, MANDATORY — render the character in this exact style): ${styleSpec.positive}`,
-          `AVOID (will conflict with the style above, do not produce any of these): ${styleSpec.negative}`,
-          `If the requested style is "realistic", do NOT add anime/anime-cel elements. If the requested style is "anime-jp", do NOT make the image photorealistic. The art medium, line treatment, color palette, and lighting MUST match the selected style exactly.`,
-
-          // —— 角色描述 ——
-          `[CHARACTER BRIEF]`,
-          `Name: ${c.name} (${c.roleLabel}, age ${c.age})`,
-          `Variant label: ${ls.label}`,
-          paletteLine,
-
-          `=== FACE — copy this description into the image EXACTLY, do not alter, do not stylize beyond what the visual style requires ===`,
-          ls.data.faceDescription,
-          `=== END FACE — the text above is the ONLY face spec; ignore any other face hint ===`,
-
-          `=== BODY — must remain IDENTICAL across all outfit variants of "${c.name}" ===`,
-          ls.data.bodyDescription,
-          `=== END BODY ===`,
-
-          `=== OUTFIT FOR THIS VARIANT (${ls.label}) — this is the ONLY thing that may differ between variants ===`,
-          ls.data.clothingDescription,
-          `=== END OUTFIT ===`,
-
-          // —— 交付前自检清单(再重复一次最关键的约束)——
-          `[FINAL CHECKLIST — before submitting the image, verify ALL of the following are TRUE. If ANY is FALSE, the image is rejected and must be regenerated.]`,
-          `[ ] Style matches "${styleSpec.label}" exactly`,
-          `[ ] Front view, eye-level camera, no top-down, no bottom-up, no side view, no 3/4, no profile`,
-          `[ ] Full body head-to-toe visible — no cropping at knees, waist, chest, head, or feet`,
-          `[ ] Face is expressionless/neutral — no smile, no frown, no emotion, no eyes closed`,
-          `[ ] Background is 100% pure white #FFFFFF — no off-white, no grey, no scenery, no floor, no shadow`,
-          `[ ] Face matches the FACE description above EXACTLY (this is a multi-outfit sheet; face must be identical across all "${c.name}" variants)`,
-          `[ ] No text, no watermark, no logos, no other people, no extra limbs, no deformed hands`,
-
-          `Begin.`,
-        ].filter(Boolean).join('\n\n')
-        const res = await callImage({ data: { prompt, model: resolveT2IModel(project?.sceneModel), noFallback: true } })
+        const res = await callImage({ data: { prompt, model: resolveT2IModel(project?.sceneModel), noFallback: true, negativePrompt, size: characterSize } })
         if (res.url) {
           // 追加到 history 数组(每次生成都保留,用户在预览左侧看历史缩略图)
           setCharImages((m) => ({ ...m, [ls.imageKey]: [...(m[ls.imageKey] ?? []), res.url] }))
@@ -586,6 +643,8 @@ function WorkspacePage() {
       toast.error('该形象还没生成,无法重生')
       return
     }
+    // 把这张卡标记为 regen 中,UI 那边会显示黑屏遮罩。结束时(成功/失败)一定清掉。
+    setRegenBusyKeys((m) => new Map(m).set(imageKey, mode))
     try {
       const res = await callRegenCharacter({
         data: {
@@ -621,6 +680,13 @@ function WorkspacePage() {
     } catch (e) {
       toast.error('生成失败')
       return false
+    } finally {
+      setRegenBusyKeys((m) => {
+        if (!m.has(imageKey)) return m
+        const n = new Map(m)
+        n.delete(imageKey)
+        return n
+      })
     }
   }
 
@@ -687,14 +753,209 @@ function WorkspacePage() {
     }
   }
 
+  // ====================================================================
+  // 新的分镜流程 —— 两条 server function 入口
+  //   1) runEnterStoryboard:把当集剧情发给 AI → 生成多组 StoryboardGroup
+  //   2) generateShotImageForGroup:对单个 group 的某个 shot,做多图融合
+  // ====================================================================
+
+  /**
+   * 从当集剧情生成多组 StoryboardGroup。
+   * 流程:
+   *  1) 取选中的 episode 文本(默认 selectedEpisodeIndex)
+   *  2) 拼角色 / 场景摘要
+   *  3) 调 generateStoryboardFromPlot server function
+   *  4) 把返回的 groups 存到 data.storyboardGroups
+   *  5) 切到 storyboard tab
+   */
+  async function runEnterStoryboard() {
+    if (busyStoryboardGen) return
+    const ep = data.episodeTexts.find((e) => e.epIndex === selectedEpisodeIndex)
+    const epText = ep?.text?.trim() ?? ''
+    if (!epText) {
+      toast.error('当集剧本为空,请先在"分集"标签生成剧本')
+      return
+    }
+    if (!data.characters.length) {
+      toast.error('暂无角色数据,请先在角色流程提取角色')
+      return
+    }
+    setBusyStoryboardGen(true)
+    try {
+      const charSummaries = data.characters.map((c) => ({
+        id: c.id,
+        name: c.name,
+        role: c.roleLabel,
+        profile: [
+          c.gender && `性别:${c.gender}`,
+          `年龄:${c.age}`,
+          c.faceDescription && `面部:${c.faceDescription.slice(0, 120)}`,
+          c.clothingDescription && `服装:${c.clothingDescription.slice(0, 120)}`,
+        ]
+          .filter(Boolean)
+          .join('; '),
+      }))
+      const sceneSummaries = data.scenes.map((s) => ({
+        id: s.id,
+        slug: s.slug,
+        location: s.location,
+        timeOfDay: s.timeOfDay,
+        profile: (s.action || '').slice(0, 200),
+      }))
+      // 前面所有集数作为上下文
+      const prevEps = data.episodeTexts
+        .filter((e) => e.epIndex < selectedEpisodeIndex)
+        .sort((a, b) => a.epIndex - b.epIndex)
+        .map((e) => `—— 第 ${e.epIndex} 集 ——\n${e.text}`)
+        .join('\n\n')
+      const res = await callGenerateStoryboard({
+        data: {
+          episodeText: epText,
+          episodeIndex: selectedEpisodeIndex,
+          characterSummaries: charSummaries,
+          sceneSummaries: sceneSummaries,
+          groupCount: 6,
+          previousEpisodesText: prevEps || undefined,
+          projectStyle: project?.style,
+        },
+      })
+      if (!res.ok) {
+        toast.error(res.error || '分镜生成失败')
+        return
+      }
+      // 关联 sceneLocation(从场景摘要里取)
+      const groups = (res.groups as StoryboardGroup[]).map((g) => {
+        const sc = sceneSummaries.find((s) => s.id === g.sceneId)
+        return { ...g, sceneLocation: sc?.location || sc?.slug }
+      })
+      setData((d) => ({ ...d, storyboardGroups: groups }))
+      toast.success(`已生成 ${groups.length} 组分镜`)
+      setTab('storyboard')
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '分镜生成失败')
+    } finally {
+      setBusyStoryboardGen(false)
+    }
+  }
+
+  /**
+   * 对某个 StoryboardGroup 的某个 shot 做多图融合,产出最终分镜图。
+   * 策略:
+   *  - 角色图:从 charImages[角色ID] / charImages[角色ID::lookId] 取最新一张
+   *  - 场景图:从 sceneImages[sceneId] 取
+   *  - 串行调用(并发 1)避免 Qwen 429 / 跑偏
+   */
+  async function generateShotImageForGroup(groupId: string, shotId: string) {
+    if (busyShotImages.has(`${groupId}::${shotId}`)) return
+    const group = data.storyboardGroups.find((g) => g.id === groupId)
+    if (!group) return
+    const shot = group.shots.find((s) => s.id === shotId)
+    if (!shot) return
+
+    // 准备角色图(从 group.characterIds 取)
+    // ⚠️ qwen-image-2.0-pro 端点限制:0 张图 = T2I,1~3 张图 = I2I。
+    //    超过 3 张会报 400 "Model 'qwen-image-2.0-2in1' supports 0~3 image content items"。
+    //    策略:有场景图 → 最多 2 张角色图;无场景图 → 最多 3 张角色图。
+    const charImageUrls: string[] = []
+    const charNames: string[] = []
+    const hasScene = !!(group.sceneId && sceneImages[group.sceneId])
+    const maxChars = hasScene ? 2 : 3
+    for (const cid of group.characterIds) {
+      if (charImageUrls.length >= maxChars) break
+      const arr = charImages[cid]
+      const url = arr?.[arr.length - 1] // 最新一张
+      if (url) {
+        charImageUrls.push(url)
+        const ch = data.characters.find((c) => c.id === cid)
+        charNames.push(ch?.name ?? cid)
+      }
+    }
+    // 准备场景图
+    let sceneImageUrl: string | undefined
+    if (group.sceneId && sceneImages[group.sceneId]) {
+      sceneImageUrl = sceneImages[group.sceneId]
+    }
+    // 场景描述
+    const sceneObj = data.scenes.find((s) => s.id === group.sceneId)
+
+    setBusyShotImages((s) => {
+      const n = new Set(s)
+      n.add(`${groupId}::${shotId}`)
+      return n
+    })
+    try {
+      const res = await callGenerateShotImage({
+        data: {
+          plotText: group.plotText,
+          shotType: shot.shotType,
+          shotTypeLabel: shot.shotTypeLabel,
+          action: shot.action,
+          camera: shot.camera,
+          characterImageUrls: charImageUrls,
+          characterNames: charNames,
+          sceneImageUrl,
+          sceneLocation: sceneObj?.location || group.sceneLocation || '',
+          sceneTimeOfDay: sceneObj?.timeOfDay || '',
+          projectStyle: project?.style,
+        },
+      })
+      if (!res.ok) {
+        toast.error(res.error || '分镜图生成失败')
+        return
+      }
+      // 写回 group.shots[i].imageUrl
+      setData((d) => ({
+        ...d,
+        storyboardGroups: d.storyboardGroups.map((g) =>
+          g.id === groupId
+            ? {
+                ...g,
+                shots: g.shots.map((sh) => (sh.id === shotId ? { ...sh, imageUrl: res.url } : sh)),
+              }
+            : g,
+        ),
+      }))
+      toast.success(`分镜图 ${shot.shotTypeLabel} 已生成`)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '分镜图生成失败')
+    } finally {
+      setBusyShotImages((s) => {
+        const n = new Set(s)
+        n.delete(`${groupId}::${shotId}`)
+        return n
+      })
+    }
+  }
+
+  /**
+   * 一键为整个 group 的所有 shot 生成图(串行,避免 Qwen 撞限速 / 跑偏)
+   */
+  async function generateAllShotsForGroup(groupId: string) {
+    const group = data.storyboardGroups.find((g) => g.id === groupId)
+    if (!group) return
+    for (const shot of group.shots) {
+      if (shot.imageUrl) continue
+      // eslint-disable-next-line no-await-in-loop
+      await generateShotImageForGroup(groupId, shot.id)
+    }
+  }
+
   // Auto-generate real images for newly produced characters / storyboard panels.
-  // 并行策略:不同角色 → Promise.all 并行;同一角色的多个 look → 内部串行
-  // (在 processCharacter 里用 for 循环,保证脸锁定一致)。
-  // 并发上限:同时最多 2 个角色在画。
-  //   原因:完全无上限时,Qwen 会同时给 N 个 429,代码 fallback 到不同 model,
-  //   产生风格/构图/背景不一致的图。2 个并发 + 429 重试同 model 是甜点:
-  //   既比完全串行快一倍,又几乎不会撞 rate limit。
-  const CHAR_GEN_MAX_PARALLEL = 2
+  //
+  // ⚠️ 串行生成(并发上限 = 1,跨角色也排队)。
+  //
+  // 历史经验:
+  //   - 完全无并发 = 2 的时候,Qwen 同时给 N 个 429,代码 fallback 到不同 model,
+  //     产生风格/构图/背景不一致的图。
+  //   - 改并发 = 2 后:撞 429 概率仍偏高,DashScope 高峰排队时返回的图在
+  //     "正视图 / 全身" 这种构图约束上很容易跑偏(仰视、半身、切头切脚),
+  //     而且失败次数上去后整批失败率上升(因为 noFallback 锁了主 model)。
+  //   - 串行 = 1 是最稳的选择:每一张图独占 DashScope 的请求槽,model 在
+  //     单一上下文里能更稳定地服从 prompt 约束。代价是耗时 = N 角色 × N look
+  //     × ~30s/张,但对"角色一致性"是质量优先,值得。
+  //
+  // 同一角色的多个 look 在 processCharacter 里已经是串行(for 循环),
+  // 这里只需要把"跨角色"也排队,实现端到端的"一张接一张"。
   useEffect(() => {
     if (!autoGen) return
     // 找出"至少有一个 look 未生成"的角色集合
@@ -706,21 +967,14 @@ function WorkspacePage() {
       if (needDefault || needLooks) charactersToStart.push(c)
     }
     if (!charactersToStart.length) return
-    // 简单并发队列:同时最多 CHAR_GEN_MAX_PARALLEL 个角色在画
-    let active = 0
-    const queue = [...charactersToStart]
-    const pump = () => {
-      while (active < CHAR_GEN_MAX_PARALLEL && queue.length > 0) {
-        const c = queue.shift()!
-        active++
-        setBusyChars((s) => new Set([...s, c.id]))
-        void processCharacter(c).finally(() => {
-          active--
-          pump()
-        })
+    // 串行:一个角色跑完才跑下一个。即便用户觉得慢,也不要在角色之间开并发 —
+    // 撞 429 / 构图跑偏 / 整批失败率上升 这三个问题都跟并发直接相关。
+    void (async () => {
+      for (const c of charactersToStart) {
+        // eslint-disable-next-line no-await-in-loop
+        await processCharacter(c)
       }
-    }
-    pump()
+    })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.characters, autoGen])
 
@@ -849,6 +1103,7 @@ function WorkspacePage() {
         scenes: data.scenes,
         characters: data.characters,
         storyboard: data.storyboard,
+        storyboardGroups: data.storyboardGroups,
         timeline: data.timeline,
         synopsisText: synopsisText || synopsisDraft,
         episodeTexts: data.episodeTexts,
@@ -1883,7 +2138,7 @@ function WorkspacePage() {
                       </div>
                     )
                   ) : hasChars ? (
-                    <div className="px-6 py-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
+                    <div className="px-6 py-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
                       {(() => {
                         // 把"每个角色每个 look"展平成"每张卡片一行",保证同角色
                         // 不同造型各自一张卡(男主角-医生 / 男主角-穿越 ...)。
@@ -1915,6 +2170,15 @@ function WorkspacePage() {
                           //   都不在:没排上(其他角色在画、或本角色所有 look 都好了)
                           const isActive = activeImageKey === imageKey
                           const isQueued = !isActive && busyChars.has(c.id)
+                          // I2I 重生(按意见 / 三视图 / 多维资产)是否在这张卡上跑,
+                          // 跑了就显示黑屏遮罩 + 对应模式的提示文字。
+                          const regenMode = regenBusyKeys.get(imageKey)
+                          const isRegening = regenMode !== undefined
+                          const regenLabel =
+                            regenMode === 'three-view' ? '正在生成三视图…' :
+                            regenMode === 'multi-asset' ? '正在生成多维资产图…' :
+                            regenMode === 'modify' ? '正在按意见重生…' :
+                            '正在生成…'
                           const [primary, ...rest] = c.roleLabel.split('·').map((s) => s.trim()).filter(Boolean)
                           const archetype = rest.join(' · ')
                           const brief = c.personality?.trim() || ''
@@ -1935,7 +2199,7 @@ function WorkspacePage() {
                                   setPreviewTarget({ character: c, lookId: card.lookId })
                                 }
                               }}
-                              className="group text-left rounded-xl border border-border bg-bg-elevated/40 hover:border-accent hover:bg-bg-elevated/70 hover:-translate-y-0.5 transition-all overflow-hidden flex flex-col focus:outline-none focus:ring-2 focus:ring-accent/40 cursor-pointer"
+                              className="group relative text-left rounded-xl border border-border bg-bg-elevated/40 hover:border-accent hover:bg-bg-elevated/70 hover:-translate-y-0.5 transition-all overflow-hidden flex flex-col focus:outline-none focus:ring-2 focus:ring-accent/40 cursor-pointer"
                             >
                               {/* Image area — portrait aspect, fills card top */}
                               <div className="relative w-full aspect-[3/4] bg-bg-base overflow-hidden">
@@ -1977,8 +2241,9 @@ function WorkspacePage() {
                                 </div>
                               </div>
 
-                              {/* Text area */}
-                              <div className="p-2.5 space-y-1.5">
+                              {/* Text area — flex column 拉伸,按钮用 mt-auto 钉到卡片底部,
+                                  不管 brief 有多长 / 是否存在,3 个按钮始终贴底。 */}
+                              <div className="p-2.5 flex flex-col flex-1 gap-1.5">
                                 <div className="flex items-center gap-1.5 min-w-0">
                                   <span
                                     className="w-0.5 h-4 rounded-full shrink-0"
@@ -2002,37 +2267,57 @@ function WorkspacePage() {
                                   <p className="text-[11px] text-text-secondary leading-relaxed line-clamp-2">{brief}</p>
                                 )}
                                 {/* 操作按钮:修改 / 标准三视图 / 多维资产图
-                                    注意 onClick 里 e.stopPropagation(),否则点按钮也会触发卡片整体的预览打开 */}
-                                <div className="grid grid-cols-3 gap-1 pt-1" onClick={(e) => e.stopPropagation()}>
+                                    图标在上 / 文字在下(vertical stack),让 3 个按钮等宽,
+                                    不会再因为"多维资产"4 字长度换行。mt-auto 让按钮行
+                                    永远贴着卡片底部。注意 onClick 里 e.stopPropagation(),
+                                    否则点按钮也会触发卡片整体的预览打开。 */}
+                                <div className="grid grid-cols-3 gap-1.5 pt-1 mt-auto" onClick={(e) => e.stopPropagation()}>
                                   <button
                                     type="button"
                                     title="基于此形象给出修改意见(右侧弹输入框)"
-                                    disabled={!hasImg}
+                                    disabled={!hasImg || isRegening}
                                     onClick={() => openModPanel(c, card.lookId)}
-                                    className="px-1.5 py-1 rounded border border-border bg-bg-surface text-text-secondary text-[10px] hover:border-accent hover:text-accent disabled:opacity-40 disabled:cursor-not-allowed transition inline-flex items-center justify-center gap-1"
+                                    className="px-1 py-1.5 rounded border border-border bg-bg-surface text-text-secondary text-[11px] leading-none hover:border-accent hover:text-accent disabled:opacity-40 disabled:cursor-not-allowed transition flex flex-col items-center justify-center gap-0.5"
                                   >
-                                    <Pencil size={10} /> 修改
+                                    <Pencil size={12} />
+                                    <span>修改</span>
                                   </button>
                                   <button
                                     type="button"
                                     title="生成标准三视图(front / side / back)"
-                                    disabled={!hasImg}
+                                    disabled={!hasImg || isRegening}
                                     onClick={() => void runPresetRegen(c, card.lookId, 'three-view')}
-                                    className="px-1.5 py-1 rounded border border-border bg-bg-surface text-text-secondary text-[10px] hover:border-accent hover:text-accent disabled:opacity-40 disabled:cursor-not-allowed transition inline-flex items-center justify-center gap-1"
+                                    className="px-1 py-1.5 rounded border border-border bg-bg-surface text-text-secondary text-[11px] leading-none hover:border-accent hover:text-accent disabled:opacity-40 disabled:cursor-not-allowed transition flex flex-col items-center justify-center gap-0.5"
                                   >
-                                    <LayoutGrid size={10} /> 三视图
+                                    <LayoutGrid size={12} />
+                                    <span>三视图</span>
                                   </button>
                                   <button
                                     type="button"
                                     title="生成多维资产图(多姿态/表情/场景)"
-                                    disabled={!hasImg}
+                                    disabled={!hasImg || isRegening}
                                     onClick={() => void runPresetRegen(c, card.lookId, 'multi-asset')}
-                                    className="px-1.5 py-1 rounded border border-border bg-bg-surface text-text-secondary text-[10px] hover:border-accent hover:text-accent disabled:opacity-40 disabled:cursor-not-allowed transition inline-flex items-center justify-center gap-1"
+                                    className="px-1 py-1.5 rounded border border-border bg-bg-surface text-text-secondary text-[11px] leading-none hover:border-accent hover:text-accent disabled:opacity-40 disabled:cursor-not-allowed transition flex flex-col items-center justify-center gap-0.5"
                                   >
-                                    <Sparkles size={10} /> 多维资产
+                                    <Sparkles size={12} />
+                                    <span>多维资产</span>
                                   </button>
                                 </div>
                               </div>
+                              {/* I2I 重生遮罩:点了三视图/多维资产/按意见重生后,
+                                  把整张卡盖住(spinner + 模式对应的提示文字),
+                                  防止用户重复点 / 让进度可见。 */}
+                              {isRegening && (
+                                <div
+                                  role="status"
+                                  aria-live="polite"
+                                  className="absolute inset-0 z-20 bg-black/75 backdrop-blur-sm flex flex-col items-center justify-center gap-3 text-white px-3 text-center"
+                                >
+                                  <Loader2 size={28} className="animate-spin text-accent" />
+                                  <div className="text-sm font-medium leading-snug">{regenLabel}</div>
+                                  <div className="text-[10px] text-white/60 leading-snug">生成中请勿关闭页面</div>
+                                </div>
+                              )}
                             </div>
                           )
                         })
@@ -2048,53 +2333,184 @@ function WorkspacePage() {
             )
           })()}
           {tab === 'storyboard' && (() => {
-            if (data.storyboard.length === 0) {
+            // ==============================================================
+            //  新分镜编辑器视图(v2)
+            //  - 列:左 plot 描述 / 中 AI 字段 + 分镜图 / 右 视频占位
+            //  - 数据源:data.storyboardGroups(由"进入分镜"按钮从当集剧情 AI 切分)
+            //  - 每行可单独重新生成,也可一键整组生成
+            // ==============================================================
+            if (data.storyboardGroups.length === 0) {
               return (
-                <div className="max-w-4xl mx-auto panel p-10 text-center">
-                  <p className="text-text-muted text-sm">{t.ws_storyboard_empty}</p>
+                <div className="max-w-4xl mx-auto panel p-10 text-center space-y-3">
+                  <Camera size={36} className="mx-auto text-text-muted" />
+                  <p className="text-text-secondary font-medium">还没有分镜</p>
+                  <p className="text-xs text-text-muted leading-relaxed">
+                    切到「角色」标签,点击右上角 <span className="text-accent font-semibold">进入分镜</span> 按钮,
+                    系统会把当集剧本发给 AI 切分成多组分镜,并按剧情 / 镜头自动生成多图融合的分镜图。
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setTab('character')}
+                    className="mt-2 inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-accent-dim text-accent text-sm font-semibold hover:bg-accent hover:text-white transition"
+                  >
+                    切到角色流程 →
+                  </button>
                 </div>
               )
             }
-            const groups = new Map<string, StoryboardPanel[]>()
-            data.storyboard.forEach((p) => {
-              const arr = groups.get(p.sceneId) ?? []
-              arr.push(p)
-              groups.set(p.sceneId, arr)
-            })
             return (
-              <div className="max-w-5xl mx-auto space-y-5">
-                <div className="flex items-center justify-between">
-                  <h2 className="font-display text-lg font-bold inline-flex items-center gap-2"><Camera size={16} /> {t.ws_tab_storyboard} · {data.storyboard.length}</h2>
-                  {completedStages.has('storyboard') && <span className="inline-flex items-center gap-0.5 text-xs text-emerald-400"><CheckCircle2 size={12} /> 已完成</span>}
+              <div className="max-w-6xl mx-auto space-y-4">
+                <div className="flex items-center justify-between flex-wrap gap-2">
+                  <h2 className="font-display text-lg font-bold inline-flex items-center gap-2">
+                    <Camera size={16} /> 分镜 · 第 {selectedEpisodeIndex} 集 · {data.storyboardGroups.length} 组
+                  </h2>
+                  <div className="flex items-center gap-2">
+                    {busyStoryboardGen && (
+                      <span className="inline-flex items-center gap-1 text-xs text-accent">
+                        <Loader2 size={12} className="animate-spin" /> AI 切分中…
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => void runEnterStoryboard()}
+                      disabled={busyStoryboardGen}
+                      className="text-xs px-2.5 py-1 rounded border border-border bg-bg-elevated text-text-secondary hover:border-accent hover:text-accent transition inline-flex items-center gap-1 disabled:opacity-40"
+                    >
+                      <Sparkles size={11} /> 重新切分
+                    </button>
+                  </div>
                 </div>
-                {Array.from(groups.entries()).map(([sceneId, panels]) => {
-                  const scene = data.scenes.find((s) => s.id === sceneId)
+                {data.storyboardGroups.map((g) => {
+                  const allShotsHaveImage = g.shots.every((s) => s.imageUrl)
+                  const anyBusy = g.shots.some((s) => busyShotImages.has(`${g.id}::${s.id}`))
                   return (
-                    <div key={sceneId} className="space-y-2">
-                      {scene && <div className="text-xs font-mono text-text-muted">SCENE {scene.index} · {scene.slug}</div>}
-                      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                        {panels.map((p) => (
-                          <div key={p.id} className="card overflow-hidden">
-                            <div className="aspect-video relative overflow-hidden" style={{ background: p.gradient }}>
-                              {panelImages[p.id] && (
-                                <img src={panelImages[p.id]} alt={p.action} className="absolute inset-0 w-full h-full object-cover" />
-                              )}
-                              <span className="absolute top-1.5 left-1.5 text-[10px] font-mono text-white/80">#{p.index} {p.shot}</span>
-                              <span className="absolute bottom-1.5 right-1.5 text-[10px] font-mono text-white/70">{p.durationSec}s</span>
-                              {busyPanel === p.id && (
-                                <div className="absolute top-1.5 right-1.5 inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-black/60 text-white text-[10px]">
-                                  <Loader2 size={10} className="animate-spin" />
-                                  生成中
-                                </div>
-                              )}
-                            </div>
-                            <div className="p-2 text-xs space-y-0.5">
-                              <div className="text-text-primary line-clamp-2">{p.action}</div>
-                              <div className="text-text-muted">{p.camera}</div>
-                              <div className="text-accent">{p.emotion}</div>
-                            </div>
+                    <div key={g.id} className="panel p-4 space-y-3">
+                      {/* 行 header:序号 / 起始-结束秒 / 场景 / 角色 / 一键生成 */}
+                      <div className="flex items-start gap-3 flex-wrap">
+                        <span className="inline-flex items-center justify-center w-7 h-7 rounded-full bg-accent-dim text-accent text-xs font-bold shrink-0">#{g.index}</span>
+                        <div className="flex-1 min-w-0 space-y-1.5">
+                          <div className="flex items-center gap-2 flex-wrap text-[11px] text-text-muted">
+                            <span className="font-mono px-1.5 py-0.5 rounded bg-bg-base border border-border">
+                              {g.startSec.toFixed(0)}s → {g.endSec.toFixed(0)}s · {(g.endSec - g.startSec).toFixed(0)}s
+                            </span>
+                            {g.sceneLocation && (
+                              <span className="px-1.5 py-0.5 rounded bg-bg-base border border-border">
+                                📍 {g.sceneLocation}
+                              </span>
+                            )}
+                            {g.characterIds.length > 0 && (
+                              <span className="px-1.5 py-0.5 rounded bg-bg-base border border-border">
+                                👥 {g.characterIds
+                                  .map((cid) => data.characters.find((c) => c.id === cid)?.name ?? cid)
+                                  .join('、')}
+                              </span>
+                            )}
                           </div>
-                        ))}
+                          <p className="text-sm text-text-primary leading-relaxed">{g.plotText}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void generateAllShotsForGroup(g.id)}
+                          disabled={anyBusy || allShotsHaveImage}
+                          className="text-[11px] px-2.5 py-1 rounded border border-accent text-accent bg-accent-dim hover:bg-accent hover:text-white transition disabled:opacity-40 inline-flex items-center gap-1 shrink-0"
+                        >
+                          {anyBusy ? <><Loader2 size={11} className="animate-spin" /> 生成中…</>
+                            : allShotsHaveImage ? '✓ 已生成'
+                            : <><Sparkles size={11} /> 一键生成全部</>}
+                        </button>
+                      </div>
+                      {/* 三列:左 plot / 中 分镜图 / 右 视频占位 */}
+                      <div className="grid grid-cols-1 md:grid-cols-[1.2fr_2fr_1fr] gap-3">
+                        {/* 左:plot 描述(其实 header 已显示,这里给个折叠补充 + 角色列表) */}
+                        <div className="rounded-lg border border-border bg-bg-base/40 p-3 space-y-2">
+                          <div className="text-[10px] tracking-widest uppercase text-text-muted">剧情 · Plot</div>
+                          <p className="text-xs text-text-secondary leading-relaxed">{g.plotText}</p>
+                          {g.characterIds.length > 0 && (
+                            <div className="pt-2 mt-1 border-t border-border/60 space-y-1">
+                              <div className="text-[10px] tracking-widest uppercase text-text-muted">涉及角色</div>
+                              <div className="flex flex-wrap gap-1.5">
+                                {g.characterIds.map((cid) => {
+                                  const ch = data.characters.find((c) => c.id === cid)
+                                  if (!ch) return null
+                                  const img = charImages[cid]?.[charImages[cid].length - 1]
+                                  return (
+                                    <div key={cid} className="flex items-center gap-1.5 px-1.5 py-1 rounded bg-bg-elevated border border-border">
+                                      <div className="w-5 h-5 rounded-full overflow-hidden bg-bg-base shrink-0">
+                                        {img
+                                          ? <img src={img} alt={ch.name} className="w-full h-full object-cover" />
+                                          : <div className="w-full h-full flex items-center justify-center text-[8px] text-text-muted">N/A</div>}
+                                      </div>
+                                      <span className="text-[11px] text-text-primary">{ch.name}</span>
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                        {/* 中:分镜图(g.shots 1~3 张) */}
+                        <div className="rounded-lg border border-border bg-bg-base/40 p-3 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <div className="text-[10px] tracking-widest uppercase text-text-muted">分镜图 · Shots ({g.shots.length})</div>
+                            <div className="text-[10px] text-text-muted">多图融合:角色 + 场景</div>
+                          </div>
+                          <div className={`grid gap-2 ${g.shots.length === 1 ? 'grid-cols-1' : g.shots.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
+                            {g.shots.map((s) => {
+                              const isBusy = busyShotImages.has(`${g.id}::${s.id}`)
+                              return (
+                                <div key={s.id} className="rounded border border-border bg-bg-elevated overflow-hidden flex flex-col">
+                                  <div className="relative aspect-video bg-bg-base">
+                                    {s.imageUrl ? (
+                                      // eslint-disable-next-line @next/next/no-img-element
+                                      <img src={s.imageUrl} alt={s.action} className="absolute inset-0 w-full h-full object-cover" />
+                                    ) : isBusy ? (
+                                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 text-text-muted">
+                                        <Loader2 size={20} className="animate-spin text-accent" />
+                                        <span className="text-[10px]">融合中…</span>
+                                      </div>
+                                    ) : (
+                                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 text-text-muted">
+                                        <ImageIcon size={20} className="opacity-50" />
+                                        <span className="text-[10px]">点击下方生成</span>
+                                      </div>
+                                    )}
+                                    <span className="absolute top-1.5 left-1.5 text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/60 text-white">
+                                      {s.shotTypeLabel}
+                                    </span>
+                                  </div>
+                                  <div className="p-2 space-y-1">
+                                    <p className="text-[11px] text-text-primary line-clamp-2 leading-snug">{s.action}</p>
+                                    {s.camera && <p className="text-[10px] text-text-muted line-clamp-1">🎥 {s.camera}</p>}
+                                    <button
+                                      type="button"
+                                      onClick={() => void generateShotImageForGroup(g.id, s.id)}
+                                      disabled={isBusy}
+                                      className="w-full mt-1 text-[10px] py-1 rounded border border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent transition disabled:opacity-40 inline-flex items-center justify-center gap-1"
+                                    >
+                                      {isBusy
+                                        ? <><Loader2 size={9} className="animate-spin" /> 生成中</>
+                                        : s.imageUrl
+                                          ? <><RefreshCw size={9} /> 重新生成</>
+                                          : <><Sparkles size={9} /> 生成本镜头</>}
+                                    </button>
+                                  </div>
+                                </div>
+                              )
+                            })}
+                          </div>
+                        </div>
+                        {/* 右:视频占位 */}
+                        <div className="rounded-lg border border-border bg-bg-base/40 p-3 space-y-2">
+                          <div className="text-[10px] tracking-widest uppercase text-text-muted">视频 · Video</div>
+                          <div className="aspect-video rounded border border-dashed border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted">
+                            <Camera size={20} className="opacity-40" />
+                            <span className="text-[10px]">视频占位</span>
+                            <span className="text-[9px] opacity-70">({(g.endSec - g.startSec).toFixed(0)}s 暂不生成)</span>
+                          </div>
+                          <p className="text-[10px] text-text-muted leading-relaxed">
+                            未来接 I2V / S2V 模型后,可用本组的分镜图 + 角色 / 场景参考图生成本段视频。
+                          </p>
+                        </div>
                       </div>
                     </div>
                   )
@@ -2169,6 +2585,7 @@ function WorkspacePage() {
           selectedEpisodeIndex={selectedEpisodeIndex}
           onImportScript={handleImportScript}
           streaming={synopsisStreaming || episodeStreaming}
+          onEnterStoryboard={() => void runEnterStoryboard()}
         />
       </div>
       {previewTarget && (() => {

@@ -492,3 +492,59 @@ curl --location 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-
     },
     "request_id": "71dfc3c6-f796-9972-97e4-bc4efc4faxxx"
 }
+qwen多图融合
+curl --location 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation' \
+--header 'Content-Type: application/json' \
+--header "Authorization: Bearer $DASHSCOPE_API_KEY" \
+--data '{
+    "model": "qwen-image-2.0-pro",
+    "input": {
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "image": "https://help-static-aliyun-doc.aliyuncs.com/file-manage-files/zh-CN/20260310/rdsgaa/image+%2815%29.png"
+                    },
+                    {
+                        "image": "https://help-static-aliyun-doc.aliyuncs.com/file-manage-files/zh-CN/20260310/qokhtl/image+%2816%29.png"
+                    },
+                    {
+                        "text": "使用图一的城市照片作为底图。请勿更改照片中的真实建筑、街道、车辆或人物。保持照片的真实性。三个图二中的卡通形象在建筑物周围，一个趴在建筑物上方，一个从建筑物的右边探出头来，一个坐在建筑物前的空地上。该形象应采用扁平化的图形风格绘制，轮廓清晰，类似于壁画或海报插图。"
+                    }
+                ]
+            }
+        ]
+    },
+    "parameters": {
+        "n": 1,
+        "negative_prompt": " ",
+        "prompt_extend": true,
+        "watermark": false,
+        "size": "2048*2048"
+    }
+}'
+任务成功
+{
+    "output": {
+        "choices": [
+            {
+                "finish_reason": "stop",
+                "message": {
+                    "content": [
+                        {
+                            "image": "https://dashscope-result-sz.oss-cn-shenzhen.aliyuncs.com/xxx.png?Expires=xxx"
+                        }
+                    ],
+                    "role": "assistant"
+                }
+            }
+        ]
+    },
+    "usage": {
+        "height": 2048,
+        "image_count": 1,
+        "width": 2048
+    },
+    "request_id": "571ae02f-5c9d-436c-83c2-f221e6df0xxx"
+}

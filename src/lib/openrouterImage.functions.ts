@@ -5,6 +5,13 @@ type Input = {
   model?: string
   size?: string
   /**
+   * 显式 negative_prompt,作为 DashScope `parameters.negative_prompt` 字段单独下发。
+   * 相比塞在 positive prompt 里的"FORBIDDEN"列表,这个独立字段在 qwen-image-* 上
+   * 抑制效果明显更强(尤其对"仰视 / 半身 / 切头切脚"这种构图问题)。
+   * 留空则不发送该字段。
+   */
+  negativePrompt?: string
+  /**
    * 锁定用户选定的 model:被 rate-limit(429)时**只重试同一个 model**
    * (1s/2s/4s 退避,最多 3 次),不再降级到不同 model。
    *
@@ -84,7 +91,7 @@ function dashScopeAttempts(requested: string) {
   return [...new Set([requested, ...(fallbacks[requested] ?? [])])];
 }
 
-async function callQwenSync(model: string, prompt: string, size: string, apiKey: string) {
+async function callQwenSync(model: string, prompt: string, size: string, apiKey: string, negativePrompt?: string) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 50_000);
   const res = await fetch(QWEN_ENDPOINT, {
@@ -93,7 +100,15 @@ async function callQwenSync(model: string, prompt: string, size: string, apiKey:
     body: JSON.stringify({
       model,
       input: { messages: [{ role: "user", content: [{ text: prompt }] }] },
-      parameters: { size, n: 1, prompt_extend: true, watermark: false },
+      parameters: {
+        size,
+        n: 1,
+        prompt_extend: true,
+        watermark: false,
+        // negative_prompt 是 DashScope multimodal-generation 端点支持的
+        // 标准字段(qwen.md 第 357-363 行示例就有)。留空字符串 / undefined 就不发。
+        ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
+      },
     }),
     signal: controller.signal,
   }).catch((e) => {
@@ -115,16 +130,18 @@ async function callQwenSync(model: string, prompt: string, size: string, apiKey:
     : { url: "", error: `[${model}] ${json?.message || "no image returned"}` };
 }
 
-async function callQwenAsync(model: string, prompt: string, size: string, apiKey: string) {
-  // qwen-image-* async endpoint rejects extra params with "url error";
-  // wan* accepts the full param set. Build a minimal body per family.
+async function callQwenAsync(model: string, prompt: string, size: string, apiKey: string, negativePrompt?: string) {
+  // ⚠️ 调用前要确保 model 真的支持 T2I(只吃 prompt)。
+  // `qwen-image-2.0-pro` 是 I2I-only,打到这个端点会 400 "url error"——
+  // 调用方(resolveT2IModel)负责把 -2.0-pro 替换成 `qwen-image-2.0`,
+  // 这里只用 endpoint-acceptable 的最小 body。
   const isQwen = model.startsWith("qwen");
   const body = isQwen
-    ? { model, input: { prompt }, parameters: { size } }
+    ? { model, input: { prompt }, parameters: { size, ...(negativePrompt ? { negative_prompt: negativePrompt } : {}) } }
     : {
         model,
         input: { prompt },
-        parameters: { size, n: 1, prompt_extend: true, watermark: false },
+        parameters: { size, n: 1, prompt_extend: true, watermark: false, ...(negativePrompt ? { negative_prompt: negativePrompt } : {}) },
       };
 
   // Retry create on 429 (DashScope per-account RPM is very low for qwen-image-max).
@@ -512,9 +529,12 @@ export const generateImage = createServerFn({ method: "POST" })
     // Use Qwen image generation API
     if (qwenKey) {
       const errors: string[] = [];
-      // Default to qwen-image-2.0-pro for high quality
-      const model = requested || "qwen-image-2.0-pro";
+      // 默认 T2I model 是 `qwen-image-2.0`(真正支持 T2I 的 Qwen 模型)。
+      // 不能默认 `qwen-image-2.0-pro` —— 它是 I2I-only,会 400 "url error"。
+      const model = requested || "qwen-image-2.0";
       const size = data.size || "2048*2048";
+      // 把 negative_prompt 从 input 拿一次,后面所有 Qwen 调用统一传
+      const negativePrompt = data.negativePrompt?.trim() || undefined;
 
       // ---- 第一次尝试(用用户选定的 model)----
       // try/catch 兜底:即便 callQwenAsync / callQwenSync 内部有各自的 try/catch,
@@ -523,8 +543,8 @@ export const generateImage = createServerFn({ method: "POST" })
       const callOnce = async (m: string, s: string): Promise<{ url: string; error: string | null }> => {
         try {
           return QWEN_ASYNC_MODELS.has(m)
-            ? await callQwenAsync(m, data.prompt, s, qwenKey)
-            : await callQwenSync(m, data.prompt, s, qwenKey)
+            ? await callQwenAsync(m, data.prompt, s, qwenKey, negativePrompt)
+            : await callQwenSync(m, data.prompt, s, qwenKey, negativePrompt)
         } catch (e) {
           return {
             url: "",
@@ -569,8 +589,8 @@ export const generateImage = createServerFn({ method: "POST" })
           let fbLastErr: string | null = null
           for (let i = 0; i <= RETRY_BACKOFF_MS.length; i++) {
             const r = await (QWEN_ASYNC_MODELS.has(fallback)
-              ? await callQwenAsync(fallback, data.prompt, fallbackSize, qwenKey)
-              : await callQwenSync(fallback, data.prompt, fallbackSize, qwenKey))
+              ? await callQwenAsync(fallback, data.prompt, fallbackSize, qwenKey, negativePrompt)
+              : await callQwenSync(fallback, data.prompt, fallbackSize, qwenKey, negativePrompt))
             if (r.url) { fbResult = r; break }
             fbLastErr = r.error
             const isRetryable = /429|502|503|504|timed out|aborted|ECONNRESET/i.test(r.error ?? "")

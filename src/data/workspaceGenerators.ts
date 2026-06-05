@@ -66,6 +66,58 @@ export type StoryboardPanel = {
   gradient: string
 }
 
+// ====================================================================
+//  分镜(Storyboard Group)—— 由 AI 根据"当集剧情"切分的多组分镜
+//  -----------------------------------------------------------------
+//  区别于旧的 StoryboardPanel(单镜头),StoryboardGroup 是"一段剧情 +
+//  1~3 个镜头"的有机组合,每个镜头一张分镜图。
+//  -----------------------------------------------------------------
+//  - plotText        : 从当集剧本切出来的原始剧情描述(一段话)
+//  - startSec/endSec : 该分镜在整集中的起止时间(秒),AI 生成
+//  - sceneId         : 关联的场景 ID(可选,AI 推断)
+//  - characterIds    : 该分镜涉及的角色 ID 列表(AI 推断)
+//  - shots[]         : 该分镜下的 1~3 个镜头,每个镜头一张图
+//
+//  StoryboardShot 字段:
+//  - shotType        : 镜头景别 WS(远)/ MS(中)/ CU(近)/ ECU(特)/ OTS(过肩)
+//  - shotTypeLabel   : 中文标签 "远景" / "中景" / "近景" / "特写" / "过肩"
+//  - action          : 该镜头描述"什么人做什么"
+//  - camera          : 摄像机说明(机位 / 角度 / 焦段)
+//  - imageUrl?       : 多图融合生成的图片 URL
+//  - busy?           : 客户端 UI 用的生成中标记(不入库)
+// ====================================================================
+
+export type ShotType = 'WS' | 'MS' | 'CU' | 'ECU' | 'OTS'
+
+export const SHOT_TYPE_LABEL: Record<ShotType, string> = {
+  WS: '远景',
+  MS: '中景',
+  CU: '近景',
+  ECU: '特写',
+  OTS: '过肩',
+}
+
+export type StoryboardShot = {
+  id: string
+  shotType: ShotType
+  shotTypeLabel: string
+  action: string
+  camera: string
+  imageUrl?: string
+}
+
+export type StoryboardGroup = {
+  id: string
+  index: number
+  plotText: string
+  startSec: number
+  endSec: number
+  sceneId?: string
+  sceneLocation?: string
+  characterIds: string[]
+  shots: StoryboardShot[]
+}
+
 export type TimelineClip = {
   id: string
   startSec: number

@@ -889,6 +889,7 @@ export const en: Translations = {
   zp_cta_extract: 'Extract characters & scenes',
   zp_cta_design: 'Go to reference sheets',
   zp_cta_storyboard: 'Go to storyboard',
+  zp_cta_enter_storyboard: 'Enter storyboard (AI-cut groups)',
   zp_cta_to_script: 'Go to script',
   zp_cta_to_character: 'Go to characters',
   zp_cta_to_timeline: 'Go to timeline',
