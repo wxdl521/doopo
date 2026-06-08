@@ -527,3 +527,174 @@ export const generateStoryboardShotImage = createServerFn({ method: 'POST' })
     }
     return { ok: true as const, url, model }
   })
+
+// --------------------------------------------------------------------
+// 3) regenerateStoryboardShot —— 按修改意见重生分镜图
+//    跟 generateStoryboardShotImage 几乎同结构,但有两个关键差别:
+//      a) 把 referenceImageUrl(当前那一张)放在 content 数组**第一位**,作为
+//         "要被改的图";角色图、场景图随后作为"风格/构图"参考。prompt 显式说
+//         "图1 是要修改的当前镜头,图 2..N 是角色/场景参考,按用户意见只改图1"。
+//      b) prompt 里追加 `userInstruction`,告诉模型"只按用户意见改,不要乱动
+//         没提到的部分(景别、构图、风格)"。
+//    这样在视觉上和"按意见重生角色"完全对齐:用户进预览 → 输意见 → 发送 →
+//    卡片封面换新图,history 数组多一张。
+// --------------------------------------------------------------------
+
+const RegenShotInput = z.object({
+  // 当前的镜头图(要被改的那张)
+  referenceImageUrl: z.string().url(),
+  // 用户输入的修改意见
+  userInstruction: z.string().min(1).max(500),
+  // 上下文(跟 generateStoryboardShotImage 一样)
+  plotText: z.string().min(1).max(2000),
+  shotType: z.enum(['WS', 'MS', 'CU', 'ECU', 'OTS']),
+  shotTypeLabel: z.string().min(1).max(20),
+  action: z.string().min(1).max(400),
+  camera: z.string().max(200).default(''),
+  characterImageUrls: z.array(z.string().url()).max(3).default([]),
+  characterNames: z.array(z.string().max(50)).max(3).default([]),
+  sceneImageUrl: z.string().url().optional(),
+  sceneLocation: z.string().max(200).default(''),
+  sceneTimeOfDay: z.string().max(50).default(''),
+  projectStyle: z.string().max(50).optional(),
+  model: z.string().max(100).optional(),
+})
+
+export type RegenerateStoryboardShotInput = z.infer<typeof RegenShotInput>
+
+export const regenerateStoryboardShot = createServerFn({ method: 'POST' })
+  .inputValidator((d: unknown) => RegenShotInput.parse(d))
+  .handler(async ({ data }) => {
+    const { resolveProjectStyle, resolveI2IModel } = await import('./visualStyles')
+    const styleSpec = resolveProjectStyle(data.projectStyle)
+    const model = resolveI2IModel(data.model || 'qwen-image-2.0-pro')
+
+    // ---- 构造 reference 图数组(content 的 image 元素)----
+    // 关键差异:图 1 永远是 referenceImageUrl(当前镜头),后面才是角色/场景参考。
+    // qwen-image-2.0-pro 端点硬限制 ≤ 3 张,所以角色/场景参考要截断。
+    const refImages: { image: string }[] = [{ image: data.referenceImageUrl }]
+    const charCount = data.characterImageUrls.length
+    // 剩余槽位 = 3 - 1(refImage) - (sceneImageUrl ? 1 : 0)
+    const hasScene = !!data.sceneImageUrl
+    const maxChars = Math.max(0, 3 - 1 - (hasScene ? 1 : 0))
+    const usedCharCount = Math.min(charCount, maxChars)
+    for (let i = 0; i < usedCharCount; i++) {
+      const url = data.characterImageUrls[i]
+      if (url) refImages.push({ image: url })
+    }
+    if (hasScene) {
+      refImages.push({ image: data.sceneImageUrl! })
+    }
+
+    // ---- 拼按意见修改的指令 ----
+    // 关键差别 vs 首次生成:prompt 强调"图1 是当前镜头,只按用户意见改,角色/场景
+    // 参考用来锁定脸/衣服/构图"。否则模型会把它当成普通的"多图融合"任务,
+    // 重新构图而不是"修改"。
+    const charRefs = usedCharCount > 0
+      ? usedCharCount === 1
+        ? `图2 = 「${data.characterNames[0] || '角色'}」(脸/衣服锁定)`
+        : `图2..${1 + usedCharCount} = ${usedCharCount} 个角色(脸/衣服锁定)`
+      : ''
+    const sceneRef = hasScene
+      ? `图${1 + usedCharCount + 1} = 场景(${data.sceneLocation || '当前场景'}${data.sceneTimeOfDay ? ' / ' + data.sceneTimeOfDay : ''})`
+      : ''
+
+    const instruction = [
+      `[任务] 修改「图1」(当前分镜镜头),严格按下面的"修改意见"调整,只改用户提到的部分。`,
+      ``,
+      `[修改意见] ${data.userInstruction}`,
+      ``,
+      `[剧情上下文] ${data.plotText}`,
+      `[本镜头] ${data.shotType} ${data.shotTypeLabel} —— ${data.action}`,
+      data.camera ? `[机位] ${data.camera}` : '',
+      ``,
+      `[参考图清单(严格按下面的对应关系使用)]`,
+      `图1 = 当前分镜镜头(要被修改的)`,
+      charRefs,
+      sceneRef,
+      ``,
+      `[修改规则 — 必须遵守]`,
+      `1. 以图1为基础,在它的构图 / 景别 / 风格上修改,**不要重新构图或换景别**。`,
+      `2. 只调整"修改意见"里明确提到的元素;没提到的部分(角色脸/衣服、场景、构图、视角、风格)全部保留图1的样子。`,
+      `3. ${usedCharCount > 0 ? `图 2..N 的角色是参考,他们的脸/身材/衣服必须跟图1 一致(不能换脸)。` : '本镜头没有角色参考,只改场景/构图相关的部分。'}`,
+      hasScene ? `4. 场景构图 / 光照沿用图1 当前的样子(场景参考图只是兜底,跟图1 冲突时以图1 为准)。` : '',
+      `5. 保持单张分镜图,不能有面板分割、文字、标号。`,
+      `6. 风格:${styleSpec.label} —— ${styleSpec.positive}`,
+    ].filter(Boolean).join('\n')
+
+    const negativePrompt = [
+      'different art style, style drift, photorealistic when input is anime, anime when input is realistic, different medium, different line treatment, different color grading',
+      'multiple panels, panel, grid, storyboard template, before/after, comparison, text, watermark, logo, signature, label, caption, annotation, arrow, callout',
+      'different face, different face shape, different eye shape, different eye color, different nose, different mouth, different eyebrows, different skin tone, different hairstyle, different hair color, different hair length, different outfit, different clothing color, different accessories',
+      'medium shot when shot type is full body, close-up when shot type is mid, headshot, bust, half body, cropped at feet, missing feet, missing legs',
+      'extreme low angle, worm\'s eye view, hero shot, extreme dutch angle, fisheye, wide-angle distortion',
+      'extra people, bystander, crowd, extra limbs, deformed hands, extra fingers, blurred face, low quality',
+    ].join(', ')
+
+    // ---- 调 Qwen multimodal-generation 端点 ----
+    const apiKey = process.env.Qwen || process.env.DASHSCOPE_API_KEY
+    if (!apiKey) return { ok: false as const, error: 'Qwen API key not configured' }
+    const size = '1024*1024'
+
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 120_000)
+    let res: Response
+    try {
+      res = await fetch(
+        'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model,
+            input: {
+              messages: [
+                {
+                  role: 'user',
+                  content: [
+                    ...refImages,
+                    { text: instruction },
+                  ],
+                },
+              ],
+            },
+            parameters: {
+              n: 1,
+              negative_prompt: negativePrompt,
+              prompt_extend: false,
+              watermark: false,
+              size,
+            },
+          }),
+          signal: controller.signal,
+        },
+      )
+    } catch (e) {
+      clearTimeout(timeout)
+      const msg = e instanceof Error ? e.message : 'unknown'
+      const isAbort = e instanceof Error && e.name === 'AbortError'
+      return { ok: false as const, error: isAbort ? 'AI 处理超时(>120s)' : `请求失败: ${msg}` }
+    }
+    clearTimeout(timeout)
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      if (res.status === 401) return { ok: false as const, error: 'Qwen auth failed (401)' }
+      if (res.status === 402) return { ok: false as const, error: 'no_credits' }
+      if (res.status === 429) return { ok: false as const, error: 'rate_limit' }
+      return { ok: false as const, error: `Qwen ${res.status}: ${text.slice(0, 300)}` }
+    }
+
+    const json = (await res.json()) as {
+      output?: { choices?: Array<{ message?: { content?: Array<{ image?: string; type?: string }> } }> }
+      message?: string
+    }
+    const url = json.output?.choices?.[0]?.message?.content?.[0]?.image
+    if (!url) {
+      return { ok: false as const, error: json.message || 'Qwen 未返回图片 URL' }
+    }
+    return { ok: true as const, url, model }
+  })

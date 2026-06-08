@@ -167,6 +167,30 @@ export default function ZopiaChatPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialInput])
 
+  // 切换流程(stage)或选择不同集数时,自动刷新对话框:
+  //   清空旧消息、关闭参数面板、退出修改模式,让目标流程的引导 CTA(剧本
+  //   / 角色 / 分镜等对应的"对话按钮")重新出现,而不是继续展示上一个流程
+  //   的历史消息。
+  //   例外:
+  //     - 流式生成中(synopsis/episode)不清,避免打断用户输入与进度展示;
+  //     - 跑工作流动画时(runWorkflowAnimation)刚刚让 onJumpStage 切换了
+  //       stage,不能把刚展示的 summary / CTAs 立刻清空 —— 跳过这一次。
+  // 跳过标志由 runWorkflowAnimation 在调 onJumpStage 前一刻置位,
+  // 本 useEffect 消费后清掉,下一次 stage 变化恢复正常行为。
+  const skipNextAutoRefreshRef = useRef(false)
+  useEffect(() => {
+    if (streaming) return
+    if (skipNextAutoRefreshRef.current) {
+      skipNextAutoRefreshRef.current = false
+      return
+    }
+    setMessages([])
+    setPendingCta(null)
+    setSynopsisEditMode(false)
+    setEpisodeEditMode(null)
+    setCtasCollapsed(false)
+  }, [stage, selectedEpisodeIndex, streaming])
+
   const intro: Record<WorkspaceTab, string> = {
     canvas: t.zp_intro_canvas,
     script: t.zp_intro_script,
@@ -189,8 +213,8 @@ export default function ZopiaChatPanel({
   // 而不是文本预设(只是 send(p) 的占位文案)。典型场景:导入剧本后或
   // AI 生成完一集后,回到 episodes 标签,应该看到和 AI 工作流收尾时
   // 完全一样的"AI 修改本集" / "提取本集角色和场景"按钮,而不是无关的
-  // 文本提示。character 阶段也用 CTA,把"进入分镜(AI 切分多组)"放最前,
-  // 方便用户点一下就走完整剧情→分镜组流程,不需要发消息。
+  // 文本提示。character / storyboard 阶段也用 CTA,把"进入分镜(AI 切分多组)"
+  // 放最前,方便用户点一下就走完整剧情→分镜组流程,不需要发消息。
   const presetCtas: Record<WorkspaceTab, { key: CtaKey; label: string; target: WorkspaceTab }[] | null> = {
     canvas: null,
     script: null,
@@ -200,7 +224,10 @@ export default function ZopiaChatPanel({
       { key: 'save_assets', label: t.zp_cta_save_assets, target: 'character' },
       { key: 'design', label: t.zp_cta_design, target: 'character' },
     ],
-    storyboard: null,
+    // storyboard 之前是 null(只显示文本预设),导致点击分镜流程时对话框
+    // 没有"对话按钮"。改为 CTA 列表,与 episodes / character 行为一致:
+    // 用户切到分镜流程时,直接看到"进入时间轴阶段 / 继续精修"等按钮。
+    storyboard: buildWorkflow('storyboard', t).ctas,
     timeline: null,
   }
 
@@ -396,12 +423,42 @@ export default function ZopiaChatPanel({
       return
     }
 
-    const wfId = `w-${Date.now()}`
-    const wf = buildWorkflow(targetStage, t)
-    setMessages((m) => [...m, userMsg, { id: wfId, kind: 'workflow', steps: wf.steps, doneCount: 0 }])
+    // Normal mode:把"用户消息 + 工作流步骤动画 + 完成后展示 summary/CTA"
+    // 这套逻辑交给 runWorkflowAnimation 统一处理(让"进入分镜阶段"这种
+    // 走 onEnterStoryboard 的 CTA 也能复用同一套动画和收尾)。
     setInput('')
     setAttachments([])
+    runWorkflowAnimation(targetStage, () => onProduce?.(targetStage, trimmed), {
+      jumpAfter: inferredJump,
+      userMsg,
+    })
+  }
 
+  /**
+   * 跑"AI 工作流"动画:推一条 user 消息(可选)+ 一条 workflow 消息,
+   * 逐步推进 doneCount;awaitable() resolve 后,把 workflow 标记完成并展
+   * 示 summary + ctas,可选地跳转到目标 tab。
+   *
+   * 抽出来是为了让非 send() 入口(比如对话框的"进入分镜阶段" CTA,实
+   * 际工作走 onEnterStoryboard 而不是 onProduce)也能共享同一种动画
+   * 和收尾。
+   *
+   * 副作用约定:jumpAfter=true 时,在调用 onJumpStage 之前先置位
+   * skipNextAutoRefreshRef,避免上面那个"stage 变化即清空消息"的
+   * useEffect 把刚展示的 summary / CTAs 立刻擦掉。
+   */
+  function runWorkflowAnimation(
+    targetStage: WorkspaceTab,
+    awaitable: () => unknown | Promise<unknown>,
+    opts?: { jumpAfter?: boolean; userMsg?: Message },
+  ) {
+    const wf = buildWorkflow(targetStage, t)
+    const wfId = `w-${Date.now()}`
+    setMessages((m) => [
+      ...m,
+      ...(opts?.userMsg ? [opts.userMsg] : []),
+      { id: wfId, kind: 'workflow', steps: wf.steps, doneCount: 0 },
+    ])
     const stepDelay = 700
     const lastStepIndex = wf.steps.length - 1
     wf.steps.forEach((_, i) => {
@@ -413,15 +470,8 @@ export default function ZopiaChatPanel({
 
     const minDuration = wf.steps.length * stepDelay
     const startedAt = Date.now()
-
-    // Always wait for onProduce to finish before completing workflow
-    const produceResult = onProduce?.(targetStage, trimmed)
-    Promise.resolve(produceResult)
-      .then(async () => {
-        // If produce returned a promise (streaming script), wait for it
-        if (produceResult) {
-          await Promise.resolve(produceResult)
-        }
+    Promise.resolve(awaitable())
+      .then(() => {
         const elapsed = Date.now() - startedAt
         const wait = Math.max(0, minDuration - elapsed)
         setTimeout(() => {
@@ -430,7 +480,12 @@ export default function ZopiaChatPanel({
               ? { ...msg, doneCount: wf.steps.length, summary: wf.summary, ctas: wf.ctas }
               : msg,
           ))
-          if (inferredJump) onJumpStage(targetStage)
+          if (opts?.jumpAfter) {
+            // 先告诉自动刷新 useEffect "下一次 stage 变化别清空"(我们要
+            // 保留刚展示的 summary),再真正切 tab。
+            skipNextAutoRefreshRef.current = true
+            onJumpStage(targetStage)
+          }
         }, wait)
       })
   }
@@ -641,10 +696,21 @@ export default function ZopiaChatPanel({
   function handleCta(c: { key: CtaKey; label: string; target: WorkspaceTab }) {
     if (c.key === 'preview') { onJumpStage(c.target); return }
     if (c.key === 'save_assets') { onSaveAssets?.(); return }
-    // enter_storyboard:在对话框点"进入分镜",走专门的剧情→分镜组流程,
-    // 不经过 send / param sheet(那个是老的旧分镜流程)。
+    // enter_storyboard:在对话框点"进入分镜",走专门的剧情→分镜组流程。
+    // 用 runWorkflowAnimation 共享同一种 AI 工作流动画:对话框里逐步
+    // 推进 [加载工作流 / 解析剧本 / 规划镜头 / 草拟构图 / 渲染] 五步,
+    // await onEnterStoryboard() 完成,展示 summary + "进入时间轴阶段 /
+    // 继续精修" CTAs,再自动切到分镜 tab。
     if (c.key === 'enter_storyboard') {
-      onEnterStoryboard?.()
+      const userMsg: Message = {
+        id: `u-${Date.now()}`,
+        kind: 'user',
+        text: t.zp_cta_enter_storyboard,
+      }
+      runWorkflowAnimation('storyboard', () => onEnterStoryboard?.(), {
+        jumpAfter: true,
+        userMsg,
+      })
       return
     }
     if (c.key === 'select_episodes') { send(t.zp_user_cta_select_episodes, { targetStage: 'episodes', jumpAfter: true }); return }

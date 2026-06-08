@@ -1,6 +1,6 @@
 import { useState } from 'react'
 // no Link needed; Logo provides home link
-import { ChevronDown, MoreHorizontal, Layers, FileText, Users, Grid3x3, Clock, Settings, Download, Loader2, CheckCircle2, Save } from 'lucide-react'
+import { ChevronDown, MoreHorizontal, Layers, FileText, Users, Grid3x3, Clock, Settings, Download, Loader2, CheckCircle2, Save, Plus } from 'lucide-react'
 import Logo from '../Logo'
 import { useLanguage } from '../../i18n/LanguageContext'
 import { NewProjectDialog } from '../NewProjectDialog'
@@ -18,7 +18,7 @@ const tabs: { id: Exclude<WorkspaceTab, 'episodes'>; icon: typeof Layers }[] = [
 
 export default function WorkspaceTopbar({
   tab, onTabChange, episodeCount, selectedEpisodeIndex, onEpisodeIndexChange, onSaveAssets,
-  onSave, saving, saved, completedStages,
+  onSave, saving, saved, completedStages, onAddEpisode,
 }: {
   tab: WorkspaceTab
   onTabChange: (t: WorkspaceTab) => void
@@ -30,6 +30,8 @@ export default function WorkspaceTopbar({
   saving?: boolean
   saved?: boolean
   completedStages?: Set<WorkspaceTab>
+  /** 顶部下拉里"+ 新增集数"按钮的回调。 */
+  onAddEpisode?: () => void
 }) {
   const { t, lang, toggleLang } = useLanguage()
   const [epOpen, setEpOpen] = useState(false)
@@ -69,6 +71,20 @@ export default function WorkspaceTopbar({
                 </>
               ) : (
                 <div className="px-3 py-2 text-xs text-text-muted">暂无集数</div>
+              )}
+              {/* 在下拉最底加"+ 新增集数"——延续已有集数索引,避免新一集重置为 1。
+                  哪怕当前 episodeCount=0,这个入口依然可用(用户的第一个集就靠它)。 */}
+              {onAddEpisode && (
+                <>
+                  {episodeCount > 0 && <div className="my-1 border-t border-border/60" />}
+                  <button
+                    type="button"
+                    onClick={() => { setEpOpen(false); onAddEpisode() }}
+                    className="w-full text-left px-3 py-1.5 text-sm hover:bg-bg-elevated inline-flex items-center gap-1.5 text-accent font-semibold"
+                  >
+                    <Plus size={13} /> 新增集数
+                  </button>
+                </>
               )}
             </div>
           )}

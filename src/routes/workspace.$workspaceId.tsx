@@ -15,7 +15,7 @@ import {
 import { generateStageAi } from '../lib/aiGenerate.functions'
 import { generateImage } from '../lib/openrouterImage.functions'
 import { regenerateCharacterLook } from '../lib/characterRegen.functions'
-import { generateStoryboardFromPlot, generateStoryboardShotImage } from '../lib/storyboard.functions'
+import { generateStoryboardFromPlot, generateStoryboardShotImage, regenerateStoryboardShot } from '../lib/storyboard.functions'
 import { getProject, saveWorkspaceData, loadWorkspaceData, type ProjectConfigRow } from '../lib/projects.functions'
 import { streamSynopsis, streamEpisodeScenes, refineSynopsis, refineEpisodeScenes } from '../lib/scriptAgent.functions'
 import type { ImportedScriptResult } from '../lib/parseImportedScript.functions'
@@ -210,6 +210,7 @@ function WorkspacePage() {
   const callRegenCharacter = useServerFn(regenerateCharacterLook)
   const callGenerateStoryboard = useServerFn(generateStoryboardFromPlot)
   const callGenerateShotImage = useServerFn(generateStoryboardShotImage)
+  const callRegenShot = useServerFn(regenerateStoryboardShot)
   const callSynopsis = useServerFn(streamSynopsis)
   const callEpisode = useServerFn(streamEpisodeScenes)
   const callRefine = useServerFn(refineSynopsis)
@@ -282,6 +283,21 @@ function WorkspacePage() {
   const [autoRunCompleteTarget, setAutoRunCompleteTarget] = useState<number | null>(null)
   const [selectedEpisodeIndex, setSelectedEpisodeIndex] = useState<number>(1)
   const [charViewTab, setCharViewTab] = useState<'characters' | 'scenes'>('characters')
+  // 顶部下拉「+ 新增集数」触发的对话框。AI 生成 / 导入剧本 两条路径都走这里。
+  const [addEpisodeOpen, setAddEpisodeOpen] = useState(false)
+  const [addEpisodeImporting, setAddEpisodeImporting] = useState(false)
+  const addEpisodeFileInputRef = useRef<HTMLInputElement>(null)
+  // 分镜图历史 + 预览/修改态(和人物卡片同一套思路)
+  //   - shotImages:key = `${groupId}::${shotId}`,value 是按时间顺序的 URL 数组
+  //     (首先生成的在最前,最新生成的或按意见重生的在末尾)。
+  //   - shotPreview:当前正在预览哪张镜头(null = 关闭)。
+  //   - shotSelectedGenIdx:预览里选中的第几代(和 selectedGenIdx 同语义)。
+  //   - shotModInput / shotModBusy:修改意见的输入 + 是否在调 regenerateStoryboardShot。
+  const [shotImages, setShotImages] = useState<Record<string, string[]>>({})
+  const [shotPreview, setShotPreview] = useState<{ groupId: string; shotId: string } | null>(null)
+  const [shotSelectedGenIdx, setShotSelectedGenIdx] = useState(0)
+  const [shotModInput, setShotModInput] = useState('')
+  const [shotModBusy, setShotModBusy] = useState(false)
   const workspaceId = Route.useParams().workspaceId
   useEffect(() => {
     let cancelled = false
@@ -294,11 +310,34 @@ function WorkspacePage() {
         if (cancelled || r.error || !r.workspaceData) return
         const wd = r.workspaceData as Record<string, any>
         if (wd.outline) setData((d) => ({ ...d, outline: wd.outline as WorkspaceData['outline'] }))
-        if (Array.isArray(wd.scenes) && wd.scenes.length) setData((d) => ({ ...d, scenes: wd.scenes as GenScene[] }))
-        if (Array.isArray(wd.characters) && wd.characters.length) setData((d) => ({ ...d, characters: wd.characters as GenCharacter[] }))
+        // 兼容旧数据:旧版 characters/scenes/storyboardGroups 没有 episodeIndex 字段,
+        // 一律默认 1(旧版没有按集分角色的概念,所有内容都属于第 1 集)。
+        if (Array.isArray(wd.scenes) && wd.scenes.length) {
+          const scenes: GenScene[] = (wd.scenes as any[]).map((s) => ({ ...s, episodeIndex: typeof s.episodeIndex === 'number' ? s.episodeIndex : 1 }))
+          setData((d) => ({ ...d, scenes }))
+        }
+        if (Array.isArray(wd.characters) && wd.characters.length) {
+          const characters: GenCharacter[] = (wd.characters as any[]).map((c) => ({ ...c, episodeIndex: typeof c.episodeIndex === 'number' ? c.episodeIndex : 1 }))
+          setData((d) => ({ ...d, characters }))
+        }
         if (Array.isArray(wd.storyboard) && wd.storyboard.length) setData((d) => ({ ...d, storyboard: wd.storyboard as StoryboardPanel[] }))
         if (Array.isArray(wd.storyboardGroups) && wd.storyboardGroups.length) {
-          setData((d) => ({ ...d, storyboardGroups: wd.storyboardGroups as StoryboardGroup[] }))
+          const storyboardGroups: StoryboardGroup[] = (wd.storyboardGroups as any[]).map((g) => ({ ...g, episodeIndex: typeof g.episodeIndex === 'number' ? g.episodeIndex : 1 }))
+          setData((d) => ({ ...d, storyboardGroups }))
+          // 老数据没有 shotImages 字段 —— 从每个 group.shots[i].imageUrl 一次性回填,
+          // 这样旧项目的"分镜图历史"也能在打开预览时看到(至少有 1 张)。
+          // 已经被新数据覆盖过(wd.shotImages 存在)的就不动。
+          if (!wd.shotImages) {
+            const migrated: Record<string, string[]> = {}
+            for (const g of storyboardGroups) {
+              for (const s of g.shots) {
+                if (s.imageUrl) {
+                  migrated[`${g.id}::${s.id}`] = [s.imageUrl]
+                }
+              }
+            }
+            if (Object.keys(migrated).length) setShotImages(migrated)
+          }
         }
         if (wd.timeline) setData((d) => ({ ...d, timeline: wd.timeline as WorkspaceData['timeline'] }))
         if (typeof wd.synopsisText === 'string' && wd.synopsisText) {
@@ -309,6 +348,7 @@ function WorkspacePage() {
           setData((d) => ({ ...d, episodeTexts: wd.episodeTexts as WorkspaceData['episodeTexts'] }))
         }
         if (wd.charImages) setCharImages(wd.charImages as Record<string, string[]>)
+        if (wd.shotImages) setShotImages(wd.shotImages as Record<string, string[]>)
         if (wd.panelImages) setPanelImages(wd.panelImages as Record<string, string>)
         if (wd.sceneImages) setSceneImages(wd.sceneImages as Record<string, string>)
         setDataLoaded(true)
@@ -776,13 +816,18 @@ function WorkspacePage() {
       toast.error('当集剧本为空,请先在"分集"标签生成剧本')
       return
     }
-    if (!data.characters.length) {
-      toast.error('暂无角色数据,请先在角色流程提取角色')
+    // 只检查当集是否有角色(其他集的角色不能用来切分当集剧情)
+    const epChars = data.characters.filter((c) => c.episodeIndex === selectedEpisodeIndex)
+    if (!epChars.length) {
+      toast.error(`第 ${selectedEpisodeIndex} 集还没有角色,请先在"角色"标签提取本集角色`)
       return
     }
     setBusyStoryboardGen(true)
     try {
-      const charSummaries = data.characters.map((c) => ({
+      // 只用当集的角色/场景做切分(避免别集的角色污染剧情理解)
+      const epChars = data.characters.filter((c) => c.episodeIndex === selectedEpisodeIndex)
+      const epScenes = data.scenes.filter((s) => s.episodeIndex === selectedEpisodeIndex)
+      const charSummaries = epChars.map((c) => ({
         id: c.id,
         name: c.name,
         role: c.roleLabel,
@@ -795,7 +840,7 @@ function WorkspacePage() {
           .filter(Boolean)
           .join('; '),
       }))
-      const sceneSummaries = data.scenes.map((s) => ({
+      const sceneSummaries = epScenes.map((s) => ({
         id: s.id,
         slug: s.slug,
         location: s.location,
@@ -823,12 +868,19 @@ function WorkspacePage() {
         toast.error(res.error || '分镜生成失败')
         return
       }
-      // 关联 sceneLocation(从场景摘要里取)
+      // 关联 sceneLocation(从场景摘要里取),并打 episodeIndex 标签。
+      // 合并:替换当集已有分镜组,其他集保留。
       const groups = (res.groups as StoryboardGroup[]).map((g) => {
         const sc = sceneSummaries.find((s) => s.id === g.sceneId)
-        return { ...g, sceneLocation: sc?.location || sc?.slug }
+        return { ...g, episodeIndex: selectedEpisodeIndex, sceneLocation: sc?.location || sc?.slug }
       })
-      setData((d) => ({ ...d, storyboardGroups: groups }))
+      setData((d) => ({
+        ...d,
+        storyboardGroups: [
+          ...d.storyboardGroups.filter((g) => g.episodeIndex !== selectedEpisodeIndex),
+          ...groups,
+        ],
+      }))
       toast.success(`已生成 ${groups.length} 组分镜`)
       setTab('storyboard')
     } catch (e) {
@@ -903,7 +955,9 @@ function WorkspacePage() {
         toast.error(res.error || '分镜图生成失败')
         return
       }
-      // 写回 group.shots[i].imageUrl
+      const imageKey = `${groupId}::${shotId}`
+      // 写回 group.shots[i].imageUrl(保持向后兼容,旧数据读取也走这个字段)
+      // 同时 push 到 shotImages 历史数组(供预览 + 按意见重生使用)
       setData((d) => ({
         ...d,
         storyboardGroups: d.storyboardGroups.map((g) =>
@@ -915,6 +969,7 @@ function WorkspacePage() {
             : g,
         ),
       }))
+      setShotImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), res.url!] }))
       toast.success(`分镜图 ${shot.shotTypeLabel} 已生成`)
     } catch (e) {
       toast.error(e instanceof Error ? e.message : '分镜图生成失败')
@@ -937,6 +992,88 @@ function WorkspacePage() {
       if (shot.imageUrl) continue
       // eslint-disable-next-line no-await-in-loop
       await generateShotImageForGroup(groupId, shot.id)
+    }
+  }
+
+  /**
+   * 按用户意见重生分镜图(和 regenerateCharacterLook 同语义)。
+   *  1) 取 group / shot,以及当前要修改的 referenceImageUrl(从 shotImages 取最新一张)
+   *  2) 拼角色 / 场景参考(server 端再按 qwen 3 张上限截断)
+   *  3) 调 callRegenShot,新图 push 到 shotImages 历史 + 写回 g.shots[i].imageUrl
+   *  4) 自动选中新生成的那张,关闭 modInput
+   */
+  async function handleRegenShot() {
+    if (!shotPreview || shotModBusy) return
+    const { groupId, shotId } = shotPreview
+    const group = data.storyboardGroups.find((g) => g.id === groupId)
+    if (!group) return
+    const shot = group.shots.find((s) => s.id === shotId)
+    if (!shot) return
+    const imageKey = `${groupId}::${shotId}`
+    const generations = shotImages[imageKey] ?? []
+    const currentIdx = Math.min(shotSelectedGenIdx, Math.max(0, generations.length - 1))
+    const referenceUrl = generations[currentIdx] ?? shot.imageUrl
+    const instruction = shotModInput.trim()
+    if (!referenceUrl || !instruction) return
+
+    // 拼角色 / 场景参考 —— 跟 generateShotImageForGroup 同样的截断策略
+    const charImageUrls: string[] = []
+    const charNames: string[] = []
+    const hasScene = !!(group.sceneId && sceneImages[group.sceneId])
+    const maxChars = hasScene ? 2 : 3
+    for (const cid of group.characterIds) {
+      if (charImageUrls.length >= maxChars) break
+      const arr = charImages[cid]
+      const url = arr?.[arr.length - 1]
+      if (url) {
+        charImageUrls.push(url)
+        const ch = data.characters.find((c) => c.id === cid)
+        charNames.push(ch?.name ?? cid)
+      }
+    }
+    const sceneImageUrl = group.sceneId && sceneImages[group.sceneId] ? sceneImages[group.sceneId] : undefined
+    const sceneObj = data.scenes.find((s) => s.id === group.sceneId)
+
+    setShotModBusy(true)
+    try {
+      const res = await callRegenShot({
+        data: {
+          referenceImageUrl: referenceUrl,
+          userInstruction: instruction,
+          plotText: group.plotText,
+          shotType: shot.shotType,
+          shotTypeLabel: shot.shotTypeLabel,
+          action: shot.action,
+          camera: shot.camera,
+          characterImageUrls: charImageUrls,
+          characterNames: charNames,
+          sceneImageUrl,
+          sceneLocation: sceneObj?.location || group.sceneLocation || '',
+          sceneTimeOfDay: sceneObj?.timeOfDay || '',
+          projectStyle: project?.style,
+        },
+      })
+      if (res?.ok && res.url) {
+        const newLen = (shotImages[imageKey]?.length ?? 0) + 1
+        setShotImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), res.url!] }))
+        setData((d) => ({
+          ...d,
+          storyboardGroups: d.storyboardGroups.map((g) =>
+            g.id === groupId
+              ? { ...g, shots: g.shots.map((sh) => (sh.id === shotId ? { ...sh, imageUrl: res.url } : sh)) }
+              : g,
+          ),
+        }))
+        setShotSelectedGenIdx(newLen - 1)
+        setShotModInput('')
+        toast.success('已按意见重生')
+      } else {
+        toast.error(res?.error || '重生失败')
+      }
+    } catch (e) {
+      toast.error('重生失败')
+    } finally {
+      setShotModBusy(false)
     }
   }
 
@@ -1055,6 +1192,119 @@ function WorkspacePage() {
     toast.success(t.zp_import_success.replace('{{count}}', String(sortedEps.length)))
   }
 
+  // ============= 新增集数(下拉「+ 新增集数」入口) =============
+  // 延续已有集数索引(取 max(epIndex)+1;空项目从 1 起),不重置 selectedEpisodeIndex。
+  // 提供两条路径:
+  //   1) AI 生成:在 data.episodeTexts 里塞一条空记录,切到 script tab,然后调
+  //      runScriptEpisode 走流式生成;前端能看到"生成中…"实时更新。
+  //   2) 导入剧本:读 .txt/.md/.docx 文件,把内容作为本集文本写入;docx 用 mammoth。
+  // 两条路径都会:
+  //   - 选中新建的 epIndex,setExpandedEpisodes 展开它
+  //   - 切到 script tab
+  //   - toast 提示
+  function computeNextEpIndex(): number {
+    if (data.episodeTexts.length === 0) return 1
+    return Math.max(...data.episodeTexts.map((e) => e.epIndex)) + 1
+  }
+
+  function openAddEpisodeDialog() {
+    setAddEpisodeOpen(true)
+  }
+  function closeAddEpisodeDialog() {
+    if (addEpisodeImporting) return
+    setAddEpisodeOpen(false)
+  }
+
+  /**
+   * 路径 1:AI 生成新一集。
+   * 先把空记录写入 episodeTexts(让 UI 立刻出现新卡片),再切到 script tab 让
+   * 流式生成开始写文本。生成完成后,runScriptEpisode 的 'done' 分支会用真实
+   * 文本覆盖那条空记录。
+   */
+  async function handleAddEpisodeAI() {
+    if (episodeStreaming || synopsisStreaming) {
+      toast.error('当前正在流式生成,稍后再试')
+      return
+    }
+    const newEpIndex = computeNextEpIndex()
+    // 写空记录(去重,避免重复点击)
+    setData((d) => {
+      if (d.episodeTexts.some((e) => e.epIndex === newEpIndex)) return d
+      return {
+        ...d,
+        episodeTexts: [...d.episodeTexts, { epIndex: newEpIndex, text: '' }].sort((a, b) => a.epIndex - b.epIndex),
+        nextEpIndex: newEpIndex + 1,
+      }
+    })
+    setSelectedEpisodeIndex(newEpIndex)
+    setExpandedEpisodes((prev) => new Set(prev).add(newEpIndex))
+    setAddEpisodeOpen(false)
+    setTab('script')
+    if (!synopsisText && !synopsisDraft) {
+      toast.warning('当前还没有故事梗概,AI 会以"通用剧情"理解,效果可能一般;生成完可在「剧本」标签补充梗概后重跑。')
+    }
+    // 流式生成(runScriptEpisode 内部会自动用 synopsisText + 前面所有集作为上下文)
+    await runScriptEpisode({
+      epIndex: newEpIndex,
+      sceneCount: data.nextSceneCount || 15,
+      lang: 'zh',
+    })
+  }
+
+  /**
+   * 路径 2:从文件导入当集剧本。
+   * 支持 .txt/.md 直接读;.docx 用 mammoth(懒加载)。整个文件内容作为本集文本,
+   * 不做分集边界检测(已有的「导入剧本」全量导入入口在 ZopiaChatPanel,语义不同)。
+   */
+  async function handleAddEpisodeFilePicked(file: File | null | undefined) {
+    if (!file) return
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error('文件过大(>10MB),请拆分后重试')
+      return
+    }
+    const lower = file.name.toLowerCase()
+    if (!/\.(txt|md|docx)$/i.test(file.name)) {
+      toast.error('仅支持 .txt / .md / .docx 文件')
+      return
+    }
+    setAddEpisodeImporting(true)
+    try {
+      let text = ''
+      if (lower.endsWith('.docx')) {
+        // 懒加载 mammoth,避免把 .docx 解析塞进首屏
+        const mod: any = await import('mammoth')
+        const mammoth = mod.default ?? mod
+        const result = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() })
+        text = (result?.value ?? '').trim()
+      } else {
+        text = (await file.text()).trim()
+      }
+      if (text.length < 5) {
+        toast.error('文件内容过短,无法作为本集剧本')
+        return
+      }
+      const newEpIndex = computeNextEpIndex()
+      setData((d) => {
+        if (d.episodeTexts.some((e) => e.epIndex === newEpIndex)) return d
+        return {
+          ...d,
+          episodeTexts: [...d.episodeTexts, { epIndex: newEpIndex, text }].sort((a, b) => a.epIndex - b.epIndex),
+          nextEpIndex: newEpIndex + 1,
+        }
+      })
+      setSelectedEpisodeIndex(newEpIndex)
+      setExpandedEpisodes((prev) => new Set(prev).add(newEpIndex))
+      setAddEpisodeOpen(false)
+      setTab('script')
+      toast.success(`已从文件添加第 ${newEpIndex} 集剧本`)
+    } catch (e) {
+      toast.error(e instanceof Error && e.message ? e.message : '读取文件失败')
+    } finally {
+      setAddEpisodeImporting(false)
+      if (addEpisodeFileInputRef.current) addEpisodeFileInputRef.current.value = ''
+    }
+  }
+
   async function handleSaveAssets() {
     if (!user) {
       toast.error('请先登录')
@@ -1108,6 +1358,7 @@ function WorkspacePage() {
         synopsisText: synopsisText || synopsisDraft,
         episodeTexts: data.episodeTexts,
         charImages,
+        shotImages,
         panelImages,
         sceneImages,
       }
@@ -1187,6 +1438,7 @@ function WorkspacePage() {
           return { outline: { logline: String(p.logline ?? ''), acts: p.acts ?? [] } }
         case 'script': {
           const scenes: GenScene[] = (p.scenes ?? []).map((s: any, i: number) => ({
+            episodeIndex: typeof s.episodeIndex === 'number' ? s.episodeIndex : 1,
             id: `ai-sc-${i + 1}-${Date.now()}`,
             index: s.index ?? i + 1,
             slug: s.slug ?? '',
@@ -1205,6 +1457,7 @@ function WorkspacePage() {
           // 兜底:AI 偶尔不返回 scenes 字段时不要 wipe 现有数据
           if (rawScenes.length === 0) return { scenes: currentData.scenes }
           const scenes: GenScene[] = rawScenes.map((s: any, i: number) => ({
+            episodeIndex: typeof s.episodeIndex === 'number' ? s.episodeIndex : 1,
             id: `ai-sc-${i + 1}-${Date.now()}`,
             index: s.index ?? i + 1,
             slug: s.slug ?? '',
@@ -1236,6 +1489,8 @@ function WorkspacePage() {
                   }))
               : []
             return {
+              // 默认归属第 1 集(若调用方传了 episodeIndex,produce() 会覆盖)
+              episodeIndex: typeof c.episodeIndex === 'number' ? c.episodeIndex : 1,
               id: cid,
               name: c.name ?? `角色${i + 1}`,
               role: (['lead', 'supporting', 'villain'] as const).includes(c.role) ? c.role : 'supporting',
@@ -1671,9 +1926,13 @@ function WorkspacePage() {
           tryAi('character-extract', extractPrompt, snapshot),
           tryAi('scene', extractPrompt, snapshot),
         ])
+        // 给所有角色/场景打 episodeIndex 标签,UI 按集数过滤用。
+        // 同一角色若跨多集出现,每集都会产生一条独立记录(避免冲突)。
+        const charsWithEp = charResult?.characters?.map((c) => ({ ...c, episodeIndex: extractEpIndex }))
+        const scenesWithEp = sceneResult?.scenes?.map((s) => ({ ...s, episodeIndex: extractEpIndex }))
         aiPatch = {
-          ...(charResult ?? {}),
-          ...(sceneResult ?? {}),
+          ...(charResult ? { characters: charsWithEp } : {}),
+          ...(sceneResult ? { scenes: scenesWithEp } : {}),
         }
       }
     }
@@ -1692,12 +1951,24 @@ function WorkspacePage() {
           return d
         }
         case 'character': {
-          // Extract from episode: apply both characters and scenes
+          // Extract from episode: 合并而非替换 —— 同一集的角色/场景用新的
+          // 替换,其他集的角色/场景保留。这样多集剧本可以独立提取、互不影响。
           if (isExtractFromEpisode && aiPatch) {
-            const patch: Partial<WorkspaceData> = {}
-            if (aiPatch.characters) patch.characters = aiPatch.characters
-            if (aiPatch.scenes) patch.scenes = aiPatch.scenes
-            return { ...d, ...patch }
+            let characters = d.characters
+            let scenes = d.scenes
+            if (aiPatch.characters) {
+              characters = [
+                ...d.characters.filter((c) => c.episodeIndex !== extractEpIndex),
+                ...aiPatch.characters,
+              ]
+            }
+            if (aiPatch.scenes) {
+              scenes = [
+                ...d.scenes.filter((s) => s.episodeIndex !== extractEpIndex),
+                ...aiPatch.scenes,
+              ]
+            }
+            return { ...d, characters, scenes }
           }
           return { ...d, characters: aiPatch?.characters ?? generateCharacters() }
         }
@@ -1746,7 +2017,7 @@ function WorkspacePage() {
 
   return (
     <div className="h-screen flex flex-col bg-bg overflow-hidden">
-      <WorkspaceTopbar tab={tab} onTabChange={setTab} episodeCount={data.episodeTexts.length} selectedEpisodeIndex={selectedEpisodeIndex} onEpisodeIndexChange={setSelectedEpisodeIndex} onSaveAssets={handleSaveAssets} onSave={handleSaveWorkspace} saving={savingWorkspace} saved={savedWorkspace} completedStages={completedStages} />
+      <WorkspaceTopbar tab={tab} onTabChange={setTab} episodeCount={data.episodeTexts.length} selectedEpisodeIndex={selectedEpisodeIndex} onEpisodeIndexChange={setSelectedEpisodeIndex} onSaveAssets={handleSaveAssets} onSave={handleSaveWorkspace} saving={savingWorkspace} saved={savedWorkspace} completedStages={completedStages} onAddEpisode={openAddEpisodeDialog} />
       <div className="flex-1 flex min-h-0">
         <main className="flex-1 min-w-0 overflow-auto p-6">
           {tab === 'canvas' && (
@@ -2040,24 +2311,58 @@ function WorkspacePage() {
             )
           })()}
           {tab === 'character' && (() => {
-            const hasChars = data.characters.length > 0
-            const hasScenes = data.scenes.length > 0
+            // 角色/场景 都按当前选中集数过滤 —— 一次只看一集。
+            const epChars = data.characters.filter((c) => c.episodeIndex === selectedEpisodeIndex)
+            const epScenes = data.scenes.filter((s) => s.episodeIndex === selectedEpisodeIndex)
+            const hasChars = epChars.length > 0
+            const hasScenes = epScenes.length > 0
+            const hasAnyEp = data.episodeTexts.some((e) => e.epIndex === selectedEpisodeIndex)
+            const extractPrompt = `从第 ${selectedEpisodeIndex} 集提取角色和场景`
 
             if (!hasChars && !hasScenes) {
+              // 当集没数据时,给出"提取本集角色"的入口(快捷路径),
+              // 避免用户切到角色 tab 后看到一个空壳还要跑去 chat 里发命令。
               return (
-                <div className="max-w-4xl mx-auto panel p-10 text-center">
-                  <p className="text-text-muted text-sm">{t.ws_character_empty}</p>
+                <div className="max-w-4xl mx-auto panel p-10 text-center space-y-3">
+                  <Users size={36} className="mx-auto text-text-muted" />
+                  <p className="text-text-secondary font-medium">第 {selectedEpisodeIndex} 集 还没有角色和场景</p>
+                  <p className="text-xs text-text-muted leading-relaxed">
+                    {hasAnyEp
+                      ? '点击下方按钮,AI 会从当集剧本里提取本集出现的角色和场景,自动给角色生成形象参考图。'
+                      : '请先在「分集」标签生成当集剧本,然后回到这里提取角色。'}
+                  </p>
+                  {hasAnyEp && (
+                    <button
+                      type="button"
+                      onClick={() => void produce('character', extractPrompt)}
+                      className="mt-2 inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-accent-dim text-accent text-sm font-semibold hover:bg-accent hover:text-white transition disabled:opacity-40"
+                    >
+                      <Sparkles size={13} /> 提取第 {selectedEpisodeIndex} 集角色和场景
+                    </button>
+                  )}
+                  {!hasAnyEp && (
+                    <button
+                      type="button"
+                      onClick={() => setTab('episodes')}
+                      className="mt-2 inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-accent-dim text-accent text-sm font-semibold hover:bg-accent hover:text-white transition"
+                    >
+                      切到分集剧本 →
+                    </button>
+                  )}
                 </div>
               )
             }
 
             const order: Record<GenCharacter['role'], number> = { lead: 0, supporting: 1, villain: 2 }
-            const sorted = [...data.characters].sort((a, b) => order[a.role] - order[b.role])
+            const sorted = [...epChars].sort((a, b) => order[a.role] - order[b.role])
             const SCENE_TIME_LABELS: Record<string, string> = { DAY: '日', NIGHT: '夜', DUSK: '黄昏', DAWN: '黎明' }
 
             return (
               <div className="-m-6 h-[calc(100vh-3rem)] flex flex-col">
-                <div className="flex items-center gap-2 px-6 pt-4 pb-2 shrink-0">
+                <div className="flex items-center gap-2 px-6 pt-4 pb-2 shrink-0 flex-wrap">
+                  <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-accent-dim text-accent text-xs font-semibold border border-accent/40">
+                    <Users size={12} /> 第 {selectedEpisodeIndex} 集
+                  </span>
                   <button
                     onClick={() => setCharViewTab('characters')}
                     className={`px-4 py-1.5 rounded-full text-sm font-semibold transition border ${
@@ -2066,7 +2371,7 @@ function WorkspacePage() {
                         : 'border-border text-text-secondary hover:text-text-primary hover:bg-bg-elevated'
                     }`}
                   >
-                    角色 {hasChars && `(${data.characters.length})`}
+                    角色 {hasChars && `(${epChars.length})`}
                   </button>
                   <button
                     onClick={() => setCharViewTab('scenes')}
@@ -2076,15 +2381,25 @@ function WorkspacePage() {
                         : 'border-border text-text-secondary hover:text-text-primary hover:bg-bg-elevated'
                     }`}
                   >
-                    场景 {hasScenes && `(${data.scenes.length})`}
+                    场景 {hasScenes && `(${epScenes.length})`}
                   </button>
+                  {hasAnyEp && (
+                    <button
+                      type="button"
+                      onClick={() => void produce('character', extractPrompt)}
+                      className="ml-auto text-[11px] px-2.5 py-1 rounded border border-border bg-bg-elevated text-text-secondary hover:border-accent hover:text-accent transition inline-flex items-center gap-1"
+                      title={`重新从第 ${selectedEpisodeIndex} 集剧本提取(会覆盖本集已有角色/场景)`}
+                    >
+                      <RefreshCw size={11} /> 重新提取本集
+                    </button>
+                  )}
                 </div>
 
                 <div className="flex-1 overflow-y-auto min-h-0">
                   {charViewTab === 'scenes' ? (
                     hasScenes ? (
                       <div className="px-6 py-4 space-y-4">
-                        {data.scenes.map((s) => (
+                        {epScenes.map((s) => (
                           <div key={s.id} className="panel p-5 space-y-3">
                             <div className="flex items-center gap-2 flex-wrap">
                               <span className="font-mono text-xs text-text-muted">SC {s.index}</span>
@@ -2133,8 +2448,17 @@ function WorkspacePage() {
                         ))}
                       </div>
                     ) : (
-                      <div className="flex items-center justify-center h-full">
-                        <p className="text-text-muted text-sm">暂无场景数据，请先提取角色和场景。</p>
+                      <div className="flex flex-col items-center justify-center h-full gap-2">
+                        <p className="text-text-muted text-sm">第 {selectedEpisodeIndex} 集 暂无场景数据</p>
+                        {hasAnyEp && (
+                          <button
+                            type="button"
+                            onClick={() => void produce('character', extractPrompt)}
+                            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-accent-dim text-accent text-xs font-semibold hover:bg-accent hover:text-white transition"
+                          >
+                            <Sparkles size={11} /> 提取本集场景
+                          </button>
+                        )}
                       </div>
                     )
                   ) : hasChars ? (
@@ -2324,8 +2648,17 @@ function WorkspacePage() {
                       })()}
                     </div>
                   ) : (
-                    <div className="flex items-center justify-center h-full">
-                      <p className="text-text-muted text-sm">暂无角色数据，请先提取角色和场景。</p>
+                    <div className="flex flex-col items-center justify-center h-full gap-2">
+                      <p className="text-text-muted text-sm">第 {selectedEpisodeIndex} 集 暂无角色数据</p>
+                      {hasAnyEp && (
+                        <button
+                          type="button"
+                          onClick={() => void produce('character', extractPrompt)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-accent-dim text-accent text-xs font-semibold hover:bg-accent hover:text-white transition"
+                        >
+                          <Sparkles size={11} /> 提取本集角色
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -2338,23 +2671,58 @@ function WorkspacePage() {
             //  - 列:左 plot 描述 / 中 AI 字段 + 分镜图 / 右 视频占位
             //  - 数据源:data.storyboardGroups(由"进入分镜"按钮从当集剧情 AI 切分)
             //  - 每行可单独重新生成,也可一键整组生成
+            //  - 分镜组按集数过滤:只展示当前选中集的分镜。
             // ==============================================================
-            if (data.storyboardGroups.length === 0) {
+            const epGroups = data.storyboardGroups.filter((g) => g.episodeIndex === selectedEpisodeIndex)
+            const hasAnyEp = data.episodeTexts.some((e) => e.epIndex === selectedEpisodeIndex)
+            const hasEpChars = data.characters.some((c) => c.episodeIndex === selectedEpisodeIndex)
+            if (epGroups.length === 0) {
+              const needsChars = !hasEpChars && hasAnyEp
               return (
                 <div className="max-w-4xl mx-auto panel p-10 text-center space-y-3">
                   <Camera size={36} className="mx-auto text-text-muted" />
-                  <p className="text-text-secondary font-medium">还没有分镜</p>
-                  <p className="text-xs text-text-muted leading-relaxed">
-                    切到「角色」标签,点击右上角 <span className="text-accent font-semibold">进入分镜</span> 按钮,
-                    系统会把当集剧本发给 AI 切分成多组分镜,并按剧情 / 镜头自动生成多图融合的分镜图。
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setTab('character')}
-                    className="mt-2 inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-accent-dim text-accent text-sm font-semibold hover:bg-accent hover:text-white transition"
-                  >
-                    切到角色流程 →
-                  </button>
+                  <p className="text-text-secondary font-medium">第 {selectedEpisodeIndex} 集 还没有分镜</p>
+                  {hasAnyEp ? (
+                    <>
+                      <p className="text-xs text-text-muted leading-relaxed">
+                        {needsChars
+                          ? '本集还没有角色。先切到「角色」标签提取本集角色(角色和场景是分镜的素材),再回来点击下方按钮切分本集剧情为分镜组。'
+                          : '点击下方按钮,系统会把当集剧本发给 AI 切分成多组分镜,并按剧情 / 镜头自动生成多图融合的分镜图。'}
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => void runEnterStoryboard()}
+                        disabled={busyStoryboardGen || needsChars}
+                        className="mt-2 inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-accent-dim text-accent text-sm font-semibold hover:bg-accent hover:text-white transition disabled:opacity-40"
+                      >
+                        {busyStoryboardGen
+                          ? <><Loader2 size={13} className="animate-spin" /> AI 切分中…</>
+                          : <><Sparkles size={13} /> 进入第 {selectedEpisodeIndex} 集分镜</>}
+                      </button>
+                      {needsChars && (
+                        <button
+                          type="button"
+                          onClick={() => setTab('character')}
+                          className="block mx-auto text-[11px] text-text-muted hover:text-accent transition"
+                        >
+                          → 先去提取本集角色
+                        </button>
+                      )}
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-xs text-text-muted leading-relaxed">
+                        请先在「分集」标签生成第 {selectedEpisodeIndex} 集剧本,然后回来切分分镜。
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setTab('episodes')}
+                        className="mt-2 inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-accent-dim text-accent text-sm font-semibold hover:bg-accent hover:text-white transition"
+                      >
+                        切到分集剧本 →
+                      </button>
+                    </>
+                  )}
                 </div>
               )
             }
@@ -2362,7 +2730,7 @@ function WorkspacePage() {
               <div className="max-w-6xl mx-auto space-y-4">
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <h2 className="font-display text-lg font-bold inline-flex items-center gap-2">
-                    <Camera size={16} /> 分镜 · 第 {selectedEpisodeIndex} 集 · {data.storyboardGroups.length} 组
+                    <Camera size={16} /> 分镜 · 第 {selectedEpisodeIndex} 集 · {epGroups.length} 组
                   </h2>
                   <div className="flex items-center gap-2">
                     {busyStoryboardGen && (
@@ -2380,7 +2748,7 @@ function WorkspacePage() {
                     </button>
                   </div>
                 </div>
-                {data.storyboardGroups.map((g) => {
+                {epGroups.map((g) => {
                   const allShotsHaveImage = g.shots.every((s) => s.imageUrl)
                   const anyBusy = g.shots.some((s) => busyShotImages.has(`${g.id}::${s.id}`))
                   return (
@@ -2419,8 +2787,10 @@ function WorkspacePage() {
                             : <><Sparkles size={11} /> 一键生成全部</>}
                         </button>
                       </div>
-                      {/* 三列:左 plot / 中 分镜图 / 右 视频占位 */}
-                      <div className="grid grid-cols-1 md:grid-cols-[1.2fr_2fr_1fr] gap-3">
+                      {/* 四列:左 plot / 中-左 分镜图(2 列多行) / 中-右 故事板占位 / 右 视频占位
+                          比例:1.2 / 2 / 1.5 / 1 —— 分镜图占大头(2 列多行天然把行拉高),
+                          故事板留足未来空间,视频放最右。 */}
+                      <div className="grid grid-cols-1 md:grid-cols-[1.2fr_2fr_1.5fr_1fr] gap-3">
                         {/* 左:plot 描述(其实 header 已显示,这里给个折叠补充 + 角色列表) */}
                         <div className="rounded-lg border border-border bg-bg-base/40 p-3 space-y-2">
                           <div className="text-[10px] tracking-widest uppercase text-text-muted">剧情 · Plot</div>
@@ -2448,21 +2818,32 @@ function WorkspacePage() {
                             </div>
                           )}
                         </div>
-                        {/* 中:分镜图(g.shots 1~3 张) */}
+                        {/* 中-左:分镜图(锁死 2 列,shot 数 = 3 时变成 2 行,行天然变高) */}
                         <div className="rounded-lg border border-border bg-bg-base/40 p-3 space-y-2">
                           <div className="flex items-center justify-between">
                             <div className="text-[10px] tracking-widest uppercase text-text-muted">分镜图 · Shots ({g.shots.length})</div>
                             <div className="text-[10px] text-text-muted">多图融合:角色 + 场景</div>
                           </div>
-                          <div className={`grid gap-2 ${g.shots.length === 1 ? 'grid-cols-1' : g.shots.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
+                          <div className="grid grid-cols-2 gap-2 auto-rows-fr">
                             {g.shots.map((s) => {
                               const isBusy = busyShotImages.has(`${g.id}::${s.id}`)
+                              const shotImageKey = `${g.id}::${s.id}`
+                              // 优先用历史数组的最新一张;没历史才回落到 g.shots[i].imageUrl
+                              // (旧数据没有 shotImages,这条 fallback 让老数据继续能渲染)
+                              const generations = shotImages[shotImageKey]
+                              const currentUrl = generations && generations.length > 0
+                                ? generations[generations.length - 1]
+                                : s.imageUrl
                               return (
                                 <div key={s.id} className="rounded border border-border bg-bg-elevated overflow-hidden flex flex-col">
-                                  <div className="relative aspect-video bg-bg-base">
-                                    {s.imageUrl ? (
+                                  <div className="relative aspect-video bg-bg-base group">
+                                    {currentUrl ? (
                                       // eslint-disable-next-line @next/next/no-img-element
-                                      <img src={s.imageUrl} alt={s.action} className="absolute inset-0 w-full h-full object-cover" />
+                                      <img
+                                        src={currentUrl}
+                                        alt={s.action}
+                                        className="absolute inset-0 w-full h-full object-cover"
+                                      />
                                     ) : isBusy ? (
                                       <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 text-text-muted">
                                         <Loader2 size={20} className="animate-spin text-accent" />
@@ -2477,6 +2858,21 @@ function WorkspacePage() {
                                     <span className="absolute top-1.5 left-1.5 text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/60 text-white">
                                       {s.shotTypeLabel}
                                     </span>
+                                    {/* 放大按钮:有图时显示,hover 时露出。点击打开预览模态。 */}
+                                    {currentUrl && (
+                                      <button
+                                        type="button"
+                                        aria-label="放大查看分镜图"
+                                        onClick={() => {
+                                          setShotSelectedGenIdx(generations ? generations.length - 1 : 0)
+                                          setShotModInput('')
+                                          setShotPreview({ groupId: g.id, shotId: s.id })
+                                        }}
+                                        className="absolute top-1.5 right-1.5 p-1 rounded bg-black/60 text-white opacity-0 group-hover:opacity-100 transition hover:bg-black/80"
+                                      >
+                                        <Maximize2 size={12} />
+                                      </button>
+                                    )}
                                   </div>
                                   <div className="p-2 space-y-1">
                                     <p className="text-[11px] text-text-primary line-clamp-2 leading-snug">{s.action}</p>
@@ -2498,6 +2894,23 @@ function WorkspacePage() {
                               )
                             })}
                           </div>
+                        </div>
+                        {/* 中-右:故事板占位 —— 暂时不实现,留空间以后挂镜头时序 / 摄影表 / 动画参考等。
+                            视觉上跟视频占位对齐(同一种虚线框 + 小图标 + "未启用"提示),
+                            行为上是只读占位,不会有任何点击效果。 */}
+                        <div className="rounded-lg border border-border bg-bg-base/40 p-3 space-y-2">
+                          <div className="flex items-center justify-between">
+                            <div className="text-[10px] tracking-widest uppercase text-text-muted">故事板 · Storyboard</div>
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-elevated border border-border text-text-muted">未启用</span>
+                          </div>
+                          <div className="aspect-video rounded border border-dashed border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted">
+                            <FileText size={20} className="opacity-40" />
+                            <span className="text-[10px]">故事板占位</span>
+                            <span className="text-[9px] opacity-70">功能暂未开放</span>
+                          </div>
+                          <p className="text-[10px] text-text-muted leading-relaxed">
+                            未来会承载本组镜头的时序、摄影表、动画参考等扩展信息。当前版本留白,不参与生成。
+                          </p>
                         </div>
                         {/* 右:视频占位 */}
                         <div className="rounded-lg border border-border bg-bg-base/40 p-3 space-y-2">
@@ -2893,6 +3306,276 @@ function WorkspacePage() {
               </div>
             </aside>
           </>
+        )
+      })()}
+
+      {/* ============= 新增集数 对话框 =============
+          顶部下拉最底下的"+ 新增集数"触发。两条路径:
+          - AI 生成:走 runScriptEpisode 流式生成(已有集数作为上下文)
+          - 导入剧本:读 .txt/.md/.docx,内容直接当本集文本 */}
+      {addEpisodeOpen && (
+        <>
+          <div
+            className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
+            onClick={closeAddEpisodeDialog}
+            aria-hidden
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="新增集数"
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none"
+          >
+            <div
+              className="pointer-events-auto w-full max-w-md rounded-2xl border border-border bg-bg-surface shadow-2xl overflow-hidden"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="px-5 py-4 border-b border-border flex items-center justify-between">
+                <div>
+                  <div className="text-xs text-text-muted tracking-wide uppercase">新增集数</div>
+                  <div className="font-display text-base font-bold text-text-primary">
+                    第 {computeNextEpIndex()} 集
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={closeAddEpisodeDialog}
+                  disabled={addEpisodeImporting}
+                  className="p-1.5 rounded-md hover:bg-bg-elevated text-text-muted disabled:opacity-30 disabled:cursor-not-allowed"
+                  aria-label="关闭"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="p-5 space-y-3">
+                <p className="text-xs text-text-muted leading-relaxed">
+                  {data.episodeTexts.length > 0
+                    ? `将在已有 ${data.episodeTexts.length} 集基础上新增第 ${computeNextEpIndex()} 集,前面所有集数会作为 AI 生成的上下文。`
+                    : '从第 1 集开始你的剧本。AI 会以"通用剧情"理解(尚未生成梗概),效果可能一般;生成完后可在「剧本」标签补充梗概后重跑。'}
+                </p>
+                <div className="grid grid-cols-2 gap-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={() => void handleAddEpisodeAI()}
+                    disabled={addEpisodeImporting || episodeStreaming || synopsisStreaming}
+                    className="rounded-xl border border-accent bg-accent-dim hover:bg-accent hover:text-white text-accent px-3 py-4 text-sm font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed flex flex-col items-center justify-center gap-1.5"
+                  >
+                    <Sparkles size={18} />
+                    <span>AI 生成</span>
+                    <span className="text-[10px] font-normal opacity-80 leading-snug">按已有集数续写</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => addEpisodeFileInputRef.current?.click()}
+                    disabled={addEpisodeImporting}
+                    className="rounded-xl border border-border bg-bg-elevated hover:border-accent hover:text-accent text-text-secondary px-3 py-4 text-sm font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed flex flex-col items-center justify-center gap-1.5"
+                  >
+                    {addEpisodeImporting ? <Loader2 size={18} className="animate-spin" /> : <FileText size={18} />}
+                    <span>{addEpisodeImporting ? '读取中…' : '导入剧本'}</span>
+                    <span className="text-[10px] font-normal opacity-80 leading-snug">.txt / .md / .docx</span>
+                  </button>
+                </div>
+                <input
+                  ref={addEpisodeFileInputRef}
+                  type="file"
+                  accept=".txt,.md,.docx"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0]
+                    void handleAddEpisodeFilePicked(file)
+                  }}
+                />
+                <p className="text-[10px] text-text-muted leading-relaxed pt-1">
+                  提示:多集剧本的统一导入(替换整季)在右侧 AI 助手的「导入剧本」入口,会把全部内容按集拆开。
+                </p>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* ============= 分镜图 预览 / 修改模态 =============
+          跟人物卡片的 previewTarget 模态同一套思路:左侧历史缩略图、中间大图、
+          右侧镜头描述 + 修改意见输入 + 发送按钮。
+          触发:点 shot 缩略图右上角的"放大"按钮(generateShotImageForGroup 出图后
+          才会出现这个按钮)。 */}
+      {shotPreview && (() => {
+        const { groupId, shotId } = shotPreview
+        const group = data.storyboardGroups.find((gg) => gg.id === groupId)
+        const shot = group?.shots.find((s) => s.id === shotId)
+        if (!group || !shot) return null
+        const imageKey = `${groupId}::${shotId}`
+        const generations = shotImages[imageKey] ?? (shot.imageUrl ? [shot.imageUrl] : [])
+        const currentIdx = Math.min(shotSelectedGenIdx, Math.max(0, generations.length - 1))
+        const currentUrl = generations[currentIdx]
+        const cardTitle = `${shot.shotTypeLabel} · ${shot.action.slice(0, 24)}${shot.action.length > 24 ? '…' : ''}`
+        return (
+          <div
+            className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+            onClick={() => { setShotPreview(null); setShotModInput('') }}
+            role="dialog"
+            aria-modal="true"
+            aria-label="分镜图预览"
+          >
+            <div
+              className="relative bg-bg-surface border border-border rounded-2xl overflow-hidden shadow-2xl w-full max-w-[1280px] h-[88vh] flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Top bar */}
+              <div className="flex items-center justify-between px-4 py-2.5 border-b border-border shrink-0">
+                <div className="min-w-0">
+                  <div className="font-display text-base font-bold text-text-primary truncate">{cardTitle}</div>
+                  <div className="text-xs text-text-muted">第 {group.index} 组 · {shot.shotType} · 共 {generations.length} 张</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => { setShotPreview(null); setShotModInput('') }}
+                  className="p-1.5 rounded-md hover:bg-bg-elevated text-text-muted"
+                  aria-label="关闭"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[120px_1fr_360px] gap-3 p-3">
+                {/* Left: history thumbnails */}
+                <aside className="overflow-y-auto pr-1 space-y-2 min-h-0">
+                  <div className="text-[10px] text-text-muted px-1 pb-1 sticky top-0 bg-bg-surface">
+                    历史生成（{generations.length}）
+                  </div>
+                  {generations.length === 0 ? (
+                    <div className="aspect-video rounded border border-dashed border-border flex items-center justify-center text-[10px] text-text-muted text-center px-1">
+                      暂无图片
+                    </div>
+                  ) : (
+                    generations.map((u, i) => (
+                      <button
+                        key={`${u}-${i}`}
+                        type="button"
+                        onClick={() => setShotSelectedGenIdx(i)}
+                        className={`block w-full rounded border-2 overflow-hidden transition ${
+                          i === currentIdx ? 'border-accent' : 'border-border hover:border-accent/60'
+                        }`}
+                        title={`第 ${i + 1} 张`}
+                      >
+                        <div className="relative w-full aspect-video bg-bg-base">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={u}
+                            alt={`${cardTitle} #${i + 1}`}
+                            loading="lazy"
+                            className="absolute inset-0 w-full h-full object-cover"
+                          />
+                          {i === generations.length - 1 && (
+                            <span className="absolute top-1 left-1 px-1 py-0.5 rounded bg-accent text-accent-foreground text-[9px] font-semibold">
+                              NEW
+                            </span>
+                          )}
+                          <span className="absolute bottom-1 right-1 px-1 py-0.5 rounded bg-black/60 text-white text-[9px] tabular-nums">
+                            #{i + 1}
+                          </span>
+                        </div>
+                      </button>
+                    ))
+                  )}
+                </aside>
+
+                {/* Center: large image */}
+                <div className="relative bg-bg-base rounded-lg overflow-hidden flex items-center justify-center min-h-0">
+                  {currentUrl ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={currentUrl}
+                      alt={cardTitle}
+                      className="max-w-full max-h-full object-contain"
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center gap-2 text-text-muted">
+                      <ImageIcon size={40} className="opacity-50" />
+                      <p className="text-sm">还没有分镜图</p>
+                    </div>
+                  )}
+                  {shotModBusy && (
+                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                      <div className="flex flex-col items-center gap-2 text-white">
+                        <Loader2 size={32} className="animate-spin" />
+                        <span className="text-sm">正在按你的意见重生…</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Right: description + modify input */}
+                <div className="flex flex-col min-h-0 gap-3">
+                  <div className="flex-1 min-h-0 overflow-y-auto rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2">
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wide text-text-muted">当前选中</div>
+                      <div className="text-sm font-semibold text-text-primary mt-0.5">
+                        {currentUrl ? `第 ${currentIdx + 1} / ${generations.length} 张` : '未生成'}
+                      </div>
+                    </div>
+                    <dl className="space-y-1.5 text-xs">
+                      <div><dt className="text-text-muted">景别</dt><dd className="text-text-secondary">{shot.shotTypeLabel}（{shot.shotType}）</dd></div>
+                      <div><dt className="text-text-muted">动作</dt><dd className="text-text-secondary">{shot.action || '-'}</dd></div>
+                      {shot.camera && <div><dt className="text-text-muted">机位</dt><dd className="text-text-secondary">🎥 {shot.camera}</dd></div>}
+                    </dl>
+                    <div className="pt-1">
+                      <div className="text-[10px] uppercase tracking-wide text-text-muted">剧情</div>
+                      <p className="text-[11px] text-text-secondary leading-relaxed mt-0.5">{group.plotText}</p>
+                    </div>
+                    {group.characterIds.length > 0 && (
+                      <div className="pt-1">
+                        <div className="text-[10px] uppercase tracking-wide text-text-muted">涉及角色</div>
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {group.characterIds.map((cid) => {
+                            const ch = data.characters.find((c) => c.id === cid)
+                            return (
+                              <span key={cid} className="text-[10px] px-1.5 py-0.5 rounded border border-border bg-bg-elevated text-text-secondary">
+                                {ch?.name ?? cid}
+                              </span>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="shrink-0 rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2">
+                    <div className="text-xs text-text-secondary font-semibold">修改分镜图</div>
+                    <p className="text-[10px] text-text-muted leading-relaxed">
+                      AI 会保留当前镜头的:景别、构图、视角、风格。只改你描述的部分(角色表情、道具、光照等)。
+                    </p>
+                    <textarea
+                      value={shotModInput}
+                      onChange={(e) => setShotModInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                          e.preventDefault()
+                          void handleRegenShot()
+                        }
+                      }}
+                      placeholder="例如:让角色表情更紧张 / 把背景换成雨天 / 加一束侧逆光…"
+                      rows={4}
+                      disabled={shotModBusy || !currentUrl}
+                      className="w-full rounded-md bg-bg-elevated border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-none placeholder:text-text-muted disabled:opacity-50"
+                    />
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] text-text-muted">⌘/Ctrl + Enter 发送</span>
+                      <button
+                        type="button"
+                        onClick={() => void handleRegenShot()}
+                        disabled={shotModBusy || !shotModInput.trim() || !currentUrl}
+                        className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
+                      >
+                        {shotModBusy ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+                        {shotModBusy ? '生成中…' : '发送修改'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
         )
       })()}
     </div>

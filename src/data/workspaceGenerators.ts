@@ -19,6 +19,8 @@ export type GenCharacterLook = {
 }
 
 export type GenCharacter = {
+  /** 该角色所属的集数(从该集剧本中提取)。workspace 里"角色"tab 会按当前选中集过滤。 */
+  episodeIndex: number
   id: string
   name: string
   role: 'lead' | 'supporting' | 'villain'
@@ -44,6 +46,8 @@ export type GenCharacter = {
 }
 
 export type GenScene = {
+  /** 该场景所属的集数(从该集剧本中提取)。 */
+  episodeIndex: number
   id: string
   index: number
   slug: string // INT. LOCATION - DAY
@@ -107,6 +111,8 @@ export type StoryboardShot = {
 }
 
 export type StoryboardGroup = {
+  /** 该分镜组所属的集数(由 runEnterStoryboard 从当前选中的 episode 写入)。 */
+  episodeIndex: number
   id: string
   index: number
   plotText: string
@@ -179,6 +185,7 @@ export function generateOutline(): Outline {
 export function generateScript(): GenScene[] {
   return [
     {
+      episodeIndex: 1,
       id: 'sc-1',
       index: 1,
       slug: 'INT. 高三(2)班 自习室 — 黄昏',
@@ -192,6 +199,7 @@ export function generateScript(): GenScene[] {
       ],
     },
     {
+      episodeIndex: 1,
       id: 'sc-2',
       index: 2,
       slug: 'INT. 校园广播站 — 午间',
@@ -206,6 +214,7 @@ export function generateScript(): GenScene[] {
       ],
     },
     {
+      episodeIndex: 1,
       id: 'sc-3',
       index: 3,
       slug: 'EXT. 操场 — 同时',
@@ -220,6 +229,7 @@ export function generateScript(): GenScene[] {
       ],
     },
     {
+      episodeIndex: 1,
       id: 'sc-4',
       index: 4,
       slug: 'INT. 校园广播站 — 紧接上场',
@@ -240,6 +250,7 @@ export function generateScript(): GenScene[] {
 export function generateCharacters(): GenCharacter[] {
   return [
     {
+      episodeIndex: 1,
       id: 'gen-ch-linxia',
       name: '林夏',
       role: 'lead',
@@ -261,6 +272,7 @@ export function generateCharacters(): GenCharacter[] {
       ],
     },
     {
+      episodeIndex: 1,
       id: 'gen-ch-jiangye',
       name: '江野',
       role: 'lead',
@@ -282,6 +294,7 @@ export function generateCharacters(): GenCharacter[] {
       ],
     },
     {
+      episodeIndex: 1,
       id: 'gen-ch-mengmeng',
       name: '小萌',
       role: 'supporting',
@@ -302,6 +315,7 @@ export function generateCharacters(): GenCharacter[] {
       ],
     },
     {
+      episodeIndex: 1,
       id: 'gen-ch-zhouxue',
       name: '周学姐',
       role: 'villain',
