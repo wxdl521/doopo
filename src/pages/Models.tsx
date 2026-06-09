@@ -44,14 +44,19 @@ type VideoModel = {
 
 const VIDEO_MODELS: VideoModel[] = [
   {
-    id: 'minimax/minimax-i2v', name: 'MiniMax I2V', nameEn: 'MiniMax I2V',
-    vendor: 'MiniMax', tagline: '图像转视频', taglineEn: 'Image to Video',
+    id: 'doubao-seedance-2-0-260128', name: 'Doubao Seedance 2.0', nameEn: 'Doubao Seedance 2.0',
+    vendor: '火山方舟 · ARK', tagline: '多模态视频生成', taglineEn: 'Multimodal Video',
     gradient: 'from-fuchsia-500 to-pink-600', status: 'available',
   },
   {
-    id: 'minimax/minimax-t2v', name: 'MiniMax T2V', nameEn: 'MiniMax T2V',
-    vendor: 'MiniMax', tagline: '文字转视频', taglineEn: 'Text to Video',
+    id: 'doubao-seedance-1-0-pro-250528', name: 'Doubao Seedance 1.0 Pro', nameEn: 'Doubao Seedance 1.0 Pro',
+    vendor: '火山方舟 · ARK', tagline: '文生视频', taglineEn: 'Text to Video',
     gradient: 'from-rose-500 to-orange-600', status: 'available',
+  },
+  {
+    id: 'doubao-seedance-1-0-lite-i2v-250428', name: 'Doubao Seedance 1.0 Lite', nameEn: 'Doubao Seedance 1.0 Lite',
+    vendor: '火山方舟 · ARK', tagline: '图生视频', taglineEn: 'Image to Video',
+    gradient: 'from-violet-500 to-purple-700', status: 'available',
   },
 ]
 
@@ -68,14 +73,19 @@ type ImageModel = {
 
 const IMAGE_MODELS: ImageModel[] = [
   {
-    id: 'minimax/image-01', name: 'MiniMax Image-01', nameEn: 'MiniMax Image-01',
-    vendor: 'MiniMax', tagline: '超清图像生成', taglineEn: 'Ultra HD Image Gen',
+    id: 'doubao-seedream-5-0-260128', name: 'Doubao Seedream 5.0', nameEn: 'Doubao Seedream 5.0',
+    vendor: '火山方舟 · ARK', tagline: '文生图·图生图·多图融合', taglineEn: 'T2I · I2I · Multi-Image Fusion',
     gradient: 'from-amber-500 to-yellow-600', status: 'available',
   },
   {
-    id: 'recraft/recraft-v3', name: 'Recraft V3', nameEn: 'Recraft V3',
-    vendor: 'Recraft', tagline: '矢量图·风格化', taglineEn: 'Vector · Stylized',
+    id: 'qwen-image-2.0', name: 'Qwen Image 2.0', nameEn: 'Qwen Image 2.0',
+    vendor: '通义千问 · Legacy', tagline: 'T2I 兜底层', taglineEn: 'T2I · Legacy Fallback',
     gradient: 'from-emerald-500 to-green-600', status: 'available',
+  },
+  {
+    id: 'wan2.6-t2i', name: '万相 2.6', nameEn: 'Wan 2.6',
+    vendor: '阿里万相 · Legacy', tagline: '文生图兜底层', taglineEn: 'T2I · Legacy Fallback',
+    gradient: 'from-cyan-500 to-blue-600', status: 'available',
   },
 ]
 

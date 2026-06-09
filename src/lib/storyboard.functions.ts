@@ -1,26 +1,32 @@
 // ====================================================================
 //  分镜(server) —— 剧情 → 分镜组 → 多图融合 → 分镜图
 //
-//  包含两个 server function:
+//  包含三个 server function:
 //
 //  1) generateStoryboardFromPlot
 //     - 输入:当集剧情文本 + 角色摘要 + 场景摘要 + 项目风格
 //     - 输出:多组 StoryboardGroup(每组 1~3 个镜头,带 startSec/endSec/
-//       shotType/action/camera 等字段)。文本任务,走 **DashScope Qwen**
+//       shotType/action/camera 等字段)。**文本任务**,走 DashScope Qwen
 //       (qwen3.6-flash,跟图片生成共用同一个 Qwen API key,稳定性高)。
 //       之前用 OpenRouter + gemini-2.5-flash fallback,经常在 google 上
 //       报 4xx / 5xx,改回 Qwen 之后稳定。
 //
 //  2) generateStoryboardShotImage
 //     - 输入:单组 plot 文本 + 角色图片 URL 数组 + 场景图片 URL + 镜头信息
-//     - 输出:多图融合生成的分镜图 URL(I2I,qwen-image-2.0-pro)
-//     - 关键:走 DashScope multimodal-generation 端点,
-//       messages[0].content = [角色图1, 角色图2, ..., 场景图, 文字指令]
-//       模型把多个参考图按文字指令融合成最终分镜。
+//     - 输出:多图融合生成的分镜图 URL(I2I)
+//     - 关键:**2026 重构**走 seedream.functions.ts:generateStoryboardShotImage
+//       (POST {ARK_BASE_URL}/images/generations,image 字段 = string[])
+//       模型把多个参考图按文字指令融合成最终分镜。提示词 builder 已搬到
+//       seedream.functions.ts,这里只保留 Zod schema 和委托入口。
 //
-//  这两个函数对应 workspace UI 的两个动作:
+//  3) regenerateStoryboardShot
+//     - 跟 2) 同结构,但图 1 永远是当前分镜图(referenceImageUrl),
+//       角色/场景参考随后。委托给 seedream.functions.ts:regenerateStoryboardShot。
+//
+//  这三个函数对应 workspace UI 的三个动作:
 //   - "把当集剧情发给 AI,生成多行分镜组"
 //   - "对每个镜头点击生成 / 自动生成,产出分镜图"
+//   - "对已生成的镜头,按用户意见重生"
 // ====================================================================
 
 import { createServerFn } from '@tanstack/react-start'
@@ -334,9 +340,10 @@ function extractJsonBlock(s: string): string {
 
 // --------------------------------------------------------------------
 // 2) generateStoryboardShotImage —— 多图融合(I2I)
-//    输入:plotText + 角色图片 URL 数组 + 场景图片 URL + 镜头信息
-//    走 qwen-image-2.0-pro 多模态生成端点,content 数组里放 N 张参考图
-//    + 1 段融合指令文字,模型把多张参考图按指令融合成最终分镜。
+//
+//    2026 重构:实际调用搬到 seedream.functions.ts,这里只保留 Zod schema
+//    和委托入口。提示词 builder 集中在 seedream.functions.ts:buildShotInstruction。
+//    Seedream 的 image 字段接受 string[],对应 N 张参考图。
 // --------------------------------------------------------------------
 
 const ShotInput = z.object({
@@ -355,7 +362,7 @@ const ShotInput = z.object({
   sceneTimeOfDay: z.string().max(50).default(''),
   // 视觉风格
   projectStyle: z.string().max(50).optional(),
-  // 模型(默认 qwen-image-2.0-pro)
+  // 模型(默认 doubao-seedream-5-0-260128,由 seedream 模块解析)
   model: z.string().max(100).optional(),
 })
 
@@ -364,180 +371,17 @@ export type GenerateStoryboardShotInput = z.infer<typeof ShotInput>
 export const generateStoryboardShotImage = createServerFn({ method: 'POST' })
   .inputValidator((d: unknown) => ShotInput.parse(d))
   .handler(async ({ data }) => {
-    const { resolveProjectStyle, resolveI2IModel } = await import('./visualStyles')
-    const styleSpec = resolveProjectStyle(data.projectStyle)
-
-    // ---- 构造 reference 图数组(content 的 image 元素)----
-    // 顺序约定:先所有角色图,再场景图。prompt 里会显式说"图1..N 是 X,图 N+1 是场景"。
-    const refImages: { image: string }[] = []
-    const nameForIdx: string[] = []
-    data.characterImageUrls.forEach((url, i) => {
-      if (url) {
-        refImages.push({ image: url })
-        nameForIdx.push(data.characterNames[i] || `角色${i + 1}`)
-      }
-    })
-    if (data.sceneImageUrl) {
-      refImages.push({ image: data.sceneImageUrl })
-    }
-
-    // 至少要有一张参考图;没有就报错(走 T2I 模式也没意义 —— 分镜必须有人物 / 场景)
-    if (!refImages.length) {
-      return { ok: false as const, error: '缺少参考图(至少需要一张角色图或场景图)' }
-    }
-    // ⚠️ qwen-image-2.0-pro 端点硬限制:content 数组里 image 元素最多 3 张
-    //    (0 张 = T2I,1~3 张 = I2I)。客户端应该已经限好,这里再守一道。
-    if (refImages.length > 3) {
-      return {
-        ok: false as const,
-        error: `参考图过多(${refImages.length} 张,qwen-image-2.0-pro 最多 3 张)。请减少该分镜涉及的角色数(≤2)或分批生成分镜图。`,
-      }
-    }
-
-    // ---- 拼融合指令 ----
-    const charRefs = data.characterImageUrls.length
-      ? data.characterImageUrls
-          .map((_, i) => `图${i + 1} = 「${data.characterNames[i] || `角色${i + 1}`}」`)
-          .join(', ')
-      : ''
-    const sceneRef = data.sceneImageUrl
-      ? `图${data.characterImageUrls.length + 1} = 场景(${data.sceneLocation || '当前场景'}${data.sceneTimeOfDay ? ' / ' + data.sceneTimeOfDay : ''})`
-      : ''
-
-    const instruction = [
-      `[任务] 生成一张「${data.shotTypeLabel}」分镜图,严格按下面的融合规则。`,
-      ``,
-      `[剧情上下文] ${data.plotText}`,
-      `[本镜头] ${data.shotType} ${data.shotTypeLabel} —— ${data.action}`,
-      data.camera ? `[机位] ${data.camera}` : '',
-      ``,
-      `[参考图清单(严格按下面的对应关系使用)]`,
-      charRefs,
-      sceneRef,
-      ``,
-      `[融合规则]`,
-      data.characterImageUrls.length
-        ? `1. 图1..N 是角色形象参考,这些角色的脸/身材/衣服必须与参考图保持一致,不得替换、不得"换脸"。`
-        : `1. 本镜头没有角色,纯场景。`,
-      data.sceneImageUrl
-        ? `2. 场景构图、空间布局、光照氛围请以场景参考图为准,本镜头发生在这个场景内。`
-        : `2. 没有场景参考,根据剧情推断合理的环境。`,
-      `3. 这是 ${data.shotTypeLabel} 镜头:`,
-      data.shotType === 'WS'
-        ? `   - 远景:人物在画面中占比较小,环境占据画面主体;展示空间感、地理关系、整体氛围。`
-        : data.shotType === 'MS'
-          ? `   - 中景:人物从膝盖以上,展示肢体语言和主要动作;既能看到人物也能看到周围环境。`
-          : data.shotType === 'CU'
-            ? `   - 近景:人物胸部以上,重点是表情、眼神、情绪;环境退到背景。`
-            : data.shotType === 'ECU'
-              ? `   - 特写:画面聚焦在某个细节(眼睛、嘴唇、手、道具),情绪张力最强。`
-              : `   - 过肩:从某人肩膀后面拍另一人,常用于对话场景,有空间纵深。`,
-      `4. 画面必须是单张分镜图,不能有面板分割、文字、标号。`,
-      `5. 风格必须匹配项目视觉风格:${styleSpec.label} —— ${styleSpec.positive}`,
-      `6. 角色动作 / 表情 / 视线方向严格按本镜头的"${data.action}"执行。`,
-    ].filter(Boolean).join('\n')
-
-    // ---- negative_prompt ----
-    const negativePrompt = [
-      // 风格漂移
-      'different art style, style drift, photorealistic when input is anime, anime when input is realistic, different medium, different line treatment, different color grading',
-      // 不要面板 / 文字 / 水印
-      'multiple panels, panel, grid, storyboard template, before/after, comparison, text, watermark, logo, signature, label, caption, annotation, arrow, callout',
-      // 角色不一致(换脸 / 换衣服)
-      'different face, different face shape, different eye shape, different eye color, different nose, different mouth, different eyebrows, different skin tone, different hairstyle, different hair color, different hair length, different outfit, different clothing color, different accessories, different age',
-      // 构图:分镜偶尔也会出"半身 / 切脚"
-      'medium shot when shot type is full body, close-up when shot type is mid, headshot, bust, half body, cropped at feet, missing feet, missing legs',
-      // 摄像机角度(分镜要稳)
-      'extreme low angle, worm\'s eye view, hero shot, extreme dutch angle, fisheye, wide-angle distortion',
-      // 杂项
-      'extra people, bystander, crowd, extra limbs, deformed hands, extra fingers, blurred face, low quality',
-    ].join(', ')
-
-    // ---- 调 Qwen multimodal-generation 端点 ----
-    const apiKey = process.env.Qwen || process.env.DASHSCOPE_API_KEY
-    if (!apiKey) return { ok: false as const, error: 'Qwen API key not configured' }
-    const model = resolveI2IModel(data.model || 'qwen-image-2.0-pro')
-
-    // 画幅:分镜用 16:9 / 3:2 横版,默认 1024*1024(模型支持的范围)
-    // 后续可以根据 shotType 选不同比例(特写可以方 / 中远可以横),这里先统一
-    const size = '1024*1024'
-
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 120_000)
-    let res: Response
-    try {
-      res = await fetch(
-        'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            model,
-            input: {
-              messages: [
-                {
-                  role: 'user',
-                  content: [
-                    // 多张参考图(图1 = 角色1, 图2 = 角色2, ..., 图N = 场景)
-                    ...refImages,
-                    // 融合指令
-                    { text: instruction },
-                  ],
-                },
-              ],
-            },
-            parameters: {
-              n: 1,
-              negative_prompt: negativePrompt,
-              // I2I 模式关掉自动 prompt 扩展(我们要的是严格按指令融合)
-              prompt_extend: false,
-              watermark: false,
-              size,
-            },
-          }),
-          signal: controller.signal,
-        },
-      )
-    } catch (e) {
-      clearTimeout(timeout)
-      const msg = e instanceof Error ? e.message : 'unknown'
-      const isAbort = e instanceof Error && e.name === 'AbortError'
-      return { ok: false as const, error: isAbort ? 'AI 处理超时(>120s)' : `请求失败: ${msg}` }
-    }
-    clearTimeout(timeout)
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => '')
-      if (res.status === 401) return { ok: false as const, error: 'Qwen auth failed (401)' }
-      if (res.status === 402) return { ok: false as const, error: 'no_credits' }
-      if (res.status === 429) return { ok: false as const, error: 'rate_limit' }
-      return { ok: false as const, error: `Qwen ${res.status}: ${text.slice(0, 300)}` }
-    }
-
-    const json = (await res.json()) as {
-      output?: { choices?: Array<{ message?: { content?: Array<{ image?: string; type?: string }> } }> }
-      message?: string
-    }
-    const url = json.output?.choices?.[0]?.message?.content?.[0]?.image
-    if (!url) {
-      return { ok: false as const, error: json.message || 'Qwen 未返回图片 URL' }
-    }
-    return { ok: true as const, url, model }
+    // 动态 import 避免循环引用
+    const { generateStoryboardShotImage: seedreamImpl } = await import('./seedream.functions')
+    return seedreamImpl({ data } as any)
   })
 
 // --------------------------------------------------------------------
 // 3) regenerateStoryboardShot —— 按修改意见重生分镜图
-//    跟 generateStoryboardShotImage 几乎同结构,但有两个关键差别:
-//      a) 把 referenceImageUrl(当前那一张)放在 content 数组**第一位**,作为
-//         "要被改的图";角色图、场景图随后作为"风格/构图"参考。prompt 显式说
-//         "图1 是要修改的当前镜头,图 2..N 是角色/场景参考,按用户意见只改图1"。
-//      b) prompt 里追加 `userInstruction`,告诉模型"只按用户意见改,不要乱动
-//         没提到的部分(景别、构图、风格)"。
-//    这样在视觉上和"按意见重生角色"完全对齐:用户进预览 → 输意见 → 发送 →
-//    卡片封面换新图,history 数组多一张。
+//
+//    2026 重构:同 2),委托给 seedream.functions.ts:regenerateStoryboardShot。
+//    关键差别:图 1 永远是 referenceImageUrl(当前镜头),Seedream 端通过
+//    seedream.functions.ts 内部处理。
 // --------------------------------------------------------------------
 
 const RegenShotInput = z.object({
@@ -565,136 +409,7 @@ export type RegenerateStoryboardShotInput = z.infer<typeof RegenShotInput>
 export const regenerateStoryboardShot = createServerFn({ method: 'POST' })
   .inputValidator((d: unknown) => RegenShotInput.parse(d))
   .handler(async ({ data }) => {
-    const { resolveProjectStyle, resolveI2IModel } = await import('./visualStyles')
-    const styleSpec = resolveProjectStyle(data.projectStyle)
-    const model = resolveI2IModel(data.model || 'qwen-image-2.0-pro')
-
-    // ---- 构造 reference 图数组(content 的 image 元素)----
-    // 关键差异:图 1 永远是 referenceImageUrl(当前镜头),后面才是角色/场景参考。
-    // qwen-image-2.0-pro 端点硬限制 ≤ 3 张,所以角色/场景参考要截断。
-    const refImages: { image: string }[] = [{ image: data.referenceImageUrl }]
-    const charCount = data.characterImageUrls.length
-    // 剩余槽位 = 3 - 1(refImage) - (sceneImageUrl ? 1 : 0)
-    const hasScene = !!data.sceneImageUrl
-    const maxChars = Math.max(0, 3 - 1 - (hasScene ? 1 : 0))
-    const usedCharCount = Math.min(charCount, maxChars)
-    for (let i = 0; i < usedCharCount; i++) {
-      const url = data.characterImageUrls[i]
-      if (url) refImages.push({ image: url })
-    }
-    if (hasScene) {
-      refImages.push({ image: data.sceneImageUrl! })
-    }
-
-    // ---- 拼按意见修改的指令 ----
-    // 关键差别 vs 首次生成:prompt 强调"图1 是当前镜头,只按用户意见改,角色/场景
-    // 参考用来锁定脸/衣服/构图"。否则模型会把它当成普通的"多图融合"任务,
-    // 重新构图而不是"修改"。
-    const charRefs = usedCharCount > 0
-      ? usedCharCount === 1
-        ? `图2 = 「${data.characterNames[0] || '角色'}」(脸/衣服锁定)`
-        : `图2..${1 + usedCharCount} = ${usedCharCount} 个角色(脸/衣服锁定)`
-      : ''
-    const sceneRef = hasScene
-      ? `图${1 + usedCharCount + 1} = 场景(${data.sceneLocation || '当前场景'}${data.sceneTimeOfDay ? ' / ' + data.sceneTimeOfDay : ''})`
-      : ''
-
-    const instruction = [
-      `[任务] 修改「图1」(当前分镜镜头),严格按下面的"修改意见"调整,只改用户提到的部分。`,
-      ``,
-      `[修改意见] ${data.userInstruction}`,
-      ``,
-      `[剧情上下文] ${data.plotText}`,
-      `[本镜头] ${data.shotType} ${data.shotTypeLabel} —— ${data.action}`,
-      data.camera ? `[机位] ${data.camera}` : '',
-      ``,
-      `[参考图清单(严格按下面的对应关系使用)]`,
-      `图1 = 当前分镜镜头(要被修改的)`,
-      charRefs,
-      sceneRef,
-      ``,
-      `[修改规则 — 必须遵守]`,
-      `1. 以图1为基础,在它的构图 / 景别 / 风格上修改,**不要重新构图或换景别**。`,
-      `2. 只调整"修改意见"里明确提到的元素;没提到的部分(角色脸/衣服、场景、构图、视角、风格)全部保留图1的样子。`,
-      `3. ${usedCharCount > 0 ? `图 2..N 的角色是参考,他们的脸/身材/衣服必须跟图1 一致(不能换脸)。` : '本镜头没有角色参考,只改场景/构图相关的部分。'}`,
-      hasScene ? `4. 场景构图 / 光照沿用图1 当前的样子(场景参考图只是兜底,跟图1 冲突时以图1 为准)。` : '',
-      `5. 保持单张分镜图,不能有面板分割、文字、标号。`,
-      `6. 风格:${styleSpec.label} —— ${styleSpec.positive}`,
-    ].filter(Boolean).join('\n')
-
-    const negativePrompt = [
-      'different art style, style drift, photorealistic when input is anime, anime when input is realistic, different medium, different line treatment, different color grading',
-      'multiple panels, panel, grid, storyboard template, before/after, comparison, text, watermark, logo, signature, label, caption, annotation, arrow, callout',
-      'different face, different face shape, different eye shape, different eye color, different nose, different mouth, different eyebrows, different skin tone, different hairstyle, different hair color, different hair length, different outfit, different clothing color, different accessories',
-      'medium shot when shot type is full body, close-up when shot type is mid, headshot, bust, half body, cropped at feet, missing feet, missing legs',
-      'extreme low angle, worm\'s eye view, hero shot, extreme dutch angle, fisheye, wide-angle distortion',
-      'extra people, bystander, crowd, extra limbs, deformed hands, extra fingers, blurred face, low quality',
-    ].join(', ')
-
-    // ---- 调 Qwen multimodal-generation 端点 ----
-    const apiKey = process.env.Qwen || process.env.DASHSCOPE_API_KEY
-    if (!apiKey) return { ok: false as const, error: 'Qwen API key not configured' }
-    const size = '1024*1024'
-
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 120_000)
-    let res: Response
-    try {
-      res = await fetch(
-        'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation',
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${apiKey}`,
-          },
-          body: JSON.stringify({
-            model,
-            input: {
-              messages: [
-                {
-                  role: 'user',
-                  content: [
-                    ...refImages,
-                    { text: instruction },
-                  ],
-                },
-              ],
-            },
-            parameters: {
-              n: 1,
-              negative_prompt: negativePrompt,
-              prompt_extend: false,
-              watermark: false,
-              size,
-            },
-          }),
-          signal: controller.signal,
-        },
-      )
-    } catch (e) {
-      clearTimeout(timeout)
-      const msg = e instanceof Error ? e.message : 'unknown'
-      const isAbort = e instanceof Error && e.name === 'AbortError'
-      return { ok: false as const, error: isAbort ? 'AI 处理超时(>120s)' : `请求失败: ${msg}` }
-    }
-    clearTimeout(timeout)
-
-    if (!res.ok) {
-      const text = await res.text().catch(() => '')
-      if (res.status === 401) return { ok: false as const, error: 'Qwen auth failed (401)' }
-      if (res.status === 402) return { ok: false as const, error: 'no_credits' }
-      if (res.status === 429) return { ok: false as const, error: 'rate_limit' }
-      return { ok: false as const, error: `Qwen ${res.status}: ${text.slice(0, 300)}` }
-    }
-
-    const json = (await res.json()) as {
-      output?: { choices?: Array<{ message?: { content?: Array<{ image?: string; type?: string }> } }> }
-      message?: string
-    }
-    const url = json.output?.choices?.[0]?.message?.content?.[0]?.image
-    if (!url) {
-      return { ok: false as const, error: json.message || 'Qwen 未返回图片 URL' }
-    }
-    return { ok: true as const, url, model }
+    // 动态 import 避免循环引用
+    const { regenerateStoryboardShot: seedreamImpl } = await import('./seedream.functions')
+    return seedreamImpl({ data } as any)
   })

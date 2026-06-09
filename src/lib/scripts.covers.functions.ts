@@ -1,7 +1,7 @@
 import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
 import { requireSupabaseAuth } from '@/integrations/supabase/auth-middleware'
-import { generateImage } from './openrouterImage.functions'
+import { generateImage } from './seedream.functions'
 
 /**
  * Server-side: generate a script cover with the configured image model,
@@ -28,7 +28,11 @@ export const uploadScriptCover = createServerFn({ method: 'POST' })
     // 1) Generate the image. We use the existing generateImage server fn
     //    rather than calling Qwen directly, so model selection / fallbacks
     //    stay in one place.
-    const generated = await generateImage({ data: { prompt, size: '1328*1328' } })
+    // 2026 修复:老代码传 '1328*1328'(legacy Qwen 尺寸)给 Seedream,被拒
+    // "size must be one of 'WIDTHxHEIGHT', '2k', '3k', or '4k'" —— Seedream 不
+    // 接受星号分隔的 WxH。改用 '2K'(自动满足 3.68MP 像素下限,且为方
+    // 形适合封面)。
+    const generated = await generateImage({ data: { prompt, size: '2K' } })
     const sourceUrl = generated?.url
     if (!sourceUrl) {
       return { url: '', error: generated?.error || 'image generation failed' }

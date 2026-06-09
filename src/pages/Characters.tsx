@@ -3,7 +3,7 @@ import { Loader2, Sparkles, Send, Download, Palette, BookOpen, Star, Shirt, Smil
 import { useServerFn } from '@tanstack/react-start'
 import { useLanguage } from '../i18n/LanguageContext'
 import { generateScript } from '../lib/openrouter.functions'
-import { generateImage } from '../lib/openrouterImage.functions'
+import { generateImage } from '../lib/seedream.functions'
 import { IMAGE_MODELS } from '../lib/imageModels'
 
 type Tab = 'front' | 'side' | 'back' | 'expression' | 'accessory'

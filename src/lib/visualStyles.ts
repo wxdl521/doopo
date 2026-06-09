@@ -114,75 +114,69 @@ export function resolveProjectStyle(projectStyle: string | null | undefined): Vi
 }
 
 // ============================================================================
-// Qwen / DashScope 模型解析
+// 模型解析 —— 2026 Seedream 迁移后
 // ============================================================================
 //
-// 历史背景:NewProjectDialog 早先把 sceneModel 默认值设成 `qwen-image-max`,
-// 但用户订阅里**没有** qwen-image-max(qwen.md 里可用的是 qwen-image-2.0 /
-// 2.0-pro / wan2.7-image / wan2.7-image-pro)。老项目里 sceneModel 是
-// `qwen-image-max` 会直接被 DashScope 400 掉("url error, please check url")。
+// 历史背景(2026 之前):NewProjectDialog 早先把 sceneModel 默认值设成
+// `qwen-image-max`,但用户订阅里没有 qwen-image-max(qwen.md 里可用的是
+// qwen-image-2.0 / 2.0-pro / wan2.7-image / wan2.7-image-pro)。老项目里
+// sceneModel 是 `qwen-image-max` 会直接被 DashScope 400 掉。
 //
-// ⚠️ `qwen-image-2.0-pro` **不是** T2I 模型:它是 I2I-only 的图生图模型,
-// 文档里(qwen.md 第 337-388 行)只在 `multimodal-generation/generation`
-// 端点 + `messages[0].content[0].image` 形式出现。如果把 `qwen-image-2.0-pro`
-// 当 T2I 打到 `text2image/image-synthesis`(无 image URL),DashScope 也会
-// 返回 400 "url error, please check url" —— 和 `qwen-image-max` 同款症状。
-// 所以 `qwen-image-2.0-pro` 只能放在 VALID_I2I_MODELS,不能放 VALID_T2I_MODELS。
+// 2026 之后:默认走火山方舟 ARK 的 Doubao Seedream(`doubao-seedream-5-0-260128`),
+// 统一支持 T2I + I2I(没有 qwen-image-2.0-pro 那种"I2I-only"坑)。
+// legacy Qwen / Wan 仍作为用户手动兜底层保留。
 //
 // `resolveImageModel` 在调用前把无效/已弃用的 model 映射到实际可用的等价物,
 // 同时区分 T2I(只吃文本)和 I2I(吃图+文本)两种用途。
-//
 // ============================================================================
 
-/** 已知会 400 的旧/无效 T2I model 列表 */
+/** Seedream 默认 model(同时支持 T2I 和 I2I) */
+const SEEDREAM_DEFAULT = 'doubao-seedream-5-0-260128'
+const SEEDREAM_I2I_DEFAULT = 'doubao-seedream-5-0-260128'
+
+/** 已知会 400 的旧/无效 T2I model 列表(Qwen 时期遗物) */
 const DEPRECATED_T2I_MODELS = new Set<string>([
   'qwen-image-max',
   'qwen-image-max-2025-12-30',
   'qwen-image-2.0-pro',
   'qwen-image-2.0-pro-2026-04-22',
   'qwen-image-2.0-pro-2026-03-03',
-  // 其他可能已下线的别名留位置
 ])
 
-/** 该用户的 T2I 可用 model(根据 docs/qwen.md 列出) */
+/** 该用户的 T2I 可用 model(Seedream + Qwen/Wan 兜底) */
 const VALID_T2I_MODELS = new Set<string>([
+  SEEDREAM_DEFAULT,
   'qwen-image-2.0',
   'wan2.7-image',
   'wan2.7-image-pro',
 ])
 
-/**
- * I2I(图生图,multimodal-generation 端点)可用的 model。
- * qwen-image-2.0-pro 和 wan2.7-image-pro 同时支持 T2I 和 I2I。
- * qwen-image-max 之类只支持 T2I,不能用于 I2I。
- */
+/** I2I(图生图)可用的 model(Seedream 默认) */
 const VALID_I2I_MODELS = new Set<string>([
+  SEEDREAM_I2I_DEFAULT,
   'qwen-image-2.0-pro',
   'wan2.7-image-pro',
 ])
 
 /**
  * 把 sceneModel 解析成 T2I 可用的 model。
- * 找不到 / 已知无效 / I2I-only → fallback 到 `qwen-image-2.0`(订阅里真正支持 T2I 的 Qwen 模型)。
- *
- * 注意:**不能** fallback 到 `qwen-image-2.0-pro`,它是 I2I-only,会被 DashScope
- * 400 "url error, please check url"。
+ * 找不到 / 已知无效 / I2I-only → fallback 到 Seedream 默认。
  */
 export function resolveT2IModel(sceneModel: string | null | undefined): string {
   const m = (sceneModel || '').trim()
-  if (!m) return 'qwen-image-2.0'
-  if (DEPRECATED_T2I_MODELS.has(m)) return 'qwen-image-2.0'
+  if (!m) return SEEDREAM_DEFAULT
+  if (DEPRECATED_T2I_MODELS.has(m)) return SEEDREAM_DEFAULT
   if (VALID_T2I_MODELS.has(m)) return m
   // 未知 model:保守 fallback,不在服务器上乱试
-  return 'qwen-image-2.0'
+  return SEEDREAM_DEFAULT
 }
 
 /**
- * 把 sceneModel 解析成 I2I 可用的 model(强制是订阅里能 I2I 的)。
- * 找不到 / 已知无效 / 只支持 T2I 的 → fallback 到 `qwen-image-2.0-pro`。
+ * 把 sceneModel 解析成 I2I 可用的 model。
+ * 找不到 / 已知无效 / 只支持 T2I 的 → fallback 到 Seedream 默认(I2I 兼容)。
  */
 export function resolveI2IModel(sceneModel: string | null | undefined): string {
   const m = (sceneModel || '').trim()
   if (VALID_I2I_MODELS.has(m)) return m
-  return 'qwen-image-2.0-pro'
+  return SEEDREAM_I2I_DEFAULT
 }

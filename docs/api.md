@@ -101,11 +101,13 @@ handler 为 **async generator**，前端以异步迭代消费 `{ delta?, done?, 
 
 | 服务 | 端点 | 用途 | 凭据 |
 |---|---|---|---|
-| OpenRouter | `POST https://openrouter.ai/api/v1/chat/completions` | 文本 / 工具调用 / 图像兜底 | `OPENROUTER_API_KEY` |
-| DashScope 异步图像 | `POST https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis`（`X-DashScope-Async: enable`） | qwen-image-* / wan* 提交任务 | `Qwen` 或 `DASHSCOPE_API_KEY` |
-| DashScope 任务查询 | `GET https://dashscope.aliyuncs.com/api/v1/tasks/{task_id}` | 轮询任务结果 | 同上 |
-| DashScope 多模态同步 | `POST .../aigc/multimodal-generation/generation` | 部分 wan 同步模型 | 同上 |
-| Lovable AI Gateway | `POST https://ai.gateway.lovable.dev/v1/chat/completions` | Gemini 图像兜底 | `LOVABLE_API_KEY` |
+| **火山方舟 ARK · Seedream (主力)** | `POST {ARK_BASE_URL}/images/generations` | 图像生成(T2I / 单图 I2I / 多图融合 / 多参考图组) | `ARK_API_KEY` |
+| **火山方舟 ARK · Seedance (视频)** | `POST {ARK_BASE_URL}/contents/generations/tasks` | 视频生成提交(异步) | 同上 |
+| **火山方舟 ARK · Seedance 轮询** | `GET {ARK_BASE_URL}/contents/generations/tasks/{id}` | 视频任务状态查询 | 同上 |
+| DashScope 异步图像 (legacy) | `POST https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis`（`X-DashScope-Async: enable`） | qwen-image-* / wan* 提交任务(用户手动选的 legacy 兜底) | `Qwen` 或 `DASHSCOPE_API_KEY` |
+| DashScope 任务查询 (legacy) | `GET https://dashscope.aliyuncs.com/api/v1/tasks/{task_id}` | 轮询任务结果 | 同上 |
+| DashScope 多模态同步 (legacy) | `POST .../aigc/multimodal-generation/generation` | 旧 I2I 路径 | 同上 |
+| OpenRouter (legacy, 已退役) | `POST https://openrouter.ai/api/v1/chat/completions` | 2026 迁移后不再使用 | `OPENROUTER_API_KEY` |
 | Supabase | PostgREST / Auth | 业务数据读写 | publishable + 用户 JWT；服务端任务用 `service_role` |
 
 ---
@@ -114,9 +116,11 @@ handler 为 **async generator**，前端以异步迭代消费 `{ delta?, done?, 
 
 | 变量 | 用途 |
 |---|---|
-| `OPENROUTER_API_KEY` | OpenRouter 文本/图像 |
-| `Qwen` / `DASHSCOPE_API_KEY` | 阿里 DashScope（通义千问、Wan） |
-| `LOVABLE_API_KEY` | Lovable AI Gateway（图像兜底） |
+| `ARK_API_KEY` | 火山方舟 ARK(Seedream 图像 + Seedance 视频,主力) |
+| `ARK_BASE_URL` | 火山方舟 API 基础 URL(默认 `https://ark.cn-beijing.volces.com/api/v3`) |
+| `ARK_IMAGE_MODEL` | 默认图像模型(默认 `doubao-seedream-5-0-260128`) |
+| `ARK_VIDEO_MODEL` | 默认视频模型(默认 `doubao-seedance-2-0-260128`) |
+| `Qwen` / `DASHSCOPE_API_KEY` | 阿里 DashScope(通义千问文本 + 图像 legacy 兜底) |
 | `SUPABASE_URL` / `SUPABASE_PUBLISHABLE_KEY` / `SUPABASE_SERVICE_ROLE_KEY` | Supabase 服务端 |
 | `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY` | 浏览器 Supabase 客户端（自动注入） |
 

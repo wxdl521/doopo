@@ -548,3 +548,94 @@ curl --location 'https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-
     },
     "request_id": "571ae02f-5c9d-436c-83c2-f221e6df0xxx"
 }
+HappyHorse-文生视频
+curl --location 'https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis' \
+    -H 'X-DashScope-Async: enable' \
+    -H "Authorization: Bearer $DASHSCOPE_API_KEY" \
+    -H 'Content-Type: application/json' \
+    -d '{
+    "model": "happyhorse-1.0-t2v",
+    "input": {
+        "prompt": "一座由硬纸板和瓶盖搭建的微型城市，在夜晚焕发出生机。一列硬纸板火车缓缓驶过，小灯点缀其间，照亮前路。"
+    },
+    "parameters": {
+        "resolution": "720P",
+        "ratio": "16:9",
+        "duration": 5
+    }
+}'
+成功响应
+{
+    "output": {
+        "task_status": "PENDING",
+        "task_id": "0385dc79-5ff8-4d82-bcb6-xxxxxx"
+    },
+    "request_id": "4909100c-7b5a-9f92-bfe5-xxxxxx"
+}
+HappyHorse-图生视频-基于首帧
+curl --location 'https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis' \
+    -H 'X-DashScope-Async: enable' \
+    -H "Authorization: Bearer $DASHSCOPE_API_KEY" \
+    -H 'Content-Type: application/json' \
+    -d '{
+    "model": "happyhorse-1.0-i2v",
+    "input": {
+        "prompt": "一只猫在草地上奔跑",
+        "media": [
+            {
+                "type": "first_frame",
+                "url": "https://cdn.translate.alibaba.com/r/wanx-demo-1.png"
+            }
+        ]
+    },
+    "parameters": {
+        "resolution": "720P",
+        "duration": 5
+    }
+}'
+成功响应
+{
+    "output": {
+        "task_status": "PENDING",
+        "task_id": "0385dc79-5ff8-4d82-bcb6-xxxxxx"
+    },
+    "request_id": "4909100c-7b5a-9f92-bfe5-xxxxxx"
+}
+HappyHorse-参考生视频
+curl --location 'https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis' \
+    -H 'X-DashScope-Async: enable' \
+    -H "Authorization: Bearer $DASHSCOPE_API_KEY" \
+    -H 'Content-Type: application/json' \
+    -d '{
+    "model": "happyhorse-1.0-r2v",
+    "input": {
+        "prompt": "[Image 1]中身着红色旗袍的女性，镜头先以侧面中景勾勒旗袍修身剪裁与S型曲线，随即切换至低角度仰拍，捕捉她轻抬玉手展开[Image 2]中的折扇的同时，[Image 3]中的流苏耳坠随头部转动轻盈摆动的细节，最后推近至面部特写，定格在她指尖轻点扇骨、眼波流转间的含蓄风情，多视角全方位展现东方韵味。",
+        "media": [
+            {
+                "type": "reference_image",
+                "url": "https://help-static-aliyun-doc.aliyuncs.com/file-manage-files/zh-CN/20260424/mvzfud/hh-v2v-girl.jpg"
+            },
+            {
+                "type": "reference_image",
+                "url": "https://help-static-aliyun-doc.aliyuncs.com/file-manage-files/zh-CN/20260424/fvuihk/hh-v2v2-folding-fan.jpg"
+            },
+            {
+                "type": "reference_image",
+                "url": "https://help-static-aliyun-doc.aliyuncs.com/file-manage-files/zh-CN/20260424/imerii/hh-v2v-earrings.jpg"
+            }
+        ]
+    },
+    "parameters": {
+        "resolution": "720P",
+        "ratio": "16:9",
+        "duration": 5
+    }
+}'
+成功响应
+{
+    "output": {
+        "task_status": "PENDING",
+        "task_id": "0385dc79-5ff8-4d82-bcb6-xxxxxx"
+    },
+    "request_id": "4909100c-7b5a-9f92-bfe5-xxxxxx"
+}

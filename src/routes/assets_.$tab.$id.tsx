@@ -12,7 +12,7 @@ import {
   getAssetById,
 } from '../data/assetsMock'
 import { assetToMarkdown, downloadMarkdown } from '../lib/assetMarkdown'
-import { generateImage } from '../lib/openrouterImage.functions'
+import { generateImage } from '../lib/seedream.functions'
 import { IMAGE_MODELS } from '../lib/imageModels'
 
 export const Route = createFileRoute('/assets_/$tab/$id')({

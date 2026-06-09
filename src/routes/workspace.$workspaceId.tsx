@@ -13,9 +13,11 @@ import {
   type StoryboardGroup, type StoryboardShot, type ShotType,
 } from '../data/workspaceGenerators'
 import { generateStageAi } from '../lib/aiGenerate.functions'
-import { generateImage } from '../lib/openrouterImage.functions'
+import { generateImage } from '../lib/seedream.functions'
 import { regenerateCharacterLook } from '../lib/characterRegen.functions'
 import { generateStoryboardFromPlot, generateStoryboardShotImage, regenerateStoryboardShot } from '../lib/storyboard.functions'
+import { generateVideo } from '../lib/videoGenerate.functions'
+import { generateStoryboardPitchDeck } from '../lib/seedream.functions'
 import { getProject, saveWorkspaceData, loadWorkspaceData, type ProjectConfigRow } from '../lib/projects.functions'
 import { streamSynopsis, streamEpisodeScenes, refineSynopsis, refineEpisodeScenes } from '../lib/scriptAgent.functions'
 import type { ImportedScriptResult } from '../lib/parseImportedScript.functions'
@@ -211,6 +213,8 @@ function WorkspacePage() {
   const callGenerateStoryboard = useServerFn(generateStoryboardFromPlot)
   const callGenerateShotImage = useServerFn(generateStoryboardShotImage)
   const callRegenShot = useServerFn(regenerateStoryboardShot)
+  const callGenVideo = useServerFn(generateVideo)
+  const callGenStoryboard = useServerFn(generateStoryboardPitchDeck)
   const callSynopsis = useServerFn(streamSynopsis)
   const callEpisode = useServerFn(streamEpisodeScenes)
   const callRefine = useServerFn(refineSynopsis)
@@ -294,6 +298,14 @@ function WorkspacePage() {
   //   - shotSelectedGenIdx:预览里选中的第几代(和 selectedGenIdx 同语义)。
   //   - shotModInput / shotModBusy:修改意见的输入 + 是否在调 regenerateStoryboardShot。
   const [shotImages, setShotImages] = useState<Record<string, string[]>>({})
+  // 2026 视频生成:每个 storyboard group 一条短视频,key = groupId。
+  // 视频用整组所有 shot 的图作 first_frame + reference_image,
+  // 涵盖整个分镜组的镜头序列(不再每张分镜单独出视频)。
+  // 不持久化(视频 URL 24h 有效)。
+  const [groupVideos, setGroupVideos] = useState<Record<string, { url: string; status: 'running' | 'succeeded' | 'failed' }>>({})
+  // 2026 Storyboard 接入:每个分镜组可以独立生成故事板图(Storyboard),
+  // key = groupId。value 包含 storyboardUrl 和 status。不持久化(Seedream URL 24h 有效)。
+  const [groupStoryboards, setGroupStoryboards] = useState<Record<string, { url: string; status: 'running' | 'succeeded' | 'failed' }>>({})
   const [shotPreview, setShotPreview] = useState<{ groupId: string; shotId: string } | null>(null)
   const [shotSelectedGenIdx, setShotSelectedGenIdx] = useState(0)
   const [shotModInput, setShotModInput] = useState('')
@@ -442,12 +454,56 @@ function WorkspacePage() {
       })),
     ]
 
-    for (const ls of lookSpecs) {
+    for (let i = 0; i < lookSpecs.length; i++) {
+      const ls = lookSpecs[i]
       // 跳过已经生成过的(可能在并发期间被其他 useEffect 跑过)
       const currentImages = charImagesRef.current
       if (currentImages[ls.imageKey]?.length) continue
 
       setActiveImageKey(ls.imageKey)
+
+      // ====================================================================
+      // 关键修复(2026):同一个角色的不同 look 之前脸不一致,因为
+      // 每个 look 都用 T2I 独立生成,模型只看到文字描述,无法视觉锁定脸。
+      // 修法:默认 look(第 1 个)继续 T2I;后续 look 全部走 I2I,reference
+      // 用默认 look 最新一张 —— 模型"看着"参考图改服装,脸/身材/姿势
+      // 都被原图锚定,自然就一致了。
+      // ====================================================================
+      const isDefaultLook = i === 0
+      const defaultLookImageKey = lookSpecs[0].imageKey
+      const defaultLookImages = charImagesRef.current[defaultLookImageKey] ?? []
+      const referenceImageUrl = isDefaultLook
+        ? undefined
+        : defaultLookImages[defaultLookImages.length - 1]
+
+      if (referenceImageUrl) {
+        // ============== 后续 look 走 I2I(以默认 look 的图为视觉锚点)==============
+        // 拼一条超强的"只换衣服、脸完全不变"指令
+        const instruction = [
+          `给【${c.name}】换上【${ls.label}】造型:`,
+          `新服装/配饰描述:${ls.data.clothingDescription || '保持原样'}`,
+          ``,
+          `强约束(必须遵守,违反 = 重画):`,
+          `• 脸、五官、脸型、肤色、表情 100% 保持与原图一致 —— 不要换脸、不要微调、不要重新生成脸部`,
+          `• 体型、身高、体态 100% 一致`,
+          `• 发型、发色、妆容、配饰 100% 保持原状 —— 除非本次新造型明确要求改`,
+          `• 整体画面构图、视角、画幅、风格、光照、背景 100% 一致`,
+          `• 唯一允许改的:服装、衣领/袖口/腰带等细节、可替换的道具、可能新增的标志性配饰`,
+          ``,
+          `输出:一张全身正面图,新造型,但脸和身材与原图完全一致。`,
+        ].join('\n')
+
+        // 找到 look 在 c.looks 里的 id(传给 doRegen 用于 imageKey 拼装)
+        const lookDbId = ls.imageKey === c.id
+          ? null  // 默认 look
+          : (c.looks ?? []).find((x) => `${c.id}::${x.id}` === ls.imageKey)?.id ?? null
+
+        // 复用 doRegen(它已经处理 I2I / busy 状态 / history push)
+        await doRegen(c, lookDbId, 'modify', instruction, referenceImageUrl)
+        continue
+      }
+
+      // ============== 默认 look 走原 T2I 路径(无参考图)==============
       try {
         // 解析项目视觉风格。每个 look 共享项目风格(项目级美术指导),但只换衣服/身份。
         const styleSpec = resolveProjectStyle(project?.style)
@@ -559,9 +615,11 @@ function WorkspacePage() {
           'watermark, logo, text, signature, label, panel number, caption, annotation, extra limbs, deformed hands, extra fingers, blurred face, low quality',
         ].join(', ')
 
-        // 显式传 portrait 画幅给 Qwen,锁死竖向构图(用 prompt 反复强调"全身"
-        // 仍会偶发切脚,但 3:4 画幅从结构上让模型必须把人物铺满纵向画布)。
-        const characterSize = '1104*1472'
+        // 显式传 portrait 画幅给 Seedream,锁死竖向构图(用 prompt 反复强调"全身"
+        // 仍会偶发切脚,但 2:3 画幅从结构上让模型必须把人物铺满纵向画布)。
+        // 2026 注意:Seedream 最小像素 3,686,400 —— 1104*1472=1,623,888 ❌(legacy Qwen 尺寸,
+        // 旧代码直接传过去会被 Seedream 400 拒掉)。改用 1664x2496=4,153,344 ✅(2:3 竖版画幅)。
+        const characterSize = '1664x2496'
 
         const res = await callImage({ data: { prompt, model: resolveT2IModel(project?.sceneModel), noFallback: true, negativePrompt, size: characterSize } })
         if (res.url) {
@@ -674,11 +732,16 @@ function WorkspacePage() {
     lookId: string | null,
     mode: 'modify' | 'three-view' | 'multi-asset',
     instruction: string,
+    /**
+     * 可选:直接指定 referenceImageUrl,绕过"从 history 取最新一张"的默认行为。
+     * 用于 processCharacter 自动给后续 look 传默认 look 的图当参考,确保脸一致。
+     */
+    referenceOverride?: string,
   ) {
     const lk = lookId == null ? null : c.looks?.find((x) => x.id === lookId) ?? null
     const imageKey = lk ? `${c.id}::${lk.id}` : c.id
     const generations = charImagesRef.current[imageKey] ?? []
-    const referenceUrl = generations[generations.length - 1]  // 用最新一张当参考
+    const referenceUrl = referenceOverride ?? generations[generations.length - 1]  // 用最新一张当参考
     if (!referenceUrl) {
       toast.error('该形象还没生成,无法重生')
       return
@@ -1074,6 +1137,187 @@ function WorkspacePage() {
       toast.error('重生失败')
     } finally {
       setShotModBusy(false)
+    }
+  }
+
+  /**
+   * 对某个 StoryboardGroup 生成短视频(整组所有分镜合成一个视频)。
+   *
+   * 流程(2026 改造 —— 从"每张分镜一个视频"改成"每组一个完整视频"):
+   *  1) 收集本组所有 shot 的最新图片(按 shot 顺序),排成镜头序列
+   *  2) 第一张图作为 first_frame(视频起始画面)
+   *  3) 后续图作为 reference_image(引导模型按这些参考图生成连贯镜头变化)
+   *  4) 拼 prompt = 整组剧情 + 每个 shot 的景别/动作/机位,让模型理解整个镜头序列
+   *  5) 调 generateVideo(server 端 submit + poll 4min)
+   *  6) 存到 groupVideos[groupId],UI 在右侧"视频 · Video"面板渲染 <video>
+   *
+   * 注意:视频 URL 24h 有效(跟图片永久 URL 行为不同)。
+   * 后续若要长期保存得在 server 端下载转存到 Supabase Storage。
+   */
+  async function generateVideoForGroup(groupId: string) {
+    const group = data.storyboardGroups.find((g) => g.id === groupId)
+    if (!group) return
+
+    if (groupVideos[groupId]?.status === 'running') {
+      toast.message('该组视频正在生成中…')
+      return
+    }
+
+    // 收集本组所有 shot 的最新图片(按 shot 顺序)
+    const shotImagesList: { shot: typeof group.shots[number]; url: string }[] = []
+    for (const s of group.shots) {
+      const key = `${groupId}::${s.id}`
+      const gens = shotImages[key] ?? []
+      const url = gens.length ? gens[gens.length - 1] : s.imageUrl
+      if (url) shotImagesList.push({ shot: s, url })
+    }
+    if (shotImagesList.length === 0) {
+      toast.error('需要先生成该组的分镜图,才能生成视频')
+      return
+    }
+
+    setGroupVideos((m) => ({ ...m, [groupId]: { url: '', status: 'running' } }))
+
+    const firstFrame = shotImagesList[0].url
+    const referenceUrls = shotImagesList.slice(1).map((x) => x.url)
+
+    // 拼整组镜头序列的 prompt
+    const shotDescriptions = shotImagesList
+      .map((x, i) => {
+        const cam = x.shot.camera ? ` (camera: ${x.shot.camera})` : ''
+        return `Shot ${i + 1} [${x.shot.shotTypeLabel}] ${x.shot.action}${cam}`
+      })
+      .join(' → ')
+    const prompt = [
+      `[Storyboard sequence: ${group.plotText || ''}]`,
+      ``,
+      `Shot breakdown: ${shotDescriptions}`,
+      ``,
+      `Render as a single continuous video clip that flows through all ${shotImagesList.length} shots in order.`,
+      `Camera transitions, lighting continuity, and character appearance MUST stay consistent across all shots.`,
+      `Cinematic motion, smooth camera movement, photorealistic, 24fps.`,
+    ].filter(Boolean).join('\n')
+
+    try {
+      const res = await callGenVideo({
+        data: {
+          prompt,
+          imageUrl: firstFrame,
+          referenceImageUrls: referenceUrls.length ? referenceUrls : undefined,
+          // 多参考图模型:happyhorse-1.0-r2v (DashScope, 实测可用)
+          // 单图模型 (happyhorse-1.0-i2v / Seedance) 会自动退化成只取 first_frame
+          model: project?.videoModel || 'happyhorse-1.0-r2v',
+          ratio: project?.aspect === '9:16' ? '9:16' : project?.aspect === '1:1' ? '1:1' : '16:9',
+          duration: 10,  // 多镜头序列需要更长时间(默认 5s 不够)
+          generateAudio: project?.audio === 'on',
+          watermark: false,
+        },
+      })
+      if (res.ok && res.videoUrl) {
+        setGroupVideos((m) => ({ ...m, [groupId]: { url: res.videoUrl!, status: 'succeeded' } }))
+        toast.success(`分镜组视频已生成 (${shotImagesList.length} 个镜头,${res.videoUrl ? '已就绪' : ''})`)
+      } else {
+        setGroupVideos((m) => ({ ...m, [groupId]: { url: '', status: 'failed' } }))
+        toast.error(res?.error || '视频生成失败')
+      }
+    } catch (e) {
+      setGroupVideos((m) => ({ ...m, [groupId]: { url: '', status: 'failed' } }))
+      toast.error(e instanceof Error ? e.message : '视频生成失败')
+    }
+  }
+
+  /**
+   * 对某个 StoryboardGroup 生成漫剧故事板图(Manga-Style Storyboard)。
+   *
+   * 收集本组的所有上下文:
+   *   - 剧情(plotText) — 故事板整体叙事的来源,模型用来推断缺失的 panel
+   *   - 场景(scene 的 slug / location / timeOfDay / profile) — 漫剧所有 panel 的环境背景
+   *   - 角色(从 data.characters 查名字 + face/body/clothing 描述,最多 3 个) — 跨 panel 保持一致
+   *   - 镜头(本组已有的 shot 列表) — 每 panel 的首帧画面 + 景别 + 动作 + 机位
+   * 调 seedream.functions.ts:generateStoryboardPitchDeck(全 T2I,模型自主构图 6/8 格)。
+   * 把返回的 storyboardUrl 存到 groupStoryboards,UI 替换"故事板占位"。
+   */
+  async function generateMangaStoryboardForGroup(groupId: string) {
+    const group = data.storyboardGroups.find((g) => g.id === groupId)
+    if (!group) return
+    if (groupStoryboards[groupId]?.status === 'running') {
+      toast.message('该故事板正在生成中…')
+      return
+    }
+
+    setGroupStoryboards((m) => ({ ...m, [groupId]: { url: '', status: 'running' } }))
+
+    // 收集场景档案
+    const sceneObj = data.scenes.find((s) => s.id === group.sceneId)
+    const scene = sceneObj
+      ? {
+          slug: sceneObj.slug,
+          location: sceneObj.location,
+          timeOfDay: sceneObj.timeOfDay,
+          // GenScene 用 `action` 描述场景氛围,跟 profile 语义接近 —— 用它即可
+          profile: sceneObj.action,
+        }
+      : undefined
+
+    // 收集角色档案(最多 3 个,带面/身/衣描述)
+    const characters = (group.characterIds || [])
+      .slice(0, 3)
+      .map((cid) => {
+        const c = data.characters.find((x) => x.id === cid)
+        if (!c) return null
+        return {
+          name: c.name,
+          roleLabel: c.roleLabel,
+          age: c.age,
+          faceDescription: c.faceDescription,
+          bodyDescription: c.bodyDescription,
+          clothingDescription: c.clothingDescription,
+          palette: c.palette,
+        }
+      })
+      .filter(Boolean) as Array<{
+        name: string
+        roleLabel?: string
+        age?: number
+        faceDescription?: string
+        bodyDescription?: string
+        clothingDescription?: string
+        palette?: string[]
+      }>
+
+    // 收集本组的 shots(平均时长 = 总时长 / shot 数,作为参考)
+    const groupDuration = (group.endSec ?? 0) - (group.startSec ?? 0)
+    const perShotSec = group.shots.length > 0 ? groupDuration / group.shots.length : 5
+    const shots = group.shots.map((s) => ({
+      shotType: s.shotType,
+      shotTypeLabel: s.shotTypeLabel,
+      action: s.action,
+      camera: s.camera,
+      durationSec: perShotSec,
+    }))
+
+    try {
+      const res = await callGenStoryboard({
+        data: {
+          projectStyle: project?.style,
+          groupLabel: group.plotText?.slice(0, 60),
+          plotText: group.plotText || '(无剧情摘要)',
+          scene,
+          characters,
+          shots,
+          model: project?.storyboardModel,
+        },
+      })
+      if (res.ok && res.url) {
+        setGroupStoryboards((m) => ({ ...m, [groupId]: { url: res.url!, status: 'succeeded' } }))
+        toast.success('故事板已生成')
+      } else {
+        setGroupStoryboards((m) => ({ ...m, [groupId]: { url: '', status: 'failed' } }))
+        toast.error(res?.error || '故事板生成失败')
+      }
+    } catch (e) {
+      setGroupStoryboards((m) => ({ ...m, [groupId]: { url: '', status: 'failed' } }))
+      toast.error(e instanceof Error ? e.message : '故事板生成失败')
     }
   }
 
@@ -2873,6 +3117,8 @@ function WorkspacePage() {
                                         <Maximize2 size={12} />
                                       </button>
                                     )}
+                                    {/* 视频生成已挪到右侧"视频 · Video"面板(2026 改造),
+                                        整组所有分镜合成一个视频,不再每张分镜单独覆盖 video。 */}
                                   </div>
                                   <div className="p-2 space-y-1">
                                     <p className="text-[11px] text-text-primary line-clamp-2 leading-snug">{s.action}</p>
@@ -2889,40 +3135,171 @@ function WorkspacePage() {
                                           ? <><RefreshCw size={9} /> 重新生成</>
                                           : <><Sparkles size={9} /> 生成本镜头</>}
                                     </button>
+                                    {/* 视频生成按钮已挪到右侧"视频 · Video"面板(2026 改造)——
+                                        整组所有分镜合成一个视频,不再每张分镜单独出。 */}
                                   </div>
                                 </div>
                               )
                             })}
                           </div>
                         </div>
-                        {/* 中-右:故事板占位 —— 暂时不实现,留空间以后挂镜头时序 / 摄影表 / 动画参考等。
-                            视觉上跟视频占位对齐(同一种虚线框 + 小图标 + "未启用"提示),
-                            行为上是只读占位,不会有任何点击效果。 */}
+                        {/* 中-右:故事板(Storyboard)—— 2026 接入 */}
                         <div className="rounded-lg border border-border bg-bg-base/40 p-3 space-y-2">
                           <div className="flex items-center justify-between">
                             <div className="text-[10px] tracking-widest uppercase text-text-muted">故事板 · Storyboard</div>
-                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-elevated border border-border text-text-muted">未启用</span>
+                            {groupStoryboards[g.id]?.status === 'succeeded' ? (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-accent/15 text-accent border border-accent/30">已生成</span>
+                            ) : groupStoryboards[g.id]?.status === 'running' ? (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-elevated border border-border text-text-muted">生成中…</span>
+                            ) : groupStoryboards[g.id]?.status === 'failed' ? (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-500 border border-rose-500/30">失败</span>
+                            ) : (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-elevated border border-border text-text-muted">未生成</span>
+                            )}
                           </div>
-                          <div className="aspect-video rounded border border-dashed border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted">
-                            <FileText size={20} className="opacity-40" />
-                            <span className="text-[10px]">故事板占位</span>
-                            <span className="text-[9px] opacity-70">功能暂未开放</span>
-                          </div>
+                          {/* 故事板图区:成功 → 显示图片;运行中 → spinner;未生成 → 虚线占位 */}
+                          {groupStoryboards[g.id]?.status === 'succeeded' && groupStoryboards[g.id]?.url ? (
+                            <div className="relative group rounded border border-accent/30 overflow-hidden bg-bg-base">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img
+                                src={groupStoryboards[g.id]!.url}
+                                alt="故事板"
+                                className="w-full h-auto block"
+                              />
+                              <div className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition flex gap-1">
+                                <a
+                                  href={groupStoryboards[g.id]!.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="px-1.5 py-0.5 rounded bg-black/70 text-white text-[10px] hover:bg-black/90"
+                                  title="在新标签页打开原图"
+                                >
+                                  ↗
+                                </a>
+                                <button
+                                  type="button"
+                                  onClick={() => void generateMangaStoryboardForGroup(g.id)}
+                                  className="px-1.5 py-0.5 rounded bg-black/70 text-white text-[10px] hover:bg-black/90"
+                                  title="重新生成故事板"
+                                >
+                                  <RefreshCw size={9} className="inline -mt-0.5" />
+                                </button>
+                              </div>
+                            </div>
+                          ) : groupStoryboards[g.id]?.status === 'running' ? (
+                            <div className="aspect-[2/3] rounded border border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted">
+                              <Loader2 size={20} className="animate-spin text-accent" />
+                              <span className="text-[10px]">Seedream 构图 + 渲染 7 分区…</span>
+                              <span className="text-[9px] opacity-70">约 30s</span>
+                            </div>
+                          ) : (
+                            <div className="aspect-[2/3] rounded border border-dashed border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted">
+                              <LayoutGrid size={20} className="opacity-40" />
+                              <span className="text-[10px]">故事板占位</span>
+                              <span className="text-[9px] opacity-70">含剧情/角色/场景/分镜</span>
+                            </div>
+                          )}
+                          {/* 触发按钮:只在未生成 / 失败时显示;成功时 hover 在图片上显示「重新生成」 */}
+                          {(!groupStoryboards[g.id] || groupStoryboards[g.id]?.status === 'failed') && (
+                            <button
+                              type="button"
+                              onClick={() => void generateMangaStoryboardForGroup(g.id)}
+                              className="w-full text-[10px] py-1 rounded border border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent transition inline-flex items-center justify-center gap-1"
+                            >
+                              <Sparkles size={9} /> {groupStoryboards[g.id]?.status === 'failed' ? '重试生成' : '生成故事板'}
+                            </button>
+                          )}
                           <p className="text-[10px] text-text-muted leading-relaxed">
-                            未来会承载本组镜头的时序、摄影表、动画参考等扩展信息。当前版本留白,不参与生成。
+                            一张图 = 标题 + 故事概述 + 角色参考(3视图+特写+动作) +
+                            场景全景(带细节) + 镜头调度 + 8 格分镜 + 技术设定。复古烫金边框,深色调背景。
                           </p>
                         </div>
-                        {/* 右:视频占位 */}
+                        {/* 右:视频(2026 接入)—— 整组合成一个视频,涵盖所有分镜 */}
                         <div className="rounded-lg border border-border bg-bg-base/40 p-3 space-y-2">
-                          <div className="text-[10px] tracking-widest uppercase text-text-muted">视频 · Video</div>
-                          <div className="aspect-video rounded border border-dashed border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted">
-                            <Camera size={20} className="opacity-40" />
-                            <span className="text-[10px]">视频占位</span>
-                            <span className="text-[9px] opacity-70">({(g.endSec - g.startSec).toFixed(0)}s 暂不生成)</span>
+                          <div className="flex items-center justify-between">
+                            <div className="text-[10px] tracking-widest uppercase text-text-muted">视频 · Video</div>
+                            {groupVideos[g.id]?.status === 'succeeded' ? (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-accent/15 text-accent border border-accent/30">已生成</span>
+                            ) : groupVideos[g.id]?.status === 'running' ? (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-elevated border border-border text-text-muted">生成中…</span>
+                            ) : groupVideos[g.id]?.status === 'failed' ? (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-500 border border-rose-500/30">失败</span>
+                            ) : (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-elevated border border-border text-text-muted">未生成</span>
+                            )}
                           </div>
-                          <p className="text-[10px] text-text-muted leading-relaxed">
-                            未来接 I2V / S2V 模型后,可用本组的分镜图 + 角色 / 场景参考图生成本段视频。
-                          </p>
+                          {/* 视频区:成功 → 显示播放器;运行中 → spinner;未生成 → 虚线占位 */}
+                          {groupVideos[g.id]?.status === 'succeeded' && groupVideos[g.id]?.url ? (
+                            <div className="relative group rounded border border-accent/30 overflow-hidden bg-black">
+                              <video
+                                src={groupVideos[g.id]!.url}
+                                controls
+                                loop
+                                playsInline
+                                className="w-full h-auto block"
+                              />
+                              <div className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition flex gap-1">
+                                <a
+                                  href={groupVideos[g.id]!.url}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="px-1.5 py-0.5 rounded bg-black/70 text-white text-[10px] hover:bg-black/90"
+                                  title="在新标签页打开原视频"
+                                >
+                                  ↗
+                                </a>
+                                <button
+                                  type="button"
+                                  onClick={() => void generateVideoForGroup(g.id)}
+                                  className="px-1.5 py-0.5 rounded bg-black/70 text-white text-[10px] hover:bg-black/90"
+                                  title="重新生成视频"
+                                >
+                                  <RefreshCw size={9} className="inline -mt-0.5" />
+                                </button>
+                              </div>
+                            </div>
+                          ) : groupVideos[g.id]?.status === 'running' ? (
+                            <div className="aspect-video rounded border border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted">
+                              <Loader2 size={20} className="animate-spin text-accent" />
+                              <span className="text-[10px]">视频生成中…</span>
+                              <span className="text-[9px] opacity-70">约 1-3 分钟</span>
+                            </div>
+                          ) : (
+                            <div className="aspect-video rounded border border-dashed border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted">
+                              <Camera size={20} className="opacity-40" />
+                              <span className="text-[10px]">视频占位</span>
+                              <span className="text-[9px] opacity-70">整组合成 · {g.shots.length} 个镜头 · 约 {(g.endSec - g.startSec).toFixed(0)}s</span>
+                            </div>
+                          )}
+                          {/* 触发按钮:只有当组里至少有一张分镜图时才点亮 */}
+                          {(() => {
+                            const hasAnyShotImage = g.shots.some((s) => {
+                              const key = `${g.id}::${s.id}`
+                              const gens = shotImages[key] ?? []
+                              return !!(gens.length ? gens[gens.length - 1] : s.imageUrl)
+                            })
+                            if (!hasAnyShotImage) {
+                              return (
+                                <p className="text-[10px] text-text-muted leading-relaxed">
+                                  需先生成该组至少一张分镜图,才能生成整组合成视频。
+                                </p>
+                              )
+                            }
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => void generateVideoForGroup(g.id)}
+                                disabled={groupVideos[g.id]?.status === 'running'}
+                                className="w-full text-[10px] py-1 rounded border border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent transition disabled:opacity-40 inline-flex items-center justify-center gap-1"
+                              >
+                                {groupVideos[g.id]?.status === 'running'
+                                  ? <><Loader2 size={9} className="animate-spin" /> 视频生成中…</>
+                                  : groupVideos[g.id]?.status === 'succeeded'
+                                    ? <><RefreshCw size={9} /> 重新生成整组视频</>
+                                    : <><Camera size={9} /> 生成整组视频</>}
+                              </button>
+                            )
+                          })()}
                         </div>
                       </div>
                     </div>
