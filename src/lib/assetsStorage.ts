@@ -13,10 +13,12 @@ export async function saveCharacters(chars: GenCharacter[], userId: string) {
     role: c.role,
     role_label: c.roleLabel,
     age: c.age,
-    look: c.look,
+    look: [c.faceDescription, c.bodyDescription, c.clothingDescription]
+      .filter(Boolean)
+      .join(' / '),
     personality: c.personality,
-    motivation: c.motivation,
-    debut_shot: c.debutShot,
+    motivation: null,
+    debut_shot: null,
     palette: c.palette,
     mbti: c.mbti ?? null,
     key_prop: c.keyProp ?? null,
