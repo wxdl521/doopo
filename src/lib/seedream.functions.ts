@@ -23,6 +23,7 @@
 import './loadEnv'  // ← 必须在所有 env 读取之前导入,触发 .env.local 加载
 import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
+import { buildStyleLock, type VisualStyleSpec } from './visualStyles'
 
 const DEFAULT_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3'
 const DEFAULT_MODEL = 'doubao-seedream-5-0-260128'
@@ -318,10 +319,8 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
       ``,
       `IDENTITY LOCK ACROSS ALL 3 PANELS: Same face, same body, same outfit, same age, same hair, same skin tone, same accessories, same shoes. The ONLY difference between panels is the camera angle. The face must be PIXEL-IDENTICAL across all 3 panels.`,
       ``,
-      `VISUAL STYLE (MUST match across all 3 panels — no style drift between panels):
-  Style name: ${styleSpec.label}
-  Style: ${styleSpec.positive}
-  AVOID: ${styleSpec.negative}`,
+      `VISUAL STYLE (MUST match across all 3 panels — no style drift between panels):`,
+      buildStyleLock(styleSpec, 'reference'),
       ``,
       `CHARACTER (source of truth, alongside the attached reference image):
   Name: ${cardTitle} (${data.characterRoleLabel}, age ${data.characterAge})
@@ -408,11 +407,11 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
       `All three views are the SAME character in standing A-pose (arms relaxed at the sides, feet slightly apart, expressionless face). Identical proportions, identical outfit, identical height across the three views. NO perspective distortion, NO foreshortening, NO 3/4 angles.`,
       `Each full-body cell shows the character head-to-toe, both feet clearly visible at the bottom, small margin above the head.`,
 
-      `Row 2 — FACIAL EXPRESSION VARIATIONS (only the expression differs):`,
-      `  Cell (2,1) = CALM / NEUTRAL expression (default passport-photo look, no emotion)`,
-      `  Cell (2,2) = SMILING / HAPPY expression (subtle gentle smile, eyes slightly squinted with warmth, mouth corners up)`,
-      `  Cell (2,3) = ANGRY / INTENSE expression (furrowed brow, serious piercing gaze, lips pressed or slightly downturned)`,
-      `All three face cells show the SAME face shape, eye shape, nose, mouth, eyebrows, skin tone, hairstyle — only the EXPRESSION changes. Same head size, same camera angle (front view), same lighting.`,
+      `Row 2 — FACIAL EXPRESSION VARIATIONS (only the expression differs; 2026/06 用户诉求:覆盖"开心/难过"等常见表情) — 用户的分镜流程需要多组表情资产:`,
+      `  Cell (2,1) = NEUTRAL / CALM expression (default passport-photo look, no emotion, face relaxed)`,
+      `  Cell (2,2) = HAPPY / SMILING expression (genuine warm smile, eyes slightly squinted with warmth, mouth corners up, slight cheek lift)`,
+      `  Cell (2,3) = SAD / MELANCHOLIC expression (slight downward mouth corners, eyebrows pulled up at inner ends, eyes soft with a hint of moisture, overall somber mood)`,
+      `All three face cells show the SAME face shape, eye shape, nose, mouth, eyebrows, skin tone, hairstyle — only the EXPRESSION changes. Same head size, same camera angle (front view), same lighting. The viewer should clearly read "neutral / happy / sad" as three distinct emotional states of the SAME person.`,
 
       `Row 3 — CLOTHING BREAKDOWN / EQUIPMENT DETAIL / COLOR PALETTE:`,
       `  Cell (3,1) = CLOTHING BREAKDOWN (服装分解): a "flat lay" / disassembled view of the outfit — each garment (top, pants/skirt, etc.) shown separately and laid flat, with the actual fabric texture, pattern, color, and stitching visible. Like a sewing pattern reference. NO body wearing the clothes — just the clothes themselves, neatly arranged in the cell.`,
@@ -447,9 +446,7 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
 
       // ========== 风格 / 角色数据 ==========
       `[PROJECT VISUAL STYLE — must match the project's selected visual style across ALL 9 cells]`,
-      `Style name: ${styleSpec.label}`,
-      `Style: ${styleSpec.positive}`,
-      `AVOID: ${styleSpec.negative}`,
+      buildStyleLock(styleSpec, 'character'),
 
       `[CHARACTER IDENTITY — copy into the image EXACTLY. Treat as the source of truth, alongside the attached reference image.]`,
       `Name: ${cardTitle} (${data.characterRoleLabel}, age ${data.characterAge})`,
@@ -471,7 +468,7 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
       `[ ] Output is ONE image with a header strip + a 3×3 grid (all 9 cells present)`,
       `[ ] Header strip contains: character name, role badge, 2-3 sentence Chinese lore text`,
       `[ ] Row 1 = full-body 3-view (front / side / back) with identical proportions`,
-      `[ ] Row 2 = 3 facial expressions (neutral / happy / intense) — only expression differs`,
+      `[ ] Row 2 = 3 facial expressions (neutral / happy / sad) — only expression differs, each clearly readable as a distinct emotion of the SAME person`,
       `[ ] Row 3 = clothing flat-lay / equipment detail / color palette with hex labels`,
       `[ ] Pure white background throughout (#FFFFFF or near-white)`,
       `[ ] Same face, body, outfit in all cells where the character appears`,
@@ -500,10 +497,27 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
     `[EDIT REQUEST — what to change in the attached image]`,
     data.userInstruction,
     ``,
-    `[LOCK — everything else MUST stay identical to the source image]`,
-    `Keep the same face, same body, same camera angle (front view, eye-level), same full-body head-to-toe framing, same neutral expressionless face, same pure white #FFFFFF background, same visual style ("${styleSpec.label}"). Apply ONLY the change described above.`,
+    `[LOCK — neutral structure MUST stay 100% identical to the source image]`,
+    `• 脸型、脸轮廓、五官比例、肤色、骨骼结构 100% 继承图1`,
+    `• 体型、身高、胖瘦、体态 100% 继承图1`,
+    `• 发型轮廓(短/长/卷/直、刘海/鬓角)100% 继承图1`,
+    `  ↳ 发色默认继承,但若用户 EDIT REQUEST 明确要换发色则按 EDIT`,
+    `• 整体画面构图、视角、画幅、风格、光照、背景 100% 继承图1`,
     ``,
+    `[LOCK — accessories / makeup / expression follow EDIT REQUEST only]`,
+    `• 妆容(眼妆、唇色、腮红)默认继承;若 EDIT 提到妆容则按 EDIT`,
+    `• 表情默认继承"无表情";若 EDIT 提到表情则按 EDIT`,
+    `• 配饰(口罩/帽子/墨镜/项链/手套等)默认继承;若 EDIT 提到配饰则按 EDIT,否则保持图1 原样`,
+    `• 整体服装默认继承;若 EDIT 提到服装则按 EDIT 改`,
+    ``,
+    `[HARD CONSTRAINT — 任何"中性结构"没在 EDIT 里明确说改的,一律按 LOCK 段保持]`,
+    `If the user's EDIT REQUEST is vague (e.g. "好看点" / "年轻些" / "加个眼镜"),interpret minimally:
+  • "好看点" / "完美些" → DO NOT change anything, return source image essentially unchanged
+  • "年轻些" / "老一些" → change only the age cue, keep face shape / body 100%
+  • "加个 X" / "换成 X" → only add/change X, nothing else`,
     `[Subject] ${cardTitle} — ${data.characterRoleLabel}, age ${data.characterAge}.`,
+    ``,
+    buildStyleLock(styleSpec, 'regen'),
   ].join('\n')
   const negative = [
     'different art style, style drift, photorealistic when input is anime, anime when input is realistic, different medium, different line treatment, different color grading',
@@ -574,7 +588,7 @@ const ShotInput = z.object({
 
 export type ShotInputType = z.infer<typeof ShotInput>
 
-function buildShotInstruction(data: ShotInputType, styleSpec: { label: string; positive: string }): string {
+function buildShotInstruction(data: ShotInputType, styleSpec: VisualStyleSpec): string {
   const charRefs = data.characterImageUrls.length
     ? data.characterImageUrls
         .map((_, i) => `图${i + 1} = 「${data.characterNames[i] || `角色${i + 1}`}」`)
@@ -613,8 +627,9 @@ function buildShotInstruction(data: ShotInputType, styleSpec: { label: string; p
             ? `   - 特写:画面聚焦在某个细节(眼睛、嘴唇、手、道具),情绪张力最强。`
             : `   - 过肩:从某人肩膀后面拍另一人,常用于对话场景,有空间纵深。`,
     `4. 画面必须是单张分镜图,不能有面板分割、文字、标号。`,
-    `5. 风格必须匹配项目视觉风格:${styleSpec.label} —— ${styleSpec.positive}`,
-    `6. 角色动作 / 表情 / 视线方向严格按本镜头的"${data.action}"执行。`,
+    `5. 角色动作 / 表情 / 视线方向严格按本镜头的"${data.action}"执行。`,
+    ``,
+    buildStyleLock(styleSpec, 'panel'),
   ].filter(Boolean).join('\n')
 }
 
@@ -684,7 +699,7 @@ const RegenShotInput = ShotInput.extend({
 
 export type RegenShotInputType = z.infer<typeof RegenShotInput>
 
-function buildRegenShotInstruction(data: RegenShotInputType, styleSpec: { label: string; positive: string }, usedCharCount: number, hasScene: boolean): string {
+function buildRegenShotInstruction(data: RegenShotInputType, styleSpec: VisualStyleSpec, usedCharCount: number, hasScene: boolean): string {
   const charRefs = usedCharCount > 0
     ? usedCharCount === 1
       ? `图2 = 「${data.characterNames[0] || '角色'}」(脸/衣服锁定)`
@@ -714,7 +729,8 @@ function buildRegenShotInstruction(data: RegenShotInputType, styleSpec: { label:
     `3. ${usedCharCount > 0 ? `图 2..N 的角色是参考,他们的脸/身材/衣服必须跟图1 一致(不能换脸)。` : '本镜头没有角色参考,只改场景/构图相关的部分。'}`,
     hasScene ? `4. 场景构图 / 光照沿用图1 当前的样子(场景参考图只是兜底,跟图1 冲突时以图1 为准)。` : '',
     `5. 保持单张分镜图,不能有面板分割、文字、标号。`,
-    `6. 风格:${styleSpec.label} —— ${styleSpec.positive}`,
+    ``,
+    buildStyleLock(styleSpec, 'panel'),
   ].filter(Boolean).join('\n')
 }
 
@@ -822,14 +838,20 @@ export type PitchDeckInputType = z.infer<typeof PitchDeckInput>
 /**
  * 把分镜数据翻译成"漫剧故事板"多格分镜 prompt。
  *
- * 设计思路(2026 用户指定 —— 从"Pitch Deck 7 段式"改成"漫剧多格分镜"):
- *   1) 整张图就是一个 manga/comic page,纯 6-8 格分镜网格
- *   2) 每格 = 1 个 shot:首帧画面 + 动态变化指示(motion lines / arrows) +
- *      顶部预留 caption box(留给后续文字标注)
- *   3) 剧情从左到右、从上到下递进
- *   4) 排版干净,格间留白(gutter),高清画质
- *   5) 角色在所有格子里保持一致(脸/身材/衣服)
- *   6) 风格锁到项目视觉风格
+ * 设计思路(2026/06 用户重做 —— 从"固定 6/8 格 + 顶部 caption"改成
+ * "可变 4-10 格 + 每格首帧 + 首帧下方画面变化描述 + 右下角虚线 caption 框"):
+ *   1) 整张图就是一个 manga/漫剧 page,分格数量自适应(根据情节密度 4-10)
+ *   2) 每格 = 1 个 shot:
+ *      - 主图区:首帧画面(用已提供的人物形象,脸/身/服/饰一致)
+ *      - 主图下方:1-2 行小字,描述"相对于上一格的画面变化"(镜头推近 /
+ *        角色由站转坐 / 光照亮转暗 等)
+ *      - 右下角或底部右侧:虚线框 / 浅色底区域,内含占位文字
+ *        `[音效/台词/转场]`,留给后期填充
+ *   3) 剧情严格递进:每一格必须比上一格推进剧情,禁止重复角度或静态对话
+ *   4) 9:16 / 4:5 竖屏比例,适合手机阅读
+ *   5) 排版整齐、格间留白一致、高清
+ *   6) 角色在所有格子里保持一致(脸/身材/服装/配饰)
+ *   7) 风格锁到项目视觉风格
  */
 function buildPitchDeckPrompt(opts: {
   data: PitchDeckInputType
@@ -839,19 +861,29 @@ function buildPitchDeckPrompt(opts: {
   const chars = data.characters || []
   const shots = data.shots || []
   const shotCount = shots.length
-  // 漫剧故事板固定 6 格(2x3)或 8 格(2x4)。少于 6 个 shot 就补到 6,8 个以上截到 8。
-  const TARGET_PANELS = shotCount >= 7 ? 8 : 6
-  const panelsToShow = Math.min(shotCount, TARGET_PANELS)
-  const needExtraPanels = Math.max(0, TARGET_PANELS - shotCount)
 
-  // 计算网格布局(根据 panel 数选 2x3 或 2x4)
-  const gridLayout = TARGET_PANELS === 8 ? '2 rows × 4 columns (horizontal manga page)' : '2 rows × 3 columns (standard manga page)'
+  // ====================================================================
+  // panel 数量自适应:用户要求"通常 4-8 格,必要时可到 10 格,
+  // 根据情节密度、动作连贯性、情绪转折点自主决定"。
+  // 这里取 clamp(shotCount, 4, 10) 作为建议数 + 在 prompt 里给模型 4-10
+  // 的活动范围,让模型按密度自调。
+  // ====================================================================
+  const SUGGESTED_PANELS = Math.min(10, Math.max(4, shotCount || 6))
+  // 网格布局:列数随 panel 数变化,保持竖屏可读性
+  // 4 格 → 2x2;5-6 格 → 2 列 × 2-3 行;7-8 格 → 2 列 × 4 行;9-10 格 → 2 列 × 5 行
+  const gridLayout = SUGGESTED_PANELS <= 4
+    ? '2 columns × 2 rows'
+    : SUGGESTED_PANELS <= 6
+      ? '2 columns × 3 rows'
+      : SUGGESTED_PANELS <= 8
+        ? '2 columns × 4 rows'
+        : '2 columns × 5 rows'
 
   // 已有 shot 描述(模型据此填每个 panel)
   const shotLines = shots.map((s, i) => {
     const cam = s.camera ? ` | camera: ${s.camera}` : ''
     const dur = s.durationSec ? ` | duration: ${s.durationSec}s` : ''
-    return `  Shot ${i + 1}: [${s.shotTypeLabel}] ${s.action}${cam}${dur}`
+    return `  Panel ${i + 1}: [${s.shotTypeLabel}] ${s.action}${cam}${dur}`
   }).join('\n')
 
   // 角色描述块
@@ -879,68 +911,90 @@ function buildPitchDeckPrompt(opts: {
 
   return [
     // ========== 任务总述 ==========
-    `[MISSION] Generate a MANGA-STYLE STORYBOARD (漫剧故事板) page for the following storyboard sequence. This is a SINGLE image designed to look like ONE page from a manga / manhua / 漫剧 / comic — NOT a finished illustration, NOT a poster, NOT a production deck. The whole image is a multi-panel storyboard with ${TARGET_PANELS} panels arranged in a clean ${gridLayout}.`,
+    `[MISSION] 请根据下面的【剧本】和【已设定的人物形象】,生成一版【漫剧故事板】(manga-style storyboard page)。这是一张单图,看起来像一页漫剧 / manhua / 短剧分镜页 —— 不是成片插画,不是海报,不是宣发图。整张图是一个多格分镜,排版竖屏,适合手机阅读。`,
 
-    `The page tells the story PROGRESSIVELY — reading order is left-to-right, top-to-bottom (or right-to-left for traditional manga style — your call, but be consistent). Each panel is one shot from the storyboard sequence. The viewer should be able to "read" the whole sequence by looking at this one image.`,
+    `[ASPECT RATIO] 输出 9:16 或 4:5 的竖屏比例。整张图是从上往下阅读的多格分镜页。`,
+
+    // ========== 分格数量(自适应)==========
+    `[PANEL COUNT — 分格数量不固定,模型自主决定]`,
+    `根据这段剧本的【情节密度】【动作连贯性】【情绪转折点】,自主决定用多少格。通常 4–8 格,必要时可到 10 格。`,
+    `建议起点:${SUGGESTED_PANELS} 格(基于已有 ${shotCount || 0} 个镜头描述)。实际允许范围:4-10 格。如果情节密集 / 转折多,加格;如果是连贯动作 / 单一情绪,少格。`,
+    `推荐布局:${gridLayout}(可以根据最终格数微调,保持视觉平衡)。`,
+
+    // ========== 每格内容结构(关键)==========
+    `[PER-PANEL STRUCTURE — 每一格必须严格按这个三段式结构]`,
+    `每一格内部从上到下分三段:`,
+    `  ┌──────────────────────────┐`,
+    `  │  段 1:首帧主图区(占格子 ~70% 高度)  │`,
+    `  │  - 这一格的镜头首帧                  │`,
+    `  │  - 严格使用已提供的人物形象          │`,
+    `  │  - 脸型/发型/服装/配饰 100% 一致      │`,
+    `  ├──────────────────────────┤`,
+    `  │  段 2:首帧下方变化说明(占 ~15%)     │`,
+    `  │  - 1-2 行小字(图内呈现,不是后期叠的) │`,
+    `  │  - 描述「这一格相对于上一格的画面变化」│`,
+    `  │  - 例:镜头从全景推近至面部特写 /    │`,
+    `  │    角色由站转坐 / 光照由亮转暗       │`,
+    `  ├──────────────────────────┤`,
+    `  │  段 3:右下角/底部右侧标注区(~15%)   │`,
+    `  │  - 一个虚线框(dashed border)或浅色   │`,
+    `  │    底(light fill ~#F0F0F0)的小矩形    │`,
+    `  │  - 内含占位文字「[音效/台词/转场]」  │`,
+    `  │  - 描述画面如何变化(例:主角开车向  │`,
+    `  │    镜头直直驶来 / "我不会放过你!" / │`,
+    `  │    切场至雨夜)                       │`,
+    `  └──────────────────────────┘`,
+    `第 1 格因为没有"上一格",段 2 改为简短的开场说明(例:开场:夜晚,XX 进入 XX)。`,
+
+    // ========== 剧情递进硬约束 ==========
+    `[STORY PROGRESSION — 硬约束]`,
+    `RULE A — 每一格必须比上一格【推进剧情】:换镜头、换动作、换情绪、换光影,任何变化都行,但绝不能"重复同一角度",也绝不能"静态对话铺满好几格"。`,
+    `RULE B — 如果剧本里某段是长对白,合并成 1 格(对白写在右下角 caption 框),不要为每句对话单独占 1 格。`,
+    `RULE C — 如果剧本里某段是连续动作(开车 / 打斗 / 奔跑),用 2-3 格分解关键节奏点(发起 / 高潮 / 落点),不要超过 3 格连续同主体。`,
 
     // ========== 整体视觉风格 ==========
-    `[OVERALL VISUAL TREATMENT — strictly enforced]`,
-    `- Manga / 漫剧 / comic style. Clean linework, strong composition, deliberate visual storytelling.`,
-    `- 2K HD resolution. The image should be sharp, high-contrast, professional-grade.`,
-    `- Each panel: rectangular, equal size, separated by clean white gutters (~3-5% of panel width). No overlapping panels.`,
-    `- Inside each panel: a manga-style illustration showing the shot's first frame. Background can be pure white (classic manga) or atmospheric (漫剧 with backgrounds) — match the project style.`,
-    `- A reserved TEXT ANNOTATION SLOT at the top of each panel: a small rectangular caption box or speech-bubble slot, with a tiny dotted/dashed border. This is where narration or dialogue text will be inserted later. The slot should be EMPTY in the image (just a placeholder box) — the actual text will be added in post.`,
-    `- Motion / dynamic indication: where appropriate, include motion lines (速度线), action arrows, slight blur trails, or dynamic composition angles to show the panel depicts a MOMENT IN MOTION (not a static pose). This is critical — the user wants each panel to convey "this is a moving scene, not a frozen photo".`,
-    `- Reading flow: visual cues (panel size, character eye-line direction, action vectors) should guide the eye naturally from panel to panel. The story should be readable WITHOUT any text.`,
-    `- Color palette: limited, consistent across all panels. Match the project visual style. Mood-appropriate saturation.`,
-    `- All panels share the same VISUAL STYLE — same line weight, same rendering technique, same color treatment, same level of detail.`,
-    `- Character consistency: any character appearing in multiple panels MUST look identical. Same face, same body, same outfit, same hair. This is non-negotiable.`,
-    `- NO text overlays, NO panel numbers, NO "Shot 1" labels inside the image. The panels speak for themselves. (Text is added in post.)`,
-
-    // ========== 网格布局 ==========
-    `[LAYOUT — ${TARGET_PANELS} panels in a clean ${gridLayout}]`,
-    TARGET_PANELS === 8
-      ? `Row 1 (top): Panels 1, 2, 3, 4 (left to right).
-Row 2 (bottom): Panels 5, 6, 7, 8 (left to right).`
-      : `Row 1 (top): Panels 1, 2, 3 (left to right).
-Row 2 (bottom): Panels 4, 5, 6 (left to right).`,
-
-    `Each panel occupies an equal rectangular cell. Panels are separated by clean white gutters (gutter width ~3-5% of panel width). No panel overlaps any other. The outer margin (between panels and image edge) is ~2-3% of image size.`,
+    `[OVERALL VISUAL TREATMENT]`,
+    `- 漫剧 / manga / manhua 风格。线条干净,构图有力,视觉叙事优先。`,
+    `- HD 高清。整张图清晰锐利,适合放大查看。`,
+    `- 每一格:矩形,大小一致,格间用干净的白色 gutter 分隔(gutter ~3-5% panel 宽度)。无重叠、无超出。`,
+    `- Motion / 动态指示:在需要的格子里加 motion lines(速度线)、动作箭头、轻微残影,让画面"有动感",而不是僵硬的定格。`,
+    `- 阅读流:格子大小 / 角色视线方向 / 动作向量 都引导眼睛自然从上到下阅读。`,
+    `- 配色:克制、跨格统一,匹配项目视觉风格,情绪饱和度合理。`,
+    `- 全部格子统一渲染风格 —— 同样线宽、同样上色技法、同样细节程度。`,
+    `- 角色一致性:出现在多格里的同一角色,必须脸 / 身 / 服 / 发 / 配饰 100% 一致。`,
+    `- 除了段 2(画面变化说明文字)和段 3(虚线框 caption)以外,**不要**画其他文字、不要画 panel 编号、不要画 "Shot N" 标签。`,
 
     // ========== 内容(模型据此填图)==========
-    `[STORY PLOT — use this verbatim as the source of truth for what happens in each panel. The plot MUST be readable panel-by-panel.]`,
+    `[STORY PLOT — 这是真值来源,每一格必须从剧情里推得]`,
     data.plotText,
 
-    `[SCENE — atmospheric context for all panels]`,
+    `[SCENE — 场景氛围,所有格子共用]`,
     sceneLine,
 
-    `[CHARACTERS — full descriptions. Same character MUST look identical across all panels they appear in.]`,
+    `[CHARACTERS — 已设定的人物形象。同一角色在多格里必须 100% 一致]`,
     charLines || '  (no specific characters — the storyboard focuses on the environment and atmosphere)',
 
-    `[SHOT BREAKDOWN — ${panelsToShow} of ${TARGET_PANELS} panels are explicitly defined. The remaining ${needExtraPanels} panel(s) should be inferred from the plot text above, maintaining the same style, character designs, and scene atmosphere. Each shot's first frame should be the panel's main illustration.]`,
-    shotLines || `  (no explicit shots — infer all ${TARGET_PANELS} from the plot text above, in reading order)`,
-    needExtraPanels > 0 ? `  Panel${needExtraPanels > 1 ? 's' : ''} ${shotCount + 1}–${TARGET_PANELS}: [INFER FROM PLOT — same visual style, character consistency, scene atmosphere.]` : '',
+    `[SHOT BREAKDOWN — 已有 ${shotCount} 个镜头建议;实际最终格数自定]`,
+    shotLines || `  (no explicit shots — infer all panels from the plot text above, reading order top-to-bottom)`,
 
-    // ========== 整体视觉风格(项目用户选)==========
-    `[PROJECT VISUAL STYLE — must match the project's selected visual style across ALL ${TARGET_PANELS} panels]`,
-    `Style name: ${styleSpec.label}`,
-    `Style: ${styleSpec.positive}`,
-    `AVOID: ${styleSpec.negative}`,
+    // ========== 项目视觉风格 ==========
+    `[PROJECT VISUAL STYLE — must match across ALL panels]`,
+    buildStyleLock(styleSpec, 'deck'),
 
     // ========== 输出质量约束 ==========
-    `[QUALITY RULES — output is REJECTED if ANY of these is violated]`,
-    `RULE 1 — ${TARGET_PANELS} EXACT PANELS: the image must contain EXACTLY ${TARGET_PANELS} panels in a ${gridLayout}. Not 4, not 9, not 12. EXACTLY ${TARGET_PANELS}.`,
-    `RULE 2 — CLEAN GUTTERS: panels must be separated by visible white space. No bleeding edges, no overlapping, no touching.`,
-    `RULE 3 — RESERVED CAPTION SLOTS: each panel must have a small rectangular placeholder box at the top (or appropriate corner) for caption / speech-bubble text. The slot is EMPTY but the placeholder shape must be visible.`,
-    `RULE 4 — MOTION / DYNAMIC: each panel should show a moment in motion (motion lines, action lines, dynamic angle, blur trail, etc.) — NOT a static standing pose. The viewer should feel the action is happening.`,
-    `RULE 5 — CHARACTER CONSISTENCY: any character in multiple panels MUST be pixel-identical. Same face, same outfit, same body, same hair, same accessories.`,
-    `RULE 6 — STYLE LOCK: all ${TARGET_PANELS} panels must be rendered in the same visual style. Mixing anime and realistic, or mixing 3D and 2D, is forbidden.`,
-    `RULE 7 — STORY READABILITY: by looking at the ${TARGET_PANELS} panels in reading order (left-to-right, top-to-bottom), the viewer should be able to understand the story progression WITHOUT any text. Visual storytelling only.`,
-    `RULE 8 — NO TEXT INSIDE PANELS: do not draw any text, labels, or numbers inside the actual panel content. The caption slots are PLACEHOLDERS (empty boxes), not pre-filled text.`,
-    `RULE 9 — NO UNRELATED CONTENT: no characters not in the list, no random props, no scenery unrelated to the plot. Everything in the storyboard must be traceable back to the inputs above.`,
-    `RULE 10 — HD QUALITY: 2K sharp, no blur, no low-res artifacts. Each panel is detailed enough that it could stand alone as a single storyboard frame.`,
+    `[QUALITY RULES — 违反任一条 = 重画]`,
+    `RULE 1 — PANEL COUNT IN RANGE: 4 到 10 格,自主决定,但必须落在这个范围内。`,
+    `RULE 2 — VERTICAL ORIENTATION: 竖屏 9:16 或 4:5,适合手机阅读。`,
+    `RULE 3 — CLEAN GUTTERS: 格子之间用清晰的白色留白分隔,留白宽度一致,无溢出。`,
+    `RULE 4 — THREE-SEGMENT PER PANEL: 每一格内部必须有(a)首帧主图(b)首帧下方 1-2 行画面变化说明(c)右下角或底部右侧的虚线框/浅底 [音效/台词/转场] 占位区。三段都不能省。`,
+    `RULE 5 — DASHED CAPTION BOX: 段 3 的占位框必须用虚线(dashed)边框或浅灰底,与段 2 的文字明显区分,且位于右下角或底部右侧。`,
+    `RULE 6 — STORY PROGRESSION: 每一格必须比上一格推进剧情,禁止重复角度,禁止静态对话铺满多格(看 RULE A/B/C)。`,
+    `RULE 7 — CHARACTER LOCK: 任一角色在多格出现,脸 / 身 / 服 / 发 / 饰必须像素级一致 —— 使用 [CHARACTERS] 里的描述,不能自行变形。`,
+    `RULE 8 — STYLE LOCK: 所有格子同一种视觉风格,严禁混搭(动漫 + 写实 / 3D + 2D / 水彩 + cel-shading)。`,
+    `RULE 9 — NO RANDOM TEXT: 除了段 2 的画面变化说明小字、段 3 的 [音效/台词/转场] 占位文字,严禁在图里画其他文字、编号、签名、水印。`,
+    `RULE 10 — HD QUALITY: 锐利、无糊、无低分辨率伪影。每一格单独拎出来也能当一张分镜首帧用。`,
 
-    `Begin. Output the manga-style storyboard page.`,
+    `Begin. Output the manga-style storyboard page (vertical, ${SUGGESTED_PANELS}-panel suggested, range 4-10).`,
   ].filter(Boolean).join('\n\n')
 }
 
@@ -955,15 +1009,16 @@ export const generateStoryboardPitchDeck = createServerFn({ method: 'POST' })
     if (!apiKey) return { ok: false as const, error: 'ARK_API_KEY not configured' }
     const model = data.model?.trim() || defaultModel
 
-    // 2K 平衡清晰度与生成时间/费用;用户提到"8K"但 Seedream 最大 4K
+    // 9:16 竖屏(1620×2880 ≈ 4.66M pixels,过 Seedream 最小像素门槛 3.69M),
+    // 适合手机阅读。用户 2026/06 要求"适合竖屏阅读(9:16 或 4:5 均可)"。
     const result = await callSeedreamImages(
       {
         model,
         prompt,
-        size: '2K',
+        size: '1620x2880',
         output_format: 'png',
         watermark: false,
-        // 不用 image 字段 — 7 分区布局模型自主构图,塞图反而会干扰 layout
+        // 不用 image 字段 — 多格分镜布局模型自主构图,塞图反而会干扰 layout
         // 可选视觉锚点(characterImageUrl / sceneImageUrl)暂不传入,保持纯 T2I 的清爽布局
       },
       apiKey,
@@ -974,6 +1029,148 @@ export const generateStoryboardPitchDeck = createServerFn({ method: 'POST' })
       if (/401/i.test(result.error || '')) return { ok: false as const, error: 'Seedream auth failed (401)' }
       if (/402/i.test(result.error || '')) return { ok: false as const, error: 'no_credits' }
       if (/timed out/i.test(result.error || '')) return { ok: false as const, error: 'AI 处理超时(>120s),设定稿内容多,建议重试' }
+      return { ok: false as const, error: result.error || 'Seedream 未返回图片' }
+    }
+    return { ok: true as const, url: result.url, model: result.model }
+  })
+
+// ====================================================================
+// 5) regenerateSceneImage —— 场景图按意见重生 / 场景三视图(2026/06 新增)
+//
+// 跟角色 regenerateCharacterLook 对称,但语义不同:
+//   - 场景没有"脸/身材/服装"概念,也不需要 front/side/back 三视图
+//   - 场景的"三视图"重新定义为 3 个景别变体:
+//       · wide      = 远景 establishing shot(整场景全景,无人物)
+//       · medium    = 中景(场景关键道具/中距离,氛围细节)
+//       · close-up  = 近景/特写(局部纹理、招牌、天气细节、情绪氛围)
+//
+// 模式:
+//   - 'modify'     : 用户给修改意见,在原场景图基础上改(构图/光照/地点保留)
+//   - 'three-view' : 一次性输出 3 景别参考图(横向 3 面板)
+//
+// 风格锁:复用 buildStyleLock(styleSpec, 'scene'),跟 genSceneImage / 角色
+// 重生 / 分镜 / 故事板保持同一段风格指纹。
+// ====================================================================
+
+const RegenerateSceneInput = z.object({
+  referenceImageUrl: z.string().url(),          // 当前场景主视图作 I2I anchor
+  userInstruction: z.string().min(1).max(2000), // modify 模式必填;three-view 模式会被忽略
+  sceneSlug: z.string().min(1).max(200),        // e.g. "INT. CAFE - DAY"
+  sceneLocation: z.string().max(200).default(''),
+  sceneTimeOfDay: z.string().max(50).default(''),
+  sceneAction: z.string().max(2000).default(''),
+  projectStyle: z.string().max(50).optional(),
+  model: z.string().max(100).optional(),
+  mode: z.enum(['modify', 'three-view']).default('modify'),
+})
+
+export type RegenerateSceneInputType = z.infer<typeof RegenerateSceneInput>
+
+function buildScenePrompts(
+  data: RegenerateSceneInputType,
+  styleSpec: VisualStyleSpec,
+): { positive: string; negative: string; size: string } {
+  if (data.mode === 'three-view') {
+    // ----------------------------------------------------------------
+    // 场景三视图(横向 3 面板,横向 3072x1280 ≈ 3.93M 像素,过 Seedream 最小门槛)
+    // 语义:同一场景的 3 个景别变体,无人物,共用同一套构图 / 光照 / 风格
+    // ----------------------------------------------------------------
+    const positive = [
+      `[STYLE LOCK — 场景三视图(3 景别变体),适用对象:scene]`,
+      buildStyleLock(styleSpec, 'scene'),
+      ``,
+      `[任务] 生成一张「场景三视图」,同一地点的 3 个景别变体。`,
+      ``,
+      `[地点] ${data.sceneSlug}`,
+      data.sceneLocation ? `[具体地点] ${data.sceneLocation}` : '',
+      data.sceneTimeOfDay ? `[时段] ${data.sceneTimeOfDay}` : '',
+      data.sceneAction ? `[场景动作] ${data.sceneAction}` : '',
+      ``,
+      `[画布] 一张横图,3 个等宽面板(左/中/右),格间干净留白(gutter ~3-5% panel 宽度)。`,
+      ``,
+      `[3 个景别变体]`,
+      `1) LEFT  · WIDE ESTABLISHING SHOT (远景):整场景全景,建筑/地形/空间关系完整,无人物。展示"地点感"。`,
+      `2) MIDDLE · MEDIUM SHOT (中景):聚焦场景关键道具/中距离(桌椅、门窗、楼梯、标志物等),展示"故事感"。`,
+      `3) RIGHT  · CLOSE-UP / DETAIL (近景特写):局部纹理/招牌/天气/光线/材质特写,展示"质感感"。`,
+      ``,
+      `[硬约束]`,
+      `• 同一地点、同一时段、同一视觉风格 —— 三个面板共享完全一致的地点/光照/色板。`,
+      `• 三个面板都【无人物,无角色,无人形,无剪影】,纯环境。`,
+      `• 三个面板里出现的任何道具/标志物/装饰物必须前后一致(同一张桌子、同一扇窗)。`,
+      `• 不要文字、不要 logo、不要面板编号。`,
+    ]
+      .filter(Boolean)
+      .join('\n')
+    const negative = [
+      'people, character, figure, silhouette, human',
+      'different location, different time of day, different style between panels',
+      'photorealistic when input is anime, anime when input is realistic, style drift, mixing styles',
+      'low quality, blurry, low resolution, watermark, text, logo, panel number, label, caption, arrow',
+    ].join(', ')
+    return { positive, negative, size: '3072x1280' }
+  }
+
+  // ----------------------------------------------------------------
+  // 'modify' 模式:在原图基础上按意见改,严约束构图/光照/地点/时段
+  // ----------------------------------------------------------------
+  const positive = [
+    `[STYLE LOCK — 场景图按意见重生,适用对象:scene]`,
+    buildStyleLock(styleSpec, 'scene'),
+    ``,
+    `[任务] 修改「图1」(当前场景图),严格按下面的"修改意见"调整,只改用户提到的部分。`,
+    ``,
+    `[修改意见] ${data.userInstruction}`,
+    ``,
+    `[地点 / 时段] ${data.sceneSlug}${data.sceneTimeOfDay ? ' / ' + data.sceneTimeOfDay : ''}`,
+    data.sceneAction ? `[场景动作参考] ${data.sceneAction}` : '',
+    ``,
+    `[修改规则 — 必须遵守]`,
+    `1. 以图1为基础,在它的构图 / 光照 / 地点 / 时段上修改,**不要重新构图或换地点**。`,
+    `2. 只调整"修改意见"里明确提到的元素;没提到的部分(构图、光照、地点、时段、视觉风格)全部保留图1 的样子。`,
+    `3. 保持单张场景图,纯环境,无人物 / 无人形 / 无剪影。`,
+    `4. 保持与图1 相同的视觉风格,严禁风格漂移。`,
+  ]
+    .filter(Boolean)
+    .join('\n')
+  const negative = [
+    'people, character, figure, silhouette, human, crowd',
+    'different art style, style drift, photorealistic when input is anime, anime when input is realistic, different medium, different color grading',
+    'different location, different time of day, different camera angle, different aspect ratio',
+    'watermark, logo, text, signature, label, panel number, caption, annotation, arrow, layout grid lines',
+    'blurry, low quality, low resolution, jpeg artifacts',
+  ].join(', ')
+  return { positive, negative, size: '2K' }
+}
+
+export const regenerateSceneImage = createServerFn({ method: 'POST' })
+  .inputValidator((d: unknown) => RegenerateSceneInput.parse(d))
+  .handler(async ({ data }) => {
+    const { resolveProjectStyle } = await import('./visualStyles')
+    const styleSpec = resolveProjectStyle(data.projectStyle)
+    const { positive, negative, size } = buildScenePrompts(data, styleSpec)
+
+    const { apiKey, baseUrl, model: defaultModel } = getArkConfig()
+    if (!apiKey) return { ok: false as const, error: 'ARK_API_KEY not configured' }
+    const model = data.model?.trim() || defaultModel
+    const prompt = appendNegative(positive, negative)
+
+    const result = await callSeedreamImages(
+      {
+        model,
+        prompt,
+        image: data.referenceImageUrl,
+        size: normalizeSeedreamSize(size),
+        output_format: 'png',
+        watermark: false,
+      },
+      apiKey,
+      baseUrl,
+      I2I_TIMEOUT_MS,
+    )
+    if (!result.url) {
+      if (/401/i.test(result.error || '')) return { ok: false as const, error: 'Seedream auth failed (401)' }
+      if (/402/i.test(result.error || '')) return { ok: false as const, error: 'no_credits' }
+      if (/timed out/i.test(result.error || '')) return { ok: false as const, error: 'AI 处理超时(>120s),请重试' }
       return { ok: false as const, error: result.error || 'Seedream 未返回图片' }
     }
     return { ok: true as const, url: result.url, model: result.model }

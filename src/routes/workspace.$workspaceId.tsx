@@ -12,8 +12,8 @@ import {
   type Outline, type GenScene, type GenCharacter, type GenCharacterLook, type StoryboardPanel, type TimelineData, type TimelineTrack, type TimelineClip,
   type StoryboardGroup, type StoryboardShot, type ShotType,
 } from '../data/workspaceGenerators'
-import { generateStageAi } from '../lib/aiGenerate.functions'
-import { generateImage } from '../lib/seedream.functions'
+import { generateStageAi, generateCharacterLookAi } from '../lib/aiGenerate.functions'
+import { generateImage, regenerateSceneImage } from '../lib/seedream.functions'
 import { regenerateCharacterLook } from '../lib/characterRegen.functions'
 import { generateStoryboardFromPlot, generateStoryboardShotImage, regenerateStoryboardShot } from '../lib/storyboard.functions'
 import { generateVideo } from '../lib/videoGenerate.functions'
@@ -21,8 +21,8 @@ import { generateStoryboardPitchDeck } from '../lib/seedream.functions'
 import { getProject, saveWorkspaceData, loadWorkspaceData, type ProjectConfigRow } from '../lib/projects.functions'
 import { streamSynopsis, streamEpisodeScenes, refineSynopsis, refineEpisodeScenes } from '../lib/scriptAgent.functions'
 import type { ImportedScriptResult } from '../lib/parseImportedScript.functions'
-import { resolveProjectStyle, resolveT2IModel, resolveI2IModel } from '../lib/visualStyles'
-import { Maximize2, FileText, Camera, Clock, Users, X, Loader2, Sparkles, Send, CheckCircle2, Pencil, Check, Image as ImageIcon, LayoutGrid, RefreshCw } from 'lucide-react'
+import { resolveProjectStyle, resolveT2IModel, resolveI2IModel, buildStyleLock } from '../lib/visualStyles'
+import { Maximize2, FileText, Camera, Clock, Users, X, Loader2, Sparkles, Send, CheckCircle2, Pencil, Check, Image as ImageIcon, LayoutGrid, RefreshCw, Target } from 'lucide-react'
 import CharacterPortrait from '../components/workspace/CharacterPortrait'
 import { toast } from 'sonner'
 
@@ -207,9 +207,19 @@ function WorkspacePage() {
   const [modInput, setModInput] = useState('')
   const [modBusy, setModBusy] = useState(false)
   const [modError, setModError] = useState<string | null>(null)
+  // 场景修改输入弹层(2026/06 跟角色修改对齐体验:打开直接输入,Enter 提交)。
+  // 跟 modPanel 解耦:角色 modPanel 走的是"打开预览 + 内嵌输入",场景没
+  // selectedGenIdx / 多图 history 概念,只需要"打开输入弹层"即可,不需要
+  // 整个预览模态框。功能上跟角色对齐,实现上各走各的 state。
+  const [sceneModOpen, setSceneModOpen] = useState<GenScene | null>(null)
+  const [sceneModInput, setSceneModInput] = useState('')
+  const [sceneModBusy, setSceneModBusy] = useState(false)
+  const [sceneModError, setSceneModError] = useState<string | null>(null)
   const callAi = useServerFn(generateStageAi)
+  const callLookAi = useServerFn(generateCharacterLookAi)
   const callImage = useServerFn(generateImage)
   const callRegenCharacter = useServerFn(regenerateCharacterLook)
+  const callRegenScene = useServerFn(regenerateSceneImage)
   const callGenerateStoryboard = useServerFn(generateStoryboardFromPlot)
   const callGenerateShotImage = useServerFn(generateStoryboardShotImage)
   const callRegenShot = useServerFn(regenerateStoryboardShot)
@@ -232,8 +242,17 @@ function WorkspacePage() {
   // 生成的图。React state 闭包是快照,useRef 才是实时的。
   const charImagesRef = useRef<Record<string, string[]>>({})
   useEffect(() => { charImagesRef.current = charImages }, [charImages])
+  // processCharacter 入口 ref 守卫(2026/06):防止 useEffect 多次触发
+  // 同一角色并发跑 processCharacter。state 的 busyChars 已经做了同样防御,
+  // 但 ref 更可靠(不会因 React batching 漏掉)。
+  const processCharacterInFlightRef = useRef<Set<string>>(new Set())
+  // 2026/06:autoGen 已处理过的角色 id 集合(无视 charImages 状态)。
+  // 目的:老图已持久化在 supabase 时,useEffect 触发仍能跑 processCharacter
+  // 重新覆盖默认 look(用户期望"第一次进入要自动生成");同时防止 enrich
+  // 内部 setData 引起的 useEffect 重跑老角色。
+  const autogenRanRef = useRef<Set<string>>(new Set())
   const [panelImages, setPanelImages] = useState<Record<string, string>>({})
-  const [sceneImages, setSceneImages] = useState<Record<string, string>>({})
+  const [sceneImages, setSceneImages] = useState<Record<string, string[]>>({})
   // 角色图片生成状态拆分:
   //   activeImageKey: 当前**正在生成**的那一张图(imageKey = c.id 或 c.id::lk.id)。
   //                   用于卡片显示 spinner(只有这一张是"生成中"状态)。
@@ -260,6 +279,10 @@ function WorkspacePage() {
   // 在 regen 期间给对应卡片加黑屏遮罩(spinner + "正在生成三视图" 等),
   // 防止用户重复点 / 让进度可感知。value 存 mode 用来显示对应的提示文字。
   const [regenBusyKeys, setRegenBusyKeys] = useState<Map<string, 'modify' | 'three-view' | 'multi-asset'>>(new Map())
+  // 用户在角色卡片右上角点"选中"后,该 look(imageKey)被钉住指向哪张 url。
+  // 用 url 而不是 index 引用,避免新增图后被偏移。
+  // 没设 → fallback 用 charImages[imageKey] 的最新一张(.at(-1))
+  const [selectedCharImages, setSelectedCharImages] = useState<Record<string, string>>({})
   const [autoGen, setAutoGen] = useState(true)
   void setAutoGen
   // 流式剧本生成状态
@@ -306,6 +329,9 @@ function WorkspacePage() {
   // 2026 Storyboard 接入:每个分镜组可以独立生成故事板图(Storyboard),
   // key = groupId。value 包含 storyboardUrl 和 status。不持久化(Seedream URL 24h 有效)。
   const [groupStoryboards, setGroupStoryboards] = useState<Record<string, { url: string; status: 'running' | 'succeeded' | 'failed' }>>({})
+  // 故事板图放大预览(2026/06 跟分镜图对齐):点图片打开全屏模态。
+  // 故事板没有 history 多代概念(每个 group 只 1 张故事板图),模态最简。
+  const [storyboardPreview, setStoryboardPreview] = useState<{ groupId: string } | null>(null)
   const [shotPreview, setShotPreview] = useState<{ groupId: string; shotId: string } | null>(null)
   const [shotSelectedGenIdx, setShotSelectedGenIdx] = useState(0)
   const [shotModInput, setShotModInput] = useState('')
@@ -361,8 +387,9 @@ function WorkspacePage() {
         }
         if (wd.charImages) setCharImages(wd.charImages as Record<string, string[]>)
         if (wd.shotImages) setShotImages(wd.shotImages as Record<string, string[]>)
+        if ((wd as any).selectedCharImages) setSelectedCharImages((wd as any).selectedCharImages as Record<string, string>)
         if (wd.panelImages) setPanelImages(wd.panelImages as Record<string, string>)
-        if (wd.sceneImages) setSceneImages(wd.sceneImages as Record<string, string>)
+        if (wd.sceneImages) setSceneImages(wd.sceneImages as Record<string, string[]>)
         setDataLoaded(true)
       })
       .catch(() => { setDataLoaded(true) })
@@ -416,16 +443,23 @@ function WorkspacePage() {
     if (busyScene) return
     setBusyScene(s.id)
     try {
+      // 2026/06 修:场景图之前完全没注入项目视觉风格,导致场景 A/B/C
+      // 跟角色画风漂移。现在统一走 buildStyleLock,跟角色 / 分镜 /
+      // 故事板 / 多维资产共享同一段风格指纹。
+      const styleSpec = resolveProjectStyle(project?.style)
       const prompt = [
+        buildStyleLock(styleSpec, 'scene'),
+        `---`,
         `Location: ${s.slug}`,
         s.location && `${s.location}`,
         `Time: ${s.timeOfDay === 'DAY' ? 'daytime' : s.timeOfDay === 'NIGHT' ? 'nighttime' : s.timeOfDay === 'DUSK' ? 'dusk, golden hour' : 'dawn'}`,
         'Empty scene, no people, no characters, no figures, no silhouettes.',
         'Cinematic environment photography, wide establishing shot, detailed architecture and props, atmospheric lighting, film still quality.',
-      ].filter(Boolean).join('. ')
+      ].filter(Boolean).join('\n')
       const res = await callImage({ data: { prompt, model: project?.sceneModel } })
       if (res.url) {
-        setSceneImages((m) => ({ ...m, [s.id]: res.url }))
+        // 2026/06 改:sceneImages 改成数组(跟 charImages 对齐),支持"主视图 + 修改/三视图"共存
+        setSceneImages((m) => ({ ...m, [s.id]: [...(m[s.id] ?? []), res.url!] }))
       } else {
         toast.error(res.error || '场景图生成失败')
       }
@@ -442,16 +476,141 @@ function WorkspacePage() {
    * 跨角色由 useEffect 通过 Promise.all 并行触发,实现"不同角色并行 / 同
    * 角色串行"的要求。
    */
+
+  /**
+   * Per-look 独立描述生成 —— 拿到主角色基础描述后,对每个 look 并行调一次
+   * generateCharacterLookAi(Qwen),产出独立完整的 face/body/clothing,
+   * 严格继承 anchor(主条目),除非 AI 在第 1 步已经标了 faceHint/bodyHint
+   * 说该变体下脸/身体有剧情明确的变化。
+   *
+   * 行为:
+   *   - 成功 → 覆盖原 looks[k].faceDescription / bodyDescription / clothingDescription
+   *   - 失败 → 保留 fallback(主条目)+ console.warn,不阻塞流程
+   *   - 同角色 looks 并行(Promise.all),跨角色由 processCharacter 调用方串行
+   *
+   * 用户诉求(2026/06):
+   * "同一个角色的不同形象让 ai 单独生成描述,不要共用一个人物形象描述"
+   * "严格按照传入的已经生成的形象生成,保证脸和身体的一致性"
+   * 文字层与图像层共享同一个 anchor:主条目 = 第 1 个 look(图像层 I2I 也锚第 1 张)。
+   */
+  async function enrichCharacterLooks(c: GenCharacter): Promise<GenCharacterLook[]> {
+    const looks = c.looks ?? []
+    console.log(`[CHAR-ENRICH] enrichCharacterLooks called: id=${c.id} looks=${looks.length}`)
+    if (looks.length === 0) return looks
+
+    // 已经填好独立 face/body 的(理论上不会出现)跳过 —— 节省 Qwen 调用
+    const needs = looks.filter(
+      (lk) =>
+        !lk.faceDescription?.trim() ||
+        !lk.bodyDescription?.trim() ||
+        lk.faceDescription === c.faceDescription ||
+        lk.bodyDescription === c.bodyDescription,
+    )
+    if (needs.length === 0) return looks
+
+    const results = await Promise.all(
+      needs.map(async (lk) => {
+        try {
+          const res = await callLookAi({
+            data: {
+              characterName: c.name,
+              age: c.age,
+              gender: c.gender,
+              anchorFaceDescription: c.faceDescription,
+              anchorBodyDescription: c.bodyDescription,
+              anchorClothingDescription: c.clothingDescription,
+              lookLabel: lk.label,
+              lookClothingDescription: lk.clothingDescription || c.clothingDescription,
+              faceHint: (lk as any).faceHint || undefined,
+              bodyHint: (lk as any).bodyHint || undefined,
+            },
+          })
+          if (res?.ok && (res as any).payload) {
+            const p = (res as any).payload
+            return {
+              ok: true as const,
+              lkId: lk.id,
+              face: String(p.faceDescription),
+              body: String(p.bodyDescription),
+              clothing: String(p.clothingDescription),
+            }
+          }
+          return { ok: false as const, lkId: lk.id, error: (res as any)?.error ?? 'unknown' }
+        } catch (e) {
+          return {
+            ok: false as const,
+            lkId: lk.id,
+            error: e instanceof Error ? e.message : 'err',
+          }
+        }
+      }),
+    )
+
+    return looks.map((lk) => {
+      const r = results.find((x) => x.lkId === lk.id)
+      if (r && r.ok) {
+        return {
+          ...lk,
+          faceDescription: r.face,
+          bodyDescription: r.body,
+          clothingDescription: r.clothing,
+        }
+      }
+      if (r && !r.ok) {
+        console.warn(`[enrichCharacterLooks] ${c.name}/${lk.label} failed:`, r.error)
+      }
+      return lk
+    })
+  }
+
   async function processCharacter(c: GenCharacter) {
+    // ===== 入口可观测性 + 防并发(2026/06 排查用)=====
+    console.log(`[CHAR-AUTOGEN] processCharacter called: id=${c.id} name=${c.name} looks=${(c.looks ?? []).length}`)
+    // ref 守卫:防止 useEffect 多次触发同角色并发跑。busyChars 已经被
+    // auto-gen useEffect 用,但 processCharacter 自身在多入口也会被直接调
+    // (genCharImage / processCharacter 内部 / 内部 IIFE),所以加 ref 兜底。
+    const inFlight = processCharacterInFlightRef.current.has(c.id)
+    if (inFlight) {
+      console.log(`[CHAR-AUTOGEN] processCharacter SKIPPED: id=${c.id} already in flight`)
+      return
+    }
+    processCharacterInFlightRef.current.add(c.id)
+
+    // ===== Per-look 独立描述生成(一次性,extract 完后)=====
+    // 检查:有 look 没自己的 face/body(或与主条目相同)→ 跑 enrich,否则跳过
+    const hasUnenriched = (c.looks ?? []).some(
+      (lk) =>
+        !lk.faceDescription?.trim() ||
+        !lk.bodyDescription?.trim() ||
+        lk.faceDescription === c.faceDescription ||
+        lk.bodyDescription === c.bodyDescription,
+    )
+    console.log(`[CHAR-AUTOGEN] hasUnenriched=${hasUnenriched} for id=${c.id}`)
+    if (hasUnenriched) {
+      const enriched = await enrichCharacterLooks(c)
+      c = { ...c, looks: enriched }
+      // 把 enriched looks 写回 workspaceData,让 UI 卡片 + 后续 I2I 都看见独立描述
+      setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              characters: prev.characters.map((x) =>
+                x.id === c.id ? { ...x, looks: enriched } : x,
+              ),
+            }
+          : prev,
+      )
+    }
+
     // 拉平成 lookSpecs。key 为图片存储 key(imageKey),label 用于 toast/标题。
+    // 2026/06:用户最新诉求 —— autoGen 只跑默认 look 1 张。变体 look 留给
+    // 用户主动触发(点虚线框 → generateOneCharacterLook / "修改"输入框 /
+    // "三视图" / "多维资产"按钮)。
+    // 同角色"不同形象"功能完整支持(数据 + UI + 主动生成链路都通),只
+    // 是不在 autoGen 里一次跑全。
+    // doRegen 的 replaceExisting 参数保留(供未来用),本路径暂不传。
     const lookSpecs: { imageKey: string; label: string; data: { faceDescription: string; bodyDescription: string; clothingDescription: string } }[] = [
       { imageKey: c.id, label: '默认', data: { faceDescription: c.faceDescription, bodyDescription: c.bodyDescription, clothingDescription: c.clothingDescription } },
-      ...(c.looks ?? []).map((lk) => ({
-        imageKey: `${c.id}::${lk.id}`,
-        label: lk.label,
-        // 脸和身材沿用主条目,clothingDescription 用 look 自己的
-        data: { faceDescription: lk.faceDescription || c.faceDescription, bodyDescription: lk.bodyDescription || c.bodyDescription, clothingDescription: lk.clothingDescription || c.clothingDescription },
-      })),
     ]
 
     for (let i = 0; i < lookSpecs.length; i++) {
@@ -478,19 +637,37 @@ function WorkspacePage() {
 
       if (referenceImageUrl) {
         // ============== 后续 look 走 I2I(以默认 look 的图为视觉锚点)==============
-        // 拼一条超强的"只换衣服、脸完全不变"指令
+        // 拼一条"中性结构锁脸 + 配饰按描述"指令(2026/06 用户诉求):
+        //   - 脸型 / 五官 / 肤色 / 骨架 / 发型 等中性结构 → 跨 look 100% 一致
+        //     (这是"看起来是同一个人"的本质)。
+        //   - 妆容 / 表情 / 配饰(口罩 / 帽子 / 眼镜 / 项链等)→ 按本 look 的
+        //     clothingDescription 生成。默认 look 的"裸脸"是基线,本新
+        //     look 不强制继承参考图的面部配饰(除非本 look 描述明确要保留)。
+        //   - 只有本 look 描述明确说"脸变了"/"胖了"/"受伤了"时,才允许
+        //     改脸 / 改身材(对应 GenCharacterLook.faceHint / bodyHint)。
+        // 用户的修改意见(若有)由 doRegen 的 userInstruction 通道处理,
+        // 不在这里覆盖。
         const instruction = [
-          `给【${c.name}】换上【${ls.label}】造型:`,
-          `新服装/配饰描述:${ls.data.clothingDescription || '保持原样'}`,
+          `给【${c.name}】生成【${ls.label}】造型,视觉锚点是图1(同角色的默认 look):`,
+          `新服装/配饰描述:${ls.data.clothingDescription || '保持参考图的服装不变'}`,
           ``,
-          `强约束(必须遵守,违反 = 重画):`,
-          `• 脸、五官、脸型、肤色、表情 100% 保持与原图一致 —— 不要换脸、不要微调、不要重新生成脸部`,
-          `• 体型、身高、体态 100% 一致`,
-          `• 发型、发色、妆容、配饰 100% 保持原状 —— 除非本次新造型明确要求改`,
-          `• 整体画面构图、视角、画幅、风格、光照、背景 100% 一致`,
-          `• 唯一允许改的:服装、衣领/袖口/腰带等细节、可替换的道具、可能新增的标志性配饰`,
+          `【中性结构锁(跨 look 必须 100% 一致)】`,
+          `• 脸型、脸轮廓、五官比例、肤色、骨骼结构 100% 继承图1`,
+          `• 体型、身高、胖瘦、体态 100% 继承图1`,
+          `• 发型轮廓(短/长/卷/直、刘海/鬓角)100% 继承图1`,
+          `  ↳ 发色默认继承,但若本新 look 描述明确要换发色则按描述`,
           ``,
-          `输出:一张全身正面图,新造型,但脸和身材与原图完全一致。`,
+          `【可按本新 look 描述自由调整的部分】`,
+          `• 妆容(眼妆、唇色、腮红)按本新 look 描述生成`,
+          `• 表情默认继承"无表情";若本新 look 描述明确要某种表情则按描述`,
+          `• 配饰(口罩/帽子/墨镜/项链/手套等)按本新 look 描述生成 —— 不强制继承图1 的配饰,除非描述明确说要保留`,
+          `• 整体服装按本新 look 的 clothingDescription 完整替换`,
+          ``,
+          `【硬约束】`,
+          `• 除非本新 look 描述里【明确写】"脸变了"/"胖了"/"受伤了"/"变年轻了"等,否则脸/身材一律按中性结构继承`,
+          `• 整体画面构图、视角、画幅、风格、光照、背景 100% 继承图1`,
+          ``,
+          `输出:一张全身正面图,新造型,看起来【明显是同一个人】,但服装/妆容/配饰已经按本新 look 描述替换。`,
         ].join('\n')
 
         // 找到 look 在 c.looks 里的 id(传给 doRegen 用于 imageKey 拼装)
@@ -498,7 +675,8 @@ function WorkspacePage() {
           ? null  // 默认 look
           : (c.looks ?? []).find((x) => `${c.id}::${x.id}` === ls.imageKey)?.id ?? null
 
-        // 复用 doRegen(它已经处理 I2I / busy 状态 / history push)
+        // 复用 doRegen(它已经处理 I2I / busy 状态 / history push)。
+        // 当前路径不再被执行(lookSpecs 只含默认 look),保留注释以备未来。
         await doRegen(c, lookDbId, 'modify', instruction, referenceImageUrl)
         continue
       }
@@ -560,11 +738,26 @@ function WorkspacePage() {
           // 表情
           `EXPRESSION: Neutral, expressionless, like a passport photo. No smile, no frown, no emotion, eyes open.`,
           ``,
+          // 默认 look 必须露出完整的脸(2026/06 用户诉求)
+          // 给后续 look 提供"脸"可以继承的视觉锚点 —— 口罩/墨镜/帽子等
+          // 面部遮挡物属于服饰/配饰,由各变体 look 自己的描述决定是否佩戴,
+          // 默认 look 不带任何面部遮挡,作为后续 look 的"裸脸"基线。
+          `FACE REVEAL — the default look must show the COMPLETE UNCOVERED FACE:
+  • No surgical mask, no dust mask, no cloth mask, no respirator
+  • No sunglasses, no goggles, no tinted glasses
+  • No hat, no cap, no hood covering the face
+  • No hands, props, or hair blocking the face
+  • Eyes, eyebrows, nose, mouth, jawline, skin tone all clearly visible
+  If the character's later outfit variants need a mask or accessory, those
+  variants add it themselves — the default look is the clean baseline face
+  that every other look inherits from.`,
+          ``,
           // 背景
           `BACKGROUND: 100% pure white #FFFFFF. No scenery, no floor, no shadow, no gradient, no vignette, no horizon line.`,
           ``,
-          // 视觉风格
-          `VISUAL STYLE: ${styleSpec.label}. Render the character in this exact style. ${styleSpec.positive}. Avoid: ${styleSpec.negative}.`,
+          // 视觉风格(2026/06:统一 buildStyleLock,跨生成入口风格指纹一致)
+          `[VISUAL STYLE — must follow the project's art direction]`,
+          buildStyleLock(styleSpec, 'character'),
           ``,
           // 多 outfit 一致性
           `FACE / BODY LOCK: "${c.name}" has multiple outfit variants. The face and body MUST remain identical across all variants. Only the outfit changes. Treat the FACE / BODY descriptions below as the single source of truth.`,
@@ -622,9 +815,18 @@ function WorkspacePage() {
         const characterSize = '1664x2496'
 
         const res = await callImage({ data: { prompt, model: resolveT2IModel(project?.sceneModel), noFallback: true, negativePrompt, size: characterSize } })
+        console.log(`[CHAR-AUTOGEN] callImage returned: id=${c.id} url=${res.url ? 'ok' : res.error}`)
         if (res.url) {
-          // 追加到 history 数组(每次生成都保留,用户在预览左侧看历史缩略图)
-          setCharImages((m) => ({ ...m, [ls.imageKey]: [...(m[ls.imageKey] ?? []), res.url] }))
+          // 2026/06 防御:直接覆盖 charImages[imageKey] = [res.url](只留 1 张)。
+          // 原因:
+          //   - autoGen 旧版本会一次跑全 1+N 个 looks,堆 N+1 张图;
+          //   - 用户之前在预览模态点过几次"修改"提交意见,也会堆图;
+          //   - 这两种历史堆叠 + 新一轮只生成 1 张,会让人感觉"看到几张
+          //     主视图"难以判断哪张是新的。
+          // 修法:autoGen 跑默认 look T2I 时直接覆盖历史为 [res.url],只留
+          // 最新 1 张。变体 look(走 I2I modify 路径,代码不会跑)不受影响。
+          setCharImages((m) => ({ ...m, [ls.imageKey]: [res.url] }))
+          console.log(`[CHAR-AUTOGEN] setCharImages WRITE: imageKey=${ls.imageKey} → [1 url] (覆盖为 1 张)`)
           toast.success(`已生成 ${cardTitle}（${styleSpec.label}）`)
         } else {
           toast.error(res.error || '生成失败')
@@ -641,6 +843,9 @@ function WorkspacePage() {
       n.delete(c.id)
       return n
     })
+    // 入口 ref 守卫:清掉
+    processCharacterInFlightRef.current.delete(c.id)
+    console.log(`[CHAR-AUTOGEN] processCharacter FINISHED: id=${c.id}`)
   }
 
   // Wrapper for "click on one card to regenerate": just trigger the whole
@@ -649,6 +854,122 @@ function WorkspacePage() {
     if (busyChars.has(c.id)) return
     setBusyChars((s) => new Set([...s, c.id]))
     await processCharacter(c)
+  }
+
+  /**
+   * 一键生成所有形象(2026/06 角色 tab 顶部按钮) —— 遍历本集所有角色的所有
+   * look(默认 + 变体),未生成的逐个跑:
+   *   - 默认 look(没图)→ genCharImage 走 T2I
+   *   - 变体 look(没图)→ generateOneCharacterLook 走 I2I(以默认图为锚,锁脸)
+   * 串行避免并发。供用户**主动**触发"同角色不同形象都生成",与 autoGen
+   * 默认只跑默认的克制策略并存。
+   */
+  async function generateAllCharacterLooksForCurrentEpisode() {
+    const epChars = data.characters.filter((c) => c.episodeIndex === selectedEpisodeIndex)
+    for (const c of epChars) {
+      // 默认 look 没图 → 跑 T2I
+      if (!charImages[c.id]?.length) {
+        await genCharImage(c)
+      }
+      // 变体 look 没图 → 跑 I2I
+      for (const lk of c.looks ?? []) {
+        if (charImages[`${c.id}::${lk.id}`]?.length) continue
+        if (!charImages[c.id]?.length) {
+          toast.error(`默认 look 还没生成,无法生成「${lk.label}」`)
+          continue
+        }
+        await generateOneCharacterLook(c, lk.id)
+      }
+    }
+    toast.success('本集所有形象生成完成')
+  }
+
+  /**
+   * 主动生成单个变体 look(2026/06) —— 角色 tab 变体 look 卡片虚线框
+   * 点击触发。流程:
+   *   1) 拿默认 look 最新图作 referenceImageUrl(无默认图则报错)
+   *   2) 拼"中性结构锁脸 + 配饰按描述"instruction(同 processCharacter 后续
+   *      look 走 I2I 的指令模板,保持一致)
+   *   3) 调 callRegenCharacter regenerateCharacterLook mode='modify'
+   *   4) push 到 charImages[`${c.id}::${lk.id}`] history 数组
+   *
+   * 不改 useEffect / processCharacter 行为,纯按用户点击触发的入口。
+   */
+  async function generateOneCharacterLook(c: GenCharacter, lookId: string) {
+    const lk = c.looks?.find((x) => x.id === lookId)
+    if (!lk) {
+      toast.error('找不到该 look')
+      return
+    }
+    const referenceUrl = charImages[c.id]?.at(-1)
+    if (!referenceUrl) {
+      toast.error('默认 look 还没生成,无法生成变体 look')
+      return
+    }
+    const imageKey = `${c.id}::${lk.id}`
+    if (charImages[imageKey]?.length) {
+      toast.success(`${c.name} · ${lk.label} 已生成`)
+      return  // 已生成过
+    }
+    setActiveImageKey(imageKey)
+    setBusyChars((s) => new Set([...s, c.id]))
+    const faceDesc = lk.faceDescription?.trim() || c.faceDescription
+    const bodyDesc = lk.bodyDescription?.trim() || c.bodyDescription
+    const clothingDesc = lk.clothingDescription?.trim() || c.clothingDescription
+    const instruction = [
+      `给【${c.name}】生成【${lk.label}】造型,视觉锚点是图1(同角色的默认 look):`,
+      `新服装/配饰描述:${clothingDesc || '保持参考图的服装不变'}`,
+      ``,
+      `【中性结构锁(跨 look 必须 100% 一致)】`,
+      `• 脸型、脸轮廓、五官比例、肤色、骨骼结构 100% 继承图1`,
+      `• 体型、身高、胖瘦、体态 100% 继承图1`,
+      `• 发型轮廓 100% 继承图1`,
+      ``,
+      `【可按本新 look 描述自由调整的部分】`,
+      `• 妆容、表情、配饰(口罩/帽子/墨镜/项链等)按本新 look 描述生成`,
+      `• 整体服装按本新 look 的服装描述完整替换`,
+      ``,
+      `【硬约束】`,
+      `• 除非本新 look 描述里【明确写】"脸变了"/"胖了"/"受伤了"等,否则脸/身材一律按中性结构继承`,
+      `• 整体画面构图、视角、画幅、风格、光照、背景 100% 继承图1`,
+      ``,
+      `输出:一张全身正面图,新造型,看起来【明显是同一个人】,但服装/妆容/配饰已按本新 look 描述替换。`,
+    ].join('\n')
+    try {
+      const res = await callRegenCharacter({
+        data: {
+          referenceImageUrl: referenceUrl,
+          userInstruction: instruction,
+          faceDescription: faceDesc,
+          bodyDescription: bodyDesc,
+          clothingDescription: clothingDesc,
+          characterName: c.name,
+          characterRoleLabel: c.roleLabel,
+          characterAge: c.age,
+          lookLabel: lk.label,
+          palette: c.palette,
+          projectStyle: project?.style,
+          model: resolveI2IModel(project?.sceneModel),
+          mode: 'modify',
+        },
+      })
+      if (res?.ok && res.url) {
+        setCharImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), res.url!] }))
+        toast.success(`已生成 ${c.name} · ${lk.label}`)
+      } else {
+        toast.error(res?.error || '生成失败')
+      }
+    } catch {
+      toast.error('生成失败')
+    } finally {
+      setActiveImageKey((cur) => (cur === imageKey ? null : cur))
+      setBusyChars((s) => {
+        if (!s.has(c.id)) return s
+        const n = new Set(s)
+        n.delete(c.id)
+        return n
+      })
+    }
   }
 
   /**
@@ -708,10 +1029,16 @@ function WorkspacePage() {
   }
 
   // ============= 卡片底部 3 个按钮的逻辑 =============
-  // 打开右侧修改面板(由卡片"修改"按钮触发)
+  // 打开预览模态框(2026/06 改造:把"修改"输入区直接嵌入预览,不再走
+  // 独立的右侧 slide-in 面板)。从卡片点击 / 卡片底部"修改"按钮 / 预览
+  // 内 look 切换 都会调到这里 —— 一次调用同时打开预览 + 修改 state。
+  // 旧名 openModPanel 保留,避免在多个调用点批量重命名;语义上现在等价于
+  // "打开这个角色卡片的预览+编辑"。
   function openModPanel(c: GenCharacter, lookId: string | null) {
     const imageKey = lookId == null ? c.id : `${c.id}::${lookId}`
     setModPanel({ character: c, lookId, imageKey })
+    setPreviewTarget({ character: c, lookId })
+    setSelectedGenIdx(0)
     setModInput('')
     setModError(null)
   }
@@ -719,6 +1046,7 @@ function WorkspacePage() {
   function closeModPanel() {
     if (modBusy) return  // 正在跑就别让人关掉
     setModPanel(null)
+    setPreviewTarget(null)
     setModInput('')
     setModError(null)
   }
@@ -737,6 +1065,13 @@ function WorkspacePage() {
      * 用于 processCharacter 自动给后续 look 传默认 look 的图当参考,确保脸一致。
      */
     referenceOverride?: string,
+    /**
+     * 2026/06:可选。true 时 setCharImages 直接覆盖为 [res.url](只留 1 张,
+     * 不堆历史),用于 processCharacter autoGen 跑后续 look —— "新生成替代
+     * 旧历史"。false(默认)时维持 append 行为,保留用户主动 modify 堆的
+     * 迭代历史。提交时也走 I2I,不影响人脸锁逻辑。
+     */
+    replaceExisting = false,
   ) {
     const lk = lookId == null ? null : c.looks?.find((x) => x.id === lookId) ?? null
     const imageKey = lk ? `${c.id}::${lk.id}` : c.id
@@ -770,7 +1105,13 @@ function WorkspacePage() {
         },
       })
       if (res?.ok && res.url) {
-        setCharImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), res.url!] }))
+        // 2026/06:replaceExisting=true 时覆盖历史(只留 1 张最新),autoGen
+        // 路径需要这样避免"几张主视图"堆叠。replaceExisting=false(默认)
+        // 时 append,保留用户主动 modify 堆的迭代历史。
+        setCharImages((m) => ({
+          ...m,
+          [imageKey]: replaceExisting ? [res.url!] : [...(m[imageKey] ?? []), res.url!],
+        }))
         const modeLabel =
           mode === 'modify' ? '已按意见重生' :
           mode === 'three-view' ? '已生成三视图' :
@@ -820,8 +1161,132 @@ function WorkspacePage() {
   ) {
     const instruction = mode === 'three-view'
       ? '根据此形象生成标准三视图:同一角色分别从前、正侧、背三个角度展示,头到脚全身,脸/身材/衣服在三个视图里完全一致。'
-      : '根据此形象生成多维资产图:同一角色 4-6 个面板,展示不同姿态(站/坐/行走)和不同场景片段,脸/身材/衣服在所有面板里完全一致。'
+      : [
+          '根据此形象生成完整的【角色多维资产图】(character sheet),单张大图,内部清晰分成两大区域:',
+          '',
+          '【区域一:全身三视图区域】(上半部分,横向排列 3 个全身视图)',
+          '1) 正面全身:正对镜头,头到脚完整入画',
+          '2) 侧面全身:正侧 90°,头到脚完整入画',
+          '3) 背面全身:背对镜头,头到脚完整入画',
+          '硬约束:同一角色,站姿端正自然,双臂自然下垂,无透视畸变(标准正交视图,不使用广角),脸型/身材/服装/配饰/发型在三个视图里 100% 一致,光照均匀。',
+          '',
+          '【区域二:细节特写区域】(下半部分,横向或网格排列 6 个特写格)',
+          '1) 面部特写:大头照,中性或微笑表情,清晰展示五官比例与脸型',
+          '2) 五官/眼妆特写:聚焦眼睛及眼周妆容(眉形、眼影、睫毛、眼神),如有眼妆细节务必呈现',
+          '3) 发型/发饰特写:展示发型轮廓、发色层次、刘海/鬓角处理,若有发饰(发卡、头巾、簪、皇冠等)需清晰呈现',
+          '4) 服装纹样/领口/袖口特写:聚焦服装最具识别度的纹样、刺绣、印花、领口剪裁、袖口收边等复杂细节',
+          '5) 腰带/配饰特写:腰带款式与扣件,以及胸口/腰侧/手腕/颈部佩戴的项链、吊坠、手镯、戒指、徽章等首饰',
+          '6) 鞋履特写:鞋款全貌(鞋面/鞋头/鞋跟),展示材质与装饰',
+          '',
+          '细节区域追加要求:',
+          '• 面部特写应呈现一组常见表情变化的暗示(如开心/难过/思考等的微表情),让角色显得"有戏",但脸部结构仍 100% 与全身视图一致',
+          '• 针对角色服饰中的复杂区域(精细纹样、繁复配饰、首饰繁多处)务必给出清晰的近景特写,避免笼统带过',
+          '',
+          '全图硬约束:所有视图与特写共用同一张脸/身材/服装色板,纯净浅灰背景,无文字标注,无 UI 元素。',
+        ].join('\n')
     await doRegen(c, lookId, mode, instruction)
+  }
+
+  /**
+   * 场景图重生(2026/06 新增) —— 对称 doRegen。
+   * 模式 'modify' / 'three-view'。三视图对场景来说 = wide/medium/close-up
+   * 三个景别变体(不是 front/side/back),具体语义在 seedream.functions.ts
+   * 的 buildScenePrompts。
+   */
+  async function doSceneRegen(
+    s: GenScene,
+    mode: 'modify' | 'three-view',
+    instruction: string,
+  ) {
+    const history = sceneImages[s.id] ?? []
+    const referenceUrl = history.at(-1)
+    if (!referenceUrl) {
+      toast.error('该场景还没生成,无法重生')
+      return false
+    }
+    if (mode === 'modify' && !instruction.trim()) {
+      toast.error('请输入修改意见')
+      return false
+    }
+    setRegenBusyKeys((m) => {
+      const n = new Map(m)
+      n.set(s.id, mode)
+      return n
+    })
+    try {
+      const res = await callRegenScene({
+        data: {
+          referenceImageUrl: referenceUrl,
+          userInstruction: instruction,
+          mode,
+          sceneSlug: s.slug,
+          sceneLocation: s.location,
+          sceneTimeOfDay: s.timeOfDay,
+          sceneAction: s.action,
+          projectStyle: project?.style,
+          model: resolveI2IModel(project?.sceneModel),
+        },
+      })
+      if (res?.ok && res.url) {
+        setSceneImages((m) => ({ ...m, [s.id]: [...(m[s.id] ?? []), res.url!] }))
+        toast.success(mode === 'three-view' ? '已生成场景三视图' : '已按意见重生')
+        return true
+      }
+      toast.error(res?.error || '生成失败')
+      return false
+    } catch {
+      toast.error('生成失败')
+      return false
+    } finally {
+      setRegenBusyKeys((m) => {
+        if (!m.has(s.id)) return m
+        const n = new Map(m)
+        n.delete(s.id)
+        return n
+      })
+    }
+  }
+
+  /** 场景"三视图"按钮:无 user input,直接跑预设指令(同角色 runPresetRegen 模式) */
+  async function runScenePresetRegen(s: GenScene) {
+    await doSceneRegen(
+      s,
+      'three-view',
+      '基于该场景生成 3 景别参考图(wide establishing + medium + close-up detail),同一地点同一时段同一视觉风格,无人物,纯环境。',
+    )
+  }
+
+  // ============= 场景"修改"输入弹层(对齐角色 openModPanel / closeModPanel / submitModPanel) =============
+
+  function openSceneModPanel(s: GenScene) {
+    setSceneModOpen(s)
+    setSceneModInput('')
+    setSceneModError(null)
+  }
+
+  function closeSceneModPanel() {
+    if (sceneModBusy) return
+    setSceneModOpen(null)
+    setSceneModInput('')
+    setSceneModError(null)
+  }
+
+  async function submitSceneModPanel() {
+    if (!sceneModOpen || sceneModBusy) return
+    const instruction = sceneModInput.trim()
+    if (!instruction) {
+      setSceneModError('请输入修改意见')
+      return
+    }
+    setSceneModBusy(true)
+    setSceneModError(null)
+    const ok = await doSceneRegen(sceneModOpen, 'modify', instruction)
+    setSceneModBusy(false)
+    if (ok) {
+      closeSceneModPanel()
+    } else {
+      setSceneModError('生成失败,请重试或换更简单的修改')
+    }
   }
 
 
@@ -835,8 +1300,7 @@ function WorkspacePage() {
       const styleSpec = resolveProjectStyle(project?.style)
       const prompt = [
         `[VISUAL STYLE — must follow the project's art direction]`,
-        `Style: ${styleSpec.positive}.`,
-        `AVOID: ${styleSpec.negative}.`,
+        buildStyleLock(styleSpec, 'panel'),
         `---`,
         scene?.slug && `Scene: ${scene.slug}`,
         `Shot ${p.shot}: ${p.camera}`,
@@ -941,7 +1405,7 @@ function WorkspacePage() {
         ...d,
         storyboardGroups: [
           ...d.storyboardGroups.filter((g) => g.episodeIndex !== selectedEpisodeIndex),
-          ...groups,
+          ...groups.map((g) => ({ ...g, plotText: composePlotText(g) })),
         ],
       }))
       toast.success(`已生成 ${groups.length} 组分镜`)
@@ -954,10 +1418,102 @@ function WorkspacePage() {
   }
 
   /**
+   * 重新拼接 plotText = 原剧情摘要 + 【本组分镜】 + 全部 shot 描述(2026/06)
+   *
+   * 用户诉求:plotText 不再只是 LLM 摘的一句话剧情,要把 AI 生成的全部分镜
+   * 描述(shotType + action + camera)一起写入,方便:
+   *   - UI 渲染时一眼看到"这段剧情 + 怎么拍"
+   *   - 喂给 Seedream(分镜图 / 故事板)时携带更丰富的上下文
+   *   - 喂给视频生成时拿到完整 storyboard 描述
+   *
+   * 行为:
+   *   - 去掉上一次拼时附加的"【本组分镜】..."尾巴(防止重复叠加)
+   *   - 用 shot 数组当前实际内容重新拼
+   *   - 500 字截断(略放宽到 800,因为要装 shot 描述)
+   *   - shots 为空时只返回原 plotText
+   *
+   * 触发点(不止一处):
+   *   - runEnterStoryboard 内 LLM 返回后立即调一次
+   *   - shots 字段变化时由 useEffect 自动重算
+   */
+  function composePlotText(g: StoryboardGroup): string {
+    // 去掉上次附加的"【本组分镜】"段(取其前部分 = 原剧情)
+    const baseText = g.plotText.split(/\n\n【本组分镜】/)[0].trimEnd()
+    if (!g.shots || g.shots.length === 0) return baseText.slice(0, 800)
+
+    const shotLines = g.shots
+      .map((s, i) => {
+        const cam = s.camera ? ` | ${s.camera}` : ''
+        return `${i + 1}. [${s.shotTypeLabel}] ${s.action}${cam}`
+      })
+      .join('\n')
+
+    const composed = `${baseText}\n\n【本组分镜】\n${shotLines}`
+    return composed.slice(0, 800)
+  }
+
+  /**
+   * 更新某个 shot 涉及某个角色的 reference look(imageKey)。
+   * 用户在分镜卡片里通过下拉切换"该 shot 用角色的哪套形象" —— 数据落到
+   * data.storyboardGroups[gIdx].shots[sIdx].characterRefs[cid]。
+   *
+   * 后续生成分镜图(generateShotImageForGroup)会读 s.characterRefs?.[cid]
+   * 拼 imageKey,不再硬编码用默认 look。
+   */
+  function updateShotCharacterRef(groupId: string, shotId: string, characterId: string, imageKey: string) {
+    setData((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        storyboardGroups: prev.storyboardGroups.map((g) => {
+          if (g.id !== groupId) return g
+          return {
+            ...g,
+            shots: g.shots.map((s) => {
+              if (s.id !== shotId) return s
+              return {
+                ...s,
+                characterRefs: {
+                  ...(s.characterRefs ?? {}),
+                  [characterId]: imageKey,
+                },
+              }
+            }),
+          }
+        }),
+      }
+    })
+  }
+
+  /**
+   * 决定"该 shot 涉及的角色 c"用哪张图作为 Seedream 融合的 reference。
+   * 优先级:
+   *   1) shot.characterRefs[c.id] 指定的 imageKey + 该 imageKey 被用户"选中"钉住的 url
+   *   2) shot.characterRefs[c.id] 指定的 imageKey 的最新一张
+   *   3) 角色默认 look(c.id)的"选中"url
+   *   4) 角色默认 look(c.id)的最新一张
+   * 老 group 没 characterRefs 字段 → 自动走到 3/4 分支,行为完全向后兼容。
+   */
+  function pickShotCharImageUrl(shot: StoryboardShot | undefined, characterId: string): string | undefined {
+    const explicitKey = shot?.characterRefs?.[characterId]
+    const keysToTry = explicitKey
+      ? [explicitKey, characterId] // 用户在 shot 里选过:先试选过的,再 fallback 默认
+      : [characterId]              // 没选过:直接用默认 look
+    for (const k of keysToTry) {
+      const pinned = selectedCharImages[k]
+      if (pinned) return pinned
+      const arr = charImages[k]
+      const latest = arr?.[arr.length - 1]
+      if (latest) return latest
+    }
+    return undefined
+  }
+
+  /**
    * 对某个 StoryboardGroup 的某个 shot 做多图融合,产出最终分镜图。
    * 策略:
    *  - 角色图:从 charImages[角色ID] / charImages[角色ID::lookId] 取最新一张
-   *  - 场景图:从 sceneImages[sceneId] 取
+   *  - 场景图:从 sceneImages[sceneId] 取最新一张(.at(-1))
    *  - 串行调用(并发 1)避免 Qwen 429 / 跑偏
    */
   async function generateShotImageForGroup(groupId: string, shotId: string) {
@@ -973,12 +1529,12 @@ function WorkspacePage() {
     //    策略:有场景图 → 最多 2 张角色图;无场景图 → 最多 3 张角色图。
     const charImageUrls: string[] = []
     const charNames: string[] = []
-    const hasScene = !!(group.sceneId && sceneImages[group.sceneId])
+    const hasScene = !!(group.sceneId && sceneImages[group.sceneId]?.length)
     const maxChars = hasScene ? 2 : 3
     for (const cid of group.characterIds) {
       if (charImageUrls.length >= maxChars) break
-      const arr = charImages[cid]
-      const url = arr?.[arr.length - 1] // 最新一张
+      // 用 pickShotCharImageUrl 取该 shot 选定的该角色图 —— 优先按 shot.characterRefs + 选中 url
+      const url = pickShotCharImageUrl(shot, cid)
       if (url) {
         charImageUrls.push(url)
         const ch = data.characters.find((c) => c.id === cid)
@@ -987,8 +1543,8 @@ function WorkspacePage() {
     }
     // 准备场景图
     let sceneImageUrl: string | undefined
-    if (group.sceneId && sceneImages[group.sceneId]) {
-      sceneImageUrl = sceneImages[group.sceneId]
+    if (group.sceneId && sceneImages[group.sceneId]?.length) {
+      sceneImageUrl = sceneImages[group.sceneId]!.at(-1)
     }
     // 场景描述
     const sceneObj = data.scenes.find((s) => s.id === group.sceneId)
@@ -1082,19 +1638,19 @@ function WorkspacePage() {
     // 拼角色 / 场景参考 —— 跟 generateShotImageForGroup 同样的截断策略
     const charImageUrls: string[] = []
     const charNames: string[] = []
-    const hasScene = !!(group.sceneId && sceneImages[group.sceneId])
+    const hasScene = !!(group.sceneId && sceneImages[group.sceneId]?.length)
     const maxChars = hasScene ? 2 : 3
     for (const cid of group.characterIds) {
       if (charImageUrls.length >= maxChars) break
-      const arr = charImages[cid]
-      const url = arr?.[arr.length - 1]
+      // 用 pickShotCharImageUrl 取该 shot 选定的该角色图(同 generateShotImageForGroup)
+      const url = pickShotCharImageUrl(shot, cid)
       if (url) {
         charImageUrls.push(url)
         const ch = data.characters.find((c) => c.id === cid)
         charNames.push(ch?.name ?? cid)
       }
     }
-    const sceneImageUrl = group.sceneId && sceneImages[group.sceneId] ? sceneImages[group.sceneId] : undefined
+    const sceneImageUrl = group.sceneId && sceneImages[group.sceneId]?.length ? sceneImages[group.sceneId]!.at(-1) : undefined
     const sceneObj = data.scenes.find((s) => s.id === group.sceneId)
 
     setShotModBusy(true)
@@ -1338,16 +1894,22 @@ function WorkspacePage() {
   // 同一角色的多个 look 在 processCharacter 里已经是串行(for 循环),
   // 这里只需要把"跨角色"也排队,实现端到端的"一张接一张"。
   useEffect(() => {
+    console.log(`[CHAR-AUTOGEN] useEffect 触发: dataLoaded=${dataLoaded} autoGen=${autoGen} chars=${data.characters.length} charImagesKeys=${Object.keys(charImages).length} ranSet=${[...autogenRanRef.current].join(',')}`)
+    if (!dataLoaded) return
     if (!autoGen) return
-    // 找出"至少有一个 look 未生成"的角色集合
+    // 找出"还没跑过 autoGen 默认 look"的角色(无视 charImages 是否有图)。
+    // 用 ref 而非 charImages 长度,避免老图持久化时 useEffect 不跑 + 状态机乱。
+    // 2026/06 修法:用 autogenRanRef 记录已处理角色 id,处理过的跳。
     const charactersToStart: GenCharacter[] = []
     for (const c of data.characters) {
-      if (busyChars.has(c.id)) continue  // 已经在跑(默认或某个 look)
-      const needDefault = !(charImages[c.id]?.length)
-      const needLooks = (c.looks ?? []).some((lk) => !(charImages[`${c.id}::${lk.id}`]?.length))
-      if (needDefault || needLooks) charactersToStart.push(c)
+      if (busyChars.has(c.id)) continue
+      if (autogenRanRef.current.has(c.id)) continue
+      charactersToStart.push(c)
     }
+    console.log(`[CHAR-AUTOGEN] useEffect: charactersToStart=${charactersToStart.length} ids=${charactersToStart.map(c => c.id).join(',')}`)
     if (!charactersToStart.length) return
+    // 标记为已处理(进 ref 集合),后续 useEffect 重跑就跳过
+    charactersToStart.forEach((c) => autogenRanRef.current.add(c.id))
     // 串行:一个角色跑完才跑下一个。即便用户觉得慢,也不要在角色之间开并发 —
     // 撞 429 / 构图跑偏 / 整批失败率上升 这三个问题都跟并发直接相关。
     void (async () => {
@@ -1356,8 +1918,13 @@ function WorkspacePage() {
         await processCharacter(c)
       }
     })()
+    // deps:[autoGen, dataLoaded, data.characters.length]
+    //   - dataLoaded 翻 0→1 → 跑 1 次(workspace 首次 mount)
+    //   - autoGen 翻 0→1(用户切开关)→ 跑
+    //   - data.characters.length 变化(用户提取新角色)→ 跑(ref 过滤老角色)
+    // enrich 内部 setData 引起的引用变化 length 没变 → useEffect 不重跑
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.characters, autoGen])
+  }, [autoGen, dataLoaded, data.characters.length])
 
   useEffect(() => {
     if (!autoGen) return
@@ -1375,7 +1942,7 @@ function WorkspacePage() {
   // Auto-generate scene images for newly produced scenes
   useEffect(() => {
     if (!autoGen) return
-    const pending = data.scenes.filter((s) => !sceneImages[s.id])
+    const pending = data.scenes.filter((s) => !sceneImages[s.id]?.length)
     if (!pending.length || busyScene) return
     void (async () => {
       for (const s of pending) {
@@ -1605,6 +2172,7 @@ function WorkspacePage() {
         shotImages,
         panelImages,
         sceneImages,
+        selectedCharImages,
       }
       const res = await callSaveWorkspace({
         data: {
@@ -1639,6 +2207,31 @@ function WorkspacePage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [completedKey, dataLoaded])
+
+  // 监听 shots 描述变化,自动重算 plotText,把 AI 生成的全部分镜描述写入
+  // 剧情段(2026/06 用户诉求)。runEnterStoryboard 末尾已立即调一次,这里
+  // 覆盖后续编辑/重生/添加 shot 等所有会改 shots 字段的路径。
+  // 死循环防护:composePlotText 输出跟原 plotText 相同时,setData 返回原 d
+  // 不触发 re-render(React setState bail-out),useEffect 不会再次跑。
+  // 把 shots 字段序列化成 stable key 当 dep,shots 数组引用变化(新增/删除
+  // shot)或任意 shot 字段(shotTypeLabel / action / camera)变化都触发。
+  const storyboardShotsHash = data.storyboardGroups
+    .map((g) => g.shots.map((s) => `${s.shotTypeLabel}|${s.action}|${s.camera}`).join(''))
+    .join('')
+  useEffect(() => {
+    if (!dataLoaded) return
+    setData((d) => {
+      if (!d) return d
+      const newGroups = d.storyboardGroups.map((g) => {
+        const recomposed = composePlotText(g)
+        return recomposed === g.plotText ? g : { ...g, plotText: recomposed }
+      })
+      // 如果所有 group plotText 都跟原一样,返回原 d(setState bail-out)
+      if (newGroups.every((g, i) => g === d.storyboardGroups[i])) return d
+      return { ...d, storyboardGroups: newGroups }
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataLoaded, storyboardShotsHash])
 
   // EpisodesView: Auto-select latest episode when episodes change
   useEffect(() => {
@@ -1727,9 +2320,14 @@ function WorkspacePage() {
                   .map((lk: any, k: number) => ({
                     id: `ai-lk-${i + 1}-${k + 1}-${Date.now()}`,
                     label: lk.label.trim(),
-                    faceDescription: c.faceDescription ?? '',  // 沿用主条目
-                    bodyDescription: c.bodyDescription ?? '',
+                    // 优先 AI 在第 1 步给的,没有则 fallback 主条目(防御性);
+                    // 正常路径下 enrichCharacterLooks 会立即覆盖成 per-look 独立描述。
+                    faceDescription: (typeof lk.faceDescription === 'string' && lk.faceDescription.trim()) || c.faceDescription || '',
+                    bodyDescription: (typeof lk.bodyDescription === 'string' && lk.bodyDescription.trim()) || c.bodyDescription || '',
                     clothingDescription: lk.clothingDescription ?? '',
+                    // 透传 AI 给的 hint(如剧情明示该变体下脸/身体有变化),enrichCharacterLooks 会读
+                    ...(typeof lk.faceHint === 'string' && lk.faceHint.trim() ? { faceHint: lk.faceHint.trim() } : {}),
+                    ...(typeof lk.bodyHint === 'string' && lk.bodyHint.trim() ? { bodyHint: lk.bodyHint.trim() } : {}),
                   }))
               : []
             return {
@@ -2637,6 +3235,16 @@ function WorkspacePage() {
                       <RefreshCw size={11} /> 重新提取本集
                     </button>
                   )}
+                  {hasChars && charViewTab === 'characters' && (
+                    <button
+                      type="button"
+                      onClick={() => void generateAllCharacterLooksForCurrentEpisode()}
+                      className="text-[11px] px-2.5 py-1 rounded border border-accent/40 bg-accent/10 text-accent hover:bg-accent hover:text-accent-foreground transition inline-flex items-center gap-1"
+                      title="遍历本集所有角色的所有 look(默认 + 变体),未生成的逐个生成(I2I 锁脸)。比 autoGen 只跑默认更彻底,适合用户主动'批量出图'"
+                    >
+                      <Sparkles size={11} /> 一键生成所有形象
+                    </button>
+                  )}
                 </div>
 
                 <div className="flex-1 overflow-y-auto min-h-0">
@@ -2657,10 +3265,55 @@ function WorkspacePage() {
                                 </span>
                               )}
                             </div>
-                            {sceneImages[s.id] ? (
-                              <div className="rounded-lg overflow-hidden border border-border">
-                                <img src={sceneImages[s.id]} alt={s.slug} className="w-full aspect-video object-cover" />
-                              </div>
+                            {sceneImages[s.id]?.length ? (
+                              (() => {
+                                // 场景卡"修改 / 三视图"按钮(2026/06 跟角色卡对齐)
+                                const sceneRegenMode = regenBusyKeys.get(s.id)
+                                const isRegening = !!sceneRegenMode
+                                const sceneImgCount = sceneImages[s.id]!.length
+                                return (
+                                  <div className="relative rounded-lg overflow-hidden border border-border">
+                                    <img src={sceneImages[s.id]!.at(-1)!} alt={s.slug} className="w-full aspect-video object-cover" />
+                                    {/* I2I 重生黑屏遮罩:点了修改/三视图后,显示 spinner + 提示文字 */}
+                                    {isRegening && (
+                                      <div className="absolute inset-0 z-20 bg-black/65 backdrop-blur-sm flex items-center justify-center">
+                                        <div className="flex flex-col items-center gap-1.5 text-white">
+                                          <Loader2 size={20} className="animate-spin" />
+                                          <span className="text-xs">
+                                            {sceneRegenMode === 'three-view' ? '正在生成三视图…' : '正在重生…'}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    )}
+                                    {/* 右下角浮动 2 按钮:修改 + 三视图(无人物资产,所以不要"多维资产") */}
+                                    <div className="absolute bottom-2 right-2 z-10 grid grid-cols-2 gap-1.5">
+                                      <button
+                                        type="button"
+                                        title="打开修改输入对话框(Enter 提交)"
+                                        disabled={isRegening}
+                                        onClick={() => openSceneModPanel(s)}
+                                        className="px-2 py-1 rounded border border-border bg-black/65 backdrop-blur-sm text-white text-[10px] hover:border-accent hover:text-accent disabled:opacity-40 transition inline-flex items-center justify-center gap-1"
+                                      >
+                                        <Pencil size={10} /> 修改
+                                      </button>
+                                      <button
+                                        type="button"
+                                        title="生成 3 景别参考图(wide + medium + close-up)"
+                                        disabled={isRegening}
+                                        onClick={() => void runScenePresetRegen(s)}
+                                        className="px-2 py-1 rounded border border-border bg-black/65 backdrop-blur-sm text-white text-[10px] hover:border-accent hover:text-accent disabled:opacity-40 transition inline-flex items-center justify-center gap-1"
+                                      >
+                                        <LayoutGrid size={10} /> 三视图
+                                      </button>
+                                    </div>
+                                    {sceneImgCount > 1 && (
+                                      <span className="absolute top-1.5 left-1.5 text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/60 text-white">
+                                        {sceneImgCount} 张
+                                      </span>
+                                    )}
+                                  </div>
+                                )
+                              })()
                             ) : !busyScene ? (
                               <button
                                 onClick={() => genSceneImage(s)}
@@ -2755,19 +3408,36 @@ function WorkspacePage() {
                             // 外层用 div role="button" 而不是 <button>:卡片内部还要
                             // 套 3 个真正的 <button>(修改 / 三视图 / 多维资产),
                             // <button> 不能嵌 <button>,会 hydration error。
+                            // 2026/06:已选中时(同 imageKey 在 selectedCharImages 里有
+                            // 值)整张卡片加 accent 边框 + 略放大 + 角标 —— 让"互斥
+                            // 选中"状态在卡片层面即可见。同一 imageKey 的所有图
+                            // (主视图/三视图/多维资产 history)互斥:只有最后被点
+                            // "选中"的那张 url 存在 selectedCharImages 里。
                             <div
                               key={imageKey}
                               role="button"
                               tabIndex={0}
-                              onClick={() => setPreviewTarget({ character: c, lookId: card.lookId })}
+                              onClick={() => openModPanel(c, card.lookId)}
                               onKeyDown={(e) => {
                                 // 键盘可达:Enter / Space 等价于点击
                                 if (e.key === 'Enter' || e.key === ' ') {
                                   e.preventDefault()
-                                  setPreviewTarget({ character: c, lookId: card.lookId })
+                                  openModPanel(c, card.lookId)
                                 }
                               }}
-                              className="group relative text-left rounded-xl border border-border bg-bg-elevated/40 hover:border-accent hover:bg-bg-elevated/70 hover:-translate-y-0.5 transition-all overflow-hidden flex flex-col focus:outline-none focus:ring-2 focus:ring-accent/40 cursor-pointer"
+                              className={`group relative text-left rounded-xl border bg-bg-elevated/40 hover:border-accent hover:bg-bg-elevated/70 hover:-translate-y-0.5 transition-all overflow-hidden flex flex-col focus:outline-none focus:ring-2 focus:ring-accent/40 cursor-pointer ${
+                                // 2026/06:已选中时(封面 === 选中图)整张卡片高亮。
+                                // 边框变 accent + 略放大 + 暖色阴影,让"互斥选中"在
+                                // 卡片层面即可见。同 imageKey 只能有 1 个 url 钉在
+                                // selectedCharImages 里(Record<imageKey, string>
+                                // 天然互斥),点新的会自动覆盖旧的。
+                                // 判定"封面 === 选中":如果 selectedCharImages[imageKey]
+                                // 存在,且等于 charImages 里任一张(被选中的那张,
+                                // 可能不是最新),卡片就高亮。
+                                selectedCharImages[imageKey] && charImages[imageKey]?.includes(selectedCharImages[imageKey])
+                                  ? 'border-2 border-accent shadow-[0_0_0_3px_rgba(99,102,241,0.25)] -translate-y-0.5 bg-bg-elevated/70'
+                                  : 'border border-border'
+                              }`}
                             >
                               {/* Image area — portrait aspect, fills card top */}
                               <div className="relative w-full aspect-[3/4] bg-bg-base overflow-hidden">
@@ -2778,12 +3448,32 @@ function WorkspacePage() {
                                     <span className="text-[10px]">生成中…</span>
                                   </div>
                                 ) : hasImg ? (
-                                  <img
-                                    src={charImages[imageKey]!.at(-1)}
-                                    alt={cardTitle}
-                                    loading="lazy"
-                                    className="absolute inset-0 w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-300"
-                                  />
+                                  <>
+                                    {/* 2026/06:封面图 = 选中的那张(如果选了)否则最新一张。
+                                        这让"点击选中 → 卡片封面变成选中的图"立即可见。 */}
+                                    {(() => {
+                                      const coverUrl = selectedCharImages[imageKey] || charImages[imageKey]!.at(-1)!
+                                      return (
+                                        <img
+                                          src={coverUrl}
+                                          alt={cardTitle}
+                                          loading="lazy"
+                                          className="absolute inset-0 w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-300"
+                                        />
+                                      )
+                                    })()}
+                                    {/* 2026/06:已选为推荐角标(左上) — 封面 === 选中时显示。
+                                        同一 imageKey 只能有 1 个 url 钉在 selectedCharImages 里(互斥),
+                                        再次点击"选中"按钮可取消(清掉 entry)。 */}
+                                    {selectedCharImages[imageKey] && (() => {
+                                      const coverUrl = selectedCharImages[imageKey] || charImages[imageKey]?.at(-1)
+                                      return coverUrl === selectedCharImages[imageKey] ? (
+                                        <div className="absolute top-1.5 left-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent text-accent-foreground text-[10px] font-bold shadow-md">
+                                          <Target size={10} /> 已选为推荐
+                                        </div>
+                                      ) : null
+                                    })()}
+                                  </>
                                 ) : isQueued ? (
                                   // 同角色下一张在排队(本角色在跑)
                                   <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 text-text-muted">
@@ -2797,16 +3487,73 @@ function WorkspacePage() {
                                     <span className="text-[10px]">排队生成中…</span>
                                   </div>
                                 ) : (
-                                  // 手动模式(无 autoGen):提示用户点击生成
-                                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 text-text-muted">
+                                  // 没图:可点击生成(2026/06)
+                                  //   默认 look → genCharImage → 走 processCharacter
+                                  //   变体 look → generateOneCharacterLook → 走 I2I(以默认图为锚)
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      if (card.lookId === null) {
+                                        void genCharImage(c)
+                                      } else {
+                                        void generateOneCharacterLook(c, card.lookId)
+                                      }
+                                    }}
+                                    className="absolute inset-0 w-full h-full flex flex-col items-center justify-center gap-1.5 text-text-muted hover:text-accent hover:bg-bg-elevated/40 transition cursor-pointer"
+                                  >
                                     <ImageIcon size={22} className="opacity-50" />
-                                    <span className="text-[10px]">点击生成形象</span>
-                                  </div>
+                                    <span className="text-[10px]">
+                                      {card.lookId === null
+                                        ? '点击生成形象'
+                                        : `点击生成「${lookLabel}」造型`}
+                                    </span>
+                                  </button>
                                 )}
-                                {/* Hover hint */}
-                                <div className="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded-full bg-black/55 backdrop-blur-sm text-white text-[10px] opacity-0 group-hover:opacity-100 transition">
-                                  点击查看详情
-                                </div>
+                                {/* "选中" 按钮(钉住当前展示图作为该 look 在分镜里的 reference)
+                                    - 2026/06:始终可见(不再 opacity-70),让用户在不 hover
+                                      的情况下也能直接看到/操作"选中"状态
+                                    - 已选中时变成实心高亮 + "已选中" 文案
+                                    - 点击调用 setSelectedCharImages,不再冒泡到卡片详情 modal
+                                    - 预览模态右栏"修改形象"区也有一个对称的"选中"按钮 */}
+                                {hasImg && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      const cur = charImages[imageKey]?.at(-1)
+                                      if (!cur) return
+                                      setSelectedCharImages((m) => {
+                                        if (m[imageKey] === cur) {
+                                          // 再点一次取消选中,回到"最新图"模式
+                                          const { [imageKey]: _, ...rest } = m
+                                          return rest
+                                        }
+                                        return { ...m, [imageKey]: cur }
+                                      })
+                                    }}
+                                    title={
+                                      selectedCharImages[imageKey]
+                                        ? '已选中此图作为该 look 的 reference,再次点击取消'
+                                        : '选中当前形象作为该 look 在分镜流程里的 reference'
+                                    }
+                                    className={`absolute top-1.5 right-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium backdrop-blur-sm transition ${
+                                      selectedCharImages[imageKey]
+                                        ? 'bg-accent text-accent-foreground shadow-sm'
+                                        : 'bg-black/70 text-white hover:bg-black/90'
+                                    }`}
+                                  >
+                                    {selectedCharImages[imageKey] ? (
+                                      <>
+                                        <Check size={10} /> 已选中
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Target size={10} /> 选中
+                                      </>
+                                    )}
+                                  </button>
+                                )}
                               </div>
 
                               {/* Text area — flex column 拉伸,按钮用 mt-auto 钉到卡片底部,
@@ -3017,6 +3764,23 @@ function WorkspacePage() {
                                   .join('、')}
                               </span>
                             )}
+                            {/* 2026/06:此组"已钉住选为推荐"的角色数(分镜将用这些图作 reference) */}
+                            {g.characterIds.length > 0 && (() => {
+                              const pinnedInGroup = g.characterIds.filter((cid) => {
+                                const ch = data.characters.find((c) => c.id === cid)
+                                if (!ch) return false
+                                // 检查该角色的默认 look + 每个变体 look 是否有被选中
+                                const hasDefault = !!selectedCharImages[ch.id]
+                                const hasLooks = (ch.looks ?? []).some((lk) => !!selectedCharImages[`${ch.id}::${lk.id}`])
+                                return hasDefault || hasLooks
+                              })
+                              if (pinnedInGroup.length === 0) return null
+                              return (
+                                <span className="px-1.5 py-0.5 rounded bg-accent/20 border border-accent/40 text-accent" title="已选为推荐,分镜将用此图作 reference">
+                                  📌 {pinnedInGroup.length} 选为推荐
+                                </span>
+                              )
+                            })()}
                           </div>
                           <p className="text-sm text-text-primary leading-relaxed">{g.plotText}</p>
                         </div>
@@ -3123,6 +3887,42 @@ function WorkspacePage() {
                                   <div className="p-2 space-y-1">
                                     <p className="text-[11px] text-text-primary line-clamp-2 leading-snug">{s.action}</p>
                                     {s.camera && <p className="text-[10px] text-text-muted line-clamp-1">🎥 {s.camera}</p>}
+                                    {/* 角色形象选择器:为该 shot 涉及的每个角色选哪个 look 作为 reference。
+                                        没设 → fallback 角色默认 look 的最新图(向后兼容旧数据)。 */}
+                                    {g.characterIds.length > 0 && (
+                                      <div className="pt-1 mt-1 border-t border-border/40 space-y-1">
+                                        {g.characterIds.map((cid) => {
+                                          const ch = data.characters.find((c) => c.id === cid)
+                                          if (!ch) return null
+                                          // 默认 look 总是第一个选项;再列出非空 look
+                                          const lookOptions: { value: string; label: string }[] = [
+                                            { value: ch.id, label: `${ch.name} · 默认` },
+                                            ...(ch.looks ?? [])
+                                              .filter((lk) => lk.label?.trim())
+                                              .map((lk) => ({ value: `${ch.id}::${lk.id}`, label: `${ch.name} · ${lk.label}` })),
+                                          ]
+                                          const currentKey = s.characterRefs?.[cid] ?? ch.id
+                                          // 看是否被该 look 的"选中"标记过,显示小星标
+                                          const isPinned = (key: string) => !!selectedCharImages[key]
+                                          return (
+                                            <div key={cid} className="flex items-center gap-1.5">
+                                              <span className="text-[9px] text-text-muted shrink-0 w-7 truncate">{ch.name}</span>
+                                              <select
+                                                value={currentKey}
+                                                onChange={(e) => updateShotCharacterRef(g.id, s.id, cid, e.target.value)}
+                                                className="flex-1 min-w-0 text-[10px] bg-bg-base border border-border rounded px-1.5 py-0.5 text-text-primary focus:outline-none focus:border-accent"
+                                              >
+                                                {lookOptions.map((opt) => (
+                                                  <option key={opt.value} value={opt.value}>
+                                                    {opt.label}{isPinned(opt.value) ? ' ⭐' : ''}
+                                                  </option>
+                                                ))}
+                                              </select>
+                                            </div>
+                                          )
+                                        })}
+                                      </div>
+                                    )}
                                     <button
                                       type="button"
                                       onClick={() => void generateShotImageForGroup(g.id, s.id)}
@@ -3164,21 +3964,18 @@ function WorkspacePage() {
                               <img
                                 src={groupStoryboards[g.id]!.url}
                                 alt="故事板"
-                                className="w-full h-auto block"
+                                onClick={() => setStoryboardPreview({ groupId: g.id })}
+                                className="w-full h-auto block cursor-zoom-in"
                               />
+                              {/* hover 只留"重新生成",去掉"在新标签打开"按钮(2026/06 用户反馈
+                                  不要点击下载;点击图片本身已可放大查看) */}
                               <div className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition flex gap-1">
-                                <a
-                                  href={groupStoryboards[g.id]!.url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="px-1.5 py-0.5 rounded bg-black/70 text-white text-[10px] hover:bg-black/90"
-                                  title="在新标签页打开原图"
-                                >
-                                  ↗
-                                </a>
                                 <button
                                   type="button"
-                                  onClick={() => void generateMangaStoryboardForGroup(g.id)}
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    void generateMangaStoryboardForGroup(g.id)
+                                  }}
                                   className="px-1.5 py-0.5 rounded bg-black/70 text-white text-[10px] hover:bg-black/90"
                                   title="重新生成故事板"
                                 >
@@ -3395,7 +4192,7 @@ function WorkspacePage() {
         return (
           <div
             className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
-            onClick={() => { setPreviewTarget(null); setRegenInput('') }}
+            onClick={() => { closeModPanel(); setRegenInput('') }}
             role="dialog"
             aria-modal="true"
           >
@@ -3411,7 +4208,7 @@ function WorkspacePage() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => { setPreviewTarget(null); setRegenInput('') }}
+                  onClick={() => { closeModPanel(); setRegenInput('') }}
                   className="p-1.5 rounded-md hover:bg-bg-elevated text-text-muted"
                   aria-label="关闭"
                 >
@@ -3456,6 +4253,31 @@ function WorkspacePage() {
                           <span className="absolute bottom-1 right-1 px-1 py-0.5 rounded bg-black/60 text-white text-[9px] tabular-nums">
                             #{i + 1}
                           </span>
+                          {/* 2026/06:每张历史缩略图可独立"设为推荐"。点星标把
+                              这张 url 钉到 selectedCharImages[imageKey],作为分镜
+                              流程的 reference。互斥:同 imageKey 只能选 1 张,
+                              这里选了一张会自动覆盖前一次。 */}
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setSelectedCharImages((m) => {
+                                if (m[imageKey] === u) {
+                                  const { [imageKey]: _, ...rest } = m
+                                  return rest
+                                }
+                                return { ...m, [imageKey]: u }
+                              })
+                            }}
+                            className={`absolute top-1 right-1 inline-flex items-center justify-center w-5 h-5 rounded-full transition ${
+                              selectedCharImages[imageKey] === u
+                                ? 'bg-accent text-accent-foreground shadow-md'
+                                : 'bg-black/60 text-white hover:bg-black/90'
+                            }`}
+                            title={selectedCharImages[imageKey] === u ? '已是推荐 — 再点取消' : '把这张设为推荐(分镜 reference)'}
+                          >
+                            <Target size={10} />
+                          </button>
                         </div>
                       </button>
                     ))
@@ -3511,7 +4333,7 @@ function WorkspacePage() {
                       <div className="pt-1 flex flex-wrap gap-1.5">
                         <button
                           type="button"
-                          onClick={() => { setPreviewTarget({ character: c, lookId: null }); setSelectedGenIdx(0) }}
+                          onClick={() => openModPanel(c, null)}
                           className={`text-[10px] px-2 py-1 rounded-full border ${
                             previewTarget.lookId == null
                               ? 'border-accent bg-accent-dim/40 text-text-primary'
@@ -3524,7 +4346,7 @@ function WorkspacePage() {
                           <button
                             key={x.id}
                             type="button"
-                            onClick={() => { setPreviewTarget({ character: c, lookId: x.id }); setSelectedGenIdx(0) }}
+                            onClick={() => openModPanel(c, x.id)}
                             className={`text-[10px] px-2 py-1 rounded-full border ${
                               previewTarget.lookId === x.id
                                 ? 'border-accent bg-accent-dim/40 text-text-primary'
@@ -3541,22 +4363,90 @@ function WorkspacePage() {
                         <span key={p} className="w-5 h-5 rounded border border-border" style={{ background: p }} title={p} />
                       ))}
                     </div>
+                    {/* 选中按钮(2026/06) — 跟卡片本体右上角的"选中"对称。
+                        在预览模态里也能直接钉住当前选中的图,不用回卡片本体点。
+                        镜像逻辑完全一致:imageKey → setSelectedCharImages */}
+                    {(() => {
+                      const imageKey = previewTarget.lookId == null
+                        ? c.id
+                        : `${c.id}::${previewTarget.lookId}`
+                      const cur = charImages[imageKey]?.at(-1)
+                      if (!cur) return null
+                      const isPinned = selectedCharImages[imageKey] === cur
+                      return (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setSelectedCharImages((m) => {
+                              if (m[imageKey] === cur) {
+                                const { [imageKey]: _, ...rest } = m
+                                return rest
+                              }
+                              return { ...m, [imageKey]: cur }
+                            })
+                          }}
+                          className={`mt-1 w-full text-[10px] py-1 rounded border inline-flex items-center justify-center gap-1 transition ${
+                            isPinned
+                              ? 'bg-accent border-accent text-accent-foreground'
+                              : 'border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent'
+                          }`}
+                        >
+                          {isPinned ? (
+                            <><Check size={10} /> 已选中此图作为 reference</>
+                          ) : (
+                            <><Target size={10} /> 选中此图作为 reference</>
+                          )}
+                        </button>
+                      )
+                    })()}
                   </div>
 
-                  {/* Right BOTTOM: 修改入口(点按钮打开右侧 slide-in 面板) */}
+                  {/* Right BOTTOM: 修改意见输入区(2026/06 改造)
+                      - 直接嵌入预览,不再弹独立 slide-in
+                      - Enter 提交,Shift+Enter 换行
+                      - 错误 / busy 状态内联展示 */}
                   <div className="shrink-0 rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2">
-                    <div className="text-xs text-text-secondary font-semibold">修改形象</div>
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs text-text-secondary font-semibold">修改形象</div>
+                      <span className="text-[10px] text-text-muted">Enter 发送 · Shift+Enter 换行</span>
+                    </div>
                     <p className="text-[10px] text-text-muted leading-relaxed">
-                      点下面的按钮,右侧滑出输入面板,输入修改意见。AI 会保留这张形象的:脸、身材、视觉风格、正视角度、纯白 #FFFFFF 背景、无表情。只改你描述的部分。
+                      直接输入修改意见。AI 会保留这张形象的:脸、身材、视觉风格、正视角度、纯白 #FFFFFF 背景、无表情。只改你描述的部分。
                     </p>
-                    <button
-                      type="button"
-                      onClick={() => openModPanel(c, previewTarget.lookId)}
-                      disabled={!currentUrl}
-                      className="w-full px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center justify-center gap-1.5"
-                    >
-                      <Pencil size={12} /> 输入修改意见
-                    </button>
+                    <textarea
+                      value={modInput}
+                      onChange={(e) => setModInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        // Enter 提交;Shift+Enter 换行(更符合"直接在对话框输入"的直觉)
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault()
+                          void submitModPanel()
+                        }
+                      }}
+                      placeholder="例如:把头发改成黑色短发 / 加一副黑框眼镜 / 把外套换成红色风衣…"
+                      rows={4}
+                      disabled={modBusy}
+                      className="w-full rounded-md bg-bg-base border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-none placeholder:text-text-muted disabled:opacity-50"
+                    />
+                    {modError && (
+                      <div className="px-2.5 py-1.5 rounded-md bg-rose-500/10 border border-rose-500/30 text-[11px] text-rose-400">
+                        {modError}
+                      </div>
+                    )}
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] text-text-muted">
+                        {modBusy ? '生成中…' : `参考图:第 ${currentIdx + 1} / ${generations.length} 张`}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => void submitModPanel()}
+                        disabled={modBusy || !modInput.trim() || !currentUrl}
+                        className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
+                      >
+                        {modBusy ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+                        {modBusy ? '生成中…' : '发送'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -3565,22 +4455,20 @@ function WorkspacePage() {
         )
       })()}
 
-      {/* ============= 右侧 slide-in 修改面板 =============
-          由卡片底部的"修改"按钮触发。不需要进人物卡片预览,直接在这里
-          输入意见 → 发送 → 关闭面板,新图替换卡片封面并加入 history。 */}
-      {modPanel && (() => {
-        const c = modPanel.character
-        const lk = modPanel.lookId == null
-          ? null
-          : c.looks?.find((x) => x.id === modPanel.lookId) ?? null
-        const title = lk ? `${c.name} · ${lk.label}` : c.name
-        const currentUrl = (charImages[modPanel.imageKey] ?? []).at(-1)
+
+      {/* ============= 场景"修改"输入弹层(2026/06 跟角色 modPanel 对齐) =============
+          角色修改走"打开预览模态框 + 内嵌 textarea"(2026/06 改造)。
+          场景没有 selectedGenIdx / 多图 history 概念,只需要"打开输入弹层
+          直接打字"—— 比角色更轻量。功能上跟角色对齐:点修改 → 弹输入 →
+          Enter 提交 → 重生 → 关闭。 */}
+      {sceneModOpen && (() => {
+        const s = sceneModOpen
+        const currentUrl = sceneImages[s.id]?.at(-1)
         return (
           <>
-            {/* 半透明背景遮罩:点击关闭(modBusy 时不响应) */}
             <div
               className="fixed inset-0 z-40 bg-black/40"
-              onClick={closeModPanel}
+              onClick={closeSceneModPanel}
               aria-hidden
             />
             <aside
@@ -3588,103 +4476,78 @@ function WorkspacePage() {
               role="dialog"
               aria-modal="true"
             >
-              {/* Header */}
               <div className="flex items-start justify-between px-4 py-3 border-b border-border shrink-0">
                 <div className="min-w-0">
-                  <div className="text-xs text-text-muted">修改形象</div>
-                  <div className="font-display text-base font-bold text-text-primary truncate">{title}</div>
-                  <div className="text-[11px] text-text-muted">{c.roleLabel} · {c.age} 岁</div>
+                  <div className="text-xs text-text-muted">修改场景</div>
+                  <div className="font-display text-base font-bold text-text-primary truncate">{s.slug}</div>
+                  <div className="text-[11px] text-text-muted">{s.location || s.action?.slice(0, 40) || ''}</div>
                 </div>
                 <button
                   type="button"
-                  onClick={closeModPanel}
-                  disabled={modBusy}
+                  onClick={closeSceneModPanel}
+                  disabled={sceneModBusy}
                   className="p-1.5 rounded-md hover:bg-bg-elevated text-text-muted disabled:opacity-30 disabled:cursor-not-allowed"
                   aria-label="关闭"
                 >
                   <X size={16} />
                 </button>
               </div>
-
-              {/* Body */}
               <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
-                {/* 当前参考图(让用户知道自己在改哪张) */}
                 <div>
                   <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1.5">当前参考图</div>
-                  <div className="relative w-full aspect-[3/4] bg-bg-base rounded-lg overflow-hidden border border-border">
+                  <div className="relative w-full aspect-video bg-bg-base rounded-lg overflow-hidden border border-border">
                     {currentUrl ? (
-                      <img
-                        src={currentUrl}
-                        alt={title}
-                        className="absolute inset-0 w-full h-full object-contain"
-                      />
+                      <img src={currentUrl} alt={s.slug} className="absolute inset-0 w-full h-full object-contain" />
                     ) : (
                       <div className="absolute inset-0 flex items-center justify-center text-text-muted text-xs">
-                        该形象还没生成
+                        该场景还没生成
                       </div>
                     )}
                   </div>
                 </div>
-
-                {/* 形象描述(给用户参考,也是发给 AI 的素材) */}
-                <details className="rounded-lg border border-border bg-bg-elevated/40">
-                  <summary className="px-3 py-2 text-xs text-text-secondary cursor-pointer select-none">
-                    形象描述(将随修改意见一起发给 AI)
-                  </summary>
-                  <dl className="px-3 pb-3 pt-1 space-y-1.5 text-[11px]">
-                    <div><dt className="text-text-muted">面部</dt><dd className="text-text-secondary">{c.faceDescription || '-'}</dd></div>
-                    <div><dt className="text-text-muted">身材</dt><dd className="text-text-secondary">{c.bodyDescription || '-'}</dd></div>
-                    <div><dt className="text-text-muted">服装{lk ? `（${lk.label}）` : ''}</dt><dd className="text-text-secondary">{lk?.clothingDescription || c.clothingDescription || '-'}</dd></div>
-                  </dl>
-                </details>
-
-                {/* 修改意见输入 */}
                 <div>
                   <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1.5">修改意见</div>
                   <textarea
-                    value={modInput}
-                    onChange={(e) => setModInput(e.target.value)}
+                    value={sceneModInput}
+                    onChange={(e) => setSceneModInput(e.target.value)}
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                      if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault()
-                        void submitModPanel()
+                        void submitSceneModPanel()
                       }
                     }}
-                    placeholder="例如:把头发改成黑色短发 / 加一副黑框眼镜 / 把外套换成红色风衣 / 表情放松一些…"
-                    rows={6}
-                    disabled={modBusy}
+                    placeholder="例如:把光线调成夜晚霓虹 / 把天气改成下雨 / 加一些桌椅道具…"
+                    rows={5}
+                    disabled={sceneModBusy}
                     className="w-full rounded-md bg-bg-elevated border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-none placeholder:text-text-muted disabled:opacity-50"
                   />
                   <p className="text-[10px] text-text-muted mt-1.5 leading-relaxed">
-                    AI 会保留:脸、身材、视觉风格、正视角度、纯白 #FFFFFF 背景、无表情。只改你描述的部分。
+                    AI 会保留:构图、光照、地点、时段、视觉风格、纯环境无人物。只改你描述的部分。
                   </p>
                 </div>
-
-                {/* 错误提示 */}
-                {modError && (
+                {sceneModError && (
                   <div className="px-3 py-2 rounded-md bg-rose-500/10 border border-rose-500/30 text-xs text-rose-400">
-                    {modError}
+                    {sceneModError}
                   </div>
                 )}
               </div>
-
-              {/* Footer:发送按钮 */}
               <div className="shrink-0 border-t border-border p-3 flex items-center justify-between gap-2">
-                <span className="text-[10px] text-text-muted">⌘/Ctrl + Enter 发送</span>
+                <span className="text-[10px] text-text-muted">Enter 发送 · Shift+Enter 换行</span>
                 <button
                   type="button"
-                  onClick={() => void submitModPanel()}
-                  disabled={modBusy || !modInput.trim() || !currentUrl}
+                  onClick={() => void submitSceneModPanel()}
+                  disabled={sceneModBusy || !sceneModInput.trim() || !currentUrl}
                   className="px-4 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
                 >
-                  {modBusy ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
-                  {modBusy ? '生成中…' : '发送修改'}
+                  {sceneModBusy ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+                  {sceneModBusy ? '生成中…' : '发送修改'}
                 </button>
               </div>
             </aside>
           </>
         )
       })()}
+
 
       {/* ============= 新增集数 对话框 =============
           顶部下拉最底下的"+ 新增集数"触发。两条路径:
@@ -3950,6 +4813,54 @@ function WorkspacePage() {
                     </div>
                   </div>
                 </div>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* ============= 故事板图放大模态(2026/06 跟分镜图对齐) =============
+          故事板没有 history 多代概念(每个 group 只 1 张),模态结构最简:
+          全屏黑底 + 居中显示 9:16 故事板图(我们的 size=1620x2880 9:16 竖屏)
+          + 顶部 X 关闭按钮。背景点击也关闭。 */}
+      {storyboardPreview && (() => {
+        const url = groupStoryboards[storyboardPreview.groupId]?.url
+        if (!url) return null
+        const group = data.storyboardGroups.find((gg) => gg.id === storyboardPreview.groupId)
+        const title = group ? `第 ${group.index} 组 · 故事板` : '故事板'
+        return (
+          <div
+            className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4"
+            onClick={() => setStoryboardPreview(null)}
+            role="dialog"
+            aria-modal="true"
+            aria-label="故事板预览"
+          >
+            <div
+              className="relative w-full max-w-[720px] h-full max-h-[88vh] flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* 顶部 bar:标题 + 关闭 */}
+              <div className="flex items-center justify-between px-1 pb-2 shrink-0">
+                <div className="text-sm font-display font-semibold text-white/90 truncate">{title}</div>
+                <button
+                  type="button"
+                  onClick={() => setStoryboardPreview(null)}
+                  className="p-1.5 rounded-md bg-white/10 hover:bg-white/20 text-white"
+                  aria-label="关闭"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              {/* 故事板图:object-contain 保持 9:16 比例;cursor-zoom-out 提示再次点击关闭 */}
+              <div className="flex-1 min-h-0 flex items-center justify-center">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={url}
+                  alt={title}
+                  onClick={() => setStoryboardPreview(null)}
+                  className="max-w-full max-h-full object-contain rounded shadow-2xl cursor-zoom-out"
+                />
               </div>
             </div>
           </div>

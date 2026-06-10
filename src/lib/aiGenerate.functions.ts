@@ -164,6 +164,7 @@ function stageSpec(stage: Input['stage']) {
           '**faceDescription**:只写脸型/五官/肤色/发型发色等中性结构,**不要写任何表情/情绪/神态**。' +
           '**looks 数组(变体造型)**:如果同一角色在文本中明显换了不同身份/服装(例:男主角在现代是医生、回忆里是学生),在 looks 里**额外**输出 1-3 个变体,每个有 label(短中文,如"医生"/"学生")和 clothingDescription。' +
           '只在**真正不同**的造型时才加 looks,同一套衣服不要重复列。' +
+          '**关于 faceHint / bodyHint(可选)**:如果该变体下脸/五官有剧情明确的变化(例:疤痕、戴半脸面具、易容成他人),在 faceHint 字段中说明;如果身材/体型有剧情明确的变化(例:变胖、怀孕、变成小孩),在 bodyHint 字段中说明。**不写 hint = 默认脸/身材与主角色 100% 一致**。' +
           '单集通常 1-5 个角色,不要为了凑数虚构。仅工具调用返回。',
         schema: {
           type: 'object',
@@ -199,6 +200,8 @@ function stageSpec(stage: Input['stage']) {
                       properties: {
                         label: { type: 'string' },
                         clothingDescription: { type: 'string' },
+                        faceHint: { type: 'string', description: '可选:剧情明确提及该变体下脸/五官有变化(疤痕/面具/易容)时填写' },
+                        bodyHint: { type: 'string', description: '可选:剧情明确提及该变体下身材/体型有变化(变胖/怀孕/变小)时填写' },
                       },
                       required: ['label', 'clothingDescription'],
                       additionalProperties: false,
@@ -223,6 +226,7 @@ function stageSpec(stage: Input['stage']) {
           '**personality 字段**:可以填,但下游生成图 prompt 不会使用它,只在 UI 描述里展示。' +
           '**looks 数组(变体造型)**:如果同一角色在不同剧情阶段/身份下有明显不同的造型(医生 vs 穿越者 vs 学生时期),请在 looks 里**额外**输出 1-3 个变体,每个变体有独立的 label(短中文,如"医生"/"穿越"/"学生")和 clothingDescription(只改这个,脸和身材沿用主条目)。' +
           '**不要**为同一套衣服重复列 looks。只有造型明显不同时才加。' +
+          '**关于 faceHint / bodyHint(可选)**:如果该变体下脸/五官有剧情明确的变化(例:疤痕、戴半脸面具、易容成他人),在 faceHint 字段中说明;如果身材/体型有剧情明确的变化(例:变胖、怀孕、变成小孩),在 bodyHint 字段中说明。**不写 hint = 默认脸/身材与主角色 100% 一致**。' +
           '每位需要：名字、role(lead/supporting/villain)、roleLabel(中文短描述如"女主 · 高冷学霸")、age、gender(性别)、faceDescription、bodyDescription、clothingDescription、personality(性格)、palette(3-4 个 hex 颜色，匹配角色调性)、可选 looks。仅工具调用返回。',
         schema: {
           type: 'object',
@@ -258,6 +262,8 @@ function stageSpec(stage: Input['stage']) {
                       properties: {
                         label: { type: 'string', description: '短中文标签,如 "医生" / "穿越" / "学生时期"' },
                         clothingDescription: { type: 'string', description: '该变体的服装配饰描述;脸和身材沿用主条目' },
+                        faceHint: { type: 'string', description: '可选:剧情明确提及该变体下脸/五官有变化(疤痕/面具/易容)时填写' },
+                        bodyHint: { type: 'string', description: '可选:剧情明确提及该变体下身材/体型有变化(变胖/怀孕/变小)时填写' },
                       },
                       required: ['label', 'clothingDescription'],
                       additionalProperties: false,
@@ -595,3 +601,109 @@ async function tryMiniMax(apiKey: string, spec: ReturnType<typeof stageSpec>, us
     }
   }
 }
+
+// ==================================================================
+// Per-look 独立描述生成
+// ------------------------------------------------------------------
+// generateStageAi 把一整集所有角色一次提取,looks[] 里每个变体只能
+// 给 label + clothingDescription;face/body 默认沿用主条目。这导致
+// 同一角色的"医生 / 穿越 / 学生"三张图共用一份脸/身体描述。
+//
+// 本 server fn 是【单角色 + 单变体】粒度:把主条目的脸/身体/服装
+// 作为 anchor 喂给 Qwen,严格指令"脸/身体 100% 继承,除非 hint
+// 明示有变化",输出 standalone 完整的 face/body/clothing 三字段,
+// 用于覆盖原 looks。
+// 客户端 enrichCharacterLooks 在 extract 完后并行调本 fn(per-look),
+// 失败 fallback 沿用主条目 + console.warn,不阻塞流程。
+// ==================================================================
+
+const LookInputSchema = z.object({
+  characterName: z.string().min(1),
+  age: z.number().int().min(0).max(150),
+  gender: z.string(),
+  anchorFaceDescription: z.string(),
+  anchorBodyDescription: z.string(),
+  anchorClothingDescription: z.string(),
+  lookLabel: z.string().min(1),
+  lookClothingDescription: z.string(),
+  faceHint: z.string().optional(),
+  bodyHint: z.string().optional(),
+  episodeContext: z.string().optional(),
+})
+
+const LookOutputSchema = {
+  type: 'object',
+  properties: {
+    faceDescription: { type: 'string', description: '面部结构(脸型/五官/肤色/发型发色),不要写任何表情' },
+    bodyDescription: { type: 'string', description: '身材体型描述' },
+    clothingDescription: { type: 'string', description: '该变体的完整服装配饰描述(独立完整,不要引用主条目)' },
+  },
+  required: ['faceDescription', 'bodyDescription', 'clothingDescription'],
+  additionalProperties: false,
+}
+
+const LOOK_SYSTEM_PROMPT = `你是一名中文短剧角色一致性维护助手。任务是:为同一个角色的【不同造型/身份/变体】,生成一组【独立、完整、可直接喂给图像生成模型】的描述。
+
+硬规则(违反 = 任务失败):
+1. faceDescription 严格继承主条目 —— 脸型、五官、肤色、脸型轮廓 100% 一致,不能换脸、不能微调、不能写"和主角色一样"。
+   - 唯一例外:如果用户在 hint 里【明确说】该变体下脸/五官有变化(例如戴半脸面具、脸上多了疤痕、易容成他人),则按 hint 写脸,否则照搬主条目脸。
+2. bodyDescription 严格继承主条目 —— 体型、身高、体态 100% 一致。
+   - 唯一例外:如果用户在 hint 里【明确说】该变体下身材/体型有变化(例如变胖了、怀孕、变成小孩),则按 hint 写身体,否则照搬主条目身体。
+3. clothingDescription 必须完全独立重新写 —— 这是该变体独有的服装/配饰,不要照搬主条目 clothing,也不要写"换一套衣服"这种空话。写出具体的款式、颜色、材质、配饰。
+4. 所有三个字段都是 standalone 完整句子 —— 不得使用"同主角色"、"沿用"、"参考主条目"、"同上"这种引用。图像模型看不到引用,只会看到字符串。
+5. 不要写任何表情、情绪、神态、动作、姿势 —— 脸/身体字段必须是中性结构描述。
+6. 输出语言:中文,简洁,每字段 20-80 字。
+
+工作流程:
+A) 先把 anchorFaceDescription / anchorBodyDescription 的内容基本照搬到 faceDescription / bodyDescription(只做轻量措辞调整,不要改实质内容)。
+B) 检查 faceHint / bodyHint:如果 hint 提到脸或身体有变化,只修改对应字段的具体内容,未提及的字段保持 anchor。
+C) clothingDescription 完全独立写:基于 lookLabel 和 lookClothingDescription 扩写出一个完整、有画面感的服装描述。
+
+仅以工具调用返回结构化结果。`
+
+export const generateCharacterLookAi = createServerFn({ method: 'POST' })
+  .inputValidator((d: unknown) => LookInputSchema.parse(d))
+  .handler(async ({ data }) => {
+    const qwenKey = process.env.Qwen
+    if (!qwenKey) return { ok: false as const, error: 'no API key available' }
+
+    const ctxParts: string[] = [
+      `【主角色基础描述(anchor)】`,
+      `姓名:${data.characterName}  年龄:${data.age}  性别:${data.gender}`,
+      `face: ${data.anchorFaceDescription}`,
+      `body: ${data.anchorBodyDescription}`,
+      `default clothing: ${data.anchorClothingDescription}`,
+      ``,
+      `【本次要生成的变体】`,
+      `label: ${data.lookLabel}`,
+      `clothing(初稿): ${data.lookClothingDescription}`,
+    ]
+    if (data.faceHint) ctxParts.push(`face hint(剧情明确提及): ${data.faceHint}`)
+    if (data.bodyHint) ctxParts.push(`body hint(剧情明确提及): ${data.bodyHint}`)
+    if (data.episodeContext) ctxParts.push(`【当集剧情摘要】\n${data.episodeContext}`)
+
+    // spec 结构(toolName/system/schema)与 stageSpec 各 case 字面量一致,
+    // 但 TS 推断 ReturnType<typeof stageSpec> 是 union,字面值不在其中 →
+    // 走 cast。tryQwen 内部只读这 3 个字段,运行时完全兼容。
+    const spec = {
+      toolName: 'emit_character_look',
+      system: LOOK_SYSTEM_PROMPT,
+      schema: LookOutputSchema,
+    } as unknown as ReturnType<typeof stageSpec>
+
+    const result = await tryQwen(qwenKey, spec, ctxParts.join('\n'), 'character-look')
+    if (!result.ok) return result
+
+    const p = result.payload as any
+    if (!p?.faceDescription || !p?.bodyDescription || !p?.clothingDescription) {
+      return { ok: false as const, error: 'incomplete tool call payload' }
+    }
+    return {
+      ok: true as const,
+      payload: {
+        faceDescription: String(p.faceDescription),
+        bodyDescription: String(p.bodyDescription),
+        clothingDescription: String(p.clothingDescription),
+      },
+    }
+  })

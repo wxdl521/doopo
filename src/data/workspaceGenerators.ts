@@ -108,6 +108,15 @@ export type StoryboardShot = {
   action: string
   camera: string
   imageUrl?: string
+  /**
+   * 用户在分镜里为该 shot 涉及的每个角色指定的 reference 形象(imageKey)。
+   *   - key: 角色 id
+   *   - value: imageKey(默认 look 用 c.id,其他 look 用 `${c.id}::${lk.id}`)
+   *
+   * 没设或为 undefined → 客户端用角色默认 look 的最新图作为 fallback,
+   * 行为与旧版一致,完全向后兼容旧数据。
+   */
+  characterRefs?: Record<string, string>
 }
 
 export type StoryboardGroup = {

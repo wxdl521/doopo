@@ -36,9 +36,6 @@ function buildWorkflow(stage: WorkspaceTab, t: any): WorkflowDef {
         ctas: [
           { key: 'enter_storyboard', label: t.zp_cta_enter_storyboard, target: 'storyboard' },
           { key: 'save_assets', label: t.zp_cta_save_assets, target: 'character' },
-          { key: 'design', label: t.zp_cta_design, target: 'character' },
-          { key: 'storyboard', label: t.zp_cta_storyboard, target: 'storyboard' },
-          { key: 'refine', label: t.zp_cta_refine, target: 'character' },
         ],
       }
     case 'storyboard':
@@ -217,12 +214,22 @@ export default function ZopiaChatPanel({
   // 放最前,方便用户点一下就走完整剧情→分镜组流程,不需要发消息。
   const presetCtas: Record<WorkspaceTab, { key: CtaKey; label: string; target: WorkspaceTab }[] | null> = {
     canvas: null,
-    script: null,
+    // 2026/06 改:script 阶段之前为 null,只显示 4 个文本预设(占位文案),
+    // 用户生成完故事梗概后看不到任何功能性按钮。现在跟 character / storyboard
+    // 对齐,直接展示 3 个 CTA:生成下一集 / 连续生成多集 / AI 修改故事梗概。
+    //   - script_next     → handleCta 调 send() 走 runScriptEpisode 流式生成
+    //   - script_continue → 走连续多集参数化提示(用户选 target + sceneCount)
+    //   - script_episode  → 打开"修改剧本梗概"输入框(见 handleCta line 713)
+    // i18n + handleCta 分支都已经存在,只是之前没接进 UI。
+    script: [
+      { key: 'script_next', label: t.zp_cta_script_next, target: 'script' },
+      { key: 'script_continue', label: t.zp_cta_script_continue, target: 'script' },
+      { key: 'script_episode', label: t.zp_cta_script_episode, target: 'script' },
+    ],
     episodes: buildWorkflow('episodes', t).ctas,
     character: [
       { key: 'enter_storyboard', label: t.zp_cta_enter_storyboard, target: 'storyboard' },
       { key: 'save_assets', label: t.zp_cta_save_assets, target: 'character' },
-      { key: 'design', label: t.zp_cta_design, target: 'character' },
     ],
     // storyboard 之前是 null(只显示文本预设),导致点击分镜流程时对话框
     // 没有"对话按钮"。改为 CTA 列表,与 episodes / character 行为一致:
@@ -625,7 +632,7 @@ export default function ZopiaChatPanel({
         return {
           baseText: t.zp_user_cta_script_continue, targetStage: 'script', jumpAfter: false,
           fields: [
-            { key: 'targetEp', label: '连跑至第', default: '10', options: [
+            { key: 'targetEp', label: '连跑至第', default: '10', custom: true, options: [
               { value: '5', label: '第 5 集' },
               { value: '10', label: '第 10 集' },
               { value: '20', label: '第 20 集' },
@@ -643,7 +650,7 @@ export default function ZopiaChatPanel({
         return {
           baseText: t.zp_user_cta_script_next, targetStage: 'script', jumpAfter: false,
           fields: [
-            { key: 'sceneCount', label: '每集分镜数', default: '5', options: [
+            { key: 'sceneCount', label: '每集分镜数', default: '5', custom: true, options: [
               { value: '3', label: '3 个' },
               { value: '5', label: '5 个' },
               { value: '7', label: '7 个' },
@@ -1090,19 +1097,13 @@ export default function ZopiaChatPanel({
                     )
                   })}
                   {f.custom && (
-                    <input
-                      type="text"
-                      value={
-                        !f.options.some((o) => o.value === pendingCta.values[f.key])
-                          ? pendingCta.values[f.key] ?? ''
-                          : ''
-                      }
-                      placeholder="自定义"
-                      onChange={(e) => setPendingCta((p) => p ? {
+                    <CustomNumberInput
+                      value={(pendingCta.values[f.key] as string) ?? ''}
+                      options={f.options}
+                      onChange={(v) => setPendingCta((p) => p ? {
                         ...p,
-                        values: { ...p.values, [f.key]: e.target.value }
+                        values: { ...p.values, [f.key]: v }
                       } : p)}
-                      className="w-16 px-2 py-1 rounded-md border border-border bg-bg-surface text-xs text-text-primary focus:border-accent focus:outline-none placeholder:text-text-muted"
                     />
                   )}
                 </div>
@@ -1393,5 +1394,56 @@ export default function ZopiaChatPanel({
       </div>
     )}
     </aside>
+  )
+}
+
+// 自定义数字输入框:与 quick-pick options 并排展示。
+// 关键修复:之前用受控 input + "若 value 在 options 里就清空" 的渲染会吞数字 ——
+// 用户先输入 "3" 让 value 变成 options 命中值,input 被强制清空,再输入 "0"
+// 就只剩 "0",所以 "30/50/70/90" 都打不进去。这里用独立的本地 text state 跟
+// isTypingRef 区分"用户在打字"和"外部点了 button",前者不重置,后者(命中 option)
+// 才清空,允许输入任意多位数字。
+function CustomNumberInput({
+  value,
+  options,
+  onChange,
+}: {
+  value: string
+  options: { value: string; label: string }[]
+  onChange: (v: string) => void
+}) {
+  const isOption = (v: string) => options.some((o) => o.value === v)
+  const [text, setText] = useState<string>(() => (isOption(value) ? '' : value))
+  const isTypingRef = useRef(false)
+  useEffect(() => {
+    // 自己刚 onChange 引起的 value 变化:跳过,保留 input 文本
+    if (isTypingRef.current) {
+      isTypingRef.current = false
+      return
+    }
+    // 外部(点 quick-pick button)把 value 设到某个 option:input 让位给 button 高亮
+    if (isOption(value)) {
+      if (text !== '') setText('')
+    } else if (value !== text) {
+      setText(value)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value])
+  return (
+    <input
+      type="text"
+      inputMode="numeric"
+      pattern="[0-9]*"
+      value={text}
+      placeholder="自定义"
+      onChange={(e) => {
+        const v = e.target.value
+        if (v !== '' && !/^\d+$/.test(v)) return
+        isTypingRef.current = true
+        setText(v)
+        onChange(v)
+      }}
+      className="w-16 px-2 py-1 rounded-md border border-border bg-bg-surface text-xs text-text-primary focus:border-accent focus:outline-none placeholder:text-text-muted"
+    />
   )
 }
