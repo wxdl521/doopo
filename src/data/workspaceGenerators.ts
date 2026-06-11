@@ -150,6 +150,13 @@ export type StoryboardShot = {
   shotTypeLabel: string
   action: string
   camera: string
+  /**
+   * 2026/06:每个 shot 自己的时间范围(秒,绝对值,在当集时间轴上)。
+   * 之前只在 group 层级有 startSec/endSec,shot 是均分的;现在 shot 也有自己的区间,
+   * UI 上每张分镜卡片可以显示 "Xs → Ys · Zs",更直观。
+   */
+  startSec?: number
+  endSec?: number
   imageUrl?: string
   /**
    * 用户在分镜里为该 shot 涉及的每个角色指定的 reference 形象(imageKey)。

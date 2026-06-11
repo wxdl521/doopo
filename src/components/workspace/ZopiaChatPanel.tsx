@@ -466,7 +466,8 @@ export default function ZopiaChatPanel({
       ...(opts?.userMsg ? [opts.userMsg] : []),
       { id: wfId, kind: 'workflow', steps: wf.steps, doneCount: 0 },
     ])
-    const stepDelay = 700
+    // 2026/06:分镜流进入 + 缩略图渲染 步骤要看得清,stepDelay 700 → 1800ms
+    const stepDelay = 1800
     const lastStepIndex = wf.steps.length - 1
     wf.steps.forEach((_, i) => {
       if (i === lastStepIndex) return

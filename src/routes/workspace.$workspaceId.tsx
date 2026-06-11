@@ -24,7 +24,7 @@ import type { ImportedScriptResult } from '../lib/parseImportedScript.functions'
 import { resolveProjectStyle, resolveT2IModel, resolveI2IModel, buildStyleLock } from '../lib/visualStyles'
 import { hashString } from '../lib/utils'
 import { filterByEpisode, groupByMatchKey, getEffectiveClothing, getEffectiveRoleLabel } from '../lib/characterFilters'
-import { Maximize2, FileText, Camera, Clock, Users, X, Loader2, Sparkles, Send, CheckCircle2, Pencil, Check, Image as ImageIcon, LayoutGrid, RefreshCw, Target } from 'lucide-react'
+import { Maximize2, FileText, Camera, Clock, Users, X, Loader2, Sparkles, Send, CheckCircle2, Pencil, Check, Image as ImageIcon, LayoutGrid, RefreshCw, Target, ChevronDown } from 'lucide-react'
 import CharacterPortrait from '../components/workspace/CharacterPortrait'
 import { toast } from 'sonner'
 
@@ -206,6 +206,9 @@ function WorkspacePage() {
     | { character: GenCharacter; lookId: string | null; imageKey: string }
     | null
   >(null)
+  // 2026/06:plot 下方圆圈点击弹出的"选形象下拉"打开状态。
+  // key = `${groupId}::${characterId}`,null = 全部关闭
+  const [openLookMenu, setOpenLookMenu] = useState<string | null>(null)
   const [modInput, setModInput] = useState('')
   const [modBusy, setModBusy] = useState(false)
   const [modError, setModError] = useState<string | null>(null)
@@ -241,7 +244,27 @@ function WorkspacePage() {
   const [charImages, setCharImages] = useState<Record<string, string[]>>({})
   // charImages 的镜像 ref:processCharacter 内部循环里要"看最新"以跳过已
   // 生成的图。React state 闭包是快照,useRef 才是实时的。
+  // 2026/06 关键修复:useEffect 镜像有 race condition(下一个 processCharacter 跑时
+  // 还没同步),所以也通过 updateCharImages 在 setCharImages 调用处同步写 ref。
   const charImagesRef = useRef<Record<string, string[]>>({})
+
+  /**
+   * 2026/06:替换 setCharImages,确保 state + ref 同步更新。
+   *
+   * 修法核心:不能把 ref 写操作放进 setState 的 updater 函数里 —— React
+   * 是异步调用 updater 的(commit 时才跑),下一个 processCharacter 同步
+   * 触发时 ref 还没更新。
+   *
+   * 正确做法:直接读 ref 当下值 → 算 next → 同步写 ref → 再 setState(只
+   * 负责触发 re-render)。这样 ref 是同步的,state 和 ref 始终一致。
+   */
+  const updateCharImages = (updater: (m: Record<string, string[]>) => Record<string, string[]>) => {
+    // 1) 同步算 + 写 ref(IIFE 链上的下个 processCharacter 立即可见)
+    const next = updater(charImagesRef.current)
+    charImagesRef.current = next
+    // 2) 触发 re-render(把 ref 的当前值推给 state,React 不再二次调用 updater)
+    setCharImages(next)
+  }
   useEffect(() => { charImagesRef.current = charImages }, [charImages])
   // processCharacter 入口 ref 守卫(2026/06):防止 useEffect 多次触发
   // 同一角色并发跑 processCharacter。state 的 busyChars 已经做了同样防御,
@@ -515,22 +538,35 @@ function WorkspacePage() {
    * 都没有命中 → 派生新 id `mc-<8hex>`。
    */
   function resolveStableId(ext: { matchKey?: string; name?: string; siblingGroupId?: string }, existing: GenCharacter[]): string {
-    const mk = (ext.matchKey || '').trim()
+    // 2026/06 修复:之前 P1 用 matchKey 折叠,导致"陆深·医生"和"陆深·学生时期"
+    // 被 AI 给的相同 matchKey 折叠成同一个 id,charImages[id] 共享,
+    // 任何一方生成都覆盖另一方图片(用户报告"当A生成B也展示A的图,
+    // 当B生成时A被刷新成B的")。
+    //
+    // 正确语义:
+    //   - 同 name(精确,含 · 后缀)+ 跨集 → 复用 id(同 look 跨集, charImages[id] 持续)
+    //   - 同真人不同 look(不同 name,如 "陆深·医生" vs "陆深·学生")→ 派生新 id
+    //     各自独立 charImages,独立生成
+    //   - matchKey 相同但 name 不同 → 走"派生新 id"路径(关键修复)
+    //
+    // 优先级:
+    //   P1: name 精确匹配 → 复用 id(同 look 跨集/legacy 兼容)
+    //   P2: legacy 兼容 —— existing 是 "陆深"(无 ·),new 是 "陆深·医生"(有 ·)→ 复用 id
+    //   P3: 任何其他情况 → 派生新 id(mc-<hash>)
+    //      (包括 matchKey 命中但 name 不同 = 不同 look)
     const nm = (ext.name || '').trim()
-    const sg = (ext.siblingGroupId || '').trim()
-    if (mk) {
-      const hit = existing.find((e) => e.matchKey === mk)
-      if (hit) return hit.id
-    }
     if (nm) {
-      const hit = existing.find((e) => e.name === nm)
-      if (hit) return hit.id
+      const byName = existing.find((e) => e.name === nm)
+      if (byName) return byName.id
     }
-    if (sg) {
-      const hit = existing.find((e) => e.siblingGroupId === sg)
-      if (hit) return hit.id
+    // P2: legacy 兼容(老数据无 · 后缀)。新 ext 有 · + existing 同 base name → 复用
+    if (nm && nm.includes('·')) {
+      const base = nm.split('·')[0].trim()
+      const byLegacy = existing.find((e) => e.name === base)
+      if (byLegacy) return byLegacy.id
     }
-    const seed = mk || nm || sg || Math.random().toString()
+    // P3: 派生新 id(用 name 哈希,稳定可重现)
+    const seed = nm || (ext.matchKey || '').trim() || Math.random().toString()
     return `mc-${hashString(seed).slice(0, 8)}`
   }
 
@@ -555,28 +591,35 @@ function WorkspacePage() {
     extracted: GenCharacter[],
     extractEpIndex: number,
   ): GenCharacter[] {
-    const byKey = new Map<string, GenCharacter>()
-    const bySibling = new Map<string, GenCharacter>()
-    for (const c of existing) {
-      byKey.set(c.matchKey, c)
-      if (c.siblingGroupId) {
-        if (!bySibling.has(c.siblingGroupId)) bySibling.set(c.siblingGroupId, c)
-      }
-    }
+    // 2026/06 修复:之前用 matchKey 当 P1 合并条件,导致"陆深 · 医生"和
+    // "陆深 · 学生时期"被错误合并(它们 matchKey 相同 → 合并 → 用户看到
+    // 2 个不同形象却同步显示,违反"多形象独立卡片"的用户诉求)。
+    //
+    // 正确语义:
+    //   - 同 look(精确 name 相同)+ 跨集 → 合并(episodes 追加,共享脸/身)
+    //   - 同真人不同 look(name 不同,如 "陆深 · 医生" vs "陆深 · 学生")→
+    //     **分开**(独立卡,各自独立生成),靠 siblingGroupId 串起来做 I2I 锁脸
+    //   - matchKey 是"真人身份",不是"合并键";多个卡片可以共享 matchKey
+    //
+    // 合并优先级:
+    //   P1: 精确 name 相等 → merge
+    //   P2: legacy 兼容 —— existing 是 "陆深"(无 ·),ext 是 "陆深 · 医生"(有 ·)→ merge
+    //   P3: 其他 → 创建新卡(matchKey 自动从同组继承,保持跨集身份)
+    const byName = new Map(existing.map((c) => [c.name, c]))
     const result = [...existing]
 
     for (const ext of extracted) {
-      let match = byKey.get(ext.matchKey)
-      if (!match && ext.siblingGroupId) match = bySibling.get(ext.siblingGroupId)
+      let match = byName.get(ext.name)
       if (!match) {
-        // name 前缀启发式("林晚 · 医生" → "林晚")
-        const baseName = ext.name.split('·')[0].trim()
-        match = existing.find((c) => c.name.split('·')[0].trim() === baseName)
-        if (match) {
-          // 收敛到已有 matchKey,以后 AI 再生成不会再分裂
-          ext.matchKey = match.matchKey
-          byKey.set(match.matchKey, match)
+        // P2:legacy 兼容(老数据无 · 后缀)
+        const extBase = ext.name.split('·')[0].trim()
+        if (extBase !== ext.name) {
+          // ext 有 · 后缀 → 看 existing 是否有同名 base(legacy 单名)
+          match = existing.find((c) => c.name === extBase)
+          if (match) ext.matchKey = match.matchKey
         }
+        // ext 无 · 后缀 + existing 也无 · 后缀 → byName.get 已处理
+        // ext 无 · + existing 有 · 变体 → 故意不匹配(新 look)
       }
 
       if (match) {
@@ -698,7 +741,10 @@ function WorkspacePage() {
       return url ? { url, sibling } : undefined
     })()
     const usingSiblingAnchor = !!siblingAnchor
-    console.log(`[CHAR-AUTOGEN] id=${c.id} siblingGroup=${c.siblingGroupId ?? '(none)'} anchor=${siblingAnchor ? 'I2I' : 'T2I'}`)
+    console.log(
+      `[CHAR-AUTOGEN] id=${c.id} name=${c.name} siblingGroup=${c.siblingGroupId ?? '(none)'} ` +
+      `anchor=${siblingAnchor ? `I2I(sibling=${siblingAnchor.sibling.name}, url=${siblingAnchor.url.slice(0, 60)}...)` : 'T2I'}`
+    )
 
     for (let i = 0; i < lookSpecs.length; i++) {
       const ls = lookSpecs[i]
@@ -761,22 +807,28 @@ function WorkspacePage() {
           ? siblingAnchor!.sibling.bodyDescription
           : c.bodyDescription
         const instruction = [
-          `给【${c.name}】生成当前造型(参考同真人的其他形象),视觉锚点是${anchorDesc}:`,
-          `当前形象服装/配饰描述:${ls.data.clothingDescription || '保持参考图的服装不变'}`,
+          // ═══════ 【最优先级:脸部档案】放最前面,被模型加权最重 ═══════
+          // 2026/06 修复:用户报告同真人 2/3 个形象 b 锁得不好。诊断认为:
+          // 1) I2I 模型对 prompt 中后段内容权重低 → face oracle 放最前
+          // 2) 参考图本身戴口罩/墨镜会让模型"反向带偏" → 文字档案优先级最高
+          `【任务:同一个人,不同形象 —— 这是"脸锁"任务】`,
           ``,
-          `【⚠ 重要:脸部/身材 100% 以"文字 oracle"为准,不是以参考图为准】`,
-          `参考图1 可能戴了口罩 / 墨镜 / 帽子 / 头饰 / 半脸面具 等遮挡面部的配饰。`,
-          `如果只看图,AI 会"看不见"被遮挡的部分,瞎猜出不同的脸。`,
-          `所以**禁止从参考图视觉推断脸部细节**——必须严格按下面文字描述生成:`,
+          `你是给同一个真人(${siblingAnchor?.sibling.name ?? c.name}家族)生成新形象。` +
+          `此人是同一个 DNA、同一个长相 —— 唯一允许变化的是当前形象描述里写的服装/配饰/妆容。`,
+          `【脸部档案 · 文字 oracle · 100% 锁死】`,
           `  脸(face): ${faceOracle || '(无)'}`,
           `  身材(body): ${bodyOracle || '(无)'}`,
-          `这两段文字是同真人的"脸部档案",是所有形象必须 100% 一致的基线。`,
+          `以上这两段文字描述是**绝对权威**,禁止从图1的视觉细节推断脸部信息(图1 可能戴口罩/墨镜/帽子/头饰/面具等遮挡,看图会瞎猜)。`,
           ``,
-          `【从参考图1 继承的部分(只能继承未被遮挡、且非脸/身材的视觉)】`,
+          `【视觉锚点】${anchorDesc}`,
+          ``,
+          `【从图1 继承的部分】`,
           `• 整体画面构图、视角、画幅、风格、光照、背景 100% 继承图1`,
           `• 发型轮廓(短/长/卷/直、刘海/鬓角)100% 继承图1`,
           `  ↳ 发色默认继承,但若当前形象描述明确要换发色则按描述`,
           `• 表情默认继承"无表情";若当前形象描述明确要某种表情则按描述`,
+          ``,
+          `【当前形象的服装/配饰描述】:${ls.data.clothingDescription || '保持参考图的服装不变'}`,
           ``,
           `【可按当前形象描述自由调整的部分】`,
           `• 妆容(眼妆、唇色、腮红)按当前形象描述生成`,
@@ -784,11 +836,11 @@ function WorkspacePage() {
           `• 整体服装按当前形象的 clothingDescription 完整替换`,
           ``,
           `【硬约束】`,
-          `• 脸型、脸轮廓、五官比例、肤色、骨骼结构 100% 按上面 face 文字生成,**严禁被参考图的任何配饰/视角/光影"带偏"**`,
-          `• 体型、身高、胖瘦、体态 100% 按上面 body 文字生成`,
-          `• 除非当前形象描述里【明确写】"脸变了"/"胖了"/"受伤了"/"变年轻了"等,否则一律按文字 oracle`,
+          `• 脸型、脸轮廓、五官比例、肤色、骨骼结构 100% 按 face 文字生成,**严禁被图1 的配饰/视角/光影"反向带偏"**`,
+          `• 体型、身高、胖瘦、体态 100% 按 body 文字生成`,
+          `• 除非当前形象描述里【明确写】"脸变了"/"胖了"/"受伤了"/"变年轻了"等,否则一律按 face 文字`,
           ``,
-          `输出:一张全身正面图,新造型,看起来【明显是同一个人】,但服装/妆容/配饰已经按当前形象描述替换。`,
+          `输出:一张全身正面图,新造型,看起来【明显是同一个人】(脸身材与图1 / 与同真人其他形象完全一致),但服装/妆容/配饰已经按当前形象描述替换。`,
         ].join('\n')
 
         // 找到 look 在 c.looks 里的 id(传给 doRegen 用于 imageKey 拼装)
@@ -946,7 +998,7 @@ function WorkspacePage() {
           //     主视图"难以判断哪张是新的。
           // 修法:autoGen 跑默认 look T2I 时直接覆盖历史为 [res.url],只留
           // 最新 1 张。变体 look(走 I2I modify 路径,代码不会跑)不受影响。
-          setCharImages((m) => ({ ...m, [ls.imageKey]: [res.url] }))
+          updateCharImages((m) => ({ ...m, [ls.imageKey]: [res.url] }))
           console.log(`[CHAR-AUTOGEN] setCharImages WRITE: imageKey=${ls.imageKey} → [1 url] (覆盖为 1 张)`)
           toast.success(`已生成 ${cardTitle}（${styleSpec.label}）`)
         } else {
@@ -1075,7 +1127,7 @@ function WorkspacePage() {
         },
       })
       if (res?.ok && res.url) {
-        setCharImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), res.url!] }))
+        updateCharImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), res.url!] }))
         toast.success(`已生成 ${c.name} · ${lk.label}`)
       } else {
         toast.error(res?.error || '生成失败')
@@ -1134,7 +1186,7 @@ function WorkspacePage() {
         },
       })
       if (res?.ok && res.url) {
-        setCharImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), res.url!] }))
+        updateCharImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), res.url!] }))
         // 自动选中新生成的那张
         setSelectedGenIdx((charImages[imageKey]?.length ?? generations.length))
         setRegenInput('')
@@ -1229,7 +1281,7 @@ function WorkspacePage() {
         // 2026/06:replaceExisting=true 时覆盖历史(只留 1 张最新),autoGen
         // 路径需要这样避免"几张主视图"堆叠。replaceExisting=false(默认)
         // 时 append,保留用户主动 modify 堆的迭代历史。
-        setCharImages((m) => ({
+        updateCharImages((m) => ({
           ...m,
           [imageKey]: replaceExisting ? [res.url!] : [...(m[imageKey] ?? []), res.url!],
         }))
@@ -1558,19 +1610,29 @@ function WorkspacePage() {
    *   - shots 字段变化时由 useEffect 自动重算
    */
   function composePlotText(g: StoryboardGroup): string {
-    // 去掉上次附加的"【本组分镜】"段(取其前部分 = 原剧情)
-    const baseText = g.plotText.split(/\n\n【本组分镜】/)[0].trimEnd()
-    if (!g.shots || g.shots.length === 0) return baseText.slice(0, 800)
-
-    const shotLines = g.shots
-      .map((s, i) => {
-        const cam = s.camera ? ` | ${s.camera}` : ''
-        return `${i + 1}. [${s.shotTypeLabel}] ${s.action}${cam}`
-      })
-      .join('\n')
-
-    const composed = `${baseText}\n\n【本组分镜】\n${shotLines}`
-    return composed.slice(0, 800)
+    // 2026/06 改造:plotText 改为按 shot 拆分的结构化列表,每行格式:
+    //   分镜1: 0-4s · 远景 · 陆深和小明在教室对话,画面慢慢推进 · 推镜
+    //   分镜2: 4-7s · 特写 · 陆深(凝重):"我喜欢你" · 静态近景
+    //   分镜3: 7-10s · 中景 · 两人在走廊一起走,夕阳 · 跟拍
+    //
+    // 数据来源:shots[].action / camera / startSec / endSec / shotTypeLabel
+    // 兼容老数据(AI 输出的 prose plotText):剥掉【本组分镜】尾巴保留前面
+    // 但优先用从 shots 重新生成的结构化列表(更准、更一致)
+    if (g.shots && g.shots.length > 0) {
+      return g.shots
+        .map((s, i) => {
+          const timeRange = s.startSec != null && s.endSec != null
+            ? `${s.startSec.toFixed(0)}-${s.endSec.toFixed(0)}s`
+            : '?s'
+          const type = s.shotTypeLabel || s.shotType
+          const action = s.action || ''
+          const cam = s.camera ? ` · ${s.camera}` : ''
+          return `分镜${i + 1}: ${timeRange} · ${type} · ${action}${cam}`
+        })
+        .join('\n')
+    }
+    // shots 为空(老数据):fallback 到 AI 输出的 prose
+    return g.plotText.split(/\n\n【本组分镜】/)[0].trimEnd()
   }
 
   /**
@@ -1604,6 +1666,44 @@ function WorkspacePage() {
         }),
       }
     })
+  }
+
+  /**
+   * 2026/06 改造:在 plot 下方的人物小圆圈点开下拉,选具体变体。
+   * 下拉直接传 variantId(不再是"循环到下一个"),所有同组 shot 的
+   * characterRefs[cid] 一起更新。
+   */
+  function setCharacterLookInGroup(groupId: string, characterId: string, variantId: string) {
+    setData((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        storyboardGroups: prev.storyboardGroups.map((g) => {
+          if (g.id !== groupId) return g
+          return {
+            ...g,
+            shots: g.shots.map((s) => ({
+              ...s,
+              characterRefs: {
+                ...(s.characterRefs ?? {}),
+                [characterId]: variantId,
+              },
+            })),
+          }
+        }),
+      }
+    })
+  }
+
+  /**
+   * 取得"当前 group 给 characterId 选中的形象"的 character 对象。
+   * 优先级:group shot 的 characterRefs[characterId] > characterId 本身。
+   */
+  function getGroupSelectedChar(groupId: string, characterId: string): GenCharacter | undefined {
+    const group = data.storyboardGroups.find((g) => g.id === groupId)
+    const firstShot = group?.shots[0]
+    const selectedId = firstShot?.characterRefs?.[characterId] ?? characterId
+    return data.characters.find((c) => c.id === selectedId)
   }
 
   /**
@@ -1962,7 +2062,8 @@ function WorkspacePage() {
         palette?: string[]
       }>
 
-    // 收集本组的 shots(平均时长 = 总时长 / shot 数,作为参考)
+    // 收集本组的 shots(2026/06:每 shot 自带 startSec/endSec,
+    // 这里把 startSec/endSec 一起传给 I2I 生成 call,prompt 里用时间范围描述)
     const groupDuration = (group.endSec ?? 0) - (group.startSec ?? 0)
     const perShotSec = group.shots.length > 0 ? groupDuration / group.shots.length : 5
     const shots = group.shots.map((s) => ({
@@ -1971,6 +2072,9 @@ function WorkspacePage() {
       action: s.action,
       camera: s.camera,
       durationSec: perShotSec,
+      // 2026/06:startSec / endSec 是 shot 自己在当集时间轴上的区间(秒,绝对值)
+      startSec: s.startSec,
+      endSec: s.endSec,
     }))
 
     try {
@@ -3945,7 +4049,9 @@ function WorkspacePage() {
                               )
                             })()}
                           </div>
-                          <p className="text-sm text-text-primary leading-relaxed">{g.plotText}</p>
+                          {/* 2026/06:plotText 现在自包含(场景变化+人物动作+台词),
+                              UI 上只在 header 保留 group 时间范围 + 角色选择角标;
+                              完整 plotText 移到左栏(下方),不再重复。 */}
                         </div>
                         <button
                           type="button"
@@ -3961,27 +4067,105 @@ function WorkspacePage() {
                       {/* 四列:左 plot / 中-左 分镜图(2 列多行) / 中-右 故事板占位 / 右 视频占位
                           比例:1.2 / 2 / 1.5 / 1 —— 分镜图占大头(2 列多行天然把行拉高),
                           故事板留足未来空间,视频放最右。 */}
-                      <div className="grid grid-cols-1 md:grid-cols-[1.2fr_2fr_1.5fr_1fr] gap-3">
-                        {/* 左:plot 描述(其实 header 已显示,这里给个折叠补充 + 角色列表) */}
-                        <div className="rounded-lg border border-border bg-bg-base/40 p-3 space-y-2">
+                      <div className="grid grid-cols-1 md:grid-cols-[1fr_2.5fr_1.5fr] gap-3">
+                        {/* 左:plot 描述(结构化列表,按 shot 拆)+ 角色列表(点击圆圈弹下拉选形象) */}
+                        <div className="rounded-lg border border-border bg-bg-base/40 p-3 space-y-2 max-h-[80vh] overflow-y-auto">
                           <div className="text-[10px] tracking-widest uppercase text-text-muted">剧情 · Plot</div>
-                          <p className="text-xs text-text-secondary leading-relaxed">{g.plotText}</p>
+                          {/* 2026/06 改造:plotText 改为按 shot 拆分的结构化列表,
+                              每行格式: 分镜N: Xs-Xs · 景别 · 动作 · 镜头。
+                              用 font-mono 等宽字体让排版对齐。 */}
+                          <pre className="text-[11px] text-text-secondary leading-relaxed font-mono whitespace-pre-wrap break-words m-0">
+{g.plotText}
+                          </pre>
                           {g.characterIds.length > 0 && (
-                            <div className="pt-2 mt-1 border-t border-border/60 space-y-1">
-                              <div className="text-[10px] tracking-widest uppercase text-text-muted">涉及角色</div>
+                            <div
+                              className="pt-2 mt-1 border-t border-border/60 space-y-1 relative"
+                              // 2026/06:点击圆圈外的地方(下拉菜单外)时关闭下拉
+                              onClick={(e) => {
+                                if ((e.target as HTMLElement).closest('[data-look-menu]')) return
+                                if ((e.target as HTMLElement).closest('[data-look-trigger]')) return
+                                setOpenLookMenu(null)
+                              }}
+                            >
+                              <div className="text-[10px] tracking-widest uppercase text-text-muted flex items-center justify-between">
+                                <span>涉及角色(点击圆圈选形象)</span>
+                              </div>
                               <div className="flex flex-wrap gap-1.5">
                                 {g.characterIds.map((cid) => {
                                   const ch = data.characters.find((c) => c.id === cid)
                                   if (!ch) return null
-                                  const img = charImages[cid]?.[charImages[cid].length - 1]
+                                  const selectedCh = getGroupSelectedChar(g.id, cid) ?? ch
+                                  const baseName = ch.name.split('·')[0].trim()
+                                  const variants = data.characters.filter((c) => c.name.split('·')[0].trim() === baseName)
+                                  const variantIdx = Math.max(0, variants.findIndex((v) => v.id === selectedCh.id))
+                                  const img = charImages[selectedCh.id]?.[charImages[selectedCh.id].length - 1]
+                                  const hasVariants = variants.length > 1
+                                  const menuKey = `${g.id}::${cid}`
+                                  const menuOpen = openLookMenu === menuKey
                                   return (
-                                    <div key={cid} className="flex items-center gap-1.5 px-1.5 py-1 rounded bg-bg-elevated border border-border">
-                                      <div className="w-5 h-5 rounded-full overflow-hidden bg-bg-base shrink-0">
-                                        {img
-                                          ? <img src={img} alt={ch.name} className="w-full h-full object-cover" />
-                                          : <div className="w-full h-full flex items-center justify-center text-[8px] text-text-muted">N/A</div>}
-                                      </div>
-                                      <span className="text-[11px] text-text-primary">{ch.name}</span>
+                                    <div key={cid} className="relative">
+                                      <button
+                                        type="button"
+                                        data-look-trigger
+                                        onClick={() => {
+                                          if (!hasVariants) return
+                                          setOpenLookMenu(menuOpen ? null : menuKey)
+                                        }}
+                                        disabled={!hasVariants}
+                                        className={`flex items-center gap-1.5 px-1.5 py-1 rounded border transition ${
+                                          hasVariants
+                                            ? 'bg-bg-elevated border-border hover:border-accent cursor-pointer'
+                                            : 'bg-bg-elevated/50 border-border/40 cursor-default'
+                                        }`}
+                                        title={hasVariants
+                                          ? `点击弹出下拉,选"${baseName}"的不同形象 (当前 ${variantIdx + 1}/${variants.length}: ${selectedCh.name})`
+                                          : `${selectedCh.name} (无其他形象可切换)`}
+                                      >
+                                        <div className="w-5 h-5 rounded-full overflow-hidden bg-bg-base shrink-0">
+                                          {img
+                                            ? <img src={img} alt={selectedCh.name} className="w-full h-full object-cover" />
+                                            : <div className="w-full h-full flex items-center justify-center text-[8px] text-text-muted">N/A</div>}
+                                        </div>
+                                        <span className="text-[11px] text-text-primary">{baseName}</span>
+                                        {hasVariants && (
+                                          <span className="text-[9px] px-1 rounded bg-accent/20 text-accent font-mono">
+                                            {variantIdx + 1}/{variants.length}
+                                          </span>
+                                        )}
+                                      </button>
+                                      {/* 下拉:列出 base name 下的所有形象变体 */}
+                                      {menuOpen && hasVariants && (
+                                        <div
+                                          data-look-menu
+                                          className="absolute z-30 left-0 top-full mt-1 min-w-[180px] rounded-lg border border-border bg-bg-surface shadow-xl py-1"
+                                        >
+                                          {variants.map((v) => {
+                                            const vImg = charImages[v.id]?.[charImages[v.id].length - 1]
+                                            const isSelected = v.id === selectedCh.id
+                                            return (
+                                              <button
+                                                key={v.id}
+                                                type="button"
+                                                onClick={() => {
+                                                  setCharacterLookInGroup(g.id, cid, v.id)
+                                                  setOpenLookMenu(null)
+                                                }}
+                                                className={`w-full flex items-center gap-2 px-2 py-1.5 text-left text-[11px] transition ${
+                                                  isSelected ? 'bg-accent/15 text-accent' : 'hover:bg-bg-elevated text-text-primary'
+                                                }`}
+                                              >
+                                                <div className="w-6 h-6 rounded-full overflow-hidden bg-bg-base shrink-0">
+                                                  {vImg
+                                                    ? <img src={vImg} alt={v.name} className="w-full h-full object-cover" />
+                                                    : <div className="w-full h-full flex items-center justify-center text-[9px] text-text-muted">N/A</div>}
+                                                </div>
+                                                <span className="flex-1 truncate">{v.name}</span>
+                                                {isSelected && <Check size={12} className="text-accent shrink-0" />}
+                                              </button>
+                                            )
+                                          })}
+                                        </div>
+                                      )}
                                     </div>
                                   )
                                 })}
@@ -3989,25 +4173,42 @@ function WorkspacePage() {
                             </div>
                           )}
                         </div>
-                        {/* 中-左:分镜图(锁死 2 列,shot 数 = 3 时变成 2 行,行天然变高) */}
-                        <div className="rounded-lg border border-border bg-bg-base/40 p-3 space-y-2">
-                          <div className="flex items-center justify-between">
-                            <div className="text-[10px] tracking-widest uppercase text-text-muted">分镜图 · Shots ({g.shots.length})</div>
-                            <div className="text-[10px] text-text-muted">多图融合:角色 + 场景</div>
+                        {/* 中:分镜图 + 故事板 合并 cell(2026/06 改造)
+                            上面 shots 2 列网格(更紧凑,描述/camera 折叠到 <details>),
+                            下面 storyboard 留位(更宽更高),
+                            视频 cell 因此能拿到更多空间。 */}
+                        <div className="rounded-lg border border-border bg-bg-base/40 p-3 space-y-3 max-h-[80vh] overflow-y-auto">
+                          {/* 顶部:shots 标题 + 全部生成 */}
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex items-center gap-2">
+                              <div className="text-[10px] tracking-widest uppercase text-text-muted">分镜图 · Shots ({g.shots.length})</div>
+                              <div className="text-[10px] text-text-muted">多图融合:角色 + 场景</div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => void generateAllShotsForGroup(g.id)}
+                              disabled={anyBusy || allShotsHaveImage}
+                              className="text-[11px] px-2.5 py-1 rounded border border-accent text-accent bg-accent-dim hover:bg-accent hover:text-white transition disabled:opacity-40 inline-flex items-center gap-1 shrink-0"
+                            >
+                              {anyBusy ? <><Loader2 size={11} className="animate-spin" /> 生成中…</>
+                                : allShotsHaveImage ? '✓ 已生成'
+                                : <><Sparkles size={11} /> 一键生成全部</>}
+                            </button>
                           </div>
-                          <div className="grid grid-cols-2 gap-2 auto-rows-fr">
+                          {/* shots 网格:2 列,卡片更紧凑(描述折叠到 <details>)。
+                              2026/06:加 max-h + overflow-y-auto,shot 多时可下滑,
+                              合并 cell 整体高度不再随 shot 数撑高。 */}
+                          <div className="grid grid-cols-2 gap-2 max-h-72 overflow-y-auto pr-1">
                             {g.shots.map((s) => {
                               const isBusy = busyShotImages.has(`${g.id}::${s.id}`)
                               const shotImageKey = `${g.id}::${s.id}`
-                              // 优先用历史数组的最新一张;没历史才回落到 g.shots[i].imageUrl
-                              // (旧数据没有 shotImages,这条 fallback 让老数据继续能渲染)
                               const generations = shotImages[shotImageKey]
                               const currentUrl = generations && generations.length > 0
                                 ? generations[generations.length - 1]
                                 : s.imageUrl
                               return (
                                 <div key={s.id} className="rounded border border-border bg-bg-elevated overflow-hidden flex flex-col">
-                                  <div className="relative aspect-video bg-bg-base group">
+                                  <div className="relative aspect-[2/1] bg-bg-base group">
                                     {currentUrl ? (
                                       // eslint-disable-next-line @next/next/no-img-element
                                       <img
@@ -4029,7 +4230,12 @@ function WorkspacePage() {
                                     <span className="absolute top-1.5 left-1.5 text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/60 text-white">
                                       {s.shotTypeLabel}
                                     </span>
-                                    {/* 放大按钮:有图时显示,hover 时露出。点击打开预览模态。 */}
+                                    {s.startSec != null && s.endSec != null && (
+                                      <span className="absolute top-1.5 right-1.5 text-[9px] font-mono px-1.5 py-0.5 rounded bg-black/60 text-white tabular-nums">
+                                        {s.startSec.toFixed(0)}-{s.endSec.toFixed(0)}s
+                                      </span>
+                                    )}
+                                    {/* 放大按钮 */}
                                     {currentUrl && (
                                       <button
                                         type="button"
@@ -4039,58 +4245,29 @@ function WorkspacePage() {
                                           setShotModInput('')
                                           setShotPreview({ groupId: g.id, shotId: s.id })
                                         }}
-                                        className="absolute top-1.5 right-1.5 p-1 rounded bg-black/60 text-white opacity-0 group-hover:opacity-100 transition hover:bg-black/80"
+                                        className="absolute bottom-1.5 right-1.5 p-1 rounded bg-black/60 text-white opacity-0 group-hover:opacity-100 transition hover:bg-black/80"
                                       >
                                         <Maximize2 size={12} />
                                       </button>
                                     )}
-                                    {/* 视频生成已挪到右侧"视频 · Video"面板(2026 改造),
-                                        整组所有分镜合成一个视频,不再每张分镜单独覆盖 video。 */}
                                   </div>
-                                  <div className="p-2 space-y-1">
-                                    <p className="text-[11px] text-text-primary line-clamp-2 leading-snug">{s.action}</p>
-                                    {s.camera && <p className="text-[10px] text-text-muted line-clamp-1">🎥 {s.camera}</p>}
-                                    {/* 角色形象选择器:为该 shot 涉及的每个角色选哪个 look 作为 reference。
-                                        没设 → fallback 角色默认 look 的最新图(向后兼容旧数据)。 */}
-                                    {g.characterIds.length > 0 && (
-                                      <div className="pt-1 mt-1 border-t border-border/40 space-y-1">
-                                        {g.characterIds.map((cid) => {
-                                          const ch = data.characters.find((c) => c.id === cid)
-                                          if (!ch) return null
-                                          // 默认 look 总是第一个选项;再列出非空 look
-                                          const lookOptions: { value: string; label: string }[] = [
-                                            { value: ch.id, label: `${ch.name} · 默认` },
-                                            ...(ch.looks ?? [])
-                                              .filter((lk) => lk.label?.trim())
-                                              .map((lk) => ({ value: `${ch.id}::${lk.id}`, label: `${ch.name} · ${lk.label}` })),
-                                          ]
-                                          const currentKey = s.characterRefs?.[cid] ?? ch.id
-                                          // 看是否被该 look 的"选中"标记过,显示小星标
-                                          const isPinned = (key: string) => !!selectedCharImages[key]
-                                          return (
-                                            <div key={cid} className="flex items-center gap-1.5">
-                                              <span className="text-[9px] text-text-muted shrink-0 w-7 truncate">{ch.name}</span>
-                                              <select
-                                                value={currentKey}
-                                                onChange={(e) => updateShotCharacterRef(g.id, s.id, cid, e.target.value)}
-                                                className="flex-1 min-w-0 text-[10px] bg-bg-base border border-border rounded px-1.5 py-0.5 text-text-primary focus:outline-none focus:border-accent"
-                                              >
-                                                {lookOptions.map((opt) => (
-                                                  <option key={opt.value} value={opt.value}>
-                                                    {opt.label}{isPinned(opt.value) ? ' ⭐' : ''}
-                                                  </option>
-                                                ))}
-                                              </select>
-                                            </div>
-                                          )
-                                        })}
+                                  {/* 底部:描述/camera 折叠到 <details>(降低卡片高度) + 单 shot 生成按钮 */}
+                                  <div className="p-1.5 space-y-1">
+                                    <details className="text-[10px] text-text-muted group/det">
+                                      <summary className="cursor-pointer list-none flex items-center gap-1 hover:text-text-primary select-none">
+                                        <ChevronDown size={10} className="transition-transform group-open/det:rotate-180" />
+                                        <span>描述 · 镜头</span>
+                                      </summary>
+                                      <div className="mt-1 pl-3 space-y-0.5 text-[10px] leading-relaxed">
+                                        <p className="text-text-primary">{s.action || '(无)'}</p>
+                                        {s.camera && <p className="text-text-muted">🎥 {s.camera}</p>}
                                       </div>
-                                    )}
+                                    </details>
                                     <button
                                       type="button"
                                       onClick={() => void generateShotImageForGroup(g.id, s.id)}
                                       disabled={isBusy}
-                                      className="w-full mt-1 text-[10px] py-1 rounded border border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent transition disabled:opacity-40 inline-flex items-center justify-center gap-1"
+                                      className="w-full text-[10px] py-0.5 rounded border border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent transition disabled:opacity-40 inline-flex items-center justify-center gap-1"
                                     >
                                       {isBusy
                                         ? <><Loader2 size={9} className="animate-spin" /> 生成中</>
@@ -4098,84 +4275,72 @@ function WorkspacePage() {
                                           ? <><RefreshCw size={9} /> 重新生成</>
                                           : <><Sparkles size={9} /> 生成本镜头</>}
                                     </button>
-                                    {/* 视频生成按钮已挪到右侧"视频 · Video"面板(2026 改造)——
-                                        整组所有分镜合成一个视频,不再每张分镜单独出。 */}
                                   </div>
                                 </div>
                               )
                             })}
                           </div>
-                        </div>
-                        {/* 中-右:故事板(Storyboard)—— 2026 接入 */}
-                        <div className="rounded-lg border border-border bg-bg-base/40 p-3 space-y-2">
-                          <div className="flex items-center justify-between">
-                            <div className="text-[10px] tracking-widest uppercase text-text-muted">故事板 · Storyboard</div>
-                            {groupStoryboards[g.id]?.status === 'succeeded' ? (
-                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-accent/15 text-accent border border-accent/30">已生成</span>
-                            ) : groupStoryboards[g.id]?.status === 'running' ? (
-                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-elevated border border-border text-text-muted">生成中…</span>
-                            ) : groupStoryboards[g.id]?.status === 'failed' ? (
-                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-500 border border-rose-500/30">失败</span>
-                            ) : (
-                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-elevated border border-border text-text-muted">未生成</span>
-                            )}
-                          </div>
-                          {/* 故事板图区:成功 → 显示图片;运行中 → spinner;未生成 → 虚线占位 */}
-                          {groupStoryboards[g.id]?.status === 'succeeded' && groupStoryboards[g.id]?.url ? (
-                            <div className="relative group rounded border border-accent/30 overflow-hidden bg-bg-base">
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img
-                                src={groupStoryboards[g.id]!.url}
-                                alt="故事板"
-                                onClick={() => setStoryboardPreview({ groupId: g.id })}
-                                className="w-full h-auto block cursor-zoom-in"
-                              />
-                              {/* hover 只留"重新生成",去掉"在新标签打开"按钮(2026/06 用户反馈
-                                  不要点击下载;点击图片本身已可放大查看) */}
-                              <div className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition flex gap-1">
+                          {/* 故事板留位(2026/06:放在 shots 下面,这一格占足垂直空间) */}
+                          <div className="pt-2 border-t border-border/60 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <div className="text-[10px] tracking-widest uppercase text-text-muted">故事板 · Storyboard</div>
+                              {groupStoryboards[g.id]?.status === 'succeeded' ? (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-accent/15 text-accent border border-accent/30">已生成</span>
+                              ) : groupStoryboards[g.id]?.status === 'running' ? (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-elevated border border-border text-text-muted">生成中…</span>
+                              ) : groupStoryboards[g.id]?.status === 'failed' ? (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-500 border border-rose-500/30">失败</span>
+                              ) : (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-elevated border border-border text-text-muted">未生成</span>
+                              )}
+                            </div>
+                            {groupStoryboards[g.id]?.status === 'succeeded' && groupStoryboards[g.id]?.url ? (
+                              <div className="relative group rounded border border-accent/30 overflow-hidden bg-bg-base max-h-64 flex items-center justify-center">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={groupStoryboards[g.id]!.url}
+                                  alt="故事板"
+                                  onClick={() => setStoryboardPreview({ groupId: g.id })}
+                                  className="max-h-64 w-auto block cursor-zoom-in object-contain"
+                                />
                                 <button
                                   type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    void generateMangaStoryboardForGroup(g.id)
-                                  }}
-                                  className="px-1.5 py-0.5 rounded bg-black/70 text-white text-[10px] hover:bg-black/90"
+                                  onClick={() => void generateMangaStoryboardForGroup(g.id)}
+                                  className="absolute top-1.5 right-1.5 p-1 rounded bg-black/60 text-white opacity-0 group-hover:opacity-100 transition hover:bg-black/80"
                                   title="重新生成故事板"
                                 >
-                                  <RefreshCw size={9} className="inline -mt-0.5" />
+                                  <RefreshCw size={12} />
                                 </button>
                               </div>
-                            </div>
-                          ) : groupStoryboards[g.id]?.status === 'running' ? (
-                            <div className="aspect-[2/3] rounded border border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted">
-                              <Loader2 size={20} className="animate-spin text-accent" />
-                              <span className="text-[10px]">Seedream 构图 + 渲染 7 分区…</span>
-                              <span className="text-[9px] opacity-70">约 30s</span>
-                            </div>
-                          ) : (
-                            <div className="aspect-[2/3] rounded border border-dashed border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted">
-                              <LayoutGrid size={20} className="opacity-40" />
-                              <span className="text-[10px]">故事板占位</span>
-                              <span className="text-[9px] opacity-70">含剧情/角色/场景/分镜</span>
-                            </div>
-                          )}
-                          {/* 触发按钮:只在未生成 / 失败时显示;成功时 hover 在图片上显示「重新生成」 */}
-                          {(!groupStoryboards[g.id] || groupStoryboards[g.id]?.status === 'failed') && (
-                            <button
-                              type="button"
-                              onClick={() => void generateMangaStoryboardForGroup(g.id)}
-                              className="w-full text-[10px] py-1 rounded border border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent transition inline-flex items-center justify-center gap-1"
-                            >
-                              <Sparkles size={9} /> {groupStoryboards[g.id]?.status === 'failed' ? '重试生成' : '生成故事板'}
-                            </button>
-                          )}
-                          <p className="text-[10px] text-text-muted leading-relaxed">
-                            一张图 = 标题 + 故事概述 + 角色参考(3视图+特写+动作) +
-                            场景全景(带细节) + 镜头调度 + 8 格分镜 + 技术设定。复古烫金边框,深色调背景。
-                          </p>
+                            ) : groupStoryboards[g.id]?.status === 'running' ? (
+                              <div className="max-h-64 h-40 rounded border border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted">
+                                <Loader2 size={20} className="animate-spin text-accent" />
+                                <span className="text-[10px]">融合中…</span>
+                              </div>
+                            ) : (
+                              <div className="max-h-64 h-40 rounded border border-dashed border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted">
+                                <LayoutGrid size={20} className="opacity-40" />
+                                <span className="text-[10px]">故事板占位</span>
+                                <span className="text-[9px] opacity-70">含剧情/角色/场景/分镜</span>
+                              </div>
+                            )}
+                            {(!groupStoryboards[g.id] || groupStoryboards[g.id]?.status === 'failed') && (
+                              <button
+                                type="button"
+                                onClick={() => void generateMangaStoryboardForGroup(g.id)}
+                                className="w-full text-[10px] py-1 rounded border border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent transition inline-flex items-center justify-center gap-1"
+                              >
+                                <Sparkles size={9} /> {groupStoryboards[g.id]?.status === 'failed' ? '重试生成' : '生成故事板'}
+                              </button>
+                            )}
+                            <p className="text-[10px] text-text-muted leading-relaxed">
+                              一张图 = 标题 + 故事概述 + 角色参考(3视图+特写+动作) +
+                              场景全景(带细节) + 镜头调度 + 8 格分镜 + 技术设定。复古烫金边框,深色调背景。
+                            </p>
+                          </div>
                         </div>
-                        {/* 右:视频(2026 接入)—— 整组合成一个视频,涵盖所有分镜 */}
-                        <div className="rounded-lg border border-border bg-bg-base/40 p-3 space-y-2">
+                                                {/* 右:视频(2026 接入)—— 整组合成一个视频,涵盖所有分镜 */}
+                        <div className="rounded-lg border border-border bg-bg-base/40 p-3 space-y-2 max-h-[80vh] overflow-y-auto">
                           <div className="flex items-center justify-between">
                             <div className="text-[10px] tracking-widest uppercase text-text-muted">视频 · Video</div>
                             {groupVideos[g.id]?.status === 'succeeded' ? (
@@ -4392,11 +4557,21 @@ function WorkspacePage() {
                     </div>
                   ) : (
                     generations.map((u, i) => (
-                      <button
+                      // 2026/06:从 <button> 改成 <div role="button"> —— 因为里面
+                      // 套了"设为推荐"星标按钮(button-in-button 会 hydration 警告)。
+                      // 加 onKeyDown 让 Enter / Space 也能切图(键盘可达)。
+                      <div
                         key={`${u}-${i}`}
-                        type="button"
+                        role="button"
+                        tabIndex={0}
                         onClick={() => setSelectedGenIdx(i)}
-                        className={`block w-full rounded border-2 overflow-hidden transition ${
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault()
+                            setSelectedGenIdx(i)
+                          }
+                        }}
+                        className={`block w-full rounded border-2 overflow-hidden transition cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 ${
                           i === currentIdx ? 'border-accent' : 'border-border hover:border-accent/60'
                         }`}
                         title={`第 ${i + 1} 张`}
@@ -4442,7 +4617,7 @@ function WorkspacePage() {
                             <Target size={10} />
                           </button>
                         </div>
-                      </button>
+                      </div>
                     ))
                   )}
                 </aside>

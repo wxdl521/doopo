@@ -175,7 +175,8 @@ function stageSpec(stage: Input['stage']) {
           '1) 对【已有角色列表】里出现的真人,即使在新文本里换了服装/换了场景:复用他的 matchKey(原样复制,不要重命名),在 characters 数组里**只输出一份**(不要因为换装就拆成两个),把新描述写到该条目的 faceDescription/bodyDescription/clothingDescription。' +
           '2) 同一真人在新文本里如果明确"换了不同的身份/造型"(同真人多形象):拆成多个独立 character,共享同一个 matchKey + 共享同一个 siblingGroupId。例:"陆深 · 医生" 和 "陆深 · 学生时期" → matchKey 都是 "陆深-001"。' +
           '3) **新真人**(列表里没出现过的)→ 生成 matchKey,格式 `<真名>-<3位hex>`,如 "江野-a3f"。' +
-          '4) **matchKey 永远不能空**,每条 character 输出必须有 matchKey 字段。',
+          '4) **matchKey 永远不能空**,每条 character 输出必须有 matchKey 字段。' +
+          '5) **不同形象必须用不同 name**(带 · 后缀,例如 "陆深 · 医生" vs "陆深 · 学生时期")。同形象跨集则用完全相同的 name(客户端按 name 精确匹配合并跨集记录,不同 name = 不同形象 = 独立卡片)。',
         schema: {
           type: 'object',
           properties: {
@@ -242,7 +243,8 @@ function stageSpec(stage: Input['stage']) {
           '1) 对【已有角色列表】里出现的真人:复用 matchKey,在 characters 数组里**只输出一份**,把新描述写到对应字段。' +
           '2) 同一真人在新文本里如果明确"换了不同的身份/造型":拆成多个独立 character,共享同一个 matchKey + 共享同一个 siblingGroupId。' +
           '3) **新真人** → 生成 matchKey,格式 `<真名>-<3位hex>`,如 "江野-a3f"。' +
-          '4) **matchKey 永远不能空**,每条 character 输出必须有 matchKey 字段。',
+          '4) **matchKey 永远不能空**,每条 character 输出必须有 matchKey 字段。' +
+          '5) **不同形象必须用不同 name**(带 · 后缀,例如 "陆深 · 医生" vs "陆深 · 学生时期")。同形象跨集则用完全相同的 name(客户端按 name 精确匹配合并跨集记录,不同 name = 不同形象 = 独立卡片)。',
         schema: {
           type: 'object',
           properties: {

@@ -28,7 +28,11 @@ import { buildStyleLock, type VisualStyleSpec } from './visualStyles'
 const DEFAULT_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3'
 const DEFAULT_MODEL = 'doubao-seedream-5-0-260128'
 const RETRY_BACKOFF_MS = [1_000, 2_000, 4_000] as const
-const REQUEST_TIMEOUT_MS = 50_000
+// 2026/06 修复:50_000 经常被 Seedream 5.0 多参考图融合 + 高分辨率 2K
+// 出图流程超时报错(用户报告 "[seedream] doubao-seedream-5-0-260128 network: timed out")。
+// 提到跟 I2I 一致的 120_000 (2 分钟),给多图融合/高分辨率足够余量。
+// 极端情况 3+ 分钟的请求仍可能超,但 retry 1s/2s/4s 退避 + 用户体验上更平滑。
+const REQUEST_TIMEOUT_MS = 120_000
 const I2I_TIMEOUT_MS = 120_000
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
