@@ -51,9 +51,10 @@ const DASHSCOPE_TASK_GET = 'https://dashscope.aliyuncs.com/api/v1/tasks/'
  *  - ARK (Seedance):doubao-seedance-* 或 seedance-*
  *  - DashScope (HappyHorse / Wan / Wanx):其他视频模型 id 一律 fallback 到 DashScope
  */
-export function getVideoBackend(modelId: string | null | undefined): 'ark' | 'dashscope' {
+export function getVideoBackend(modelId: string | null | undefined): 'ark' | 'dashscope' | 'jimeng' {
   const m = (modelId || '').trim().toLowerCase()
   if (m.startsWith('doubao-seedance-') || m.startsWith('seedance-')) return 'ark'
+  if (m.startsWith('jimeng-')) return 'jimeng'
   return 'dashscope'
 }
 
