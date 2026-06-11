@@ -771,7 +771,8 @@ export default function ZopiaChatPanel({
         if (f.multiSelect && Array.isArray(v)) {
           display = v.map((val) => f.options.find((o) => o.value === val)?.label ?? val).join('、')
         } else {
-          display = f.options.find((o) => o.value === v)?.label ?? v ?? ''
+          const sv = typeof v === 'string' ? v : ''
+          display = f.options.find((o) => o.value === sv)?.label ?? sv
         }
         return `- ${f.label}: ${display}`
       })
