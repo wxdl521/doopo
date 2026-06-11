@@ -354,6 +354,217 @@ async function dashscopePoll(input: {
 // 统一 submit / poll(根据 model id 派发)
 // ====================================================================
 
+// ====================================================================
+// 即梦 (Volcengine Visual Service) —— Sigv4 签名 + submit/poll
+//
+//  签名算法跟 AWS Sigv4 同源(火山引擎自家版本),Header 鉴权:
+//    1) Canonical Request:
+//         METHOD\nURI\nQUERY\nCANONICAL_HEADERS\nSIGNED_HEADERS\nHEX(SHA256(BODY))
+//    2) String to Sign:
+//         HMAC-SHA256\nX-DATE\nCREDENTIAL_SCOPE\nHEX(SHA256(canonical_request))
+//    3) Signing Key:
+//         HMAC(HMAC(HMAC(HMAC(SK, date), region), service), "request")
+//    4) Header:
+//         Authorization: HMAC-SHA256 Credential=AK/SCOPE, SignedHeaders=..., Signature=HEX
+// ====================================================================
+
+function hmac(key: Buffer | string, data: string): Buffer {
+  return createHmac('sha256', key).update(data, 'utf8').digest()
+}
+function sha256Hex(data: string): string {
+  return createHash('sha256').update(data, 'utf8').digest('hex')
+}
+
+function volcSign(opts: {
+  ak: string
+  sk: string
+  method: 'GET' | 'POST'
+  host: string
+  path: string         // 始终 '/'
+  query: string        // 已经按 RFC3986 编码 & 字典排序的 query string,不带前导 '?'
+  body: string         // 原始请求体(JSON 字符串)
+  region: string
+  service: string
+}): Record<string, string> {
+  const now = new Date()
+  // X-Date: 20240720T103939Z
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const xDate =
+    `${now.getUTCFullYear()}${pad(now.getUTCMonth() + 1)}${pad(now.getUTCDate())}` +
+    `T${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}Z`
+  const shortDate = xDate.slice(0, 8)
+
+  const bodyHash = sha256Hex(opts.body)
+  const headers: Record<string, string> = {
+    'host': opts.host,
+    'x-date': xDate,
+    'x-content-sha256': bodyHash,
+    'content-type': 'application/json',
+  }
+  const signedHeaderNames = Object.keys(headers).sort()
+  const canonicalHeaders =
+    signedHeaderNames.map((k) => `${k}:${headers[k].trim()}\n`).join('')
+  const signedHeaders = signedHeaderNames.join(';')
+
+  const canonicalRequest = [
+    opts.method,
+    opts.path,
+    opts.query,
+    canonicalHeaders,
+    signedHeaders,
+    bodyHash,
+  ].join('\n')
+
+  const credentialScope = `${shortDate}/${opts.region}/${opts.service}/request`
+  const stringToSign = [
+    'HMAC-SHA256',
+    xDate,
+    credentialScope,
+    sha256Hex(canonicalRequest),
+  ].join('\n')
+
+  const kDate = hmac(opts.sk, shortDate)
+  const kRegion = hmac(kDate, opts.region)
+  const kService = hmac(kRegion, opts.service)
+  const kSigning = hmac(kService, 'request')
+  const signature = createHmac('sha256', kSigning).update(stringToSign, 'utf8').digest('hex')
+
+  const authorization =
+    `HMAC-SHA256 Credential=${opts.ak}/${credentialScope}, ` +
+    `SignedHeaders=${signedHeaders}, Signature=${signature}`
+
+  return {
+    Host: opts.host,
+    'X-Date': xDate,
+    'X-Content-Sha256': bodyHash,
+    'Content-Type': 'application/json',
+    Authorization: authorization,
+  }
+}
+
+function getJimengConfig() {
+  return {
+    ak: process.env.JIMENG_ACCESS_KEY || process.env.VOLC_ACCESSKEY,
+    sk: process.env.JIMENG_SECRET_KEY || process.env.VOLC_SECRETKEY,
+  }
+}
+
+/** frames = 24 * 秒数 + 1,且仅取 [121, 241](即 5s / 10s) */
+function jimengFramesFromDuration(duration?: number): number {
+  if (!duration) return 121
+  return duration >= 8 ? 241 : 121
+}
+
+async function jimengCall(opts: {
+  ak: string
+  sk: string
+  action: 'CVSync2AsyncSubmitTask' | 'CVSync2AsyncGetResult'
+  body: Record<string, unknown>
+}): Promise<{ ok: true; json: any } | { ok: false; error: string }> {
+  // Query 必须按字典序、RFC3986 编码,且不带前导 '?'
+  // Action & Version 都不含特殊字符,直接拼即可
+  const query = `Action=${opts.action}&Version=${JIMENG_VERSION}`
+  const bodyStr = JSON.stringify(opts.body)
+  const headers = volcSign({
+    ak: opts.ak,
+    sk: opts.sk,
+    method: 'POST',
+    host: JIMENG_HOST,
+    path: '/',
+    query,
+    body: bodyStr,
+    region: JIMENG_REGION,
+    service: JIMENG_SERVICE,
+  })
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 30_000)
+  try {
+    const res = await fetch(`https://${JIMENG_HOST}/?${query}`, {
+      method: 'POST',
+      headers,
+      body: bodyStr,
+      signal: controller.signal,
+    })
+    clearTimeout(timeout)
+    const text = await res.text().catch(() => '')
+    let json: any = {}
+    try { json = JSON.parse(text) } catch {}
+    if (!res.ok && (json?.code ?? 0) !== 10000) {
+      return { ok: false, error: `[jimeng] ${opts.action} HTTP ${res.status}: ${text.slice(0, 300)}` }
+    }
+    return { ok: true, json }
+  } catch (e) {
+    clearTimeout(timeout)
+    const msg = e instanceof Error ? (e.name === 'AbortError' ? `${opts.action} timeout (30s)` : e.message) : 'fetch failed'
+    return { ok: false, error: `[jimeng] network: ${msg}` }
+  }
+}
+
+async function jimengSubmit(input: {
+  ak: string
+  sk: string
+  prompt: string
+  firstFrameImageUrl?: string
+  aspectRatio?: string
+  duration?: number
+  seed?: number
+}): Promise<{ ok: true; taskId: string } | { ok: false; error: string }> {
+  const body: Record<string, unknown> = {
+    req_key: JIMENG_REQ_KEY,
+    prompt: input.prompt,
+    frames: jimengFramesFromDuration(input.duration),
+    aspect_ratio: input.aspectRatio && input.aspectRatio !== 'adaptive' ? input.aspectRatio : '16:9',
+    seed: typeof input.seed === 'number' ? input.seed : -1,
+  }
+  if (input.firstFrameImageUrl) body.image_urls = [input.firstFrameImageUrl]
+
+  const r = await jimengCall({ ak: input.ak, sk: input.sk, action: 'CVSync2AsyncSubmitTask', body })
+  if (!r.ok) return r
+  const code = r.json?.code
+  const taskId = r.json?.data?.task_id
+  if (code !== 10000 || !taskId) {
+    return { ok: false, error: `[jimeng] submit code=${code} msg=${r.json?.message || 'no task_id'}` }
+  }
+  return { ok: true, taskId }
+}
+
+async function jimengPoll(input: {
+  ak: string
+  sk: string
+  taskId: string
+}): Promise<
+  | { ok: true; status: SeedanceProgress; videoUrl: string | null; raw: any }
+  | { ok: false; error: string; status?: SeedanceProgress; raw?: any }
+> {
+  const r = await jimengCall({
+    ak: input.ak,
+    sk: input.sk,
+    action: 'CVSync2AsyncGetResult',
+    body: { req_key: JIMENG_REQ_KEY, task_id: input.taskId },
+  })
+  if (!r.ok) return { ok: false, error: r.error }
+  const code = r.json?.code
+  const data = r.json?.data || {}
+  // code != 10000 表示业务错误(审核 / 限流 / 内部错误等)
+  if (code !== 10000) {
+    return {
+      ok: false,
+      error: `[jimeng] poll code=${code} msg=${r.json?.message || 'unknown'}`,
+      status: 'failed',
+      raw: r.json,
+    }
+  }
+  // status: in_queue / generating / done / not_found / expired
+  const raw = (data.status || '').toLowerCase()
+  let status: SeedanceProgress = 'queued'
+  if (raw === 'in_queue') status = 'queued'
+  else if (raw === 'generating') status = 'running'
+  else if (raw === 'done') status = data.video_url ? 'succeeded' : 'failed'
+  else if (raw === 'not_found' || raw === 'expired') status = 'failed'
+  return { ok: true, status, videoUrl: data.video_url || null, raw: r.json }
+}
+
 type SubmitInput = {
   model: string
   prompt: string
@@ -398,10 +609,26 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
     return r.ok ? { ok: true, taskId: r.taskId, model: r.model, backend: 'ark' } : { ok: false, error: r.error }
   }
   if (backend === 'jimeng') {
-    return {
-      ok: false,
-      error: '[jimeng] 即梦 3.0 Pro 后端尚未配置 AK/SK(JIMENG_ACCESS_KEY / JIMENG_SECRET_KEY)。请在 Project Settings → Secrets 添加后再试。',
+    const { ak, sk } = getJimengConfig()
+    if (!ak || !sk) {
+      return {
+        ok: false,
+        error: '[jimeng] 缺少 JIMENG_ACCESS_KEY / JIMENG_SECRET_KEY,请在 Project Settings → Secrets 添加后再试。',
+      }
     }
+    const firstFrameImageUrl =
+      input.media.find((m) => m.type === 'first_frame')?.url ||
+      input.media.find((m) => m.type === 'reference_image')?.url
+    const r = await jimengSubmit({
+      ak, sk,
+      prompt: input.prompt,
+      firstFrameImageUrl,
+      aspectRatio: input.ratio,
+      duration: input.duration,
+    })
+    return r.ok
+      ? { ok: true, taskId: r.taskId, model: input.model, backend: 'jimeng' }
+      : { ok: false, error: r.error }
   }
   // DashScope
   const { apiKey } = getDashScopeConfig()
@@ -431,7 +658,9 @@ async function pollVideoTask(input: PollInput): Promise<PollResult> {
     return arkPoll({ taskId: input.taskId, apiKey, baseUrl })
   }
   if (input.backend === 'jimeng') {
-    return { ok: false, error: '[jimeng] 后端尚未配置 AK/SK' }
+    const { ak, sk } = getJimengConfig()
+    if (!ak || !sk) return { ok: false, error: '[jimeng] 缺少 JIMENG_ACCESS_KEY / JIMENG_SECRET_KEY' }
+    return jimengPoll({ ak, sk, taskId: input.taskId })
   }
   const { apiKey } = getDashScopeConfig()
   if (!apiKey) return { ok: false, error: 'Qwen / DASHSCOPE_API_KEY not configured' }
