@@ -19,8 +19,13 @@ export type GenCharacterLook = {
 }
 
 export type GenCharacter = {
-  /** 该角色所属的集数(从该集剧本中提取)。workspace 里"角色"tab 会按当前选中集过滤。 */
-  episodeIndex: number
+  /**
+   * 2026/06 改造:从 `episodeIndex: number` 改为 `episodes: number[]`。
+   * 跨集 = 同一个 GenCharacter + 多集出现。
+   * UI 默认按 selectedEpisodeIndex 过滤 `c.episodes.includes(...)`。
+   * 老数据加载时:typeof c.episodes === 'undefined' → 转 [c.episodeIndex]。
+   */
+  episodes: number[]
   id: string
   name: string
   role: 'lead' | 'supporting' | 'villain'
@@ -57,6 +62,30 @@ export type GenCharacter = {
    * 后续跨集复用锚图)。
    */
   siblingGroupId?: string
+  /**
+   * 2026/06:跨集身份锚点 —— 同一真人在所有集(ep1, ep2, ep3)都共享同一个
+   * matchKey,不论他/她有几个形象(医生/学生)。
+   *
+   * 客户端规则:
+   *   - AI 在 character-extract / character 阶段必须填(必填字段,带 schema pattern 校验)
+   *   - 命名建议: "<真名>-<3位hex>",例如 "陆深-a3f"
+   *   - 跨集匹配优先级 1(matchKey > siblingGroupId > name 前缀)
+   *   - 旧数据加载时: c.matchKey 缺失 → 兜底 = c.id(老 id 自身就是稳定锚)
+   */
+  matchKey: string
+  /**
+   * 2026/06:per-episode 服装 / roleLabel override。
+   * 脸 / 身材 / 人格 / palette 永远共享(同人同脸是基本要求);
+   * 但允许每集穿不同衣服(ep1 医生穿白大褂、ep5 医生穿西装)或不同身份称谓
+   * (ep1 "林夏 医生"、ep3 "林夏 患者")。
+   *
+   * 读: getEffectiveClothing(c, ep) / getEffectiveRoleLabel(c, ep)
+   * 写: mergeExtractedCharacters 在跨集 clothing 变化时自动填
+   */
+  perEpisodeClothingOverrides?: Record<number, {
+    clothingDescription?: string
+    roleLabel?: string
+  }>
 }
 
 export type GenScene = {
@@ -273,8 +302,9 @@ export function generateScript(): GenScene[] {
 export function generateCharacters(): GenCharacter[] {
   return [
     {
-      episodeIndex: 1,
+      episodes: [1],
       id: 'gen-ch-linxia',
+      matchKey: '林夏-test',
       name: '林夏',
       role: 'lead',
       roleLabel: '女主 · 高冷学霸',
@@ -295,8 +325,9 @@ export function generateCharacters(): GenCharacter[] {
       ],
     },
     {
-      episodeIndex: 1,
+      episodes: [1],
       id: 'gen-ch-jiangye',
+      matchKey: '江野-test',
       name: '江野',
       role: 'lead',
       roleLabel: '男主 · 阳光体育委员',
@@ -317,8 +348,9 @@ export function generateCharacters(): GenCharacter[] {
       ],
     },
     {
-      episodeIndex: 1,
+      episodes: [1],
       id: 'gen-ch-mengmeng',
+      matchKey: '小萌-test',
       name: '小萌',
       role: 'supporting',
       roleLabel: '配角 · 八卦闺蜜',
@@ -338,8 +370,9 @@ export function generateCharacters(): GenCharacter[] {
       ],
     },
     {
-      episodeIndex: 1,
+      episodes: [1],
       id: 'gen-ch-zhouxue',
+      matchKey: '周学姐-test',
       name: '周学姐',
       role: 'villain',
       roleLabel: '反派 · 广播站站长',

@@ -12,8 +12,9 @@ const views: CharacterStageView[] = [
 ]
 
 const character: GenCharacter = {
-  episodeIndex: 1,
+  episodes: [1],
   id: 'gen-ch-linxia',
+  matchKey: '林夏-test',
   name: '林夏',
   role: 'lead',
   roleLabel: '女主 · 高冷学霸',

@@ -22,6 +22,8 @@ import { getProject, saveWorkspaceData, loadWorkspaceData, type ProjectConfigRow
 import { streamSynopsis, streamEpisodeScenes, refineSynopsis, refineEpisodeScenes } from '../lib/scriptAgent.functions'
 import type { ImportedScriptResult } from '../lib/parseImportedScript.functions'
 import { resolveProjectStyle, resolveT2IModel, resolveI2IModel, buildStyleLock } from '../lib/visualStyles'
+import { hashString } from '../lib/utils'
+import { filterByEpisode, groupByMatchKey, getEffectiveClothing, getEffectiveRoleLabel } from '../lib/characterFilters'
 import { Maximize2, FileText, Camera, Clock, Users, X, Loader2, Sparkles, Send, CheckCircle2, Pencil, Check, Image as ImageIcon, LayoutGrid, RefreshCw, Target } from 'lucide-react'
 import CharacterPortrait from '../components/workspace/CharacterPortrait'
 import { toast } from 'sonner'
@@ -347,14 +349,24 @@ function WorkspacePage() {
         if (cancelled || r.error || !r.workspaceData) return
         const wd = r.workspaceData as Record<string, any>
         if (wd.outline) setData((d) => ({ ...d, outline: wd.outline as WorkspaceData['outline'] }))
-        // 兼容旧数据:旧版 characters/scenes/storyboardGroups 没有 episodeIndex 字段,
-        // 一律默认 1(旧版没有按集分角色的概念,所有内容都属于第 1 集)。
+        // 兼容旧数据:
+        //   - scenes/storyboardGroups 仍单集,episodeIndex 字段保留
+        //   - characters 2026/06 改造:episodeIndex(number) → episodes(number[])
+        //     老数据没有 episodes 字段 → 转 [c.episodeIndex];matchKey 缺失 → 兜底 = c.id
+        //     (老 id 自身就是稳定锚,这样 charImages[id] 全部健在)
         if (Array.isArray(wd.scenes) && wd.scenes.length) {
           const scenes: GenScene[] = (wd.scenes as any[]).map((s) => ({ ...s, episodeIndex: typeof s.episodeIndex === 'number' ? s.episodeIndex : 1 }))
           setData((d) => ({ ...d, scenes }))
         }
         if (Array.isArray(wd.characters) && wd.characters.length) {
-          const characters: GenCharacter[] = (wd.characters as any[]).map((c) => ({ ...c, episodeIndex: typeof c.episodeIndex === 'number' ? c.episodeIndex : 1 }))
+          const characters: GenCharacter[] = (wd.characters as any[]).map((c) => {
+            const legacyEp = typeof c.episodeIndex === 'number' ? c.episodeIndex : 1
+            return {
+              ...c,
+              episodes: Array.isArray(c.episodes) && c.episodes.length ? c.episodes : [legacyEp],
+              matchKey: typeof c.matchKey === 'string' && c.matchKey.trim() ? c.matchKey : c.id,
+            }
+          })
           setData((d) => ({ ...d, characters }))
         }
         if (Array.isArray(wd.storyboard) && wd.storyboard.length) setData((d) => ({ ...d, storyboard: wd.storyboard as StoryboardPanel[] }))
@@ -492,6 +504,122 @@ function WorkspacePage() {
    * "严格按照传入的已经生成的形象生成,保证脸和身体的一致性"
    * 文字层与图像层共享同一个 anchor:主条目 = 第 1 个 look(图像层 I2I 也锚第 1 张)。
    */
+  // ====================================================================
+  // 跨集角色一致性 工具 (2026/06)
+  // ====================================================================
+
+  /**
+   * 给 AI 返回的某条 character 派生一个稳定的 id。
+   * 关键: 优先复用 existing 里"同 matchKey / 同 name / 同 siblingGroupId"的 id,
+   * 这样 charImages[id] 老图全部健在(不会被新 hash id 算出的 imageKey 失效)。
+   * 都没有命中 → 派生新 id `mc-<8hex>`。
+   */
+  function resolveStableId(ext: { matchKey?: string; name?: string; siblingGroupId?: string }, existing: GenCharacter[]): string {
+    const mk = (ext.matchKey || '').trim()
+    const nm = (ext.name || '').trim()
+    const sg = (ext.siblingGroupId || '').trim()
+    if (mk) {
+      const hit = existing.find((e) => e.matchKey === mk)
+      if (hit) return hit.id
+    }
+    if (nm) {
+      const hit = existing.find((e) => e.name === nm)
+      if (hit) return hit.id
+    }
+    if (sg) {
+      const hit = existing.find((e) => e.siblingGroupId === sg)
+      if (hit) return hit.id
+    }
+    const seed = mk || nm || sg || Math.random().toString()
+    return `mc-${hashString(seed).slice(0, 8)}`
+  }
+
+  /**
+   * 把 AI 这次返回的 characters(extracted, 已有 episodes:[extractEpIndex])
+   * 合并进已有 data.characters,做跨集去重。
+   *
+   * 匹配规则(优先级从高到低):
+   *   1) matchKey 严格相等 → 合并(同一真人跨集出现)
+   *   2) siblingGroupId 相等(且非空) → 合并(同真人多形象)
+   *   3) name 前缀("林晚 · 医生" → "林晚")在已有角色里出现 → 启发式合并
+   *   4) 全无 → 创建新 GenCharacter
+   *
+   * 合并后:
+   *   - id 沿用已有(防止 charImages[id] 失效)
+   *   - episodes 追加 extractEpIndex(去重 + 排序)
+   *   - 描述字段: face/body 用 AI 新的(更准);clothing 走 per-episode override
+   *   - roleLabel: 若跨集有变化,存到 override,主字段用最新
+   */
+  function mergeExtractedCharacters(
+    existing: GenCharacter[],
+    extracted: GenCharacter[],
+    extractEpIndex: number,
+  ): GenCharacter[] {
+    const byKey = new Map<string, GenCharacter>()
+    const bySibling = new Map<string, GenCharacter>()
+    for (const c of existing) {
+      byKey.set(c.matchKey, c)
+      if (c.siblingGroupId) {
+        if (!bySibling.has(c.siblingGroupId)) bySibling.set(c.siblingGroupId, c)
+      }
+    }
+    const result = [...existing]
+
+    for (const ext of extracted) {
+      let match = byKey.get(ext.matchKey)
+      if (!match && ext.siblingGroupId) match = bySibling.get(ext.siblingGroupId)
+      if (!match) {
+        // name 前缀启发式("林晚 · 医生" → "林晚")
+        const baseName = ext.name.split('·')[0].trim()
+        match = existing.find((c) => c.name.split('·')[0].trim() === baseName)
+        if (match) {
+          // 收敛到已有 matchKey,以后 AI 再生成不会再分裂
+          ext.matchKey = match.matchKey
+          byKey.set(match.matchKey, match)
+        }
+      }
+
+      if (match) {
+        const idx = result.findIndex((c) => c.id === match!.id)
+        const newEpisodes = Array.from(new Set([...match.episodes, extractEpIndex])).sort((a, b) => a - b)
+        // clothing/roleLabel per-episode override 处理
+        const overrides = { ...(match.perEpisodeClothingOverrides ?? {}) }
+        const clothingChanged = ext.clothingDescription.trim() !== match.clothingDescription.trim()
+        const roleLabelChanged = (ext.roleLabel ?? '').trim() !== (match.roleLabel ?? '').trim()
+        if (clothingChanged || roleLabelChanged) {
+          // 把"老集"的状态存到 override,新集用新的
+          const oldState = overrides[match.episodes[0]] ?? {}
+          for (const ep of match.episodes) {
+            if (ep === extractEpIndex) continue
+            if (overrides[ep]) continue
+            overrides[ep] = {
+              ...(clothingChanged ? { clothingDescription: match.clothingDescription } : {}),
+              ...(roleLabelChanged ? { roleLabel: match.roleLabel } : {}),
+              ...oldState,
+            }
+          }
+        }
+        result[idx] = {
+          ...match,
+          name: ext.name,
+          episodes: newEpisodes,
+          faceDescription: ext.faceDescription || match.faceDescription,
+          bodyDescription: ext.bodyDescription || match.bodyDescription,
+          clothingDescription: ext.clothingDescription,
+          roleLabel: ext.roleLabel || match.roleLabel,
+          personality: ext.personality || match.personality,
+          palette: ext.palette?.length ? ext.palette : match.palette,
+          siblingGroupId: ext.siblingGroupId ?? match.siblingGroupId,
+          perEpisodeClothingOverrides: Object.keys(overrides).length > 0 ? overrides : undefined,
+        }
+      } else {
+        // 创建新的 —— 已经是 [extractEpIndex] in episodes
+        result.push({ ...ext })
+      }
+    }
+    return result
+  }
+
   async function enrichCharacterLooks(c: GenCharacter): Promise<GenCharacterLook[]> {
     return c.looks ?? []
   }
@@ -858,7 +986,7 @@ function WorkspacePage() {
    * 默认只跑默认的克制策略并存。
    */
   async function generateAllCharacterLooksForCurrentEpisode() {
-    const epChars = data.characters.filter((c) => c.episodeIndex === selectedEpisodeIndex)
+    const epChars = data.characters.filter((c) => c.episodes.includes(selectedEpisodeIndex))
     for (const c of epChars) {
       // 默认 look 没图 → 跑 T2I
       if (!charImages[c.id]?.length) {
@@ -1337,7 +1465,7 @@ function WorkspacePage() {
       return
     }
     // 只检查当集是否有角色(其他集的角色不能用来切分当集剧情)
-    const epChars = data.characters.filter((c) => c.episodeIndex === selectedEpisodeIndex)
+    const epChars = data.characters.filter((c) => c.episodes.includes(selectedEpisodeIndex))
     if (!epChars.length) {
       toast.error(`第 ${selectedEpisodeIndex} 集还没有角色,请先在"角色"标签提取本集角色`)
       return
@@ -1345,7 +1473,7 @@ function WorkspacePage() {
     setBusyStoryboardGen(true)
     try {
       // 只用当集的角色/场景做切分(避免别集的角色污染剧情理解)
-      const epChars = data.characters.filter((c) => c.episodeIndex === selectedEpisodeIndex)
+      const epChars = data.characters.filter((c) => c.episodes.includes(selectedEpisodeIndex))
       const epScenes = data.scenes.filter((s) => s.episodeIndex === selectedEpisodeIndex)
       const charSummaries = epChars.map((c) => ({
         id: c.id,
@@ -2245,7 +2373,14 @@ function WorkspacePage() {
     }
   }, [selectedEpisodeIndex, tab])
 
-  async function tryAi(stage: 'canvas' | 'script' | 'scene' | 'character' | 'character-extract' | 'storyboard' | 'timeline', userPrompt: string, currentData: WorkspaceData): Promise<Partial<WorkspaceData> | null> {
+  async function tryAi(
+    stage: 'canvas' | 'script' | 'scene' | 'character' | 'character-extract' | 'storyboard' | 'timeline',
+    userPrompt: string,
+    currentData: WorkspaceData,
+    // 2026/06:可选项,用于 character-extract / character 阶段给每条 GenCharacter 打 episodes 标签。
+    // 不传时默认 1(老 canvas -> character 全量创建路径)。
+    extractEpIndex?: number,
+  ): Promise<Partial<WorkspaceData> | null> {
     try {
       const res = await callAi({
         data: {
@@ -2255,7 +2390,15 @@ function WorkspacePage() {
             logline: currentData.outline?.logline,
             acts: currentData.outline?.acts,
             scenes: currentData.scenes.map((s) => ({ index: s.index, slug: s.slug, action: s.action, beats: s.beats })),
-            characters: currentData.characters.map((c) => ({ name: c.name, roleLabel: c.roleLabel })),
+            // 2026/06:给 AI 更多上下文用于跨集识别 —— 含 id, matchKey, episodes, siblingGroupId
+            characters: currentData.characters.map((c) => ({
+              id: c.id,
+              matchKey: c.matchKey,
+              name: c.name,
+              roleLabel: c.roleLabel,
+              siblingGroupId: c.siblingGroupId ?? null,
+              episodes: c.episodes,
+            })),
           },
         },
       })
@@ -2301,9 +2444,16 @@ function WorkspacePage() {
         }
         case 'character-extract':
         case 'character': {
+          const epForNew = extractEpIndex ?? 1
           const characters: GenCharacter[] = (p.characters ?? []).map((c: any, i: number) => {
             const palette: string[] = Array.isArray(c.palette) && c.palette.length ? c.palette : ['#1e293b', '#475569', '#fbbf24']
-            const cid = `ai-ch-${i + 1}-${Date.now()}`
+            // 2026/06:matchKey 兜底 —— AI 漏填时 client 派生
+            const matchKey = (typeof c.matchKey === 'string' && c.matchKey.trim())
+              ? c.matchKey.trim()
+              : `auto-${(c.name ?? 'c-' + (i+1)).replace(/[\s·]+/g, '-')}-${hashString(String(c.name ?? i)).slice(0,4)}`
+            // 2026/06:resolveStableId 优先复用 existing 里同 matchKey/name/sibling 的 id,
+            // 防止 charImages[id] 老图全部失效
+            const cid = resolveStableId({ ...c, matchKey }, currentData.characters)
             // 同角色不同造型(医生/穿越/学生 等),每个 look 走独立图片生成 call,
             // 脸和身材沿用主条目,clothingDescription 用 look 自己的。AI 字段
             // 是 string[] of { label, clothingDescription },转成 GenCharacterLook[]。
@@ -2324,9 +2474,10 @@ function WorkspacePage() {
                   }))
               : []
             return {
-              // 默认归属第 1 集(若调用方传了 episodeIndex,produce() 会覆盖)
-              episodeIndex: typeof c.episodeIndex === 'number' ? c.episodeIndex : 1,
+              // 2026/06:episodes 数组替代原 episodeIndex
+              episodes: [epForNew],
               id: cid,
+              matchKey,
               name: c.name ?? `角色${i + 1}`,
               role: (['lead', 'supporting', 'villain'] as const).includes(c.role) ? c.role : 'supporting',
               roleLabel: c.roleLabel ?? ROLE_LABEL_FALLBACK[c.role as GenCharacter['role']] ?? '配角',
@@ -2339,7 +2490,6 @@ function WorkspacePage() {
               palette,
               swatch: `linear-gradient(135deg, ${palette[0]}, ${palette[palette.length - 1]})`,
               looks: looks.length > 0 ? looks : undefined,
-              // 2026/06:同真人的多形象共享 groupId,下游 I2I 锁脸用
               ...(typeof c.siblingGroupId === 'string' && c.siblingGroupId.trim()
                 ? { siblingGroupId: c.siblingGroupId.trim() }
                 : {}),
@@ -2762,15 +2912,15 @@ function WorkspacePage() {
       if (epText) {
         const extractPrompt = `以下是第 ${extractEpIndex} 集的剧本内容，请只提取本集中出现的角色和主要场景：\n\n${epText}`
         const [charResult, sceneResult] = await Promise.all([
-          tryAi('character-extract', extractPrompt, snapshot),
-          tryAi('scene', extractPrompt, snapshot),
+          // 2026/06:传 extractEpIndex 让 tryAi 给每条 character 打 episodes:[extractEpIndex]
+          tryAi('character-extract', extractPrompt, snapshot, extractEpIndex),
+          tryAi('scene', extractPrompt, snapshot, extractEpIndex),
         ])
-        // 给所有角色/场景打 episodeIndex 标签,UI 按集数过滤用。
-        // 同一角色若跨多集出现,每集都会产生一条独立记录(避免冲突)。
-        const charsWithEp = charResult?.characters?.map((c) => ({ ...c, episodeIndex: extractEpIndex }))
+        // 2026/06 跨集一致性:characters 走 mergeExtractedCharacters(在 setData 阶段处理),
+        // 这里 aiPatch 直接放 charResult —— episodes 已由 tryAi 打好。
         const scenesWithEp = sceneResult?.scenes?.map((s) => ({ ...s, episodeIndex: extractEpIndex }))
         aiPatch = {
-          ...(charResult ? { characters: charsWithEp } : {}),
+          ...(charResult ? { characters: charResult.characters } : {}),
           ...(sceneResult ? { scenes: scenesWithEp } : {}),
         }
       }
@@ -2790,18 +2940,22 @@ function WorkspacePage() {
           return d
         }
         case 'character': {
-          // Extract from episode: 合并而非替换 —— 同一集的角色/场景用新的
-          // 替换,其他集的角色/场景保留。这样多集剧本可以独立提取、互不影响。
+          // Extract from episode: 跨集合并 —— 同一真人在 ep1+ep2+... 共享一个 GenCharacter,
+          // 改任一集的形象自动反映到所有集。场景仍按集硬替换(单集语义)。
           if (isExtractFromEpisode && aiPatch) {
             let characters = d.characters
             let scenes = d.scenes
             if (aiPatch.characters) {
-              characters = [
-                ...d.characters.filter((c) => c.episodeIndex !== extractEpIndex),
-                ...aiPatch.characters,
-              ]
+              // 2026/06:跨集合并 —— 按 matchKey > siblingGroupId > name 前缀匹配,
+              // 匹配的 GenCharacter 复用(episodes 追加,描述/override 刷新)。
+              characters = mergeExtractedCharacters(
+                d.characters,
+                aiPatch.characters,
+                extractEpIndex,
+              )
             }
             if (aiPatch.scenes) {
+              // 场景仍是单集语义,按集硬替换
               scenes = [
                 ...d.scenes.filter((s) => s.episodeIndex !== extractEpIndex),
                 ...aiPatch.scenes,
@@ -3151,7 +3305,7 @@ function WorkspacePage() {
           })()}
           {tab === 'character' && (() => {
             // 角色/场景 都按当前选中集数过滤 —— 一次只看一集。
-            const epChars = data.characters.filter((c) => c.episodeIndex === selectedEpisodeIndex)
+            const epChars = data.characters.filter((c) => c.episodes.includes(selectedEpisodeIndex))
             const epScenes = data.scenes.filter((s) => s.episodeIndex === selectedEpisodeIndex)
             const hasChars = epChars.length > 0
             const hasScenes = epScenes.length > 0
@@ -3397,7 +3551,10 @@ function WorkspacePage() {
                             regenMode === 'multi-asset' ? '正在生成多维资产图…' :
                             regenMode === 'modify' ? '正在按意见重生…' :
                             '正在生成…'
-                          const [primary, ...rest] = c.roleLabel.split('·').map((s) => s.trim()).filter(Boolean)
+                          // 2026/06:per-episode roleLabel override —— ep 切换时若
+                          // 该 GenCharacter 在该集有不同 roleLabel,这里会读到 override 后的版本
+                          const effectiveRoleLabel = getEffectiveRoleLabel(c, selectedEpisodeIndex)
+                          const [primary, ...rest] = effectiveRoleLabel.split('·').map((s) => s.trim()).filter(Boolean)
                           const archetype = rest.join(' · ')
                           const brief = c.personality?.trim() || ''
                           const cardTitle = card.lookId === null ? c.name : `${c.name} · ${lookLabel}`
@@ -3563,6 +3720,15 @@ function WorkspacePage() {
                                     aria-hidden
                                   />
                                   <h3 className="font-display text-sm font-bold text-text-primary truncate">{cardTitle}</h3>
+                                  {/* 2026/06 跨集角标:同真人在多集出现时显示 ep1/2/3 等 */}
+                                  {c.episodes.length > 1 && (
+                                    <span
+                                      className="text-[9px] px-1.5 py-0.5 rounded-full bg-accent/15 text-accent border border-accent/30 font-mono shrink-0"
+                                      title={`出现在第 ${c.episodes.join(', ')} 集`}
+                                    >
+                                      ep{c.episodes.join('/')}
+                                    </span>
+                                  )}
                                   <span className="ml-auto text-[10px] text-text-muted tabular-nums shrink-0">{c.age}岁</span>
                                 </div>
                                 <div className="flex items-center gap-1 flex-wrap">
@@ -3663,7 +3829,7 @@ function WorkspacePage() {
             // ==============================================================
             const epGroups = data.storyboardGroups.filter((g) => g.episodeIndex === selectedEpisodeIndex)
             const hasAnyEp = data.episodeTexts.some((e) => e.epIndex === selectedEpisodeIndex)
-            const hasEpChars = data.characters.some((c) => c.episodeIndex === selectedEpisodeIndex)
+            const hasEpChars = data.characters.some((c) => c.episodes.includes(selectedEpisodeIndex))
             if (epGroups.length === 0) {
               const needsChars = !hasEpChars && hasAnyEp
               return (

@@ -169,7 +169,13 @@ function stageSpec(stage: Input['stage']) {
           '**关键:siblingGroupId 锁脸/锁身材** —— 上述两个"陆深"是同一个人,必须在 siblingGroupId 字段输出**相同的 id**(例如 `g-陆深-7a2f`),让下游图片生成时第二个走 I2I 锁脸(以第一个的图为参考),保证脸一致。' +
           '**不同真人不要共享 groupId**;同一真人的所有形象共享同一个 groupId。命名建议:`g-<真名>-<短 hash>`(无需真做 hash,用任何稳定字符串即可,如 `g-陆深-1`)。' +
           '**只在真正不同的造型/身份时拆**,同一套衣服只输出 1 个角色(此时 siblingGroupId 不填)。' +
-          '单集通常 1-8 个角色(多形象拆分后可能更多),不要为了凑数虚构。仅工具调用返回。',
+          '单集通常 1-8 个角色(多形象拆分后可能更多),不要为了凑数虚构。仅工具调用返回。' +
+          '【跨集角色一致性 —— 2026/06】你被提供了一份【已有角色列表】(context.characters),每条有稳定的 matchKey。' +
+          '你必须严格按以下规则输出 characters 数组:' +
+          '1) 对【已有角色列表】里出现的真人,即使在新文本里换了服装/换了场景:复用他的 matchKey(原样复制,不要重命名),在 characters 数组里**只输出一份**(不要因为换装就拆成两个),把新描述写到该条目的 faceDescription/bodyDescription/clothingDescription。' +
+          '2) 同一真人在新文本里如果明确"换了不同的身份/造型"(同真人多形象):拆成多个独立 character,共享同一个 matchKey + 共享同一个 siblingGroupId。例:"陆深 · 医生" 和 "陆深 · 学生时期" → matchKey 都是 "陆深-001"。' +
+          '3) **新真人**(列表里没出现过的)→ 生成 matchKey,格式 `<真名>-<3位hex>`,如 "江野-a3f"。' +
+          '4) **matchKey 永远不能空**,每条 character 输出必须有 matchKey 字段。',
         schema: {
           type: 'object',
           properties: {
@@ -201,8 +207,14 @@ function stageSpec(stage: Input['stage']) {
                    * 单形象角色不填。
                    */
                   siblingGroupId: { type: 'string', description: '同真人多形象共享的分组 id(如 "g-陆深-1"),用于 I2I 锁脸。不填 = 单形象' },
+                  /**
+                   * 2026/06:跨集身份锚点 —— 同一真人在所有集、所有形象都共享。
+                   * 命名: "<真名>-<3位hex>",如 "陆深-a3f"。
+                   * 跨集复用 + 匹配都用这个字段。必填。
+                   */
+                  matchKey: { type: 'string', description: '跨集稳定 id,同一真人在所有集(ep1/ep2/ep3)和所有形象(医生/学生)都填相同。命名 "<真名>-<3位hex>"。必填。', pattern: '^.{2,40}$' },
                 },
-                required: ['name', 'role', 'roleLabel', 'age', 'gender', 'faceDescription', 'bodyDescription', 'clothingDescription', 'personality', 'palette'],
+                required: ['name', 'role', 'roleLabel', 'age', 'gender', 'faceDescription', 'bodyDescription', 'clothingDescription', 'personality', 'palette', 'matchKey'],
                 additionalProperties: false,
               },
             },
@@ -224,7 +236,13 @@ function stageSpec(stage: Input['stage']) {
           '**关键:siblingGroupId 锁脸/锁身材** —— 同真人的多个形象必须共享同一个 siblingGroupId(例 `g-陆深-1`),让下游图片生成时后续形象走 I2I 锁脸(以首个图为参考)。' +
           '**不同真人不要共享 groupId**;同一真人的所有形象都共享一个 groupId。命名建议:`g-<真名>-<短 hash>`(无需真做 hash,用任何稳定字符串即可,如 `g-陆深-1`)。' +
           '**不要**为同一套衣服重复列。' +
-          '每位需要：名字、role(lead/supporting/villain)、roleLabel(中文短描述如"女主 · 高冷学霸")、age、gender(性别)、faceDescription、bodyDescription、clothingDescription、personality(性格)、palette(3-4 个 hex 颜色，匹配角色调性)。仅工具调用返回。',
+          '每位需要：名字、role(lead/supporting/villain)、roleLabel(中文短描述如"女主 · 高冷学霸")、age、gender(性别)、faceDescription、bodyDescription、clothingDescription、personality(性格)、palette(3-4 个 hex 颜色，匹配角色调性)、**matchKey**(必填,跨集身份锚)。仅工具调用返回。' +
+          '【跨集角色一致性 —— 2026/06】你被提供了一份【已有角色列表】(context.characters),每条有稳定的 matchKey。' +
+          '你必须严格按以下规则输出 characters 数组:' +
+          '1) 对【已有角色列表】里出现的真人:复用 matchKey,在 characters 数组里**只输出一份**,把新描述写到对应字段。' +
+          '2) 同一真人在新文本里如果明确"换了不同的身份/造型":拆成多个独立 character,共享同一个 matchKey + 共享同一个 siblingGroupId。' +
+          '3) **新真人** → 生成 matchKey,格式 `<真名>-<3位hex>`,如 "江野-a3f"。' +
+          '4) **matchKey 永远不能空**,每条 character 输出必须有 matchKey 字段。',
         schema: {
           type: 'object',
           properties: {
@@ -256,8 +274,14 @@ function stageSpec(stage: Input['stage']) {
                    * 单形象角色不填。
                    */
                   siblingGroupId: { type: 'string', description: '同真人多形象共享的分组 id(如 "g-陆深-1"),用于 I2I 锁脸。不填 = 单形象' },
+                  /**
+                   * 2026/06:跨集身份锚点 —— 同一真人在所有集、所有形象都共享。
+                   * 命名: "<真名>-<3位hex>",如 "陆深-a3f"。
+                   * 跨集复用 + 匹配都用这个字段。必填。
+                   */
+                  matchKey: { type: 'string', description: '跨集稳定 id,同一真人在所有集(ep1/ep2/ep3)和所有形象(医生/学生)都填相同。命名 "<真名>-<3位hex>"。必填。', pattern: '^.{2,40}$' },
                 },
-                required: ['name', 'role', 'roleLabel', 'age', 'gender', 'faceDescription', 'bodyDescription', 'clothingDescription', 'personality', 'palette'],
+                required: ['name', 'role', 'roleLabel', 'age', 'gender', 'faceDescription', 'bodyDescription', 'clothingDescription', 'personality', 'palette', 'matchKey'],
                 additionalProperties: false,
               },
             },
