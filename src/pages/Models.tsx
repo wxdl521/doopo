@@ -49,6 +49,11 @@ const VIDEO_MODELS: VideoModel[] = [
     gradient: 'from-fuchsia-500 to-pink-600', status: 'available',
   },
   {
+    id: 'doubao-seedance-2-0-fast-260128', name: 'Doubao Seedance 2.0 Fast', nameEn: 'Doubao Seedance 2.0 Fast',
+    vendor: '火山方舟 · ARK', tagline: '720p 快速版 · 多模态', taglineEn: '720p Fast · Multimodal',
+    gradient: 'from-pink-500 to-rose-600', status: 'available',
+  },
+  {
     id: 'doubao-seedance-1-0-pro-250528', name: 'Doubao Seedance 1.0 Pro', nameEn: 'Doubao Seedance 1.0 Pro',
     vendor: '火山方舟 · ARK', tagline: '文生视频', taglineEn: 'Text to Video',
     gradient: 'from-rose-500 to-orange-600', status: 'available',
@@ -57,6 +62,16 @@ const VIDEO_MODELS: VideoModel[] = [
     id: 'doubao-seedance-1-0-lite-i2v-250428', name: 'Doubao Seedance 1.0 Lite', nameEn: 'Doubao Seedance 1.0 Lite',
     vendor: '火山方舟 · ARK', tagline: '图生视频', taglineEn: 'Image to Video',
     gradient: 'from-violet-500 to-purple-700', status: 'available',
+  },
+  {
+    id: 'jimeng-3.0-pro', name: '即梦 3.0 Pro', nameEn: 'Jimeng 3.0 Pro',
+    vendor: '火山引擎 · 视觉服务', tagline: '多镜头叙事 · 1080P', taglineEn: 'Multi-shot · 1080P',
+    gradient: 'from-sky-500 to-indigo-600', status: 'available',
+  },
+  {
+    id: 'jimeng-3.0-pro-i2v', name: '即梦 3.0 Pro (图生视频)', nameEn: 'Jimeng 3.0 Pro (I2V)',
+    vendor: '火山引擎 · 视觉服务', tagline: '首帧图生视频 · 1080P', taglineEn: 'First-frame I2V · 1080P',
+    gradient: 'from-indigo-500 to-blue-700', status: 'available',
   },
 ]
 
