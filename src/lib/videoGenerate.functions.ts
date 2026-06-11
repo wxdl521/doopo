@@ -132,7 +132,10 @@ async function arkSubmit(input: {
     clearTimeout(timeout)
     const text = await res.text().catch(() => '')
     if (!res.ok) return { ok: false, error: `[ark-seedance] submit ${res.status}: ${text.slice(0, 300)}` }
-    const json = (await res.json().catch(() => ({}))) as { id?: string; error?: { code?: string; message?: string } }
+    // 2026/06 Bugfix:res.text() 已经把 body 流消费了,res.json() 必然失败。
+    // 改成 JSON.parse(text) 复用同一份 text,不再二次读 body。
+    let json: { id?: string; error?: { code?: string; message?: string } } = {}
+    try { json = JSON.parse(text) } catch {}
     if (!json.id) return { ok: false, error: `[ark-seedance] no task_id: ${json.error?.message || text.slice(0, 200)}` }
     return { ok: true, taskId: json.id, model: input.model }
   } catch (e) {
@@ -164,12 +167,9 @@ async function arkPoll(input: {
     clearTimeout(timeout)
     const text = await res.text().catch(() => '')
     if (!res.ok) return { ok: false, error: `[ark-seedance] poll ${res.status}: ${text.slice(0, 300)}` }
-    const json = (await res.json().catch(() => ({}))) as {
-      id?: string
-      status?: string
-      content?: { video_url?: string }
-      error?: { code?: string; message?: string }
-    }
+    // 2026/06 Bugfix:见 arkSubmit —— 改用 JSON.parse(text) 而不是 res.json()
+    let json: { id?: string; status?: string; content?: { video_url?: string }; error?: { code?: string; message?: string } } = {}
+    try { json = JSON.parse(text) } catch {}
     const status = (json.status?.toLowerCase() || '') as SeedanceProgress
     const videoUrl = json.content?.video_url || null
     return { ok: true, status, videoUrl, raw: json }
@@ -255,10 +255,9 @@ async function dashscopeSubmit(input: {
     clearTimeout(timeout)
     const text = await res.text().catch(() => '')
     if (!res.ok) return { ok: false, error: `[dashscope-video] submit ${res.status}: ${text.slice(0, 300)}` }
-    const json = (await res.json().catch(() => ({}))) as {
-      output?: { task_id?: string; task_status?: string }
-      error?: { code?: string; message?: string }
-    }
+    // 2026/06 Bugfix:见 arkSubmit —— 改用 JSON.parse(text) 而不是 res.json()
+    let json: { output?: { task_id?: string; task_status?: string }; error?: { code?: string; message?: string } } = {}
+    try { json = JSON.parse(text) } catch {}
     const taskId = json.output?.task_id
     if (!taskId) {
       return { ok: false, error: `[dashscope-video] no task_id: ${json.error?.message || text.slice(0, 200)}` }
@@ -288,10 +287,9 @@ async function dashscopePoll(input: {
     clearTimeout(timeout)
     const text = await res.text().catch(() => '')
     if (!res.ok) return { ok: false, error: `[dashscope-video] poll ${res.status}: ${text.slice(0, 300)}` }
-    const json = (await res.json().catch(() => ({}))) as {
-      output?: { task_status?: string; video_url?: string; results?: Array<{ video_url?: string; url?: string }> }
-      error?: { code?: string; message?: string }
-    }
+    // 2026/06 Bugfix:见 arkSubmit —— 改用 JSON.parse(text) 而不是 res.json()
+    let json: { output?: { task_status?: string; video_url?: string; results?: Array<{ video_url?: string; url?: string }> }; error?: { code?: string; message?: string } } = {}
+    try { json = JSON.parse(text) } catch {}
     const rawStatus = (json.output?.task_status || '').toUpperCase()
     const status = rawStatus.toLowerCase() as SeedanceProgress
     // 成功时 video_url 在 output.video_url(DashScope 视频任务的字段);

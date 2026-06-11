@@ -37,12 +37,26 @@ export type GenCharacter = {
   keyProp?: string
   relations?: { targetId: string; label: string; summary: string }[]
   /**
-   * 同角色不同造型/身份/服装下的"变体卡片"。例如:
-   *   男主角-医生(白大褂)、男主角-穿越(古装)
-   * 没有 looks 时,UI 把默认 appearance 作为唯一的"默认"卡片渲染。
-   * 每个 look 走独立的图片生成 call,key 为 `${characterId}::${look.id}`。
+   * 同角色不同造型/身份/服装下的"变体卡片"(已废弃 2026/06 —— 改成"多形象拆分为
+   * 独立角色",各自有独立 name "林晚 · 医生"、"林晚 · 日常")。保留字段是为
+   * 了兼容老数据(老数据加载进来如果 c.looks 有值仍能正常显示/操作),新流程
+   * 下 AI 不再输出 looks 数组,这个字段在新角色上永远 undefined。
    */
   looks?: GenCharacterLook[]
+  /**
+   * 2026/06:同真人的多个形象(医生/日常/学生...)的"分身组 id"。多个独立角色
+   * 如果共享同一个 siblingGroupId,表示它们是同一个真人的不同切面 —— 脸和
+   * 身材必须保持一致。
+   *
+   * 生成流程:
+   *   - 组内第一个生成的(还没有同组其他角色出图)→ 走 T2I,作为锚图
+   *   - 后续生成的 → 走 I2I,拿同组已生成的图作 reference,锁脸锁身材
+   *
+   * 命名约定:AI 输出时用 `g-<真名>-<hash>` 或类似稳定的 id,确保同一集里
+   * 同一真人的所有形象共享一个 groupId。同一真人跨集也建议保持一致(便于
+   * 后续跨集复用锚图)。
+   */
+  siblingGroupId?: string
 }
 
 export type GenScene = {

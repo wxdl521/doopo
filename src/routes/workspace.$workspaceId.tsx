@@ -12,7 +12,7 @@ import {
   type Outline, type GenScene, type GenCharacter, type GenCharacterLook, type StoryboardPanel, type TimelineData, type TimelineTrack, type TimelineClip,
   type StoryboardGroup, type StoryboardShot, type ShotType,
 } from '../data/workspaceGenerators'
-import { generateStageAi, generateCharacterLookAi } from '../lib/aiGenerate.functions'
+import { generateStageAi } from '../lib/aiGenerate.functions'
 import { generateImage, regenerateSceneImage } from '../lib/seedream.functions'
 import { regenerateCharacterLook } from '../lib/characterRegen.functions'
 import { generateStoryboardFromPlot, generateStoryboardShotImage, regenerateStoryboardShot } from '../lib/storyboard.functions'
@@ -216,7 +216,6 @@ function WorkspacePage() {
   const [sceneModBusy, setSceneModBusy] = useState(false)
   const [sceneModError, setSceneModError] = useState<string | null>(null)
   const callAi = useServerFn(generateStageAi)
-  const callLookAi = useServerFn(generateCharacterLookAi)
   const callImage = useServerFn(generateImage)
   const callRegenCharacter = useServerFn(regenerateCharacterLook)
   const callRegenScene = useServerFn(regenerateSceneImage)
@@ -494,73 +493,7 @@ function WorkspacePage() {
    * 文字层与图像层共享同一个 anchor:主条目 = 第 1 个 look(图像层 I2I 也锚第 1 张)。
    */
   async function enrichCharacterLooks(c: GenCharacter): Promise<GenCharacterLook[]> {
-    const looks = c.looks ?? []
-    console.log(`[CHAR-ENRICH] enrichCharacterLooks called: id=${c.id} looks=${looks.length}`)
-    if (looks.length === 0) return looks
-
-    // 已经填好独立 face/body 的(理论上不会出现)跳过 —— 节省 Qwen 调用
-    const needs = looks.filter(
-      (lk) =>
-        !lk.faceDescription?.trim() ||
-        !lk.bodyDescription?.trim() ||
-        lk.faceDescription === c.faceDescription ||
-        lk.bodyDescription === c.bodyDescription,
-    )
-    if (needs.length === 0) return looks
-
-    const results = await Promise.all(
-      needs.map(async (lk) => {
-        try {
-          const res = await callLookAi({
-            data: {
-              characterName: c.name,
-              age: c.age,
-              gender: c.gender,
-              anchorFaceDescription: c.faceDescription,
-              anchorBodyDescription: c.bodyDescription,
-              anchorClothingDescription: c.clothingDescription,
-              lookLabel: lk.label,
-              lookClothingDescription: lk.clothingDescription || c.clothingDescription,
-              faceHint: (lk as any).faceHint || undefined,
-              bodyHint: (lk as any).bodyHint || undefined,
-            },
-          })
-          if (res?.ok && (res as any).payload) {
-            const p = (res as any).payload
-            return {
-              ok: true as const,
-              lkId: lk.id,
-              face: String(p.faceDescription),
-              body: String(p.bodyDescription),
-              clothing: String(p.clothingDescription),
-            }
-          }
-          return { ok: false as const, lkId: lk.id, error: (res as any)?.error ?? 'unknown' }
-        } catch (e) {
-          return {
-            ok: false as const,
-            lkId: lk.id,
-            error: e instanceof Error ? e.message : 'err',
-          }
-        }
-      }),
-    )
-
-    return looks.map((lk) => {
-      const r = results.find((x) => x.lkId === lk.id)
-      if (r && r.ok) {
-        return {
-          ...lk,
-          faceDescription: r.face,
-          bodyDescription: r.body,
-          clothingDescription: r.clothing,
-        }
-      }
-      if (r && !r.ok) {
-        console.warn(`[enrichCharacterLooks] ${c.name}/${lk.label} failed:`, r.error)
-      }
-      return lk
-    })
+    return c.looks ?? []
   }
 
   async function processCharacter(c: GenCharacter) {
@@ -609,9 +542,35 @@ function WorkspacePage() {
     // 同角色"不同形象"功能完整支持(数据 + UI + 主动生成链路都通),只
     // 是不在 autoGen 里一次跑全。
     // doRegen 的 replaceExisting 参数保留(供未来用),本路径暂不传。
+    // 2026/06:多形象拆分后 lookSpecs 永远只有 1 个条目(默认),lookSpec 维度
+    // 已经没意义。保留这个结构是为了让下方 I2I/T2I 分支代码能跑通(单点路径)。
     const lookSpecs: { imageKey: string; label: string; data: { faceDescription: string; bodyDescription: string; clothingDescription: string } }[] = [
       { imageKey: c.id, label: '默认', data: { faceDescription: c.faceDescription, bodyDescription: c.bodyDescription, clothingDescription: c.clothingDescription } },
     ]
+
+    // ====================================================================
+    // 关键修复(2026/06):多形象拆分为独立角色后,脸一致性靠这里保障。
+    // 如果当前角色 c 有 siblingGroupId,就在 data.characters 里找同组的其他角色
+    // 拿它已经生成的图,作为 I2I 的 reference —— 模型"看着"参考图改服装,
+    // 脸/身材/姿势都被原图锚定,自然就一致了。
+    // 同组其他角色都没有图 → 这是组里第一个,降级走 T2I 当锚图。
+    // ====================================================================
+    // 2026/06:返回整个 {url, sibling} 不只 url —— 后面拼 I2I 指令时要把
+    // sibling 的 faceDescription / bodyDescription 作为"脸部/身材文字 oracle"
+    // 一起喂给模型,防止参考图本身戴了口罩/墨镜/帽子等遮挡物时 AI 看不清脸。
+    // 文字 oracle 是从原始 prompt 来的,免疫遮挡。
+    const siblingAnchor: { url: string; sibling: GenCharacter } | undefined = (() => {
+      if (!c.siblingGroupId) return undefined
+      const sibling = data.characters.find(
+        (x) => x.id !== c.id && x.siblingGroupId === c.siblingGroupId,
+      )
+      if (!sibling) return undefined
+      const sibImgs = charImagesRef.current[sibling.id] ?? []
+      const url = sibImgs[sibImgs.length - 1]
+      return url ? { url, sibling } : undefined
+    })()
+    const usingSiblingAnchor = !!siblingAnchor
+    console.log(`[CHAR-AUTOGEN] id=${c.id} siblingGroup=${c.siblingGroupId ?? '(none)'} anchor=${siblingAnchor ? 'I2I' : 'T2I'}`)
 
     for (let i = 0; i < lookSpecs.length; i++) {
       const ls = lookSpecs[i]
@@ -622,52 +581,86 @@ function WorkspacePage() {
       setActiveImageKey(ls.imageKey)
 
       // ====================================================================
-      // 关键修复(2026):同一个角色的不同 look 之前脸不一致,因为
-      // 每个 look 都用 T2I 独立生成,模型只看到文字描述,无法视觉锁定脸。
-      // 修法:默认 look(第 1 个)继续 T2I;后续 look 全部走 I2I,reference
-      // 用默认 look 最新一张 —— 模型"看着"参考图改服装,脸/身材/姿势
-      // 都被原图锚定,自然就一致了。
+      // 关键修复(2026/06 改造后):脸/身材锁定的两种路径
+      //   - 旧路径(looks[] 时代):默认 look T2I,后续 look I2I 用默认 look 图
+      //   - 新路径(多形象拆分为独立角色):同组首个 T2I,后续 I2I 用同组首个的图
+      //
+      // 下方逻辑统一抽象为 "referenceImageUrl 是否存在":
+      //   - 有 → 走 I2I 锁脸
+      //   - 无 → 走 T2I
+      // 新老路径共用同一段 I2I 指令(下方 instruction 模板)。
       // ====================================================================
       const isDefaultLook = i === 0
       const defaultLookImageKey = lookSpecs[0].imageKey
       const defaultLookImages = charImagesRef.current[defaultLookImageKey] ?? []
-      const referenceImageUrl = isDefaultLook
-        ? undefined
-        : defaultLookImages[defaultLookImages.length - 1]
+      // 三种"有参考图"的情况合并:
+      //   1) 新架构下的兄弟锚图(同组其他角色已有图) → 用兄弟的 url
+      //   2) 旧架构下的默认 look 图(同角色其他 look 已有图,理论上新架构下不会触发)
+      //   3) 自己已有图(用户主动重生时 referenceOverride 走别的分支,这里只考虑 T2I 首次)
+      const referenceImageUrl = usingSiblingAnchor
+        ? siblingAnchor!.url
+        : isDefaultLook
+          ? undefined
+          : defaultLookImages[defaultLookImages.length - 1]
 
       if (referenceImageUrl) {
         // ============== 后续 look 走 I2I(以默认 look 的图为视觉锚点)==============
         // 拼一条"中性结构锁脸 + 配饰按描述"指令(2026/06 用户诉求):
         //   - 脸型 / 五官 / 肤色 / 骨架 / 发型 等中性结构 → 跨 look 100% 一致
         //     (这是"看起来是同一个人"的本质)。
-        //   - 妆容 / 表情 / 配饰(口罩 / 帽子 / 眼镜 / 项链等)→ 按本 look 的
+        //   - 妆容 / 表情 / 配饰(口罩 / 帽子 / 眼镜 / 项链等)→ 按当前形象的
         //     clothingDescription 生成。默认 look 的"裸脸"是基线,本新
         //     look 不强制继承参考图的面部配饰(除非本 look 描述明确要保留)。
-        //   - 只有本 look 描述明确说"脸变了"/"胖了"/"受伤了"时,才允许
+        //   - 只有当前形象描述明确说"脸变了"/"胖了"/"受伤了"时,才允许
         //     改脸 / 改身材(对应 GenCharacterLook.faceHint / bodyHint)。
         // 用户的修改意见(若有)由 doRegen 的 userInstruction 通道处理,
         // 不在这里覆盖。
+        // 锚图来源分两种:1) 新架构下 usingSiblingAnchor=true(同组其他角色);
+        // 2) 旧架构下 usingSiblingAnchor=false(同角色其他 look)。文案略有不同。
+        // 锚图来源分两种文案,新架构(同组 sibling)还会附上文字 oracle。
+        // 关键:脸部/身材 100% 以"文字描述"为准 —— 因为参考图可能戴了口罩/
+        // 墨镜/帽子/头饰等遮挡面部的配饰,AI 看不清会瞎猜。文字 oracle 是
+        // 从生成该图时的原始 prompt 拿的,完全不受遮挡影响。
+        const anchorDesc = usingSiblingAnchor
+          ? '图1(同真人的其他形象,共享 siblingGroupId)'
+          : `图1(同角色【${ls.label}】造型的默认图)`
+        // 兄弟锚图时把兄弟的 face/body 描述作为"文字 oracle"附上;
+        // 旧架构下没有兄弟概念,fallback 用 c 自己当前描述。
+        const faceOracle = usingSiblingAnchor
+          ? siblingAnchor!.sibling.faceDescription
+          : c.faceDescription
+        const bodyOracle = usingSiblingAnchor
+          ? siblingAnchor!.sibling.bodyDescription
+          : c.bodyDescription
         const instruction = [
-          `给【${c.name}】生成【${ls.label}】造型,视觉锚点是图1(同角色的默认 look):`,
-          `新服装/配饰描述:${ls.data.clothingDescription || '保持参考图的服装不变'}`,
+          `给【${c.name}】生成当前造型(参考同真人的其他形象),视觉锚点是${anchorDesc}:`,
+          `当前形象服装/配饰描述:${ls.data.clothingDescription || '保持参考图的服装不变'}`,
           ``,
-          `【中性结构锁(跨 look 必须 100% 一致)】`,
-          `• 脸型、脸轮廓、五官比例、肤色、骨骼结构 100% 继承图1`,
-          `• 体型、身高、胖瘦、体态 100% 继承图1`,
+          `【⚠ 重要:脸部/身材 100% 以"文字 oracle"为准,不是以参考图为准】`,
+          `参考图1 可能戴了口罩 / 墨镜 / 帽子 / 头饰 / 半脸面具 等遮挡面部的配饰。`,
+          `如果只看图,AI 会"看不见"被遮挡的部分,瞎猜出不同的脸。`,
+          `所以**禁止从参考图视觉推断脸部细节**——必须严格按下面文字描述生成:`,
+          `  脸(face): ${faceOracle || '(无)'}`,
+          `  身材(body): ${bodyOracle || '(无)'}`,
+          `这两段文字是同真人的"脸部档案",是所有形象必须 100% 一致的基线。`,
+          ``,
+          `【从参考图1 继承的部分(只能继承未被遮挡、且非脸/身材的视觉)】`,
+          `• 整体画面构图、视角、画幅、风格、光照、背景 100% 继承图1`,
           `• 发型轮廓(短/长/卷/直、刘海/鬓角)100% 继承图1`,
-          `  ↳ 发色默认继承,但若本新 look 描述明确要换发色则按描述`,
+          `  ↳ 发色默认继承,但若当前形象描述明确要换发色则按描述`,
+          `• 表情默认继承"无表情";若当前形象描述明确要某种表情则按描述`,
           ``,
-          `【可按本新 look 描述自由调整的部分】`,
-          `• 妆容(眼妆、唇色、腮红)按本新 look 描述生成`,
-          `• 表情默认继承"无表情";若本新 look 描述明确要某种表情则按描述`,
-          `• 配饰(口罩/帽子/墨镜/项链/手套等)按本新 look 描述生成 —— 不强制继承图1 的配饰,除非描述明确说要保留`,
-          `• 整体服装按本新 look 的 clothingDescription 完整替换`,
+          `【可按当前形象描述自由调整的部分】`,
+          `• 妆容(眼妆、唇色、腮红)按当前形象描述生成`,
+          `• 配饰(口罩/帽子/墨镜/项链/手套等)按当前形象描述生成 —— 不强制继承图1 的配饰,除非描述明确说要保留`,
+          `• 整体服装按当前形象的 clothingDescription 完整替换`,
           ``,
           `【硬约束】`,
-          `• 除非本新 look 描述里【明确写】"脸变了"/"胖了"/"受伤了"/"变年轻了"等,否则脸/身材一律按中性结构继承`,
-          `• 整体画面构图、视角、画幅、风格、光照、背景 100% 继承图1`,
+          `• 脸型、脸轮廓、五官比例、肤色、骨骼结构 100% 按上面 face 文字生成,**严禁被参考图的任何配饰/视角/光影"带偏"**`,
+          `• 体型、身高、胖瘦、体态 100% 按上面 body 文字生成`,
+          `• 除非当前形象描述里【明确写】"脸变了"/"胖了"/"受伤了"/"变年轻了"等,否则一律按文字 oracle`,
           ``,
-          `输出:一张全身正面图,新造型,看起来【明显是同一个人】,但服装/妆容/配饰已经按本新 look 描述替换。`,
+          `输出:一张全身正面图,新造型,看起来【明显是同一个人】,但服装/妆容/配饰已经按当前形象描述替换。`,
         ].join('\n')
 
         // 找到 look 在 c.looks 里的 id(传给 doRegen 用于 imageKey 拼装)
@@ -2346,6 +2339,10 @@ function WorkspacePage() {
               palette,
               swatch: `linear-gradient(135deg, ${palette[0]}, ${palette[palette.length - 1]})`,
               looks: looks.length > 0 ? looks : undefined,
+              // 2026/06:同真人的多形象共享 groupId,下游 I2I 锁脸用
+              ...(typeof c.siblingGroupId === 'string' && c.siblingGroupId.trim()
+                ? { siblingGroupId: c.siblingGroupId.trim() }
+                : {}),
             }
           })
           return { characters }
@@ -4365,12 +4362,14 @@ function WorkspacePage() {
                     </div>
                     {/* 选中按钮(2026/06) — 跟卡片本体右上角的"选中"对称。
                         在预览模态里也能直接钉住当前选中的图,不用回卡片本体点。
-                        镜像逻辑完全一致:imageKey → setSelectedCharImages */}
+                        镜像逻辑完全一致:imageKey → setSelectedCharImages。
+                        2026/06 Bugfix:`cur` 必须跟随左栏缩略图选中的 currentUrl
+                        (即 generations[currentIdx]),不能写 .at(-1) 否则永远钉最新。 */}
                     {(() => {
                       const imageKey = previewTarget.lookId == null
                         ? c.id
                         : `${c.id}::${previewTarget.lookId}`
-                      const cur = charImages[imageKey]?.at(-1)
+                      const cur = currentUrl  // 跟随左栏选中的图,不是最新
                       if (!cur) return null
                       const isPinned = selectedCharImages[imageKey] === cur
                       return (

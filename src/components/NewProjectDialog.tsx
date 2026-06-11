@@ -51,19 +51,19 @@ const realImageModelOptions = imageModelOptions.filter((m) => m.id !== '__sep__'
 void IMAGE_MODELS
 const storyboardModels = realImageModelOptions
 const sceneModels = realImageModelOptions
-// Video models —— 2026 接入双后端:火山方舟 Seedance(需开通) + 阿里 DashScope HappyHorse(已可用)
+// Video models —— 2026/06 接入双后端:火山方舟 Seedance(已开通,默认走 ARK) + 阿里 DashScope HappyHorse(备用)
 // 详见 docs/seedream.md (Seedance) 和 docs/qwen.md (HappyHorse)
 const videoModels = [
-  // ---- 主力:HappyHorse(图生视频,实测账户可用)----
-  { id: 'happyhorse-1.0-i2v', label: 'HappyHorse 1.0 (图生视频·首帧)', sub: '默认 · DashScope · I2V' },
-  { id: 'happyhorse-1.0-t2v', label: 'HappyHorse 1.0 (文生视频)', sub: 'DashScope · T2V' },
-  { id: 'happyhorse-1.0-r2v', label: 'HappyHorse 1.0 (参考生视频)', sub: 'DashScope · 多参考图' },
-
-  // ---- 备用:Seedance(需用户在 ARK 控制台开通)----
-  { id: '__video_sep__', label: '—— 备用:Seedance(需开通)——', sub: '' },
-  { id: 'doubao-seedance-2-0-260128', label: 'Doubao Seedance 2.0', sub: 'ARK · 多模态' },
+  // ---- 主力:Seedance(火山方舟 ARK,多模态·支持参考图/视频/音频)----
+  { id: 'doubao-seedance-2-0-260128', label: 'Doubao Seedance 2.0', sub: '默认 · ARK · 多模态' },
   { id: 'doubao-seedance-1-0-pro-250528', label: 'Doubao Seedance 1.0 Pro', sub: 'ARK · T2V' },
   { id: 'doubao-seedance-1-0-lite-i2v-250428', label: 'Doubao Seedance 1.0 Lite', sub: 'ARK · I2V' },
+
+  // ---- 备用:HappyHorse(阿里 DashScope)----
+  { id: '__video_sep__', label: '—— 备用:HappyHorse(DashScope)——', sub: '' },
+  { id: 'happyhorse-1.0-r2v', label: 'HappyHorse 1.0 (参考生视频)', sub: 'DashScope · 多参考图' },
+  { id: 'happyhorse-1.0-i2v', label: 'HappyHorse 1.0 (图生视频·首帧)', sub: 'DashScope · I2V' },
+  { id: 'happyhorse-1.0-t2v', label: 'HappyHorse 1.0 (文生视频)', sub: 'DashScope · T2V' },
 ]
 // 过滤掉"分隔符"项(只是 UI 视觉分组,不能选)
 const realVideoModels = videoModels.filter((m) => m.id !== '__video_sep__')
@@ -127,8 +127,9 @@ export function NewProjectDialog({
   const [storyboardModel, setStoryboardModel] = useState('doubao-seedream-5-0-260128')
   // Seedream 统一支持 T2I + I2I,没有 qwen-image-2.0-pro 那样的"I2I-only"坑
   const [sceneModel, setSceneModel] = useState('doubao-seedream-5-0-260128')
-  // 视频默认走 HappyHorse I2V —— Seedance 账户未开通前一直会 404 ModelNotOpen
-  const [videoModel, setVideoModel] = useState('happyhorse-1.0-i2v')
+  // 2026/06:视频默认走火山方舟 Seedance 2.0 —— ARK 账户已开通,cURL 已验证
+  // generateVideo 自动按 model id 路由到 ARK,分镜流程点"生成整组视频"直接走火山引擎
+  const [videoModel, setVideoModel] = useState('doubao-seedance-2-0-260128')
   const [audio, setAudio] = useState<'auto' | 'on' | 'off'>('auto')
   const [workflow, setWorkflow] = useState('grid')
   const [style, setStyle] = useState('3d-cg')
