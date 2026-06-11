@@ -22,45 +22,49 @@ export const uploadScriptCover = createServerFn({ method: 'POST' })
       .parse(input),
   )
   .handler(async ({ data, context }) => {
-    const { supabase, userId } = context as { supabase: any; userId: string }
-    const { scriptId, prompt } = data
-
-    // 1) Generate the image. We use the existing generateImage server fn
-    //    rather than calling Qwen directly, so model selection / fallbacks
-    //    stay in one place.
-    // 2026 修复:老代码传 '1328*1328'(legacy Qwen 尺寸)给 Seedream,被拒
-    // "size must be one of 'WIDTHxHEIGHT', '2k', '3k', or '4k'" —— Seedream 不
-    // 接受星号分隔的 WxH。改用 '2K'(自动满足 3.68MP 像素下限,且为方
-    // 形适合封面)。
-    const generated = await generateImage({ data: { prompt, size: '2K' } })
-    const sourceUrl = generated?.url
-    if (!sourceUrl) {
-      return { url: '', error: generated?.error || 'image generation failed' }
-    }
-
-    // 2) Download the bytes. The upstream URL is time-limited so we must
-    //    re-host the file immediately.
-    let bytes: ArrayBuffer
+    // 2026/06 修复:整个 handler 用 try/catch 包住,任何抛出都转成
+    // { url:'', error } 返回。否则 h3 会把异常吃掉,把响应改写成
+    // {"unhandled":true,"message":"HTTPError"},前端只能拿到一个无意义
+    // 的 HTML 错误页,根本看不到真实原因。
     try {
-      const resp = await fetch(sourceUrl)
-      if (!resp.ok) throw new Error(`upstream fetch ${resp.status}`)
-      bytes = await resp.arrayBuffer()
+      const { supabase, userId } = context as { supabase: any; userId: string }
+      const { scriptId, prompt } = data
+
+      // 1) 生成图片。复用 generateImage server fn,模型路由 / 兜底统一在那里。
+      //    历史坑:老代码传 '1328*1328'(Qwen 尺寸)给 Seedream,被拒
+      //    "size must be one of 'WIDTHxHEIGHT', '2k', '3k', or '4k'"。
+      //    改用 '2K'(自动满足 3.68MP 像素下限,适合封面)。
+      const generated = await generateImage({ data: { prompt, size: '2K' } })
+      const sourceUrl = generated?.url
+      if (!sourceUrl) {
+        return { url: '', error: generated?.error || 'image generation failed' }
+      }
+
+      // 2) 下载字节(上游 URL 有时效)。
+      let bytes: ArrayBuffer
+      try {
+        const resp = await fetch(sourceUrl)
+        if (!resp.ok) throw new Error(`upstream fetch ${resp.status}`)
+        bytes = await resp.arrayBuffer()
+      } catch (e: any) {
+        return { url: '', error: `failed to download generated image: ${e?.message ?? e}` }
+      }
+
+      // 3) 上传到 {userId}/{scriptId}.jpg
+      const path = `${userId}/${scriptId}.jpg`
+      const blob = new Blob([bytes], { type: 'image/jpeg' })
+      const { error: uploadErr } = await supabase.storage
+        .from('script-covers')
+        .upload(path, blob, { contentType: 'image/jpeg', upsert: true })
+      if (uploadErr) {
+        return { url: '', error: `storage upload failed: ${uploadErr.message}` }
+      }
+
+      // 4) 取 public URL。
+      const { data: pub } = supabase.storage.from('script-covers').getPublicUrl(path)
+      return { url: pub?.publicUrl || '', model: generated.model }
     } catch (e: any) {
-      return { url: '', error: `failed to download generated image: ${e?.message ?? e}` }
+      console.error('[uploadScriptCover] unhandled:', e)
+      return { url: '', error: `unhandled: ${e?.message ?? String(e)}` }
     }
-
-    // 3) Upload to the user's own folder. Path: {userId}/{scriptId}.jpg
-    //    jpg is fine because Qwen always returns JPEG output.
-    const path = `${userId}/${scriptId}.jpg`
-    const blob = new Blob([bytes], { type: 'image/jpeg' })
-    const { error: uploadErr } = await supabase.storage
-      .from('script-covers')
-      .upload(path, blob, { contentType: 'image/jpeg', upsert: true })
-    if (uploadErr) {
-      return { url: '', error: `storage upload failed: ${uploadErr.message}` }
-    }
-
-    // 4) Return the public URL.
-    const { data: pub } = supabase.storage.from('script-covers').getPublicUrl(path)
-    return { url: pub.publicUrl, model: generated.model }
   })
