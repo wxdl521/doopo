@@ -443,11 +443,17 @@ const SubmitServerInput = z.object({
 export const submitVideoTaskFn = createServerFn({ method: 'POST' })
   .inputValidator((d: unknown) => SubmitServerInput.parse(d))
   .handler(async ({ data }) => {
-    // 把 ARK 风格的 content 数组转成统一 media 形式
+    // 把 ARK 风格的 content 数组转成统一 media + ref 形式
     const media: DashScopeMediaItem[] = []
+    let referenceVideoUrl: string | undefined
+    let referenceAudioUrl: string | undefined
     for (const item of (data.content as any[])) {
       if (item?.type === 'image_url' && item?.image_url?.url) {
         media.push({ type: 'reference_image', url: item.image_url.url })
+      } else if (item?.type === 'video_url' && item?.video_url?.url) {
+        referenceVideoUrl = item.video_url.url
+      } else if (item?.type === 'audio_url' && item?.audio_url?.url) {
+        referenceAudioUrl = item.audio_url.url
       }
     }
     const prompt = (data.content as any[]).find((i) => i?.type === 'text')?.text || ''
@@ -461,6 +467,8 @@ export const submitVideoTaskFn = createServerFn({ method: 'POST' })
       duration: data.duration,
       generateAudio: data.generateAudio,
       watermark: data.watermark,
+      referenceVideoUrl,
+      referenceAudioUrl,
     })
     if (!r.ok) return { ok: false as const, error: r.error }
     return { ok: true as const, taskId: r.taskId, model: r.model, backend: r.backend }
@@ -470,7 +478,7 @@ export const submitVideoTaskFn = createServerFn({ method: 'POST' })
 
 const PollServerInput = z.object({
   taskId: z.string().min(1).max(200),
-  backend: z.enum(['ark', 'dashscope']),
+  backend: z.enum(['ark', 'dashscope', 'jimeng']),
 })
 
 export const pollVideoTaskFn = createServerFn({ method: 'POST' })
@@ -497,7 +505,7 @@ const GenerateVideoInput = z.object({
   referenceAudioUrl: z.string().url().optional(),
   model: z.string().max(200).optional(),
   ratio: z.enum(SUPPORTED_RATIOS).default('16:9'),
-  duration: z.number().int().min(1).max(60).default(5),
+  duration: z.number().int().min(1).max(60).default(5),  // ARK 示例最大 11s,这里留余量到 60
   resolution: z.enum(['480P', '720P', '1080P']).default('720P'),
   generateAudio: z.boolean().optional(),
   watermark: z.boolean().optional(),
@@ -530,6 +538,8 @@ export const generateVideo = createServerFn({ method: 'POST' })
       duration: data.duration,
       generateAudio: data.generateAudio,
       watermark: data.watermark,
+      referenceVideoUrl: data.referenceVideoUrl,
+      referenceAudioUrl: data.referenceAudioUrl,
     })
     if (!submit.ok) {
       return { ok: false as const, error: submit.error, taskId: undefined, backend }
