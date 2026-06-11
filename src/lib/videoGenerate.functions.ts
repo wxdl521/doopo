@@ -349,21 +349,28 @@ type SubmitInput = {
   duration?: number
   generateAudio?: boolean
   watermark?: boolean
+  // 新增:ARK Seedance 完整参考素材(2026/06)
+  referenceVideoUrl?: string
+  referenceAudioUrl?: string
 }
 
-type SubmitResult = { ok: true; taskId: string; model: string; backend: 'ark' | 'dashscope' } | { ok: false; error: string }
+type VideoBackend = 'ark' | 'dashscope' | 'jimeng'
+type SubmitResult = { ok: true; taskId: string; model: string; backend: VideoBackend } | { ok: false; error: string }
 
 async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
   const backend = getVideoBackend(input.model)
   if (backend === 'ark') {
     const { apiKey, baseUrl } = getArkConfig()
     if (!apiKey) return { ok: false, error: 'ARK_API_KEY not configured' }
-    // 构造 ARK content 数组
-    const content: ContentItem[] = [{ type: 'text', text: input.prompt }]
-    for (const m of input.media) {
-      // ARK 的角色 = 'reference_image'(不论 DashScope 是 first_frame 还是 reference_image,都当参考)
-      content.push({ type: 'image_url', image_url: { url: m.url }, role: 'reference_image' })
-    }
+    // 构造 ARK content 数组 —— 按官方 cURL 示例:text + 多 reference_image + 可选 reference_video / reference_audio
+    const firstFrameImageUrl = input.media.find((m) => m.type === 'first_frame')?.url
+    const referenceImageUrls = input.media.filter((m) => m.type === 'reference_image').map((m) => m.url)
+    const content = buildArkContent(input.prompt, {
+      firstFrameImageUrl,
+      referenceImageUrls,
+      referenceVideoUrl: input.referenceVideoUrl,
+      referenceAudioUrl: input.referenceAudioUrl,
+    })
     const r = await arkSubmit({
       model: input.model,
       content,
@@ -375,6 +382,12 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
       baseUrl,
     })
     return r.ok ? { ok: true, taskId: r.taskId, model: r.model, backend: 'ark' } : { ok: false, error: r.error }
+  }
+  if (backend === 'jimeng') {
+    return {
+      ok: false,
+      error: '[jimeng] 即梦 3.0 Pro 后端尚未配置 AK/SK(JIMENG_ACCESS_KEY / JIMENG_SECRET_KEY)。请在 Project Settings → Secrets 添加后再试。',
+    }
   }
   // DashScope
   const { apiKey } = getDashScopeConfig()
@@ -391,7 +404,7 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
   return r.ok ? { ok: true, taskId: r.taskId, model: r.model, backend: 'dashscope' } : { ok: false, error: r.error }
 }
 
-type PollInput = { taskId: string; backend: 'ark' | 'dashscope' }
+type PollInput = { taskId: string; backend: VideoBackend }
 
 type PollResult =
   | { ok: true; status: SeedanceProgress; videoUrl: string | null; raw: any }
@@ -402,6 +415,9 @@ async function pollVideoTask(input: PollInput): Promise<PollResult> {
     const { apiKey, baseUrl } = getArkConfig()
     if (!apiKey) return { ok: false, error: 'ARK_API_KEY not configured' }
     return arkPoll({ taskId: input.taskId, apiKey, baseUrl })
+  }
+  if (input.backend === 'jimeng') {
+    return { ok: false, error: '[jimeng] 后端尚未配置 AK/SK' }
   }
   const { apiKey } = getDashScopeConfig()
   if (!apiKey) return { ok: false, error: 'Qwen / DASHSCOPE_API_KEY not configured' }
