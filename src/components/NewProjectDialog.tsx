@@ -56,8 +56,14 @@ const sceneModels = realImageModelOptions
 const videoModels = [
   // ---- 主力:Seedance(火山方舟 ARK,多模态·支持参考图/视频/音频)----
   { id: 'doubao-seedance-2-0-260128', label: 'Doubao Seedance 2.0', sub: '默认 · ARK · 多模态' },
+  { id: 'doubao-seedance-2-0-fast-260128', label: 'Doubao Seedance 2.0 Fast', sub: 'ARK · 720p 快速版' },
   { id: 'doubao-seedance-1-0-pro-250528', label: 'Doubao Seedance 1.0 Pro', sub: 'ARK · T2V' },
   { id: 'doubao-seedance-1-0-lite-i2v-250428', label: 'Doubao Seedance 1.0 Lite', sub: 'ARK · I2V' },
+
+  // ---- 即梦 3.0 Pro(火山引擎视觉服务,需 AK/SK)----
+  { id: '__video_sep_jimeng__', label: '—— 即梦 3.0 Pro(Volcengine 视觉服务)——', sub: '' },
+  { id: 'jimeng-3.0-pro', label: '即梦 3.0 Pro (文生视频)', sub: '需配置 JIMENG AK/SK' },
+  { id: 'jimeng-3.0-pro-i2v', label: '即梦 3.0 Pro (图生视频·首帧)', sub: '需配置 JIMENG AK/SK' },
 
   // ---- 备用:HappyHorse(阿里 DashScope)----
   { id: '__video_sep__', label: '—— 备用:HappyHorse(DashScope)——', sub: '' },
@@ -66,7 +72,7 @@ const videoModels = [
   { id: 'happyhorse-1.0-t2v', label: 'HappyHorse 1.0 (文生视频)', sub: 'DashScope · T2V' },
 ]
 // 过滤掉"分隔符"项(只是 UI 视觉分组,不能选)
-const realVideoModels = videoModels.filter((m) => m.id !== '__video_sep__')
+const realVideoModels = videoModels.filter((m) => !m.id.startsWith('__video_sep'))
 
 const workflows = [
   { id: 'grid', icon: Grid3x3, key: 'grid' },

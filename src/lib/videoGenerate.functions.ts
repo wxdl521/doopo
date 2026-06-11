@@ -30,6 +30,7 @@
 import './loadEnv'  // 2026 修复:必须最先导入,让 ARK/Qwen env 在读取前就绪
 import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
+import { createHash, createHmac } from 'node:crypto'
 
 // ---------- ARK (Seedance) 配置 ----------
 
@@ -51,14 +52,16 @@ const DASHSCOPE_TASK_GET = 'https://dashscope.aliyuncs.com/api/v1/tasks/'
  *  - ARK (Seedance):doubao-seedance-* 或 seedance-*
  *  - DashScope (HappyHorse / Wan / Wanx):其他视频模型 id 一律 fallback 到 DashScope
  */
-export function getVideoBackend(modelId: string | null | undefined): 'ark' | 'dashscope' {
+export function getVideoBackend(modelId: string | null | undefined): 'ark' | 'dashscope' | 'jimeng' {
   const m = (modelId || '').trim().toLowerCase()
   if (m.startsWith('doubao-seedance-') || m.startsWith('seedance-')) return 'ark'
+  if (m.startsWith('jimeng-')) return 'jimeng'
   return 'dashscope'
 }
 
 export const SEEDANCE_MODELS = {
   'doubao-seedance-2-0-260128': 'Doubao Seedance 2.0',
+  'doubao-seedance-2-0-fast-260128': 'Doubao Seedance 2.0 Fast (720p)',
   'doubao-seedance-1-0-pro-250528': 'Doubao Seedance 1.0 Pro (T2V)',
   'doubao-seedance-1-0-lite-i2v-250428': 'Doubao Seedance 1.0 Lite (I2V)',
 } as const
@@ -68,6 +71,18 @@ export const HAPPYHORSE_MODELS = {
   'happyhorse-1.0-i2v': 'HappyHorse 1.0 (图生视频·首帧)',
   'happyhorse-1.0-r2v': 'HappyHorse 1.0 (参考生视频)',
 } as const
+
+export const JIMENG_MODELS = {
+  'jimeng-3.0-pro': '即梦 3.0 Pro (文生视频)',
+  'jimeng-3.0-pro-i2v': '即梦 3.0 Pro (图生视频·首帧)',
+} as const
+
+// 即梦 3.0 Pro 文生/图生视频统一用同一个 req_key
+const JIMENG_REQ_KEY = 'jimeng_ti2v_v30_pro'
+const JIMENG_HOST = 'visual.volcengineapi.com'
+const JIMENG_REGION = 'cn-north-1'
+const JIMENG_SERVICE = 'cv'
+const JIMENG_VERSION = '2022-08-31'
 
 // ====================================================================
 // 通用类型
@@ -217,6 +232,34 @@ function getDashScopeConfig() {
 
 type DashScopeMediaItem = { type: 'first_frame' | 'reference_image'; url: string }
 
+// ----- ARK 内容拼装 -----
+type ArkReferences = {
+  referenceImageUrls?: string[]
+  firstFrameImageUrl?: string
+  referenceVideoUrl?: string
+  referenceAudioUrl?: string
+}
+
+/**
+ * 按 ARK 官方 cURL 示例拼 content 数组(text + 多个 image_url + 可选 video_url / audio_url)
+ */
+export function buildArkContent(prompt: string, refs: ArkReferences): ContentItem[] {
+  const content: ContentItem[] = [{ type: 'text', text: prompt }]
+  if (refs.firstFrameImageUrl) {
+    content.push({ type: 'image_url', image_url: { url: refs.firstFrameImageUrl }, role: 'reference_image' })
+  }
+  for (const url of refs.referenceImageUrls ?? []) {
+    content.push({ type: 'image_url', image_url: { url }, role: 'reference_image' })
+  }
+  if (refs.referenceVideoUrl) {
+    content.push({ type: 'video_url', video_url: { url: refs.referenceVideoUrl }, role: 'reference_video' })
+  }
+  if (refs.referenceAudioUrl) {
+    content.push({ type: 'audio_url', audio_url: { url: refs.referenceAudioUrl }, role: 'reference_audio' })
+  }
+  return content
+}
+
 async function dashscopeSubmit(input: {
   model: string
   prompt: string
@@ -311,6 +354,217 @@ async function dashscopePoll(input: {
 // 统一 submit / poll(根据 model id 派发)
 // ====================================================================
 
+// ====================================================================
+// 即梦 (Volcengine Visual Service) —— Sigv4 签名 + submit/poll
+//
+//  签名算法跟 AWS Sigv4 同源(火山引擎自家版本),Header 鉴权:
+//    1) Canonical Request:
+//         METHOD\nURI\nQUERY\nCANONICAL_HEADERS\nSIGNED_HEADERS\nHEX(SHA256(BODY))
+//    2) String to Sign:
+//         HMAC-SHA256\nX-DATE\nCREDENTIAL_SCOPE\nHEX(SHA256(canonical_request))
+//    3) Signing Key:
+//         HMAC(HMAC(HMAC(HMAC(SK, date), region), service), "request")
+//    4) Header:
+//         Authorization: HMAC-SHA256 Credential=AK/SCOPE, SignedHeaders=..., Signature=HEX
+// ====================================================================
+
+function hmac(key: Buffer | string, data: string): Buffer {
+  return createHmac('sha256', key).update(data, 'utf8').digest()
+}
+function sha256Hex(data: string): string {
+  return createHash('sha256').update(data, 'utf8').digest('hex')
+}
+
+function volcSign(opts: {
+  ak: string
+  sk: string
+  method: 'GET' | 'POST'
+  host: string
+  path: string         // 始终 '/'
+  query: string        // 已经按 RFC3986 编码 & 字典排序的 query string,不带前导 '?'
+  body: string         // 原始请求体(JSON 字符串)
+  region: string
+  service: string
+}): Record<string, string> {
+  const now = new Date()
+  // X-Date: 20240720T103939Z
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const xDate =
+    `${now.getUTCFullYear()}${pad(now.getUTCMonth() + 1)}${pad(now.getUTCDate())}` +
+    `T${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}Z`
+  const shortDate = xDate.slice(0, 8)
+
+  const bodyHash = sha256Hex(opts.body)
+  const headers: Record<string, string> = {
+    'host': opts.host,
+    'x-date': xDate,
+    'x-content-sha256': bodyHash,
+    'content-type': 'application/json',
+  }
+  const signedHeaderNames = Object.keys(headers).sort()
+  const canonicalHeaders =
+    signedHeaderNames.map((k) => `${k}:${headers[k].trim()}\n`).join('')
+  const signedHeaders = signedHeaderNames.join(';')
+
+  const canonicalRequest = [
+    opts.method,
+    opts.path,
+    opts.query,
+    canonicalHeaders,
+    signedHeaders,
+    bodyHash,
+  ].join('\n')
+
+  const credentialScope = `${shortDate}/${opts.region}/${opts.service}/request`
+  const stringToSign = [
+    'HMAC-SHA256',
+    xDate,
+    credentialScope,
+    sha256Hex(canonicalRequest),
+  ].join('\n')
+
+  const kDate = hmac(opts.sk, shortDate)
+  const kRegion = hmac(kDate, opts.region)
+  const kService = hmac(kRegion, opts.service)
+  const kSigning = hmac(kService, 'request')
+  const signature = createHmac('sha256', kSigning).update(stringToSign, 'utf8').digest('hex')
+
+  const authorization =
+    `HMAC-SHA256 Credential=${opts.ak}/${credentialScope}, ` +
+    `SignedHeaders=${signedHeaders}, Signature=${signature}`
+
+  return {
+    Host: opts.host,
+    'X-Date': xDate,
+    'X-Content-Sha256': bodyHash,
+    'Content-Type': 'application/json',
+    Authorization: authorization,
+  }
+}
+
+function getJimengConfig() {
+  return {
+    ak: process.env.JIMENG_ACCESS_KEY || process.env.VOLC_ACCESSKEY,
+    sk: process.env.JIMENG_SECRET_KEY || process.env.VOLC_SECRETKEY,
+  }
+}
+
+/** frames = 24 * 秒数 + 1,且仅取 [121, 241](即 5s / 10s) */
+function jimengFramesFromDuration(duration?: number): number {
+  if (!duration) return 121
+  return duration >= 8 ? 241 : 121
+}
+
+async function jimengCall(opts: {
+  ak: string
+  sk: string
+  action: 'CVSync2AsyncSubmitTask' | 'CVSync2AsyncGetResult'
+  body: Record<string, unknown>
+}): Promise<{ ok: true; json: any } | { ok: false; error: string }> {
+  // Query 必须按字典序、RFC3986 编码,且不带前导 '?'
+  // Action & Version 都不含特殊字符,直接拼即可
+  const query = `Action=${opts.action}&Version=${JIMENG_VERSION}`
+  const bodyStr = JSON.stringify(opts.body)
+  const headers = volcSign({
+    ak: opts.ak,
+    sk: opts.sk,
+    method: 'POST',
+    host: JIMENG_HOST,
+    path: '/',
+    query,
+    body: bodyStr,
+    region: JIMENG_REGION,
+    service: JIMENG_SERVICE,
+  })
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 30_000)
+  try {
+    const res = await fetch(`https://${JIMENG_HOST}/?${query}`, {
+      method: 'POST',
+      headers,
+      body: bodyStr,
+      signal: controller.signal,
+    })
+    clearTimeout(timeout)
+    const text = await res.text().catch(() => '')
+    let json: any = {}
+    try { json = JSON.parse(text) } catch {}
+    if (!res.ok && (json?.code ?? 0) !== 10000) {
+      return { ok: false, error: `[jimeng] ${opts.action} HTTP ${res.status}: ${text.slice(0, 300)}` }
+    }
+    return { ok: true, json }
+  } catch (e) {
+    clearTimeout(timeout)
+    const msg = e instanceof Error ? (e.name === 'AbortError' ? `${opts.action} timeout (30s)` : e.message) : 'fetch failed'
+    return { ok: false, error: `[jimeng] network: ${msg}` }
+  }
+}
+
+async function jimengSubmit(input: {
+  ak: string
+  sk: string
+  prompt: string
+  firstFrameImageUrl?: string
+  aspectRatio?: string
+  duration?: number
+  seed?: number
+}): Promise<{ ok: true; taskId: string } | { ok: false; error: string }> {
+  const body: Record<string, unknown> = {
+    req_key: JIMENG_REQ_KEY,
+    prompt: input.prompt,
+    frames: jimengFramesFromDuration(input.duration),
+    aspect_ratio: input.aspectRatio && input.aspectRatio !== 'adaptive' ? input.aspectRatio : '16:9',
+    seed: typeof input.seed === 'number' ? input.seed : -1,
+  }
+  if (input.firstFrameImageUrl) body.image_urls = [input.firstFrameImageUrl]
+
+  const r = await jimengCall({ ak: input.ak, sk: input.sk, action: 'CVSync2AsyncSubmitTask', body })
+  if (!r.ok) return r
+  const code = r.json?.code
+  const taskId = r.json?.data?.task_id
+  if (code !== 10000 || !taskId) {
+    return { ok: false, error: `[jimeng] submit code=${code} msg=${r.json?.message || 'no task_id'}` }
+  }
+  return { ok: true, taskId }
+}
+
+async function jimengPoll(input: {
+  ak: string
+  sk: string
+  taskId: string
+}): Promise<
+  | { ok: true; status: SeedanceProgress; videoUrl: string | null; raw: any }
+  | { ok: false; error: string; status?: SeedanceProgress; raw?: any }
+> {
+  const r = await jimengCall({
+    ak: input.ak,
+    sk: input.sk,
+    action: 'CVSync2AsyncGetResult',
+    body: { req_key: JIMENG_REQ_KEY, task_id: input.taskId },
+  })
+  if (!r.ok) return { ok: false, error: r.error }
+  const code = r.json?.code
+  const data = r.json?.data || {}
+  // code != 10000 表示业务错误(审核 / 限流 / 内部错误等)
+  if (code !== 10000) {
+    return {
+      ok: false,
+      error: `[jimeng] poll code=${code} msg=${r.json?.message || 'unknown'}`,
+      status: 'failed',
+      raw: r.json,
+    }
+  }
+  // status: in_queue / generating / done / not_found / expired
+  const raw = (data.status || '').toLowerCase()
+  let status: SeedanceProgress = 'queued'
+  if (raw === 'in_queue') status = 'queued'
+  else if (raw === 'generating') status = 'running'
+  else if (raw === 'done') status = data.video_url ? 'succeeded' : 'failed'
+  else if (raw === 'not_found' || raw === 'expired') status = 'failed'
+  return { ok: true, status, videoUrl: data.video_url || null, raw: r.json }
+}
+
 type SubmitInput = {
   model: string
   prompt: string
@@ -320,21 +574,28 @@ type SubmitInput = {
   duration?: number
   generateAudio?: boolean
   watermark?: boolean
+  // 新增:ARK Seedance 完整参考素材(2026/06)
+  referenceVideoUrl?: string
+  referenceAudioUrl?: string
 }
 
-type SubmitResult = { ok: true; taskId: string; model: string; backend: 'ark' | 'dashscope' } | { ok: false; error: string }
+type VideoBackend = 'ark' | 'dashscope' | 'jimeng'
+type SubmitResult = { ok: true; taskId: string; model: string; backend: VideoBackend } | { ok: false; error: string }
 
 async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
   const backend = getVideoBackend(input.model)
   if (backend === 'ark') {
     const { apiKey, baseUrl } = getArkConfig()
     if (!apiKey) return { ok: false, error: 'ARK_API_KEY not configured' }
-    // 构造 ARK content 数组
-    const content: ContentItem[] = [{ type: 'text', text: input.prompt }]
-    for (const m of input.media) {
-      // ARK 的角色 = 'reference_image'(不论 DashScope 是 first_frame 还是 reference_image,都当参考)
-      content.push({ type: 'image_url', image_url: { url: m.url }, role: 'reference_image' })
-    }
+    // 构造 ARK content 数组 —— 按官方 cURL 示例:text + 多 reference_image + 可选 reference_video / reference_audio
+    const firstFrameImageUrl = input.media.find((m) => m.type === 'first_frame')?.url
+    const referenceImageUrls = input.media.filter((m) => m.type === 'reference_image').map((m) => m.url)
+    const content = buildArkContent(input.prompt, {
+      firstFrameImageUrl,
+      referenceImageUrls,
+      referenceVideoUrl: input.referenceVideoUrl,
+      referenceAudioUrl: input.referenceAudioUrl,
+    })
     const r = await arkSubmit({
       model: input.model,
       content,
@@ -346,6 +607,28 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
       baseUrl,
     })
     return r.ok ? { ok: true, taskId: r.taskId, model: r.model, backend: 'ark' } : { ok: false, error: r.error }
+  }
+  if (backend === 'jimeng') {
+    const { ak, sk } = getJimengConfig()
+    if (!ak || !sk) {
+      return {
+        ok: false,
+        error: '[jimeng] 缺少 JIMENG_ACCESS_KEY / JIMENG_SECRET_KEY,请在 Project Settings → Secrets 添加后再试。',
+      }
+    }
+    const firstFrameImageUrl =
+      input.media.find((m) => m.type === 'first_frame')?.url ||
+      input.media.find((m) => m.type === 'reference_image')?.url
+    const r = await jimengSubmit({
+      ak, sk,
+      prompt: input.prompt,
+      firstFrameImageUrl,
+      aspectRatio: input.ratio,
+      duration: input.duration,
+    })
+    return r.ok
+      ? { ok: true, taskId: r.taskId, model: input.model, backend: 'jimeng' }
+      : { ok: false, error: r.error }
   }
   // DashScope
   const { apiKey } = getDashScopeConfig()
@@ -362,7 +645,7 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
   return r.ok ? { ok: true, taskId: r.taskId, model: r.model, backend: 'dashscope' } : { ok: false, error: r.error }
 }
 
-type PollInput = { taskId: string; backend: 'ark' | 'dashscope' }
+type PollInput = { taskId: string; backend: VideoBackend }
 
 type PollResult =
   | { ok: true; status: SeedanceProgress; videoUrl: string | null; raw: any }
@@ -373,6 +656,11 @@ async function pollVideoTask(input: PollInput): Promise<PollResult> {
     const { apiKey, baseUrl } = getArkConfig()
     if (!apiKey) return { ok: false, error: 'ARK_API_KEY not configured' }
     return arkPoll({ taskId: input.taskId, apiKey, baseUrl })
+  }
+  if (input.backend === 'jimeng') {
+    const { ak, sk } = getJimengConfig()
+    if (!ak || !sk) return { ok: false, error: '[jimeng] 缺少 JIMENG_ACCESS_KEY / JIMENG_SECRET_KEY' }
+    return jimengPoll({ ak, sk, taskId: input.taskId })
   }
   const { apiKey } = getDashScopeConfig()
   if (!apiKey) return { ok: false, error: 'Qwen / DASHSCOPE_API_KEY not configured' }
@@ -397,11 +685,17 @@ const SubmitServerInput = z.object({
 export const submitVideoTaskFn = createServerFn({ method: 'POST' })
   .inputValidator((d: unknown) => SubmitServerInput.parse(d))
   .handler(async ({ data }) => {
-    // 把 ARK 风格的 content 数组转成统一 media 形式
+    // 把 ARK 风格的 content 数组转成统一 media + ref 形式
     const media: DashScopeMediaItem[] = []
+    let referenceVideoUrl: string | undefined
+    let referenceAudioUrl: string | undefined
     for (const item of (data.content as any[])) {
       if (item?.type === 'image_url' && item?.image_url?.url) {
         media.push({ type: 'reference_image', url: item.image_url.url })
+      } else if (item?.type === 'video_url' && item?.video_url?.url) {
+        referenceVideoUrl = item.video_url.url
+      } else if (item?.type === 'audio_url' && item?.audio_url?.url) {
+        referenceAudioUrl = item.audio_url.url
       }
     }
     const prompt = (data.content as any[]).find((i) => i?.type === 'text')?.text || ''
@@ -415,6 +709,8 @@ export const submitVideoTaskFn = createServerFn({ method: 'POST' })
       duration: data.duration,
       generateAudio: data.generateAudio,
       watermark: data.watermark,
+      referenceVideoUrl,
+      referenceAudioUrl,
     })
     if (!r.ok) return { ok: false as const, error: r.error }
     return { ok: true as const, taskId: r.taskId, model: r.model, backend: r.backend }
@@ -424,7 +720,7 @@ export const submitVideoTaskFn = createServerFn({ method: 'POST' })
 
 const PollServerInput = z.object({
   taskId: z.string().min(1).max(200),
-  backend: z.enum(['ark', 'dashscope']),
+  backend: z.enum(['ark', 'dashscope', 'jimeng']),
 })
 
 export const pollVideoTaskFn = createServerFn({ method: 'POST' })
@@ -451,7 +747,7 @@ const GenerateVideoInput = z.object({
   referenceAudioUrl: z.string().url().optional(),
   model: z.string().max(200).optional(),
   ratio: z.enum(SUPPORTED_RATIOS).default('16:9'),
-  duration: z.number().int().min(1).max(60).default(5),
+  duration: z.number().int().min(1).max(60).default(5),  // ARK 示例最大 11s,这里留余量到 60
   resolution: z.enum(['480P', '720P', '1080P']).default('720P'),
   generateAudio: z.boolean().optional(),
   watermark: z.boolean().optional(),
@@ -484,6 +780,8 @@ export const generateVideo = createServerFn({ method: 'POST' })
       duration: data.duration,
       generateAudio: data.generateAudio,
       watermark: data.watermark,
+      referenceVideoUrl: data.referenceVideoUrl,
+      referenceAudioUrl: data.referenceAudioUrl,
     })
     if (!submit.ok) {
       return { ok: false as const, error: submit.error, taskId: undefined, backend }
