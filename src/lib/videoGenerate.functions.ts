@@ -30,6 +30,7 @@
 import './loadEnv'  // 2026 修复:必须最先导入,让 ARK/Qwen env 在读取前就绪
 import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
+import { createHash, createHmac } from 'node:crypto'
 
 // ---------- ARK (Seedance) 配置 ----------
 
@@ -70,6 +71,18 @@ export const HAPPYHORSE_MODELS = {
   'happyhorse-1.0-i2v': 'HappyHorse 1.0 (图生视频·首帧)',
   'happyhorse-1.0-r2v': 'HappyHorse 1.0 (参考生视频)',
 } as const
+
+export const JIMENG_MODELS = {
+  'jimeng-3.0-pro': '即梦 3.0 Pro (文生视频)',
+  'jimeng-3.0-pro-i2v': '即梦 3.0 Pro (图生视频·首帧)',
+} as const
+
+// 即梦 3.0 Pro 文生/图生视频统一用同一个 req_key
+const JIMENG_REQ_KEY = 'jimeng_ti2v_v30_pro'
+const JIMENG_HOST = 'visual.volcengineapi.com'
+const JIMENG_REGION = 'cn-north-1'
+const JIMENG_SERVICE = 'cv'
+const JIMENG_VERSION = '2022-08-31'
 
 // ====================================================================
 // 通用类型
