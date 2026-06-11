@@ -218,6 +218,34 @@ function getDashScopeConfig() {
 
 type DashScopeMediaItem = { type: 'first_frame' | 'reference_image'; url: string }
 
+// ----- ARK 内容拼装 -----
+type ArkReferences = {
+  referenceImageUrls?: string[]
+  firstFrameImageUrl?: string
+  referenceVideoUrl?: string
+  referenceAudioUrl?: string
+}
+
+/**
+ * 按 ARK 官方 cURL 示例拼 content 数组(text + 多个 image_url + 可选 video_url / audio_url)
+ */
+export function buildArkContent(prompt: string, refs: ArkReferences): ContentItem[] {
+  const content: ContentItem[] = [{ type: 'text', text: prompt }]
+  if (refs.firstFrameImageUrl) {
+    content.push({ type: 'image_url', image_url: { url: refs.firstFrameImageUrl }, role: 'reference_image' })
+  }
+  for (const url of refs.referenceImageUrls ?? []) {
+    content.push({ type: 'image_url', image_url: { url }, role: 'reference_image' })
+  }
+  if (refs.referenceVideoUrl) {
+    content.push({ type: 'video_url', video_url: { url: refs.referenceVideoUrl }, role: 'reference_video' })
+  }
+  if (refs.referenceAudioUrl) {
+    content.push({ type: 'audio_url', audio_url: { url: refs.referenceAudioUrl }, role: 'reference_audio' })
+  }
+  return content
+}
+
 async function dashscopeSubmit(input: {
   model: string
   prompt: string
