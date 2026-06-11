@@ -59,6 +59,7 @@ export function getVideoBackend(modelId: string | null | undefined): 'ark' | 'da
 
 export const SEEDANCE_MODELS = {
   'doubao-seedance-2-0-260128': 'Doubao Seedance 2.0',
+  'doubao-seedance-2-0-fast-260128': 'Doubao Seedance 2.0 Fast (720p)',
   'doubao-seedance-1-0-pro-250528': 'Doubao Seedance 1.0 Pro (T2V)',
   'doubao-seedance-1-0-lite-i2v-250428': 'Doubao Seedance 1.0 Lite (I2V)',
 } as const
