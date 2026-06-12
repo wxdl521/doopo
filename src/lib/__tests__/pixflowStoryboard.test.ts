@@ -174,8 +174,8 @@ describe('generateStoryboardShotImage — 高层路由分发源码不变量', ()
 
 describe('UI 模型清单 —— 不允许裸 openai/gpt-image-2', () => {
   it('IMAGE_MODELS 不应包含已下线的裸 id', () => {
-    // IMAGE_MODELS 里仍允许保留 openai/gpt-image-2 这类 legacy 条目
-    // (它走 openrouter,不会打到 ARK)。关键不变量是:
+    // IMAGE_MODELS 不允许保留 openai/gpt-image-2 这类裸 legacy 条目。
+    // 关键不变量是:
     //   1) 不存在 ARK Seedream 没有但 id 又会被路由到 Seedream 的"幽灵 id"
     //   2) 凡是 pixflow 提供的图像模型,key 必须带 pixflow/ 前缀
     const pixflowEntries = IMAGE_MODELS.filter((m) => /gemini-.*image|gpt-image/i.test(m.key))
