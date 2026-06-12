@@ -46,13 +46,6 @@ const imageModelOptions = [
   { id: 'pixflow/gemini-3.1-flash-image-preview', label: 'Nano Banana 2', sub: 'Pixflow · Google · 快速' },
   { id: 'pixflow/gemini-3.1-flash-image', label: 'Gemini 3.1 Flash Image', sub: 'Pixflow · Google · 通用' },
 
-  // ---- Lovable AI Gateway(openai/gpt-image-*, google/gemini-*-image*)----
-  { id: '__sep__', label: '—— Lovable AI Gateway ——', sub: '' },
-  { id: 'openai/gpt-image-2', label: 'GPT Image 2', sub: 'Lovable Gateway · OpenAI · 高级' },
-  { id: 'openai/gpt-image-1-mini', label: 'GPT Image 1 Mini', sub: 'Lovable Gateway · OpenAI · 低成本' },
-  { id: 'google/gemini-3-pro-image-preview', label: 'Gemini 3 Pro Image (LG)', sub: 'Lovable Gateway · Google · 高质量' },
-  { id: 'google/gemini-3.1-flash-image-preview', label: 'Gemini 3.1 Flash Image (LG)', sub: 'Lovable Gateway · Google · 快速' },
-  { id: 'google/gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image (Nano Banana)', sub: 'Lovable Gateway · Google · 通用' },
 ]
 // 过滤掉"分隔符"项(只是 UI 视觉分组,不能选)
 const realImageModelOptions = imageModelOptions.filter((m) => m.id !== '__sep__')

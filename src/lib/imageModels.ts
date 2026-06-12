@@ -29,6 +29,4 @@ export const IMAGE_MODELS: ImageModelOption[] = [
   { key: 'wan2.5-t2i-preview', label: '万相 2.5 文生图 Preview', sub: 'Wan · 自由尺寸' },
   { key: 'wanx2.1-t2i-turbo', label: '万相 2.1 极速版', sub: 'Wanx' },
   { key: 'wanx2.1-t2i-plus', label: '万相 2.1 专业版', sub: 'Wanx' },
-  { key: 'google/gemini-3.1-flash-image-preview', label: 'Gemini Nano Banana 2', sub: 'Google · 快速' },
-  { key: 'openai/gpt-image-2', label: 'GPT Image 2', sub: 'OpenAI · 高级' },
 ]
