@@ -893,11 +893,11 @@ export const regenerateStoryboardShot = createServerFn({ method: 'POST' })
     const requested = data.model?.trim() || ''
     if (requested.toLowerCase().startsWith('pixflow/')) {
       const { callPixflowImage } = await import('./pixflow.functions')
-      const refNote = `\n\n[注] 参考图链接(模型不直接读图,请按描述/修改意见还原):\n${images.map((u, i) => `图${i + 1}: ${u}`).join('\n')}`
       const r = await callPixflowImage({
-        prompt: appendNegative(instruction, negative) + refNote,
+        prompt: appendNegative(instruction, negative),
         model: requested,
-        size: '1024x1024',
+        size: '2K',
+        referenceImages: images,
       })
       if (!r.url) return { ok: false as const, error: r.error || 'Pixflow 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
