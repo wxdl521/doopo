@@ -44,9 +44,7 @@ const imageModelOptions = [
   { id: 'wanx2.1-t2i-plus', label: '万相 2.1 专业版', sub: 'Wanx' },
   { id: 'pixflow/gemini-3-pro-image-preview', label: 'Gemini 3 Pro Image', sub: 'Pixflow · Google · 高质量' },
   { id: 'pixflow/gemini-3.1-flash-image-preview', label: 'Nano Banana 2', sub: 'Pixflow · Google · 快速' },
-  { id: 'pixflow/gemini-2.5-flash-image', label: 'Nano Banana', sub: 'Pixflow · Google' },
-  { id: 'pixflow/gpt-image-2', label: 'GPT Image 2', sub: 'Pixflow · OpenAI · 高级' },
-  { id: 'pixflow/gpt-image-1-mini', label: 'GPT Image 1 Mini', sub: 'Pixflow · OpenAI · 快速' },
+  { id: 'pixflow/gemini-3.1-flash-image', label: 'Gemini 3.1 Flash Image', sub: 'Pixflow · Google · 通用' },
 ]
 // 过滤掉"分隔符"项(只是 UI 视觉分组,不能选)
 const realImageModelOptions = imageModelOptions.filter((m) => m.id !== '__sep__')
