@@ -15,6 +15,7 @@ export const IMAGE_MODELS: ImageModelOption[] = [
 
   // ---- Pixflow(api.pixflow.im · OpenAI 兼容)----
   { key: '', label: '—— Pixflow Gateway ——', sub: undefined, legacy: true },
+  { key: 'pixflow/gpt-image-2', label: 'GPT Image 2', sub: 'Pixflow · OpenAI · Image2' },
   { key: 'pixflow/gemini-3-pro-image-preview', label: 'Gemini 3 Pro Image', sub: 'Pixflow · Google · 高质量' },
   { key: 'pixflow/gemini-3.1-flash-image-preview', label: 'Gemini 3.1 Flash Image (Nano Banana 2)', sub: 'Pixflow · Google · 快速' },
   { key: 'pixflow/gemini-3.1-flash-image', label: 'Gemini 3.1 Flash Image', sub: 'Pixflow · Google · 通用' },

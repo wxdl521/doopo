@@ -188,6 +188,8 @@ describe('UI 模型清单 —— 不允许裸 openai/gpt-image-2', () => {
         `图像模型 id 必须是 legacy(openai/google) 或 pixflow/ 前缀,但得到: ${m.key}`,
       ).toBe(true)
     }
+    expect(IMAGE_MODELS.some((m) => m.key === 'pixflow/gpt-image-2')).toBe(true)
+    expect(IMAGE_MODELS.some((m) => m.key === 'openai/gpt-image-2')).toBe(false)
   })
 
   it('历史裸 openai/gpt-image-2 会先归一成 pixflow/gpt-image-2,不会落到 ARK', async () => {
