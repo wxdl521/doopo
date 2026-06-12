@@ -1525,10 +1525,7 @@ export const regenerateSceneImage = createServerFn({ method: 'POST' })
     const { resolveProjectStyle } = await import('./visualStyles')
     const styleSpec = resolveProjectStyle(data.projectStyle)
     const { positive, negative, size } = buildScenePrompts(data, styleSpec)
-
-    const { apiKey, baseUrl, model: defaultModel } = getArkConfig()
-    if (!apiKey) return { ok: false as const, error: 'ARK_API_KEY not configured' }
-    const model = data.model?.trim() || defaultModel
+    const requested = normalizeImageModelForRouting(data.model)
     const prompt = appendNegative(positive, negative)
 
     // 2026/06:查看提示词模式
@@ -1538,9 +1535,26 @@ export const regenerateSceneImage = createServerFn({ method: 'POST' })
         previewPrompt: prompt,
         negativePrompt: negative,
         promptSize: normalizeSeedreamSize(size),
-        promptExtra: { model, route: '场景图重生', mode: data.mode, referenceImage: data.referenceImageUrl },
+        promptExtra: { model: requested || DEFAULT_MODEL, route: '场景图重生', mode: data.mode, referenceImage: data.referenceImageUrl },
       } as any
     }
+
+    if (requested.toLowerCase().startsWith('pixflow/')) {
+      const { callPixflowImage } = await import('./pixflow.functions')
+      const r = await callPixflowImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+        quality: 'high',
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'Pixflow 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+
+    const { apiKey, baseUrl, model: defaultModel } = getArkConfig()
+    if (!apiKey) return { ok: false as const, error: 'ARK_API_KEY not configured' }
+    const model = requested || defaultModel
 
     const result = await callSeedreamImages(
       {
