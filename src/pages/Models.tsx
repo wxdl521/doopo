@@ -29,6 +29,37 @@ const AI_MODELS: AIModel[] = [
     vendor: 'Meta', tagline: '开源·推理强', taglineEn: 'Open Source · Strong Reasoning',
     gradient: 'from-orange-500 to-rose-700', status: 'used',
   },
+  // ---- Pixflow Gemini 全系列对话模型 ----
+  {
+    id: 'pixflow/gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview', nameEn: 'Gemini 3.1 Pro Preview',
+    vendor: 'Pixflow · Google', tagline: '次世代推理 · pixflow', taglineEn: 'Next-gen reasoning · pixflow',
+    gradient: 'from-sky-500 to-indigo-600', status: 'available',
+  },
+  {
+    id: 'pixflow/gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', nameEn: 'Gemini 3 Flash Preview',
+    vendor: 'Pixflow · Google', tagline: '快速通用 · pixflow', taglineEn: 'Fast all-rounder · pixflow',
+    gradient: 'from-sky-400 to-blue-600', status: 'available',
+  },
+  {
+    id: 'pixflow/gemini-3.1-flash-lite-preview', name: 'Gemini 3.1 Flash Lite', nameEn: 'Gemini 3.1 Flash Lite',
+    vendor: 'Pixflow · Google', tagline: '高吞吐低成本 · pixflow', taglineEn: 'High-volume · pixflow',
+    gradient: 'from-cyan-400 to-sky-600', status: 'available',
+  },
+  {
+    id: 'pixflow/gemini-2.5-pro', name: 'Gemini 2.5 Pro', nameEn: 'Gemini 2.5 Pro',
+    vendor: 'Pixflow · Google', tagline: '强多模态推理 · pixflow', taglineEn: 'Strong multimodal · pixflow',
+    gradient: 'from-indigo-500 to-purple-700', status: 'available',
+  },
+  {
+    id: 'pixflow/gemini-2.5-flash', name: 'Gemini 2.5 Flash', nameEn: 'Gemini 2.5 Flash',
+    vendor: 'Pixflow · Google', tagline: '均衡 · pixflow', taglineEn: 'Balanced · pixflow',
+    gradient: 'from-blue-500 to-indigo-600', status: 'available',
+  },
+  {
+    id: 'pixflow/gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', nameEn: 'Gemini 2.5 Flash Lite',
+    vendor: 'Pixflow · Google', tagline: '最低成本 · pixflow', taglineEn: 'Lowest cost · pixflow',
+    gradient: 'from-teal-400 to-cyan-600', status: 'available',
+  },
 ]
 
 type VideoModel = {
@@ -91,6 +122,32 @@ const IMAGE_MODELS: ImageModel[] = [
     id: 'doubao-seedream-5-0-260128', name: 'Doubao Seedream 5.0', nameEn: 'Doubao Seedream 5.0',
     vendor: '火山方舟 · ARK', tagline: '文生图·图生图·多图融合', taglineEn: 'T2I · I2I · Multi-Image Fusion',
     gradient: 'from-amber-500 to-yellow-600', status: 'available',
+  },
+  // ---- Pixflow 图像模型 ----
+  {
+    id: 'pixflow/gpt-image-2', name: 'GPT Image 2', nameEn: 'GPT Image 2',
+    vendor: 'Pixflow · OpenAI', tagline: 'SOTA 文生图 · pixflow', taglineEn: 'SOTA T2I · pixflow',
+    gradient: 'from-rose-500 to-pink-600', status: 'available',
+  },
+  {
+    id: 'pixflow/gpt-image-1-mini', name: 'GPT Image 1 Mini', nameEn: 'GPT Image 1 Mini',
+    vendor: 'Pixflow · OpenAI', tagline: '低成本图像 · pixflow', taglineEn: 'Cost-efficient · pixflow',
+    gradient: 'from-pink-400 to-rose-500', status: 'available',
+  },
+  {
+    id: 'pixflow/gemini-3-pro-image-preview', name: 'Gemini 3 Pro Image', nameEn: 'Gemini 3 Pro Image',
+    vendor: 'Pixflow · Google', tagline: '高质量图像 · pixflow', taglineEn: 'High-quality · pixflow',
+    gradient: 'from-indigo-500 to-violet-700', status: 'available',
+  },
+  {
+    id: 'pixflow/gemini-3.1-flash-image-preview', name: 'Nano Banana 2', nameEn: 'Nano Banana 2',
+    vendor: 'Pixflow · Google', tagline: '快速高质量 · pixflow', taglineEn: 'Fast HQ · pixflow',
+    gradient: 'from-yellow-400 to-amber-600', status: 'available',
+  },
+  {
+    id: 'pixflow/gemini-2.5-flash-image', name: 'Nano Banana', nameEn: 'Nano Banana',
+    vendor: 'Pixflow · Google', tagline: '图像生成/编辑 · pixflow', taglineEn: 'Gen/edit · pixflow',
+    gradient: 'from-lime-400 to-emerald-600', status: 'available',
   },
   {
     id: 'qwen-image-2.0', name: 'Qwen Image 2.0', nameEn: 'Qwen Image 2.0',
