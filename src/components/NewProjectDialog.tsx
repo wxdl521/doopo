@@ -42,6 +42,7 @@ const imageModelOptions = [
   { id: 'wan2.2-t2i-flash', label: '万相 2.2 极速版', sub: 'Wan · 速度优先' },
   { id: 'wanx2.1-t2i-turbo', label: '万相 2.1 极速版', sub: 'Wanx' },
   { id: 'wanx2.1-t2i-plus', label: '万相 2.1 专业版', sub: 'Wanx' },
+  { id: 'pixflow/gpt-image-2', label: 'GPT Image 2', sub: 'Pixflow · OpenAI · Image2' },
   { id: 'pixflow/gemini-3-pro-image-preview', label: 'Gemini 3 Pro Image', sub: 'Pixflow · Google · 高质量' },
   { id: 'pixflow/gemini-3.1-flash-image-preview', label: 'Nano Banana 2', sub: 'Pixflow · Google · 快速' },
   { id: 'pixflow/gemini-3.1-flash-image', label: 'Gemini 3.1 Flash Image', sub: 'Pixflow · Google · 通用' },

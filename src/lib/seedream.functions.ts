@@ -54,6 +54,17 @@ export function isSeedreamModel(modelId: string | null | undefined): boolean {
 }
 
 /**
+ * 历史项目里可能残留裸 `openai/gpt-image-2`。它不是 ARK/Seedream 模型,
+ * 必须归一到 Pixflow 前缀路由,否则会被错误 POST 到 ARK /images/generations 并 404。
+ */
+export function normalizeImageModelForRouting(modelId: string | null | undefined): string {
+  const m = (modelId || '').trim()
+  const lower = m.toLowerCase()
+  if (lower === 'openai/gpt-image-2' || lower === 'gpt-image-2') return 'pixflow/gpt-image-2'
+  return m
+}
+
+/**
  * Seedream 最小像素数限制(实测 2026/06):
  * 任何 size 的 WxH 必须 >= 3,686,400 像素,否则返回
  * `code: InvalidParameter, message: "image size must be at least 3686400 pixels"`。
@@ -219,7 +230,7 @@ const GenerateImageInput = z.object({
 export const generateImage = createServerFn({ method: 'POST' })
   .inputValidator((d: unknown) => GenerateImageInput.parse(d))
   .handler(async ({ data }) => {
-    const requested = (data.model || '').trim()
+    const requested = normalizeImageModelForRouting(data.model)
     // 委托给 Lovable AI Gateway(openai/gpt-image-*, google/gemini-*-image*)
     {
       const { isLovableGatewayImageModel, callLovableGatewayImage } = await import('./lovableImage.functions')
@@ -630,10 +641,7 @@ export const regenerateCharacterLook = createServerFn({ method: 'POST' })
       : `${data.characterName} · ${data.lookLabel}`
 
     const { positive, negative, size } = buildCharacterPrompts({ data, styleSpec, cardTitle })
-
-    const { apiKey, baseUrl, model: defaultModel } = getArkConfig()
-    if (!apiKey) return { ok: false as const, error: 'ARK_API_KEY not configured' }
-    const model = data.model?.trim() || defaultModel
+    const requested = normalizeImageModelForRouting(data.model)
     const prompt = appendNegative(positive, negative)
 
     // 2026/06:查看提示词模式 —— 不调 Seedream,直接把 prompt 返回
@@ -643,9 +651,26 @@ export const regenerateCharacterLook = createServerFn({ method: 'POST' })
         previewPrompt: prompt,
         negativePrompt: negative,
         promptSize: normalizeSeedreamSize(size),
-        promptExtra: { model, mode: data.mode, referenceImage: data.referenceImageUrl },
+        promptExtra: { model: requested || DEFAULT_MODEL, mode: data.mode, referenceImage: data.referenceImageUrl },
       }
     }
+
+    if (requested.toLowerCase().startsWith('pixflow/')) {
+      const { callPixflowImage } = await import('./pixflow.functions')
+      const r = await callPixflowImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+        quality: 'high',
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'Pixflow 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+
+    const { apiKey, baseUrl, model: defaultModel } = getArkConfig()
+    if (!apiKey) return { ok: false as const, error: 'ARK_API_KEY not configured' }
+    const model = requested || defaultModel
 
     const result = await callSeedreamImages(
       { model, prompt, image: data.referenceImageUrl, size: normalizeSeedreamSize(size), output_format: 'png', watermark: false },
@@ -766,10 +791,9 @@ export const generateStoryboardShotImage = createServerFn({ method: 'POST' })
     const instruction = buildShotInstruction(data, styleSpec)
     const negative = buildShotNegative()
 
-    const requested = data.model?.trim() || ''
-    // 委托给 Pixflow(gpt-image-2 / gemini 图像模型)。注意:Pixflow
-    // /v1/images/generations 不接受多参考图 I2I,只能纯文本生图,
-    // 因此把参考图清单作为文字描述塞进 prompt 头部。
+    const requested = normalizeImageModelForRouting(data.model)
+    // 委托给 Pixflow(gpt-image-2 / gemini 图像模型)。gpt-image-* 有参考图时
+    // 在 pixflow.functions.ts 内部切到 /v1/images/edits,避免误走 ARK/Seedream。
     {
       const { isLovableGatewayImageModel, callLovableGatewayImage } = await import('./lovableImage.functions')
       if (isLovableGatewayImageModel(requested)) {
@@ -811,7 +835,7 @@ export const generateStoryboardShotImage = createServerFn({ method: 'POST' })
 
     const { apiKey, baseUrl, model: defaultModel } = getArkConfig()
     if (!apiKey) return { ok: false as const, error: 'ARK_API_KEY not configured' }
-    const model = data.model?.trim() || defaultModel
+    const model = requested || defaultModel
     const prompt = appendNegative(instruction, negative)
 
     // 2026/06:查看提示词模式
@@ -915,7 +939,7 @@ export const regenerateStoryboardShot = createServerFn({ method: 'POST' })
     const instruction = buildRegenShotInstruction(data, styleSpec, usedCharCount, hasScene)
     const negative = buildShotNegative()
 
-    const requested = data.model?.trim() || ''
+    const requested = normalizeImageModelForRouting(data.model)
     {
       const { isLovableGatewayImageModel, callLovableGatewayImage } = await import('./lovableImage.functions')
       if (isLovableGatewayImageModel(requested)) {
@@ -956,7 +980,7 @@ export const regenerateStoryboardShot = createServerFn({ method: 'POST' })
 
     const { apiKey, baseUrl, model: defaultModel } = getArkConfig()
     if (!apiKey) return { ok: false as const, error: 'ARK_API_KEY not configured' }
-    const model = data.model?.trim() || defaultModel
+    const model = requested || defaultModel
     const prompt = appendNegative(instruction, negative)
 
     // 2026/06:查看提示词模式
@@ -1316,9 +1340,23 @@ export const generateStoryboardPitchDeck = createServerFn({ method: 'POST' })
     ].join(', ')
     const prompt = appendNegative(buildPitchDeckPrompt({ data, styleSpec }), negative)
 
+    const requested = normalizeImageModelForRouting(data.model)
+    if (requested.toLowerCase().startsWith('pixflow/')) {
+      const { callPixflowImage } = await import('./pixflow.functions')
+      const r = await callPixflowImage({
+        prompt,
+        model: requested,
+        size: '3840x2160',
+        referenceImages: data.referenceImages || [],
+        quality: 'high',
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'Pixflow 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+
     const { apiKey, baseUrl, model: defaultModel } = getArkConfig()
     if (!apiKey) return { ok: false as const, error: 'ARK_API_KEY not configured' }
-    const model = data.model?.trim() || defaultModel
+    const model = requested || defaultModel
 
     // 2026/06:查看提示词模式 —— 跳过实际生成
     if (data.previewOnly) {
@@ -1486,10 +1524,7 @@ export const regenerateSceneImage = createServerFn({ method: 'POST' })
     const { resolveProjectStyle } = await import('./visualStyles')
     const styleSpec = resolveProjectStyle(data.projectStyle)
     const { positive, negative, size } = buildScenePrompts(data, styleSpec)
-
-    const { apiKey, baseUrl, model: defaultModel } = getArkConfig()
-    if (!apiKey) return { ok: false as const, error: 'ARK_API_KEY not configured' }
-    const model = data.model?.trim() || defaultModel
+    const requested = normalizeImageModelForRouting(data.model)
     const prompt = appendNegative(positive, negative)
 
     // 2026/06:查看提示词模式
@@ -1499,9 +1534,26 @@ export const regenerateSceneImage = createServerFn({ method: 'POST' })
         previewPrompt: prompt,
         negativePrompt: negative,
         promptSize: normalizeSeedreamSize(size),
-        promptExtra: { model, route: '场景图重生', mode: data.mode, referenceImage: data.referenceImageUrl },
+        promptExtra: { model: requested || DEFAULT_MODEL, route: '场景图重生', mode: data.mode, referenceImage: data.referenceImageUrl },
       } as any
     }
+
+    if (requested.toLowerCase().startsWith('pixflow/')) {
+      const { callPixflowImage } = await import('./pixflow.functions')
+      const r = await callPixflowImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+        quality: 'high',
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'Pixflow 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+
+    const { apiKey, baseUrl, model: defaultModel } = getArkConfig()
+    if (!apiKey) return { ok: false as const, error: 'ARK_API_KEY not configured' }
+    const model = requested || defaultModel
 
     const result = await callSeedreamImages(
       {
