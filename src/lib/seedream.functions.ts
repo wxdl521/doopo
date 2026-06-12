@@ -641,10 +641,7 @@ export const regenerateCharacterLook = createServerFn({ method: 'POST' })
       : `${data.characterName} · ${data.lookLabel}`
 
     const { positive, negative, size } = buildCharacterPrompts({ data, styleSpec, cardTitle })
-
-    const { apiKey, baseUrl, model: defaultModel } = getArkConfig()
-    if (!apiKey) return { ok: false as const, error: 'ARK_API_KEY not configured' }
-    const model = data.model?.trim() || defaultModel
+    const requested = normalizeImageModelForRouting(data.model)
     const prompt = appendNegative(positive, negative)
 
     // 2026/06:查看提示词模式 —— 不调 Seedream,直接把 prompt 返回
@@ -654,9 +651,26 @@ export const regenerateCharacterLook = createServerFn({ method: 'POST' })
         previewPrompt: prompt,
         negativePrompt: negative,
         promptSize: normalizeSeedreamSize(size),
-        promptExtra: { model, mode: data.mode, referenceImage: data.referenceImageUrl },
+        promptExtra: { model: requested || DEFAULT_MODEL, mode: data.mode, referenceImage: data.referenceImageUrl },
       }
     }
+
+    if (requested.toLowerCase().startsWith('pixflow/')) {
+      const { callPixflowImage } = await import('./pixflow.functions')
+      const r = await callPixflowImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+        quality: 'high',
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'Pixflow 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+
+    const { apiKey, baseUrl, model: defaultModel } = getArkConfig()
+    if (!apiKey) return { ok: false as const, error: 'ARK_API_KEY not configured' }
+    const model = requested || defaultModel
 
     const result = await callSeedreamImages(
       { model, prompt, image: data.referenceImageUrl, size: normalizeSeedreamSize(size), output_format: 'png', watermark: false },
