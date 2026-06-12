@@ -33,6 +33,7 @@ type FetchCall = { url: string; init?: RequestInit }
 function installFetchSpy(opts: {
   onPixflow?: (call: FetchCall) => Response | Promise<Response>
   onReferenceImage?: () => Response
+  allowOpenAIImages?: boolean
 }) {
   const calls: FetchCall[] = []
   const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
@@ -44,9 +45,21 @@ function installFetchSpy(opts: {
       throw new Error(`REGRESSION: pixflow flow leaked to ARK host (${url})`)
     }
 
-    // 老 OpenAI 兼容图像端点 —— 同样视为回归
-    if (url.includes(`${PIXFLOW_HOST}/v1/images/generations`)) {
+    // gpt-image-* 无参考图时合法走 /v1/images/generations;
+    // Gemini 模型若误打这里仍然算回归,所以用 allowOpenAIImages 显式放行
+    if (url.includes(`${PIXFLOW_HOST}/v1/images/generations`) && !opts.allowOpenAIImages) {
       throw new Error(`REGRESSION: pixflow image call hit deprecated /v1/images/generations`)
+    }
+
+    // OpenAI 兼容图像端点(gpt-image-* T2I / I2I)
+    if (
+      url.includes(`${PIXFLOW_HOST}/v1/images/generations`) ||
+      url.includes(`${PIXFLOW_HOST}/v1/images/edits`)
+    ) {
+      return new Response(
+        JSON.stringify({ data: [{ url: 'https://cdn.pixflow.im/out.png' }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
     }
 
     if (url.includes(`${PIXFLOW_HOST}/v1beta/models/`)) {
