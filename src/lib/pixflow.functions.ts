@@ -1,17 +1,20 @@
 // ====================================================================
-//  Pixflow AI Gateway —— OpenAI 兼容协议
+//  Pixflow AI Gateway —— OpenAI 兼容 + Gemini Native 混合协议
 //
 //  Base URL: https://api.pixflow.im (env: GOOGLE_GEMINI_BASE_URL 可覆盖)
-//  Auth:     Authorization: Bearer ${PIXFLOW_API_KEY}
+//  Auth (OpenAI):  Authorization: Bearer ${PIXFLOW_API_KEY}
+//  Auth (Gemini):  x-goog-api-key: ${PIXFLOW_API_KEY}
 //
 //  覆盖两类调用:
-//    1) callPixflowImage   POST /v1/images/generations
-//       支持: gpt-image-2, gpt-image-1-mini,
-//             google/gemini-2.5-flash-image, google/gemini-3-pro-image-preview,
-//             google/gemini-3.1-flash-image-preview 等
+//    1) callPixflowImage   —— 图像生成
+//       - Gemini 图像模型 → POST /v1beta/models/{id}:generateContent
+//         (responseModalities=["TEXT","IMAGE"]; 返回 inlineData base64)
+//       - gpt-image-* 模型 → POST /v1/images/generations
+//         (注:实测当前 API Key 分组不开放 OpenAI Images,会返回 404)
+//       已验证可用: gemini-3-pro-image-preview, gemini-3.1-flash-image-preview,
+//                   gemini-3.1-flash-image
 //    2) callPixflowChat    POST /v1/chat/completions
-//       支持: google/gemini-2.5-pro, google/gemini-2.5-flash,
-//             google/gemini-3-flash-preview, google/gemini-3.1-pro-preview ...
+//       支持: gemini-2.5-pro / 2.5-flash / 3-flash-preview / 3.1-pro-preview ...
 //
 //  模型 id 约定:在项目里所有 Pixflow 走的模型,UI 选项都加前缀 `pixflow/`
 //  以避免和现有 Seedream/Qwen/OpenRouter 路由冲突。本模块在调用时会
@@ -49,6 +52,8 @@ type PixflowImageInput = {
   model: string
   size?: string
   n?: number
+  /** I2I 参考图 URL 列表(Gemini Native 会下载后转 base64 注入) */
+  referenceImages?: string[]
 }
 
 type PixflowImageResult = {
@@ -58,15 +63,38 @@ type PixflowImageResult = {
   model: string
 }
 
+/** 把 size 字符串(1024x1024 / 1K / 2K)折算成 Gemini imageConfig.imageSize 档位 */
+function toGeminiImageSize(size?: string): '1K' | '2K' | '4K' {
+  if (!size) return '1K'
+  const s = size.trim().toUpperCase()
+  if (s === '1K' || s === '2K' || s === '4K') return s as '1K' | '2K' | '4K'
+  const m = s.match(/^(\d+)\s*[xX*]\s*(\d+)$/)
+  if (m) {
+    const pixels = parseInt(m[1], 10) * parseInt(m[2], 10)
+    if (pixels >= 4_000_000) return '2K'
+  }
+  return '1K'
+}
+
+/** 下载 URL 转 base64 + mime,失败返回 null(跳过该参考图) */
+async function urlToInlineData(url: string): Promise<{ mimeType: string; data: string } | null> {
+  try {
+    const ctl = new AbortController()
+    const tm = setTimeout(() => ctl.abort(), 20_000)
+    const r = await fetch(url, { signal: ctl.signal })
+    clearTimeout(tm)
+    if (!r.ok) return null
+    const buf = Buffer.from(await r.arrayBuffer())
+    const mime = r.headers.get('content-type')?.split(';')[0]?.trim() || 'image/png'
+    return { mimeType: mime, data: buf.toString('base64') }
+  } catch {
+    return null
+  }
+}
+
 /**
- * Pixflow 图像生成。返回与 Seedream/Qwen 一致的 { url, error, model } 形态。
- *
- * Gemini 系列图像模型在 OpenAI 兼容代理下,Pixflow 文档给出两种 body 形态:
- *   A) {model, prompt, n, size}                 —— 与 OpenAI images 完全一致
- *   B) {model, messages, modalities:["image"]}  —— OpenRouter chat-completions 风格
- *
- * 实测 api.pixflow.im 对所有图像模型都接受 A 形态,我们就只发 A,简化代码。
- * 如果某个模型只吃 B,Pixflow 会返回 400,前端会把错误信息透传出来。
+ * Pixflow 图像生成 —— 按 model id 自动选择最合适的协议。
+ * 返回与 Seedream/Qwen 一致的 { url, urls, error, model }。
  */
 export async function callPixflowImage(input: PixflowImageInput): Promise<PixflowImageResult> {
   const { apiKey, baseUrl } = getPixflowConfig()
@@ -75,6 +103,74 @@ export async function callPixflowImage(input: PixflowImageInput): Promise<Pixflo
     return { url: '', urls: [], error: 'PIXFLOW_API_KEY not configured', model }
   }
 
+  // ----- Gemini 图像模型走 Native generateContent -----
+  if (/^gemini-.*image/i.test(model)) {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    try {
+      const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [
+        { text: input.prompt },
+      ]
+      if (input.referenceImages?.length) {
+        for (const url of input.referenceImages) {
+          const inline = await urlToInlineData(url)
+          if (inline) parts.push({ inlineData: inline })
+        }
+      }
+      const res = await fetch(`${baseUrl}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-goog-api-key': apiKey,
+        },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts }],
+          generationConfig: {
+            responseModalities: ['TEXT', 'IMAGE'],
+            imageConfig: { imageSize: toGeminiImageSize(input.size) },
+          },
+        }),
+        signal: controller.signal,
+      })
+      clearTimeout(timeout)
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        return { url: '', urls: [], error: `[pixflow ${model}] ${res.status}: ${text.slice(0, 300)}`, model }
+      }
+      const json = (await res.json()) as {
+        candidates?: Array<{ content?: { parts?: Array<{ inlineData?: { mimeType?: string; data?: string } }> } }>
+        error?: { message?: string }
+      }
+      const urls: string[] = []
+      for (const cand of json.candidates ?? []) {
+        for (const part of cand.content?.parts ?? []) {
+          if (part.inlineData?.data) {
+            const mime = part.inlineData.mimeType || 'image/png'
+            urls.push(`data:${mime};base64,${part.inlineData.data}`)
+          }
+        }
+      }
+      if (urls.length === 0) {
+        return {
+          url: '',
+          urls: [],
+          error: `[pixflow ${model}] no image returned: ${json.error?.message || 'empty candidates'}`,
+          model,
+        }
+      }
+      return { url: urls[0], urls, error: null, model }
+    } catch (e) {
+      clearTimeout(timeout)
+      return {
+        url: '',
+        urls: [],
+        error: `[pixflow ${model}] network: ${e instanceof Error ? e.message : 'fetch failed'}`,
+        model,
+      }
+    }
+  }
+
+  // ----- gpt-image-* 走 OpenAI Compatible /v1/images/generations -----
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
   try {
