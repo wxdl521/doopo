@@ -190,15 +190,25 @@ describe('UI 模型清单 —— 不允许裸 openai/gpt-image-2', () => {
     }
   })
 
-  it('NewProjectDialog 故事板下拉:openai/gpt-image-2 走 Lovable Gateway,且不会落到 ARK', async () => {
-    // 2026/06 重新启用 openai/gpt-image-2(走 Lovable AI Gateway,不打 ARK)。
-    // 关键不变量改为:存在 Lovable Gateway 分支 + isLovableGatewayImageModel
-    // 在 seedream dispatch 里早于 callSeedreamImages 出现。
+  it('历史裸 openai/gpt-image-2 会先归一成 pixflow/gpt-image-2,不会落到 ARK', async () => {
+    // 2026/06 回归:旧项目可能持久化了裸 `openai/gpt-image-2`。
+    // 这个 id 绝不能再被当作 Seedream model POST 到 ARK,必须先归一到 Pixflow。
     const seedreamSrc = readFileSync(resolve(__dirname, '../seedream.functions.ts'), 'utf-8')
-    // 三个 handler(generateImage / generateStoryboardShotImage / regenerateStoryboardShot)
-    // 都必须在调用 callSeedreamImages 前先尝试 Lovable Gateway 分支。
-    const lovableMatches = seedreamSrc.match(/isLovableGatewayImageModel\(requested\)/g) || []
-    expect(lovableMatches.length, '三处 handler 都应有 Lovable Gateway 早分支').toBeGreaterThanOrEqual(3)
+
+    expect(seedreamSrc).toMatch(/function normalizeImageModelForRouting[\s\S]*openai\/gpt-image-2[\s\S]*pixflow\/gpt-image-2/)
+    expect(seedreamSrc).toMatch(/const requested = normalizeImageModelForRouting\(data\.model\)/)
+
+    for (const handler of ['generateImage', 'generateStoryboardShotImage', 'regenerateStoryboardShot', 'generateStoryboardPitchDeck']) {
+      const start = seedreamSrc.indexOf(`export const ${handler}`)
+      expect(start, `${handler} 必须存在`).toBeGreaterThan(0)
+      const next = seedreamSrc.indexOf('export const ', start + 1)
+      const block = next > 0 ? seedreamSrc.slice(start, next) : seedreamSrc.slice(start)
+      const normalizeIdx = block.indexOf('normalizeImageModelForRouting(data.model)')
+      const arkIdx = block.indexOf('getArkConfig()')
+      expect(normalizeIdx, `${handler} 必须先 normalize model`).toBeGreaterThan(0)
+      expect(arkIdx, `${handler} 仍保留 ARK 兜底`).toBeGreaterThan(0)
+      expect(normalizeIdx).toBeLessThan(arkIdx)
+    }
   })
 })
 
