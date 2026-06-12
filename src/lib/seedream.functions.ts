@@ -777,7 +777,7 @@ export const generateStoryboardShotImage = createServerFn({ method: 'POST' })
     const instruction = buildShotInstruction(data, styleSpec)
     const negative = buildShotNegative()
 
-    const requested = data.model?.trim() || ''
+    const requested = normalizeImageModelForRouting(data.model)
     // 委托给 Pixflow(gpt-image-2 / gemini 图像模型)。注意:Pixflow
     // /v1/images/generations 不接受多参考图 I2I,只能纯文本生图,
     // 因此把参考图清单作为文字描述塞进 prompt 头部。
@@ -926,7 +926,7 @@ export const regenerateStoryboardShot = createServerFn({ method: 'POST' })
     const instruction = buildRegenShotInstruction(data, styleSpec, usedCharCount, hasScene)
     const negative = buildShotNegative()
 
-    const requested = data.model?.trim() || ''
+    const requested = normalizeImageModelForRouting(data.model)
     {
       const { isLovableGatewayImageModel, callLovableGatewayImage } = await import('./lovableImage.functions')
       if (isLovableGatewayImageModel(requested)) {
