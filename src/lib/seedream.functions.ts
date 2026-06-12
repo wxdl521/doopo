@@ -754,6 +754,38 @@ export const generateStoryboardShotImage = createServerFn({ method: 'POST' })
     const instruction = buildShotInstruction(data, styleSpec)
     const negative = buildShotNegative()
 
+    const requested = data.model?.trim() || ''
+    // 委托给 Pixflow(gpt-image-2 / gemini 图像模型)。注意:Pixflow
+    // /v1/images/generations 不接受多参考图 I2I,只能纯文本生图,
+    // 因此把参考图清单作为文字描述塞进 prompt 头部。
+    if (requested.toLowerCase().startsWith('pixflow/')) {
+      const { callPixflowImage } = await import('./pixflow.functions')
+      const refNote = images.length
+        ? `\n\n[注] 参考图链接(用于风格/角色描述参考,模型不直接读图,请按下面描述还原):\n${images.map((u, i) => `图${i + 1}: ${u}`).join('\n')}`
+        : ''
+      const r = await callPixflowImage({
+        prompt: appendNegative(instruction, negative) + refNote,
+        model: requested,
+        size: '1024x1024',
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'Pixflow 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    // 委托给 legacy(Qwen / Wan / OpenRouter 等)
+    if (requested && !isSeedreamModel(requested)) {
+      const { generateImage: legacy } = await import('./openrouterImage.functions')
+      const r: any = await legacy({
+        data: {
+          prompt: appendNegative(instruction, negative),
+          model: requested,
+          size: '1328*1328',
+          negativePrompt: negative,
+        },
+      } as any)
+      if (!r?.url) return { ok: false as const, error: r?.error || 'Legacy 模型未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+
     const { apiKey, baseUrl, model: defaultModel } = getArkConfig()
     if (!apiKey) return { ok: false as const, error: 'ARK_API_KEY not configured' }
     const model = data.model?.trim() || defaultModel
