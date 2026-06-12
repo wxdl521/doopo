@@ -125,16 +125,6 @@ const IMAGE_MODELS: ImageModel[] = [
   },
   // ---- Pixflow 图像模型 ----
   {
-    id: 'pixflow/gpt-image-2', name: 'GPT Image 2', nameEn: 'GPT Image 2',
-    vendor: 'Pixflow · OpenAI', tagline: 'SOTA 文生图 · pixflow', taglineEn: 'SOTA T2I · pixflow',
-    gradient: 'from-rose-500 to-pink-600', status: 'available',
-  },
-  {
-    id: 'pixflow/gpt-image-1-mini', name: 'GPT Image 1 Mini', nameEn: 'GPT Image 1 Mini',
-    vendor: 'Pixflow · OpenAI', tagline: '低成本图像 · pixflow', taglineEn: 'Cost-efficient · pixflow',
-    gradient: 'from-pink-400 to-rose-500', status: 'available',
-  },
-  {
     id: 'pixflow/gemini-3-pro-image-preview', name: 'Gemini 3 Pro Image', nameEn: 'Gemini 3 Pro Image',
     vendor: 'Pixflow · Google', tagline: '高质量图像 · pixflow', taglineEn: 'High-quality · pixflow',
     gradient: 'from-indigo-500 to-violet-700', status: 'available',
@@ -145,8 +135,8 @@ const IMAGE_MODELS: ImageModel[] = [
     gradient: 'from-yellow-400 to-amber-600', status: 'available',
   },
   {
-    id: 'pixflow/gemini-2.5-flash-image', name: 'Nano Banana', nameEn: 'Nano Banana',
-    vendor: 'Pixflow · Google', tagline: '图像生成/编辑 · pixflow', taglineEn: 'Gen/edit · pixflow',
+    id: 'pixflow/gemini-3.1-flash-image', name: 'Gemini 3.1 Flash Image', nameEn: 'Gemini 3.1 Flash Image',
+    vendor: 'Pixflow · Google', tagline: '通用图像生成/编辑 · pixflow', taglineEn: 'General gen/edit · pixflow',
     gradient: 'from-lime-400 to-emerald-600', status: 'available',
   },
   {
