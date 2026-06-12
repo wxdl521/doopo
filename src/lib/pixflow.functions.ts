@@ -26,7 +26,9 @@ import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
 
 const DEFAULT_BASE_URL = 'https://api.pixflow.im'
+// Pixflow 文档建议:图片请求超时设到 ~400s,文本请求保持较短即可
 const REQUEST_TIMEOUT_MS = 120_000
+const IMAGE_REQUEST_TIMEOUT_MS = 400_000
 const PIXFLOW_PREFIX = 'pixflow/'
 
 export function isPixflowModel(modelId: string | null | undefined): boolean {
@@ -52,6 +54,8 @@ type PixflowImageInput = {
   model: string
   size?: string
   n?: number
+  /** OpenAI quality 字段(auto/low/high);仅 gpt-image-* 走 OpenAI 兼容时下发 */
+  quality?: 'auto' | 'low' | 'high'
   /** I2I 参考图 URL 列表(Gemini Native 会下载后转 base64 注入) */
   referenceImages?: string[]
 }
@@ -170,22 +174,36 @@ export async function callPixflowImage(input: PixflowImageInput): Promise<Pixflo
     }
   }
 
-  // ----- gpt-image-* 走 OpenAI Compatible /v1/images/generations -----
+  // ----- gpt-image-* 走 OpenAI Compatible -----
+  //   - 无参考图 → POST /v1/images/generations (JSON, T2I)
+  //   - 有参考图 → POST /v1/images/edits     (JSON, images[].image_url)
+  //     文档明确:/v1/images/generations 不会把 image/images 当成参考图,
+  //     必须走 /v1/images/edits;高稳定分组支持 JSON `images[].image_url`
+  //     引用图(免去 multipart 文件上传)。
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  const timeout = setTimeout(() => controller.abort(), IMAGE_REQUEST_TIMEOUT_MS)
   try {
-    const res = await fetch(`${baseUrl}/v1/images/generations`, {
+    const hasRefs = !!input.referenceImages?.length
+    const endpoint = hasRefs ? '/v1/images/edits' : '/v1/images/generations'
+    const body: Record<string, unknown> = {
+      model,
+      prompt: input.prompt,
+      n: input.n ?? 1,
+      size: input.size || '1024x1024',
+      quality: input.quality ?? 'auto',
+      // 高稳定分组默认返回 url(响应体小);其他分组返回 b64_json,我们都能解析
+      response_format: 'url',
+    }
+    if (hasRefs) {
+      body.images = input.referenceImages!.map((image_url) => ({ image_url }))
+    }
+    const res = await fetch(`${baseUrl}${endpoint}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${apiKey}`,
       },
-      body: JSON.stringify({
-        model,
-        prompt: input.prompt,
-        n: input.n ?? 1,
-        size: input.size || '1024x1024',
-      }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     })
     clearTimeout(timeout)
