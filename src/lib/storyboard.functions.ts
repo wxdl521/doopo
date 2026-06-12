@@ -77,9 +77,33 @@ const PlotInput = z.object({
 
 export type GenerateStoryboardFromPlotInput = z.infer<typeof PlotInput>
 
+/**
+ * 2026/06 改造:从一次性返回改为**流式输出**。
+ *
+ * AI 切分一集剧情通常要 30~120s,用户从点"进入分镜"到看到第一组分镜要等
+ * 整段时间。改造后:
+ *   - server fn 用 async generator yield 事件
+ *   - 用 `stream: true` 调 Qwen,SSE delta 一边到一边攒
+ *   - 用 StreamingGroupExtractor 监听 buffer,一旦某个 `{ ... }` group
+ *     对象完整闭合,立刻 parse + normalize + yield 出去
+ *   - 客户端边收边把组追加到 storyboardGroups,跳到分镜 tab 时第一组已可见
+ *
+ * 事件:
+ *   - progress: 进度文案 (展示给 toast / loading 状态)
+ *   - group:    单组已就绪 (normalized 后的 StoryboardGroup 雏形,
+ *               还差 episodeIndex / sceneLocation,客户端补)
+ *   - done:     流结束,带最终用的模型 + 累计组数
+ *   - error:    任何阶段失败,客户端展示错误并停止
+ */
+export type StoryboardStreamEvent =
+  | { kind: 'progress'; message: string }
+  | { kind: 'group'; group: ReturnType<typeof normalizeGroup> }
+  | { kind: 'done'; model: string; count: number }
+  | { kind: 'error'; message: string }
+
 export const generateStoryboardFromPlot = createServerFn({ method: 'POST' })
   .inputValidator((d: unknown) => PlotInput.parse(d))
-  .handler(async ({ data }) => {
+  .handler(async function* ({ data }): AsyncGenerator<StoryboardStreamEvent> {
     const { resolveProjectStyle } = await import('./visualStyles')
     const styleSpec = resolveProjectStyle(data.projectStyle)
 
@@ -96,17 +120,33 @@ export const generateStoryboardFromPlot = createServerFn({ method: 'POST' })
 
     // 强制 JSON 输出,避免模型输出自然语言;prompt 里明确告诉模型输出 schema。
     const systemPrompt = `你是一名资深影视分镜师。你的任务是把一集剧本切分成若干组分镜。
-每组分镜对应剧本中一段连续剧情,包含 1~3 个具体镜头(shot),每个镜头对应一张分镜图。
+每组分镜对应剧本中一段连续剧情,**至少 1 个**镜头(shot),不设上限,
+具体数量由你按剧情自行判断 —— 不要套固定数量,跟着内容走。
 
-【plotText 字段要求(2026/06 用户诉求)】
-- plotText 仍然要写(AI 输出),但格式必须是**结构化剧情列表**,不是散文:
-  • 按 shot 顺序逐条描述
-  • 每条对应一个 shot,包含:**台词(必须有,角色名:内容) + 动作(什么人做什么) + 场景变化**
-  • 台词是核心 —— 用户说"看不到人物台词,详情不够",所以每条都要有角色对白
-- 输出格式示例(plotText 是多行字符串,用 \\n 分隔):
-  "陆深在教室自习。\\n小明冲进来:『老师找你!』,声音急迫。\\n陆深抬头:『什么事?』,起身。\\n两人穿过走廊,镜头跟着背影。\\n转场到办公室,陆深推门:『报告。』"
-- 这个 plotText 会在 UI 上**辅助展示**(不直接显示,主要用 shots[].action),但要写得**自包含**
-- plotText 描述的是"剧情文本",**不要**重复 shot 的景别/镜头信息(那些是 shots.camera)
+【plotText 字段要求(2026/06 用户诉求:详细扩写剧情)】
+- plotText 是**当前 group 那段剧情的详细扩写散文**,不是结构化列表也不是 shot 描述
+- 必须严格遵守剧本原文的逻辑,**只做扩写,不能改动/新增剧情**:
+  • 原剧本没说的人物心理 → 不能写
+  • 原剧本没出现的台词 → 不能编造
+  • 原剧本的事件顺序 → 不能调整
+- 扩写时按下面 5 要素铺开本组对应的那段剧本(每要素都要写到):
+  1) 人物状态:本组开始时人物处于什么情绪/姿势/状态(原剧本提到的)
+  2) 环境:场景在哪、什么时间、光线/氛围/可见的关键道具
+  3) 动作:每个人物按时间顺序做了什么(细化到具体动作,例如"陆深推开教室门,
+     把书包甩到桌上,坐下时椅子嘎吱响")
+  4) 台词:**完整引用原剧本里的台词**,带角色名,例如 陆深:"我没事。" 语气/
+     表情/动作配合写在台词前后
+  5) 后续承接:这段结束后接下来发生了什么(原剧本的逻辑承接,不要剧透到下一组之外)
+- 字数要求:**≥ 200 字**,中等场景 300~500 字,信息量大的段落可以 800 字
+- 输出格式:连贯的中文散文段落,允许用 \\n 分自然段(不超过 3~4 段);
+  **不要**用"分镜 1: ..."这种结构化前缀,**不要**写景别/机位(那些是 shots.camera)
+- 示例片段(扩写一段两人在教室对话的剧本):
+  "傍晚的教室只剩窗外最后一缕橘红,陆深一个人坐在第三排,膝上摊着没翻动的物理课本。
+  门被猛地推开,小明气喘吁吁冲进来,手里还攥着没合上的笔记本。\\n
+  小明:『老师找你!』他的声音又急又冲,带着没缓过来的喘息。陆深抬起头,合上书本,
+  低声反问:『什么事?』随即从座位上起身,把椅子推回原位。\\n
+  两人沿着走廊快步走向年级办公室,夕阳把走廊染成长长的暖色块,只听见脚步声。
+  陆深在办公室门口顿了一下,推门:『报告。』里面传来导员翻文件的窸窣声。"
 
 【分镜 shots 字段要求】
 - action 用中文描述该镜头"什么人做什么",1~2 句
@@ -139,30 +179,78 @@ ${data.previousEpisodesText ? `===== 前面集数上下文 =====\n${data.previou
 ===== 第 ${data.episodeIndex} 集剧本 =====
 ${data.episodeText}
 
-===== 输出 JSON Schema =====
+===== 输出 JSON Schema(**示例只展示字段结构,数量绝非要求**;下面 3 个 group 故意用了 1/2/3 三种不同 shot 数量,提醒你按剧情决定,严禁全部用同一个数量) =====
 {
   "groups": [
     {
       "id": "grp-1",
-      "plotText": "本组完整剧情描述(包含场景变化+人物动作+台词,50-200 字;不要写 shot 描述)",
+      "plotText": "本组完整剧情**详细扩写**(≥ 200 字散文,严格遵循剧本逻辑,涵盖:人物状态 / 环境 / 动作 / 完整引用台词 / 后续承接;不要写 shot 描述、景别、机位)",
       "startSec": 0,
-      "endSec": 8,
+      "endSec": 4,
       "sceneId": "sc-xxx (必须从上面场景列表里挑一个最接近的,没有就 null)",
-      "characterIds": ["ch-xxx", "ch-yyy"],
+      "characterIds": ["ch-xxx"],
       "shots": [
         {
           "shotType": "WS" | "MS" | "CU" | "ECU" | "OTS",
-          "action": "什么人做什么(中文 1~2 句)",
+          "action": "极简单段落用 1 个 shot 即可(单一动作 / 一句台词)",
           "camera": "机位 / 焦段 / 角度(中文简短)",
           "startSec": 0,
           "endSec": 4
+        }
+      ]
+    },
+    {
+      "id": "grp-2",
+      "plotText": "...常规对话往返,用 2 个 shot...",
+      "startSec": 4,
+      "endSec": 10,
+      "sceneId": "sc-xxx",
+      "characterIds": ["ch-xxx", "ch-yyy"],
+      "shots": [
+        {
+          "shotType": "MS",
+          "action": "A 说...",
+          "camera": "...",
+          "startSec": 4,
+          "endSec": 7
         },
         {
-          "shotType": "WS" | "MS" | "CU" | "ECU" | "OTS",
-          "action": "什么人做什么(中文 1~2 句)",
-          "camera": "机位 / 焦段 / 角度(中文简短)",
-          "startSec": 4,
-          "endSec": 8
+          "shotType": "OTS",
+          "action": "B 反应...",
+          "camera": "...",
+          "startSec": 7,
+          "endSec": 10
+        }
+      ]
+    },
+    {
+      "id": "grp-3",
+      "plotText": "...复合段落:环境交代 + 人物动作 + 反应,用 3 个 shot...",
+      "startSec": 10,
+      "endSec": 19,
+      "sceneId": "sc-xxx",
+      "characterIds": ["ch-xxx", "ch-yyy"],
+      "shots": [
+        {
+          "shotType": "WS",
+          "action": "环境/场面建立...",
+          "camera": "...",
+          "startSec": 10,
+          "endSec": 13
+        },
+        {
+          "shotType": "CU",
+          "action": "人物特写动作...",
+          "camera": "...",
+          "startSec": 13,
+          "endSec": 16
+        },
+        {
+          "shotType": "ECU",
+          "action": "情绪反应/收尾...",
+          "camera": "...",
+          "startSec": 16,
+          "endSec": 19
         }
       ]
     }
@@ -175,13 +263,20 @@ ${data.episodeText}
 - characterIds 必须在传入的角色列表里;没有明确角色时给空数组 []
 - shots 内部:连续 shot 的 endSec 必须等于下一个 shot 的 startSec(无缝衔接)
 - shots 内部:第一个 shot 的 startSec == group.startSec,最后一个 shot 的 endSec == group.endSec
-- 镜头组合要有变化,不要 5 组都是 MS 中景`
+- 镜头组合要有变化,不要 5 组都是 MS 中景
+- **shots 数量按剧情自行判断**,只要 ≥ 1 即可,不设上限;不要为了凑数硬塞,
+  也不要总是用同一个数量,让数量服从内容。
+- **严禁所有 group 都套相同的 shot 数量**(尤其严禁全部 3 个 —— 这是示例数量,不是要求)。
+  正常分布大致:简短/单动作段 1 shot,常规对白 2 shot,复合场面 3 shot,
+  极复杂动作戏可到 4-5 shot。整集 shot 数应有明显的差异分布。`
 
-    // ---- 调 DashScope Qwen 文本模型 ----
-    // 跟图片生成共用同一个 Qwen API key,避免走 OpenRouter + Google fallback
-    // 带来的"好像是谷歌 AI"问题。优先 flash(快),失败再试 plus(更强)。
+    // ---- 调 DashScope Qwen 文本模型 (SSE 流式) ----
+    // 跟图片生成共用同一个 Qwen API key。优先 flash(快),失败再试 plus(更强)。
     const apiKey = process.env.Qwen || process.env.DASHSCOPE_API_KEY
-    if (!apiKey) return { ok: false as const, error: 'Qwen API key 未配置(请设置 Qwen 或 DASHSCOPE_API_KEY)' }
+    if (!apiKey) {
+      yield { kind: 'error', message: 'Qwen API key 未配置(请设置 Qwen 或 DASHSCOPE_API_KEY)' }
+      return
+    }
 
     const DASHSCOPE_CHAT = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions'
     // 2026/06 修法:[qwen3.7-max] timed out (>60s) 经常超时。
@@ -202,12 +297,19 @@ ${data.episodeText}
     ].filter(Boolean)
     const FALLBACK_RETRYABLE = new Set([403, 404, 429, 500, 502, 503])
 
+    yield { kind: 'progress', message: '正在加载分镜工作流…' }
+
     let lastError = ''
     for (const model of modelAttempts) {
       const timeoutMs = MODEL_TIMEOUTS[model] ?? 90_000
       const controller = new AbortController()
       const timeout = setTimeout(() => controller.abort(), timeoutMs)
+      // 单模型尝试期间是否已成功 yield 过 group。已经 yield 出去的 group
+      // 是不可撤回的(客户端已经展示了),后续即便流出错也不能切换模型重头来。
+      let yieldedAny = false
+      let modelSucceeded = false
       try {
+        yield { kind: 'progress', message: `已提交 ${model},等待 AI 输出第一组…` }
         const res = await fetch(DASHSCOPE_CHAT, {
           method: 'POST',
           headers: {
@@ -216,61 +318,206 @@ ${data.episodeText}
           },
           body: JSON.stringify({
             model,
+            stream: true,
             messages: [
               { role: 'system', content: systemPrompt },
               { role: 'user', content: userPrompt },
             ],
-            // Qwen 支持 response_format 强制 JSON
+            // Qwen 支持 response_format 强制 JSON;streaming 下 delta 也都是 JSON 片段
             response_format: { type: 'json_object' },
             temperature: 0.6,
-            max_tokens: 4000,
+            // plotText 改成详细扩写(每 group 200~800 字)后 4000 不够 6 组用,
+            // 提到 8000 给 prose + shots 留足空间。
+            max_tokens: 8000,
           }),
           signal: controller.signal,
         })
-        clearTimeout(timeout)
         if (!res.ok) {
           const text = await res.text().catch(() => '')
           lastError = `[${model}] ${res.status}: ${text.slice(0, 200)}`
-          if (FALLBACK_RETRYABLE.has(res.status)) continue
-          return { ok: false as const, error: lastError }
-        }
-        const json = (await res.json()) as {
-          choices?: Array<{ message?: { content?: string } }>
-        }
-        const raw = json?.choices?.[0]?.message?.content ?? ''
-        const jsonText = extractJsonBlock(raw)
-        if (!jsonText) {
-          lastError = `[${model}] empty JSON output (raw: ${raw.slice(0, 200)})`
-          continue
-        }
-        try {
-          const parsed = JSON.parse(jsonText) as { groups?: any[] }
-          if (!Array.isArray(parsed.groups)) {
-            lastError = `[${model}] no groups in output (raw: ${jsonText.slice(0, 200)})`
+          if (FALLBACK_RETRYABLE.has(res.status)) {
+            clearTimeout(timeout)
             continue
           }
-          // 轻校验 + 兜底
-          const groups = parsed.groups
-            .slice(0, data.groupCount)
-            .map((g: any, i: number) => normalizeGroup(g, i, data))
-            .filter(Boolean) as ReturnType<typeof normalizeGroup>[]
-          if (!groups.length) {
-            lastError = `[${model}] all groups filtered out (raw: ${jsonText.slice(0, 200)})`
-            continue
-          }
-          return { ok: true as const, groups, model }
-        } catch (e) {
-          lastError = `[${model}] parse failed: ${(e instanceof Error ? e.message : String(e)).slice(0, 200)} (raw: ${jsonText.slice(0, 200)})`
+          clearTimeout(timeout)
+          yield { kind: 'error', message: lastError }
+          return
+        }
+        if (!res.body) {
+          lastError = `[${model}] 上游无响应体`
+          clearTimeout(timeout)
           continue
         }
+        // SSE 流式消费 + StreamingGroupExtractor:每个 group `{...}` 闭合一份
+        // 就立刻 normalize 并 yield 给客户端。
+        const reader = res.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+        let fullText = ''
+        const extractor = new StreamingGroupExtractor()
+        let groupIndex = 0
+        let groupCount = 0
+        while (true) {
+          const { value, done } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+          let nl: number
+          while ((nl = buffer.indexOf('\n')) !== -1) {
+            const line = buffer.slice(0, nl).trim()
+            buffer = buffer.slice(nl + 1)
+            if (!line.startsWith('data:')) continue
+            const payload = line.slice(5).trim()
+            if (!payload || payload === '[DONE]') continue
+            try {
+              const json = JSON.parse(payload)
+              const delta: string | undefined =
+                json?.choices?.[0]?.delta?.content ??
+                json?.choices?.[0]?.message?.content
+              if (!delta) continue
+              fullText += delta
+              const completed = extractor.feed(delta)
+              for (const groupJson of completed) {
+                try {
+                  const raw = JSON.parse(groupJson)
+                  const g = normalizeGroup(raw, groupIndex, data)
+                  groupIndex++
+                  if (!g) continue
+                  yield { kind: 'group', group: g }
+                  yieldedAny = true
+                  groupCount++
+                  if (groupCount >= data.groupCount) {
+                    // 已达请求数量,主动中止上游 stream 节省 token
+                    try { controller.abort() } catch { /* noop */ }
+                    break
+                  }
+                } catch {
+                  // 单组 JSON 解析失败,跳过(下一组可能 OK)
+                }
+              }
+              if (groupCount >= data.groupCount) break
+            } catch {
+              // SSE 心跳/非 JSON 行,忽略
+            }
+          }
+          if (groupCount >= data.groupCount) break
+        }
+        clearTimeout(timeout)
+        if (groupCount > 0) {
+          yield { kind: 'done', model, count: groupCount }
+          modelSucceeded = true
+          return
+        }
+        // 流结束但一组都没拿到 — 兜底:尝试整体解析 fullText
+        const jsonText = extractJsonBlock(fullText)
+        if (jsonText) {
+          try {
+            const parsed = JSON.parse(jsonText) as { groups?: any[] }
+            if (Array.isArray(parsed.groups) && parsed.groups.length > 0) {
+              for (const g of parsed.groups.slice(0, data.groupCount)) {
+                const normalized = normalizeGroup(g, groupIndex, data)
+                groupIndex++
+                if (!normalized) continue
+                yield { kind: 'group', group: normalized }
+                yieldedAny = true
+                groupCount++
+              }
+              if (groupCount > 0) {
+                yield { kind: 'done', model, count: groupCount }
+                modelSucceeded = true
+                return
+              }
+            }
+          } catch {
+            // fall through to model fallback
+          }
+        }
+        lastError = `[${model}] 流结束但未解析到任何分镜组 (raw: ${fullText.slice(0, 200)})`
       } catch (e) {
         lastError = e instanceof Error && e.name === 'AbortError'
           ? `[${model}] timed out (>${Math.round(timeoutMs / 1000)}s)`
           : `[${model}] ${e instanceof Error ? e.message : 'network error'}`
+        clearTimeout(timeout)
+      }
+      // 关键:已经 yield 过 group 的模型不能 fallback 重试 —— 客户端那边
+      // 已经展示了部分组,换模型重新来一遍会重复。
+      if (yieldedAny && !modelSucceeded) {
+        // 部分组成功 + 流中断:按"已达本次能拿到的"结束,客户端拿到 done 也好告知用户。
+        yield { kind: 'done', model, count: 0 /* 客户端用累计计数 */ }
+        return
       }
     }
-    return { ok: false as const, error: lastError || '分镜生成失败' }
+    yield { kind: 'error', message: lastError || '分镜生成失败' }
   })
+
+// --------------------------------------------------------------------
+// StreamingGroupExtractor
+//   - 输入:AI delta 文本,内含一个大 JSON `{"groups":[ {...}, {...}, ... ]}`
+//   - 任务:边收 delta 边吐出"已闭合的 group `{...}` 子串",拿到一份就吐一份
+//   - 状态机:
+//       waiting_array:  在找到 `"groups"` 后的第一个 `[` 之前,所有字符进 buf
+//       inside_array:   逐字符走,top-level `{` 开始累 current,depth 回 0 时
+//                       一组就绪 → 推到 completed,继续等下一个 `{` 或 `]`
+//   - 字符串/转义处理:在 string 内的 `{` `}` 不计 depth(`"a{b}c"` 不算嵌套)
+// --------------------------------------------------------------------
+class StreamingGroupExtractor {
+  private buf = ''
+  private state: 'waiting_array' | 'inside_array' = 'waiting_array'
+  private depth = 0
+  private inString = false
+  private escape = false
+  private current = ''
+
+  feed(delta: string): string[] {
+    const completed: string[] = []
+    for (let i = 0; i < delta.length; i++) {
+      const ch = delta[i]
+      if (this.state === 'waiting_array') {
+        this.buf += ch
+        // 等待 "groups" 之后(可能跨多个 delta)的第一个 `[`
+        if (ch === '[' && this.buf.includes('"groups"')) {
+          this.state = 'inside_array'
+          this.buf = ''
+        }
+        continue
+      }
+      // inside_array
+      if (this.depth === 0) {
+        // 跳过 array 里的空白 / 逗号 / 关闭括号
+        if (ch === '{') {
+          this.depth = 1
+          this.current = '{'
+        } else if (ch === ']') {
+          // 整个 groups 数组结束;后面字符直接吞掉
+          this.state = 'waiting_array'
+          this.buf = ''
+        }
+        // 其他(空白、`,`)忽略
+        continue
+      }
+      // depth > 0
+      this.current += ch
+      if (this.escape) {
+        this.escape = false
+        continue
+      }
+      if (this.inString) {
+        if (ch === '\\') this.escape = true
+        else if (ch === '"') this.inString = false
+        continue
+      }
+      if (ch === '"') this.inString = true
+      else if (ch === '{') this.depth++
+      else if (ch === '}') {
+        this.depth--
+        if (this.depth === 0) {
+          completed.push(this.current)
+          this.current = ''
+        }
+      }
+    }
+    return completed
+  }
+}
 
 // 兜底:把 AI 返回的 loose group 强制规整成可用的 StoryboardGroup
 function normalizeGroup(
@@ -309,8 +556,10 @@ function normalizeGroup(
     ? g.characterIds.filter((x: any) => typeof x === 'string' && validCharIds.has(x))
     : []
   const rawShots: any[] = Array.isArray(g.shots) ? g.shots : []
+  // 2026/06:之前这里有 .slice(0, 3) 把 shots 硬截到 3 个 —— 用户诉求改成
+  // **不设上限**,AI 给几个就保几个。normalizeShot 内部还是会做单条字段
+  // 校验(没 action 会丢),所以"多了也不会污染数据"这一点是安全的。
   const shots = rawShots
-    .slice(0, 3)
     .map((s: any, i: number, arr: any[]) => normalizeShot(s, index, i, startSec, endSec, arr))
     .filter((s): s is NonNullable<ReturnType<typeof normalizeShot>> => s !== null)
   if (!shots.length) return null
@@ -433,6 +682,8 @@ const ShotInput = z.object({
   projectStyle: z.string().max(50).optional(),
   // 模型(默认 doubao-seedream-5-0-260128,由 seedream 模块解析)
   model: z.string().max(100).optional(),
+  // 2026/06:查看提示词模式
+  previewOnly: z.boolean().default(false),
 })
 
 export type GenerateStoryboardShotInput = z.infer<typeof ShotInput>
@@ -471,6 +722,8 @@ const RegenShotInput = z.object({
   sceneTimeOfDay: z.string().max(50).default(''),
   projectStyle: z.string().max(50).optional(),
   model: z.string().max(100).optional(),
+  // 2026/06:查看提示词模式
+  previewOnly: z.boolean().default(false),
 })
 
 export type RegenerateStoryboardShotInput = z.infer<typeof RegenShotInput>

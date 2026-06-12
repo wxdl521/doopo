@@ -43,6 +43,8 @@ const Input = z.object({
    * 默认 'modify' 保持原有行为;三视图/角色设定稿由客户端按钮触发。
    */
   mode: z.enum(['modify', 'three-view', 'multi-asset']).default('modify'),
+  // 2026/06:查看提示词模式 —— true 时 server 只 build prompt 返回,不实际调 Seedream
+  previewOnly: z.boolean().default(false),
 })
 
 export type RegenerateInput = z.infer<typeof Input>

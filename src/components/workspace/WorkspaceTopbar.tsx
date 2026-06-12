@@ -1,6 +1,6 @@
 import { useState } from 'react'
 // no Link needed; Logo provides home link
-import { ChevronDown, MoreHorizontal, Layers, FileText, Users, Grid3x3, Clock, Settings, Download, Loader2, CheckCircle2, Save, Plus } from 'lucide-react'
+import { ChevronDown, MoreHorizontal, Layers, FileText, Users, Grid3x3, Clock, Settings, Download, Loader2, CheckCircle2, Save, Plus, Eye, EyeOff } from 'lucide-react'
 import Logo from '../Logo'
 import { useLanguage } from '../../i18n/LanguageContext'
 import { NewProjectDialog } from '../NewProjectDialog'
@@ -19,6 +19,7 @@ const tabs: { id: Exclude<WorkspaceTab, 'episodes'>; icon: typeof Layers }[] = [
 export default function WorkspaceTopbar({
   tab, onTabChange, episodeCount, selectedEpisodeIndex, onEpisodeIndexChange, onSaveAssets,
   onSave, saving, saved, completedStages, onAddEpisode,
+  viewPromptsMode, onToggleViewPromptsMode,
 }: {
   tab: WorkspaceTab
   onTabChange: (t: WorkspaceTab) => void
@@ -32,6 +33,9 @@ export default function WorkspaceTopbar({
   completedStages?: Set<WorkspaceTab>
   /** 顶部下拉里"+ 新增集数"按钮的回调。 */
   onAddEpisode?: () => void
+  /** 2026/06:查看提示词模式 —— 开启后所有生成按钮变成"展示 prompt"而不是真正生成 */
+  viewPromptsMode?: boolean
+  onToggleViewPromptsMode?: () => void
 }) {
   const { t, lang, toggleLang } = useLanguage()
   const [epOpen, setEpOpen] = useState(false)
@@ -153,6 +157,22 @@ export default function WorkspaceTopbar({
         <button onClick={toggleLang} className="px-2 py-1 text-xs rounded-md border border-border text-text-secondary hover:text-text-primary inline-flex items-center gap-1">
           {lang === 'zh' ? '中文' : 'EN'} <ChevronDown size={12} />
         </button>
+        {/* 2026/06:查看提示词 toggle —— 开启后所有生成按钮变成"展示 prompt"而不是真正生成 */}
+        {onToggleViewPromptsMode && (
+          <button
+            type="button"
+            onClick={onToggleViewPromptsMode}
+            title={viewPromptsMode ? '退出查看提示词模式' : '开启查看提示词模式 — 点生成按钮显示提示词,不实际生成'}
+            className={`px-2 py-1 text-xs rounded-md border inline-flex items-center gap-1 transition ${
+              viewPromptsMode
+                ? 'bg-accent-dim/60 border-accent text-accent font-semibold shadow-glow'
+                : 'border-border text-text-secondary hover:text-text-primary hover:border-accent'
+            }`}
+          >
+            {viewPromptsMode ? <Eye size={12} /> : <EyeOff size={12} />}
+            查看提示词
+          </button>
+        )}
         <span className="px-2 py-1 text-xs rounded-full bg-bg-elevated border border-border text-accent font-semibold">✦ 73</span>
         <button className="px-3 py-1 text-xs rounded-full bg-gradient-to-r from-rose-500 to-orange-500 text-white font-semibold">{t.header_upgrade}</button>
         <div className="w-8 h-8 rounded-full bg-gradient-to-br from-accent to-accent-mint" />

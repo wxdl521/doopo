@@ -15,6 +15,7 @@ import {
 import { generateStageAi } from '../lib/aiGenerate.functions'
 import { generateImage, regenerateSceneImage } from '../lib/seedream.functions'
 import { regenerateCharacterLook } from '../lib/characterRegen.functions'
+import { describeCharacterImage } from '../lib/describeCharacterImage.functions'
 import { generateStoryboardFromPlot, generateStoryboardShotImage, regenerateStoryboardShot } from '../lib/storyboard.functions'
 import { generateVideo } from '../lib/videoGenerate.functions'
 import { generateStoryboardPitchDeck } from '../lib/seedream.functions'
@@ -223,6 +224,7 @@ function WorkspacePage() {
   const callAi = useServerFn(generateStageAi)
   const callImage = useServerFn(generateImage)
   const callRegenCharacter = useServerFn(regenerateCharacterLook)
+  const callDescribeCharImg = useServerFn(describeCharacterImage)
   const callRegenScene = useServerFn(regenerateSceneImage)
   const callGenerateStoryboard = useServerFn(generateStoryboardFromPlot)
   const callGenerateShotImage = useServerFn(generateStoryboardShotImage)
@@ -294,6 +296,43 @@ function WorkspacePage() {
   const [busyScene, setBusyScene] = useState<string | null>(null)
   // 新的"分镜组"流程:正在生成 StoryboardGroup(整集切分)的标识
   const [busyStoryboardGen, setBusyStoryboardGen] = useState(false)
+  // 2026/06:查看提示词模式 —— 开启后所有生成按钮触发后只展示 prompt 不实际生成。
+  // viewPromptsModeRef 镜像给 async 回调用,避免捕获到过期 state
+  const [viewPromptsMode, setViewPromptsMode] = useState(false)
+  const viewPromptsModeRef = useRef(false)
+  useEffect(() => { viewPromptsModeRef.current = viewPromptsMode }, [viewPromptsMode])
+  const [promptPreview, setPromptPreview] = useState<{
+    title: string
+    prompt: string
+    negative?: string
+    size?: string
+    extra?: Record<string, string>  // 比如 model / imageUrls / referenceCount 之类
+  } | null>(null)
+  /**
+   * 2026/06:统一的"预览模式拦截器"。所有生成路径在 await server fn 后调一次:
+   *   - 如果开了 viewPromptsMode,**且** 响应里带 previewPrompt(server 端尊重了
+   *     previewOnly 参数),弹 modal 展示 prompt,返回 true(告诉调用方"已拦截,
+   *     别走 normal flow")
+   *   - 否则什么都不做,返回 false,调用方继续正常处理结果
+   *
+   * 这样每个生成路径只需一行 if (interceptPromptPreview(...)) return / continue
+   */
+  function interceptPromptPreview(
+    title: string,
+    res: unknown,
+  ): boolean {
+    if (!res || typeof res !== 'object') return false
+    const r = res as { previewPrompt?: string; negativePrompt?: string; promptSize?: string; promptExtra?: Record<string, string> }
+    if (!r.previewPrompt) return false
+    setPromptPreview({
+      title,
+      prompt: r.previewPrompt,
+      negative: r.negativePrompt,
+      size: r.promptSize,
+      extra: r.promptExtra,
+    })
+    return true
+  }
   // 正在跑"对某个分镜组的某张分镜图做多图融合"的 key,格式 `${groupId}::${shotId}`
   const [busyShotImages, setBusyShotImages] = useState<Set<string>>(new Set())
   // I2I 重生(按意见重生 / 三视图 / 多维资产)正在跑的卡片 imageKey → mode 映射。
@@ -307,6 +346,9 @@ function WorkspacePage() {
   // 用 url 而不是 index 引用,避免新增图后被偏移。
   // 没设 → fallback 用 charImages[imageKey] 的最新一张(.at(-1))
   const [selectedCharImages, setSelectedCharImages] = useState<Record<string, string>>({})
+  // ref 镜像 —— doRegen 在 event handler / await 后访问,用 ref 避免闭包过期
+  const selectedCharImagesRef = useRef<Record<string, string>>({})
+  useEffect(() => { selectedCharImagesRef.current = selectedCharImages }, [selectedCharImages])
   const [autoGen, setAutoGen] = useState(true)
   void setAutoGen
   // 流式剧本生成状态
@@ -1249,7 +1291,16 @@ function WorkspacePage() {
     const lk = lookId == null ? null : c.looks?.find((x) => x.id === lookId) ?? null
     const imageKey = lk ? `${c.id}::${lk.id}` : c.id
     const generations = charImagesRef.current[imageKey] ?? []
-    const referenceUrl = referenceOverride ?? generations[generations.length - 1]  // 用最新一张当参考
+    // 2026/06 改:reference 优先级
+    //   1) referenceOverride(processCharacter autoGen 显式传)
+    //   2) selectedCharImages[imageKey] —— 用户在卡片上"选中"的那张
+    //      (前提是这张 url 还在 generations 里;否则忽略)
+    //   3) 最新一张 generations[length-1]
+    // 这样点"三视图"/"多维资产" 按用户选中的形象去 I2I,而不是机械地用最新。
+    const pinned = selectedCharImagesRef.current[imageKey]
+    const fallback = generations[generations.length - 1]
+    const referenceUrl = referenceOverride
+      ?? (pinned && generations.includes(pinned) ? pinned : fallback)
     if (!referenceUrl) {
       toast.error('该形象还没生成,无法重生')
       return
@@ -1275,8 +1326,18 @@ function WorkspacePage() {
           // model(qwen-image-2.0-pro)。
           model: resolveI2IModel(project?.sceneModel),
           mode,
+          previewOnly: viewPromptsModeRef.current,
         },
       })
+      // 2026/06:查看提示词模式 —— 拦截到 previewPrompt 就弹 modal 不写图
+      if (interceptPromptPreview(
+        mode === 'three-view' ? `${c.name} · 三视图` :
+        mode === 'multi-asset' ? `${c.name} · 多维资产` :
+        `${c.name} · 修改 (${instruction.slice(0, 30)}…)`,
+        res,
+      )) {
+        return true  // 视为"成功",让上层关 modal/清错误状态
+      }
       if (res?.ok && res.url) {
         // 2026/06:replaceExisting=true 时覆盖历史(只留 1 张最新),autoGen
         // 路径需要这样避免"几张主视图"堆叠。replaceExisting=false(默认)
@@ -1308,6 +1369,13 @@ function WorkspacePage() {
   }
 
   // 右侧面板的"发送"按钮:走 mode='modify' + 用户意见
+  //
+  // 2026/06 二次改造:doRegen 只生成新图、不更新角色文字描述,导致后续点
+  // "三视图"/"多维资产" 时 I2I 收到的 face/body/clothing 文字仍是原始的,
+  // 跟修改后的图脱节(image-anchor 主导出新形象,但文字残留可能拉偏一些细节)。
+  // 改:成功后调 describeCharacterImage 让 Qwen-VL 看新图重写 3 段描述,
+  // 写回 data.characters 对应字段(默认 look → 角色根字段;变体 look → c.looks[i])。
+  // 失败不阻塞(只 console.warn),用户至少图已更新。
   async function submitModPanel() {
     if (!modPanel || modBusy) return
     const instruction = modInput.trim()
@@ -1317,7 +1385,65 @@ function WorkspacePage() {
     }
     setModBusy(true)
     setModError(null)
-    const ok = await doRegen(modPanel.character, modPanel.lookId, 'modify', instruction)
+    const c = modPanel.character
+    const lookId = modPanel.lookId
+    const imageKey = modPanel.imageKey
+    const ok = await doRegen(c, lookId, 'modify', instruction)
+    if (ok) {
+      // 取刚生成的图(append 到 charImages 末尾)
+      const newUrl = charImagesRef.current[imageKey]?.at(-1)
+      if (newUrl) {
+        try {
+          const lk = lookId == null ? null : c.looks?.find((x) => x.id === lookId) ?? null
+          const res = await callDescribeCharImg({
+            data: {
+              imageUrl: newUrl,
+              characterName: c.name,
+              characterRoleLabel: c.roleLabel,
+              characterAge: c.age,
+              lookLabel: lk?.label || '默认',
+            },
+          })
+          if (res?.ok) {
+            setData((prev) => {
+              if (!prev) return prev
+              return {
+                ...prev,
+                characters: prev.characters.map((x) => {
+                  if (x.id !== c.id) return x
+                  if (lookId == null) {
+                    return {
+                      ...x,
+                      faceDescription: res.faceDescription || x.faceDescription,
+                      bodyDescription: res.bodyDescription || x.bodyDescription,
+                      clothingDescription: res.clothingDescription || x.clothingDescription,
+                    }
+                  }
+                  return {
+                    ...x,
+                    looks: (x.looks ?? []).map((lk2) =>
+                      lk2.id !== lookId
+                        ? lk2
+                        : {
+                            ...lk2,
+                            faceDescription: res.faceDescription || lk2.faceDescription,
+                            bodyDescription: res.bodyDescription || lk2.bodyDescription,
+                            clothingDescription: res.clothingDescription || lk2.clothingDescription,
+                          },
+                    ),
+                  }
+                }),
+              }
+            })
+            toast.success('文字描述已同步到新图')
+          } else {
+            console.warn('[describeCharacterImage] failed:', res?.error)
+          }
+        } catch (e) {
+          console.warn('[describeCharacterImage] error:', e)
+        }
+      }
+    }
     setModBusy(false)
     if (ok) {
       closeModPanel()
@@ -1327,6 +1453,12 @@ function WorkspacePage() {
   }
 
   // 卡片"三视图" / "多维资产图"按钮:无 user input,直接跑预定义指令
+  //
+  // 注意:multi-asset 模式的具体布局/格子数/中文标注/特征保留 等硬约束**全部
+  // 写在 seedream.functions.ts 的 buildCharacterPrompts() 里**(2026/06 用户重写),
+  // 不在这里。这里只传一个简短的 user-facing 指令作为 EDIT REQUEST 写到 prompt
+  // 里(让 LLM 看到用户的语义),但实际渲染逻辑由 seedream 端的 mode='multi-asset'
+  // 分支自包含决定。
   async function runPresetRegen(
     c: GenCharacter,
     lookId: string | null,
@@ -1334,29 +1466,7 @@ function WorkspacePage() {
   ) {
     const instruction = mode === 'three-view'
       ? '根据此形象生成标准三视图:同一角色分别从前、正侧、背三个角度展示,头到脚全身,脸/身材/衣服在三个视图里完全一致。'
-      : [
-          '根据此形象生成完整的【角色多维资产图】(character sheet),单张大图,内部清晰分成两大区域:',
-          '',
-          '【区域一:全身三视图区域】(上半部分,横向排列 3 个全身视图)',
-          '1) 正面全身:正对镜头,头到脚完整入画',
-          '2) 侧面全身:正侧 90°,头到脚完整入画',
-          '3) 背面全身:背对镜头,头到脚完整入画',
-          '硬约束:同一角色,站姿端正自然,双臂自然下垂,无透视畸变(标准正交视图,不使用广角),脸型/身材/服装/配饰/发型在三个视图里 100% 一致,光照均匀。',
-          '',
-          '【区域二:细节特写区域】(下半部分,横向或网格排列 6 个特写格)',
-          '1) 面部特写:大头照,中性或微笑表情,清晰展示五官比例与脸型',
-          '2) 五官/眼妆特写:聚焦眼睛及眼周妆容(眉形、眼影、睫毛、眼神),如有眼妆细节务必呈现',
-          '3) 发型/发饰特写:展示发型轮廓、发色层次、刘海/鬓角处理,若有发饰(发卡、头巾、簪、皇冠等)需清晰呈现',
-          '4) 服装纹样/领口/袖口特写:聚焦服装最具识别度的纹样、刺绣、印花、领口剪裁、袖口收边等复杂细节',
-          '5) 腰带/配饰特写:腰带款式与扣件,以及胸口/腰侧/手腕/颈部佩戴的项链、吊坠、手镯、戒指、徽章等首饰',
-          '6) 鞋履特写:鞋款全貌(鞋面/鞋头/鞋跟),展示材质与装饰',
-          '',
-          '细节区域追加要求:',
-          '• 面部特写应呈现一组常见表情变化的暗示(如开心/难过/思考等的微表情),让角色显得"有戏",但脸部结构仍 100% 与全身视图一致',
-          '• 针对角色服饰中的复杂区域(精细纹样、繁复配饰、首饰繁多处)务必给出清晰的近景特写,避免笼统带过',
-          '',
-          '全图硬约束:所有视图与特写共用同一张脸/身材/服装色板,纯净浅灰背景,无文字标注,无 UI 元素。',
-        ].join('\n')
+      : '生成完整的【角色多维资产图】:简介(名字+个性)+ 大型主肖像 + 全身三视图(正/侧/背)+ 6-8 种表情(开心/生气/困倦/惊讶/悲伤/常态…)+ 4-6 种动作姿势(按个性挑)+ 配饰/道具图标,白底,中文标注,保留角色全部特征。'
     await doRegen(c, lookId, mode, instruction)
   }
 
@@ -1398,8 +1508,16 @@ function WorkspacePage() {
           sceneAction: s.action,
           projectStyle: project?.style,
           model: resolveI2IModel(project?.sceneModel),
+          previewOnly: viewPromptsModeRef.current,
         },
       })
+      // 2026/06:查看提示词模式拦截
+      if (interceptPromptPreview(
+        `场景 ${s.slug} · ${mode === 'three-view' ? '三视图' : '修改'}`,
+        res,
+      )) {
+        return true
+      }
       if (res?.ok && res.url) {
         setSceneImages((m) => ({ ...m, [s.id]: [...(m[s.id] ?? []), res.url!] }))
         toast.success(mode === 'three-view' ? '已生成场景三视图' : '已按意见重生')
@@ -1553,7 +1671,19 @@ function WorkspacePage() {
         .sort((a, b) => a.epIndex - b.epIndex)
         .map((e) => `—— 第 ${e.epIndex} 集 ——\n${e.text}`)
         .join('\n\n')
-      const res = await callGenerateStoryboard({
+      // 2026/06 流式改造:server fn 现在 yield 事件,每组就绪就立刻 push。
+      //   - 先清掉当集老分镜,避免和流入的新组混着展示
+      //   - **不**主动 setTab('storyboard'),等对话框 runWorkflowAnimation
+      //     收尾后再 jumpAfter:true 自然跳过去(用户选 B,保留原动画完整感);
+      //     这期间 stream 在后台跑、groups 静默 append,跳过去时已有不少组
+      //   - 在 storyboard tab 空态按钮直接触发的场景没影响:用户已在分镜 tab
+      //   - for-await 消费;group 事件 → 追加到 storyboardGroups
+      //   - error / done 事件 → 终止 / 收尾
+      setData((d) => ({
+        ...d,
+        storyboardGroups: d.storyboardGroups.filter((g) => g.episodeIndex !== selectedEpisodeIndex),
+      }))
+      const stream = (await callGenerateStoryboard({
         data: {
           episodeText: epText,
           episodeIndex: selectedEpisodeIndex,
@@ -1563,26 +1693,49 @@ function WorkspacePage() {
           previousEpisodesText: prevEps || undefined,
           projectStyle: project?.style,
         },
-      })
-      if (!res.ok) {
-        toast.error(res.error || '分镜生成失败')
-        return
+      })) as AsyncIterable<
+        | { kind: 'progress'; message: string }
+        | { kind: 'group'; group: Omit<StoryboardGroup, 'episodeIndex' | 'sceneLocation'> }
+        | { kind: 'done'; model: string; count: number }
+        | { kind: 'error'; message: string }
+      >
+      let receivedCount = 0
+      let lastError: string | null = null
+      for await (const ev of stream) {
+        if (ev.kind === 'group') {
+          const sc = sceneSummaries.find((s) => s.id === ev.group.sceneId)
+          const enriched: StoryboardGroup = {
+            ...ev.group,
+            episodeIndex: selectedEpisodeIndex,
+            sceneLocation: sc?.location || sc?.slug,
+          }
+          // composePlotText 现在只剥老数据的【本组分镜】尾巴(不再覆盖 AI prose),
+          // 保留 server 端 LLM 写的详细剧情扩写
+          enriched.plotText = composePlotText(enriched)
+          setData((d) => ({
+            ...d,
+            storyboardGroups: [...d.storyboardGroups, enriched],
+          }))
+          receivedCount++
+          if (receivedCount === 1) {
+            toast.success('第一组分镜已就绪,后续将陆续到达…')
+          }
+        } else if (ev.kind === 'error') {
+          lastError = ev.message
+          break
+        } else if (ev.kind === 'done') {
+          // 服务端正常结束
+          break
+        }
+        // progress 事件目前只用于 console 调试,UI 上 busyStoryboardGen 已经显示"切分中…"
       }
-      // 关联 sceneLocation(从场景摘要里取),并打 episodeIndex 标签。
-      // 合并:替换当集已有分镜组,其他集保留。
-      const groups = (res.groups as StoryboardGroup[]).map((g) => {
-        const sc = sceneSummaries.find((s) => s.id === g.sceneId)
-        return { ...g, episodeIndex: selectedEpisodeIndex, sceneLocation: sc?.location || sc?.slug }
-      })
-      setData((d) => ({
-        ...d,
-        storyboardGroups: [
-          ...d.storyboardGroups.filter((g) => g.episodeIndex !== selectedEpisodeIndex),
-          ...groups.map((g) => ({ ...g, plotText: composePlotText(g) })),
-        ],
-      }))
-      toast.success(`已生成 ${groups.length} 组分镜`)
-      setTab('storyboard')
+      if (lastError) {
+        toast.error(lastError)
+      } else if (receivedCount > 0) {
+        toast.success(`已生成 ${receivedCount} 组分镜`)
+      } else {
+        toast.error('未生成任何分镜,请重试')
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : '分镜生成失败')
     } finally {
@@ -1591,48 +1744,26 @@ function WorkspacePage() {
   }
 
   /**
-   * 重新拼接 plotText = 原剧情摘要 + 【本组分镜】 + 全部 shot 描述(2026/06)
+   * 2026/06 二次改造:之前 composePlotText 把 AI 的 prose plotText 用机械的
+   * "分镜N: 时段 · 景别 · 动作" 列表覆盖,导致用户看不到 LLM 输出的详细剧情。
+   * 用户最新诉求:plotText 要详细扩写(状态/环境/动作/具体台词/后续),严格遵循
+   * 剧本逻辑。server 端 prompt 已改成让 AI 输出 200~800 字详细 prose;
+   * 客户端这里**不再覆盖**,直接保留 AI 的原文。
    *
-   * 用户诉求:plotText 不再只是 LLM 摘的一句话剧情,要把 AI 生成的全部分镜
-   * 描述(shotType + action + camera)一起写入,方便:
-   *   - UI 渲染时一眼看到"这段剧情 + 怎么拍"
-   *   - 喂给 Seedream(分镜图 / 故事板)时携带更丰富的上下文
-   *   - 喂给视频生成时拿到完整 storyboard 描述
+   * shot 信息(景别/动作/机位)已经在每个 shot 卡片的 <details> 里独立展示,
+   * 不需要塞回 plotText 顶部重复。
    *
-   * 行为:
-   *   - 去掉上一次拼时附加的"【本组分镜】..."尾巴(防止重复叠加)
-   *   - 用 shot 数组当前实际内容重新拼
-   *   - 500 字截断(略放宽到 800,因为要装 shot 描述)
-   *   - shots 为空时只返回原 plotText
+   * 函数保留是为了:
+   *   - 老数据兼容(plotText 历史上可能带 "【本组分镜】..." 尾巴,这里剥掉)
+   *   - 三处调用点(streaming append / useEffect 同步 / 直接调)签名不变
    *
-   * 触发点(不止一处):
-   *   - runEnterStoryboard 内 LLM 返回后立即调一次
-   *   - shots 字段变化时由 useEffect 自动重算
+   * 返回:AI 的 plotText 剥掉历史尾巴后的原文。
    */
   function composePlotText(g: StoryboardGroup): string {
-    // 2026/06 改造:plotText 改为按 shot 拆分的结构化列表,每行格式:
-    //   分镜1: 0-4s · 远景 · 陆深和小明在教室对话,画面慢慢推进 · 推镜
-    //   分镜2: 4-7s · 特写 · 陆深(凝重):"我喜欢你" · 静态近景
-    //   分镜3: 7-10s · 中景 · 两人在走廊一起走,夕阳 · 跟拍
-    //
-    // 数据来源:shots[].action / camera / startSec / endSec / shotTypeLabel
-    // 兼容老数据(AI 输出的 prose plotText):剥掉【本组分镜】尾巴保留前面
-    // 但优先用从 shots 重新生成的结构化列表(更准、更一致)
-    if (g.shots && g.shots.length > 0) {
-      return g.shots
-        .map((s, i) => {
-          const timeRange = s.startSec != null && s.endSec != null
-            ? `${s.startSec.toFixed(0)}-${s.endSec.toFixed(0)}s`
-            : '?s'
-          const type = s.shotTypeLabel || s.shotType
-          const action = s.action || ''
-          const cam = s.camera ? ` · ${s.camera}` : ''
-          return `分镜${i + 1}: ${timeRange} · ${type} · ${action}${cam}`
-        })
-        .join('\n')
-    }
-    // shots 为空(老数据):fallback 到 AI 输出的 prose
-    return g.plotText.split(/\n\n【本组分镜】/)[0].trimEnd()
+    const raw = g.plotText ?? ''
+    // 老数据可能含 "【本组分镜】..." 尾巴(2026/06 之前 composePlotText 的产物),
+    // 剥掉,只保留 AI 写的那部分;新数据没这尾巴,split 不影响。
+    return raw.split(/\n\n【本组分镜】/)[0].trimEnd()
   }
 
   /**
@@ -1789,8 +1920,13 @@ function WorkspacePage() {
           sceneLocation: sceneObj?.location || group.sceneLocation || '',
           sceneTimeOfDay: sceneObj?.timeOfDay || '',
           projectStyle: project?.style,
+          previewOnly: viewPromptsModeRef.current,
         },
       })
+      // 2026/06:查看提示词模式拦截
+      if (interceptPromptPreview(`第 ${group.index} 组 · 分镜 ${shot.shotType} ${shot.shotTypeLabel}`, res)) {
+        return
+      }
       if (!res.ok) {
         toast.error(res.error || '分镜图生成失败')
         return
@@ -1891,8 +2027,14 @@ function WorkspacePage() {
           sceneLocation: sceneObj?.location || group.sceneLocation || '',
           sceneTimeOfDay: sceneObj?.timeOfDay || '',
           projectStyle: project?.style,
+          previewOnly: viewPromptsModeRef.current,
         },
       })
+      // 2026/06:查看提示词模式拦截
+      if (interceptPromptPreview(`第 ${group.index} 组 · 分镜重生 (${instruction.slice(0, 24)}…)`, res)) {
+        setShotModBusy(false)
+        return
+      }
       if (res?.ok && res.url) {
         const newLen = (shotImages[imageKey]?.length ?? 0) + 1
         setShotImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), res.url!] }))
@@ -1975,6 +2117,28 @@ function WorkspacePage() {
       `Cinematic motion, smooth camera movement, photorealistic, 24fps.`,
     ].filter(Boolean).join('\n')
 
+    // 2026/06:查看提示词模式 —— 视频 prompt 完全 client 端拼,这里直接弹 modal
+    if (viewPromptsModeRef.current) {
+      setPromptPreview({
+        title: `第 ${group.index} 组 · 按分镜图生成视频`,
+        prompt,
+        extra: {
+          model: project?.videoModel || 'happyhorse-1.0-r2v',
+          route: '视频(按分镜图)',
+          first_frame: firstFrame,
+          referenceImages: referenceUrls.join(' / ') || '(none)',
+          duration: '10s (fixed)',
+          ratio: project?.aspect ?? '16:9',
+        },
+      })
+      // 清掉 running 状态
+      setGroupVideos((m) => {
+        const { [groupId]: _, ...rest } = m
+        return rest
+      })
+      return
+    }
+
     try {
       const res = await callGenVideo({
         data: {
@@ -1993,6 +2157,116 @@ function WorkspacePage() {
       if (res.ok && res.videoUrl) {
         setGroupVideos((m) => ({ ...m, [groupId]: { url: res.videoUrl!, status: 'succeeded' } }))
         toast.success(`分镜组视频已生成 (${shotImagesList.length} 个镜头,${res.videoUrl ? '已就绪' : ''})`)
+      } else {
+        setGroupVideos((m) => ({ ...m, [groupId]: { url: '', status: 'failed' } }))
+        toast.error(res?.error || '视频生成失败')
+      }
+    } catch (e) {
+      setGroupVideos((m) => ({ ...m, [groupId]: { url: '', status: 'failed' } }))
+      toast.error(e instanceof Error ? e.message : '视频生成失败')
+    }
+  }
+
+  /**
+   * 2026/06 新增:基于"故事板图"生成整组视频(跟 generateVideoForGroup 并列)。
+   *
+   * 跟传统 generateVideoForGroup 的差别:
+   *   - 那个用每张分镜图按时间序列作 reference,first_frame=第一张分镜图
+   *   - 这个**只用故事板图**作为视觉锚点(first_frame=storyboard image),
+   *     剧情文字 plotText 作为叙事参考写进 prompt
+   *   - 适合"还没逐张生成分镜图、但故事板已就绪"的场景,或想让 AI 按故事板
+   *     的画面分布/节奏直接出片
+   *
+   * 前置条件:groupStoryboards[groupId] 已 succeeded 且有 url。
+   * 复用 groupVideos 同一槽位,后生成覆盖前生成(用户在两种模式间切换)。
+   */
+  async function generateVideoFromStoryboardForGroup(groupId: string) {
+    const group = data.storyboardGroups.find((g) => g.id === groupId)
+    if (!group) return
+
+    if (groupVideos[groupId]?.status === 'running') {
+      toast.message('该组视频正在生成中…')
+      return
+    }
+
+    const storyboard = groupStoryboards[groupId]
+    if (storyboard?.status !== 'succeeded' || !storyboard.url) {
+      toast.error('请先生成该组的故事板,才能用故事板生成视频')
+      return
+    }
+
+    setGroupVideos((m) => ({ ...m, [groupId]: { url: '', status: 'running' } }))
+
+    // 收集 shot 描述当作叙事提示(可选,无图也行,只是给文字 context)
+    const shotDescriptions = group.shots
+      .map((s, i) => {
+        const cam = s.camera ? ` (camera: ${s.camera})` : ''
+        const time = s.startSec != null && s.endSec != null
+          ? ` [${s.startSec.toFixed(0)}-${s.endSec.toFixed(0)}s]`
+          : ''
+        return `Shot ${i + 1}${time} [${s.shotTypeLabel}] ${s.action}${cam}`
+      })
+      .join(' → ')
+
+    const prompt = [
+      `[STORYBOARD-DRIVEN VIDEO GENERATION]`,
+      `The attached first-frame image is a complete director's storyboard / pitch deck for this scene. It contains: shared creative direction, character & style reference, environment + top-down camera diagram, multiple numbered storyboard frames showing the shot sequence, lighting/mood notes, and audio/cinematography notes.`,
+      ``,
+      `Your task: produce a single continuous video clip that **brings the storyboard to life** — following the shot sequence, camera positions, lighting transitions, and overall mood as laid out in the storyboard. Use the storyboard's frame breakdown as the structural guide for what happens when.`,
+      ``,
+      `[NARRATIVE REFERENCE — plot context, secondary]`,
+      group.plotText || '(无剧情摘要)',
+      ``,
+      shotDescriptions ? `[SHOT BREAKDOWN — for additional sequence hints]\n${shotDescriptions}` : '',
+      ``,
+      `[CONSTRAINTS]`,
+      `- Render as ONE continuous video that flows through the storyboard's shot sequence in order`,
+      `- Character appearance, lighting continuity, and environment must stay consistent across the clip (follow the storyboard's reference panels)`,
+      `- Cinematic motion, smooth camera movement, ${(group.endSec - group.startSec).toFixed(0)}s duration target`,
+      `- Photorealistic if the storyboard is photorealistic; illustration-style if the storyboard is illustration`,
+      `- 24fps, polished post-processing matching the storyboard's mood notes`,
+    ].filter(Boolean).join('\n')
+
+    // 2026/06:查看提示词模式 —— 直接弹 modal
+    if (viewPromptsModeRef.current) {
+      setPromptPreview({
+        title: `第 ${group.index} 组 · 按故事板生成视频`,
+        prompt,
+        extra: {
+          model: project?.videoModel || 'happyhorse-1.0-r2v',
+          route: '视频(按故事板)',
+          first_frame: storyboard.url,
+          referenceImages: '(none)',
+          duration: `${Math.min(10, Math.max(5, Math.round(group.endSec - group.startSec)))}s`,
+          ratio: project?.aspect ?? '16:9',
+        },
+      })
+      setGroupVideos((m) => {
+        const { [groupId]: _, ...rest } = m
+        return rest
+      })
+      return
+    }
+
+    try {
+      const res = await callGenVideo({
+        data: {
+          prompt,
+          // 故事板图作为 first_frame —— 多数视频模型把 first_frame 当成构图/调性
+          // 的强 anchor;模型会按 storyboard 的 panel 布局推导镜头序列
+          imageUrl: storyboard.url,
+          // 不传 referenceImageUrls —— 故事板自己就是综合 reference;
+          // 再塞分镜图会让 r2v 模型困惑(参考图太多 + 风格统一压力大)
+          model: project?.videoModel || 'happyhorse-1.0-r2v',
+          ratio: project?.aspect === '9:16' ? '9:16' : project?.aspect === '1:1' ? '1:1' : '16:9',
+          duration: Math.min(10, Math.max(5, Math.round(group.endSec - group.startSec))),
+          generateAudio: project?.audio === 'on',
+          watermark: false,
+        },
+      })
+      if (res.ok && res.videoUrl) {
+        setGroupVideos((m) => ({ ...m, [groupId]: { url: res.videoUrl!, status: 'succeeded' } }))
+        toast.success('按故事板的视频已生成')
       } else {
         setGroupVideos((m) => ({ ...m, [groupId]: { url: '', status: 'failed' } }))
         toast.error(res?.error || '视频生成失败')
@@ -2036,9 +2310,9 @@ function WorkspacePage() {
         }
       : undefined
 
-    // 收集角色档案(最多 3 个,带面/身/衣描述)
+    // 收集角色档案(2026/06:撤掉 .slice(0, 3) 让文字描述层全员上;
+    // 图片层另有 4 张总上限,在下面 referenceImages 收集时挑)
     const characters = (group.characterIds || [])
-      .slice(0, 3)
       .map((cid) => {
         const c = data.characters.find((x) => x.id === cid)
         if (!c) return null
@@ -2062,6 +2336,40 @@ function WorkspacePage() {
         palette?: string[]
       }>
 
+    // 2026/06:故事板 I2I 参考图收集
+    //   - Seedream image 字段最多 4 张
+    //   - 优先级:场景必占 1 张(用户诉求) → 剩余 ≤3 给角色
+    //   - 无场景图时:全部 4 张给角色
+    //   - 角色取图:selectedCharImages 优先(用户钉住的"已选中"图),否则 charImages 最新
+    //   - 每张图配 label,在 prompt 里说明"图 N 是 X"
+    const REF_MAX = 4
+    const referenceImages: string[] = []
+    const referenceImageLabels: string[] = []
+    // 场景图
+    const sceneImgUrl = group.sceneId && sceneImages[group.sceneId]?.length
+      ? sceneImages[group.sceneId]!.at(-1)
+      : undefined
+    if (sceneImgUrl) {
+      referenceImages.push(sceneImgUrl)
+      const sLabel = sceneObj
+        ? `场景: ${sceneObj.location || sceneObj.slug}${sceneObj.timeOfDay ? ` · ${sceneObj.timeOfDay}` : ''}`
+        : '场景'
+      referenceImageLabels.push(sLabel)
+    }
+    // 角色图:按 group.characterIds 顺序填,直到 4 张上限
+    for (const cid of group.characterIds || []) {
+      if (referenceImages.length >= REF_MAX) break
+      const c = data.characters.find((x) => x.id === cid)
+      if (!c) continue
+      // 选中图优先,否则最新
+      const pinned = selectedCharImages[c.id]
+      const generations = charImages[c.id] ?? []
+      const url = (pinned && generations.includes(pinned) ? pinned : generations.at(-1))
+      if (!url) continue
+      referenceImages.push(url)
+      referenceImageLabels.push(`角色: ${c.name}${c.roleLabel ? ` (${c.roleLabel})` : ''}`)
+    }
+
     // 收集本组的 shots(2026/06:每 shot 自带 startSec/endSec,
     // 这里把 startSec/endSec 一起传给 I2I 生成 call,prompt 里用时间范围描述)
     const groupDuration = (group.endSec ?? 0) - (group.startSec ?? 0)
@@ -2071,8 +2379,9 @@ function WorkspacePage() {
       shotTypeLabel: s.shotTypeLabel,
       action: s.action,
       camera: s.camera,
-      durationSec: perShotSec,
-      // 2026/06:startSec / endSec 是 shot 自己在当集时间轴上的区间(秒,绝对值)
+      // 优先用真实 startSec/endSec 算时长,fallback perShotSec
+      durationSec: (s.startSec != null && s.endSec != null) ? (s.endSec - s.startSec) : perShotSec,
+      // 2026/06:也把 startSec / endSec 透传到 server,prompt 里可用精确时间区间
       startSec: s.startSec,
       endSec: s.endSec,
     }))
@@ -2086,9 +2395,20 @@ function WorkspacePage() {
           scene,
           characters,
           shots,
+          referenceImages,
+          referenceImageLabels,
           model: project?.storyboardModel,
+          previewOnly: viewPromptsModeRef.current,
         },
       })
+      // 2026/06:查看提示词模式拦截 —— 把 running 状态清掉(也别标 failed)
+      if (interceptPromptPreview(`第 ${group.index} 组 · 故事板`, res)) {
+        setGroupStoryboards((m) => {
+          const { [groupId]: _, ...rest } = m
+          return rest
+        })
+        return
+      }
       if (res.ok && res.url) {
         setGroupStoryboards((m) => ({ ...m, [groupId]: { url: res.url!, status: 'succeeded' } }))
         toast.success('故事板已生成')
@@ -2433,11 +2753,12 @@ function WorkspacePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [completedKey, dataLoaded])
 
-  // 监听 shots 描述变化,自动重算 plotText,把 AI 生成的全部分镜描述写入
-  // 剧情段(2026/06 用户诉求)。runEnterStoryboard 末尾已立即调一次,这里
-  // 覆盖后续编辑/重生/添加 shot 等所有会改 shots 字段的路径。
-  // 死循环防护:composePlotText 输出跟原 plotText 相同时,setData 返回原 d
-  // 不触发 re-render(React setState bail-out),useEffect 不会再次跑。
+  // 2026/06 二次改造:之前 shots 字段一变就调 composePlotText 重写 plotText,
+  // 把 AI 写的详细剧情扩写覆盖成机械的 shot 列表。改 prompt 后 plotText 是
+  // LLM 写的 prose,这里**不能再覆盖**。
+  // 这个 useEffect 仍保留只是为了:对历史数据 composePlotText 会剥掉
+  // "【本组分镜】..." 尾巴(老 prose),换上干净 prose;
+  // 对新数据 composePlotText 返回原文,setState bail-out,无副作用。
   // 把 shots 字段序列化成 stable key 当 dep,shots 数组引用变化(新增/删除
   // shot)或任意 shot 字段(shotTypeLabel / action / camera)变化都触发。
   const storyboardShotsHash = data.storyboardGroups
@@ -3114,7 +3435,7 @@ function WorkspacePage() {
 
   return (
     <div className="h-screen flex flex-col bg-bg overflow-hidden">
-      <WorkspaceTopbar tab={tab} onTabChange={setTab} episodeCount={data.episodeTexts.length} selectedEpisodeIndex={selectedEpisodeIndex} onEpisodeIndexChange={setSelectedEpisodeIndex} onSaveAssets={handleSaveAssets} onSave={handleSaveWorkspace} saving={savingWorkspace} saved={savedWorkspace} completedStages={completedStages} onAddEpisode={openAddEpisodeDialog} />
+      <WorkspaceTopbar tab={tab} onTabChange={setTab} episodeCount={data.episodeTexts.length} selectedEpisodeIndex={selectedEpisodeIndex} onEpisodeIndexChange={setSelectedEpisodeIndex} onSaveAssets={handleSaveAssets} onSave={handleSaveWorkspace} saving={savingWorkspace} saved={savedWorkspace} completedStages={completedStages} onAddEpisode={openAddEpisodeDialog} viewPromptsMode={viewPromptsMode} onToggleViewPromptsMode={() => setViewPromptsMode((v) => !v)} />
       <div className="flex-1 flex min-h-0">
         <main className="flex-1 min-w-0 overflow-auto p-6">
           {tab === 'canvas' && (
@@ -3624,20 +3945,35 @@ function WorkspacePage() {
                           lookLabel: string
                           imageKey: string
                         }
-                        const cards: DisplayCard[] = []
-                        for (const c of sorted) {
-                          cards.push({
-                            character: c, lookId: null, lookLabel: '默认',
-                            imageKey: c.id,
-                          })
-                          for (const lk of c.looks ?? []) {
-                            cards.push({
-                              character: c, lookId: lk.id, lookLabel: lk.label,
-                              imageKey: `${c.id}::${lk.id}`,
+                        // 2026/06 新增:把"之前几集出现过但本集没用到"的角色,
+                        // 在当集角色之后追加展示(只展示,不能编辑/参与当集)。
+                        // 同角色按 episodes 列表区分:本集 = c.episodes.includes(sel);
+                        // 之前几集 = !本集 && c.episodes.some(ep => ep < sel)
+                        const prevEpsChars = data.characters.filter((c) =>
+                          !c.episodes.includes(selectedEpisodeIndex)
+                          && c.episodes.some((ep) => ep < selectedEpisodeIndex),
+                        )
+                        const prevSorted = [...prevEpsChars].sort((a, b) => order[a.role] - order[b.role])
+
+                        function buildCardsFor(chars: GenCharacter[]): DisplayCard[] {
+                          const arr: DisplayCard[] = []
+                          for (const c of chars) {
+                            arr.push({
+                              character: c, lookId: null, lookLabel: '默认',
+                              imageKey: c.id,
                             })
+                            for (const lk of c.looks ?? []) {
+                              arr.push({
+                                character: c, lookId: lk.id, lookLabel: lk.label,
+                                imageKey: `${c.id}::${lk.id}`,
+                              })
+                            }
                           }
+                          return arr
                         }
-                        return cards.map((card) => {
+                        const currentCards = buildCardsFor(sorted)
+                        const prevCards = buildCardsFor(prevSorted)
+                        function renderCard(card: DisplayCard) {
                           const { character: c, lookLabel, imageKey } = card
                           const hasImg = !!(charImages[imageKey] && charImages[imageKey].length > 0)
                           // 并行策略:不同角色同时跑,同角色串行。
@@ -3902,7 +4238,25 @@ function WorkspacePage() {
                               )}
                             </div>
                           )
-                        })
+                        }
+                        // 渲染:当集角色 → 分隔标题(若有之前几集)→ 之前几集角色
+                        return (
+                          <>
+                            {currentCards.map(renderCard)}
+                            {prevCards.length > 0 && (
+                              <>
+                                <div className="col-span-full mt-2 pt-4 border-t border-border">
+                                  <h3 className="text-sm text-text-secondary font-semibold inline-flex items-center gap-2">
+                                    <Users size={14} className="text-text-muted" />
+                                    之前几集出现过的角色 · {prevSorted.length} 位
+                                    <span className="text-[11px] text-text-muted/70 font-normal">仅展示,不参与当集</span>
+                                  </h3>
+                                </div>
+                                {prevCards.map(renderCard)}
+                              </>
+                            )}
+                          </>
+                        )
                       })()}
                     </div>
                   ) : (
@@ -4066,10 +4420,15 @@ function WorkspacePage() {
                       </div>
                       {/* 四列:左 plot / 中-左 分镜图(2 列多行) / 中-右 故事板占位 / 右 视频占位
                           比例:1.2 / 2 / 1.5 / 1 —— 分镜图占大头(2 列多行天然把行拉高),
-                          故事板留足未来空间,视频放最右。 */}
+                          故事板留足未来空间,视频放最右。
+
+                          2026/06 行高改造(二次压缩):cell max-h 从 420px 再降一半
+                          到 220px,每个分镜组的可见高度约 ~半屏的 1/3。
+                          内容超出由 cell 自身 overflow-y-auto 滑;故事板图片配套
+                          缩到 max-h-28(112px)以匹配新行高。 */}
                       <div className="grid grid-cols-1 md:grid-cols-[1fr_2.5fr_1.5fr] gap-3">
                         {/* 左:plot 描述(结构化列表,按 shot 拆)+ 角色列表(点击圆圈弹下拉选形象) */}
-                        <div className="rounded-lg border border-border bg-bg-base/40 p-3 space-y-2 max-h-[80vh] overflow-y-auto">
+                        <div className="rounded-lg border border-border bg-bg-base/40 p-3 space-y-2 max-h-[220px] overflow-y-auto">
                           <div className="text-[10px] tracking-widest uppercase text-text-muted">剧情 · Plot</div>
                           {/* 2026/06 改造:plotText 改为按 shot 拆分的结构化列表,
                               每行格式: 分镜N: Xs-Xs · 景别 · 动作 · 镜头。
@@ -4176,8 +4535,11 @@ function WorkspacePage() {
                         {/* 中:分镜图 + 故事板 合并 cell(2026/06 改造)
                             上面 shots 2 列网格(更紧凑,描述/camera 折叠到 <details>),
                             下面 storyboard 留位(更宽更高),
-                            视频 cell 因此能拿到更多空间。 */}
-                        <div className="rounded-lg border border-border bg-bg-base/40 p-3 space-y-3 max-h-[80vh] overflow-y-auto">
+                            视频 cell 因此能拿到更多空间。
+                            行高改造:外层用 max-h-[420px] + overflow-y-auto,
+                            shots 网格不再单独滑动 —— 整个 cell 一条滑块吞掉 shots + 故事板,
+                            符合"故事板和分镜图合起来太高就只在这一格上下滑"的诉求。 */}
+                        <div className="rounded-lg border border-border bg-bg-base/40 p-3 space-y-3 max-h-[220px] overflow-y-auto">
                           {/* 顶部:shots 标题 + 全部生成 */}
                           <div className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-2">
@@ -4196,9 +4558,11 @@ function WorkspacePage() {
                             </button>
                           </div>
                           {/* shots 网格:2 列,卡片更紧凑(描述折叠到 <details>)。
-                              2026/06:加 max-h + overflow-y-auto,shot 多时可下滑,
-                              合并 cell 整体高度不再随 shot 数撑高。 */}
-                          <div className="grid grid-cols-2 gap-2 max-h-72 overflow-y-auto pr-1">
+                              2026/06 行高改造:**去掉**之前的 max-h-72 + 内层
+                              overflow-y-auto。原本 shots 单独滑、故事板单独显,导致
+                              cell 内部出现两条滑块且行高仍被撑到 600+px。现在交给
+                              外层 cell 统一 overflow,行高更可控、滑动也只有一条。 */}
+                          <div className="grid grid-cols-2 gap-2">
                             {g.shots.map((s) => {
                               const isBusy = busyShotImages.has(`${g.id}::${s.id}`)
                               const shotImageKey = `${g.id}::${s.id}`
@@ -4251,18 +4615,24 @@ function WorkspacePage() {
                                       </button>
                                     )}
                                   </div>
-                                  {/* 底部:描述/camera 折叠到 <details>(降低卡片高度) + 单 shot 生成按钮 */}
+                                  {/* 底部:分镜 N · 时间 · 景别 始终显示(2026/06 用户诉求);
+                                      action + camera 也始终显示,不再藏在 details 折叠 */}
                                   <div className="p-1.5 space-y-1">
-                                    <details className="text-[10px] text-text-muted group/det">
-                                      <summary className="cursor-pointer list-none flex items-center gap-1 hover:text-text-primary select-none">
-                                        <ChevronDown size={10} className="transition-transform group-open/det:rotate-180" />
-                                        <span>描述 · 镜头</span>
-                                      </summary>
-                                      <div className="mt-1 pl-3 space-y-0.5 text-[10px] leading-relaxed">
-                                        <p className="text-text-primary">{s.action || '(无)'}</p>
-                                        {s.camera && <p className="text-text-muted">🎥 {s.camera}</p>}
-                                      </div>
-                                    </details>
+                                    <div className="flex items-center justify-between gap-1 text-[10px] font-mono tabular-nums">
+                                      <span className="text-accent font-semibold">
+                                        分镜 {g.shots.findIndex((x) => x.id === s.id) + 1}
+                                      </span>
+                                      {s.startSec != null && s.endSec != null && (
+                                        <span className="text-text-secondary">
+                                          {s.startSec.toFixed(0)}-{s.endSec.toFixed(0)}s
+                                        </span>
+                                      )}
+                                      <span className="text-text-muted">{s.shotTypeLabel}</span>
+                                    </div>
+                                    <p className="text-[10px] leading-relaxed text-text-primary">{s.action || '(无描述)'}</p>
+                                    {s.camera && (
+                                      <p className="text-[10px] leading-relaxed text-text-muted">🎥 {s.camera}</p>
+                                    )}
                                     <button
                                       type="button"
                                       onClick={() => void generateShotImageForGroup(g.id, s.id)}
@@ -4295,13 +4665,13 @@ function WorkspacePage() {
                               )}
                             </div>
                             {groupStoryboards[g.id]?.status === 'succeeded' && groupStoryboards[g.id]?.url ? (
-                              <div className="relative group rounded border border-accent/30 overflow-hidden bg-bg-base max-h-64 flex items-center justify-center">
+                              <div className="relative group rounded border border-accent/30 overflow-hidden bg-bg-base max-h-28 flex items-center justify-center">
                                 {/* eslint-disable-next-line @next/next/no-img-element */}
                                 <img
                                   src={groupStoryboards[g.id]!.url}
                                   alt="故事板"
                                   onClick={() => setStoryboardPreview({ groupId: g.id })}
-                                  className="max-h-64 w-auto block cursor-zoom-in object-contain"
+                                  className="max-h-28 w-auto block cursor-zoom-in object-contain"
                                 />
                                 <button
                                   type="button"
@@ -4313,12 +4683,12 @@ function WorkspacePage() {
                                 </button>
                               </div>
                             ) : groupStoryboards[g.id]?.status === 'running' ? (
-                              <div className="max-h-64 h-40 rounded border border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted">
+                              <div className="max-h-28 h-20 rounded border border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted">
                                 <Loader2 size={20} className="animate-spin text-accent" />
                                 <span className="text-[10px]">融合中…</span>
                               </div>
                             ) : (
-                              <div className="max-h-64 h-40 rounded border border-dashed border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted">
+                              <div className="max-h-28 h-20 rounded border border-dashed border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted">
                                 <LayoutGrid size={20} className="opacity-40" />
                                 <span className="text-[10px]">故事板占位</span>
                                 <span className="text-[9px] opacity-70">含剧情/角色/场景/分镜</span>
@@ -4340,7 +4710,7 @@ function WorkspacePage() {
                           </div>
                         </div>
                                                 {/* 右:视频(2026 接入)—— 整组合成一个视频,涵盖所有分镜 */}
-                        <div className="rounded-lg border border-border bg-bg-base/40 p-3 space-y-2 max-h-[80vh] overflow-y-auto">
+                        <div className="rounded-lg border border-border bg-bg-base/40 p-3 space-y-2 max-h-[220px] overflow-y-auto">
                           <div className="flex items-center justify-between">
                             <div className="text-[10px] tracking-widest uppercase text-text-muted">视频 · Video</div>
                             {groupVideos[g.id]?.status === 'succeeded' ? (
@@ -4406,7 +4776,7 @@ function WorkspacePage() {
                             if (!hasAnyShotImage) {
                               return (
                                 <p className="text-[10px] text-text-muted leading-relaxed">
-                                  需先生成该组至少一张分镜图,才能生成整组合成视频。
+                                  需先生成该组至少一张分镜图,才能按分镜图生成视频。
                                 </p>
                               )
                             }
@@ -4420,8 +4790,35 @@ function WorkspacePage() {
                                 {groupVideos[g.id]?.status === 'running'
                                   ? <><Loader2 size={9} className="animate-spin" /> 视频生成中…</>
                                   : groupVideos[g.id]?.status === 'succeeded'
-                                    ? <><RefreshCw size={9} /> 重新生成整组视频</>
-                                    : <><Camera size={9} /> 生成整组视频</>}
+                                    ? <><RefreshCw size={9} /> 按分镜图重新生成视频</>
+                                    : <><Camera size={9} /> 按分镜图生成视频</>}
+                              </button>
+                            )
+                          })()}
+                          {/* 2026/06 新增:按故事板图生成视频(并列第二个按钮)。
+                              用 storyboard image 作 first_frame,plot text 作叙事参考。
+                              前置条件:故事板已生成。 */}
+                          {(() => {
+                            const sb = groupStoryboards[g.id]
+                            const hasStoryboard = sb?.status === 'succeeded' && !!sb.url
+                            if (!hasStoryboard) {
+                              return (
+                                <p className="text-[10px] text-text-muted leading-relaxed">
+                                  需先生成该组的故事板,才能用故事板生成视频。
+                                </p>
+                              )
+                            }
+                            return (
+                              <button
+                                type="button"
+                                onClick={() => void generateVideoFromStoryboardForGroup(g.id)}
+                                disabled={groupVideos[g.id]?.status === 'running'}
+                                className="w-full text-[10px] py-1 rounded border border-accent/60 bg-accent-dim/20 text-accent hover:border-accent hover:bg-accent-dim/40 transition disabled:opacity-40 inline-flex items-center justify-center gap-1"
+                                title="基于故事板图(作为视觉锚)+ 剧情文字(作叙事参考)生成视频"
+                              >
+                                {groupVideos[g.id]?.status === 'running'
+                                  ? <><Loader2 size={9} className="animate-spin" /> 视频生成中…</>
+                                  : <><LayoutGrid size={9} /> 按故事板生成视频</>}
                               </button>
                             )
                           })()}
@@ -5206,6 +5603,95 @@ function WorkspacePage() {
           </div>
         )
       })()}
+
+      {/* ============= 查看提示词模态(2026/06) =============
+          全局开关 viewPromptsMode 打开时,所有生成按钮触发后不真正生成,而是
+          把 server fn 返回的 previewPrompt 弹到这个 modal 里展示。带复制按钮。 */}
+      {promptPreview && (
+        <div
+          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setPromptPreview(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="查看提示词"
+        >
+          <div
+            className="relative w-full max-w-3xl max-h-[85vh] bg-bg-surface border border-accent/40 rounded-2xl shadow-2xl flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-3 border-b border-border shrink-0">
+              <h2 className="font-display text-base font-bold inline-flex items-center gap-2">
+                <Sparkles size={16} className="text-accent" /> 提示词预览 · {promptPreview.title}
+              </h2>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const text = [
+                      `=== ${promptPreview.title} ===`,
+                      promptPreview.size ? `Size: ${promptPreview.size}` : '',
+                      promptPreview.extra ? Object.entries(promptPreview.extra).map(([k, v]) => `${k}: ${v}`).join('\n') : '',
+                      '',
+                      '--- POSITIVE PROMPT ---',
+                      promptPreview.prompt,
+                      promptPreview.negative ? '\n--- NEGATIVE PROMPT ---\n' + promptPreview.negative : '',
+                    ].filter(Boolean).join('\n')
+                    navigator.clipboard.writeText(text).then(() => toast.success('提示词已复制'))
+                  }}
+                  className="px-3 py-1 text-xs rounded-md border border-accent text-accent bg-accent-dim/30 hover:bg-accent-dim/60 transition"
+                >
+                  📋 复制
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPromptPreview(null)}
+                  className="p-1.5 rounded-md hover:bg-bg-elevated text-text-muted"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3 min-h-0">
+              {promptPreview.size && (
+                <div className="text-[11px] text-text-muted">
+                  Image size: <span className="font-mono text-text-secondary">{promptPreview.size}</span>
+                </div>
+              )}
+              {promptPreview.extra && Object.entries(promptPreview.extra).length > 0 && (
+                <div className="text-[11px] text-text-muted space-y-0.5">
+                  {Object.entries(promptPreview.extra).map(([k, v]) => (
+                    <div key={k}>
+                      <span className="text-text-secondary">{k}:</span> <span className="font-mono">{v}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div>
+                <div className="text-[11px] uppercase tracking-widest text-accent mb-1">Positive Prompt</div>
+                <pre className="whitespace-pre-wrap break-words text-[11px] text-text-secondary bg-bg-base border border-border rounded-md p-3 font-mono leading-relaxed">{promptPreview.prompt}</pre>
+              </div>
+              {promptPreview.negative && (
+                <div>
+                  <div className="text-[11px] uppercase tracking-widest text-rose-400 mb-1">Negative Prompt</div>
+                  <pre className="whitespace-pre-wrap break-words text-[11px] text-text-secondary bg-bg-base border border-rose-500/20 rounded-md p-3 font-mono leading-relaxed">{promptPreview.negative}</pre>
+                </div>
+              )}
+            </div>
+            <div className="px-5 py-3 border-t border-border shrink-0 flex items-center justify-between">
+              <span className="text-[11px] text-text-muted">
+                查看模式已开启 — 按钮不会真正生成,只展示提示词。再次点击顶部 toggle 关闭。
+              </span>
+              <button
+                type="button"
+                onClick={() => setPromptPreview(null)}
+                className="px-3 py-1 text-xs rounded-md bg-accent text-accent-foreground font-semibold hover:opacity-90"
+              >
+                关闭
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

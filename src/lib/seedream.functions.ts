@@ -29,11 +29,12 @@ const DEFAULT_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3'
 const DEFAULT_MODEL = 'doubao-seedream-5-0-260128'
 const RETRY_BACKOFF_MS = [1_000, 2_000, 4_000] as const
 // 2026/06 修复:50_000 经常被 Seedream 5.0 多参考图融合 + 高分辨率 2K
-// 出图流程超时报错(用户报告 "[seedream] doubao-seedream-5-0-260128 network: timed out")。
-// 提到跟 I2I 一致的 120_000 (2 分钟),给多图融合/高分辨率足够余量。
+// 出图流程超时报错。先提到 120s,后又因新 multi-asset(3 区域 + 13 子图概念)
+// 和 16:9 故事板(6 section, ~3500 字 prompt)单图渲染负担更重,
+// **2026/06 二次提到 180s**(3 分钟)给单次重活兜底。
 // 极端情况 3+ 分钟的请求仍可能超,但 retry 1s/2s/4s 退避 + 用户体验上更平滑。
-const REQUEST_TIMEOUT_MS = 120_000
-const I2I_TIMEOUT_MS = 120_000
+const REQUEST_TIMEOUT_MS = 180_000
+const I2I_TIMEOUT_MS = 180_000
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
 
 // ---------- 工具函数 ----------
@@ -211,6 +212,8 @@ const GenerateImageInput = z.object({
   size: z.string().max(50).optional(),
   negativePrompt: z.string().max(4000).optional(),
   noFallback: z.boolean().optional(),
+  // 2026/06:查看提示词模式
+  previewOnly: z.boolean().default(false),
 })
 
 export const generateImage = createServerFn({ method: 'POST' })
@@ -238,6 +241,20 @@ export const generateImage = createServerFn({ method: 'POST' })
     const model = requested || defaultModel
     const size = normalizeSeedreamSize(data.size || '2K')
     const prompt = appendNegative(data.prompt, data.negativePrompt)
+
+    // 2026/06:查看提示词模式
+    if (data.previewOnly) {
+      return {
+        url: '',
+        error: null,
+        model,
+        size,
+        previewPrompt: prompt,
+        negativePrompt: data.negativePrompt,
+        promptSize: size,
+        promptExtra: { model, route: 'T2I (generateImage)' },
+      } as any
+    }
 
     return callSeedreamImages(
       { model, prompt, size, output_format: 'png', watermark: false },
@@ -267,6 +284,8 @@ const RegenerateInput = z.object({
   projectStyle: z.string().max(50).optional(),
   model: z.string().max(100).optional(),
   mode: z.enum(['modify', 'three-view', 'multi-asset']).default('modify'),
+  // 2026/06:查看提示词模式
+  previewOnly: z.boolean().default(false),
 })
 
 export type RegenerateInputType = z.infer<typeof RegenerateInput>
@@ -364,136 +383,180 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
 
   if (data.mode === 'multi-asset') {
     // ====================================================================
-    // 官方角色资料卡(Official Character Profile Card)—— 2026 用户重做
+    // 角色多维资产图 —— 2026/06 用户二次扩展
     //
-    // 风格:类似官方游戏 / 动漫设定集的角色资料卡,白底,插画风,有组织的布局。
-    // 关键词:角色资料卡、官方设定、3 视图、表情变化、服装分解、装备详细、
-    //        色板、世界观、白色背景、插画风格
+    // 在原 3 区域(三视图/表情/姿势)基础上合并新需求:
+    //   ① 大型主肖像(hero portrait,放整张图最显眼位置)
+    //   ② 各种面部表情(开心/生气/困倦/惊讶等,融合原有 6 表情扩成 6-8 个)
+    //   ③ 动作姿势(按角色个性自适应,不限定 4 个)
+    //   ④ 小型物体图标(配饰/长期携带道具)
+    //   ⑥ 简介条(名字 + 个性 / role 描述)
     //
-    // 布局:
-    //   顶部 header strip —— 角色名 + 角色定位 + 世界观设定简要说明(2-3 句)
-    //   Row 1 (3 格)—— 3 视图(front / side / back),角色比例完全一致
-    //   Row 2 (3 格)—— 面部表情变化(中性 / 微笑 / 严肃)
-    //   Row 3 (3 格)—— 服装分解 / 装备详细 / 色板
+    // 最终布局(从上到下):
+    //   Section 0  简介条        — 名字 + 个性短描述
+    //   Section 1  大型主肖像    — 整张图最显眼,半身或全身 hero shot
+    //   Section 2  角色三视图    — 正/侧/背
+    //   Section 3  表情表        — 6-8 个面部特写(覆盖开心/生气/困倦/惊讶/悲伤/常态等)
+    //   Section 4  动作姿势      — 4-6 个全身动作,按角色个性挑选
+    //   Section 5  配饰/道具图标 — 小型物体行,展示长期携带的配饰/道具
+    //
+    // 硬约束:白色背景、中文标注、不限格数(按内容铺开)、跨 section 同一张脸/服装/特征
     // ====================================================================
     const positive = [
-      `[MISSION] Generate an OFFICIAL-STYLE CHARACTER PROFILE CARD (官方角色资料卡 / Character Design Reference Page) for "${cardTitle}" — a ${data.characterRoleLabel}, age ${data.characterAge}. This is a single image designed to look like a page from a game / anime production art book / 官方设定集 — like a character design document handed to a 3D modeler or animator. PURE WHITE BACKGROUND, illustration-grade, organized layout, clean linework. NOT a finished illustration, NOT a poster, NOT a manga storyboard.`,
-
-      `The document's purpose: a single image that gives a game / animation team all the information they need to faithfully reproduce this character in any future scene — 3 views for modeling, facial expression range for animation, clothing/equipment breakdown for rigging, color palette for consistency, world/lore context for tone.`,
+      `[MISSION] Generate a complete CHARACTER MULTI-ASSET SHEET (角色多维资产图) for "${cardTitle}" — a ${data.characterRoleLabel}, age ${data.characterAge}. ONE large image, PURE WHITE BACKGROUND (#FFFFFF). The image is divided into SIX clearly separated sections, top-to-bottom, with thin neutral dividers between sections. Illustration-grade, clean composition, like a page from an official character design document handed to an animation team or game studio.`,
 
       `You are given TWO sources of truth and BOTH must agree:`,
-      `  (A) the attached REFERENCE IMAGE — the current approved front-view of "${cardTitle}", and`,
-      `  (B) the FACE / BODY / OUTFIT text descriptions below (the source-of-truth for the locked character design).`,
-      `If (A) and (B) ever disagree, follow (B) and treat (A) as a visual hint. The character identity MUST match (B) exactly.`,
+      `  (A) the attached REFERENCE IMAGE — the current approved look of "${cardTitle}", and`,
+      `  (B) the FACE / BODY / OUTFIT text descriptions below.`,
+      `If (A) and (B) ever disagree, follow (B) and treat (A) as a visual hint. The character identity MUST stay consistent across all sub-images.`,
 
       // ========== 整体视觉风格 ==========
       `[OVERALL VISUAL TREATMENT — strictly enforced]`,
-      `- PURE WHITE BACKGROUND (#FFFFFF) for the entire page and all cells. Like a printed reference document. NO scenery, NO floor, NO horizon, NO environment, NO shadow on the background.`,
-      `- Illustration style with clean linework, organized layout. NOT photoreal — illustration-grade (the kind of art you'd see in an official character art-book).`,
-      `- Thin neutral dividers between cells (very light grey ~#E8E8E8 or so). No fancy borders, no gold filigree, no ornate decoration. Just clean grid lines.`,
-      `- HD 2K resolution. Sharp, clean, professional-grade. Each cell should be detailed enough to be usable as a reference for production work.`,
-      `- All text in the header strip rendered in clean typefaces (Songti / 思源宋体 / Times / similar) — no Comic Sans, no decorative fonts. Text is small and integrated into the layout.`,
+      `- PURE WHITE BACKGROUND (#FFFFFF) for the entire page and every sub-image. NO scenery, NO floor, NO horizon, NO environment, NO shadow on the background. Like a printed reference document.`,
+      `- Illustration style with clean linework. NOT photoreal — illustration-grade.`,
+      `- Thin neutral dividers (~#E8E8E8) only between the six sections. No fancy borders, no gold filigree.`,
+      `- HD resolution. Sharp, clean, professional.`,
+      `- ALL TEXT IN SIMPLIFIED CHINESE (简体中文), readable size, clean font (Songti / 思源宋体 / sans-serif). Each section carries a Chinese title (with optional small English subtitle); each sub-image carries a short Chinese label.`,
+      `- DO NOT IMPOSE A FIXED NUMBER OF GRID CELLS within sections. Section 1 is one big image. Sections 2-5 lay out sub-images naturally — content first, no padding for grid neatness.`,
 
-      // ========== 布局:header strip + 3x3 grid ==========
-      `[LAYOUT — a small "header strip" at the top, then a clean 3 columns × 3 rows grid (= 9 cells).]`,
+      // ========== Section 0:简介条 ==========
+      `[SECTION 0 — 简介 / PROFILE BAR (top strip, ~8% of image height)]`,
+      `A horizontal text-only header at the very top of the image. From left to right:`,
+      `  • Character name in larger Chinese characters: "${cardTitle}"`,
+      `  • Small role badge (chip): "${data.characterRoleLabel}", age ${data.characterAge}`,
+      `  • Brief personality / character description in 1-2 short Chinese sentences (refined, succinct — pulled from the role context). Example tone: "沉默寡言的天才剑士,行动果决,内心藏着旧伤。"`,
+      `Layout: clean, print-document feel. Small but readable. NO illustration in this strip — text only.`,
 
-      `[HEADER STRIP — top of the image, full width, ~10% of image height]`,
-      `A small horizontal text-only header with:`,
-      `  Left:   Character name in large Chinese characters ("${cardTitle}"), with a small English subtitle below ("Official Profile Card" or similar)`,
-      `  Center: Role label (${data.characterRoleLabel}) in a small badge / chip`,
-      `  Right:  A 2-3 sentence brief worldview / lore description for this character (in Chinese), explaining their role in the world, their personality archetype, and their key relationship/context. Tone should be epic / literario / inキャラクター. NO image, NO icon, just plain text.`,
-      `The header is small and clean — the 3x3 grid below is the main attraction.`,
+      // ========== Section 1:大型主肖像 ==========
+      `[SECTION 1 — 大型主肖像 / MAIN PORTRAIT (the visual centerpiece, ~25% of image height)]`,
+      `Section title above it: "大型主肖像 / Main Portrait"`,
+      `One LARGE hero portrait — half-body to 3/4-body framing, facing camera, in the character's most identity-defining pose (the look that best captures who they are). This is the centerpiece of the whole sheet — render it with the most attention to detail (lighting, expression, posture). White background.`,
+      `Must show the character's complete identity-defining features: face, hairstyle, complete outfit visible, signature accessories. If the character has special traits (glasses, animal ears, wings, tail, horns, distinctive markings), ALL must be visible here.`,
 
-      `Row 1 — FULL-BODY 3-VIEW (front / side / back, identical proportions):`,
-      `  Cell (1,1) = FRONT full body (front view, standing A-pose, expressionless face)`,
-      `  Cell (1,2) = SIDE PROFILE full body (90° rotation, character's RIGHT side facing camera)`,
-      `  Cell (1,3) = BACK full body (180° rotation, back facing camera)`,
-      `All three views are the SAME character in standing A-pose (arms relaxed at the sides, feet slightly apart, expressionless face). Identical proportions, identical outfit, identical height across the three views. NO perspective distortion, NO foreshortening, NO 3/4 angles.`,
-      `Each full-body cell shows the character head-to-toe, both feet clearly visible at the bottom, small margin above the head.`,
+      // ========== Section 2:三视图 ==========
+      `[SECTION 2 — 角色三视图 / THREE-VIEW]`,
+      `Section title: "角色三视图 / Three-View"`,
+      `Lay out THREE FULL-BODY orthographic views side-by-side:`,
+      `  • 正视图 (Front view) — character standing A-pose, facing camera, expressionless face, both feet visible`,
+      `  • 侧视图 (Side view) — 90° rotation, character's RIGHT side facing camera, same A-pose`,
+      `  • 背视图 (Back view) — 180° rotation, back facing camera, same A-pose`,
+      `Each view is labeled in Chinese below it: "正视图" / "侧视图" / "背视图".`,
+      `CRITICAL — PRESERVE ALL CHARACTER FEATURES across all three views: any special trait (glasses, wings, animal ears, tail, horns, special hair accessory, distinctive eye color, tattoos) MUST appear consistently. Identical proportions, identical outfit, identical height. NO perspective distortion, NO foreshortening, NO 3/4 angles. Standard orthographic.`,
 
-      `Row 2 — FACIAL EXPRESSION VARIATIONS (only the expression differs; 2026/06 用户诉求:覆盖"开心/难过"等常见表情) — 用户的分镜流程需要多组表情资产:`,
-      `  Cell (2,1) = NEUTRAL / CALM expression (default passport-photo look, no emotion, face relaxed)`,
-      `  Cell (2,2) = HAPPY / SMILING expression (genuine warm smile, eyes slightly squinted with warmth, mouth corners up, slight cheek lift)`,
-      `  Cell (2,3) = SAD / MELANCHOLIC expression (slight downward mouth corners, eyebrows pulled up at inner ends, eyes soft with a hint of moisture, overall somber mood)`,
-      `All three face cells show the SAME face shape, eye shape, nose, mouth, eyebrows, skin tone, hairstyle — only the EXPRESSION changes. Same head size, same camera angle (front view), same lighting. The viewer should clearly read "neutral / happy / sad" as three distinct emotional states of the SAME person.`,
+      // ========== Section 3:表情表 ==========
+      `[SECTION 3 — 表情表 / EXPRESSIONS]`,
+      `Section title: "表情表 / Expressions"`,
+      `Lay out 6-8 FACIAL CLOSE-UPS (大头照, head-and-shoulders, front-facing). Each is the SAME face as in Sections 1-2; ONLY the EXPRESSION changes. Each labeled in Chinese below it.`,
+      `Required emotions (pick at least 6 from this set, all from the list must appear unless the character's nature truly excludes one):`,
+      `  • 开心 / 喜悦 (Happy / Joy) — genuine smile, eyes warm`,
+      `  • 生气 / 愤怒 (Angry) — brows pulled down and inward, mouth tight or bared`,
+      `  • 困倦 (Sleepy) — eyes half-closed, slight head tilt, relaxed mouth`,
+      `  • 惊讶 (Surprised) — eyes wide, brows raised, mouth slightly agape`,
+      `  • 悲伤 (Sad) — mouth corners down, inner brows raised, eyes soft`,
+      `  • 常态 / 平静 (Neutral / Calm) — default, face relaxed`,
+      `Optional additions if 8 cells used:`,
+      `  • 恐惧 (Fear) — eyes wide with tension, brows raised and pulled together`,
+      `  • 思考 (Thoughtful) — slight eye narrowing, lips pressed, contemplative`,
+      `CRITICAL — same face shape, eye shape, nose, mouth structure, hairstyle, skin tone, camera angle (front), lighting. Special features (glasses, ears, horns) consistent in every expression close-up.`,
 
-      `Row 3 — CLOTHING BREAKDOWN / EQUIPMENT DETAIL / COLOR PALETTE:`,
-      `  Cell (3,1) = CLOTHING BREAKDOWN (服装分解): a "flat lay" / disassembled view of the outfit — each garment (top, pants/skirt, etc.) shown separately and laid flat, with the actual fabric texture, pattern, color, and stitching visible. Like a sewing pattern reference. NO body wearing the clothes — just the clothes themselves, neatly arranged in the cell.`,
-      `  Cell (3,2) = EQUIPMENT / ACCESSORIES DETAIL (装备详细部分): the key prop(s) / weapon(s) / accessory(ies) the character carries, each shown separately as a clean line-art illustration with shading. Multiple items arranged neatly. Include any visible texture / material / engraved detail.`,
-      `  Cell (3,3) = COLOR PALETTE (色板): a clean horizontal grid of 4-6 small color swatches (rounded squares), each labeled with a tiny hex code below. The colors are the dominant colors of the character's design (skin, hair, primary outfit, secondary outfit, accent).`,
+      // ========== Section 4:动作姿势 ==========
+      `[SECTION 4 — 动作姿势 / POSES (personality-driven)]`,
+      `Section title: "动作姿势 / Poses"`,
+      `Lay out 4-6 FULL-BODY dynamic poses, each labeled in Chinese below it. **Pick poses that fit THIS character's personality**, drawn from the role label (${data.characterRoleLabel}) and the description below. Different characters get different pose sets — a warrior gets combat poses, a scholar gets reading/thinking poses, a child gets playful poses, etc.`,
+      `Examples (pick what fits; invent better-matching ones freely):`,
+      `  • 跑步 (Running) / 行走 (Walking) — for active characters`,
+      `  • 玩耍 (Playing) — for childlike or playful characters`,
+      `  • 战斗准备 (Combat ready) — for fighters`,
+      `  • 思考 (Thinking) — for strategists / scholars`,
+      `  • 招手 (Waving) / 微笑挥手 — for friendly characters`,
+      `  • 坐姿 (Sitting) — composed or contemplative`,
+      `  • 回头 (Turning back) — mysterious or guarded`,
+      `  • 持物姿态 (Holding signature prop) — if the character has a signature item`,
+      `Each pose is head-to-toe full body, both feet visible. Outfit / hair / special features (ears, tail, wings, glasses, horns) MUST stay consistent in every pose.`,
+
+      // ========== Section 5:配饰/道具图标 ==========
+      `[SECTION 5 — 配饰 / 道具图标 / ACCESSORIES & PROPS]`,
+      `Section title: "配饰 / 道具图标 / Accessories & Props"`,
+      `Lay out a HORIZONTAL ROW of 4-8 SMALL OBJECT ICONS — each rendered as a clean isolated illustration on the white background, like an inventory icon. Each labeled in Chinese below it.`,
+      `Pick items from the character's outfit / equipment / typical loadout — the accessories or props the character carries habitually or that define them. Examples (only include what actually fits THIS character):`,
+      `  • Weapons (剑、弓、匕首、法杖…)`,
+      `  • Jewelry / wearables (吊坠、戒指、耳环、项链、护身符…)`,
+      `  • Tools / containers (背包、水壶、笔记本、地图、卷轴…)`,
+      `  • Personal effects (信物、家传物件、护照、徽章…)`,
+      `  • Headgear / handheld accessories (帽子、面具、手套、烟斗…)`,
+      `Each icon is small but clear, showing its design detail. Items NOT held/worn by the character — just the items themselves, isolated. If the character has a signature pet / familiar that travels with them, include it here as well.`,
 
       // ========== 质量约束 ==========
       `[CRITICAL RULES — output is REJECTED if ANY of these is violated]`,
-
-      `RULE 1 — PURE WHITE BACKGROUND: every cell AND the entire image background MUST be white / very-light off-white (#FFFFFF or #FAFAFA). NOT gray, NOT cream, NOT textured, NOT scenery. This is a "design document" with a clean white background.`,
-
-      `RULE 2 — IDENTITY LOCK: the character depicted in all 9 cells MUST be pixel-identical (same face, body, outfit, hair, skin tone, accessories) where they appear. Only the framing / expression / angle changes between cells.`,
-
-      `RULE 3 — CHARACTER PROPORTIONS CONSISTENT across the 3 full-body views. Same head size, same torso length, same arm length, same leg length. The character in the side and back views is the EXACT same height as the front view.`,
-
-      `RULE 4 — NO DISTORTION / NO PERSPECTIVE ERRORS: all views are flat orthographic. No fish-eye, no wide-angle distortion, no hero/low angle, no 3/4 view (only allowed angles: 0° front, 90° side, 180° back for the full-body views).`,
-
-      `RULE 5 — EXPRESSION ONLY: in Row 2, ONLY the expression changes. The face shape, eye shape, hairstyle, skin tone, lighting, camera angle MUST stay identical across the 3 expression cells. The viewer should be able to tell "these are 3 expressions of the SAME person".`,
-
-      `RULE 6 — CLOTHING IS A FLAT LAY: in Cell (3,1), the clothing is shown DISASSEMBLED (top, pants, etc. laid out separately) — NOT worn by the character, NOT on a mannequin. Just the garments themselves, neatly arranged.`,
-      `— EQUIPMENT IS INDIVIDUAL ITEMS: in Cell (3,2), each prop/weapon/accessory is shown separately — NOT held by the character, NOT in a scene. Just the items, neatly arranged.`,
-
-      `RULE 7 — COLOR PALETTE: in Cell (3,3), 4-6 small color swatches with hex codes (e.g. "#E8C4A0") labeled below each. The swatches should reflect the dominant colors of the character.`,
-
-      `RULE 8 — STYLE LOCK: all 9 cells + the header MUST be rendered in the project's selected visual style "${styleSpec.label}". Mixing anime and realistic, or mixing 3D and 2D, is forbidden.`,
-      `— header text may be in a slightly different visual treatment (cleaner, more print-like) but should still feel cohesive with the rest of the page.`,
-
-      `RULE 9 — NO UNRELATED CONTENT: no other characters, no random props, no scenery. Everything in the card must be traceable back to the character's face/body/outfit descriptions below.`,
-      `— The header's lore text should reference the character by name and reflect their actual role / personality from the inputs.`,
-
-      `RULE 10 — READABLE HEADER TEXT: the character name, role badge, and lore text in the header must be readable — large enough, in proper Chinese, no truncation. The lore text should be 2-3 sentences of refined literary Chinese.`,
+      `RULE 1 — PURE WHITE BACKGROUND (#FFFFFF) everywhere. NOT gray, NOT cream, NOT textured. No floor, no scenery.`,
+      `RULE 2 — IDENTITY LOCK: every face shown across the entire image MUST be the SAME PERSON. Same face shape, eyes, nose, mouth, hairstyle, hair color, skin tone. Different person = REJECT.`,
+      `RULE 3 — FEATURE PRESERVATION: any special trait (glasses, wings, animal ears, tail, horns, special accessories, distinctive markings) MUST appear in: the main portrait, all three views, every expression close-up, every pose. Missing in any one of these = REJECT.`,
+      `RULE 4 — CHINESE TEXT LABELS: every section carries a Chinese title; every sub-image / icon carries a Chinese label. Text must be readable, simplified Chinese, no garbled characters, no English-only labels.`,
+      `RULE 5 — NO RIGID GRID: do not force a fixed grid. Section 1 = one big hero portrait. Sections 2-5 lay items out by content (3 views in Section 2, 6-8 expressions in Section 3, 4-6 poses in Section 4, 4-8 accessory icons in Section 5).`,
+      `RULE 6 — NO PERSPECTIVE ERRORS in Section 2 (three-view): orthographic only (0° / 90° / 180°).`,
+      `RULE 7 — EXPRESSION ONLY in Section 3: only expression changes between close-ups. Same head size, camera angle, lighting.`,
+      `RULE 8 — PERSONALITY-MATCHED POSES in Section 4: pose set should reflect this character's role and temperament. A reserved scholar should NOT get aggressive combat poses; a playful child should NOT get combat-ready poses.`,
+      `RULE 9 — STYLE LOCK: all sub-images + labels rendered in the project's selected visual style "${styleSpec.label}". No mixing of anime + photoreal, no mixing of 2D + 3D.`,
+      `RULE 10 — NO UNRELATED CONTENT: no other characters in any sub-image, no random scenery, no extra limbs, no deformed hands. Section 0 is text-only. Section 5 icons are isolated objects, not in-scene.`,
+      `RULE 11 — SECTION SEPARATORS: only thin neutral dividers (~#E8E8E8) between the six sections. No fancy borders, no decorative frames.`,
+      `RULE 12 — PROFILE BAR IS TEXT-ONLY: Section 0 contains only text (name, role badge, personality description). No portrait, no icon in this strip.`,
 
       // ========== 风格 / 角色数据 ==========
-      `[PROJECT VISUAL STYLE — must match the project's selected visual style across ALL 9 cells]`,
+      `[PROJECT VISUAL STYLE — must match across all sub-images]`,
       buildStyleLock(styleSpec, 'character'),
 
-      `[CHARACTER IDENTITY — copy into the image EXACTLY. Treat as the source of truth, alongside the attached reference image.]`,
+      `[CHARACTER IDENTITY — source of truth, copy into the image EXACTLY]`,
       `Name: ${cardTitle} (${data.characterRoleLabel}, age ${data.characterAge})`,
 
-      `=== FACE — must remain IDENTICAL across all cells that show the face ===`,
+      `=== FACE — IDENTICAL across every face/head in the image ===`,
       data.faceDescription || '(no separate face description — use the face shown in the attached reference image)',
       `=== END FACE ===`,
 
-      `=== BODY — must remain IDENTICAL across all cells ===`,
+      `=== BODY — IDENTICAL across all full-body sub-images ===`,
       data.bodyDescription || '(no separate body description — use the body shown in the attached reference image)',
       `=== END BODY ===`,
 
-      `=== OUTFIT — must remain IDENTICAL across all cells. Do NOT change the outfit, do NOT add/remove any clothing item, accessory, or prop. ===`,
+      `=== OUTFIT — IDENTICAL across all sub-images, do NOT add/remove clothing or accessories ===`,
       data.clothingDescription || '(no separate outfit description — use the outfit shown in the attached reference image)',
       `=== END OUTFIT ===`,
-      data.palette?.length ? `\n=== PALETTE (hex colors) — apply consistently across all cells ===\n${data.palette.join(', ')}\n=== END PALETTE ===` : '',
+      data.palette?.length ? `\n=== PALETTE (hex colors) — apply consistently ===\n${data.palette.join(', ')}\n=== END PALETTE ===` : '',
+
+      // 把用户在 instruction 里写的语义提示也带上(client 那边传简短中文 instruction,作为 EDIT REQUEST)
+      `[USER REQUEST]`,
+      data.userInstruction,
 
       `[FINAL CHECKLIST]`,
-      `[ ] Output is ONE image with a header strip + a 3×3 grid (all 9 cells present)`,
-      `[ ] Header strip contains: character name, role badge, 2-3 sentence Chinese lore text`,
-      `[ ] Row 1 = full-body 3-view (front / side / back) with identical proportions`,
-      `[ ] Row 2 = 3 facial expressions (neutral / happy / sad) — only expression differs, each clearly readable as a distinct emotion of the SAME person`,
-      `[ ] Row 3 = clothing flat-lay / equipment detail / color palette with hex labels`,
-      `[ ] Pure white background throughout (#FFFFFF or near-white)`,
-      `[ ] Same face, body, outfit in all cells where the character appears`,
-      `[ ] Style matches "${styleSpec.label}" across all cells`,
-      `[ ] No text inside Row 1 / Row 2 / Row 3 cells (text only in header strip)`,
-      `[ ] No other characters, no extra limbs, no distortion, no perspective errors`,
+      `[ ] Pure white background throughout`,
+      `[ ] Section 0: text-only profile bar (name, role chip, 1-2 Chinese sentences of personality)`,
+      `[ ] Section 1: one large hero portrait — the visual centerpiece`,
+      `[ ] Section 2: three full-body orthographic views (front/side/back) with Chinese labels`,
+      `[ ] Section 3: 6-8 facial close-ups covering 开心/生气/困倦/惊讶/悲伤/常态 (at minimum) with Chinese labels`,
+      `[ ] Section 4: 4-6 full-body poses matched to character personality, Chinese-labeled`,
+      `[ ] Section 5: 4-8 small accessory/prop icons (isolated objects), Chinese-labeled`,
+      `[ ] Same face, body, outfit, special features across the entire image`,
+      `[ ] All text in simplified Chinese, readable`,
+      `[ ] Style matches "${styleSpec.label}"`,
+      `[ ] No other characters, no extra limbs, no perspective errors in the three-view`,
 
-      `Begin. Output the official character profile card.`,
-
+      `Begin. Output the character multi-asset sheet.`,
     ].filter(Boolean).join('\n\n')
     const negative = [
-      'different art style, style drift, photorealistic when input is anime, anime when input is realistic, different medium, different line treatment, different color grading, inconsistent rendering between cells',
-      'different face, different face shape, different eye shape, different eye color, different nose, different mouth, different eyebrows, different skin tone, different hairstyle, different hair color, different hair length, different facial proportions, age change, different body, different body proportions, different height, different weight, different gender presentation, different outfit, different clothing color, different clothing style, different accessories, different hat, different glasses, different jewelry, different shoes, different makeup',
-      'perspective distortion, fish-eye, wide-angle distortion, foreshortening, hero shot, low angle, high angle, 3/4 view, diagonal angle, three-quarter view, dutch angle, tilted camera',
-      'cropped at knees, cropped at waist, cropped at chest, cropped at hips, cropped at shoulders, head cut off, feet cut off, body extending beyond frame, half-body, half-length, missing feet, missing hands, missing legs',
-      'different proportions across the three views, character taller in front view, character shorter in side view, character shorter in back view, inconsistent body scale between panels',
+      'different art style, style drift, photorealistic when input is anime, anime when input is realistic, inconsistent rendering between sub-images',
+      'different face, different face shape, different eye shape, different eye color, different nose, different mouth, different eyebrows, different skin tone, different hairstyle, different hair color, different hair length, different facial proportions, age change, different body, different body proportions, different height, different gender presentation, different outfit, different clothing color, different clothing style, different accessories, different glasses, different jewelry, different shoes',
+      'missing glasses when source has glasses, missing wings when source has wings, missing tail when source has tail, missing animal ears when source has them, missing horns when source has horns, missing distinctive feature, feature drift, lost accessory',
+      'perspective distortion in three-view, fish-eye, wide-angle distortion, foreshortening, hero shot, low angle, 3/4 view in front/side/back, diagonal angle',
+      'cropped at knees, cropped at waist, cropped at chest, head cut off, feet cut off, body extending beyond frame, missing feet, missing hands, missing legs',
+      'inconsistent proportions across the three views, taller in one view, shorter in another, scale mismatch between sub-images',
       'extra people, bystander, multiple characters, extra limbs, deformed hands, extra fingers, deformed face, blurred face, low quality',
-      'detailed scenery, busy backgrounds, complex environments, room interior, outdoor landscape, props cluttering the frame, floor, wall, sky, scenery, furniture, ground texture, horizon line, shadow on background, floor reflection, color cast, gradient background, vignette',
-      'watermark, logo, text, signature, label, panel number, caption, annotation, arrow, callout, layout grid lines, dividers, visible borders between cells',
+      'detailed scenery, busy backgrounds, room interior, outdoor landscape, props cluttering the frame, floor, wall, sky, scenery, furniture, ground texture, horizon line, shadow on background, gradient background',
+      'English-only labels, garbled Chinese, missing labels, illegible text, decorative borders, ornate frames, gold filigree',
+      'rigid 3x3 grid template when content needs different layout, forced 4 panels, forced 5 panels, padding cells, blank cells',
+      'profile bar with illustration, profile bar with icon, profile bar that is not text-only',
+      'accessory icons held by the character, accessory icons worn by the character, accessory icons in a scene, accessory icons with background scenery',
+      'main portrait too small, main portrait same size as thumbnails, no clear visual centerpiece, hero portrait demoted to side thumbnail',
+      'combat poses for a peaceful character, scholarly poses for a child, mismatched poses for character personality',
     ].join(', ')
-    return { positive, negative, size: '2K' }
+    return { positive, negative, size: '2160x2880' }
   }
 
   // ---- 默认 'modify' ----
@@ -551,6 +614,17 @@ export const regenerateCharacterLook = createServerFn({ method: 'POST' })
     const model = data.model?.trim() || defaultModel
     const prompt = appendNegative(positive, negative)
 
+    // 2026/06:查看提示词模式 —— 不调 Seedream,直接把 prompt 返回
+    if (data.previewOnly) {
+      return {
+        ok: true as const,
+        previewPrompt: prompt,
+        negativePrompt: negative,
+        promptSize: normalizeSeedreamSize(size),
+        promptExtra: { model, mode: data.mode, referenceImage: data.referenceImageUrl },
+      }
+    }
+
     const result = await callSeedreamImages(
       { model, prompt, image: data.referenceImageUrl, size: normalizeSeedreamSize(size), output_format: 'png', watermark: false },
       apiKey,
@@ -561,7 +635,7 @@ export const regenerateCharacterLook = createServerFn({ method: 'POST' })
       // 中文错误映射(保持跟原来一致的用户体验)
       if (/401/i.test(result.error || '')) return { ok: false as const, error: 'Seedream auth failed (401)' }
       if (/402/i.test(result.error || '')) return { ok: false as const, error: 'no_credits' }
-      if (/timed out/i.test(result.error || '')) return { ok: false as const, error: 'AI 处理超时(>120s),请重试或换更简单的修改' }
+      if (/timed out/i.test(result.error || '')) return { ok: false as const, error: 'AI 处理超时(>180s),请重试或换更简单的修改' }
       return { ok: false as const, error: result.error || 'Seedream 未返回图片' }
     }
     return { ok: true as const, url: result.url, model: result.model }
@@ -588,6 +662,8 @@ const ShotInput = z.object({
   sceneTimeOfDay: z.string().max(50).default(''),
   projectStyle: z.string().max(50).optional(),
   model: z.string().max(100).optional(),
+  // 2026/06:查看提示词模式
+  previewOnly: z.boolean().default(false),
 })
 
 export type ShotInputType = z.infer<typeof ShotInput>
@@ -673,6 +749,17 @@ export const generateStoryboardShotImage = createServerFn({ method: 'POST' })
     const model = data.model?.trim() || defaultModel
     const prompt = appendNegative(instruction, negative)
 
+    // 2026/06:查看提示词模式
+    if (data.previewOnly) {
+      return {
+        ok: true as const,
+        previewPrompt: prompt,
+        negativePrompt: negative,
+        promptSize: '2K',
+        promptExtra: { model, route: 'I2I 分镜图', refImages: images.join(' / ') },
+      } as any
+    }
+
     const result = await callSeedreamImages(
       { model, prompt, image: images, size: '2K', output_format: 'png', watermark: false },
       apiKey,
@@ -682,7 +769,7 @@ export const generateStoryboardShotImage = createServerFn({ method: 'POST' })
     if (!result.url) {
       if (/401/i.test(result.error || '')) return { ok: false as const, error: 'Seedream auth failed (401)' }
       if (/402/i.test(result.error || '')) return { ok: false as const, error: 'no_credits' }
-      if (/timed out/i.test(result.error || '')) return { ok: false as const, error: 'AI 处理超时(>120s)' }
+      if (/timed out/i.test(result.error || '')) return { ok: false as const, error: 'AI 处理超时(>180s)' }
       return { ok: false as const, error: result.error || 'Seedream 未返回图片' }
     }
     return { ok: true as const, url: result.url, model: result.model }
@@ -768,6 +855,17 @@ export const regenerateStoryboardShot = createServerFn({ method: 'POST' })
     const model = data.model?.trim() || defaultModel
     const prompt = appendNegative(instruction, negative)
 
+    // 2026/06:查看提示词模式
+    if (data.previewOnly) {
+      return {
+        ok: true as const,
+        previewPrompt: prompt,
+        negativePrompt: negative,
+        promptSize: '2K',
+        promptExtra: { model, route: 'I2I 分镜重生', userInstruction: data.userInstruction, refImages: images.join(' / ') },
+      } as any
+    }
+
     const result = await callSeedreamImages(
       { model, prompt, image: images, size: '2K', output_format: 'png', watermark: false },
       apiKey,
@@ -777,7 +875,7 @@ export const regenerateStoryboardShot = createServerFn({ method: 'POST' })
     if (!result.url) {
       if (/401/i.test(result.error || '')) return { ok: false as const, error: 'Seedream auth failed (401)' }
       if (/402/i.test(result.error || '')) return { ok: false as const, error: 'no_credits' }
-      if (/timed out/i.test(result.error || '')) return { ok: false as const, error: 'AI 处理超时(>120s)' }
+      if (/timed out/i.test(result.error || '')) return { ok: false as const, error: 'AI 处理超时(>180s)' }
       return { ok: false as const, error: result.error || 'Seedream 未返回图片' }
     }
     return { ok: true as const, url: result.url, model: result.model }
@@ -818,6 +916,9 @@ const PitchDeckShotSchema = z.object({
   action: z.string().min(1).max(400),
   camera: z.string().max(200).default(''),
   durationSec: z.number().optional(),
+  // 2026/06 新增:用户要求每帧标注时长,把 shot 自身的时间区间也传过来
+  startSec: z.number().optional(),
+  endSec: z.number().optional(),
 })
 
 const PitchDeckInput = z.object({
@@ -830,11 +931,24 @@ const PitchDeckInput = z.object({
     timeOfDay: z.string().max(50).optional(),
     profile: z.string().max(2000).optional(),
   }).optional(),
-  characters: z.array(PitchDeckCharacterSchema).max(3).default([]),
-  shots: z.array(PitchDeckShotSchema).max(3).default([]),
+  // 2026/06:之前 .max(3) 偷偷砍数据 —— 大场面组 4-6 角色会被丢一半。
+  // 文字描述无 token 压力,放到 8;图片层面另有 .max(4) 上限(下面)
+  characters: z.array(PitchDeckCharacterSchema).max(8).default([]),
+  // 2026/06:之前 .max(3) 配合 normalizeGroup 的 .slice(0, 3)。后者已撤,
+  // 这里也放到 20,避免 Zod 直接 reject 整个故事板请求
+  shots: z.array(PitchDeckShotSchema).max(20).default([]),
+  // 2026/06:故事板 I2I 参考图 —— 用户反映"故事板不按我设定的人物形象/场景画"。
+  // 根因是之前不传 image 字段,纯 T2I。改成传入参考图(场景至少 1 张 + 角色若干)。
+  // 客户端按 "场景必占 1 张,剩余给角色" 的优先级挑出最多 4 张(Seedream 上限),
+  // 每张配一个 label,在 prompt 里说明"图 N 是 X"。
+  referenceImages: z.array(z.string().url()).max(4).default([]),
+  referenceImageLabels: z.array(z.string().max(120)).max(4).default([]),
+  // 老字段保留向后兼容,不再实际使用
   characterImageUrl: z.string().url().optional(),
   sceneImageUrl: z.string().url().optional(),
   model: z.string().max(100).optional(),
+  // 2026/06:查看提示词模式
+  previewOnly: z.boolean().default(false),
 })
 
 export type PitchDeckInputType = z.infer<typeof PitchDeckInput>
@@ -867,27 +981,63 @@ function buildPitchDeckPrompt(opts: {
   const shotCount = shots.length
 
   // ====================================================================
-  // panel 数量自适应:用户要求"通常 4-8 格,必要时可到 10 格,
-  // 根据情节密度、动作连贯性、情绪转折点自主决定"。
-  // 这里取 clamp(shotCount, 4, 10) 作为建议数 + 在 prompt 里给模型 4-10
-  // 的活动范围,让模型按密度自调。
+  // 2026/06 用户重写:从"9:16 竖屏漫剧多格分镜"改成"16:9 横向导演预制作指南"。
+  // 整张图是一个 director's pre-production guide / pitch deck 风格,
+  // 多个清晰分节(共享创意指导 / 角色与风格参考 / 环境与场景设计 / 故事板帧 /
+  // 灯光情绪 / 关键词 / 音频音调 / 电影摄影笔记),
+  // 简洁基于网格,电影化、专业、连贯,像递到导演手里的一页设定。
+  //
+  // 关键约束:
+  //   - 故事板帧严格按本组剧情(plotText)+ AI 扩写的 shots 来展开,不允许
+  //     模型自己虚构"另一个剧情"
+  //   - 角色身份严格按 [CHARACTERS] 描述,允许细微变化(表情/姿态),
+  //     不允许换脸/换服装
+  //   - 不限制故事板帧数,根据 shots 数自调(SUGGESTED_PANELS)
   // ====================================================================
-  const SUGGESTED_PANELS = Math.min(10, Math.max(4, shotCount || 6))
-  // 网格布局:列数随 panel 数变化,保持竖屏可读性
-  // 4 格 → 2x2;5-6 格 → 2 列 × 2-3 行;7-8 格 → 2 列 × 4 行;9-10 格 → 2 列 × 5 行
-  const gridLayout = SUGGESTED_PANELS <= 4
-    ? '2 columns × 2 rows'
-    : SUGGESTED_PANELS <= 6
-      ? '2 columns × 3 rows'
-      : SUGGESTED_PANELS <= 8
-        ? '2 columns × 4 rows'
-        : '2 columns × 5 rows'
 
-  // 已有 shot 描述(模型据此填每个 panel)
+  // 推荐故事板帧数:shots 数 clamp 到 4-10
+  const SUGGESTED_PANELS = Math.min(10, Math.max(4, shotCount || 6))
+
+  // 2026/06:参考图说明块。客户端会按 "场景至少 1 张 + 角色若干 ≤ 4 总数" 传图,
+  // 每张配 label(如 "场景: 教室,夜","角色: 陆深 主角")。在 prompt 里告诉
+  // 模型每张图代表什么,让 Seedream 把它们正确融合到 Section 2(角色)/3(场景)。
+  //
+  // **2026/06 二次强化**:不只是 identity 锁定,还要**画风 / 渲染技法**继承。
+  // 用户反映"故事板画风跟参考图对不上",所以这块加更狠的画风指令 —— 让模型把
+  // 参考图当作 "this exact look" 的视觉真值,storyboard 内所有插画都要复现
+  // 参考图的线条 / 笔触 / 色饱和度 / 阴影方式 / 渲染层次。
+  const refImgs = data.referenceImages || []
+  const refLabels = data.referenceImageLabels || []
+  const referenceImageBlock = refImgs.length
+    ? [
+        `[REFERENCE IMAGES — ${refImgs.length} 张视觉锚点,**最高真值**,严格遵循]`,
+        ...refImgs.map((_, i) => `  Image ${i + 1}: ${refLabels[i] ?? '(no label)'}`),
+        ``,
+        `【身份锁定 / IDENTITY LOCK】`,
+        `Section 2(角色与风格参考):同一个角色出现在故事板里时,脸 / 身材 / 服装 / 发型 / 配饰必须严格复制对应"角色"参考图,不允许换脸 / 换服装 / 换发色。`,
+        `Section 3(环境与场景设计):场景 establishing shot 和俯视示意图都基于"场景"参考图的地点、布局、关键道具、光照氛围,不允许虚构出参考图里没有的建筑或环境元素。`,
+        `Section 5(故事板帧):每一帧里出现的角色按对应参考图来画;场景沿用参考图的环境基调。`,
+        ``,
+        `【画风继承 / STYLE INHERITANCE — 这是关键,跟身份锁定同等优先级】`,
+        `整张故事板的**所有插画**(Section 2 角色卡、Section 3 establishing shot、Section 5 每一帧 storyboard thumbnail)必须复现参考图的视觉风格:`,
+        `  • 线条质感(粗细 / 利落度 / 是否带轮廓线)`,
+        `  • 上色技法(平涂 / cel-shading / 厚涂 / 水彩 / 数码插画)`,
+        `  • 色彩饱和度与色温(暖 / 冷 / 高饱 / 低饱 / 退色感)`,
+        `  • 阴影方式与层次(硬光 / 软光 / 单色阴影 / 多层渐变)`,
+        `  • 整体写实程度(写实照片 / 半写实 / 卡通 / anime / 漫画)`,
+        `如果参考图是 anime 风,故事板所有插画也必须 anime;如果参考图是写实风,所有插画必须写实。**绝对禁止**故事板出 cel-shading 风但参考图是写实风,或反之。每一格 thumbnail 看起来都要像"从同一张参考图里裁出来的角度"。`,
+        `俯视示意图(Section 3b)是技术性线稿,允许用更简化的线条风格(但仍跟整体调色协调),不强制复现参考图的上色技法。`,
+      ].join('\n')
+    : '[REFERENCE IMAGES] (none provided — 按 [CHARACTERS] 文字描述 + [STYLE LOCK] 风格指纹生成,角色/场景细节可能不完全匹配项目设定)'
+
+  // 已有 shot 描述(模型据此填每个 panel + 显示每帧时长)
   const shotLines = shots.map((s, i) => {
     const cam = s.camera ? ` | camera: ${s.camera}` : ''
-    const dur = s.durationSec ? ` | duration: ${s.durationSec}s` : ''
-    return `  Panel ${i + 1}: [${s.shotTypeLabel}] ${s.action}${cam}${dur}`
+    // 2026/06:每帧时长标注 —— 优先用 startSec/endSec 算精确时长,否则用 durationSec
+    const dur = (s.startSec != null && s.endSec != null)
+      ? ` | ${s.startSec.toFixed(0)}-${s.endSec.toFixed(0)}s (${(s.endSec - s.startSec).toFixed(0)}s)`
+      : s.durationSec ? ` | duration: ${s.durationSec}s` : ''
+    return `  Frame ${i + 1}: [${s.shotTypeLabel}] ${s.action}${cam}${dur}`
   }).join('\n')
 
   // 角色描述块
@@ -915,90 +1065,128 @@ function buildPitchDeckPrompt(opts: {
 
   return [
     // ========== 任务总述 ==========
-    `[MISSION] 请根据下面的【剧本】和【已设定的人物形象】,生成一版【漫剧故事板】(manga-style storyboard page)。这是一张单图,看起来像一页漫剧 / manhua / 短剧分镜页 —— 不是成片插画,不是海报,不是宣发图。整张图是一个多格分镜,排版竖屏,适合手机阅读。`,
+    `[MISSION] Create a 16:9 STORYBOARD / DIRECTOR'S PRE-PRODUCTION GUIDE for the scene described below. ONE single image, landscape orientation, organized like a professional pitch deck page that a director hands to the production team. The layout is clean, grid-based, divided into clearly LABELED sections (Chinese-first with optional small English subtitles). It must feel cohesive, cinematic, and professionally designed — communicating tone, pacing, and visual storytelling at a glance.`,
 
-    `[ASPECT RATIO] 输出 9:16 或 4:5 的竖屏比例。整张图是从上往下阅读的多格分镜页。`,
+    `[PRIMARY GOAL] This storyboard will be **directly consumed by a downstream video-generation model** as the structural & visual reference. Every shot, camera type, motion description, timing, mood note, and character anchor on this page must be unambiguous and machine-readable. Text descriptions stay TERSE but PERFECTLY LEGIBLE — short is good, garbled is fatal.`,
 
-    // ========== 分格数量(自适应)==========
-    `[PANEL COUNT — 分格数量不固定,模型自主决定]`,
-    `根据这段剧本的【情节密度】【动作连贯性】【情绪转折点】,自主决定用多少格。通常 4–8 格,必要时可到 10 格。`,
-    `建议起点:${SUGGESTED_PANELS} 格(基于已有 ${shotCount || 0} 个镜头描述)。实际允许范围:4-10 格。如果情节密集 / 转折多,加格;如果是连贯动作 / 单一情绪,少格。`,
-    `推荐布局:${gridLayout}(可以根据最终格数微调,保持视觉平衡)。`,
+    `[ASPECT RATIO] Strictly 16:9 LANDSCAPE.`,
 
-    // ========== 每格内容结构(关键)==========
-    `[PER-PANEL STRUCTURE — 每一格必须严格按这个三段式结构]`,
-    `每一格内部从上到下分三段:`,
-    `  ┌──────────────────────────┐`,
-    `  │  段 1:首帧主图区(占格子 ~70% 高度)  │`,
-    `  │  - 这一格的镜头首帧                  │`,
-    `  │  - 严格使用已提供的人物形象          │`,
-    `  │  - 脸型/发型/服装/配饰 100% 一致      │`,
-    `  ├──────────────────────────┤`,
-    `  │  段 2:首帧下方变化说明(占 ~15%)     │`,
-    `  │  - 1-2 行小字(图内呈现,不是后期叠的) │`,
-    `  │  - 描述「这一格相对于上一格的画面变化」│`,
-    `  │  - 例:镜头从全景推近至面部特写 /    │`,
-    `  │    角色由站转坐 / 光照由亮转暗       │`,
-    `  ├──────────────────────────┤`,
-    `  │  段 3:右下角/底部右侧标注区(~15%)   │`,
-    `  │  - 一个虚线框(dashed border)或浅色   │`,
-    `  │    底(light fill ~#F0F0F0)的小矩形    │`,
-    `  │  - 内含占位文字「[音效/台词/转场]」  │`,
-    `  │  - 描述画面如何变化(例:主角开车向  │`,
-    `  │    镜头直直驶来 / "我不会放过你!" / │`,
-    `  │    切场至雨夜)                       │`,
-    `  └──────────────────────────┘`,
-    `第 1 格因为没有"上一格",段 2 改为简短的开场说明(例:开场:夜晚,XX 进入 XX)。`,
+    // ========== 文字可读性(关键)==========
+    `[TEXT READABILITY — TOP PRIORITY, this storyboard is text-readability-first]`,
+    `- ALL Chinese text must be CRISP, SHARP, ACCURATE, IMMEDIATELY READABLE. No garbled glyphs, no fake/pseudo characters, no smeared strokes, no unreadable handwriting.`,
+    `- 分区标题 (section titles), 镜头编号 (shot numbers), 角色角度标签 (character angle labels) MUST be visibly LARGE and BOLD — far larger than body text. Title hierarchy is OBVIOUS at a glance.`,
+    `- 每个分镜帧的文字说明 ≤ 1–2 LINES of brief Chinese. NO long paragraphs inside frame captions. Density via short tags (e.g. "35mm 广角 · 跟拍 · 急促 · 4s"), not prose.`,
+    `- High contrast: dark text on clean white / very light grey background. Plenty of white space.`,
+    `- Use a clean printed font family (思源宋体 / 思源黑体 / Noto Sans / Songti). NEVER comic / decorative / pseudo-handwritten fonts. Print-grade typography only.`,
 
-    // ========== 剧情递进硬约束 ==========
-    `[STORY PROGRESSION — 硬约束]`,
-    `RULE A — 每一格必须比上一格【推进剧情】:换镜头、换动作、换情绪、换光影,任何变化都行,但绝不能"重复同一角度",也绝不能"静态对话铺满好几格"。`,
-    `RULE B — 如果剧本里某段是长对白,合并成 1 格(对白写在右下角 caption 框),不要为每句对话单独占 1 格。`,
-    `RULE C — 如果剧本里某段是连续动作(开车 / 打斗 / 奔跑),用 2-3 格分解关键节奏点(发起 / 高潮 / 落点),不要超过 3 格连续同主体。`,
+    // ========== 全局布局 ==========
+    `[OVERALL LAYOUT — top to bottom, all on ONE page, grid-aligned]`,
+    `1) 顶部栏 · SHARED CREATIVE DIRECTION (full-width strip, ~10% height)`,
+    `2) 中部左 · CHARACTER & STYLE REFERENCE (~30% width)`,
+    `3) 中部中 · ENVIRONMENT & SCENE DESIGN (~35% width)`,
+    `4) 中部右 · LIGHTING / MOOD / STYLE NOTES + MOOD KEYWORDS (~35% width, stacked)`,
+    `5) 下半区 · STORYBOARD FRAMES (full-width grid)`,
+    `6) 底部栏 · AUDIO / TONE + CINEMATOGRAPHY NOTES (split, full width, ~12% height)`,
+    `Each section has a clear LARGE Chinese title (with small English subtitle), thin neutral dividers (#E8E8E8) separating sections. No overlap, no clutter. Generous gutters.`,
 
-    // ========== 整体视觉风格 ==========
-    `[OVERALL VISUAL TREATMENT]`,
-    `- 漫剧 / manga / manhua 风格。线条干净,构图有力,视觉叙事优先。`,
-    `- HD 高清。整张图清晰锐利,适合放大查看。`,
-    `- 每一格:矩形,大小一致,格间用干净的白色 gutter 分隔(gutter ~3-5% panel 宽度)。无重叠、无超出。`,
-    `- Motion / 动态指示:在需要的格子里加 motion lines(速度线)、动作箭头、轻微残影,让画面"有动感",而不是僵硬的定格。`,
-    `- 阅读流:格子大小 / 角色视线方向 / 动作向量 都引导眼睛自然从上到下阅读。`,
-    `- 配色:克制、跨格统一,匹配项目视觉风格,情绪饱和度合理。`,
-    `- 全部格子统一渲染风格 —— 同样线宽、同样上色技法、同样细节程度。`,
-    `- 角色一致性:出现在多格里的同一角色,必须脸 / 身 / 服 / 发 / 配饰 100% 一致。`,
-    `- 除了段 2(画面变化说明文字)和段 3(虚线框 caption)以外,**不要**画其他文字、不要画 panel 编号、不要画 "Shot N" 标签。`,
+    // ========== 1. 共享创意指导 ==========
+    `[SECTION 1 — 共享创意指导 / SHARED CREATIVE DIRECTION (top bar)]`,
+    `A horizontal strip carrying overall scene constraints (terse):`,
+    `  • 镜头数量 / Shot count: ${SUGGESTED_PANELS} 帧 (depends on plot density)`,
+    `  • 统一调色板 / Unified palette: 3–5 small color swatches with hex labels, derived from project visual style "${styleSpec.label}"`,
+    `  • 一般环境背景 / General environmental backdrop: ONE short Chinese sentence (≤ 20 字) describing world / time / weather`,
+    `Tone: confident, terse, director's opening note style.`,
 
-    // ========== 内容(模型据此填图)==========
-    `[STORY PLOT — 这是真值来源,每一格必须从剧情里推得]`,
+    // ========== 2. 角色与风格参考 ==========
+    `[SECTION 2 — 角色与风格参考 / CHARACTER & STYLE REFERENCE]`,
+    `For each character in [CHARACTERS], a multi-angle reference grid:`,
+    `  • 五个角度 / five angles per character: 正面 (front) · 背面 (back) · 侧面 (side) · 特写 (close-up face) · 放松姿态 (relaxed standing pose)`,
+    `  • Each angle is a small thumbnail with a LARGE clear Chinese label below it ("正面" / "背面" / etc.)`,
+    `  • A small "服装与配饰 / Costume & Accessories" callout box listing key clothing items and props in 1–2 brief Chinese lines`,
+    `STRICT identity consistency — face / hair / outfit / accessories MUST 100% match [CHARACTERS] descriptions. Subtle expression / posture / angle variation allowed within the scene; identity drift NOT.`,
+
+    // ========== 3. 环境与场景设计 ==========
+    `[SECTION 3 — 环境与场景设计 / ENVIRONMENT & SCENE DESIGN]`,
+    `Two parts stacked vertically:`,
+    `  (3a) ESTABLISHING SHOT: A larger illustrated wide shot of the location, capturing its dramatic features (mountains / urban skyline / interior atmosphere / weather). No characters, environment only.`,
+    `  (3b) 俯视示意图 / TOP-DOWN DIAGRAM: an overhead map view of the same location in clean simple linework + light shading. Includes:`,
+    `       - Character(s) movement path through the space (dotted/dashed line with small arrows)`,
+    `       - Numbered camera positions along the route (📷1, 📷2, … matching the storyboard frames below in Section 5)`,
+    `       - Each camera position labeled with shot type (广角 WS / 中景 MS / 特写 CU / 过肩 OTS / 微距 ECU)`,
+    `Layout the diagram below or beside the establishing shot. Both clearly labeled in Chinese.`,
+
+    // ========== 4. 灯光/情绪/风格备注 + 关键词 ==========
+    `[SECTION 4 — 灯光 / 情绪 / 风格备注 / LIGHTING · MOOD · STYLE NOTES]`,
+    `Two stacked sub-blocks:`,
+    `  (4a) 灯光与情绪 / LIGHTING & MOOD: 2–3 small visual swatches showing lighting conditions (e.g. 黄昏暖光 / 雨夜冷光 / 室内顶光) with **short** Chinese descriptions (≤ 15 字 each) covering:`,
+    `       - 光线质量变化 / Light quality shifts (warm→cold / hard→soft / bright→dim)`,
+    `       - 一天中不同时间过渡 / Time-of-day transitions if applicable`,
+    `       - 环境变化 / Environmental shifts if applicable (下雨 rain / 着火 fire / 刮风 wind / 起雾 fog / 落雪 snow)`,
+    `  (4b) 情绪与关键词 / MOOD & KEYWORDS: 4–7 concise Chinese mood / tone / theme tag chips (e.g. 孤独 / 紧张 / 温柔 / 悬疑 / 希望 / 危机 / 平静) arranged as small rounded chips on a light background.`,
+
+    // ========== 5. 故事板帧 ==========
+    `[SECTION 5 — 故事板帧 / STORYBOARD FRAMES (main grid, full-width, the most prominent section)]`,
+    `A grid of numbered storyboard frames. **数量按 [SHOT BREAKDOWN] 决定 — one frame per shot listed below**. Frames laid out left-to-right, top-to-bottom, reading order obvious.`,
+    `Each frame contains:`,
+    `  • A CINEMATIC THUMBNAIL with the actual scene visualized (faithful to [STORY PLOT] + the corresponding shot's action)`,
+    `  • A LARGE prominent shot number label: "镜头 1" / "镜头 2" / etc. — far bigger than body text`,
+    `  • A tight info strip beneath the thumbnail with these tags (each ≤ 8 字, separated by " · "):`,
+    `      ⏱ 时长 (duration in seconds, e.g. "4s")`,
+    `      🎬 镜头类型 / lens (e.g. "35mm 广角" / "85mm 长焦" / "鱼眼")`,
+    `      📐 景别 / shot size (广角 / 中景 / 特写 / 微距)`,
+    `      🎥 运动 / motion (静态 / 跟拍 / 手持 / 推镜 / 摇镜 / 升降)`,
+    `      🎭 动作+情绪 (1 short Chinese line ≤ 12 字: 什么人做什么 + 当下情绪)`,
+    `**Each frame's caption is BRIEF (1–2 lines total in tag form)** — no prose. Frames must be derived from [STORY PLOT] and [SHOT BREAKDOWN] below — do NOT invent unrelated frames.`,
+
+    // ========== 6. 音频/音调 + 电影摄影笔记 ==========
+    `[SECTION 6 — 底部栏 BOTTOM BAR (two sub-blocks side-by-side)]`,
+    `  (6a) 音频 / 音调 / AUDIO · TONE: ambient sounds (环境声), music style (音乐风格), overall sonic atmosphere (整体声音氛围) — a compact Chinese bullet list with small icons (🔊 / 🎵 / 🌀) next to each line. Each line ≤ 15 字.`,
+    `  (6b) 电影摄影笔记 / CINEMATOGRAPHY NOTES: lens characteristics (镜头特性), motion style (运动风格), post-processing feel (后期处理感觉) — 3 short Chinese sentences (≤ 20 字 each) capturing visual philosophy.`,
+
+    // ========== 内容(真值)==========
+    // 2026/06 加入:参考图说明放在 [STORY PLOT] 之前,
+    // 让模型把"图 N 是 X" 当成 identity lock 的硬约束读入
+    referenceImageBlock,
+
+    // 2026/06 二次强化:把 [STYLE LOCK] 提到紧邻 referenceImageBlock 下方,
+    // 让"风格指纹 + 参考图画风继承"作为一个连贯块被模型先读到,
+    // 而不是被埋在 13 条 rule 中间。
+    `[PROJECT VISUAL STYLE — 风格指纹,跟 [REFERENCE IMAGES] 的画风继承指令配套使用]`,
+    buildStyleLock(styleSpec, 'deck'),
+    refImgs.length
+      ? `**优先级**:当 [REFERENCE IMAGES] 的实际画风与本风格指纹有冲突时,以 [REFERENCE IMAGES] 为准(参考图是最高真值)。本风格指纹用于补全参考图没说的维度(例如参考图没标颜色饱和度,就按指纹推断)。`
+      : `没有参考图时,本风格指纹是唯一的画风真值,所有插画严格按 5 维度执行。`,
+
+    `[STORY PLOT — 真值来源,故事板每一帧必须从这段剧情扩写而来,不允许虚构其他剧情]`,
     data.plotText,
 
-    `[SCENE — 场景氛围,所有格子共用]`,
+    `[SCENE — 场景氛围,所有 frames + Environment 区域共用]`,
     sceneLine,
 
-    `[CHARACTERS — 已设定的人物形象。同一角色在多格里必须 100% 一致]`,
-    charLines || '  (no specific characters — the storyboard focuses on the environment and atmosphere)',
+    `[CHARACTERS — 已设定的人物形象。Section 2 + storyboard frames 里所有人脸/服装/配饰必须 100% 匹配这里描述]`,
+    charLines || '  (no specific characters — focus on environment and atmosphere)',
 
-    `[SHOT BREAKDOWN — 已有 ${shotCount} 个镜头建议;实际最终格数自定]`,
-    shotLines || `  (no explicit shots — infer all panels from the plot text above, reading order top-to-bottom)`,
+    `[SHOT BREAKDOWN — 已有 ${shotCount} 个镜头(AI 扩写产生);Section 5 的故事板帧严格按这些镜头展开]`,
+    shotLines || `  (no explicit shots — derive all frames from the plot text above, in narrative order)`,
 
     // ========== 项目视觉风格 ==========
-    `[PROJECT VISUAL STYLE — must match across ALL panels]`,
-    buildStyleLock(styleSpec, 'deck'),
-
-    // ========== 输出质量约束 ==========
+    // ========== 质量约束 ==========
     `[QUALITY RULES — 违反任一条 = 重画]`,
-    `RULE 1 — PANEL COUNT IN RANGE: 4 到 10 格,自主决定,但必须落在这个范围内。`,
-    `RULE 2 — VERTICAL ORIENTATION: 竖屏 9:16 或 4:5,适合手机阅读。`,
-    `RULE 3 — CLEAN GUTTERS: 格子之间用清晰的白色留白分隔,留白宽度一致,无溢出。`,
-    `RULE 4 — THREE-SEGMENT PER PANEL: 每一格内部必须有(a)首帧主图(b)首帧下方 1-2 行画面变化说明(c)右下角或底部右侧的虚线框/浅底 [音效/台词/转场] 占位区。三段都不能省。`,
-    `RULE 5 — DASHED CAPTION BOX: 段 3 的占位框必须用虚线(dashed)边框或浅灰底,与段 2 的文字明显区分,且位于右下角或底部右侧。`,
-    `RULE 6 — STORY PROGRESSION: 每一格必须比上一格推进剧情,禁止重复角度,禁止静态对话铺满多格(看 RULE A/B/C)。`,
-    `RULE 7 — CHARACTER LOCK: 任一角色在多格出现,脸 / 身 / 服 / 发 / 饰必须像素级一致 —— 使用 [CHARACTERS] 里的描述,不能自行变形。`,
-    `RULE 8 — STYLE LOCK: 所有格子同一种视觉风格,严禁混搭(动漫 + 写实 / 3D + 2D / 水彩 + cel-shading)。`,
-    `RULE 9 — NO RANDOM TEXT: 除了段 2 的画面变化说明小字、段 3 的 [音效/台词/转场] 占位文字,严禁在图里画其他文字、编号、签名、水印。`,
-    `RULE 10 — HD QUALITY: 锐利、无糊、无低分辨率伪影。每一格单独拎出来也能当一张分镜首帧用。`,
+    `RULE 1 — ASPECT 16:9 LANDSCAPE: 必须严格横向 16:9。不允许 9:16 / 1:1 / 4:3。`,
+    `RULE 2 — SIX-SECTION LAYOUT: 必须包含上述 6 大 section(共享创意指导 / 角色与风格参考 / 环境与场景设计 / 灯光情绪与关键词 / 故事板帧 / 底部音频与电影摄影),布局清晰、网格对齐、有中文标题。`,
+    `RULE 3 — TEXT MUST BE CRISP AND READABLE (最高优先级): 所有中文文字必须锐利、清晰、准确、可读。严禁乱码、伪文字、模糊笔画、伪手写。分区标题 / 镜头编号 / 角度标签明显放大(字号 ≫ 正文)。使用清晰印刷字体(思源宋体 / 黑体 / Noto Sans),严禁装饰字体。下游视频生成模型要直接读这些文字,可读性 = 视频质量。`,
+    `RULE 4 — BRIEF FRAME CAPTIONS: Section 5 每帧的文字说明 ≤ 1–2 行(标签形式),严禁长段落、严禁堆段落文字。所有描述用 " · " 分隔的短 tag(如 "35mm · 跟拍 · 急促 · 4s")。`,
+    `RULE 5 — STORY FAITHFULNESS: 故事板帧严格按 [STORY PLOT] 和 [SHOT BREAKDOWN] 展开,不允许出现剧本之外的剧情或人物。AI 扩写的 shot action 是真值,模型把它**视觉化**,不要"再编一遍"。`,
+    `RULE 6 — CHARACTER LOCK: 任一角色在 Section 2 和故事板帧里出现,脸 / 身 / 服 / 发 / 饰必须严格按 [CHARACTERS] 描述,允许微小表情/姿态变化,不允许换脸/换服装/换发型。**若 [REFERENCE IMAGES] 里有对应"角色"参考图,该参考图是 identity 的最高真值,文字描述次之。**`,
+    `RULE 7 — FRAME COUNT MATCHES SHOTS: Section 5 帧数 = [SHOT BREAKDOWN] 列表里的 shot 数量(${shotCount || SUGGESTED_PANELS} 个)。每帧严格对应一个 shot,顺序一致。`,
+    `RULE 8 — PER-FRAME DURATION: 每个故事板帧必须在标签条里清晰显示该镜头时长(秒,如 "4s" / "时长 4s"),时长来自 [SHOT BREAKDOWN] 给出的值。下游视频生成需要这个时间信息。`,
+    `RULE 9 — STYLE LOCK + 画风继承: 全图统一项目视觉风格 "${styleSpec.label}",严禁混搭(动漫+写实 / 3D+2D / 水彩+cel-shading)。**若有 [REFERENCE IMAGES],storyboard 内所有插画(角色卡 + establishing shot + 每帧 thumbnail)必须复现参考图的具体画风**(线条质感 / 上色技法 / 色饱和度 / 阴影方式 / 写实程度),让人一眼看出是同一套美术资产。参考图与文字风格指纹冲突时,以参考图为准。`,
+    `RULE 10 — CLEAN GRID + WHITE SPACE: section 之间用细中性分隔线(~#E8E8E8)分隔,留白充足,无装饰边框、无 logo、无水印、无外加 panel 编号或签名。背景干净(白色或极浅灰),高对比度文字。`,
+    `RULE 11 — TOP-DOWN DIAGRAM PRESENT: Section 3 必须包含俯视示意图,带移动路径(虚线/箭头)+ 编号摄像机位置 + 镜头类型标注。`,
+    `RULE 12 — ENVIRONMENTAL DETAILS IN SECTION 4: Section 4 灯光与情绪区必须涵盖光线质量变化 / 一天中时间过渡(若适用)/ 环境变化(若适用:下雨 / 着火 / 刮风 / 起雾 / 落雪 等)。这些细节会直接影响下游视频生成的氛围。`,
+    `RULE 13 — HD QUALITY: 锐利、无糊、无低分辨率伪影。文字尤其要清晰到可被 OCR 准确读取。`,
 
-    `Begin. Output the manga-style storyboard page (vertical, ${SUGGESTED_PANELS}-panel suggested, range 4-10).`,
+    `Begin. Output the 16:9 director's pre-production storyboard page (${shotCount || SUGGESTED_PANELS} frames in Section 5, one per shot in [SHOT BREAKDOWN]).`,
   ].filter(Boolean).join('\n\n')
 }
 
@@ -1007,23 +1195,63 @@ export const generateStoryboardPitchDeck = createServerFn({ method: 'POST' })
   .handler(async ({ data }) => {
     const { resolveProjectStyle } = await import('./visualStyles')
     const styleSpec = resolveProjectStyle(data.projectStyle)
-    const prompt = buildPitchDeckPrompt({ data, styleSpec })
+    // 2026/06:加 negative prompt 主攻 "文字乱码 / 文字模糊 / 伪手写"等
+    // 文字渲染常见问题,呼应 prompt 里 RULE 3(文字最高优先级)。
+    // **2026/06 二次强化**:加画风漂移 negative,防故事板插画跟参考图画风不一致
+    const negative = [
+      'garbled text, fake characters, pseudo Chinese, jumbled glyphs, broken strokes, illegible labels, blurry text, smeared text, distorted text, unreadable captions, mismatched font widths, comic font, decorative font, handwritten scribble',
+      'long paragraphs inside frame captions, dense block text in frames, prose inside storyboard frames, walls of text, paragraph dump',
+      'cluttered layout, overlapping sections, missing dividers, off-grid placement, no white space, busy decorative borders, ornate frames, gold filigree',
+      'wrong aspect ratio, vertical 9:16, square 1:1, 4:3, portrait orientation',
+      'extra characters not in [CHARACTERS], scenery not in [SCENE], invented plot, frames unrelated to [SHOT BREAKDOWN]',
+      'low resolution, blurry, pixelated, JPEG artifacts, low quality, soft focus on text',
+      'missing top-down diagram in Section 3, missing camera position numbers, missing shot type labels in diagram',
+      'frames without duration label, frames without shot number, frames without motion tag, frames without camera tag',
+      // 画风漂移 / 不继承参考图
+      'art style drift from reference images, inconsistent rendering across sections, anime when reference is realistic, realistic when reference is anime, cel-shading when reference is painterly, 3D render when reference is 2D, watercolor when reference is digital illustration, different line treatment from reference, different color saturation from reference, different shading style from reference, mixed art styles, inconsistent brush strokes between frames, mixing 2D and 3D, mixing photoreal and stylized',
+    ].join(', ')
+    const prompt = appendNegative(buildPitchDeckPrompt({ data, styleSpec }), negative)
 
     const { apiKey, baseUrl, model: defaultModel } = getArkConfig()
     if (!apiKey) return { ok: false as const, error: 'ARK_API_KEY not configured' }
     const model = data.model?.trim() || defaultModel
 
-    // 9:16 竖屏(1620×2880 ≈ 4.66M pixels,过 Seedream 最小像素门槛 3.69M),
-    // 适合手机阅读。用户 2026/06 要求"适合竖屏阅读(9:16 或 4:5 均可)"。
+    // 2026/06:查看提示词模式 —— 跳过实际生成
+    if (data.previewOnly) {
+      return {
+        ok: true as const,
+        previewPrompt: prompt,
+        negativePrompt: negative,
+        promptSize: '3840x2160',
+        promptExtra: {
+          model,
+          route: '故事板 (Pitch Deck)',
+          refImages: (data.referenceImages || []).join(' / ') || '(none)',
+          characters: (data.characters || []).map((c) => c.name).join(', ') || '(none)',
+          shotCount: String((data.shots || []).length),
+        },
+      } as any
+    }
+
+    // 2026/06 用户重写:从 9:16 竖屏漫剧分镜改成 16:9 横向导演预制作 pitch deck。
+    // 起初 2560×1440 (3.69M pixels) 卡在 Seedream 最小像素门槛上;**2026/06 二次提升**
+    // 到 **3840×2160** (16:9 4K, 8.29M pixels) —— 用户要求"文字可读性最高优先",
+    // 高分辨率给中文文字 fidelity 留余量,小字/标签更不容易糊。
+    //
+    // 2026/06 三次改造:加 image 字段(场景 + 角色参考图,最多 4 张)。
+    // 之前注释说"塞图会干扰 layout",实测不准 —— Seedream I2I 在多图 + 强 prompt
+    // 引导下能正确把参考图融到 Section 2/3/5。客户端按"场景必占 1 张 +
+    // 角色填剩余" 的顺序传 referenceImages,服务端透传到 image 字段。
+    // 空数组时不传 image,退化回纯 T2I。
+    const refImages = data.referenceImages || []
     const result = await callSeedreamImages(
       {
         model,
         prompt,
-        size: '1620x2880',
+        ...(refImages.length ? { image: refImages.length === 1 ? refImages[0] : refImages } : {}),
+        size: '3840x2160',
         output_format: 'png',
         watermark: false,
-        // 不用 image 字段 — 多格分镜布局模型自主构图,塞图反而会干扰 layout
-        // 可选视觉锚点(characterImageUrl / sceneImageUrl)暂不传入,保持纯 T2I 的清爽布局
       },
       apiKey,
       baseUrl,
@@ -1032,7 +1260,7 @@ export const generateStoryboardPitchDeck = createServerFn({ method: 'POST' })
     if (!result.url) {
       if (/401/i.test(result.error || '')) return { ok: false as const, error: 'Seedream auth failed (401)' }
       if (/402/i.test(result.error || '')) return { ok: false as const, error: 'no_credits' }
-      if (/timed out/i.test(result.error || '')) return { ok: false as const, error: 'AI 处理超时(>120s),设定稿内容多,建议重试' }
+      if (/timed out/i.test(result.error || '')) return { ok: false as const, error: 'AI 处理超时(>180s),设定稿内容多,建议重试' }
       return { ok: false as const, error: result.error || 'Seedream 未返回图片' }
     }
     return { ok: true as const, url: result.url, model: result.model }
@@ -1066,6 +1294,8 @@ const RegenerateSceneInput = z.object({
   projectStyle: z.string().max(50).optional(),
   model: z.string().max(100).optional(),
   mode: z.enum(['modify', 'three-view']).default('modify'),
+  // 2026/06:查看提示词模式
+  previewOnly: z.boolean().default(false),
 })
 
 export type RegenerateSceneInputType = z.infer<typeof RegenerateSceneInput>
@@ -1158,6 +1388,17 @@ export const regenerateSceneImage = createServerFn({ method: 'POST' })
     const model = data.model?.trim() || defaultModel
     const prompt = appendNegative(positive, negative)
 
+    // 2026/06:查看提示词模式
+    if (data.previewOnly) {
+      return {
+        ok: true as const,
+        previewPrompt: prompt,
+        negativePrompt: negative,
+        promptSize: normalizeSeedreamSize(size),
+        promptExtra: { model, route: '场景图重生', mode: data.mode, referenceImage: data.referenceImageUrl },
+      } as any
+    }
+
     const result = await callSeedreamImages(
       {
         model,
@@ -1174,7 +1415,7 @@ export const regenerateSceneImage = createServerFn({ method: 'POST' })
     if (!result.url) {
       if (/401/i.test(result.error || '')) return { ok: false as const, error: 'Seedream auth failed (401)' }
       if (/402/i.test(result.error || '')) return { ok: false as const, error: 'no_credits' }
-      if (/timed out/i.test(result.error || '')) return { ok: false as const, error: 'AI 处理超时(>120s),请重试' }
+      if (/timed out/i.test(result.error || '')) return { ok: false as const, error: 'AI 处理超时(>180s),请重试' }
       return { ok: false as const, error: result.error || 'Seedream 未返回图片' }
     }
     return { ok: true as const, url: result.url, model: result.model }
