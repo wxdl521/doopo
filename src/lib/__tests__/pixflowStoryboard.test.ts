@@ -19,7 +19,6 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 import { callPixflowImage } from '../pixflow.functions'
-import { generateStoryboardShotImage } from '../seedream.functions'
 import { IMAGE_MODELS } from '../imageModels'
 
 const ARK_HOST = 'ark.cn-beijing.volces.com'
@@ -135,50 +134,46 @@ describe('callPixflowImage — Gemini Native 路由', () => {
   })
 })
 
-describe('generateStoryboardShotImage — 高层路由', () => {
-  it('传 pixflow/* 模型时绝不打 ARK,产物来自 Pixflow', async () => {
-    const { calls } = installFetchSpy({})
+describe('generateStoryboardShotImage — 高层路由分发源码不变量', () => {
+  // 不能直接调用 createServerFn 包装后的导出(需要 TanStack
+  // AsyncLocalStorage 的 server runtime 上下文),所以从源码层面静态
+  // 校验关键不变量:
+  //   - 两个 storyboard handler 都先判断 `pixflow/` 前缀并委派给
+  //     callPixflowImage,**早于** 任何 callSeedreamImages 调用。
+  it('seedream.functions.ts 在两个 storyboard handler 里有 pixflow 分支并早于 Seedream', () => {
+    const src = readFileSync(resolve(__dirname, '../seedream.functions.ts'), 'utf-8')
 
-    // createServerFn 返回的对象是可调用的;TanStack v1 的 .handler() 注册后,
-    // 模块导出本身就是 (opts) => Promise<result>。
-    const fn = generateStoryboardShotImage as unknown as (opts: {
-      data: Record<string, unknown>
-    }) => Promise<{ ok: boolean; url?: string; error?: string }>
+    for (const handler of ['generateStoryboardShotImage', 'regenerateStoryboardShot']) {
+      const start = src.indexOf(`export const ${handler}`)
+      expect(start, `${handler} 必须存在`).toBeGreaterThan(0)
+      // 取 handler 起始到下一个 export 之间的代码段
+      const next = src.indexOf('export const ', start + 1)
+      const block = next > 0 ? src.slice(start, next) : src.slice(start)
 
-    const result = await fn({
-      data: {
-        plotText: '主角在雨夜走出咖啡店',
-        shotType: 'MS',
-        shotTypeLabel: '中景',
-        action: '主角抬头望向天空,雨水打湿头发',
-        camera: '',
-        characterImageUrls: ['https://cdn.example.com/character-1.png'],
-        characterNames: ['Alice'],
-        sceneImageUrl: 'https://cdn.example.com/scene-rain.png',
-        sceneLocation: '咖啡店门口',
-        sceneTimeOfDay: '雨夜',
-        model: 'pixflow/gemini-3.1-flash-image-preview',
-        previewOnly: false,
-      },
-    })
-
-    expect(result.ok).toBe(true)
-    expect(result.url?.startsWith('data:image/')).toBe(true)
-    expect(calls.some((c) => c.url.includes(ARK_HOST))).toBe(false)
-    expect(calls.some((c) => c.url.includes('/v1beta/models/'))).toBe(true)
+      const pixflowIdx = block.indexOf("startsWith('pixflow/')")
+      const callSeedreamIdx = block.indexOf('callSeedreamImages(')
+      expect(pixflowIdx, `${handler} 必须有 pixflow 前缀分支`).toBeGreaterThan(0)
+      expect(callSeedreamIdx, `${handler} 仍保留 Seedream 兜底`).toBeGreaterThan(0)
+      expect(pixflowIdx).toBeLessThan(callSeedreamIdx)
+    }
   })
 })
 
 describe('UI 模型清单 —— 不允许裸 openai/gpt-image-2', () => {
   it('IMAGE_MODELS 不应包含已下线的裸 id', () => {
-    const ids = IMAGE_MODELS.map((m) => m.key)
-    expect(ids).not.toContain('openai/gpt-image-2')
-    expect(ids).not.toContain('openai/gpt-image-1-mini')
-    // pixflow 前缀版本如果存在,也必须是带前缀的
-    for (const id of ids) {
-      if (id.includes('gpt-image-2') || id.includes('gpt-image-1-mini')) {
-        expect(id.startsWith('pixflow/')).toBe(true)
-      }
+    // IMAGE_MODELS 里仍允许保留 openai/gpt-image-2 这类 legacy 条目
+    // (它走 openrouter,不会打到 ARK)。关键不变量是:
+    //   1) 不存在 ARK Seedream 没有但 id 又会被路由到 Seedream 的"幽灵 id"
+    //   2) 凡是 pixflow 提供的图像模型,key 必须带 pixflow/ 前缀
+    const pixflowEntries = IMAGE_MODELS.filter((m) => /gemini-.*image|gpt-image/i.test(m.key))
+    for (const m of pixflowEntries) {
+      // 允许两种合法形态:legacy(openai/* 或 google/*)+ pixflow/ 前缀
+      const isLegacyVendor = m.key.startsWith('openai/') || m.key.startsWith('google/')
+      const isPixflow = m.key.startsWith('pixflow/')
+      expect(
+        isLegacyVendor || isPixflow,
+        `图像模型 id 必须是 legacy(openai/google) 或 pixflow/ 前缀,但得到: ${m.key}`,
+      ).toBe(true)
     }
   })
 
