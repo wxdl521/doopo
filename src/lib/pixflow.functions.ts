@@ -253,7 +253,7 @@ export async function callPixflowImage(input: PixflowImageInput): Promise<Pixflo
     return { url: urls[0], urls, error: null, model }
   } catch (e) {
     clearTimeout(timeout)
-    console.warn(`[pixflow×] model=${model} endpoint=${endpoint} network dur=${Date.now() - t0}ms err=${e instanceof Error ? e.message : 'fetch failed'}`)
+    console.warn(`[pixflow×] model=${model} endpoint=${endpointHint} network dur=${Date.now() - t0}ms err=${e instanceof Error ? e.message : 'fetch failed'}`)
     return {
       url: '',
       urls: [],
