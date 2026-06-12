@@ -916,6 +916,19 @@ export const regenerateStoryboardShot = createServerFn({ method: 'POST' })
     const negative = buildShotNegative()
 
     const requested = data.model?.trim() || ''
+    {
+      const { isLovableGatewayImageModel, callLovableGatewayImage } = await import('./lovableImage.functions')
+      if (isLovableGatewayImageModel(requested)) {
+        const r = await callLovableGatewayImage({
+          prompt: appendNegative(instruction, negative),
+          model: requested,
+          size: '2K',
+          referenceImages: images,
+        })
+        if (!r.url) return { ok: false as const, error: r.error || 'Lovable Gateway 未返回图片' }
+        return { ok: true as const, url: r.url, model: r.model }
+      }
+    }
     if (requested.toLowerCase().startsWith('pixflow/')) {
       const { callPixflowImage } = await import('./pixflow.functions')
       const r = await callPixflowImage({
