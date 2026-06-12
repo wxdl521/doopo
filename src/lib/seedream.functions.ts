@@ -760,13 +760,11 @@ export const generateStoryboardShotImage = createServerFn({ method: 'POST' })
     // 因此把参考图清单作为文字描述塞进 prompt 头部。
     if (requested.toLowerCase().startsWith('pixflow/')) {
       const { callPixflowImage } = await import('./pixflow.functions')
-      const refNote = images.length
-        ? `\n\n[注] 参考图链接(用于风格/角色描述参考,模型不直接读图,请按下面描述还原):\n${images.map((u, i) => `图${i + 1}: ${u}`).join('\n')}`
-        : ''
       const r = await callPixflowImage({
-        prompt: appendNegative(instruction, negative) + refNote,
+        prompt: appendNegative(instruction, negative),
         model: requested,
-        size: '1024x1024',
+        size: '2K',
+        referenceImages: images,
       })
       if (!r.url) return { ok: false as const, error: r.error || 'Pixflow 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
