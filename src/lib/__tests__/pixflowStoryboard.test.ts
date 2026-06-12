@@ -33,6 +33,7 @@ type FetchCall = { url: string; init?: RequestInit }
 function installFetchSpy(opts: {
   onPixflow?: (call: FetchCall) => Response | Promise<Response>
   onReferenceImage?: () => Response
+  allowOpenAIImages?: boolean
 }) {
   const calls: FetchCall[] = []
   const spy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
@@ -44,9 +45,21 @@ function installFetchSpy(opts: {
       throw new Error(`REGRESSION: pixflow flow leaked to ARK host (${url})`)
     }
 
-    // 老 OpenAI 兼容图像端点 —— 同样视为回归
-    if (url.includes(`${PIXFLOW_HOST}/v1/images/generations`)) {
+    // gpt-image-* 无参考图时合法走 /v1/images/generations;
+    // Gemini 模型若误打这里仍然算回归,所以用 allowOpenAIImages 显式放行
+    if (url.includes(`${PIXFLOW_HOST}/v1/images/generations`) && !opts.allowOpenAIImages) {
       throw new Error(`REGRESSION: pixflow image call hit deprecated /v1/images/generations`)
+    }
+
+    // OpenAI 兼容图像端点(gpt-image-* T2I / I2I)
+    if (
+      url.includes(`${PIXFLOW_HOST}/v1/images/generations`) ||
+      url.includes(`${PIXFLOW_HOST}/v1/images/edits`)
+    ) {
+      return new Response(
+        JSON.stringify({ data: [{ url: 'https://cdn.pixflow.im/out.png' }] }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      )
     }
 
     if (url.includes(`${PIXFLOW_HOST}/v1beta/models/`)) {
@@ -186,5 +199,92 @@ describe('UI 模型清单 —— 不允许裸 openai/gpt-image-2', () => {
     // 都必须在调用 callSeedreamImages 前先尝试 Lovable Gateway 分支。
     const lovableMatches = seedreamSrc.match(/isLovableGatewayImageModel\(requested\)/g) || []
     expect(lovableMatches.length, '三处 handler 都应有 Lovable Gateway 早分支').toBeGreaterThanOrEqual(3)
+  })
+})
+
+// ====================================================================
+//  Pixflow gpt-image-* OpenAI 兼容路由 —— 参数策略快照
+//
+//  根据 https://api.pixflow.im/docs:
+//   - T2I:   POST /v1/images/generations  (JSON)
+//   - I2I:   POST /v1/images/edits        (images[].image_url JSON)
+//   - quality 必填 auto|low|high,缺省走 auto
+//   - response_format 显式传 url(高稳定分组返回更小)
+//   - 鉴权: Authorization: Bearer <PIXFLOW_API_KEY>
+//   - 图像类请求超时设到 ~400s(2K/4K 需要 70-300s)
+// ====================================================================
+describe('callPixflowImage — gpt-image-* OpenAI 兼容路由参数策略', () => {
+  it('T2I(无参考图)命中 /v1/images/generations,带 quality/response_format,Bearer 鉴权', async () => {
+    const { calls } = installFetchSpy({ allowOpenAIImages: true })
+    const r = await callPixflowImage({
+      prompt: 'a tiny red apple',
+      model: 'pixflow/gpt-image-2',
+      size: '1024x1024',
+    })
+
+    expect(r.error).toBeNull()
+    expect(r.url).toBe('https://cdn.pixflow.im/out.png')
+
+    const gen = calls.find((c) => c.url.endsWith('/v1/images/generations'))
+    expect(gen, '必须打 /v1/images/generations').toBeDefined()
+    expect(calls.some((c) => c.url.endsWith('/v1/images/edits'))).toBe(false)
+
+    const headers = gen!.init!.headers as Record<string, string>
+    expect(headers.Authorization).toBe('Bearer test-pixflow-key')
+    expect(headers['Content-Type']).toBe('application/json')
+
+    const body = JSON.parse(gen!.init!.body as string)
+    expect(body.model).toBe('gpt-image-2')
+    expect(body.prompt).toBe('a tiny red apple')
+    expect(body.size).toBe('1024x1024')
+    expect(body.quality).toBe('auto')
+    expect(body.response_format).toBe('url')
+    expect(body.images, 'T2I 不应携带 images').toBeUndefined()
+  })
+
+  it('I2I(有参考图)切换到 /v1/images/edits,以 images[].image_url JSON 引用', async () => {
+    const { calls } = installFetchSpy({ allowOpenAIImages: true })
+    const r = await callPixflowImage({
+      prompt: 'fuse them',
+      model: 'pixflow/gpt-image-2',
+      size: '2K',
+      quality: 'high',
+      referenceImages: ['https://cdn.example.com/a.png', 'https://cdn.example.com/b.png'],
+    })
+
+    expect(r.error).toBeNull()
+
+    const edits = calls.find((c) => c.url.endsWith('/v1/images/edits'))
+    expect(edits, '有参考图必须切到 /v1/images/edits').toBeDefined()
+    expect(calls.some((c) => c.url.endsWith('/v1/images/generations'))).toBe(false)
+
+    const body = JSON.parse(edits!.init!.body as string)
+    expect(body.model).toBe('gpt-image-2')
+    expect(body.quality).toBe('high')
+    expect(body.response_format).toBe('url')
+    expect(body.images).toEqual([
+      { image_url: 'https://cdn.example.com/a.png' },
+      { image_url: 'https://cdn.example.com/b.png' },
+    ])
+
+    // gpt-image-* 走 OpenAI JSON 引用,不应该真去下载参考图
+    expect(calls.some((c) => c.url.startsWith('https://cdn.example.com/'))).toBe(false)
+  })
+})
+
+describe('Pixflow 源码常量快照 —— 防止超时/分组策略悄悄被改回', () => {
+  const src = readFileSync(resolve(__dirname, '../pixflow.functions.ts'), 'utf-8')
+
+  it('图像请求超时常量保持 400_000ms(文档建议 ~400s)', () => {
+    expect(src).toMatch(/IMAGE_REQUEST_TIMEOUT_MS\s*=\s*400_000/)
+  })
+
+  it('gpt-image-* 分支显式下发 quality 与 response_format=url', () => {
+    expect(src).toMatch(/quality:\s*input\.quality\s*\?\?\s*'auto'/)
+    expect(src).toMatch(/response_format:\s*'url'/)
+  })
+
+  it('有参考图时 endpoint 切到 /v1/images/edits', () => {
+    expect(src).toMatch(/hasRefs\s*\?\s*'\/v1\/images\/edits'\s*:\s*'\/v1\/images\/generations'/)
   })
 })
