@@ -182,11 +182,9 @@ describe('UI 模型清单 —— 不允许裸 openai/gpt-image-2', () => {
     // 关键不变量改为:存在 Lovable Gateway 分支 + isLovableGatewayImageModel
     // 在 seedream dispatch 里早于 callSeedreamImages 出现。
     const seedreamSrc = readFileSync(resolve(__dirname, '../seedream.functions.ts'), 'utf-8')
-    expect(seedreamSrc).toMatch(/isLovableGatewayImageModel/)
-    const lovableIdx = seedreamSrc.indexOf('isLovableGatewayImageModel')
-    const callSeedreamIdx = seedreamSrc.indexOf('callSeedreamImages')
-    expect(lovableIdx).toBeGreaterThan(0)
-    expect(callSeedreamIdx).toBeGreaterThan(0)
-    expect(lovableIdx).toBeLessThan(callSeedreamIdx)
+    // 三个 handler(generateImage / generateStoryboardShotImage / regenerateStoryboardShot)
+    // 都必须在调用 callSeedreamImages 前先尝试 Lovable Gateway 分支。
+    const lovableMatches = seedreamSrc.match(/isLovableGatewayImageModel\(requested\)/g) || []
+    expect(lovableMatches.length, '三处 handler 都应有 Lovable Gateway 早分支').toBeGreaterThanOrEqual(3)
   })
 })
