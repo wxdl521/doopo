@@ -177,11 +177,14 @@ describe('UI 模型清单 —— 不允许裸 openai/gpt-image-2', () => {
     }
   })
 
-  it('NewProjectDialog 故事板下拉源码里不再含裸 openai/gpt-image-2', () => {
-    const src = readFileSync(resolve(__dirname, '../../components/NewProjectDialog.tsx'), 'utf-8')
-    // 允许出现 'pixflow/gpt-image-2' (带前缀);但不允许出现裸 'openai/gpt-image-2'
-    // 用正则确保边界:前一个字符不是 / 或字母数字
-    const bareMatches = src.match(/(?<![\w/])openai\/gpt-image-2/g) || []
-    expect(bareMatches).toEqual([])
+  it('NewProjectDialog 故事板下拉:openai/gpt-image-2 走 Lovable Gateway,且不会落到 ARK', async () => {
+    // 2026/06 重新启用 openai/gpt-image-2(走 Lovable AI Gateway,不打 ARK)。
+    // 关键不变量改为:存在 Lovable Gateway 分支 + isLovableGatewayImageModel
+    // 在 seedream dispatch 里早于 callSeedreamImages 出现。
+    const seedreamSrc = readFileSync(resolve(__dirname, '../seedream.functions.ts'), 'utf-8')
+    // 三个 handler(generateImage / generateStoryboardShotImage / regenerateStoryboardShot)
+    // 都必须在调用 callSeedreamImages 前先尝试 Lovable Gateway 分支。
+    const lovableMatches = seedreamSrc.match(/isLovableGatewayImageModel\(requested\)/g) || []
+    expect(lovableMatches.length, '三处 handler 都应有 Lovable Gateway 早分支').toBeGreaterThanOrEqual(3)
   })
 })

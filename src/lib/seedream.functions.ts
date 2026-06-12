@@ -220,6 +220,18 @@ export const generateImage = createServerFn({ method: 'POST' })
   .inputValidator((d: unknown) => GenerateImageInput.parse(d))
   .handler(async ({ data }) => {
     const requested = (data.model || '').trim()
+    // 委托给 Lovable AI Gateway(openai/gpt-image-*, google/gemini-*-image*)
+    {
+      const { isLovableGatewayImageModel, callLovableGatewayImage } = await import('./lovableImage.functions')
+      if (isLovableGatewayImageModel(requested)) {
+        const r = await callLovableGatewayImage({
+          prompt: appendNegative(data.prompt, data.negativePrompt),
+          model: requested,
+          size: data.size,
+        })
+        return { url: r.url, error: r.error, model: r.model }
+      }
+    }
     // 委托给 Pixflow(OpenAI 兼容的 gpt-image-2 / gemini 系列)
     if (requested.toLowerCase().startsWith('pixflow/')) {
       const { callPixflowImage } = await import('./pixflow.functions')
@@ -758,6 +770,19 @@ export const generateStoryboardShotImage = createServerFn({ method: 'POST' })
     // 委托给 Pixflow(gpt-image-2 / gemini 图像模型)。注意:Pixflow
     // /v1/images/generations 不接受多参考图 I2I,只能纯文本生图,
     // 因此把参考图清单作为文字描述塞进 prompt 头部。
+    {
+      const { isLovableGatewayImageModel, callLovableGatewayImage } = await import('./lovableImage.functions')
+      if (isLovableGatewayImageModel(requested)) {
+        const r = await callLovableGatewayImage({
+          prompt: appendNegative(instruction, negative),
+          model: requested,
+          size: '2K',
+          referenceImages: images,
+        })
+        if (!r.url) return { ok: false as const, error: r.error || 'Lovable Gateway 未返回图片' }
+        return { ok: true as const, url: r.url, model: r.model }
+      }
+    }
     if (requested.toLowerCase().startsWith('pixflow/')) {
       const { callPixflowImage } = await import('./pixflow.functions')
       const r = await callPixflowImage({
@@ -891,6 +916,19 @@ export const regenerateStoryboardShot = createServerFn({ method: 'POST' })
     const negative = buildShotNegative()
 
     const requested = data.model?.trim() || ''
+    {
+      const { isLovableGatewayImageModel, callLovableGatewayImage } = await import('./lovableImage.functions')
+      if (isLovableGatewayImageModel(requested)) {
+        const r = await callLovableGatewayImage({
+          prompt: appendNegative(instruction, negative),
+          model: requested,
+          size: '2K',
+          referenceImages: images,
+        })
+        if (!r.url) return { ok: false as const, error: r.error || 'Lovable Gateway 未返回图片' }
+        return { ok: true as const, url: r.url, model: r.model }
+      }
+    }
     if (requested.toLowerCase().startsWith('pixflow/')) {
       const { callPixflowImage } = await import('./pixflow.functions')
       const r = await callPixflowImage({
