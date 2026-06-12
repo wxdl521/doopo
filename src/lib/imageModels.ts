@@ -15,11 +15,9 @@ export const IMAGE_MODELS: ImageModelOption[] = [
 
   // ---- Pixflow(api.pixflow.im · OpenAI 兼容)----
   { key: '', label: '—— Pixflow Gateway ——', sub: undefined, legacy: true },
-  { key: 'pixflow/gpt-image-2', label: 'GPT Image 2', sub: 'Pixflow · OpenAI' },
-  { key: 'pixflow/gpt-image-1-mini', label: 'GPT Image 1 Mini', sub: 'Pixflow · OpenAI · 低成本' },
   { key: 'pixflow/gemini-3-pro-image-preview', label: 'Gemini 3 Pro Image', sub: 'Pixflow · Google · 高质量' },
   { key: 'pixflow/gemini-3.1-flash-image-preview', label: 'Gemini 3.1 Flash Image (Nano Banana 2)', sub: 'Pixflow · Google · 快速' },
-  { key: 'pixflow/gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image (Nano Banana)', sub: 'Pixflow · Google' },
+  { key: 'pixflow/gemini-3.1-flash-image', label: 'Gemini 3.1 Flash Image', sub: 'Pixflow · Google · 通用' },
 
   // ---- Legacy 兜底层(用户手动选;seedream 模块会委派)----
   { key: '', label: '—— Legacy 兜底层 ——', sub: undefined, legacy: true },
