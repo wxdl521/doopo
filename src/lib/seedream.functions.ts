@@ -220,6 +220,18 @@ export const generateImage = createServerFn({ method: 'POST' })
   .inputValidator((d: unknown) => GenerateImageInput.parse(d))
   .handler(async ({ data }) => {
     const requested = (data.model || '').trim()
+    // 委托给 Lovable AI Gateway(openai/gpt-image-*, google/gemini-*-image*)
+    {
+      const { isLovableGatewayImageModel, callLovableGatewayImage } = await import('./lovableImage.functions')
+      if (isLovableGatewayImageModel(requested)) {
+        const r = await callLovableGatewayImage({
+          prompt: appendNegative(data.prompt, data.negativePrompt),
+          model: requested,
+          size: data.size,
+        })
+        return { url: r.url, error: r.error, model: r.model }
+      }
+    }
     // 委托给 Pixflow(OpenAI 兼容的 gpt-image-2 / gemini 系列)
     if (requested.toLowerCase().startsWith('pixflow/')) {
       const { callPixflowImage } = await import('./pixflow.functions')
