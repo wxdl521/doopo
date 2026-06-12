@@ -1327,9 +1327,23 @@ export const generateStoryboardPitchDeck = createServerFn({ method: 'POST' })
     ].join(', ')
     const prompt = appendNegative(buildPitchDeckPrompt({ data, styleSpec }), negative)
 
+    const requested = normalizeImageModelForRouting(data.model)
+    if (requested.toLowerCase().startsWith('pixflow/')) {
+      const { callPixflowImage } = await import('./pixflow.functions')
+      const r = await callPixflowImage({
+        prompt,
+        model: requested,
+        size: '3840x2160',
+        referenceImages: data.referenceImages || [],
+        quality: 'high',
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'Pixflow 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+
     const { apiKey, baseUrl, model: defaultModel } = getArkConfig()
     if (!apiKey) return { ok: false as const, error: 'ARK_API_KEY not configured' }
-    const model = data.model?.trim() || defaultModel
+    const model = requested || defaultModel
 
     // 2026/06:查看提示词模式 —— 跳过实际生成
     if (data.previewOnly) {
