@@ -103,7 +103,15 @@ async function urlToInlineData(url: string): Promise<{ mimeType: string; data: s
 export async function callPixflowImage(input: PixflowImageInput): Promise<PixflowImageResult> {
   const { apiKey, baseUrl } = getPixflowConfig()
   const model = stripPixflowPrefix(input.model)
+  const refCount = input.referenceImages?.length ?? 0
+  const protocol = /^gemini-.*image/i.test(model) ? 'gemini-native' : 'openai-compat'
+  const endpointHint = protocol === 'gemini-native'
+    ? `/v1beta/models/${model}:generateContent`
+    : (refCount > 0 ? '/v1/images/edits' : '/v1/images/generations')
+  const t0 = Date.now()
+  console.log(`[pixflow→] model=${model} protocol=${protocol} endpoint=${endpointHint} refs=${refCount} size=${input.size ?? 'default'} quality=${input.quality ?? 'auto'}`)
   if (!apiKey) {
+    console.warn(`[pixflow×] model=${model} missing PIXFLOW_API_KEY`)
     return { url: '', urls: [], error: 'PIXFLOW_API_KEY not configured', model }
   }
 
