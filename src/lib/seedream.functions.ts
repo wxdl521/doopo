@@ -57,7 +57,7 @@ export function isSeedreamModel(modelId: string | null | undefined): boolean {
  * 历史项目里可能残留裸 `openai/gpt-image-2`。它不是 ARK/Seedream 模型,
  * 必须归一到 Pixflow 前缀路由,否则会被错误 POST 到 ARK /images/generations 并 404。
  */
-function normalizeImageModelForRouting(modelId: string | null | undefined): string {
+export function normalizeImageModelForRouting(modelId: string | null | undefined): string {
   const m = (modelId || '').trim()
   const lower = m.toLowerCase()
   if (lower === 'openai/gpt-image-2' || lower === 'gpt-image-2') return 'pixflow/gpt-image-2'
