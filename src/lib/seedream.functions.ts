@@ -54,6 +54,17 @@ export function isSeedreamModel(modelId: string | null | undefined): boolean {
 }
 
 /**
+ * 历史项目里可能残留裸 `openai/gpt-image-2`。它不是 ARK/Seedream 模型,
+ * 必须归一到 Pixflow 前缀路由,否则会被错误 POST 到 ARK /images/generations 并 404。
+ */
+function normalizeImageModelForRouting(modelId: string | null | undefined): string {
+  const m = (modelId || '').trim()
+  const lower = m.toLowerCase()
+  if (lower === 'openai/gpt-image-2' || lower === 'gpt-image-2') return 'pixflow/gpt-image-2'
+  return m
+}
+
+/**
  * Seedream 最小像素数限制(实测 2026/06):
  * 任何 size 的 WxH 必须 >= 3,686,400 像素,否则返回
  * `code: InvalidParameter, message: "image size must be at least 3686400 pixels"`。
@@ -219,7 +230,7 @@ const GenerateImageInput = z.object({
 export const generateImage = createServerFn({ method: 'POST' })
   .inputValidator((d: unknown) => GenerateImageInput.parse(d))
   .handler(async ({ data }) => {
-    const requested = (data.model || '').trim()
+    const requested = normalizeImageModelForRouting(data.model)
     // 委托给 Lovable AI Gateway(openai/gpt-image-*, google/gemini-*-image*)
     {
       const { isLovableGatewayImageModel, callLovableGatewayImage } = await import('./lovableImage.functions')
