@@ -892,6 +892,32 @@ export const regenerateStoryboardShot = createServerFn({ method: 'POST' })
     const instruction = buildRegenShotInstruction(data, styleSpec, usedCharCount, hasScene)
     const negative = buildShotNegative()
 
+    const requested = data.model?.trim() || ''
+    if (requested.toLowerCase().startsWith('pixflow/')) {
+      const { callPixflowImage } = await import('./pixflow.functions')
+      const refNote = `\n\n[注] 参考图链接(模型不直接读图,请按描述/修改意见还原):\n${images.map((u, i) => `图${i + 1}: ${u}`).join('\n')}`
+      const r = await callPixflowImage({
+        prompt: appendNegative(instruction, negative) + refNote,
+        model: requested,
+        size: '1024x1024',
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'Pixflow 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested && !isSeedreamModel(requested)) {
+      const { generateImage: legacy } = await import('./openrouterImage.functions')
+      const r: any = await legacy({
+        data: {
+          prompt: appendNegative(instruction, negative),
+          model: requested,
+          size: '1328*1328',
+          negativePrompt: negative,
+        },
+      } as any)
+      if (!r?.url) return { ok: false as const, error: r?.error || 'Legacy 模型未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+
     const { apiKey, baseUrl, model: defaultModel } = getArkConfig()
     if (!apiKey) return { ok: false as const, error: 'ARK_API_KEY not configured' }
     const model = data.model?.trim() || defaultModel
