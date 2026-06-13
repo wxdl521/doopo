@@ -65,7 +65,7 @@ export function ProjectCard({
   }
   return (
     <div className="card group cursor-pointer relative">
-      <Link to="/projects/$projectId" params={{ projectId: project.id }} className="block">
+      <Link to="/workspace/$workspaceId" params={{ workspaceId: project.id }} className="block">
         <div className="relative aspect-[16/10] overflow-hidden bg-bg-elevated">
           {/^https?:\/\//.test(project.thumbnail) ? (
             <img

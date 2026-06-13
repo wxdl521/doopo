@@ -1,12 +1,12 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { Fragment, useState, useEffect, useRef } from 'react'
+import { Fragment, useState, useEffect, useRef, useCallback } from 'react'
 import { useServerFn } from '@tanstack/react-start'
 import ReactMarkdown from 'react-markdown'
 import WorkspaceTopbar, { type WorkspaceTab } from '../components/workspace/WorkspaceTopbar'
 import ZopiaChatPanel from '../components/workspace/ZopiaChatPanel'
 import { useLanguage } from '../i18n/LanguageContext'
 import { useAuth } from '../hooks/useAuth'
-import { saveCharacters, saveScenes } from '../lib/assetsStorage'
+import { saveCharacters, saveScenes, saveOneCharacter, saveOneScene } from '../lib/assetsStorage'
 import {
   generateOutline, generateScript, generateCharacters, generateStoryboard, generateTimeline,
   type Outline, type GenScene, type GenCharacter, type GenCharacterLook, type StoryboardPanel, type TimelineData, type TimelineTrack, type TimelineClip,
@@ -20,13 +20,15 @@ import { generateStoryboardFromPlot, generateStoryboardShotImage, regenerateStor
 import { generateVideo } from '../lib/videoGenerate.functions'
 import { generateStoryboardPitchDeck } from '../lib/seedream.functions'
 import { getProject, saveWorkspaceData, loadWorkspaceData, type ProjectConfigRow } from '../lib/projects.functions'
+import { persistWorkspaceMedia } from '../lib/workspaceMedia.functions'
 import { streamSynopsis, streamEpisodeScenes, refineSynopsis, refineEpisodeScenes } from '../lib/scriptAgent.functions'
 import type { ImportedScriptResult } from '../lib/parseImportedScript.functions'
 import { resolveProjectStyle, resolveT2IModel, resolveI2IModel, buildStyleLock } from '../lib/visualStyles'
 import { hashString } from '../lib/utils'
 import { filterByEpisode, groupByMatchKey, getEffectiveClothing, getEffectiveRoleLabel } from '../lib/characterFilters'
-import { Maximize2, FileText, Camera, Clock, Users, X, Loader2, Sparkles, Send, CheckCircle2, Pencil, Check, Image as ImageIcon, LayoutGrid, RefreshCw, Target, ChevronDown } from 'lucide-react'
+import { Maximize2, FileText, Camera, Clock, Users, X, Loader2, Sparkles, Send, CheckCircle2, Pencil, Check, Image as ImageIcon, LayoutGrid, RefreshCw, Target, ChevronDown, BookmarkPlus } from 'lucide-react'
 import CharacterPortrait from '../components/workspace/CharacterPortrait'
+import StoryboardTimeline from '../components/workspace/StoryboardTimeline'
 import { toast } from 'sonner'
 
 export const Route = createFileRoute('/workspace/$workspaceId')({
@@ -84,6 +86,38 @@ const sbGradient = (i: number) => {
     'linear-gradient(135deg, #10b981, #0f172a)',
   ]
   return palette[i % palette.length]
+}
+
+// 2026/06:把 ARK Seedance / DashScope 等视频模型返回的英文错误翻译成中文 + 解决建议。
+// toast 直接弹服务端原始错误信息对用户不友好(尤其是 ARK 内容审核拦截)。
+// 这里识别几个常见错误码,返回更可读的提示。
+function explainVideoError(raw: string | undefined | null): string {
+  const s = (raw || '').trim()
+  if (!s) return '视频生成失败'
+  // 1) ARK 内容审核拦截 —— 输入图被识别为含真实人物
+  if (/InputImageSensitiveContentDetected\.PrivacyInformation/i.test(s)
+      || /may contain real person/i.test(s)
+      || /SensitiveContentDetected/i.test(s)) {
+    return '火山方舟识别到参考图可能含真实人物,已拒绝生成。建议:① 把分镜/故事板切到插画/动漫风格再生成;② 或在「基础设置」把视频模型换成 happyhorse-1.0-i2v(走阿里 DashScope,审核更宽松)。'
+  }
+  // 2) 内容违规(其它类型)
+  if (/ContentPolicyViolation|InvalidParameter\.Prompt|SensitiveWords/i.test(s)) {
+    return '内容审核拦截:prompt 或图片可能含敏感信息,已拒绝生成。试试修改剧情 / 重生插画风格分镜图。'
+  }
+  // 3) 配额 / 限流
+  if (/429|quota|rate.?limit/i.test(s)) {
+    return '请求过于频繁或配额已用完,请稍后再试。'
+  }
+  // 4) 余额不足
+  if (/balance|insufficient.?funds|account.*not enough/i.test(s)) {
+    return '账户余额不足,请充值后再试。'
+  }
+  // 5) 任务超时
+  if (/timed? ?out/i.test(s)) {
+    return '任务处理超时,请稍后重试或缩短分镜组时长。'
+  }
+  // 6) 其它 —— 截断到 200 字避免 toast 太长
+  return s.length > 200 ? `${s.slice(0, 200)}…` : s
 }
 
 // Module-scope: defined once, stable component identity across renders.
@@ -238,6 +272,7 @@ function WorkspacePage() {
   const loadProject = useServerFn(getProject)
   const callSaveWorkspace = useServerFn(saveWorkspaceData)
   const callLoadWorkspace = useServerFn(loadWorkspaceData)
+  const callPersistMedia = useServerFn(persistWorkspaceMedia)
   const [project, setProject] = useState<ProjectConfigRow | null>(null)
   const [savingWorkspace, setSavingWorkspace] = useState(false)
   const [savedWorkspace, setSavedWorkspace] = useState(false)
@@ -395,6 +430,15 @@ function WorkspacePage() {
   // 2026 Storyboard 接入:每个分镜组可以独立生成故事板图(Storyboard),
   // key = groupId。value 包含 storyboardUrl 和 status。不持久化(Seedream URL 24h 有效)。
   const [groupStoryboards, setGroupStoryboards] = useState<Record<string, { url: string; status: 'running' | 'succeeded' | 'failed' }>>({})
+  // 2026/06 Storyboard → Timeline 拼接播放:用户在时间轴上可调整 clip 顺序,
+  // 顺序仅在会话内有效(视频 URL 本身不持久化,顺序跟着重置即可)。
+  const [clipOrder, setClipOrder] = useState<string[]>([])
+  // 2026/06:外部触发"进入时间轴流程"对话动画的 signal。
+  // 分镜 row header 按钮每点一次 +1,ZopiaChatPanel 收到变化就跑 workflow 动画。
+  const [enterTimelineSignal, setEnterTimelineSignal] = useState(0)
+  const triggerEnterTimeline = useCallback(() => {
+    setEnterTimelineSignal((n) => n + 1)
+  }, [])
   // 故事板图放大预览(2026/06 跟分镜图对齐):点图片打开全屏模态。
   // 故事板没有 history 多代概念(每个 group 只 1 张故事板图),模态最简。
   const [storyboardPreview, setStoryboardPreview] = useState<{ groupId: string } | null>(null)
@@ -466,11 +510,35 @@ function WorkspacePage() {
         if ((wd as any).selectedCharImages) setSelectedCharImages((wd as any).selectedCharImages as Record<string, string>)
         if (wd.panelImages) setPanelImages(wd.panelImages as Record<string, string>)
         if (wd.sceneImages) setSceneImages(wd.sceneImages as Record<string, string[]>)
+        // 2026/06:跨 session 恢复入库后的永久视频 / 故事板图 URL。
+        // 这些字段是老数据没有的(2026/06 前不持久化),所以可选读。
+        if (wd.groupVideos && typeof wd.groupVideos === 'object') {
+          setGroupVideos(wd.groupVideos as Record<string, { url: string; status: 'running' | 'succeeded' | 'failed' }>)
+        }
+        if (wd.groupStoryboards && typeof wd.groupStoryboards === 'object') {
+          setGroupStoryboards(wd.groupStoryboards as Record<string, { url: string; status: 'running' | 'succeeded' | 'failed' }>)
+        }
         setDataLoaded(true)
       })
       .catch(() => { setDataLoaded(true) })
     return () => { cancelled = true }
   }, [workspaceId, loadProject, callLoadWorkspace])
+
+  // 2026/06:同步 clipOrder 与 data.storyboardGroups。
+  // - 新生成的分镜组自动追加到末尾
+  // - 删除/重切的分组从顺序中清理
+  // - 不持久化(视频 URL 24h 失效,顺序仅当前会话有效)
+  useEffect(() => {
+    setClipOrder((prev) => {
+      const validIds = new Set(data.storyboardGroups.map((g) => g.id))
+      const kept = prev.filter((id) => validIds.has(id))
+      const existing = new Set(kept)
+      const appended = data.storyboardGroups
+        .map((g) => g.id)
+        .filter((id) => !existing.has(id))
+      return [...kept, ...appended]
+    })
+  }, [data.storyboardGroups])
 
   // Expand character visual description from script profiles before image generation
   async function expandCharacterLook(c: GenCharacter): Promise<string> {
@@ -1224,7 +1292,9 @@ function WorkspacePage() {
           lookLabel: lk?.label || '默认',
           palette: c.palette,
           projectStyle: project?.style,
-          model: project?.sceneModel,
+          // 2026/06 修复:跟同文件 1167/1327/1510 三处保持一致,先过 resolveI2IModel
+          // 防止把 T2I-only model id 直接打到 ARK 报 400
+          model: resolveI2IModel(project?.sceneModel),
         },
       })
       if (res?.ok && res.url) {
@@ -1920,6 +1990,9 @@ function WorkspacePage() {
           sceneLocation: sceneObj?.location || group.sceneLocation || '',
           sceneTimeOfDay: sceneObj?.timeOfDay || '',
           projectStyle: project?.style,
+          // 2026/06 修复:历史上从来不传 model,导致用户切了 sceneModel
+          // 也不影响分镜图,默认走 ARK Seedream。现在补上委派路由。
+          model: resolveI2IModel(project?.sceneModel),
           previewOnly: viewPromptsModeRef.current,
         },
       })
@@ -2027,6 +2100,8 @@ function WorkspacePage() {
           sceneLocation: sceneObj?.location || group.sceneLocation || '',
           sceneTimeOfDay: sceneObj?.timeOfDay || '',
           projectStyle: project?.style,
+          // 2026/06 修复:跟 shot generate 调用对称,补 model 字段
+          model: resolveI2IModel(project?.sceneModel),
           previewOnly: viewPromptsModeRef.current,
         },
       })
@@ -2159,11 +2234,11 @@ function WorkspacePage() {
         toast.success(`分镜组视频已生成 (${shotImagesList.length} 个镜头,${res.videoUrl ? '已就绪' : ''})`)
       } else {
         setGroupVideos((m) => ({ ...m, [groupId]: { url: '', status: 'failed' } }))
-        toast.error(res?.error || '视频生成失败')
+        toast.error(explainVideoError(res?.error))
       }
     } catch (e) {
       setGroupVideos((m) => ({ ...m, [groupId]: { url: '', status: 'failed' } }))
-      toast.error(e instanceof Error ? e.message : '视频生成失败')
+      toast.error(explainVideoError(e instanceof Error ? e.message : '视频生成失败'))
     }
   }
 
@@ -2269,11 +2344,11 @@ function WorkspacePage() {
         toast.success('按故事板的视频已生成')
       } else {
         setGroupVideos((m) => ({ ...m, [groupId]: { url: '', status: 'failed' } }))
-        toast.error(res?.error || '视频生成失败')
+        toast.error(explainVideoError(res?.error))
       }
     } catch (e) {
       setGroupVideos((m) => ({ ...m, [groupId]: { url: '', status: 'failed' } }))
-      toast.error(e instanceof Error ? e.message : '视频生成失败')
+      toast.error(explainVideoError(e instanceof Error ? e.message : '视频生成失败'))
     }
   }
 
@@ -2683,6 +2758,42 @@ function WorkspacePage() {
     toast.success('已保存到资产库')
   }
 
+  // 2026/06:per-item 保存角色到资产库。
+  // - imageKey 形如 `${characterId}`(默认)或 `${characterId}::${lookId}`(变体)
+  // - 取该 imageKey 在 charImages 里的最后一张作为 cover_url(per-look 准确对应)
+  async function saveCharacterToAssets(c: GenCharacter, lookId: string | null, imageKey: string) {
+    if (!user) {
+      toast.error('请先登录')
+      return
+    }
+    const coverUrl = charImages[imageKey]?.at(-1) ?? null
+    const r = await saveOneCharacter(c, user.id, coverUrl)
+    if (!r.ok) {
+      toast.error(`保存角色失败:${r.error}`)
+      return
+    }
+    setSavedAssetKeys((prev) => new Set(prev).add(imageKey))
+    toast.success(`「${c.name}${lookId ? ` · ${c.looks?.find((l) => l.id === lookId)?.label ?? ''}` : ''}」已保存到资产库`)
+  }
+
+  async function saveSceneToAssets(s: GenScene) {
+    if (!user) {
+      toast.error('请先登录')
+      return
+    }
+    const coverUrl = sceneImages[s.id]?.at(-1) ?? null
+    const r = await saveOneScene(s, user.id, coverUrl)
+    if (!r.ok) {
+      toast.error(`保存场景失败:${r.error}`)
+      return
+    }
+    setSavedAssetKeys((prev) => new Set(prev).add(`scene::${s.id}`))
+    toast.success(`「${s.slug}」已保存到资产库`)
+  }
+
+  // 追踪哪些资产已保存(用于按钮显示"已保存"反馈)
+  const [savedAssetKeys, setSavedAssetKeys] = useState<Set<string>>(new Set())
+
   // ===== Workspace data persistence =====
   const completedStages = (() => {
     const stages = new Set<WorkspaceTab>()
@@ -2704,6 +2815,52 @@ function WorkspacePage() {
     setSavingWorkspace(true)
     setSavedWorkspace(false)
     try {
+      // 2026/06:入库 ephemeral 媒体(分镜视频 + 故事板图)。
+      // ARK / DashScope / Seedream 三方 URL 24h 过期,服务端下载 → 上传
+      // Supabase Storage → 返回永久 URL,替换后写回 workspace_data。
+      // 已入库的会被服务端检测跳过(URL 已在自己的 bucket 里)。
+      // 没有 ephemeral 项时这步基本零成本,直接返回原 map。
+      let persistGroupVideos = groupVideos
+      let persistGroupStoryboards = groupStoryboards
+      const hasEphemeralMedia =
+        Object.values(groupVideos).some((v) => v.status === 'succeeded' && v.url) ||
+        Object.values(groupStoryboards).some((v) => v.status === 'succeeded' && v.url)
+      if (hasEphemeralMedia) {
+        const toastId = toast.loading('正在将视频 / 故事板图入库到你的存储…')
+        try {
+          const persistRes = await callPersistMedia({
+            data: {
+              workspaceId,
+              groupVideos,
+              groupStoryboards,
+            },
+          })
+          // 用永久 URL 替换 client state —— 后续 <video src> 用新 URL
+          persistGroupVideos = persistRes.groupVideos
+          persistGroupStoryboards = persistRes.groupStoryboards
+          setGroupVideos(persistGroupVideos)
+          setGroupStoryboards(persistGroupStoryboards)
+          toast.dismiss(toastId)
+          if (persistRes.persistedCount > 0) {
+            toast.success(
+              `已入库 ${persistRes.persistedCount} 个文件` +
+              (persistRes.failedCount > 0 ? `,${persistRes.failedCount} 个失败(已保留原临时链接)` : ''),
+            )
+          } else if (persistRes.failedCount > 0) {
+            toast.warning(`入库失败 ${persistRes.failedCount} 个,临时链接仍可使用`)
+          }
+          if (persistRes.errors.length) {
+            // 开发可见:详细错误打到 console,生产只 toast 概要
+            console.warn('[persistWorkspaceMedia]', persistRes.errors)
+          }
+        } catch (e) {
+          toast.dismiss(toastId)
+          // 入库失败不阻断保存 —— 用 ephemeral URL 也能保存(后续 24h 后失效)
+          console.error('[persistWorkspaceMedia]', e)
+          toast.warning('媒体入库失败,将以临时链接保存(24h 内有效)')
+        }
+      }
+
       const workspaceData: Record<string, unknown> = {
         outline: data.outline,
         scenes: data.scenes,
@@ -2718,6 +2875,10 @@ function WorkspacePage() {
         panelImages,
         sceneImages,
         selectedCharImages,
+        // 2026/06:已入库或原始的 groupVideos / groupStoryboards 一并保存,
+        // 跨 session 也能恢复(只要 URL 在 Storage 里就是永久的)。
+        groupVideos: persistGroupVideos,
+        groupStoryboards: persistGroupStoryboards,
       }
       const res = await callSaveWorkspace({
         data: {
@@ -3882,6 +4043,27 @@ function WorkspacePage() {
                                         <LayoutGrid size={10} /> 三视图
                                       </button>
                                     </div>
+                                    {/* 2026/06:per-item 「保存到资产」按钮(左下角,跟角色卡位置对称) */}
+                                    <button
+                                      type="button"
+                                      onClick={(e) => { e.stopPropagation(); void saveSceneToAssets(s) }}
+                                      title={savedAssetKeys.has(`scene::${s.id}`) ? '已保存到资产库,点击重新保存' : '把这张场景卡(含主图)保存到你的资产库'}
+                                      className={`absolute bottom-2 left-2 z-10 inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium backdrop-blur-sm transition ${
+                                        savedAssetKeys.has(`scene::${s.id}`)
+                                          ? 'bg-emerald-500/85 text-white shadow-sm'
+                                          : 'bg-black/65 text-white border border-border hover:bg-accent hover:text-accent-foreground'
+                                      }`}
+                                    >
+                                      {savedAssetKeys.has(`scene::${s.id}`) ? (
+                                        <>
+                                          <Check size={10} /> 已保存
+                                        </>
+                                      ) : (
+                                        <>
+                                          <BookmarkPlus size={10} /> 保存到资产
+                                        </>
+                                      )}
+                                    </button>
                                     {sceneImgCount > 1 && (
                                       <span className="absolute top-1.5 left-1.5 text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/60 text-white">
                                         {sceneImgCount} 张
@@ -4148,6 +4330,35 @@ function WorkspacePage() {
                                     )}
                                   </button>
                                 )}
+                                {/* 2026/06:per-item 「保存到资产」按钮 —— 钉在图片右下角,
+                                    已保存状态显示「✓ 已保存」+ 绿色徽章。点击只存这一张卡
+                                    的当前封面图(优先 selectedCharImages[imageKey],否则最新)。
+                                    状态保存在 React state,刷新页面会重置(下次点重新入库)。 */}
+                                {hasImg && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      void saveCharacterToAssets(c, card.lookId, imageKey)
+                                    }}
+                                    title={savedAssetKeys.has(imageKey) ? '已保存到资产库,点击重新保存当前封面图' : '把这张角色卡(含主图)保存到你的资产库'}
+                                    className={`absolute bottom-1.5 left-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium backdrop-blur-sm transition ${
+                                      savedAssetKeys.has(imageKey)
+                                        ? 'bg-emerald-500/85 text-white shadow-sm'
+                                        : 'bg-black/70 text-white hover:bg-accent hover:text-accent-foreground'
+                                    }`}
+                                  >
+                                    {savedAssetKeys.has(imageKey) ? (
+                                      <>
+                                        <Check size={10} /> 已保存
+                                      </>
+                                    ) : (
+                                      <>
+                                        <BookmarkPlus size={10} /> 保存到资产
+                                      </>
+                                    )}
+                                  </button>
+                                )}
                               </div>
 
                               {/* Text area — flex column 拉伸,按钮用 mt-auto 钉到卡片底部,
@@ -4350,6 +4561,13 @@ function WorkspacePage() {
                         <Loader2 size={12} className="animate-spin" /> AI 切分中…
                       </span>
                     )}
+                    <button
+                      type="button"
+                      onClick={triggerEnterTimeline}
+                      className="text-xs px-2.5 py-1 rounded border border-border bg-bg-elevated text-text-secondary hover:border-accent hover:text-accent transition inline-flex items-center gap-1"
+                    >
+                      <Clock size={11} /> {t.sb_enter_timeline}
+                    </button>
                     <button
                       type="button"
                       onClick={() => void runEnterStoryboard()}
@@ -4830,60 +5048,26 @@ function WorkspacePage() {
               </div>
             )
           })()}
-          {tab === 'timeline' && (() => {
-            if (!data.timeline) {
-              return (
-                <div className="max-w-4xl mx-auto panel p-10 text-center">
-                  <p className="text-text-muted text-sm">{t.ws_timeline_empty}</p>
-                </div>
-              )
-            }
-            const tl = data.timeline
-            const TRACK_TONES: Record<string, string> = {
-              video: 'from-accent to-accent-mint',
-              audio: 'from-amber-400 to-rose-500',
-              subtitle: 'from-emerald-400 to-cyan-500',
-            }
-            return (
-              <div className="space-y-3 max-w-5xl mx-auto">
-                <div className="flex items-center justify-between">
-                  <h2 className="font-display text-lg font-bold inline-flex items-center gap-2"><Clock size={16} /> {t.ws_tab_timeline} · {tl.totalSec.toFixed(0)}s</h2>
-                  {completedStages.has('timeline') && <span className="inline-flex items-center gap-0.5 text-xs text-emerald-400"><CheckCircle2 size={12} /> 已完成</span>}
-                </div>
-                <div className="relative h-5 px-1 text-[10px] font-mono text-text-muted">
-                  {Array.from({ length: Math.ceil(tl.totalSec / 10) + 1 }).map((_, i) => (
-                    <span key={i} className="absolute -translate-x-1/2" style={{ left: `${(i * 10 / tl.totalSec) * 100}%` }}>{i * 10}s</span>
-                  ))}
-                </div>
-                {tl.tracks.map((tr) => (
-                  <div key={tr.kind} className="panel p-3">
-                    <div className="text-xs text-text-muted mb-2">{tr.label}</div>
-                    <div className="relative h-10 bg-bg-elevated/40 rounded">
-                      {tr.clips.map((c) => (
-                        <div
-                          key={c.id}
-                          className={`absolute top-0 bottom-0 rounded bg-gradient-to-r ${TRACK_TONES[tr.kind]} text-[10px] font-mono text-white/90 px-1.5 flex items-center overflow-hidden`}
-                          style={{ left: `${(c.startSec / tl.totalSec) * 100}%`, width: `${(c.durationSec / tl.totalSec) * 100}%` }}
-                          title={`${c.label} (${c.startSec.toFixed(1)}s → ${(c.startSec + c.durationSec).toFixed(1)}s)`}
-                        >
-                          <span className="truncate">{c.label}</span>
-                        </div>
-                      ))}
-                      {tr.kind === 'video' && tl.transitionsAt.map((sec, i) => (
-                        <Fragment key={i}>
-                          <div
-                            className="absolute top-0 bottom-0 w-0.5 bg-accent"
-                            style={{ left: `${(sec / tl.totalSec) * 100}%` }}
-                            title={`transition @ ${sec.toFixed(1)}s`}
-                          />
-                        </Fragment>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )
-          })()}
+          {tab === 'timeline' && (
+            <StoryboardTimeline
+              groups={data.storyboardGroups}
+              groupVideos={groupVideos}
+              clipOrder={clipOrder}
+              onClipReorder={setClipOrder}
+              i18n={{
+                title: t.ws_tab_timeline,
+                hint: t.tl_drag_hint,
+                play: t.tl_play,
+                pause: t.tl_pause,
+                resetOrder: t.tl_reset_order,
+                noVideo: t.tl_no_video,
+                generating: t.tl_generating,
+                failed: t.tl_failed,
+                empty: t.ws_timeline_empty,
+                reorderChanged: t.tl_reorder_changed,
+              }}
+            />
+          )}
         </main>
         <ZopiaChatPanel
           stage={tab}
@@ -4898,6 +5082,8 @@ function WorkspacePage() {
           onImportScript={handleImportScript}
           streaming={synopsisStreaming || episodeStreaming}
           onEnterStoryboard={() => void runEnterStoryboard()}
+          enterTimelineSignal={enterTimelineSignal}
+          onEnterTimeline={() => setTab('timeline')}
         />
       </div>
       {previewTarget && (() => {

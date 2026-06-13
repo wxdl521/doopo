@@ -78,6 +78,192 @@ export const getProject = createServerFn({ method: 'POST' })
     return { project, error: null as string | null }
   })
 
+// ====================================================================
+// listMyProjects —— 当前用户的项目列表(只列 user_id = 自己 的)
+// 用于 /projects 页和 Home 页"最近项目"区。
+// 不返回 workspace_data 全文(可能很大),只返回摘要字段。
+// status 推断:从 completed_stages 长度 + workspace_data 内容判断
+// ====================================================================
+
+export type ProjectListItem = {
+  id: string
+  name: string
+  customCover: string | null
+  createdAt: string
+  updatedAt: string
+  completedStages: string[]
+  /** 计算字段:draft / rendering / ready */
+  status: 'draft' | 'rendering' | 'ready'
+  /**
+   * 自动从 workspace_data 里挑出来的缩略图 URL(故事板图 → 分镜图 → 角色图)。
+   * 客户端会优先用 customCover → thumbnail → 渐变占位 三级 fallback。
+   */
+  thumbnail: string | null
+}
+
+const ALL_STAGES = ['canvas', 'script', 'character', 'storyboard', 'timeline'] as const
+
+function inferStatus(row: { completed_stages: string[]; workspace_data: any }): 'draft' | 'rendering' | 'ready' {
+  const done = (row.completed_stages ?? []).length
+  if (done >= ALL_STAGES.length) return 'ready'
+  if (done === 0) return 'draft'
+  return 'rendering'
+}
+
+/**
+ * 从 workspace_data JSON 里挑缩略图。
+ * 优先级:
+ *   1. groupStoryboards(漫剧故事板图,故事板流程生成) — groupId 任意取第 1 个 succeeded
+ *   2. shotImages(分镜图) — `${groupId}::${shotId}` key,取第 1 个数组的第 1 张
+ *   3. charImages(角色图) — imageKey,取第 1 个数组的第 1 张
+ *   4. panelImages(旧版分镜) — 取第 1 个 value
+ *   5. sceneImages(场景图) — 取第 1 个数组的第 1 张
+ * 返回 URL 字符串,没有则 null。
+ */
+function pickThumbnail(ws: any): string | null {
+  if (!ws || typeof ws !== 'object') return null
+  // 1) 故事板图
+  const sb = ws.groupStoryboards
+  if (sb && typeof sb === 'object') {
+    for (const gid of Object.keys(sb)) {
+      const v = sb[gid]
+      if (v && typeof v === 'object' && v.status === 'succeeded' && typeof v.url === 'string' && v.url) {
+        return v.url
+      }
+    }
+  }
+  // 2) 分镜图(shotImages 是 `${groupId}::${shotId}` → url[])
+  const shots = ws.shotImages
+  if (shots && typeof shots === 'object') {
+    for (const k of Object.keys(shots)) {
+      const arr = shots[k]
+      if (Array.isArray(arr) && arr.length && typeof arr[0] === 'string') return arr[0]
+    }
+  }
+  // 3) 角色图
+  const chars = ws.charImages
+  if (chars && typeof chars === 'object') {
+    for (const k of Object.keys(chars)) {
+      const arr = chars[k]
+      if (Array.isArray(arr) && arr.length && typeof arr[0] === 'string') return arr[0]
+    }
+  }
+  // 4) 旧版分镜图
+  const panels = ws.panelImages
+  if (panels && typeof panels === 'object') {
+    for (const k of Object.keys(panels)) {
+      const v = panels[k]
+      if (typeof v === 'string' && v) return v
+    }
+  }
+  // 5) 场景图
+  const scenes = ws.sceneImages
+  if (scenes && typeof scenes === 'object') {
+    for (const k of Object.keys(scenes)) {
+      const arr = scenes[k]
+      if (Array.isArray(arr) && arr.length && typeof arr[0] === 'string') return arr[0]
+    }
+  }
+  return null
+}
+
+export const listMyProjects = createServerFn({ method: 'POST' })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => z.object({}).parse(input ?? {}))
+  .handler(async ({ context }) => {
+    const { supabase } = context
+    const { data, error } = await supabase
+      .from('projects')
+      .select('id,name,custom_cover,created_at,updated_at,completed_stages,workspace_data')
+      .order('updated_at', { ascending: false })
+    if (error) return { projects: [] as ProjectListItem[], error: error.message }
+    const projects: ProjectListItem[] = (data ?? []).map((row) => ({
+      id: row.id,
+      name: row.name,
+      customCover: row.custom_cover,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      completedStages: row.completed_stages ?? [],
+      status: inferStatus({ completed_stages: row.completed_stages ?? [], workspace_data: row.workspace_data }),
+      thumbnail: pickThumbnail(row.workspace_data),
+    }))
+    return { projects, error: null as string | null }
+  })
+
+// ====================================================================
+// renameProject —— 改名。只允许改自己 user_id 的项目(RLS + 中间件双重保险)。
+// ====================================================================
+
+export const renameProject = createServerFn({ method: 'POST' })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z.object({
+      id: z.string().min(1).max(64),
+      name: z.string().min(1).max(200),
+    }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context
+    const { data: row, error } = await supabase
+      .from('projects')
+      .update({ name: data.name, updated_at: new Date().toISOString() })
+      .eq('id', data.id)
+      .eq('user_id', userId)  // 二次保险,虽然 RLS 已经能挡住
+      .select('id')
+      .maybeSingle()
+    if (error) return { ok: false as const, error: error.message }
+    if (!row) return { ok: false as const, error: 'project not found or not owned by you' }
+    return { ok: true as const, error: null as string | null }
+  })
+
+// ====================================================================
+// deleteProject —— 删除项目(workspace_data / cover 等会一起被删)。
+// 这里**不级联删 workspace-media bucket 里的文件**(用户可能想保留旧素材),
+// 如果要彻底清理可以再加个 server fn 跑 supabase.storage.remove。
+// ====================================================================
+
+export const deleteProject = createServerFn({ method: 'POST' })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) =>
+    z.object({ id: z.string().min(1).max(64) }).parse(input),
+  )
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context
+    const { error, count } = await supabase
+      .from('projects')
+      .delete({ count: 'exact' })
+      .eq('id', data.id)
+      .eq('user_id', userId)
+    if (error) return { ok: false as const, error: error.message }
+    if (count === 0) return { ok: false as const, error: 'project not found or not owned by you' }
+    return { ok: true as const, error: null as string | null }
+  })
+
+// ====================================================================
+// deleteAllMyProjects —— 清空当前用户所有项目。
+// 这是破坏性操作,UI 端必须用强确认 modal(二次输入项目名 / 勾选框等)。
+// RLS 自动按 user_id 过滤,不会误删别人的。
+// 这里**不级联删 workspace-media bucket 里的文件**(老素材保留)。
+// ====================================================================
+
+export const deleteAllMyProjects = createServerFn({ method: 'POST' })
+  .middleware([requireSupabaseAuth])
+  // 客户端必须传 confirm: true 作为"二次确认",避免被误触发
+  .inputValidator((input: unknown) =>
+    z.object({
+      confirm: z.literal(true),
+    }).parse(input),
+  )
+  .handler(async ({ context }) => {
+    const { supabase, userId } = context
+    const { error, count } = await supabase
+      .from('projects')
+      .delete({ count: 'exact' })
+      .eq('user_id', userId)
+    if (error) return { ok: false as const, error: error.message, deletedCount: 0 }
+    return { ok: true as const, error: null as string | null, deletedCount: count ?? 0 }
+  })
+
 // ===== Workspace data persistence =====
 
 export const saveWorkspaceData = createServerFn({ method: 'POST' })

@@ -8,40 +8,41 @@ import ShowcaseGrid from '../components/ShowcaseGrid'
 import { useLanguage } from '../i18n/LanguageContext'
 import CommunityCard, { type CommunityCardItem } from '../components/community/CommunityCard'
 import { listCommunityPosts } from '../lib/community.functions'
+import { listMyProjects, type ProjectListItem } from '../lib/projects.functions'
+import { formatRelativeTime } from '../lib/utils'
 
-const recent: ProjectMeta[] = [
-  {
-    id: '1',
-    title: 'Lighthouse Reverie',
-    thumbnail: 'https://images.unsplash.com/photo-1507413245164-6160d8298b31?w=1200&h=750&fit=crop&q=80',
-    status: 'rendering',
-    updated: '2 min ago',
-  },
-  {
-    id: '2',
-    title: 'Founder Story Pitch',
-    thumbnail: 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?w=1200&h=750&fit=crop&q=80',
-    status: 'ready',
-    updated: 'yesterday',
-  },
-  {
-    id: '3',
-    title: 'Cyberpunk Cafe MV',
-    thumbnail: 'https://images.unsplash.com/photo-1542751371-adc38448a05e?w=1200&h=750&fit=crop&q=80',
-    status: 'draft',
-    updated: '3 days ago',
-  },
-]
+function toMeta(p: ProjectListItem): ProjectMeta {
+  // 三级 fallback:customCover → 自动挑的图 → 渐变色
+  const thumbnail = p.customCover || p.thumbnail || 'from-accent to-accent-mint'
+  return {
+    id: p.id,
+    title: p.name,
+    thumbnail,
+    status: p.status,
+    updated: formatRelativeTime(p.updatedAt),
+  }
+}
 
 export default function Home() {
   const { t } = useLanguage()
   const list = useServerFn(listCommunityPosts)
+  const callListProjects = useServerFn(listMyProjects)
   const [community, setCommunity] = useState<CommunityCardItem[]>([])
+  const [recent, setRecent] = useState<ProjectMeta[]>([])
   useEffect(() => {
     list({ data: { sort: 'hot', limit: 6 } })
       .then((d) => setCommunity(d as CommunityCardItem[]))
       .catch(() => {})
   }, [list])
+  useEffect(() => {
+    callListProjects({ data: {} })
+      .then((r) => {
+        if (r.error) return
+        // Home 区只显示最近 3 个
+        setRecent((r.projects ?? []).slice(0, 3).map(toMeta))
+      })
+      .catch(() => {})
+  }, [callListProjects])
 
   return (
     <div className="space-y-16 animate-fade-in">
@@ -80,7 +81,7 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Recent Projects */}
+      {/* Recent Projects — 从 Supabase 拉当前用户的最近 3 个项目 */}
       <section>
         <div className="flex items-center justify-between mb-5">
           <h2 className="font-display text-2xl font-bold">{t.home_recent_projects}</h2>
@@ -90,9 +91,16 @@ export default function Home() {
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
           <NewProjectCard />
-          {recent.map((p) => (
-            <ProjectCard key={p.id} project={p} />
-          ))}
+          {recent.length === 0 ? (
+            // 没项目时,只显示 NewProjectCard + 一行轻提示
+            <div className="col-span-3 hidden sm:flex items-center text-sm text-text-muted px-3 py-6 border border-dashed border-border rounded-xl">
+              还没有项目 — 点左边卡片新建,或者直接输入上方提示框开始创作。
+            </div>
+          ) : (
+            recent.map((p) => (
+              <ProjectCard key={p.id} project={p} />
+            ))
+          )}
         </div>
       </section>
 

@@ -91,7 +91,7 @@ function buildWorkflow(stage: WorkspaceTab, t: any): WorkflowDef {
 }
 
 export default function ZopiaChatPanel({
-  stage, onJumpStage, onProduce, collapsed, onToggleCollapsed, initialInput, onSaveAssets, locked, selectedEpisodeIndex, onImportScript, streaming, onEnterStoryboard,
+  stage, onJumpStage, onProduce, collapsed, onToggleCollapsed, initialInput, onSaveAssets, locked, selectedEpisodeIndex, onImportScript, streaming, onEnterStoryboard, enterTimelineSignal, onEnterTimeline,
 }: {
   stage: WorkspaceTab
   onJumpStage: (t: WorkspaceTab) => void
@@ -110,6 +110,19 @@ export default function ZopiaChatPanel({
    * 把当集剧情发给 AI 切分成多组 StoryboardGroup。
    */
   onEnterStoryboard?: () => void | Promise<void>
+  /**
+   * 2026/06:从分镜 row header 外部触发"进入时间轴"对话动画的信号。
+   * 父组件把数字 +1 即可触发一次 runWorkflowAnimation('timeline', ..., { jumpAfter: true })。
+   * 0 / undefined = 不触发。
+   */
+  enterTimelineSignal?: number
+  /**
+   * 2026/06:跟 enter_storyboard 同形 —— enterTimelineSignal 触发后,
+   * 动画收尾时调用这个回调执行真正的"切换到 timeline 视图"。
+   * 由于 jumpAfter=true 已经会自动 onJumpStage('timeline'),这个回调可留空,
+   * 仅作为未来需要"先做点事再切 tab"的扩展点。
+   */
+  onEnterTimeline?: () => void | Promise<void>
 }) {
   const { t, lang } = useLanguage()
   const callParseScript = useServerFn(parseImportedScript)
@@ -497,6 +510,24 @@ export default function ZopiaChatPanel({
         }, wait)
       })
   }
+
+  // 2026/06:外部 signal 触发"进入时间轴流程"动画。
+  // 当父组件把 enterTimelineSignal 数字 +1 时,这里跑一遍 tl_load/tl_align/...
+  // 5 步工作流,然后 jumpAfter=true 自动切到 timeline tab。
+  useEffect(() => {
+    if (!enterTimelineSignal) return
+    const userMsg: Message = {
+      id: `u-${Date.now()}`,
+      kind: 'user',
+      text: t.zp_user_quick_timeline,
+    }
+    runWorkflowAnimation('timeline', () => { void onEnterTimeline?.() }, {
+      jumpAfter: true,
+      userMsg,
+    })
+    // 只在外部 signal 变化时触发
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [enterTimelineSignal])
 
   const quickActions: { key: string; icon: typeof FileText; target: WorkspaceTab; label: string; userText: string }[] = [
     { key: 'qs', icon: FileText, target: 'script', label: t.zp_quick_script, userText: t.zp_user_quick_script },

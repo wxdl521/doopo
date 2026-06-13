@@ -5,8 +5,12 @@ import type { Tables, Json } from '@/integrations/supabase/types'
 export type DbCharacter = Tables<'characters'>
 export type DbScene = Tables<'scenes'>
 
-export async function saveCharacters(chars: GenCharacter[], userId: string) {
-  const records = chars.map((c) => ({
+/**
+ * 把 GenCharacter 转换成 characters 表的 upsert 记录。
+ * coverUrl 可选 —— 调用方传入角色的最新图片 URL(同步持久化到 assets 库)。
+ */
+function charToRecord(c: GenCharacter, userId: string, coverUrl?: string | null) {
+  return {
     id: c.id,
     user_id: userId,
     name: c.name,
@@ -23,16 +27,15 @@ export async function saveCharacters(chars: GenCharacter[], userId: string) {
     mbti: c.mbti ?? null,
     key_prop: c.keyProp ?? null,
     gradient: c.swatch,
-  }))
-  return supabase.from('characters').upsert(records)
+    cover_url: coverUrl ?? null,
+  }
 }
 
-export async function loadCharacters(userId: string) {
-  return supabase.from('characters').select('*').eq('user_id', userId)
-}
-
-export async function saveScenes(scenes: GenScene[], userId: string) {
-  const records = scenes.map((s) => ({
+/**
+ * 把 GenScene 转换成 scenes 表的 upsert 记录。
+ */
+function sceneToRecord(s: GenScene, userId: string, coverUrl?: string | null) {
+  return {
     id: s.id,
     user_id: userId,
     name: s.slug.split('—')[0].trim() || s.location,
@@ -42,8 +45,60 @@ export async function saveScenes(scenes: GenScene[], userId: string) {
     beats: s.beats,
     dialogue: s.dialogue as unknown as Json,
     gradient: null,
-  }))
+    cover_url: coverUrl ?? null,
+  }
+}
+
+/** 批量保存(保留旧行为,cover_url 传 null) */
+export async function saveCharacters(chars: GenCharacter[], userId: string) {
+  const records = chars.map((c) => charToRecord(c, userId, null))
+  return supabase.from('characters').upsert(records)
+}
+
+export async function saveScenes(scenes: GenScene[], userId: string) {
+  const records = scenes.map((s) => sceneToRecord(s, userId, null))
   return supabase.from('scenes').upsert(records)
+}
+
+/**
+ * 2026/06 新增:per-item 保存单个角色到资产库。
+ *  - chars: 单元素的 GenCharacter 数组
+ *  - coverUrl: 当前角色的主图 URL(从 charImages 里挑)
+ * 成功时返回 { ok: true },失败返回错误信息(不进 console.error,留给调用方 toast)。
+ */
+export async function saveOneCharacter(
+  c: GenCharacter,
+  userId: string,
+  coverUrl?: string | null,
+): Promise<{ ok: boolean; error?: string }> {
+  const record = charToRecord(c, userId, coverUrl)
+  const { error } = await supabase.from('characters').upsert(record)
+  if (error) return { ok: false, error: error.message }
+  return { ok: true }
+}
+
+export async function saveOneScene(
+  s: GenScene,
+  userId: string,
+  coverUrl?: string | null,
+): Promise<{ ok: boolean; error?: string }> {
+  const record = sceneToRecord(s, userId, coverUrl)
+  const { error } = await supabase.from('scenes').upsert(record)
+  if (error) return { ok: false, error: error.message }
+  return { ok: true }
+}
+
+/** 从资产库移除单条角色/场景(per-item 删除按钮用) */
+export async function deleteCharacter(id: string, userId: string) {
+  return supabase.from('characters').delete().eq('id', id).eq('user_id', userId)
+}
+
+export async function deleteScene(id: string, userId: string) {
+  return supabase.from('scenes').delete().eq('id', id).eq('user_id', userId)
+}
+
+export async function loadCharacters(userId: string) {
+  return supabase.from('characters').select('*').eq('user_id', userId)
 }
 
 export async function loadScenes(userId: string) {
