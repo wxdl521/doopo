@@ -108,6 +108,7 @@ export type ProjectConfig = {
   audio: 'auto' | 'on' | 'off'
   workflow: string
   style: string
+  customCover?: string | null
 }
 
 export function NewProjectDialog({
@@ -220,7 +221,10 @@ export function NewProjectDialog({
    *   2) 其他项保持原顺序;带 _recommended 标记的 pixflow 选项
    *   3) 不在合法 catalog 里的 lastUsed 静默丢弃
    */
-  function reorderModels<T extends { id: string }>(catalog: T[], lastUsedId: string | undefined): ModelOption[] {
+  function reorderModels<T extends { id: string; label: string; sub?: string }>(
+    catalog: T[],
+    lastUsedId: string | undefined,
+  ): ModelOption[] {
     const base: ModelOption[] = catalog.map((m) => ({
       ...m,
       _recommended: isPixflow(m.id),
