@@ -485,6 +485,30 @@ function WorkspacePage() {
   //   - shotSelectedGenIdx:预览里选中的第几代(和 selectedGenIdx 同语义)。
   //   - shotModInput / shotModBusy:修改意见的输入 + 是否在调 regenerateStoryboardShot。
   const [shotImages, setShotImages] = useState<Record<string, string[]>>({})
+  // 2026/06:分镜图加载失败的 key 集合(`${groupId}::${shotId}`)。
+  //   - Seedream / Pixflow 返回的 url 偶尔会失效(签名 24h 过期 / 浏览器侧 DNS
+  //     不通 / 上游 bucket 临时 403 等)。state 里 imageUrl 还在,但 <img>
+  //     渲染会 broken。
+  //   - 用于 allShotsHaveImage、按钮文案、按钮 disabled 状态:
+  //     "已生成" 这个 badge 不应该出现在图片实际打不开的镜头上。
+  //   - 不持久化:刷新页面图片会重新尝试加载。
+  const [brokenShotImages, setBrokenShotImages] = useState<Set<string>>(new Set())
+  const markShotImageBroken = useCallback((key: string) => {
+    setBrokenShotImages((s) => {
+      if (s.has(key)) return s
+      const next = new Set(s)
+      next.add(key)
+      return next
+    })
+  }, [])
+  const clearShotImageBroken = useCallback((key: string) => {
+    setBrokenShotImages((s) => {
+      if (!s.has(key)) return s
+      const next = new Set(s)
+      next.delete(key)
+      return next
+    })
+  }, [])
   // 2026 视频生成:每个 storyboard group 一条短视频,key = groupId。
   // 视频用整组所有 shot 的图作 first_frame + reference_image,
   // 涵盖整个分镜组的镜头序列(不再每张分镜单独出视频)。
@@ -2063,7 +2087,14 @@ function WorkspacePage() {
       if (interceptPromptPreview(`第 ${group.index} 组 · 分镜 ${shot.shotType} ${shot.shotTypeLabel}`, res)) {
         return
       }
-      if (!res.ok) {
+      // 2026/06 修复:之前只检查 !res.ok,没检查 res.url。如果 server 返回
+      // {ok: true, url: ''} 这种异常体(目前没观察到但属于防御性兜底),
+      // 会写入 imageUrl='' + push 空串到 shotImages + toast "已生成",
+      // 后续 allShotsHaveImage(every(imageUrl)) 看到空串(JS 里 falsy)
+      // 不会误判,但 generateAllShotsForGroup 里 `if (shot.imageUrl) continue`
+      // 看到空串仍 falsy,导致同一张图永远过不了守卫一直被重新生成 —— 循环 bug。
+      // 加 url 守卫,空 url 走失败分支。
+      if (!res.ok || !res.url) {
         toast.error(res.error || '分镜图生成失败')
         return
       }
@@ -3600,7 +3631,32 @@ function WorkspacePage() {
 
   return (
     <div className="h-screen flex flex-col bg-bg overflow-hidden">
-      <WorkspaceTopbar tab={tab} onTabChange={setTab} episodeCount={data.episodeTexts.length} selectedEpisodeIndex={selectedEpisodeIndex} onEpisodeIndexChange={setSelectedEpisodeIndex} onSave={handleSaveWorkspace} saving={savingWorkspace} saved={savedWorkspace} completedStages={completedStages} onAddEpisode={openAddEpisodeDialog} viewPromptsMode={viewPromptsMode} onToggleViewPromptsMode={() => setViewPromptsMode((v) => !v)} />
+      <WorkspaceTopbar
+        tab={tab}
+        onTabChange={setTab}
+        episodeCount={data.episodeTexts.length}
+        selectedEpisodeIndex={selectedEpisodeIndex}
+        onEpisodeIndexChange={setSelectedEpisodeIndex}
+        onSave={handleSaveWorkspace}
+        saving={savingWorkspace}
+        saved={savedWorkspace}
+        completedStages={completedStages}
+        onAddEpisode={openAddEpisodeDialog}
+        viewPromptsMode={viewPromptsMode}
+        onToggleViewPromptsMode={() => setViewPromptsMode((v) => !v)}
+        currentProject={project ? {
+          id: project.id,
+          aspect: project.aspect,
+          storyboardModel: project.storyboardModel,
+          sceneModel: project.sceneModel,
+          videoModel: project.videoModel,
+          audio: project.audio,
+          workflow: project.workflow,
+          style: project.style,
+          customCover: project.customCover,
+        } : undefined}
+        onProjectSaved={(saved) => setProject((p) => p ? { ...p, ...saved } : p)}
+      />
       <div className="flex-1 flex min-h-0">
         <main className="flex-1 min-w-0 overflow-auto p-6">
           {tab === 'canvas' && (
@@ -4577,7 +4633,17 @@ function WorkspacePage() {
                   </div>
                 </div>
                 {epGroups.map((g) => {
-                  const allShotsHaveImage = g.shots.every((s) => s.imageUrl)
+                  // 2026/06 修复:之前 `every(s => s.imageUrl)` 只看 state 里
+                  // imageUrl 字段,不看图实际能不能加载。Seedream TOS 签名 URL
+                  // 24h 过期 / 上游 403 时,state 里有 url 但 <img> 实际 broken,
+                  // 按钮仍然显示"✓ 已生成"且 disabled,误导用户认为分镜已就绪。
+                  // 这里把 brokenShotImages 也算上 —— 任何一个镜头图加载失败,
+                  // 整个组就不算"全部已生成"。
+                  const allShotsHaveImage = g.shots.every((s) => {
+                    if (!s.imageUrl) return false
+                    const key = `${g.id}::${s.id}`
+                    return !brokenShotImages.has(key)
+                  })
                   const anyBusy = g.shots.some((s) => busyShotImages.has(`${g.id}::${s.id}`))
                   return (
                     <div key={g.id} className="panel p-4 space-y-3">
@@ -4794,6 +4860,13 @@ function WorkspacePage() {
                                       <img
                                         src={currentUrl}
                                         alt={s.action}
+                                        // 2026/06:追踪图片实际加载状态。Seedream TOS 签名 URL
+                                        // 24h 过期 / 上游 403 时,<img> 会 broken,但 imageUrl
+                                        // state 还在 → allShotsHaveImage / 按钮文案误判为"已生成"。
+                                        // onError 把 key 加进 brokenShotImages,让上层逻辑
+                                        // (按钮 disabled + 文案) 把这个镜头当作未生成。
+                                        onLoad={() => clearShotImageBroken(shotImageKey)}
+                                        onError={() => markShotImageBroken(shotImageKey)}
                                         className="absolute inset-0 w-full h-full object-cover"
                                       />
                                     ) : isBusy ? (
@@ -4987,7 +5060,9 @@ function WorkspacePage() {
                             const hasAnyShotImage = g.shots.some((s) => {
                               const key = `${g.id}::${s.id}`
                               const gens = shotImages[key] ?? []
-                              return !!(gens.length ? gens[gens.length - 1] : s.imageUrl)
+                              const hasUrl = !!(gens.length ? gens[gens.length - 1] : s.imageUrl)
+                              // 同 allShotsHaveImage:url 存在但图加载失败 = 视为无图
+                              return hasUrl && !brokenShotImages.has(key)
                             })
                             if (!hasAnyShotImage) {
                               return (

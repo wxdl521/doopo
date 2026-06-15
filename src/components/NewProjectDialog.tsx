@@ -1,11 +1,13 @@
-import { useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useNavigate } from '@tanstack/react-router'
 import { useServerFn } from '@tanstack/react-start'
-import { Sparkles, Grid3x3, GitBranch, Zap, Video, X, Check, Flame, Upload } from 'lucide-react'
+import { Sparkles, Grid3x3, GitBranch, Zap, Video, X, Check, Flame, Upload, Clock } from 'lucide-react'
 import { Dialog, DialogContent, DialogTrigger } from './ui/dialog'
 import { useLanguage } from '../i18n/LanguageContext'
 import { IMAGE_MODELS } from '../lib/imageModels'
 import { upsertProject } from '../lib/projects.functions'
+import { loadUserPrefs, saveUserPrefs } from '../lib/userPreferences'
+import { useAuth } from '../hooks/useAuth'
 import { toast } from 'sonner'
 import style3dCg from '../assets/styles/3d-cg.jpg'
 import styleAnimeJp from '../assets/styles/anime-jp.jpg'
@@ -112,13 +114,27 @@ export function NewProjectDialog({
   trigger,
   open: openProp,
   onOpenChange,
+  initial,
+  onSaved,
 }: {
   trigger?: ReactNode
   open?: boolean
   onOpenChange?: (open: boolean) => void
+  /**
+   * 2026/06:从父组件传入的"当前值"。
+   *   - 用于编辑现有项目(基础设置按钮打开)—— state 初值用项目当前设置
+   *     而不是 userPrefs,避免用户看到"我一开始选的 pixflow"被覆盖成"上次选的"
+   *   - 不传 = 新建模式,初值走 userPrefs → 硬编码 fallback
+   *   - 传了 initial.id = 编辑模式,confirm 时 upsert 同 id,不 navigate
+   */
+  initial?: Partial<ProjectConfig> & { id?: string }
+  /** 编辑模式保存成功后的回调(父组件可刷新 project state) */
+  onSaved?: (saved: ProjectConfig & { id: string }) => void
 }) {
   const { t } = useLanguage()
   const navigate = useNavigate()
+  const { user } = useAuth()
+  const userId = user?.id
   const saveProject = useServerFn(upsertProject)
   const [openInner, setOpenInner] = useState(false)
   const isControlled = openProp !== undefined
@@ -128,24 +144,121 @@ export function NewProjectDialog({
     onOpenChange?.(v)
   }
 
-  const [aspect, setAspect] = useState('16:9')
-  const [customCover, setCustomCover] = useState<string | null>(null)
+  // 2026/06:per-user 上次选择 —— 打开弹窗瞬间从 localStorage 读出来作为默认。
+  // 没登录 / 没历史 → 用硬编码默认。避免每次建项目都从 Seedream 重新选。
+  // 编辑现有项目时,initial 优先级 > userPrefs,确保用户看到的是项目当前设置。
+  const initialPrefs = useMemo(() => loadUserPrefs(userId), [userId])
+  const pickScene = () =>
+    initial?.sceneModel
+    || initial?.storyboardModel
+    || initialPrefs.lastSceneModel
+    || initialPrefs.lastImageModel
+    || 'doubao-seedream-5-0-260128'
+  const pickVideo = () =>
+    initial?.videoModel
+    || initialPrefs.lastVideoModel
+    || 'doubao-seedance-2-0-260128'
+  const [aspect, setAspect] = useState(() => initial?.aspect ?? '16:9')
+  const [customCover, setCustomCover] = useState<string | null>(
+    () => initial?.customCover ?? null,
+  )
   const fileInputRef = useRef<HTMLInputElement>(null)
   // 2026 重构:默认全走火山方舟 Seedream(图像) + 阿里 HappyHorse(视频,实测可用)
-  const [storyboardModel, setStoryboardModel] = useState('doubao-seedream-5-0-260128')
+  const [storyboardModel, setStoryboardModel] = useState(pickScene)
   // Seedream 统一支持 T2I + I2I,没有 qwen-image-2.0-pro 那样的"I2I-only"坑
-  const [sceneModel, setSceneModel] = useState('doubao-seedream-5-0-260128')
+  const [sceneModel, setSceneModel] = useState(pickScene)
   // 2026/06:视频默认走火山方舟 Seedance 2.0 —— ARK 账户已开通,cURL 已验证
   // generateVideo 自动按 model id 路由到 ARK,分镜流程点"生成整组视频"直接走火山引擎
-  const [videoModel, setVideoModel] = useState('doubao-seedance-2-0-260128')
-  const [audio, setAudio] = useState<'auto' | 'on' | 'off'>('auto')
-  const [workflow, setWorkflow] = useState('grid')
-  const [style, setStyle] = useState('3d-cg')
+  const [videoModel, setVideoModel] = useState(pickVideo)
+  const [audio, setAudio] = useState<'auto' | 'on' | 'off'>(
+    () => initial?.audio ?? initialPrefs.lastAudio ?? 'auto',
+  )
+  const [workflow, setWorkflow] = useState(
+    () => initial?.workflow ?? initialPrefs.lastWorkflow ?? 'grid',
+  )
+  const [style, setStyle] = useState(
+    () => initial?.style ?? initialPrefs.lastStyle ?? '3d-cg',
+  )
+
+  // 用户改任何一个字段 → 写回 localStorage(per-user key)。
+  // 这样下次开弹窗,无论换浏览器还是换账号,都能恢复到对应用户的偏好。
+  useEffect(() => {
+    if (!userId) return
+    saveUserPrefs(userId, { lastSceneModel: sceneModel })
+  }, [sceneModel, userId])
+  useEffect(() => {
+    if (!userId) return
+    saveUserPrefs(userId, { lastVideoModel: videoModel })
+  }, [videoModel, userId])
+  useEffect(() => {
+    if (!userId) return
+    saveUserPrefs(userId, { lastAudio: audio })
+  }, [audio, userId])
+  useEffect(() => {
+    if (!userId) return
+    saveUserPrefs(userId, { lastWorkflow: workflow })
+  }, [workflow, userId])
+  useEffect(() => {
+    if (!userId) return
+    saveUserPrefs(userId, { lastStyle: style })
+  }, [style, userId])
 
   const estimate = (aspects.find((a) => a.id === aspect)?.cost ?? 11)
 
+  // ====================================================================
+  // 2026/06:个性化模型选择 UX
+  //   - 把"用户上次选的"置顶到选项列表最上方(per-user,跟 userId 走)
+  //   - 把 pixflow/* 系列标记为"推荐"(Pixflow 直连 OpenAI Images + Gemini,
+  //     b64_json 返回,浏览器无需解析外网域名,适合内网/受限网络)
+  //   - 非法 id(用户 pref 里残留但当前 catalog 没了)静默忽略
+  // ====================================================================
+  type ModelOption = { id: string; label: string; sub?: string; _pinned?: boolean; _recommended?: boolean }
+  const isPixflow = (id: string) => id.startsWith('pixflow/')
+  /**
+   * 重排模型列表:
+   *   1) 置顶项(lastUsed)放在第 0 位,带 _pinned 标记
+   *   2) 其他项保持原顺序;带 _recommended 标记的 pixflow 选项
+   *   3) 不在合法 catalog 里的 lastUsed 静默丢弃
+   */
+  function reorderModels<T extends { id: string }>(catalog: T[], lastUsedId: string | undefined): ModelOption[] {
+    const base: ModelOption[] = catalog.map((m) => ({
+      ...m,
+      _recommended: isPixflow(m.id),
+    }))
+    if (!lastUsedId) return base
+    const idx = base.findIndex((m) => m.id === lastUsedId)
+    if (idx === -1) return base
+    const [picked] = base.splice(idx, 1)
+    picked._pinned = true
+    picked._recommended = picked._recommended || isPixflow(picked.id)
+    return [picked, ...base]
+  }
+
+  // 每次 render 都按"当前 storyboardModel/sceneModel/videoModel"
+  // 倒推出"上次用的"用于置顶 —— 也就是用户当前正在看 / 改的值就视为置顶项。
+  // 这样 (a) 用户没历史 → 当前默认值置顶;(b) 用户改完 select → 新值立即置顶;
+  // (c) 即便 prefs 被清了,本会话仍能看到自己当前的选项在顶上。
+  const orderedStoryboardModels = useMemo(
+    () => reorderModels(storyboardModels, storyboardModel),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [storyboardModel],
+  )
+  const orderedSceneModels = useMemo(
+    () => reorderModels(sceneModels, sceneModel),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [sceneModel],
+  )
+  const orderedVideoModels = useMemo(
+    () => reorderModels(realVideoModels, videoModel),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [videoModel],
+  )
+
   async function confirm() {
-    const id = `ws-${Date.now().toString(36)}`
+    // 2026/06:编辑现有项目(initial.id 存在)时,upsert 同 id,不 navigate;
+    // 新建项目时,生成新 id 并跳转到新 workspace。
+    const isEdit = !!initial?.id
+    const id = initial?.id ?? `ws-${Date.now().toString(36)}`
     try {
       const res = await saveProject({
         data: {
@@ -166,6 +279,23 @@ export function NewProjectDialog({
       }
     } catch (e) {
       toast.error('保存项目配置失败，请先登录')
+      return
+    }
+    if (isEdit) {
+      // 编辑模式:仅关闭弹窗,把保存后的结果回传给父组件(刷新 project state)。
+      // 不要写 userPrefs —— 上次选择语义不变,避免覆盖另一个项目的设置。
+      onSaved?.({
+        id,
+        aspect,
+        storyboardModel,
+        sceneModel,
+        videoModel,
+        audio,
+        workflow,
+        style,
+        customCover: customCover ?? null,
+      })
+      setOpen(false)
       return
     }
     setOpen(false)
@@ -192,12 +322,35 @@ export function NewProjectDialog({
 
         <div className="grid md:grid-cols-3 gap-4 pt-4">
           <FieldSelect label={t.np_aspect} hint={t.np_aspect_hint} value={aspect} onChange={setAspect} options={aspects.map((a) => ({ id: a.id, label: a.label }))} />
-          <FieldSelect label={t.np_storyboard_model} hint={t.np_storyboard_model_hint} value={storyboardModel} onChange={setStoryboardModel} options={storyboardModels.map((m) => ({ id: m.id, label: `${m.label}` , sub: m.sub }))} />
-          <FieldSelect label={t.np_scene_model} hint={t.np_scene_model_hint} value={sceneModel} onChange={setSceneModel} options={sceneModels.map((m) => ({ id: m.id, label: m.label, sub: m.sub }))} />
+          <FieldSelect
+            label={t.np_storyboard_model}
+            hint={t.np_storyboard_model_hint}
+            value={storyboardModel}
+            onChange={setStoryboardModel}
+            options={orderedStoryboardModels as any}
+            pinnedLabel={t.np_model_recently_used}
+            recommendedLabel={t.np_model_recommended}
+          />
+          <FieldSelect
+            label={t.np_scene_model}
+            hint={t.np_scene_model_hint}
+            value={sceneModel}
+            onChange={setSceneModel}
+            options={orderedSceneModels as any}
+            pinnedLabel={t.np_model_recently_used}
+            recommendedLabel={t.np_model_recommended}
+          />
         </div>
 
         <div className="grid md:grid-cols-2 gap-4 pt-3">
-          <FieldSelect label={t.np_video_model} value={videoModel} onChange={setVideoModel} options={realVideoModels.map((m) => ({ id: m.id, label: m.label, sub: m.sub }))} />
+          <FieldSelect
+            label={t.np_video_model}
+            value={videoModel}
+            onChange={setVideoModel}
+            options={orderedVideoModels as any}
+            pinnedLabel={t.np_model_recently_used}
+            recommendedLabel={t.np_model_recommended}
+          />
           <div>
             <div className="text-sm font-semibold mb-1">{t.np_audio}</div>
             <div className="bg-bg-elevated border border-border rounded-lg px-3 py-2 flex items-center justify-between">
@@ -303,13 +456,15 @@ export function NewProjectDialog({
 }
 
 function FieldSelect({
-  label, hint, value, onChange, options,
+  label, hint, value, onChange, options, pinnedLabel, recommendedLabel,
 }: {
   label: string
   hint?: string
   value: string
   onChange: (v: string) => void
-  options: { id: string; label: string; sub?: string }[]
+  options: { id: string; label: string; sub?: string; _pinned?: boolean; _recommended?: boolean }[]
+  pinnedLabel?: string
+  recommendedLabel?: string
 }) {
   return (
     <div>
@@ -317,12 +472,41 @@ function FieldSelect({
       {hint && <div className="text-[11px] text-text-muted mb-1">{hint}</div>}
       <div className="relative">
         <select value={value} onChange={(e) => onChange(e.target.value)}
-          className="w-full appearance-none bg-bg-elevated border border-border rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-accent">
-          {options.map((o) => (
-            <option key={o.id} value={o.id}>{o.label}{o.sub ? ` — ${o.sub}` : ''}</option>
-          ))}
+          className="w-full appearance-none bg-bg-elevated border border-border rounded-lg pl-3 pr-8 py-2 text-sm focus:outline-none focus:border-accent">
+          {options.map((o) => {
+            // 原生 <option> 不支持复杂 markup,只能拼文本,但可以用
+            // 前缀字符 (🕐 / ✨) 让用户在浏览器下拉里直观看到标记。
+            // _pinned 优先于 _recommended —— 同一项是"最近使用 + 推荐"时只显示一个。
+            const prefix = o._pinned ? '🕐 ' : o._recommended ? '✨ ' : ''
+            return (
+              <option key={o.id} value={o.id}>
+                {prefix}{o.label}{o.sub ? ` — ${o.sub}` : ''}
+              </option>
+            )
+          })}
         </select>
-        <Sparkles size={12} className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+        {/* select 右侧的图标:被置顶的项显示"最近使用"提示,推荐的项显示 sparkle */}
+        {options.find((o) => o.id === value)?._pinned ? (
+          <span
+            title={pinnedLabel}
+            aria-label={pinnedLabel}
+            className="absolute right-3 top-1/2 -translate-y-1/2 inline-flex items-center gap-0.5 text-[10px] text-amber-400 pointer-events-none"
+          >
+            <Clock size={11} />
+            <span className="hidden lg:inline">{pinnedLabel}</span>
+          </span>
+        ) : options.find((o) => o.id === value)?._recommended ? (
+          <span
+            title={recommendedLabel}
+            aria-label={recommendedLabel}
+            className="absolute right-3 top-1/2 -translate-y-1/2 inline-flex items-center gap-0.5 text-[10px] text-accent pointer-events-none"
+          >
+            <Sparkles size={11} />
+            <span className="hidden lg:inline">{recommendedLabel}</span>
+          </span>
+        ) : (
+          <Sparkles size={12} className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+        )}
       </div>
     </div>
   )

@@ -4,6 +4,7 @@ import { ChevronDown, MoreHorizontal, Layers, FileText, Users, Grid3x3, Clock, S
 import Logo from '../Logo'
 import { useLanguage } from '../../i18n/LanguageContext'
 import { NewProjectDialog } from '../NewProjectDialog'
+import type { ProjectConfig } from '../NewProjectDialog'
 
 export type WorkspaceTab = 'canvas' | 'script' | 'episodes' | 'character' | 'storyboard' | 'timeline'
 
@@ -20,6 +21,7 @@ export default function WorkspaceTopbar({
   tab, onTabChange, episodeCount, selectedEpisodeIndex, onEpisodeIndexChange,
   onSave, saving, saved, completedStages, onAddEpisode,
   viewPromptsMode, onToggleViewPromptsMode,
+  currentProject, onProjectSaved,
 }: {
   tab: WorkspaceTab
   onTabChange: (t: WorkspaceTab) => void
@@ -35,6 +37,14 @@ export default function WorkspaceTopbar({
   /** 2026/06:查看提示词模式 —— 开启后所有生成按钮变成"展示 prompt"而不是真正生成 */
   viewPromptsMode?: boolean
   onToggleViewPromptsMode?: () => void
+  /**
+   * 2026/06:当前工作区的项目配置。
+   * 透传给 NewProjectDialog 作为 initial —— 用户点左上"基础设置"看到的是
+   * 项目当前设置,而不是 userPrefs 里的"上次选择"。
+   */
+  currentProject?: ProjectConfig & { id: string }
+  /** 编辑保存成功回调(用于刷新本地 project state) */
+  onProjectSaved?: (saved: ProjectConfig & { id: string }) => void
 }) {
   const { t, lang, toggleLang } = useLanguage()
   const [epOpen, setEpOpen] = useState(false)
@@ -116,6 +126,8 @@ export default function WorkspaceTopbar({
           {moreOpen && (
             <div className="absolute top-full left-0 mt-1 min-w-[180px] bg-bg-surface border border-border rounded-lg shadow-card py-1 z-[100]" onMouseLeave={() => setMoreOpen(false)}>
               <NewProjectDialog
+                initial={currentProject}
+                onSaved={onProjectSaved}
                 trigger={
                   <button className="w-full text-left px-3 py-1.5 text-sm hover:bg-bg-elevated inline-flex items-center gap-2">
                     <Settings size={14} /> {t.ws_settings}

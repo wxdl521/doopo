@@ -696,6 +696,12 @@ export const zh = {
   np_scene_model: '角色场景图模型',
   np_scene_model_hint: '用于角色、场景与道具设定图生成',
   np_video_model: '视频模型',
+  // 2026/06:模型选择 UX —— 个性化标记
+  //   - np_model_recently_used:用户上次选的模型,置顶 + 标"🕐 最近使用"
+  //   - np_model_recommended:Pixflow 系列全局推荐,标"✨ 推荐"
+  //   都按 userId 隔离(localStorage key: doopoo.userPrefs.<userId>)
+  np_model_recently_used: '最近使用',
+  np_model_recommended: '推荐',
   np_audio: '生成音频',
   np_workflow: '生成工作流',
   np_workflow_grid: '多宫格分镜生视频',

@@ -687,6 +687,12 @@ export const en: Translations = {
   np_scene_model: 'Character & scene model',
   np_scene_model_hint: 'For character, scene and prop reference sheets',
   np_video_model: 'Video model',
+  // 2026/06:personalized model selection UX
+  //   - np_model_recently_used: the user's last-selected model, pinned + marked "🕐 Recent"
+  //   - np_model_recommended:    Pixflow models globally marked "✨ Recommended"
+  //   scoped per-user via localStorage key doopoo.userPrefs.<userId>
+  np_model_recently_used: 'Recent',
+  np_model_recommended: 'Recommended',
   np_audio: 'Audio',
   np_workflow: 'Workflow',
   np_workflow_grid: 'Storyboard grid → video',
