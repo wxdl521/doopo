@@ -414,26 +414,45 @@ const DEPRECATED_T2I_MODELS = new Set<string>([
 const VALID_T2I_MODELS = new Set<string>([
   SEEDREAM_DEFAULT,
   "qwen-image-2.0",
+  "qwen-image",
+  "qwen-image-plus",
   "wan2.7-image",
   "wan2.7-image-pro",
+  "wan2.6-t2i",
+  "wan2.5-t2i-preview",
+  "wan2.2-t2i-flash",
+  "wanx2.1-t2i-turbo",
+  "wanx2.1-t2i-plus",
   // 2026/06:补 Gemini(走 OpenRouter) + GPT-Image-2(走 Pixflow 直连)。
   // Gemini 3.1 Flash Image 支持 T2I,跟 Qwen Plus / Wan 一样是 T2I 兜底。
   "google/gemini-3.1-flash-image-preview",
   "openai/gpt-image-2",
   "openai/gpt-image-1-mini",
+  // Pixflow gateway 前缀(api.pixflow.im,OpenAI 兼容)
+  "pixflow/gpt-image-2",
+  "pixflow/gemini-3-pro-image-preview",
+  "pixflow/gemini-3.1-flash-image-preview",
+  "pixflow/gemini-3.1-flash-image",
 ]);
 
 /** I2I(图生图)可用的 model(Seedream + Qwen/Wan 兜底) */
 const VALID_I2I_MODELS = new Set<string>([
   SEEDREAM_I2I_DEFAULT,
   "qwen-image-2.0-pro",
+  "qwen-image-plus",
   "wan2.7-image-pro",
+  "wan2.6-t2i",
+  "wanx2.1-t2i-plus",
   // 2026/06:Gemini 走 OpenRouter(modalities:image),GPT-Image 走 Pixflow
   // /v1/images/edits(OpenAI Images 协议 + multipart)。seedream.functions.ts
   // 委派到 regenerateImageI2I,路由选择看 openrouterImage.functions.ts。
   "google/gemini-3.1-flash-image-preview",
   "openai/gpt-image-2",
   "openai/gpt-image-1-mini",
+  "pixflow/gpt-image-2",
+  "pixflow/gemini-3-pro-image-preview",
+  "pixflow/gemini-3.1-flash-image-preview",
+  "pixflow/gemini-3.1-flash-image",
 ]);
 
 /**

@@ -53,6 +53,7 @@ export type Database = {
         }
         Update: {
           age?: number | null
+          cover_url?: string | null
           created_at?: string | null
           debut_shot?: string | null
           gradient?: string | null
@@ -260,6 +261,7 @@ export type Database = {
         Update: {
           action?: string | null
           beats?: string[] | null
+          cover_url?: string | null
           created_at?: string | null
           dialogue?: Json | null
           gradient?: string | null
