@@ -62,14 +62,19 @@ handler 为 **async generator**，前端以异步迭代消费 `{ delta?, done?, 
 
 ## 六、图像生成 — `src/lib/openrouterImage.functions.ts`
 
-多渠道回退链：**请求模型 → DashScope 同族降级（max → plus → base）→ Lovable AI Gateway（Gemini 3.1 Flash Image）→ OpenRouter（Gemini）**。
+**2026/06 角色流程 I2I 路由修复** —— 4 个 I2I handler (`regenerateCharacterLook` / `generateStoryboardShotImage` / `regenerateStoryboardShot` / `regenerateSceneImage`) + 1 个 T2I handler (`generateStoryboardPitchDeck`) 之前永远打火山方舟 ARK,忽略客户端传入的 `model` 字段。修复后:
+- Seedream 模型 id (`doubao-seedream-*` / `seedream-*`) → 走 ARK
+- Qwen 2.0-pro / Wan 2.7-image-pro → 走 DashScope multimodal-generation 端点(Qwen 同步,无需任务轮询)
+- Gemini 3.1 Flash Image / GPT Image 2 / GPT Image 1 mini → 走 OpenRouter `chat/completions` + `modalities:["image","text"]`(需 `OPENROUTER_API_KEY`)
+
+多渠道回退链(单次请求内不切换后端):**请求模型 → ARK Seedream (默认) / DashScope Qwen-Wan (用户选 I2I legacy) / OpenRouter (Gemini/GPT-Image,需 key)**。
 
 | 名称 | 入参 | 出参 | 说明 |
 |---|---|---|---|
-| `generateImage` | `{ prompt, model?, size? }` | `{ url, model, error? }`（`url` 为 https 或 `data:image/png;base64,...`） | 角色/场景/封面图生成 |
-| `probeImageModels` | — | `{ healthy[], blocked[], cached }` | 探测 OpenRouter 图像模型可用性（带 10min 缓存） |
+| `generateImage` | `{ prompt, model?, size?, negativePrompt? }` | `{ url, model, error? }` | T2I 委派(Seedream / Qwen-Wan DashScope) |
+| `regenerateImageI2I` | `{ prompt, model, size?, negativePrompt?, referenceImages[] }` | `{ url, model, error? }` | I2I 委派(Seedream 不走这条;非 Seedream 走 DashScope 或 OpenRouter) |
 
-支持模型见 `src/lib/imageModels.ts`：Gemini 3.1 Flash Image、`qwen-image-{max,plus,2.0,2.0-pro}`、`wan2.6-t2i`、`wan2.5-t2i-preview`、`wan2.2-t2i-{flash,plus}`、`wanx2.{0,1}-t2i-{turbo,plus}` 等。
+支持模型见 `src/lib/imageModels.ts`:Seedream 5.0、Gemini 3.1 Flash Image、GPT Image 2 / 1 mini、`qwen-image-{2.0,2.0-pro,plus}`、`wan2.6-t2i` / `wan2.5-t2i-preview` / `wanx2.1-t2i-{turbo,plus}` 等。
 
 ---
 
@@ -106,8 +111,8 @@ handler 为 **async generator**，前端以异步迭代消费 `{ delta?, done?, 
 | **火山方舟 ARK · Seedance 轮询** | `GET {ARK_BASE_URL}/contents/generations/tasks/{id}` | 视频任务状态查询 | 同上 |
 | DashScope 异步图像 (legacy) | `POST https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis`（`X-DashScope-Async: enable`） | qwen-image-* / wan* 提交任务(用户手动选的 legacy 兜底) | `Qwen` 或 `DASHSCOPE_API_KEY` |
 | DashScope 任务查询 (legacy) | `GET https://dashscope.aliyuncs.com/api/v1/tasks/{task_id}` | 轮询任务结果 | 同上 |
-| DashScope 多模态同步 (legacy) | `POST .../aigc/multimodal-generation/generation` | 旧 I2I 路径 | 同上 |
-| OpenRouter (legacy, 已退役) | `POST https://openrouter.ai/api/v1/chat/completions` | 2026 迁移后不再使用 | `OPENROUTER_API_KEY` |
+| DashScope 多模态同步 (legacy) | `POST .../aigc/multimodal-generation/generation` | I2I 路径(qwen-image-2.0-pro / wan2.7-image-pro) | 同上 |
+| OpenRouter 图像(legacy, 2026/06 复活) | `POST https://openrouter.ai/api/v1/chat/completions`(body `modalities:["image","text"]`) | Gemini 3.1 Flash Image / GPT Image 2 / GPT Image 1 mini I2I | `OPENROUTER_API_KEY` |
 | Supabase | PostgREST / Auth | 业务数据读写 | publishable + 用户 JWT；服务端任务用 `service_role` |
 
 ---

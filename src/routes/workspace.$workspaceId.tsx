@@ -6,7 +6,7 @@ import WorkspaceTopbar, { type WorkspaceTab } from '../components/workspace/Work
 import ZopiaChatPanel from '../components/workspace/ZopiaChatPanel'
 import { useLanguage } from '../i18n/LanguageContext'
 import { useAuth } from '../hooks/useAuth'
-import { saveCharacters, saveScenes, saveOneCharacter, saveOneScene } from '../lib/assetsStorage'
+import { saveOneCharacter, saveOneScene } from '../lib/assetsStorage'
 import {
   generateOutline, generateScript, generateCharacters, generateStoryboard, generateTimeline,
   type Outline, type GenScene, type GenCharacter, type GenCharacterLook, type StoryboardPanel, type TimelineData, type TimelineTrack, type TimelineClip,
@@ -87,6 +87,10 @@ const sbGradient = (i: number) => {
   ]
   return palette[i % palette.length]
 }
+
+// 2026/06 提到模块顶层 —— 场景卡片网格 + 点击放大 lightbox 都要用。
+// 之前在 character tab 的 IIFE 里 const,模态那边引用不到。
+const SCENE_TIME_LABELS: Record<string, string> = { DAY: '日', NIGHT: '夜', DUSK: '黄昏', DAWN: '黎明' }
 
 // 2026/06:把 ARK Seedance / DashScope 等视频模型返回的英文错误翻译成中文 + 解决建议。
 // toast 直接弹服务端原始错误信息对用户不友好(尤其是 ARK 内容审核拦截)。
@@ -255,6 +259,10 @@ function WorkspacePage() {
   const [sceneModInput, setSceneModInput] = useState('')
   const [sceneModBusy, setSceneModBusy] = useState(false)
   const [sceneModError, setSceneModError] = useState<string | null>(null)
+  // 2026/06:场景卡片点击放大(lightbox)用的 state。点卡片设上,关闭置空。
+  // 比角色卡那个复杂的三栏 preview modal 简单 —— 用户明确说"点击后放大那种",
+  // 就是大图 + 描述,不是完整的编辑面板(编辑输入已由底部「编辑」按钮触发)。
+  const [scenePreview, setScenePreview] = useState<GenScene | null>(null)
   const callAi = useServerFn(generateStageAi)
   const callImage = useServerFn(generateImage)
   const callRegenCharacter = useServerFn(regenerateCharacterLook)
@@ -314,6 +322,61 @@ function WorkspacePage() {
   const autogenRanRef = useRef<Set<string>>(new Set())
   const [panelImages, setPanelImages] = useState<Record<string, string>>({})
   const [sceneImages, setSceneImages] = useState<Record<string, string[]>>({})
+
+  // 2026/06:把生成的图片自动入库。
+  // 监听 charImages / sceneImages 变化,每个 entry 的最后一张 URL 自动
+  // upsert 到 characters.cover_url / scenes.cover_url。原先 saveAssets()
+  // 只写文字字段(cover_url=null),用户得点"新对话" / "保存到资产库"才会
+  // 触发,而且图片压根没进去 —— 现在改为"图稳定就入库"。
+  //
+  // 三个保证:
+  //   1) 不重复写 —— lastAutoSavedUrlRef[key] 缓存上次成功写入的 URL,
+  //      同一 URL 触发不了二次写。
+  //   2) 失败可重试 —— 写库失败时,只有当 ref 仍指向我们刚设的 URL(没
+  //      有更新的写入覆盖)才回滚,下次 URL 变化时再试。
+  //   3) 不阻塞 UI —— 写库是 fire-and-forget,toast/console 仅在失败时打。
+  //
+  // 注意:同一个 character 的多个 look(如 ${c.id}::${look.id})共享
+  // characters 表的 cover_url 字段,后写的覆盖先写的。这是 schema 限制,
+  // 不是这个 effect 的 bug —— 想精确每个 look 各一张图,得加独立的
+  // character_images 表。
+  const lastAutoSavedUrlRef = useRef<Record<string, string | undefined>>({})
+  useEffect(() => {
+    if (!user) return
+    const tryAutoSave = (
+      key: string,
+      latestUrl: string,
+      save: () => Promise<{ ok: boolean; error?: string }>,
+      label: string,
+    ) => {
+      if (lastAutoSavedUrlRef.current[key] === latestUrl) return
+      const previous = lastAutoSavedUrlRef.current[key]
+      lastAutoSavedUrlRef.current[key] = latestUrl
+      void save().then((r) => {
+        if (r.ok) {
+          setSavedAssetKeys((prev) => new Set(prev).add(key))
+          return
+        }
+        // 失败回滚:仅当 ref 仍指向本次写入的 URL(没有被更新的写入覆盖)
+        if (lastAutoSavedUrlRef.current[key] === latestUrl) {
+          if (previous === undefined) delete lastAutoSavedUrlRef.current[key]
+          else lastAutoSavedUrlRef.current[key] = previous
+        }
+        console.warn(`自动入库 ${label} 失败:`, r.error)
+      })
+    }
+    data.characters.forEach((c) => {
+      const latestUrl = charImages[c.id]?.at(-1)
+      if (!latestUrl) return
+      tryAutoSave(c.id, latestUrl, () => saveOneCharacter(c, user.id, latestUrl), `角色 ${c.name}`)
+    })
+    data.scenes.forEach((s) => {
+      const latestUrl = sceneImages[s.id]?.at(-1)
+      if (!latestUrl) return
+      const key = `scene::${s.id}`
+      tryAutoSave(key, latestUrl, () => saveOneScene(s, user.id, latestUrl), `场景 ${s.slug}`)
+    })
+  }, [charImages, sceneImages, data.characters, data.scenes, user])
   // 角色图片生成状态拆分:
   //   activeImageKey: 当前**正在生成**的那一张图(imageKey = c.id 或 c.id::lk.id)。
   //                   用于卡片显示 spinner(只有这一张是"生成中"状态)。
@@ -2736,28 +2799,6 @@ function WorkspacePage() {
     }
   }
 
-  async function handleSaveAssets() {
-    if (!user) {
-      toast.error('请先登录')
-      return
-    }
-    if (data.characters.length > 0) {
-      const { error: charErr } = await saveCharacters(data.characters, user.id)
-      if (charErr) {
-        toast.error('保存角色失败')
-        return
-      }
-    }
-    if (data.scenes.length > 0) {
-      const { error: sceneErr } = await saveScenes(data.scenes, user.id)
-      if (sceneErr) {
-        toast.error('保存场景失败')
-        return
-      }
-    }
-    toast.success('已保存到资产库')
-  }
-
   // 2026/06:per-item 保存角色到资产库。
   // - imageKey 形如 `${characterId}`(默认)或 `${characterId}::${lookId}`(变体)
   // - 取该 imageKey 在 charImages 里的最后一张作为 cover_url(per-look 准确对应)
@@ -2774,21 +2815,6 @@ function WorkspacePage() {
     }
     setSavedAssetKeys((prev) => new Set(prev).add(imageKey))
     toast.success(`「${c.name}${lookId ? ` · ${c.looks?.find((l) => l.id === lookId)?.label ?? ''}` : ''}」已保存到资产库`)
-  }
-
-  async function saveSceneToAssets(s: GenScene) {
-    if (!user) {
-      toast.error('请先登录')
-      return
-    }
-    const coverUrl = sceneImages[s.id]?.at(-1) ?? null
-    const r = await saveOneScene(s, user.id, coverUrl)
-    if (!r.ok) {
-      toast.error(`保存场景失败:${r.error}`)
-      return
-    }
-    setSavedAssetKeys((prev) => new Set(prev).add(`scene::${s.id}`))
-    toast.success(`「${s.slug}」已保存到资产库`)
   }
 
   // 追踪哪些资产已保存(用于按钮显示"已保存"反馈)
@@ -3572,31 +3598,9 @@ function WorkspacePage() {
     return scriptPromise
   }
 
-  async function saveAssets() {
-    if (!user) {
-      toast.error('请先登录')
-      return
-    }
-    if (data.characters.length > 0) {
-      const { error: charErr } = await saveCharacters(data.characters, user.id)
-      if (charErr) {
-        toast.error('保存角色失败')
-        return
-      }
-    }
-    if (data.scenes.length > 0) {
-      const { error: sceneErr } = await saveScenes(data.scenes, user.id)
-      if (sceneErr) {
-        toast.error('保存场景失败')
-        return
-      }
-    }
-    toast.success('已保存到资产库')
-  }
-
   return (
     <div className="h-screen flex flex-col bg-bg overflow-hidden">
-      <WorkspaceTopbar tab={tab} onTabChange={setTab} episodeCount={data.episodeTexts.length} selectedEpisodeIndex={selectedEpisodeIndex} onEpisodeIndexChange={setSelectedEpisodeIndex} onSaveAssets={handleSaveAssets} onSave={handleSaveWorkspace} saving={savingWorkspace} saved={savedWorkspace} completedStages={completedStages} onAddEpisode={openAddEpisodeDialog} viewPromptsMode={viewPromptsMode} onToggleViewPromptsMode={() => setViewPromptsMode((v) => !v)} />
+      <WorkspaceTopbar tab={tab} onTabChange={setTab} episodeCount={data.episodeTexts.length} selectedEpisodeIndex={selectedEpisodeIndex} onEpisodeIndexChange={setSelectedEpisodeIndex} onSave={handleSaveWorkspace} saving={savingWorkspace} saved={savedWorkspace} completedStages={completedStages} onAddEpisode={openAddEpisodeDialog} viewPromptsMode={viewPromptsMode} onToggleViewPromptsMode={() => setViewPromptsMode((v) => !v)} />
       <div className="flex-1 flex min-h-0">
         <main className="flex-1 min-w-0 overflow-auto p-6">
           {tab === 'canvas' && (
@@ -3934,7 +3938,6 @@ function WorkspacePage() {
 
             const order: Record<GenCharacter['role'], number> = { lead: 0, supporting: 1, villain: 2 }
             const sorted = [...epChars].sort((a, b) => order[a.role] - order[b.role])
-            const SCENE_TIME_LABELS: Record<string, string> = { DAY: '日', NIGHT: '夜', DUSK: '黄昏', DAWN: '黎明' }
 
             return (
               <div className="-m-6 h-[calc(100vh-3rem)] flex flex-col">
@@ -3987,120 +3990,115 @@ function WorkspacePage() {
                 <div className="flex-1 overflow-y-auto min-h-0">
                   {charViewTab === 'scenes' ? (
                     hasScenes ? (
-                      <div className="px-6 py-4 space-y-4">
-                        {epScenes.map((s) => (
-                          <div key={s.id} className="panel p-5 space-y-3">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="font-mono text-xs text-text-muted">SC {s.index}</span>
-                              <h3 className="font-display text-lg font-bold text-text-primary">{s.slug}</h3>
-                              <span className="text-xs px-2 py-0.5 rounded-full border border-border bg-bg-elevated text-text-muted">
-                                {SCENE_TIME_LABELS[s.timeOfDay] ?? s.timeOfDay}
-                              </span>
-                              {busyScene === s.id && (
-                                <span className="inline-flex items-center gap-1 text-xs text-accent">
-                                  <Loader2 size={10} className="animate-spin" /> 生成中…
-                                </span>
+                      // 2026/06:场景 UI 跟角色 UI 对齐 —— 网格卡片,点击放大,
+                      // 卡片底部只有「三视图」+「编辑」两个按钮。原详情面板里
+                      // 的 action/beats/dialogue 移到点击后的放大 lightbox 里展示。
+                      <div className="px-6 py-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                        {epScenes.map((s) => {
+                          const hasImg = !!(sceneImages[s.id] && sceneImages[s.id].length > 0)
+                          const sceneRegenMode = regenBusyKeys.get(s.id)
+                          const isRegening = sceneRegenMode !== undefined
+                          const sceneImgCount = sceneImages[s.id]?.length ?? 0
+                          return (
+                            <div
+                              key={s.id}
+                              role="button"
+                              tabIndex={0}
+                              onClick={() => setScenePreview(s)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' || e.key === ' ') {
+                                  e.preventDefault()
+                                  setScenePreview(s)
+                                }
+                              }}
+                              className="group relative text-left rounded-xl border border-border bg-bg-elevated/40 hover:border-accent hover:bg-bg-elevated/70 hover:-translate-y-0.5 transition-all overflow-hidden flex flex-col focus:outline-none focus:ring-2 focus:ring-accent/40 cursor-pointer"
+                            >
+                              {/* Image area — 16:9,跟场景图实际比例对齐 */}
+                              <div className="relative w-full aspect-video bg-bg-base overflow-hidden">
+                                {busyScene === s.id && !hasImg ? (
+                                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-text-muted">
+                                    <Loader2 size={20} className="animate-spin text-accent" />
+                                    <span className="text-[10px]">生成中…</span>
+                                  </div>
+                                ) : hasImg ? (
+                                  <img
+                                    src={sceneImages[s.id]!.at(-1)!}
+                                    alt={s.slug}
+                                    loading="lazy"
+                                    className="absolute inset-0 w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-300"
+                                  />
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); genSceneImage(s) }}
+                                    className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 text-text-muted hover:text-accent hover:bg-bg-elevated/40 transition cursor-pointer"
+                                  >
+                                    <ImageIcon size={22} className="opacity-50" />
+                                    <span className="text-[10px]">点击生成场景图</span>
+                                  </button>
+                                )}
+                                {sceneImgCount > 1 && (
+                                  <span className="absolute top-1.5 left-1.5 text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/60 text-white">
+                                    {sceneImgCount} 张
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Text area — 标题 + 时段 badge + action brief + 2 按钮 */}
+                              <div className="p-2.5 flex flex-col flex-1 gap-1.5">
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <span className="font-mono text-[10px] text-text-muted shrink-0">SC {s.index}</span>
+                                  <h3 className="font-display text-sm font-bold text-text-primary truncate">{s.slug}</h3>
+                                  <span className="text-[10px] px-1.5 py-0.5 rounded-full border border-border bg-bg-elevated text-text-muted shrink-0">
+                                    {SCENE_TIME_LABELS[s.timeOfDay] ?? s.timeOfDay}
+                                  </span>
+                                </div>
+                                {s.action && (
+                                  <p className="text-[11px] text-text-secondary leading-relaxed line-clamp-2">{s.action}</p>
+                                )}
+                                {/* 2 个操作按钮:三视图 + 编辑。mt-auto 让按钮行贴着卡片底部,
+                                    不管 brief 长度如何,位置都一致(跟角色卡行为一致)。 */}
+                                <div className="grid grid-cols-2 gap-1.5 pt-1 mt-auto" onClick={(e) => e.stopPropagation()}>
+                                  <button
+                                    type="button"
+                                    title="生成 3 景别参考图(wide + medium + close-up)"
+                                    disabled={!hasImg || isRegening}
+                                    onClick={() => void runScenePresetRegen(s)}
+                                    className="px-1 py-1.5 rounded border border-border bg-bg-surface text-text-secondary text-[11px] leading-none hover:border-accent hover:text-accent disabled:opacity-40 disabled:cursor-not-allowed transition flex flex-col items-center justify-center gap-0.5"
+                                  >
+                                    <LayoutGrid size={12} />
+                                    <span>三视图</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    title="打开修改输入对话框(Enter 提交)"
+                                    disabled={!hasImg || isRegening}
+                                    onClick={() => openSceneModPanel(s)}
+                                    className="px-1 py-1.5 rounded border border-border bg-bg-surface text-text-secondary text-[11px] leading-none hover:border-accent hover:text-accent disabled:opacity-40 disabled:cursor-not-allowed transition flex flex-col items-center justify-center gap-0.5"
+                                  >
+                                    <Pencil size={12} />
+                                    <span>编辑</span>
+                                  </button>
+                                </div>
+                              </div>
+
+                              {/* I2I 重生遮罩:点了三视图/编辑后,整张卡盖住 spinner + 提示文字 */}
+                              {isRegening && (
+                                <div
+                                  role="status"
+                                  aria-live="polite"
+                                  className="absolute inset-0 z-20 bg-black/75 backdrop-blur-sm flex flex-col items-center justify-center gap-3 text-white px-3 text-center"
+                                >
+                                  <Loader2 size={28} className="animate-spin text-accent" />
+                                  <div className="text-sm font-medium leading-snug">
+                                    {sceneRegenMode === 'three-view' ? '正在生成三视图…' : '正在重生…'}
+                                  </div>
+                                  <div className="text-[10px] text-white/60 leading-snug">生成中请勿关闭页面</div>
+                                </div>
                               )}
                             </div>
-                            {sceneImages[s.id]?.length ? (
-                              (() => {
-                                // 场景卡"修改 / 三视图"按钮(2026/06 跟角色卡对齐)
-                                const sceneRegenMode = regenBusyKeys.get(s.id)
-                                const isRegening = !!sceneRegenMode
-                                const sceneImgCount = sceneImages[s.id]!.length
-                                return (
-                                  <div className="relative rounded-lg overflow-hidden border border-border">
-                                    <img src={sceneImages[s.id]!.at(-1)!} alt={s.slug} className="w-full aspect-video object-cover" />
-                                    {/* I2I 重生黑屏遮罩:点了修改/三视图后,显示 spinner + 提示文字 */}
-                                    {isRegening && (
-                                      <div className="absolute inset-0 z-20 bg-black/65 backdrop-blur-sm flex items-center justify-center">
-                                        <div className="flex flex-col items-center gap-1.5 text-white">
-                                          <Loader2 size={20} className="animate-spin" />
-                                          <span className="text-xs">
-                                            {sceneRegenMode === 'three-view' ? '正在生成三视图…' : '正在重生…'}
-                                          </span>
-                                        </div>
-                                      </div>
-                                    )}
-                                    {/* 右下角浮动 2 按钮:修改 + 三视图(无人物资产,所以不要"多维资产") */}
-                                    <div className="absolute bottom-2 right-2 z-10 grid grid-cols-2 gap-1.5">
-                                      <button
-                                        type="button"
-                                        title="打开修改输入对话框(Enter 提交)"
-                                        disabled={isRegening}
-                                        onClick={() => openSceneModPanel(s)}
-                                        className="px-2 py-1 rounded border border-border bg-black/65 backdrop-blur-sm text-white text-[10px] hover:border-accent hover:text-accent disabled:opacity-40 transition inline-flex items-center justify-center gap-1"
-                                      >
-                                        <Pencil size={10} /> 修改
-                                      </button>
-                                      <button
-                                        type="button"
-                                        title="生成 3 景别参考图(wide + medium + close-up)"
-                                        disabled={isRegening}
-                                        onClick={() => void runScenePresetRegen(s)}
-                                        className="px-2 py-1 rounded border border-border bg-black/65 backdrop-blur-sm text-white text-[10px] hover:border-accent hover:text-accent disabled:opacity-40 transition inline-flex items-center justify-center gap-1"
-                                      >
-                                        <LayoutGrid size={10} /> 三视图
-                                      </button>
-                                    </div>
-                                    {/* 2026/06:per-item 「保存到资产」按钮(左下角,跟角色卡位置对称) */}
-                                    <button
-                                      type="button"
-                                      onClick={(e) => { e.stopPropagation(); void saveSceneToAssets(s) }}
-                                      title={savedAssetKeys.has(`scene::${s.id}`) ? '已保存到资产库,点击重新保存' : '把这张场景卡(含主图)保存到你的资产库'}
-                                      className={`absolute bottom-2 left-2 z-10 inline-flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium backdrop-blur-sm transition ${
-                                        savedAssetKeys.has(`scene::${s.id}`)
-                                          ? 'bg-emerald-500/85 text-white shadow-sm'
-                                          : 'bg-black/65 text-white border border-border hover:bg-accent hover:text-accent-foreground'
-                                      }`}
-                                    >
-                                      {savedAssetKeys.has(`scene::${s.id}`) ? (
-                                        <>
-                                          <Check size={10} /> 已保存
-                                        </>
-                                      ) : (
-                                        <>
-                                          <BookmarkPlus size={10} /> 保存到资产
-                                        </>
-                                      )}
-                                    </button>
-                                    {sceneImgCount > 1 && (
-                                      <span className="absolute top-1.5 left-1.5 text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/60 text-white">
-                                        {sceneImgCount} 张
-                                      </span>
-                                    )}
-                                  </div>
-                                )
-                              })()
-                            ) : !busyScene ? (
-                              <button
-                                onClick={() => genSceneImage(s)}
-                                className="w-full aspect-video rounded-lg border-2 border-dashed border-border flex items-center justify-center text-text-muted text-sm hover:border-accent hover:text-accent transition"
-                              >
-                                点击生成场景图
-                              </button>
-                            ) : null}
-                            <p className="text-sm text-text-secondary leading-relaxed">{s.action}</p>
-                            {s.beats.length > 0 && (
-                              <ul className="space-y-1 text-sm">
-                                {s.beats.map((b, i) => (
-                                  <li key={i} className="flex gap-2 text-text-secondary"><span className="text-accent shrink-0">·</span><span>{b}</span></li>
-                                ))}
-                              </ul>
-                            )}
-                            {s.dialogue.length > 0 && (
-                              <div className="space-y-1.5 pt-1 border-t border-border/50">
-                                {s.dialogue.map((d, i) => (
-                                  <div key={i} className="text-sm">
-                                    <span className="font-semibold text-text-primary">{d.role}</span>
-                                    {d.parenthetical && <span className="text-text-muted text-xs ml-1">({d.parenthetical})</span>}
-                                    <span className="text-text-secondary">："{d.line}"</span>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        ))}
+                          )
+                        })}
                       </div>
                     ) : (
                       <div className="flex flex-col items-center justify-center h-full gap-2">
@@ -5070,13 +5068,13 @@ function WorkspacePage() {
           )}
         </main>
         <ZopiaChatPanel
+          workspaceId={workspaceId}
           stage={tab}
           onJumpStage={setTab}
           onProduce={produce}
           collapsed={collapsed}
           onToggleCollapsed={() => setCollapsed((v) => !v)}
           initialInput={initialChatInput}
-          onSaveAssets={saveAssets}
           locked={episodeStreaming && autoRunTargetRef.current != null}
           selectedEpisodeIndex={selectedEpisodeIndex}
           onImportScript={handleImportScript}
@@ -5384,6 +5382,100 @@ function WorkspacePage() {
           场景没有 selectedGenIdx / 多图 history 概念,只需要"打开输入弹层
           直接打字"—— 比角色更轻量。功能上跟角色对齐:点修改 → 弹输入 →
           Enter 提交 → 重生 → 关闭。 */}
+
+      {/* ============= 场景卡片点击放大 lightbox(2026/06) =============
+          跟角色的"三栏 preview modal"不一样,这里按用户要求做轻量版:
+          大图占左,描述(action / beats / dialogue)列在右,关闭走背景点击
+          或 X 按钮。编辑输入由卡片底部「编辑」按钮 → openSceneModPanel
+          触发,不重复进 lightbox。 */}
+      {scenePreview && (() => {
+        const s = scenePreview
+        const currentUrl = sceneImages[s.id]?.at(-1)
+        return (
+          <div
+            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-6"
+            onClick={() => setScenePreview(null)}
+            role="dialog"
+            aria-modal="true"
+          >
+            <div
+              className="relative bg-bg-surface border border-border rounded-2xl overflow-hidden shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Top bar */}
+              <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-mono text-text-muted">SC {s.index} · {SCENE_TIME_LABELS[s.timeOfDay] ?? s.timeOfDay}</div>
+                  <div className="font-display text-base font-bold text-text-primary truncate">{s.slug}</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setScenePreview(null)}
+                  className="p-1.5 rounded-md hover:bg-bg-elevated text-text-muted"
+                  aria-label="关闭"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              {/* Body: 大图 + 描述,深色背景让大图更显质感 */}
+              <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[2fr_1fr]">
+                <div className="relative bg-black flex items-center justify-center min-h-[300px] max-h-[calc(90vh-110px)]">
+                  {currentUrl ? (
+                    <img
+                      src={currentUrl}
+                      alt={s.slug}
+                      className="max-w-full max-h-full object-contain"
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center gap-2 text-text-muted p-8">
+                      <ImageIcon size={40} className="opacity-50" />
+                      <p className="text-sm">还没有生成场景图</p>
+                    </div>
+                  )}
+                </div>
+                <div className="overflow-y-auto p-4 space-y-3 bg-bg-surface min-h-0">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1">地点 / 时段</div>
+                    <div className="text-sm text-text-primary">{s.location || '—'} · {SCENE_TIME_LABELS[s.timeOfDay] ?? s.timeOfDay}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1">动作</div>
+                    <p className="text-sm text-text-secondary leading-relaxed">{s.action || '—'}</p>
+                  </div>
+                  {s.beats.length > 0 && (
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1">节拍</div>
+                      <ul className="space-y-1 text-sm">
+                        {s.beats.map((b, i) => (
+                          <li key={i} className="flex gap-2 text-text-secondary">
+                            <span className="text-accent shrink-0">·</span>
+                            <span>{b}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {s.dialogue.length > 0 && (
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1">对白</div>
+                      <div className="space-y-1.5">
+                        {s.dialogue.map((d, i) => (
+                          <div key={i} className="text-sm">
+                            <span className="font-semibold text-text-primary">{d.role}</span>
+                            {d.parenthetical && <span className="text-text-muted text-xs ml-1">({d.parenthetical})</span>}
+                            <span className="text-text-secondary">："{d.line}"</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
       {sceneModOpen && (() => {
         const s = sceneModOpen
         const currentUrl = sceneImages[s.id]?.at(-1)

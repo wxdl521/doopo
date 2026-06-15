@@ -17,7 +17,7 @@ const tabs: { id: Exclude<WorkspaceTab, 'episodes'>; icon: typeof Layers }[] = [
 ]
 
 export default function WorkspaceTopbar({
-  tab, onTabChange, episodeCount, selectedEpisodeIndex, onEpisodeIndexChange, onSaveAssets,
+  tab, onTabChange, episodeCount, selectedEpisodeIndex, onEpisodeIndexChange,
   onSave, saving, saved, completedStages, onAddEpisode,
   viewPromptsMode, onToggleViewPromptsMode,
 }: {
@@ -26,7 +26,6 @@ export default function WorkspaceTopbar({
   episodeCount: number
   selectedEpisodeIndex: number
   onEpisodeIndexChange: (n: number) => void
-  onSaveAssets?: () => void
   onSave?: () => void
   saving?: boolean
   saved?: boolean
