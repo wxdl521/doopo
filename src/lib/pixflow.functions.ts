@@ -301,41 +301,75 @@ type PixflowChatInput = {
   model: string
   max_tokens?: number
   temperature?: number
+  /** 仅对 GPT-5 系列(Responses API)生效:minimal | low | medium | high | xhigh */
+  reasoning_effort?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+  /** 仅对 Responses API 生效:是否禁用对话存储(对应 Codex 的 disable_response_storage) */
+  disable_response_storage?: boolean
 }
 
 export async function callPixflowChat(input: PixflowChatInput) {
   const { apiKey, baseUrl } = getPixflowConfig()
   const model = stripPixflowPrefix(input.model)
-  if (!apiKey) {
+  // gpt-5* 也是 OpenAI 分组,key 优先取 PIXFLOW_OPENAI_API_KEY,回落到通用 key
+  const chatKey = /^gpt-/i.test(model) ? (process.env.PIXFLOW_OPENAI_API_KEY || apiKey) : apiKey
+  if (!chatKey) {
     return { content: '', error: 'PIXFLOW_API_KEY not configured', model }
   }
+  // Pixflow 对 GPT-5 系列要求走 Responses API(wire_api = "responses")
+  const useResponses = /^gpt-5(\.|-|$)/i.test(model)
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
   try {
-    const res = await fetch(`${baseUrl}/v1/chat/completions`, {
+    const endpoint = useResponses ? '/v1/responses' : '/v1/chat/completions'
+    const body: Record<string, unknown> = useResponses
+      ? {
+          model,
+          // Responses API 用 input[] 替代 messages[];content 是结构化 part 数组
+          input: input.messages.map((m) => ({
+            role: m.role,
+            content: [{ type: m.role === 'assistant' ? 'output_text' : 'input_text', text: m.content }],
+          })),
+          reasoning: { effort: input.reasoning_effort ?? 'xhigh' },
+          store: input.disable_response_storage === false,
+          max_output_tokens: input.max_tokens ?? 2000,
+        }
+      : {
+          model,
+          messages: input.messages,
+          max_tokens: input.max_tokens ?? 2000,
+          temperature: input.temperature ?? 0.7,
+        }
+    const res = await fetch(`${baseUrl}${endpoint}`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
+        Authorization: `Bearer ${chatKey}`,
       },
-      body: JSON.stringify({
-        model,
-        messages: input.messages,
-        max_tokens: input.max_tokens ?? 2000,
-        temperature: input.temperature ?? 0.7,
-      }),
+      body: JSON.stringify(body),
       signal: controller.signal,
     })
     clearTimeout(timeout)
     if (!res.ok) {
       const text = await res.text().catch(() => '')
-      return { content: '', error: `[pixflow ${model}] ${res.status}: ${text.slice(0, 300)}`, model }
+      return { content: '', error: `[pixflow ${model}] ${endpoint} ${res.status}: ${text.slice(0, 300)}`, model }
     }
     const json = (await res.json()) as {
+      // chat.completions
       choices?: Array<{ message?: { content?: string } }>
+      // responses API
+      output_text?: string
+      output?: Array<{ content?: Array<{ type?: string; text?: string }> }>
       error?: { message?: string }
     }
-    const content = json.choices?.[0]?.message?.content || ''
+    let content = ''
+    if (useResponses) {
+      content =
+        json.output_text ||
+        json.output?.flatMap((o) => o.content ?? []).map((c) => c.text || '').join('') ||
+        ''
+    } else {
+      content = json.choices?.[0]?.message?.content || ''
+    }
     if (!content) {
       return { content: '', error: `[pixflow ${model}] empty content: ${json.error?.message || ''}`, model }
     }
