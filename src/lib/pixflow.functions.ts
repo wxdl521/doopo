@@ -58,7 +58,7 @@ function pickPixflowKey(model: string): string | undefined {
     return process.env.PIXFLOW_GEMINI_API_KEY || generic
   }
   if (/^gpt-/i.test(model)) {
-    return process.env.PIXFLOW_OPENAI_API_KEY || generic
+    return process.env.OPENAI_API_KEY || process.env.PIXFLOW_OPENAI_API_KEY || generic
   }
   return generic
 }
@@ -310,8 +310,8 @@ type PixflowChatInput = {
 export async function callPixflowChat(input: PixflowChatInput) {
   const { apiKey, baseUrl } = getPixflowConfig()
   const model = stripPixflowPrefix(input.model)
-  // gpt-5* 也是 OpenAI 分组,key 优先取 PIXFLOW_OPENAI_API_KEY,回落到通用 key
-  const chatKey = /^gpt-/i.test(model) ? (process.env.PIXFLOW_OPENAI_API_KEY || apiKey) : apiKey
+  // gpt-* 系列优先取 OPENAI_API_KEY, 再 PIXFLOW_OPENAI_API_KEY, 最后通用 key
+  const chatKey = /^gpt-/i.test(model) ? (process.env.OPENAI_API_KEY || process.env.PIXFLOW_OPENAI_API_KEY || apiKey) : apiKey
   if (!chatKey) {
     return { content: '', error: 'PIXFLOW_API_KEY not configured', model }
   }
