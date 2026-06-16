@@ -47,6 +47,22 @@ function getPixflowConfig() {
   }
 }
 
+/**
+ * Pixflow 按"模型分组"发放 API Key:gpt-image-* 与 gemini-* 通常不是同一个 key。
+ * 若用户单独提供了 PIXFLOW_GEMINI_API_KEY / PIXFLOW_OPENAI_API_KEY,则优先使用;
+ * 否则回落到通用 PIXFLOW_API_KEY。
+ */
+function pickPixflowKey(model: string): string | undefined {
+  const generic = process.env.PIXFLOW_API_KEY
+  if (/^gemini-/i.test(model)) {
+    return process.env.PIXFLOW_GEMINI_API_KEY || generic
+  }
+  if (/^gpt-/i.test(model)) {
+    return process.env.PIXFLOW_OPENAI_API_KEY || generic
+  }
+  return generic
+}
+
 // ---------- Image generation ----------
 
 type PixflowImageInput = {
@@ -101,8 +117,9 @@ async function urlToInlineData(url: string): Promise<{ mimeType: string; data: s
  * 返回与 Seedream/Qwen 一致的 { url, urls, error, model }。
  */
 export async function callPixflowImage(input: PixflowImageInput): Promise<PixflowImageResult> {
-  const { apiKey, baseUrl } = getPixflowConfig()
+  const { baseUrl } = getPixflowConfig()
   const model = stripPixflowPrefix(input.model)
+  const apiKey = pickPixflowKey(model)
   const refCount = input.referenceImages?.length ?? 0
   const protocol = /^gemini-.*image/i.test(model) ? 'gemini-native' : 'openai-compat'
   const endpointHint = protocol === 'gemini-native'
@@ -111,8 +128,9 @@ export async function callPixflowImage(input: PixflowImageInput): Promise<Pixflo
   const t0 = Date.now()
   console.log(`[pixflow→] model=${model} protocol=${protocol} endpoint=${endpointHint} refs=${refCount} size=${input.size ?? 'default'} quality=${input.quality ?? 'auto'}`)
   if (!apiKey) {
-    console.warn(`[pixflow×] model=${model} missing PIXFLOW_API_KEY`)
-    return { url: '', urls: [], error: 'PIXFLOW_API_KEY not configured', model }
+    const needed = /^gemini-/i.test(model) ? 'PIXFLOW_GEMINI_API_KEY (or PIXFLOW_API_KEY)' : /^gpt-/i.test(model) ? 'PIXFLOW_OPENAI_API_KEY (or PIXFLOW_API_KEY)' : 'PIXFLOW_API_KEY'
+    console.warn(`[pixflow×] model=${model} missing ${needed}`)
+    return { url: '', urls: [], error: `${needed} not configured`, model }
   }
 
   // ----- Gemini 图像模型走 Native generateContent -----
@@ -209,21 +227,32 @@ export async function callPixflowImage(input: PixflowImageInput): Promise<Pixflo
     if (hasRefs) {
       body.images = input.referenceImages!.map((image_url) => ({ image_url }))
     }
-    const res = await fetch(`${baseUrl}${endpoint}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    })
+    // 对 502/524 这种 pixflow 上游瞬时错误做一次重试(指数退避 1.5s)
+    let res: Response | null = null
+    let lastText = ''
+    for (let attempt = 0; attempt < 2; attempt++) {
+      res = await fetch(`${baseUrl}${endpoint}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      })
+      if (res.ok) break
+      lastText = await res.text().catch(() => '')
+      const transient = res.status === 502 || res.status === 503 || res.status === 504 || res.status === 524
+      if (!transient || attempt === 1) break
+      console.warn(`[pixflow⟳] model=${model} endpoint=${endpoint} status=${res.status} retry in 1.5s`)
+      await new Promise((r) => setTimeout(r, 1500))
+    }
     clearTimeout(timeout)
 
-    if (!res.ok) {
-      const text = await res.text().catch(() => '')
-      console.warn(`[pixflow×] model=${model} endpoint=${endpoint} status=${res.status} dur=${Date.now() - t0}ms body=${text.slice(0, 200)}`)
-      return { url: '', urls: [], error: `[pixflow ${model}] ${res.status}: ${text.slice(0, 300)}`, model }
+    if (!res || !res.ok) {
+      const status = res?.status ?? 0
+      console.warn(`[pixflow×] model=${model} endpoint=${endpoint} status=${status} dur=${Date.now() - t0}ms body=${lastText.slice(0, 200)}`)
+      return { url: '', urls: [], error: `[pixflow ${model}] ${status}: ${lastText.slice(0, 300)}`, model }
     }
 
     const json = (await res.json()) as {
