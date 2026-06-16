@@ -311,17 +311,43 @@ export async function callPixflowChat(input: PixflowChatInput) {
   const { apiKey, baseUrl } = getPixflowConfig()
   const model = stripPixflowPrefix(input.model)
   // gpt-* 系列优先取 OPENAI_API_KEY, 再 PIXFLOW_OPENAI_API_KEY, 最后通用 key
-  const chatKey = /^gpt-/i.test(model) ? (process.env.OPENAI_API_KEY || process.env.PIXFLOW_OPENAI_API_KEY || apiKey) : apiKey
+  // gemini-* 系列优先取 PIXFLOW_GEMINI_API_KEY, 再通用 key
+  const chatKey = /^gpt-/i.test(model)
+    ? (process.env.OPENAI_API_KEY || process.env.PIXFLOW_OPENAI_API_KEY || apiKey)
+    : /^gemini-/i.test(model)
+      ? (process.env.PIXFLOW_GEMINI_API_KEY || apiKey)
+      : apiKey
   if (!chatKey) {
     return { content: '', error: 'PIXFLOW_API_KEY not configured', model }
   }
+  // Pixflow 不支持把 gemini-* 走 OpenAI 兼容 /v1/chat/completions(实测稳定 503),
+  // 必须改走 Gemini Native 的 :generateContent。
+  const useGeminiNative = /^gemini-/i.test(model)
   // Pixflow 对 GPT-5 系列要求走 Responses API(wire_api = "responses")
   const useResponses = /^gpt-5(\.|-|$)/i.test(model)
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
   try {
-    const endpoint = useResponses ? '/v1/responses' : '/v1/chat/completions'
-    const body: Record<string, unknown> = useResponses
+    const endpoint = useGeminiNative
+      ? `/v1beta/models/${encodeURIComponent(model)}:generateContent`
+      : useResponses ? '/v1/responses' : '/v1/chat/completions'
+    const body: Record<string, unknown> = useGeminiNative
+      ? {
+          contents: input.messages
+            .filter((m) => m.role !== 'system')
+            .map((m) => ({
+              role: m.role === 'assistant' ? 'model' : 'user',
+              parts: [{ text: m.content }],
+            })),
+          ...(input.messages.find((m) => m.role === 'system')
+            ? { systemInstruction: { parts: [{ text: input.messages.find((m) => m.role === 'system')!.content }] } }
+            : {}),
+          generationConfig: {
+            maxOutputTokens: input.max_tokens ?? 2000,
+            temperature: input.temperature ?? 0.7,
+          },
+        }
+      : useResponses
       ? {
           model,
           // Responses API 用 input[] 替代 messages[];content 是结构化 part 数组
@@ -343,7 +369,9 @@ export async function callPixflowChat(input: PixflowChatInput) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${chatKey}`,
+        ...(useGeminiNative
+          ? { 'x-goog-api-key': chatKey }
+          : { Authorization: `Bearer ${chatKey}` }),
       },
       body: JSON.stringify(body),
       signal: controller.signal,
@@ -359,10 +387,17 @@ export async function callPixflowChat(input: PixflowChatInput) {
       // responses API
       output_text?: string
       output?: Array<{ content?: Array<{ type?: string; text?: string }> }>
+      // gemini native
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
       error?: { message?: string }
     }
     let content = ''
-    if (useResponses) {
+    if (useGeminiNative) {
+      content = (json.candidates ?? [])
+        .flatMap((c) => c.content?.parts ?? [])
+        .map((p) => p.text || '')
+        .join('')
+    } else if (useResponses) {
       content =
         json.output_text ||
         json.output?.flatMap((o) => o.content ?? []).map((c) => c.text || '').join('') ||
