@@ -997,6 +997,17 @@ export const regenerateStoryboardShot = createServerFn({ method: 'POST' })
       if (!r.url) return { ok: false as const, error: r.error || 'Pixflow 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
+    if (requested.toLowerCase().startsWith('tokenflash/')) {
+      const { callTokenflashImage } = await import('./tokenflash.functions')
+      const r = await callTokenflashImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: '2K',
+        referenceImages: images,
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'Tokenflash 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
     if (requested && !isSeedreamModel(requested)) {
       const { generateImage: legacy } = await import('./openrouterImage.functions')
       const r: any = await legacy({
