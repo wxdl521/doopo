@@ -1810,6 +1810,18 @@ export const regenerateSceneImage = createServerFn({ method: 'POST' })
       if (!r.url) return { ok: false as const, error: r.error || 'Pixflow 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
+    if (requested.toLowerCase().startsWith('tokenflash/')) {
+      const { callTokenflashImage } = await import('./tokenflash.functions')
+      const r = await callTokenflashImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+        quality: 'high',
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'Tokenflash 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
 
     const { apiKey, baseUrl, model: defaultModel } = getArkConfig()
     if (!apiKey) return { ok: false as const, error: 'ARK_API_KEY not configured' }
