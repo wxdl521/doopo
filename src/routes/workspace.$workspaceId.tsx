@@ -7000,8 +7000,8 @@ function WorkspacePage() {
                   <img
                     src={url}
                     alt={title}
-                    onLoad={() => clearStoryboardBroken(s.id)}
-                    onError={() => markStoryboardBroken(s.id)}
+                    onLoad={() => clearStoryboardBroken(storyboardPreview.groupId)}
+                    onError={() => markStoryboardBroken(storyboardPreview.groupId)}
                     className="max-w-full max-h-full object-contain rounded"
                   />
                   {storyboardModBusy && (
