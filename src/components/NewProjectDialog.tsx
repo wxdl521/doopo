@@ -48,6 +48,7 @@ const imageModelOptions = [
   { id: 'pixflow/gemini-3-pro-image-preview', label: 'Gemini 3 Pro Image', sub: 'Pixflow · Google · 高质量' },
   { id: 'pixflow/gemini-3.1-flash-image-preview', label: 'Nano Banana 2', sub: 'Pixflow · Google · 快速' },
   { id: 'pixflow/gemini-3.1-flash-image', label: 'Gemini 3.1 Flash Image', sub: 'Pixflow · Google · 通用' },
+  { id: 'tokenflash/gpt-image-2', label: 'GPT Image 2 (Tokenflash)', sub: 'Tokenflash · OpenAI · Image2 · 推荐' },
 
 ]
 // 过滤掉"分隔符"项(只是 UI 视觉分组,不能选)

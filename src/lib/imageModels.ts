@@ -30,6 +30,11 @@ export const IMAGE_MODELS: ImageModelOption[] = [
   { key: '', label: '—— [Pixflow · OpenAI 兼容] ——', sub: undefined, legacy: true },
   { key: 'pixflow/gpt-image-2', label: 'GPT Image 2', sub: '[Pixflow·OpenAI] Image2 · T2I/I2I' },
 
+  // ---- [Tokenflash · OpenAI 兼容] tokenflash.cn → /v1/images/generations|edits ----
+  //  2026/06 接入:实测 gpt-image-2 单次 ~45-55s,显著快于 pixflow,且未观测到 502
+  { key: '', label: '—— [Tokenflash · OpenAI 兼容] ——', sub: undefined, legacy: true },
+  { key: 'tokenflash/gpt-image-2', label: 'GPT Image 2', sub: '[Tokenflash·OpenAI] Image2 · T2I/I2I · 推荐' },
+
   // ---- [DashScope] 阿里百炼 · 通义千问 / 万相 ----
   { key: '', label: '—— [DashScope · 阿里百炼] ——', sub: undefined, legacy: true },
   { key: 'qwen-image-2.0', label: 'Qwen Image 2.0', sub: '[DashScope] 通义千问 · T2I 稳定' },
