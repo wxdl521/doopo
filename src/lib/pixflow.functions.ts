@@ -58,7 +58,7 @@ function pickPixflowKey(model: string): string | undefined {
     return process.env.PIXFLOW_GEMINI_API_KEY || generic
   }
   if (/^gpt-/i.test(model)) {
-    return process.env.PIXFLOW_OPENAI_API_KEY || generic
+    return process.env.OPENAI_API_KEY || process.env.PIXFLOW_OPENAI_API_KEY || generic
   }
   return generic
 }
