@@ -433,6 +433,8 @@ const VALID_T2I_MODELS = new Set<string>([
   "pixflow/gemini-3-pro-image-preview",
   "pixflow/gemini-3.1-flash-image-preview",
   "pixflow/gemini-3.1-flash-image",
+  // Tokenflash gateway 前缀(tokenflash.cn,OpenAI 兼容)
+  "tokenflash/gpt-image-2",
 ]);
 
 /** I2I(图生图)可用的 model(Seedream + Qwen/Wan 兜底) */
@@ -453,6 +455,7 @@ const VALID_I2I_MODELS = new Set<string>([
   "pixflow/gemini-3-pro-image-preview",
   "pixflow/gemini-3.1-flash-image-preview",
   "pixflow/gemini-3.1-flash-image",
+  "tokenflash/gpt-image-2",
 ]);
 
 /**

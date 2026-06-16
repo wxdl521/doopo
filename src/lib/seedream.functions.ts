@@ -253,6 +253,16 @@ export const generateImage = createServerFn({ method: 'POST' })
       })
       return { url: r.url, error: r.error, model: r.model }
     }
+    // 委托给 Tokenflash(OpenAI 兼容,api.tokenflash.cn)
+    if (requested.toLowerCase().startsWith('tokenflash/')) {
+      const { callTokenflashImage } = await import('./tokenflash.functions')
+      const r = await callTokenflashImage({
+        prompt: appendNegative(data.prompt, data.negativePrompt),
+        model: requested,
+        size: data.size,
+      })
+      return { url: r.url, error: r.error, model: r.model }
+    }
     // 委托给 legacy(老 Qwen / OpenRouter 路径)
     if (requested && !isSeedreamModel(requested)) {
       // 动态 import 避免循环引用
@@ -667,6 +677,18 @@ export const regenerateCharacterLook = createServerFn({ method: 'POST' })
       if (!r.url) return { ok: false as const, error: r.error || 'Pixflow 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
+    if (requested.toLowerCase().startsWith('tokenflash/')) {
+      const { callTokenflashImage } = await import('./tokenflash.functions')
+      const r = await callTokenflashImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+        quality: 'high',
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'Tokenflash 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
 
     const { apiKey, baseUrl, model: defaultModel } = getArkConfig()
     if (!apiKey) return { ok: false as const, error: 'ARK_API_KEY not configured' }
@@ -819,6 +841,17 @@ export const generateStoryboardShotImage = createServerFn({ method: 'POST' })
       return { ok: true as const, url: r.url, model: r.model }
     }
     // 委托给 legacy(Qwen / Wan / OpenRouter 等)
+    if (requested.toLowerCase().startsWith('tokenflash/')) {
+      const { callTokenflashImage } = await import('./tokenflash.functions')
+      const r = await callTokenflashImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: '2K',
+        referenceImages: images,
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'Tokenflash 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
     if (requested && !isSeedreamModel(requested)) {
       const { generateImage: legacy } = await import('./openrouterImage.functions')
       const r: any = await legacy({
@@ -962,6 +995,17 @@ export const regenerateStoryboardShot = createServerFn({ method: 'POST' })
         referenceImages: images,
       })
       if (!r.url) return { ok: false as const, error: r.error || 'Pixflow 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('tokenflash/')) {
+      const { callTokenflashImage } = await import('./tokenflash.functions')
+      const r = await callTokenflashImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: '2K',
+        referenceImages: images,
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'Tokenflash 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
     if (requested && !isSeedreamModel(requested)) {
@@ -1351,6 +1395,18 @@ export const generateStoryboardPitchDeck = createServerFn({ method: 'POST' })
         quality: 'high',
       })
       if (!r.url) return { ok: false as const, error: r.error || 'Pixflow 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('tokenflash/')) {
+      const { callTokenflashImage } = await import('./tokenflash.functions')
+      const r = await callTokenflashImage({
+        prompt,
+        model: requested,
+        size: '3840x2160',
+        referenceImages: data.referenceImages || [],
+        quality: 'high',
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'Tokenflash 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
 
@@ -1752,6 +1808,18 @@ export const regenerateSceneImage = createServerFn({ method: 'POST' })
         quality: 'high',
       })
       if (!r.url) return { ok: false as const, error: r.error || 'Pixflow 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('tokenflash/')) {
+      const { callTokenflashImage } = await import('./tokenflash.functions')
+      const r = await callTokenflashImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+        quality: 'high',
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'Tokenflash 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
 
