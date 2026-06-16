@@ -21,9 +21,10 @@ export const IMAGE_MODELS: ImageModelOption[] = [
 
   // ---- [Pixflow · Gemini Native] api.pixflow.im → /v1beta/models/{id}:generateContent ----
   { key: '', label: '—— [Pixflow · Gemini Native] ——', sub: undefined, legacy: true },
-  { key: 'pixflow/gemini-3-pro-image-preview', label: 'Gemini 3 Pro Image', sub: '[Pixflow·Gemini] 高质量 · T2I/I2I' },
-  { key: 'pixflow/gemini-3.1-flash-image-preview', label: 'Gemini 3.1 Flash Image (Nano Banana 2)', sub: '[Pixflow·Gemini] 快速 · T2I/I2I' },
-  { key: 'pixflow/gemini-3.1-flash-image', label: 'Gemini 3.1 Flash Image', sub: '[Pixflow·Gemini] 通用 · T2I/I2I' },
+  { key: 'pixflow/gemini-3.1-pro-preview', label: 'Gemini 3.1 Pro Preview', sub: '[Pixflow·Gemini] 高质量 · 文本/多模态' },
+  { key: 'pixflow/gemini-3-flash', label: 'Gemini 3 Flash', sub: '[Pixflow·Gemini] 快速 · 文本/多模态' },
+  { key: 'pixflow/gemini-3.5-flash', label: 'Gemini 3.5 Flash', sub: '[Pixflow·Gemini] 新版 Flash' },
+  { key: 'pixflow/gemini-3.1-flash-image', label: 'Gemini 3.1 Flash Image', sub: '[Pixflow·Gemini] 图像 · T2I/I2I' },
 
   // ---- [Pixflow · OpenAI 兼容] api.pixflow.im → /v1/images/generations|edits ----
   { key: '', label: '—— [Pixflow · OpenAI 兼容] ——', sub: undefined, legacy: true },
