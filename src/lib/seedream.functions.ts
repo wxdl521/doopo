@@ -253,6 +253,16 @@ export const generateImage = createServerFn({ method: 'POST' })
       })
       return { url: r.url, error: r.error, model: r.model }
     }
+    // 委托给 Tokenflash(OpenAI 兼容,api.tokenflash.cn)
+    if (requested.toLowerCase().startsWith('tokenflash/')) {
+      const { callTokenflashImage } = await import('./tokenflash.functions')
+      const r = await callTokenflashImage({
+        prompt: appendNegative(data.prompt, data.negativePrompt),
+        model: requested,
+        size: data.size,
+      })
+      return { url: r.url, error: r.error, model: r.model }
+    }
     // 委托给 legacy(老 Qwen / OpenRouter 路径)
     if (requested && !isSeedreamModel(requested)) {
       // 动态 import 避免循环引用
