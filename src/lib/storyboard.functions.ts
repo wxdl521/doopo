@@ -735,3 +735,57 @@ export const regenerateStoryboardShot = createServerFn({ method: 'POST' })
     const { regenerateStoryboardShot: seedreamImpl } = await import('./seedream.functions')
     return seedreamImpl({ data } as any)
   })
+
+// --------------------------------------------------------------------
+// 4) regenerateStoryboardPitchDeck —— 故事板图按意见重生(2026/06 新增)
+//
+//    委托入口。实际实现(Seedream I2I,referenceImageUrl 作 image 1)在
+//    seedream.functions.ts:regenerateStoryboardPitchDeck。
+// --------------------------------------------------------------------
+
+const RegenPitchDeckInput = z.object({
+  projectStyle: z.string().max(50).optional(),
+  groupLabel: z.string().max(200).optional(),
+  plotText: z.string().min(1).max(2000),
+  scene: z.object({
+    slug: z.string().max(200).optional(),
+    location: z.string().max(200).optional(),
+    timeOfDay: z.string().max(50).optional(),
+    profile: z.string().max(2000).optional(),
+  }).optional(),
+  characters: z.array(z.object({
+    name: z.string().min(1).max(100),
+    roleLabel: z.string().max(200).optional(),
+    age: z.number().int().min(0).max(200).optional(),
+    faceDescription: z.string().max(2000).optional(),
+    bodyDescription: z.string().max(2000).optional(),
+    clothingDescription: z.string().max(2000).optional(),
+    palette: z.array(z.string()).max(8).optional(),
+  })).max(8).default([]),
+  shots: z.array(z.object({
+    shotType: z.enum(['WS', 'MS', 'CU', 'ECU', 'OTS']),
+    shotTypeLabel: z.string().min(1).max(20),
+    action: z.string().min(1).max(400),
+    camera: z.string().max(200).default(''),
+    durationSec: z.number().optional(),
+    startSec: z.number().optional(),
+    endSec: z.number().optional(),
+  })).max(20).default([]),
+  referenceImages: z.array(z.string().url()).max(4).default([]),
+  referenceImageLabels: z.array(z.string().max(120)).max(4).default([]),
+  characterImageUrl: z.string().url().optional(),
+  sceneImageUrl: z.string().url().optional(),
+  model: z.string().max(100).optional(),
+  previewOnly: z.boolean().default(false),
+  referenceImageUrl: z.string().url(),
+  userInstruction: z.string().min(1).max(500),
+})
+
+export type RegenerateStoryboardPitchDeckInput = z.infer<typeof RegenPitchDeckInput>
+
+export const regenerateStoryboardPitchDeck = createServerFn({ method: 'POST' })
+  .inputValidator((d: unknown) => RegenPitchDeckInput.parse(d))
+  .handler(async ({ data }) => {
+    const { regenerateStoryboardPitchDeck: seedreamImpl } = await import('./seedream.functions')
+    return seedreamImpl({ data } as any)
+  })

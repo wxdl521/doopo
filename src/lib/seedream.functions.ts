@@ -1409,6 +1409,185 @@ export const generateStoryboardPitchDeck = createServerFn({ method: 'POST' })
   })
 
 // ====================================================================
+// 5b) regenerateStoryboardPitchDeck —— 故事板图按用户意见重生(2026/06 新增)
+//
+//   跟 regenerateStoryboardShot 语义对齐:用户对当前故事板图不满意,
+//   输入"修改意见",AI 在保留 6-section 整体布局 / 字号层级 / 文字可读性
+//   等结构的基础上,只改用户提到的部分(色板 / 标题文案 / 故事板帧内容
+//   / 灯光情绪 / 关键词 等)。
+//
+//   **图像策略**(跟 regen 共享):
+//     - 图 1 永远是 data.referenceImageUrl(当前故事板图,作为"画风 + 布局 +
+//       文字位置 + section 比例"的真值)
+//     - 图 2..N 是 data.referenceImages 里的角色/场景参考图,跟原 generate
+//       路径同样的 4 张上限
+//     - Seedream I2I 顺序 = [当前故事板, 场景, 角色1, 角色2]
+//
+//   **Prompt 策略**:
+//     - 不复用 buildPitchDeckPrompt(那是首生成,模型自由构图)
+//     - 改成"修改模式":以图1为底,只改用户提到的元素
+//     - 仍然强制 6-section 布局 + 中文标题 + 字号层级(防止用户改完变成 4 格图)
+//
+//   **路由**:跟 generateStoryboardPitchDeck 保持完全一致(Seedream 主力,
+//   Pixflow/Lovable 不支持 4K 8.3M pixels 故兜底走 Seedream)。
+// ====================================================================
+
+const RegeneratePitchDeckInput = PitchDeckInput.extend({
+  referenceImageUrl: z.string().url(),
+  userInstruction: z.string().min(1).max(500),
+})
+
+export type RegeneratePitchDeckInputType = z.infer<typeof RegeneratePitchDeckInput>
+
+function buildRegenPitchDeckPrompt(opts: {
+  data: RegeneratePitchDeckInputType
+  styleSpec: VisualStyleSpec
+}): string {
+  const { data, styleSpec } = opts
+  const chars = data.characters || []
+  const shots = data.shots || []
+
+  // 角色描述块(简化版,regen 主要靠参考图锁定)
+  const charLines = chars.length
+    ? chars.map((c) => `  · ${c.name}${c.roleLabel ? ` (${c.roleLabel})` : ''}: ${c.faceDescription || '(face from ref image)'}`).join('\n')
+    : '  (no characters in this group)'
+
+  const sceneLine = data.scene
+    ? [
+        data.scene.location ? `  Location: ${data.scene.location}` : '',
+        data.scene.timeOfDay ? `  Time: ${data.scene.timeOfDay}` : '',
+      ].filter(Boolean).join('\n') || '  (no scene info)'
+    : '  (no specific scene)'
+
+  return [
+    // ========== 任务:在图 1 基础上按意见修改 ==========
+    `[MISSION] You are MODIFYING an existing 16:9 director's pre-production guide (图1).`,
+    `The user has feedback — apply ONLY the changes they describe. Preserve everything else from 图1: 6-section layout, section proportions, title hierarchy, character identities, scene environment, visual style.`,
+    ``,
+    `[USER FEEDBACK — the ONLY things to change]`,
+    data.userInstruction,
+    ``,
+    `[CONTEXT — preserved unchanged from 图1]`,
+    `Style: ${styleSpec.label} (${styleSpec.positive.slice(0, 80)}...)`,
+    `Plot: ${data.plotText || '(no plot text)'}`,
+    `Scene:`,
+    sceneLine,
+    `Characters (face/body must stay identical to 图1 unless user feedback says otherwise):`,
+    charLines,
+    `Shot count: ${shots.length} (do NOT change panel layout unless user feedback mentions it)`,
+    ``,
+    // ========== 6-SECTION 布局硬约束(防走样)==========
+    `[LAYOUT — MUST PRESERVE]`,
+    `1) Top strip · SHARED CREATIVE DIRECTION (~10% height)`,
+    `2) Middle-left · CHARACTER & STYLE REFERENCE (~30% width)`,
+    `3) Middle-center · ENVIRONMENT & SCENE DESIGN (~35% width)`,
+    `4) Middle-right · LIGHTING/MOOD + MOOD KEYWORDS (~35% width)`,
+    `5) Bottom · STORYBOARD FRAMES (full-width grid, ${shots.length} panels)`,
+    `6) Bottom strip · AUDIO + CINEMATOGRAPHY NOTES (~12% height)`,
+    `Each section has a LARGE Chinese title (with small English subtitle). Thin neutral dividers (#E8E8E8).`,
+    ``,
+    // ========== 文字可读性 ==========
+    `[TEXT READABILITY — TOP PRIORITY]`,
+    `- ALL Chinese text CRISP / SHARP / ACCURATE / READABLE. No garbled glyphs.`,
+    `- Section titles, shot numbers, character angle labels MUST be visibly LARGE and BOLD.`,
+    `- Each frame caption ≤ 1-2 short Chinese tags (e.g. "35mm 广角 · 跟拍 · 4s").`,
+    `- High contrast: dark text on clean white / very light grey background.`,
+    `- Clean printed font (思源宋体 / 思源黑体 / Noto Sans). NO decorative / pseudo-handwritten fonts.`,
+    ``,
+    // ========== 修改规则 ==========
+    `[MODIFICATION RULES]`,
+    `1. Treat 图1 as the structural source of truth — preserve its layout, proportions, fonts, color usage.`,
+    `2. Apply ONLY what the user described in [USER FEEDBACK]. Everything else: identical to 图1.`,
+    `3. If user feedback is vague ("好看点", "改改"), interpret MINIMALLY — small refinements only.`,
+    `4. If user feedback contradicts 图1 layout (e.g. user says "改成 4 格"), DO follow user feedback but keep all other style consistency.`,
+    `5. Do NOT change character faces / outfits / scene unless user feedback explicitly mentions them.`,
+    `6. Do NOT introduce new characters, scenes, or styles that aren't in 图1 or in [CONTEXT].`,
+    `7. Maintain the same aspect ratio (16:9) and section grid.`,
+    `8. Same Shot count as listed in [CONTEXT], in same order.`,
+    ``,
+    // ========== 风格指纹 ==========
+    `[PROJECT VISUAL STYLE — must match 图1's rendered style]`,
+    buildStyleLock(styleSpec, 'deck'),
+    ``,
+    `[OUTPUT] Regenerate the entire 16:9 pre-production guide with the user's changes applied. One image, landscape.`,
+  ].filter(Boolean).join('\n')
+}
+
+export const regenerateStoryboardPitchDeck = createServerFn({ method: 'POST' })
+  .inputValidator((d: unknown) => RegeneratePitchDeckInput.parse(d))
+  .handler(async ({ data }) => {
+    const { resolveProjectStyle } = await import('./visualStyles')
+    const styleSpec = resolveProjectStyle(data.projectStyle)
+
+    const prompt = buildRegenPitchDeckPrompt({ data, styleSpec })
+
+    // 图 1 = 当前故事板(图布局 / 风格 / 文字位置的真值),后面跟原 referenceImages
+    // 里的角色/场景参考图 —— 跟原 generate 共享同样 4 张上限
+    const images: string[] = [data.referenceImageUrl]
+    const extraRefs = data.referenceImages || []
+    for (const url of extraRefs) {
+      if (!url || url === data.referenceImageUrl) continue
+      if (images.length >= 4) break
+      images.push(url)
+    }
+
+    if (images.length > 4) {
+      return { ok: false as const, error: `参考图过多(${images.length} 张,Seedream 最多 4 张)` }
+    }
+
+    // 路由:跟 generateStoryboardPitchDeck 完全对齐(Seedream 主力,
+    // Pixflow/Lovable 不支持 4K 8.3M pixels 故跳过兜底)
+    const requested = normalizeImageModelForRouting(data.model)
+    if (requested && !isSeedreamModel(requested)) {
+      return {
+        ok: false as const,
+        error: `故事板按意见重生目前只支持 Seedream 模型(用户选了 ${requested},Seedream 4K 是唯一能稳定输出 3840×2160 的)。`,
+      }
+    }
+
+    const { apiKey, baseUrl, model: defaultModel } = getArkConfig()
+    if (!apiKey) return { ok: false as const, error: 'ARK_API_KEY not configured' }
+    const model = requested || defaultModel
+
+    // 2026/06:查看提示词模式
+    if (data.previewOnly) {
+      return {
+        ok: true as const,
+        previewPrompt: prompt,
+        negativePrompt: '',
+        promptSize: '3840x2160',
+        promptExtra: {
+          model,
+          route: 'I2I 故事板按意见重生',
+          userInstruction: data.userInstruction,
+          refImages: images.join(' / '),
+        },
+      } as any
+    }
+
+    const result = await callSeedreamImages(
+      {
+        model,
+        prompt,
+        image: images,
+        size: '3840x2160',
+        output_format: 'png',
+        watermark: false,
+      },
+      apiKey,
+      baseUrl,
+      I2I_TIMEOUT_MS,
+    )
+    if (!result.url) {
+      if (/401/i.test(result.error || '')) return { ok: false as const, error: 'Seedream auth failed (401)' }
+      if (/402/i.test(result.error || '')) return { ok: false as const, error: 'no_credits' }
+      if (/timed out/i.test(result.error || '')) return { ok: false as const, error: 'AI 处理超时(>180s)' }
+      return { ok: false as const, error: result.error || 'Seedream 未返回图片' }
+    }
+    return { ok: true as const, url: result.url, model: result.model }
+  })
+
+// ====================================================================
 // 5) regenerateSceneImage —— 场景图按意见重生 / 场景三视图(2026/06 新增)
 //
 // 跟角色 regenerateCharacterLook 对称,但语义不同:
@@ -1450,12 +1629,24 @@ function buildScenePrompts(
     // ----------------------------------------------------------------
     // 场景三视图(横向 3 面板,横向 3072x1280 ≈ 3.93M 像素,过 Seedream 最小门槛)
     // 语义:同一场景的 3 个景别变体,无人物,共用同一套构图 / 光照 / 风格
+    //
+    // 2026/06 加强稳定性:之前 prompt 只笼统说"同一地点/同一时段",Seedream I2I
+    // 虽然传了 referenceImageUrl,但模型在生成 3 面板时容易各自"重新想象"出
+    // 不同的色板 / 光照 / 建筑细节 —— 三个面板彼此漂移、跟原图也漂移。
+    //
+    // 现在明确"图1 是基线真值",3 个面板必须从同一基线衍生,并加 IDENTITY
+    // LOCK 段枚举具体要锁住的视觉维度。
     // ----------------------------------------------------------------
     const positive = [
       `[STYLE LOCK — 场景三视图(3 景别变体),适用对象:scene]`,
       buildStyleLock(styleSpec, 'scene'),
       ``,
-      `[任务] 生成一张「场景三视图」,同一地点的 3 个景别变体。`,
+      `[关键:这是 I2I 任务,图1 是当前主视图]`,
+      `图1 是这个场景的"基线真值" —— 已经有确定的色板 / 光照方向 / 建筑或自然要素 / 装饰物 / 材质 / 时代风格。`,
+      `本任务 = 在图1 的基础上,生成 3 个不同景别的变体(同一场景、不同距离)。`,
+      `3 个面板**必须继承图1 的所有视觉元素**,只在景别/取景范围上变化。`,
+      ``,
+      `[任务] 生成一张「场景三视图」,3 个面板都是图1 同一地点的景别变体。`,
       ``,
       `[地点] ${data.sceneSlug}`,
       data.sceneLocation ? `[具体地点] ${data.sceneLocation}` : '',
@@ -1464,24 +1655,37 @@ function buildScenePrompts(
       ``,
       `[画布] 一张横图,3 个等宽面板(左/中/右),格间干净留白(gutter ~3-5% panel 宽度)。`,
       ``,
-      `[3 个景别变体]`,
-      `1) LEFT  · WIDE ESTABLISHING SHOT (远景):整场景全景,建筑/地形/空间关系完整,无人物。展示"地点感"。`,
-      `2) MIDDLE · MEDIUM SHOT (中景):聚焦场景关键道具/中距离(桌椅、门窗、楼梯、标志物等),展示"故事感"。`,
-      `3) RIGHT  · CLOSE-UP / DETAIL (近景特写):局部纹理/招牌/天气/光线/材质特写,展示"质感感"。`,
+      `[3 个景别变体 —— 仅取景距离变化,场景内容必须与图1 一致]`,
+      `1) LEFT  · WIDE ESTABLISHING SHOT (远景):拉开看图1 描述的整场景全景,展示地点/空间关系。**所有建筑 / 自然要素 / 装饰物 / 招牌 / 桌椅 必须跟图1 完全相同**(只是更远更全)。`,
+      `2) MIDDLE · MEDIUM SHOT (中景):走近到图1 中等距离,聚焦场景关键道具/门窗/标志物/桌椅/柜台等中景元素。**这些道具必须跟图1 中景里的同一物体一致**(同一张桌子、同一扇窗、同一面墙的颜色)。`,
+      `3) RIGHT  · CLOSE-UP / DETAIL (近景特写):贴近图1 选一个局部(招牌字迹/墙砖纹理/灯光/材质/天气现象)做质感特写。**这个局部必须在图1 里能找到**(颜色、材质、文字内容跟图1 一致)。`,
+      ``,
+      `[IDENTITY LOCK —— 跟图1 锁死,不得漂移]`,
+      `• 色板:3 个面板共用图1 的色板 —— 主色 / 辅色 / 强调色完全一致(不允许 LEFT 偏暖、MIDDLE 偏冷、RIGHT 偏紫这种漂移)。`,
+      `• 光照方向:3 个面板共用图1 的主光源方向(左光 / 右光 / 顶光 / 逆光)和色温(暖 / 冷 / 中性)。`,
+      `• 时代风格:3 个面板共用图1 的时代风格 —— 写实/动漫/水墨/赛博,不允许混搭。`,
+      `• 关键物体:图1 里有的招牌、桌椅、建筑特征、自然要素(树/山/河)、装饰物 —— 3 个面板里出现时,数量、形状、颜色、位置感必须跟图1 一致。`,
+      `• 人物状态:3 个面板都【无人物,无角色,无人形,无剪影,无背影】,纯环境。`,
+      `• 文字 / 标识:如果图1 里有可读文字(招牌字、墙上的字),在面板里出现时,内容 / 字体 / 颜色保持一致。如果图1 没有文字,面板里也不要新加文字。`,
       ``,
       `[硬约束]`,
-      `• 同一地点、同一时段、同一视觉风格 —— 三个面板共享完全一致的地点/光照/色板。`,
-      `• 三个面板都【无人物,无角色,无人形,无剪影】,纯环境。`,
-      `• 三个面板里出现的任何道具/标志物/装饰物必须前后一致(同一张桌子、同一扇窗)。`,
-      `• 不要文字、不要 logo、不要面板编号。`,
+      `• 3 个面板之间绝对不允许互相矛盾:同一物体不能在不同面板里有不同颜色/形状。`,
+      `• 3 个面板必须看起来像"同一个摄影师在同一天/同一光照下拍的 3 张照片",不是一个"概念图三联画"。`,
+      `• 不要文字(除非图1 已有)、不要 logo、不要面板编号、不要分割线外的标注。`,
     ]
       .filter(Boolean)
       .join('\n')
     const negative = [
-      'people, character, figure, silhouette, human',
-      'different location, different time of day, different style between panels',
-      'photorealistic when input is anime, anime when input is realistic, style drift, mixing styles',
-      'low quality, blurry, low resolution, watermark, text, logo, panel number, label, caption, arrow',
+      'people, character, figure, silhouette, human, bystander',
+      'different location, different time of day, different weather between panels',
+      'different color palette between panels, color shift between panels, inconsistent lighting between panels',
+      'style drift, mixing styles, different art style between panels, photorealistic when input is anime, anime when input is realistic',
+      'different furniture, different furniture color, different furniture shape between panels',
+      'different wall color, different floor color, different building shape between panels',
+      'adding new objects not in 图1, inventing new details not in 图1, hallucinating extra elements',
+      'changing the architecture, modifying the scene layout, redesigning the environment',
+      'panel borders, separator lines, text, watermark, logo, panel number, label, caption, arrow, callout',
+      'low quality, blurry, low resolution, jpeg artifacts',
     ].join(', ')
     return { positive, negative, size: '3072x1280' }
   }

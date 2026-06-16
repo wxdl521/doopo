@@ -3,8 +3,12 @@
 //  (ARK / DashScope / Seedream,24h 过期)下载下来,上传到用户自己的
 //  Supabase Storage `workspace-media` bucket,返回永久 URL。
 //
-//  触发方式:用户在 workspace 左上角点「保存」时,客户端先调这个 fn
-//  把所有 ephemeral URL 入库,再把替换后的 URL 写回 workspace_data。
+//  触发方式:
+//    1. 用户在 workspace 左上角点「保存」时,客户端先调 persistWorkspaceMedia
+//       把所有 ephemeral URL 入库,再把替换后的 URL 写回 workspace_data。
+//    2. 2026/06 自动入库:每个 groupStoryboards[gid] 状态变成 succeeded 时,
+//       useEffect 自动调 saveOneStoryboard —— 不依赖用户点「保存」,
+//       避免 Seedream TOS URL 24h 过期后用户回来看故事板发现图 broken。
 //
 //  路径约定:
 //    {userId}/{workspaceId}/videos/{groupId}.{ext}        视频
@@ -20,6 +24,71 @@ import "./loadEnv"
 import { createServerFn } from "@tanstack/react-start"
 import { z } from "zod"
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware"
+
+/**
+ * 2026/06:saveOneStoryboard —— 单条故事板图入库(自动入库链路)。
+ *
+ *   跟 persistWorkspaceMedia 的 processMap("storyboard") 等价,但只处理一条。
+ *   客户端 useEffect 监听 groupStoryboards 变化 → 每个新 succeeded 项自动
+ *   调这个 → 不依赖用户点「保存」也能避免 24h 后图片 broken。
+ *
+ *   路径:{userId}/{workspaceId}/storyboards/{groupId}.{ext}
+ *
+ *   行为:
+ *     - 已入库(URL 已在 supabase.co / 自己的 storage 域名)→ 跳过,返回原 URL
+ *     - 三方 URL → 服务端 fetch → 上传 Supabase Storage → 返回永久 URL
+ *     - fetch 失败(TOS 过期 / 网络断)→ 返回 ok:false,客户端决定是否 toast
+ *     - 空 url 或 status !== 'succeeded' → noop 返回 ok:true url:''
+ */
+const SaveOneStoryboardInput = z.object({
+  workspaceId: z.string().min(1).max(64),
+  groupId: z.string().min(1).max(64),
+  url: z.string().min(1).max(2000),
+})
+
+export type SaveOneStoryboardResult = {
+  ok: boolean
+  url: string  // 替换后的永久 URL(或原 URL,如果已入库 / noop)
+  persisted: boolean  // true = 这次真做了下载 + 上传;false = 跳过 / noop
+  error?: string
+}
+
+export const saveOneStoryboard = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => SaveOneStoryboardInput.parse(input))
+  .handler(async ({ data, context }): Promise<SaveOneStoryboardResult> => {
+    const { supabase, userId } = context as { supabase: any; userId: string }
+    const { workspaceId, groupId, url } = data
+
+    if (!url) {
+      return { ok: true, url: "", persisted: false }
+    }
+    // 已入库(浏览器走的 supabase 域名)→ 跳过,直接返回原 URL
+    if (isAlreadyPersisted(url)) {
+      return { ok: true, url, persisted: false }
+    }
+
+    try {
+      const { buf, contentType } = await fetchMedia(url)
+      const path = makePath(userId, workspaceId, "storyboard", groupId, contentType)
+      const mime = MIME_BY_KIND.storyboard
+      const blob = new Blob([buf], { type: mime })
+      const { error: uploadErr } = await supabase.storage
+        .from(BUCKET)
+        .upload(path, blob, { contentType: mime, upsert: true })
+      if (uploadErr) {
+        return { ok: false, url, persisted: false, error: `storage upload failed: ${uploadErr.message}` }
+      }
+      const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(path)
+      const permanentUrl = pub?.publicUrl
+      if (!permanentUrl) {
+        return { ok: false, url, persisted: false, error: "no public url after upload" }
+      }
+      return { ok: true, url: permanentUrl, persisted: true }
+    } catch (e: any) {
+      return { ok: false, url, persisted: false, error: e?.message ?? String(e) }
+    }
+  })
 
 const BUCKET = "workspace-media"
 const FETCH_TIMEOUT_MS = 60_000

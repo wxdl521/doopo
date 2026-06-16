@@ -16,17 +16,17 @@ import { generateStageAi } from '../lib/aiGenerate.functions'
 import { generateImage, regenerateSceneImage } from '../lib/seedream.functions'
 import { regenerateCharacterLook } from '../lib/characterRegen.functions'
 import { describeCharacterImage } from '../lib/describeCharacterImage.functions'
-import { generateStoryboardFromPlot, generateStoryboardShotImage, regenerateStoryboardShot } from '../lib/storyboard.functions'
+import { generateStoryboardFromPlot, generateStoryboardShotImage, regenerateStoryboardShot, regenerateStoryboardPitchDeck } from '../lib/storyboard.functions'
 import { generateVideo } from '../lib/videoGenerate.functions'
 import { generateStoryboardPitchDeck } from '../lib/seedream.functions'
 import { getProject, saveWorkspaceData, loadWorkspaceData, type ProjectConfigRow } from '../lib/projects.functions'
-import { persistWorkspaceMedia } from '../lib/workspaceMedia.functions'
+import { persistWorkspaceMedia, saveOneStoryboard } from '../lib/workspaceMedia.functions'
 import { streamSynopsis, streamEpisodeScenes, refineSynopsis, refineEpisodeScenes } from '../lib/scriptAgent.functions'
 import type { ImportedScriptResult } from '../lib/parseImportedScript.functions'
 import { resolveProjectStyle, resolveT2IModel, resolveI2IModel, buildStyleLock } from '../lib/visualStyles'
 import { hashString } from '../lib/utils'
 import { filterByEpisode, groupByMatchKey, getEffectiveClothing, getEffectiveRoleLabel } from '../lib/characterFilters'
-import { Maximize2, FileText, Camera, Clock, Users, X, Loader2, Sparkles, Send, CheckCircle2, Pencil, Check, Image as ImageIcon, LayoutGrid, RefreshCw, Target, ChevronDown, BookmarkPlus } from 'lucide-react'
+import { Maximize2, FileText, Camera, Clock, Users, X, Loader2, Sparkles, Send, CheckCircle2, Pencil, Check, Image as ImageIcon, LayoutGrid, RefreshCw, Target, ChevronDown, BookmarkPlus, Plus } from 'lucide-react'
 import CharacterPortrait from '../components/workspace/CharacterPortrait'
 import StoryboardTimeline from '../components/workspace/StoryboardTimeline'
 import { toast } from 'sonner'
@@ -217,6 +217,393 @@ function CharacterDossier({ character, cast }: { character: GenCharacter; cast: 
   )
 }
 
+/**
+ * 2026/06:ShotMembershipEditor —— 分镜角色集合编辑器。
+ * 显示该 shot 实际生效的角色列表(pickShotCharacterIds:shot 覆盖 group),
+ * 每个角色可:
+ *   - 点 look 缩略图 → 选该角色在该 shot 用的具体形象(imageKey)
+ *   - 点 × → 把该角色从该 shot 移除(不影响 group)
+ *   - 点「+ 加角色」 → 从 group.characterIds 里挑没在 shot 里的,添加进来
+ *   - 点「恢复 group 默认」 → 清空 shot.characterIds,回到 fallback 行为
+ */
+function ShotMembershipEditor({
+  group,
+  shot,
+  characters,
+  charImages,
+  onAdd,
+  onRemove,
+  onSetLook,
+  onReset,
+}: {
+  group: StoryboardGroup
+  shot: StoryboardShot
+  characters: GenCharacter[]
+  charImages: Record<string, string[]>
+  onAdd: (characterId: string) => void
+  onRemove: (characterId: string) => void
+  onSetLook: (characterId: string, imageKey: string) => void
+  onReset: () => void
+}) {
+  const effectiveIds = pickShotCharacterIds(shot, group)
+  const groupIds = group.characterIds
+  const isOverridden = shot.characterIds !== undefined
+  const addable = groupIds.filter((cid: string) => !effectiveIds.includes(cid))
+  return (
+    <div className="pt-1">
+      <div className="flex items-center justify-between">
+        <div className="text-[10px] uppercase tracking-wide text-text-muted">本镜头角色</div>
+        {isOverridden && (
+          <button
+            type="button"
+            onClick={onReset}
+            className="text-[9px] text-text-muted hover:text-accent underline-offset-2 hover:underline"
+            title="清空 shot.characterIds,恢复 group 默认"
+          >
+            恢复 group 默认
+          </button>
+        )}
+      </div>
+      {effectiveIds.length === 0 ? (
+        <div className="text-[10px] text-text-muted mt-1 italic">本镜头无角色(纯场景 / 空镜)</div>
+      ) : (
+        <div className="space-y-1.5 mt-1">
+          {effectiveIds.map((cid: string) => {
+            const ch = characters.find((c) => c.id === cid)
+            const lookKeys: string[] = ch
+              ? [ch.id, ...(ch.looks ?? []).map((lk) => `${ch.id}::${lk.id}`)]
+              : [cid]
+            const currentImageKey = shot.characterRefs?.[cid] ?? ch?.id ?? cid
+            const currentImg = charImages[currentImageKey]?.at(-1)
+            return (
+              <div
+                key={cid}
+                className="flex items-center gap-1.5 p-1 rounded border border-border bg-bg-base"
+              >
+                {/* 当前选中的 look 缩略图 */}
+                <div className="shrink-0 w-9 h-9 rounded overflow-hidden bg-bg-elevated border border-border">
+                  {currentImg ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={currentImg}
+                      alt={ch?.name ?? cid}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-[8px] text-text-muted">N/A</div>
+                  )}
+                </div>
+                {/* 角色名 */}
+                <div className="flex-1 min-w-0">
+                  <div className="text-[11px] font-semibold text-text-primary truncate">
+                    {ch?.name ?? cid}
+                  </div>
+                  {/* look 切换缩略图条 */}
+                  {lookKeys.length > 0 && (
+                    <div className="flex gap-0.5 mt-0.5 overflow-x-auto">
+                      {lookKeys.map((lk) => {
+                        const url = charImages[lk]?.at(-1)
+                        if (!url) return null
+                        const active = lk === currentImageKey
+                        return (
+                          <button
+                            key={lk}
+                            type="button"
+                            onClick={() => onSetLook(cid, lk)}
+                            className={`shrink-0 w-5 h-5 rounded overflow-hidden border transition ${
+                              active ? 'border-accent ring-1 ring-accent' : 'border-border hover:border-accent/60'
+                            }`}
+                            title={lk === ch?.id ? '默认 look' : `变体 ${lk.split('::')[1] ?? lk}`}
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={url} alt="" className="w-full h-full object-cover" />
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+                {/* 移除按钮 */}
+                <button
+                  type="button"
+                  onClick={() => onRemove(cid)}
+                  className="shrink-0 p-1 rounded text-text-muted hover:text-rose-400 hover:bg-rose-500/10 transition"
+                  title={`把 ${ch?.name ?? cid} 从本镜头移除(不影响 group 其他镜头)`}
+                >
+                  <X size={11} />
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      )}
+      {addable.length > 0 && (
+        <div className="mt-2">
+          <div className="text-[10px] text-text-muted mb-1">从 group 加角色</div>
+          <div className="flex flex-wrap gap-1">
+            {addable.map((cid) => {
+              const ch = characters.find((c) => c.id === cid)
+              return (
+                <button
+                  key={cid}
+                  type="button"
+                  onClick={() => onAdd(cid)}
+                  className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded border border-dashed border-border text-[10px] text-text-secondary hover:border-accent hover:text-accent hover:bg-accent-dim/30 transition"
+                  title={`点击把 ${ch?.name ?? cid} 加入本镜头`}
+                >
+                  <Plus size={9} /> {ch?.name ?? cid}
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * 2026/06:ShotSceneEditor —— 分镜场景选择器。
+ * shot.sceneId 优先级 > group.sceneId。用户可:
+ *   - 选另一个场景(切换)
+ *   - 选"无场景"(空镜 / 抽象镜头)
+ *   - 恢复默认(= group.sceneId,清掉 shot.sceneId)
+ */
+function ShotSceneEditor({
+  group,
+  shot,
+  scenes,
+  onSet,
+  onReset,
+}: {
+  group: StoryboardGroup
+  shot: StoryboardShot
+  scenes: GenScene[]
+  onSet: (sceneId: string | null) => void
+  onReset: () => void
+}) {
+  const isOverridden = shot.sceneId !== undefined
+  return (
+    <div className="pt-2 border-t border-border/40">
+      <div className="flex items-center justify-between mt-2">
+        <div className="text-[10px] uppercase tracking-wide text-text-muted">本镜头场景</div>
+        {isOverridden && (
+          <button
+            type="button"
+            onClick={onReset}
+            className="text-[9px] text-text-muted hover:text-accent underline-offset-2 hover:underline"
+            title="清空 shot.sceneId,恢复 group 默认"
+          >
+            恢复 group 默认
+          </button>
+        )}
+      </div>
+      {scenes.length === 0 ? (
+        <div className="text-[10px] text-text-muted mt-1 italic">项目还没有场景</div>
+      ) : (
+        <div className="flex flex-wrap gap-1 mt-1.5">
+          {scenes.map((s) => {
+            const active = (shot.sceneId === undefined && group.sceneId === s.id)
+              || shot.sceneId === s.id
+            const label = s.location || s.slug || s.id
+            return (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => onSet(s.id)}
+                className={`px-1.5 py-0.5 rounded text-[10px] transition ${
+                  active
+                    ? 'bg-accent text-accent-foreground'
+                    : 'border border-border text-text-secondary hover:border-accent hover:text-accent'
+                }`}
+                title={s.slug}
+              >
+                {label.slice(0, 12)}
+              </button>
+            )
+          })}
+          <button
+            type="button"
+            onClick={() => onSet(null)}
+            className={`px-1.5 py-0.5 rounded text-[10px] transition ${
+              shot.sceneId === null
+                ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+                : 'border border-dashed border-border text-text-muted hover:border-rose-500 hover:text-rose-400'
+            }`}
+            title="显式设置本镜头不带场景(空镜 / 抽象镜头)"
+          >
+            无场景
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * 2026/06:Module-level helpers(原在 WorkspacePage 内部 closure 里,导致 module-level
+ * 组件 ShotMembershipEditor / ShotSceneEditor 拿不到,运行时直接报
+ * ReferenceError: pickShotCharacterIds is not defined)。
+ *
+ * 这俩函数是 (shot, group) → string[] / string|null|undefined 的纯函数,无 state / hook,
+ * 提到 module 级零副作用,所有 caller(WorkspacePage 内部 + ShotMembershipEditor
+ * 这些 module-level 组件)都还能访问。
+ */
+
+/**
+ * 取得该 shot 实际生效的角色 id 列表。
+ *   - shot.characterIds 显式设值(非 undefined)→ 用 shot 的
+ *   - shot.characterIds === undefined → fallback 到 group.characterIds
+ *
+ * 显式设 [] (空数组)→ 该 shot 不带任何角色(纯场景/空镜)。
+ */
+function pickShotCharacterIds(shot: StoryboardShot | undefined, group: StoryboardGroup | undefined): string[] {
+  if (shot?.characterIds !== undefined) return shot.characterIds
+  return group?.characterIds ?? []
+}
+
+/**
+ * 取得该 shot 实际生效的场景 id。
+ *   - shot.sceneId === null   → 显式无场景,返回 null
+ *   - shot.sceneId === string → 用 shot 的
+ *   - shot.sceneId === undefined → fallback 到 group.sceneId
+ */
+function pickShotSceneId(shot: StoryboardShot | undefined, group: StoryboardGroup | undefined): string | null | undefined {
+  if (shot?.sceneId !== undefined) return shot.sceneId  // string | null 都被尊重
+  return group?.sceneId
+}
+
+/**
+ * 2026/06:GroupMembershipEditor —— 分镜组层级的"+ 加角色"按钮 + addable 下拉。
+ *
+ * 注意:这里**不**渲染当前的角色 chip 行 —— chip 行(含 look-switcher 逻辑)
+ * 由父级在 5356-5450 那个位置渲染,这样能复用现有 look-menu 状态(openLookMenu)。
+ * 本组件只暴露"添加"入口;移除走父级 chip 上的 × 按钮。
+ *
+ * addable 范围:data.characters 过滤
+ *   c.episodes.includes(group.episodeIndex)  // 本集
+ *   && !group.characterIds.includes(c.id)   // 未加入
+ *
+ * onClick 必须 stopPropagation:父级容器有"点非 look-menu 区关闭 dropdown"
+ * 的全局 handler,不 stop 会让刚加的角色立即被关掉(实际是 + 按钮本身的 dropdown
+ * 被关掉,不影响数据,但视觉上会闪烁)。
+ */
+function GroupMembershipEditor({
+  group,
+  characters,
+  onAdd,
+}: {
+  group: StoryboardGroup
+  characters: GenCharacter[]
+  onAdd: (characterId: string) => void
+}) {
+  const [addOpen, setAddOpen] = useState(false)
+  const addable = characters
+    .filter((c) => c.episodes.includes(group.episodeIndex))
+    .filter((c) => !group.characterIds.includes(c.id))
+  return (
+    <div className="relative inline-block">
+      <button
+        type="button"
+        // 不 stopPropagation:让点击冒泡到父级 look-menu close handler,
+        // 自动关掉可能还开着的 look 菜单,避免两个 popover 同时浮着。
+        onClick={() => setAddOpen((v) => !v)}
+        disabled={addable.length === 0}
+        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-dashed border-border text-[10px] text-text-secondary hover:border-accent hover:text-accent hover:bg-accent-dim/30 transition disabled:opacity-40 disabled:cursor-not-allowed"
+        title={addable.length === 0 ? '本集角色已全部加入' : '从本集角色库挑选一个加进来'}
+      >
+        <Plus size={9} /> 加角色
+      </button>
+      {addOpen && addable.length > 0 && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="absolute z-30 left-0 top-full mt-1 min-w-[200px] max-h-[260px] overflow-y-auto rounded-lg border border-border bg-bg-surface shadow-xl py-1"
+        >
+          {addable.map((c) => (
+            <button
+              key={c.id}
+              type="button"
+              onClick={() => { onAdd(c.id); setAddOpen(false) }}
+              className="w-full flex items-center gap-2 px-2 py-1.5 text-left text-[11px] hover:bg-bg-elevated text-text-primary transition"
+              title={`加入 ${c.name}`}
+            >
+              <Plus size={11} className="text-accent shrink-0" />
+              <span className="flex-1 truncate">{c.name}</span>
+              {c.roleLabel && <span className="text-[9px] text-text-muted shrink-0">{c.roleLabel}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/**
+ * 2026/06:GroupSceneEditor —— 分镜组层级的场景选择器。
+ *   - 列表范围:data.scenes(过滤 s.episodeIndex === group.episodeIndex)
+ *   - 当前选中的高亮;点别的 → onSet(s.id);点 "无场景" → onSet(null)
+ *   - 没有 g.sceneId 时显示 "未指定" 提示
+ * 复用 ShotSceneEditor 的视觉:圆角小 chip、accent 高亮、rose 色 "无场景"。
+ */
+function GroupSceneEditor({
+  group,
+  scenes,
+  onSet,
+}: {
+  group: StoryboardGroup
+  scenes: GenScene[]
+  onSet: (sceneId: string | null) => void
+}) {
+  const epScenes = scenes.filter((s) => s.episodeIndex === group.episodeIndex)
+  return (
+    <div className="pt-2 border-t border-border/40 space-y-1.5">
+      <div className="flex items-center justify-between">
+        <div className="text-[10px] uppercase tracking-wide text-text-muted">本组场景</div>
+        <div className="text-[9px] text-text-muted">
+          {group.sceneId ? (epScenes.find((s) => s.id === group.sceneId)?.location || epScenes.find((s) => s.id === group.sceneId)?.slug || '已选') : '未指定'}
+        </div>
+      </div>
+      {epScenes.length === 0 ? (
+        <div className="text-[10px] text-text-muted italic">本集还没有场景</div>
+      ) : (
+        <div className="flex flex-wrap gap-1">
+          {epScenes.map((s) => {
+            const active = group.sceneId === s.id
+            const label = s.location || s.slug || s.id
+            return (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => onSet(s.id)}
+                className={`px-1.5 py-0.5 rounded text-[10px] transition ${
+                  active
+                    ? 'bg-accent text-accent-foreground'
+                    : 'border border-border text-text-secondary hover:border-accent hover:text-accent'
+                }`}
+                title={s.slug}
+              >
+                {label.slice(0, 12)}
+              </button>
+            )
+          })}
+          <button
+            type="button"
+            onClick={() => onSet(null)}
+            className={`px-1.5 py-0.5 rounded text-[10px] transition ${
+              group.sceneId === undefined
+                ? 'bg-rose-500/15 text-rose-400 border border-rose-500/30'
+                : 'border border-dashed border-border text-text-muted hover:border-rose-500 hover:text-rose-400'
+            }`}
+            title="清空本组场景(空镜 / 抽象)"
+          >
+            无场景
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function WorkspacePage() {
   const { t } = useLanguage()
   const { user } = useAuth()
@@ -273,6 +660,7 @@ function WorkspacePage() {
   const callRegenShot = useServerFn(regenerateStoryboardShot)
   const callGenVideo = useServerFn(generateVideo)
   const callGenStoryboard = useServerFn(generateStoryboardPitchDeck)
+  const callRegenStoryboard = useServerFn(regenerateStoryboardPitchDeck)
   const callSynopsis = useServerFn(streamSynopsis)
   const callEpisode = useServerFn(streamEpisodeScenes)
   const callRefine = useServerFn(refineSynopsis)
@@ -281,6 +669,7 @@ function WorkspacePage() {
   const callSaveWorkspace = useServerFn(saveWorkspaceData)
   const callLoadWorkspace = useServerFn(loadWorkspaceData)
   const callPersistMedia = useServerFn(persistWorkspaceMedia)
+  const callSaveOneStoryboard = useServerFn(saveOneStoryboard)
   const [project, setProject] = useState<ProjectConfigRow | null>(null)
   const [savingWorkspace, setSavingWorkspace] = useState(false)
   const [savedWorkspace, setSavedWorkspace] = useState(false)
@@ -322,6 +711,27 @@ function WorkspacePage() {
   const autogenRanRef = useRef<Set<string>>(new Set())
   const [panelImages, setPanelImages] = useState<Record<string, string>>({})
   const [sceneImages, setSceneImages] = useState<Record<string, string[]>>({})
+  // 2026/06:跟角色 selectedCharImages 对称 —— 用户从历史里"选中"的某张
+  // 场景图,作为分镜 / 故事板 / 按意见重生的 reference。
+  // - 用 url 而不是 index 引用,避免新增图后被偏移
+  // - 没设 → fallback 用 sceneImages[s.id] 的最新一张(.at(-1))
+  // - 显式传 `null` 取消选中(回到用最新的逻辑)
+  const [selectedSceneImages, setSelectedSceneImages] = useState<Record<string, string | null>>({})
+  const selectedSceneImagesRef = useRef<Record<string, string | null>>({})
+  useEffect(() => { selectedSceneImagesRef.current = selectedSceneImages }, [selectedSceneImages])
+
+  /**
+   * 2026/06:跟角色 pickShotCharImageUrl 对齐的 helper —— 选中的图优先,
+   * 没选 / 选中的 url 已不在 history 里 → fallback 最新一张。
+   * 用于:场景卡片封面 / 预览 modal / 按意见重生 / 作为分镜/故事板 reference。
+   * 返回 string | undefined(没图时 undefined,跟 caller 的现有判断一致)。
+   */
+  function pickSceneImageUrl(sceneId: string): string | undefined {
+    const history = sceneImages[sceneId] ?? []
+    const pinned = selectedSceneImagesRef.current[sceneId]
+    if (pinned && history.includes(pinned)) return pinned
+    return history.at(-1)
+  }
 
   // 2026/06:把生成的图片自动入库。
   // 监听 charImages / sceneImages 变化,每个 entry 的最后一张 URL 自动
@@ -457,6 +867,11 @@ function WorkspacePage() {
   const [expandedEpisodes, setExpandedEpisodes] = useState<Set<number>>(new Set([1]))
   const [episodeEditing, setEpisodeEditing] = useState<number | null>(null)
   const [episodeDraft, setEpisodeDraft] = useState('')
+  // 2026/06:分镜组 plotText 行内编辑(跟 synopsis / episode 同模式,Pencil→textarea→Check)。
+  // 用 Record 存每个 group 的 draft(只一个 group 同时处于编辑态,editingGroupId 决定)。
+  // runEnterStoryboard 重置 storyboardGroups 时会清空这两个 state,避免旧 id 的 draft 残留。
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null)
+  const [groupPlotDraft, setGroupPlotDraft] = useState<Record<string, string>>({})
   const episodeEditRef = useRef<HTMLTextAreaElement>(null)
   const [synopsisStreaming, setSynopsisStreaming] = useState(false)
   const [episodeStreaming, setEpisodeStreaming] = useState(false)
@@ -517,6 +932,39 @@ function WorkspacePage() {
   // 2026 Storyboard 接入:每个分镜组可以独立生成故事板图(Storyboard),
   // key = groupId。value 包含 storyboardUrl 和 status。不持久化(Seedream URL 24h 有效)。
   const [groupStoryboards, setGroupStoryboards] = useState<Record<string, { url: string; status: 'running' | 'succeeded' | 'failed' }>>({})
+  // 2026/06:故事板图加载失败的 groupId 集合。
+  // 跟 brokenShotImages 同语义 —— Seedream TOS 24h 过期 / 上游 403 / 浏览器
+  // 侧 DNS 不通时,state 里 url 还在,<img> 却 broken。徽章在 URL 真的"过
+  // 期/坏"时改成"已过期",跟"已生成"区分开,让用户知道该重新生成或保存入库。
+  const [brokenStoryboards, setBrokenStoryboards] = useState<Set<string>>(new Set())
+  const markStoryboardBroken = useCallback((gid: string) => {
+    setBrokenStoryboards((s) => {
+      if (s.has(gid)) return s
+      const next = new Set(s)
+      next.add(gid)
+      return next
+    })
+  }, [])
+  const clearStoryboardBroken = useCallback((gid: string) => {
+    setBrokenStoryboards((s) => {
+      if (!s.has(gid)) return s
+      const next = new Set(s)
+      next.delete(gid)
+      return next
+    })
+  }, [])
+
+  // 2026/06:故事板图自动入库 —— 监听 groupStoryboards 变化,每个 succeeded
+  // 且未入库的项自动调 saveOneStoryboard,把临时 TOS URL 替换成永久
+  // Supabase Storage URL。**根本解决** Seedream TOS URL 24h 过期导致"故事板
+  // 图突然打不开 / 显示已过期"的问题 —— 不再依赖用户点「保存」按钮。
+  //
+  // 行为对齐 character/scene 自动入库(同一个 useEffect 模式):
+  //   - dedupeByUrlSet:同 url 已发起的请求会被 dedupe 掉,避免每个组件
+  //     重渲染都重新下载上传
+  //   - 失败不上 toast(避免每次刷新都刷错误),仅在 dev console 打 warn
+  // 放在 brokenStoryboards 之后,确保 groupStoryboards 已经初始化完毕,
+  // 避免 TDZ ReferenceError。
   // 2026/06 Storyboard → Timeline 拼接播放:用户在时间轴上可调整 clip 顺序,
   // 顺序仅在会话内有效(视频 URL 本身不持久化,顺序跟着重置即可)。
   const [clipOrder, setClipOrder] = useState<string[]>([])
@@ -529,6 +977,10 @@ function WorkspacePage() {
   // 故事板图放大预览(2026/06 跟分镜图对齐):点图片打开全屏模态。
   // 故事板没有 history 多代概念(每个 group 只 1 张故事板图),模态最简。
   const [storyboardPreview, setStoryboardPreview] = useState<{ groupId: string } | null>(null)
+  // 2026/06:故事板图按意见重生的输入 + busy 状态。
+  // 跟 shotModInput/shotModBusy 对称,但故事板没有"多代"概念,所以一组只有 1 张。
+  const [storyboardModInput, setStoryboardModInput] = useState('')
+  const [storyboardModBusy, setStoryboardModBusy] = useState(false)
   const [shotPreview, setShotPreview] = useState<{ groupId: string; shotId: string } | null>(null)
   const [shotSelectedGenIdx, setShotSelectedGenIdx] = useState(0)
   const [shotModInput, setShotModInput] = useState('')
@@ -597,6 +1049,7 @@ function WorkspacePage() {
         if ((wd as any).selectedCharImages) setSelectedCharImages((wd as any).selectedCharImages as Record<string, string>)
         if (wd.panelImages) setPanelImages(wd.panelImages as Record<string, string>)
         if (wd.sceneImages) setSceneImages(wd.sceneImages as Record<string, string[]>)
+        if ((wd as any).selectedSceneImages) setSelectedSceneImages((wd as any).selectedSceneImages as Record<string, string | null>)
         // 2026/06:跨 session 恢复入库后的永久视频 / 故事板图 URL。
         // 这些字段是老数据没有的(2026/06 前不持久化),所以可选读。
         if (wd.groupVideos && typeof wd.groupVideos === 'object') {
@@ -610,6 +1063,54 @@ function WorkspacePage() {
       .catch(() => { setDataLoaded(true) })
     return () => { cancelled = true }
   }, [workspaceId, loadProject, callLoadWorkspace])
+
+  // 2026/06:故事板图自动入库 —— 监听 groupStoryboards 变化,每个 succeeded
+  // 且未入库的项自动调 saveOneStoryboard,把临时 TOS URL 替换成永久
+  // Supabase Storage URL。**根本解决** Seedream TOS URL 24h 过期导致"故事板
+  // 图突然打不开 / 显示已过期"的问题 —— 不再依赖用户点「保存」按钮。
+  //
+  // 必须放在 workspaceId 声明(line 596)之后,避免 TDZ ReferenceError。
+  // 行为对齐 character/scene 自动入库(同一个 useEffect 模式):
+  //   - dedupeByUrlSet:同 url 已发起的请求会被 dedupe 掉,避免每个组件
+  //     重渲染都重新下载上传
+  //   - 失败不上 toast(避免每次刷新都刷错误),仅在 dev console 打 warn
+  const autoSavingStoryboardsRef = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (!user || !workspaceId) return
+    const entries = Object.entries(groupStoryboards)
+    for (const [gid, item] of entries) {
+      if (item.status !== 'succeeded' || !item.url) continue
+      // 已入库的跳过(URL 是 supabase.co / 自己的 storage 域名)
+      if (
+        item.url.includes('.supabase.co') ||
+        item.url.includes('.supabase.in') ||
+        item.url.includes('/storage/v1/object/public/workspace-media/') ||
+        item.url.includes('/object/public/workspace-media/')
+      ) continue
+      // 同 url 已发起的请求跳过(防重)
+      if (autoSavingStoryboardsRef.current.has(item.url)) continue
+      autoSavingStoryboardsRef.current.add(item.url)
+      void (async () => {
+        try {
+          const r = await callSaveOneStoryboard({
+            data: { workspaceId, groupId: gid, url: item.url },
+          })
+          if (r.ok && r.persisted && r.url && r.url !== item.url) {
+            // 替换为永久 URL
+            setGroupStoryboards((m) => {
+              const cur = m[gid]
+              if (!cur || cur.url !== item.url) return m  // 用户已经又生成了
+              return { ...m, [gid]: { ...cur, url: r.url } }
+            })
+          }
+        } catch (e) {
+          console.warn(`[storyboard auto-save] ${gid} 失败:`, e)
+        } finally {
+          autoSavingStoryboardsRef.current.delete(item.url)
+        }
+      })()
+    }
+  }, [groupStoryboards, user, workspaceId, callSaveOneStoryboard])
 
   // 2026/06:同步 clipOrder 与 data.storyboardGroups。
   // - 新生成的分镜组自动追加到末尾
@@ -1639,7 +2140,12 @@ function WorkspacePage() {
     instruction: string,
   ) {
     const history = sceneImages[s.id] ?? []
-    const referenceUrl = history.at(-1)
+    // 2026/06:跟角色 selectedCharImages 对称 —— 优先用用户"选中"的那张作 reference,
+    // 没选 / 选中的 url 已不在 history 里 → fallback 最新一张
+    const pinned = selectedSceneImagesRef.current[s.id]
+    const referenceUrl = (pinned && history.includes(pinned))
+      ? pinned
+      : history.at(-1)
     if (!referenceUrl) {
       toast.error('该场景还没生成,无法重生')
       return false
@@ -1840,6 +2346,10 @@ function WorkspacePage() {
         ...d,
         storyboardGroups: d.storyboardGroups.filter((g) => g.episodeIndex !== selectedEpisodeIndex),
       }))
+      // 2026/06:同步清掉 plotText 行内编辑的 draft —— 老 group id 已被 wipe,留着会占内存
+      // 且下一次编辑同 id 的新 group 时可能误用旧草稿。
+      setGroupPlotDraft({})
+      setEditingGroupId(null)
       const stream = (await callGenerateStoryboard({
         data: {
           episodeText: epText,
@@ -2019,6 +2529,154 @@ function WorkspacePage() {
   }
 
   /**
+   * 2026/06:在 shot 上加 / 减角色(写入 shot.characterIds,fallback 路径
+   * 下同时也写 group.characterIds,避免减完角色后下次又因为 fallback 出现)。
+   * 操作:
+   *   - add:    shot.characterIds.push(cid);group.characterIds 也确保包含
+   *   - remove: shot.characterIds 移除;group.characterIds 不动(其他 shot 可能还要)
+   */
+  function setShotCharacterMembership(groupId: string, shotId: string, characterId: string, action: 'add' | 'remove') {
+    setData((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        storyboardGroups: prev.storyboardGroups.map((g) => {
+          if (g.id !== groupId) return g
+          const newGroupCharIds = action === 'add' && !g.characterIds.includes(characterId)
+            ? [...g.characterIds, characterId]
+            : g.characterIds
+          return {
+            ...g,
+            characterIds: newGroupCharIds,
+            shots: g.shots.map((s) => {
+              if (s.id !== shotId) return s
+              // 该 shot 当前 effective 列表(决定从哪改)
+              const current = pickShotCharacterIds(s, g)
+              const next = action === 'add'
+                ? (current.includes(characterId) ? current : [...current, characterId])
+                : current.filter((c) => c !== characterId)
+              return { ...s, characterIds: next }
+            }),
+          }
+        }),
+      }
+    })
+  }
+
+  /** 2026/06:覆盖设置 shot 的场景 id(null = 显式无场景) */
+  function setShotScene(groupId: string, shotId: string, sceneId: string | null) {
+    setData((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        storyboardGroups: prev.storyboardGroups.map((g) => {
+          if (g.id !== groupId) return g
+          return {
+            ...g,
+            // 同时把该场景加到 group 的 scene 选项里(如果 group 还没设这个场景,设为它)
+            // 这样未来如果把 shot 的 sceneId 清掉,能 fallback 到一个合理的 group scene
+            sceneId: g.sceneId ?? sceneId ?? undefined,
+            shots: g.shots.map((s) =>
+              s.id === shotId ? { ...s, sceneId } : s,
+            ),
+          }
+        }),
+      }
+    })
+  }
+
+  /**
+   * 2026/06:在 group 层级加 / 减角色(直接写 group.characterIds)。
+   *   - add:    group.characterIds 追加(已存在则不重复)
+   *   - remove: group.characterIds 移除(其他 group 不受影响)
+   * 下游所有 pickShotCharacterIds(shot, group) / 一键生成 / 故事板图 / 按意见重生
+   * 都会通过回退链路读到最新的 group.characterIds,无需后端改动。
+   */
+  function setGroupCharacterIds(groupId: string, characterId: string, action: 'add' | 'remove') {
+    setData((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        storyboardGroups: prev.storyboardGroups.map((g) => {
+          if (g.id !== groupId) return g
+          const next = action === 'add'
+            ? (g.characterIds.includes(characterId) ? g.characterIds : [...g.characterIds, characterId])
+            : g.characterIds.filter((c) => c !== characterId)
+          return { ...g, characterIds: next }
+        }),
+      }
+    })
+  }
+
+  /**
+   * 2026/06:设置 group 层级场景 id。同步把 sceneLocation 写成该场景的
+   * location/slug,跟 runEnterStoryboard 行 2204 的格式保持一致,这样 header
+   * 那行 📍 sceneLocation 标签能立即跟着变(否则会出现 dropdown 选了新场景
+   * 但 header 📍 不动的视觉割裂)。
+   *   - sceneId: 切到指定场景
+   *   - null:    清空(group.sceneId = undefined,sceneLocation = undefined)
+   */
+  function setGroupScene(groupId: string, sceneId: string | null) {
+    setData((prev) => {
+      if (!prev) return prev
+      const target = sceneId ? prev.scenes.find((s) => s.id === sceneId) : undefined
+      return {
+        ...prev,
+        storyboardGroups: prev.storyboardGroups.map((g) => {
+          if (g.id !== groupId) return g
+          return {
+            ...g,
+            sceneId: sceneId ?? undefined,
+            sceneLocation: target ? (target.location || target.slug) : undefined,
+          }
+        }),
+      }
+    })
+  }
+
+  /**
+   * 2026/06:把 group.plotText 写回。draft 与现有值相同则 bail out。
+   * 不在 useEffect 里跑(避免在编辑过程中被 composePlotText 覆盖)。
+   */
+  function commitGroupPlot(groupId: string) {
+    const draft = groupPlotDraft[groupId]
+    if (draft === undefined) { setEditingGroupId(null); return }
+    setData((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        storyboardGroups: prev.storyboardGroups.map((g) =>
+          g.id === groupId && g.plotText !== draft ? { ...g, plotText: draft } : g,
+        ),
+      }
+    })
+    setEditingGroupId((cur) => (cur === groupId ? null : cur))
+  }
+
+  /** 把 shot 的 override 全部清掉,恢复到 group 的默认 */
+  function resetShotOverrides(groupId: string, shotId: string) {
+    setData((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        storyboardGroups: prev.storyboardGroups.map((g) => {
+          if (g.id !== groupId) return g
+          return {
+            ...g,
+            shots: g.shots.map((s) => {
+              if (s.id !== shotId) return s
+              const next: StoryboardShot = { ...s }
+              delete next.characterIds
+              delete next.sceneId
+              return next
+            }),
+          }
+        }),
+      }
+    })
+  }
+
+  /**
    * 对某个 StoryboardGroup 的某个 shot 做多图融合,产出最终分镜图。
    * 策略:
    *  - 角色图:从 charImages[角色ID] / charImages[角色ID::lookId] 取最新一张
@@ -2036,11 +2694,14 @@ function WorkspacePage() {
     // ⚠️ qwen-image-2.0-pro 端点限制:0 张图 = T2I,1~3 张图 = I2I。
     //    超过 3 张会报 400 "Model 'qwen-image-2.0-2in1' supports 0~3 image content items"。
     //    策略:有场景图 → 最多 2 张角色图;无场景图 → 最多 3 张角色图。
+    // 2026/06:按 shot 覆盖 > group 默认 取角色列表和场景。
+    const shotCharIds = pickShotCharacterIds(shot, group)
+    const shotSceneId = pickShotSceneId(shot, group)
     const charImageUrls: string[] = []
     const charNames: string[] = []
-    const hasScene = !!(group.sceneId && sceneImages[group.sceneId]?.length)
+    const hasScene = !!(shotSceneId && sceneImages[shotSceneId]?.length)
     const maxChars = hasScene ? 2 : 3
-    for (const cid of group.characterIds) {
+    for (const cid of shotCharIds) {
       if (charImageUrls.length >= maxChars) break
       // 用 pickShotCharImageUrl 取该 shot 选定的该角色图 —— 优先按 shot.characterRefs + 选中 url
       const url = pickShotCharImageUrl(shot, cid)
@@ -2050,13 +2711,13 @@ function WorkspacePage() {
         charNames.push(ch?.name ?? cid)
       }
     }
-    // 准备场景图
+    // 准备场景图(优先用用户选中的那张)
     let sceneImageUrl: string | undefined
-    if (group.sceneId && sceneImages[group.sceneId]?.length) {
-      sceneImageUrl = sceneImages[group.sceneId]!.at(-1)
+    if (shotSceneId) {
+      sceneImageUrl = pickSceneImageUrl(shotSceneId)
     }
     // 场景描述
-    const sceneObj = data.scenes.find((s) => s.id === group.sceneId)
+    const sceneObj = data.scenes.find((s) => s.id === shotSceneId)
 
     setBusyShotImages((s) => {
       const n = new Set(s)
@@ -2159,14 +2820,15 @@ function WorkspacePage() {
     const instruction = shotModInput.trim()
     if (!referenceUrl || !instruction) return
 
-    // 拼角色 / 场景参考 —— 跟 generateShotImageForGroup 同样的截断策略
+    // 2026/06:按 shot 覆盖 > group 默认 取角色 + 场景(同 generateShotImageForGroup)。
+    const shotCharIds = pickShotCharacterIds(shot, group)
+    const shotSceneId = pickShotSceneId(shot, group)
     const charImageUrls: string[] = []
     const charNames: string[] = []
-    const hasScene = !!(group.sceneId && sceneImages[group.sceneId]?.length)
+    const hasScene = !!(shotSceneId && sceneImages[shotSceneId]?.length)
     const maxChars = hasScene ? 2 : 3
-    for (const cid of group.characterIds) {
+    for (const cid of shotCharIds) {
       if (charImageUrls.length >= maxChars) break
-      // 用 pickShotCharImageUrl 取该 shot 选定的该角色图(同 generateShotImageForGroup)
       const url = pickShotCharImageUrl(shot, cid)
       if (url) {
         charImageUrls.push(url)
@@ -2174,8 +2836,8 @@ function WorkspacePage() {
         charNames.push(ch?.name ?? cid)
       }
     }
-    const sceneImageUrl = group.sceneId && sceneImages[group.sceneId]?.length ? sceneImages[group.sceneId]!.at(-1) : undefined
-    const sceneObj = data.scenes.find((s) => s.id === group.sceneId)
+    const sceneImageUrl = shotSceneId ? pickSceneImageUrl(shotSceneId) : undefined
+    const sceneObj = data.scenes.find((s) => s.id === shotSceneId)
 
     setShotModBusy(true)
     try {
@@ -2467,8 +3129,24 @@ function WorkspacePage() {
 
     setGroupStoryboards((m) => ({ ...m, [groupId]: { url: '', status: 'running' } }))
 
-    // 收集场景档案
-    const sceneObj = data.scenes.find((s) => s.id === group.sceneId)
+    // 2026/06:故事板 pitch deck 是"组级"产物,代表整组的视觉摘要。
+    //   - 角色:用各 shot 有效角色列表的并集(任一 shot 显式加的角色都会进 pitch deck)
+    //   - 场景:取**第一个 shot** 的有效场景(因为 pitch deck 通常展示主镜头画面)
+    //   - 没有 shot 的空 group 才 fallback 到 group.characterIds / group.sceneId
+    const unionCharIds = (() => {
+      if (group.shots.length === 0) return group.characterIds ?? []
+      const set = new Set<string>()
+      for (const s of group.shots) {
+        for (const cid of pickShotCharacterIds(s, group)) set.add(cid)
+      }
+      // 如果所有 shot 都没 override,set 跟 group.characterIds 完全一致
+      // 但有 override 时,union 可能超过 group(显式 add 的角色)
+      return Array.from(set)
+    })()
+    const deckSceneId = group.shots.length > 0
+      ? pickShotSceneId(group.shots[0], group) ?? group.sceneId
+      : group.sceneId
+    const sceneObj = data.scenes.find((s) => s.id === deckSceneId)
     const scene = sceneObj
       ? {
           slug: sceneObj.slug,
@@ -2481,7 +3159,7 @@ function WorkspacePage() {
 
     // 收集角色档案(2026/06:撤掉 .slice(0, 3) 让文字描述层全员上;
     // 图片层另有 4 张总上限,在下面 referenceImages 收集时挑)
-    const characters = (group.characterIds || [])
+    const characters = (unionCharIds || [])
       .map((cid) => {
         const c = data.characters.find((x) => x.id === cid)
         if (!c) return null
@@ -2514,10 +3192,8 @@ function WorkspacePage() {
     const REF_MAX = 4
     const referenceImages: string[] = []
     const referenceImageLabels: string[] = []
-    // 场景图
-    const sceneImgUrl = group.sceneId && sceneImages[group.sceneId]?.length
-      ? sceneImages[group.sceneId]!.at(-1)
-      : undefined
+    // 场景图(2026/06:用用户选中的那张,fallback 最新一张)
+    const sceneImgUrl = deckSceneId ? pickSceneImageUrl(deckSceneId) : undefined
     if (sceneImgUrl) {
       referenceImages.push(sceneImgUrl)
       const sLabel = sceneObj
@@ -2525,8 +3201,8 @@ function WorkspacePage() {
         : '场景'
       referenceImageLabels.push(sLabel)
     }
-    // 角色图:按 group.characterIds 顺序填,直到 4 张上限
-    for (const cid of group.characterIds || []) {
+    // 角色图:按 unionCharIds(各 shot 有效角色的并集)顺序填,直到 4 张上限
+    for (const cid of unionCharIds || []) {
       if (referenceImages.length >= REF_MAX) break
       const c = data.characters.find((x) => x.id === cid)
       if (!c) continue
@@ -2588,6 +3264,139 @@ function WorkspacePage() {
     } catch (e) {
       setGroupStoryboards((m) => ({ ...m, [groupId]: { url: '', status: 'failed' } }))
       toast.error(e instanceof Error ? e.message : '故事板生成失败')
+    }
+  }
+
+  /**
+   * 2026/06:对当前故事板图按用户意见重生。
+   * 跟 generateMangaStoryboardForGroup 类似,但传 referenceImageUrl(当前故事板)
+   * 作 image 1,server 端 buildRegenPitchDeckPrompt 会写明"以图1为基础,
+   * 只改用户提到的部分"。
+   */
+  async function handleRegenStoryboard() {
+    if (!storyboardPreview || storyboardModBusy) return
+    const { groupId } = storyboardPreview
+    const group = data.storyboardGroups.find((g) => g.id === groupId)
+    if (!group) return
+    const current = groupStoryboards[groupId]
+    if (!current?.url) return
+    const instruction = storyboardModInput.trim()
+    if (!instruction) return
+
+    // 2026/06:跟 generateMangaStoryboardForGroup 一致 —— 用各 shot 有效角色并集 +
+    //   第一个 shot 的有效场景,体现 shot 级 override。
+    const unionCharIds = (() => {
+      if (group.shots.length === 0) return group.characterIds ?? []
+      const set = new Set<string>()
+      for (const s of group.shots) {
+        for (const cid of pickShotCharacterIds(s, group)) set.add(cid)
+      }
+      return Array.from(set)
+    })()
+    const deckSceneId = group.shots.length > 0
+      ? pickShotSceneId(group.shots[0], group) ?? group.sceneId
+      : group.sceneId
+    const sceneObj = data.scenes.find((s) => s.id === deckSceneId)
+    const scene = sceneObj
+      ? {
+          slug: sceneObj.slug,
+          location: sceneObj.location,
+          timeOfDay: sceneObj.timeOfDay,
+          profile: sceneObj.action,
+        }
+      : undefined
+
+    const characters = (unionCharIds || [])
+      .map((cid) => {
+        const c = data.characters.find((x) => x.id === cid)
+        if (!c) return null
+        return {
+          name: c.name,
+          roleLabel: c.roleLabel,
+          age: c.age,
+          faceDescription: c.faceDescription,
+          bodyDescription: c.bodyDescription,
+          clothingDescription: c.clothingDescription,
+          palette: c.palette,
+        }
+      })
+      .filter(Boolean) as Array<{
+        name: string
+        roleLabel?: string
+        age?: number
+        faceDescription?: string
+        bodyDescription?: string
+        clothingDescription?: string
+        palette?: string[]
+      }>
+
+    const groupDuration = (group.endSec ?? 0) - (group.startSec ?? 0)
+    const perShotSec = group.shots.length > 0 ? groupDuration / group.shots.length : 5
+    const shots = group.shots.map((s) => ({
+      shotType: s.shotType,
+      shotTypeLabel: s.shotTypeLabel,
+      action: s.action,
+      camera: s.camera,
+      durationSec: (s.startSec != null && s.endSec != null) ? (s.endSec - s.startSec) : perShotSec,
+      startSec: s.startSec,
+      endSec: s.endSec,
+    }))
+
+    // 收集参考图:场景 1 张 + 角色 ≤3 张,Seedream 上限 4 张
+    const REF_MAX = 4
+    const referenceImages: string[] = []
+    const referenceImageLabels: string[] = []
+    const sceneImgUrl = deckSceneId ? pickSceneImageUrl(deckSceneId) : undefined
+    if (sceneImgUrl) {
+      referenceImages.push(sceneImgUrl)
+      referenceImageLabels.push(
+        sceneObj ? `场景: ${sceneObj.location || sceneObj.slug}${sceneObj.timeOfDay ? ` · ${sceneObj.timeOfDay}` : ''}` : '场景',
+      )
+    }
+    for (const cid of unionCharIds || []) {
+      if (referenceImages.length >= REF_MAX) break
+      const c = data.characters.find((x) => x.id === cid)
+      if (!c) continue
+      const pinned = selectedCharImages[c.id]
+      const generations = charImages[c.id] ?? []
+      const url = (pinned && generations.includes(pinned) ? pinned : generations.at(-1))
+      if (!url) continue
+      referenceImages.push(url)
+      referenceImageLabels.push(`角色: ${c.name}${c.roleLabel ? ` (${c.roleLabel})` : ''}`)
+    }
+
+    setStoryboardModBusy(true)
+    try {
+      const res = await callRegenStoryboard({
+        data: {
+          referenceImageUrl: current.url,
+          userInstruction: instruction,
+          projectStyle: project?.style,
+          groupLabel: group.plotText?.slice(0, 60),
+          plotText: group.plotText || '(无剧情摘要)',
+          scene,
+          characters,
+          shots,
+          referenceImages,
+          referenceImageLabels,
+          model: project?.storyboardModel,
+          previewOnly: viewPromptsModeRef.current,
+        },
+      })
+      if (interceptPromptPreview(`第 ${group.index} 组 · 故事板按意见重生`, res)) {
+        return
+      }
+      if (res?.ok && res.url) {
+        setGroupStoryboards((m) => ({ ...m, [groupId]: { url: res.url!, status: 'succeeded' } }))
+        toast.success('已按意见重生故事板')
+        setStoryboardModInput('')
+      } else {
+        toast.error(res?.error || '故事板重生失败')
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : '故事板重生失败')
+    } finally {
+      setStoryboardModBusy(false)
     }
   }
 
@@ -4051,10 +4860,15 @@ function WorkspacePage() {
                       // 的 action/beats/dialogue 移到点击后的放大 lightbox 里展示。
                       <div className="px-6 py-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
                         {epScenes.map((s) => {
-                          const hasImg = !!(sceneImages[s.id] && sceneImages[s.id].length > 0)
+                          const history = sceneImages[s.id] ?? []
+                          const hasImg = history.length > 0
                           const sceneRegenMode = regenBusyKeys.get(s.id)
                           const isRegening = sceneRegenMode !== undefined
-                          const sceneImgCount = sceneImages[s.id]?.length ?? 0
+                          const sceneImgCount = history.length
+                          // 2026/06:跟角色 selectedCharImages 对称 —— 选中的图作封面
+                          const pinned = selectedSceneImages[s.id]
+                          const coverUrl = (pinned && history.includes(pinned)) ? pinned : history.at(-1)
+                          const isPinned = !!pinned && pinned === coverUrl
                           return (
                             <div
                               key={s.id}
@@ -4067,7 +4881,11 @@ function WorkspacePage() {
                                   setScenePreview(s)
                                 }
                               }}
-                              className="group relative text-left rounded-xl border border-border bg-bg-elevated/40 hover:border-accent hover:bg-bg-elevated/70 hover:-translate-y-0.5 transition-all overflow-hidden flex flex-col focus:outline-none focus:ring-2 focus:ring-accent/40 cursor-pointer"
+                              className={`group relative text-left rounded-xl border bg-bg-elevated/40 hover:border-accent hover:bg-bg-elevated/70 hover:-translate-y-0.5 transition-all overflow-hidden flex flex-col focus:outline-none focus:ring-2 focus:ring-accent/40 cursor-pointer ${
+                                isPinned
+                                  ? 'border-2 border-accent shadow-[0_0_0_3px_rgba(99,102,241,0.25)]'
+                                  : 'border border-border'
+                              }`}
                             >
                               {/* Image area — 16:9,跟场景图实际比例对齐 */}
                               <div className="relative w-full aspect-video bg-bg-base overflow-hidden">
@@ -4078,7 +4896,7 @@ function WorkspacePage() {
                                   </div>
                                 ) : hasImg ? (
                                   <img
-                                    src={sceneImages[s.id]!.at(-1)!}
+                                    src={coverUrl!}
                                     alt={s.slug}
                                     loading="lazy"
                                     className="absolute inset-0 w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-300"
@@ -4097,6 +4915,41 @@ function WorkspacePage() {
                                   <span className="absolute top-1.5 left-1.5 text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/60 text-white">
                                     {sceneImgCount} 张
                                   </span>
+                                )}
+                                {/* 2026/06:跟角色卡对齐 —— "已选为推荐" 角标 + 右上"选中"按钮 */}
+                                {isPinned && (
+                                  <div className="absolute top-1.5 right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent text-accent-foreground text-[10px] font-bold shadow-md">
+                                    <Target size={10} /> 已选为推荐
+                                  </div>
+                                )}
+                                {hasImg && !isRegening && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      // 互斥:同 sceneId 只能选 1 张,这里选/取消切换
+                                      if (isPinned) {
+                                        setSelectedSceneImages((m) => {
+                                          const { [s.id]: _omit, ...rest } = m
+                                          return rest
+                                        })
+                                      } else {
+                                        setSelectedSceneImages((m) => ({ ...m, [s.id]: coverUrl! }))
+                                      }
+                                    }}
+                                    title={isPinned ? '已选中此图作为场景 reference,再点取消' : '把这张设为场景 reference(分镜/故事板/按意见重生都会用)'}
+                                    className={`absolute bottom-1.5 right-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium backdrop-blur-sm transition ${
+                                      isPinned
+                                        ? 'bg-accent text-accent-foreground shadow-sm'
+                                        : 'bg-black/70 text-white hover:bg-black/90'
+                                    }`}
+                                  >
+                                    {isPinned ? (
+                                      <><Check size={10} /> 已选中</>
+                                    ) : (
+                                      <><Target size={10} /> 设为推荐</>
+                                    )}
+                                  </button>
                                 )}
                               </div>
 
@@ -4709,28 +5562,70 @@ function WorkspacePage() {
                           内容超出由 cell 自身 overflow-y-auto 滑;故事板图片配套
                           缩到 max-h-28(112px)以匹配新行高。 */}
                       <div className="grid grid-cols-1 md:grid-cols-[1fr_2.5fr_1.5fr] gap-3">
-                        {/* 左:plot 描述(结构化列表,按 shot 拆)+ 角色列表(点击圆圈弹下拉选形象) */}
-                        <div className="rounded-lg border border-border bg-bg-base/40 p-3 space-y-2 max-h-[220px] overflow-y-auto">
-                          <div className="text-[10px] tracking-widest uppercase text-text-muted">剧情 · Plot</div>
-                          {/* 2026/06 改造:plotText 改为按 shot 拆分的结构化列表,
-                              每行格式: 分镜N: Xs-Xs · 景别 · 动作 · 镜头。
-                              用 font-mono 等宽字体让排版对齐。 */}
-                          <pre className="text-[11px] text-text-secondary leading-relaxed font-mono whitespace-pre-wrap break-words m-0">
+                        {/* 左:plot 描述(可编辑)+ 角色列表(增/减 + look-switcher)+ 场景选择 */}
+                        <div className="rounded-lg border border-border bg-bg-base/40 p-3 space-y-2 max-h-[280px] overflow-y-auto">
+                          {/* 剧情 · Plot label + 编辑/完成 切换 */}
+                          <div className="flex items-center justify-between">
+                            <div className="text-[10px] tracking-widest uppercase text-text-muted">剧情 · Plot</div>
+                            {editingGroupId === g.id ? (
+                              <button
+                                type="button"
+                                onClick={() => commitGroupPlot(g.id)}
+                                className="inline-flex items-center gap-1 text-[10px] text-accent hover:text-accent/80 transition"
+                                title="保存修改"
+                              >
+                                <Check size={11} /> 完成
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  // 切到其他 group 编辑时,先把上一个 group 的草稿落盘
+                                  if (editingGroupId && editingGroupId !== g.id) {
+                                    commitGroupPlot(editingGroupId)
+                                  }
+                                  setEditingGroupId(g.id)
+                                  setGroupPlotDraft((prev) => ({ ...prev, [g.id]: g.plotText }))
+                                }}
+                                className="inline-flex items-center gap-1 text-[10px] text-text-muted hover:text-accent transition"
+                                title="编辑剧情"
+                              >
+                                <Pencil size={11} /> 编辑
+                              </button>
+                            )}
+                          </div>
+                          {/* plotText:预读 <pre> / 编辑 <textarea> 切换 */}
+                          {editingGroupId === g.id ? (
+                            <textarea
+                              value={groupPlotDraft[g.id] ?? g.plotText}
+                              onChange={(e) => setGroupPlotDraft((prev) => ({ ...prev, [g.id]: e.target.value }))}
+                              className="w-full text-[11px] text-text-secondary leading-relaxed font-mono p-2 rounded border border-accent/40 bg-bg-elevated/40 min-h-[80px] resize-y"
+                              autoFocus
+                            />
+                          ) : (
+                            // 2026/06 改造:plotText 改为按 shot 拆分的结构化列表,
+                            // 每行格式: 分镜N: Xs-Xs · 景别 · 动作 · 镜头。
+                            // 用 font-mono 等宽字体让排版对齐。
+                            <pre className="text-[11px] text-text-secondary leading-relaxed font-mono whitespace-pre-wrap break-words m-0">
 {g.plotText}
-                          </pre>
-                          {g.characterIds.length > 0 && (
-                            <div
-                              className="pt-2 mt-1 border-t border-border/60 space-y-1 relative"
-                              // 2026/06:点击圆圈外的地方(下拉菜单外)时关闭下拉
-                              onClick={(e) => {
-                                if ((e.target as HTMLElement).closest('[data-look-menu]')) return
-                                if ((e.target as HTMLElement).closest('[data-look-trigger]')) return
-                                setOpenLookMenu(null)
-                              }}
-                            >
-                              <div className="text-[10px] tracking-widest uppercase text-text-muted flex items-center justify-between">
-                                <span>涉及角色(点击圆圈选形象)</span>
-                              </div>
+                            </pre>
+                          )}
+                          {/* 角色 section —— 始终渲染(2026/06:从 g.characterIds.length>0 条件提到外层,
+                              让空 group 也能点 + 加角色) */}
+                          <div
+                            className="pt-2 mt-1 border-t border-border/60 space-y-1.5 relative"
+                            // 2026/06:点击圆圈外的地方(下拉菜单外)时关闭下拉
+                            onClick={(e) => {
+                              if ((e.target as HTMLElement).closest('[data-look-menu]')) return
+                              if ((e.target as HTMLElement).closest('[data-look-trigger]')) return
+                              setOpenLookMenu(null)
+                            }}
+                          >
+                            <div className="text-[10px] tracking-widest uppercase text-text-muted flex items-center justify-between">
+                              <span>涉及角色(点击圆圈选形象)</span>
+                              <span className="text-[9px]">{g.characterIds.length} 个</span>
+                            </div>
+                            {g.characterIds.length > 0 ? (
                               <div className="flex flex-wrap gap-1.5">
                                 {g.characterIds.map((cid) => {
                                   const ch = data.characters.find((c) => c.id === cid)
@@ -4745,35 +5640,52 @@ function WorkspacePage() {
                                   const menuOpen = openLookMenu === menuKey
                                   return (
                                     <div key={cid} className="relative">
-                                      <button
-                                        type="button"
-                                        data-look-trigger
-                                        onClick={() => {
-                                          if (!hasVariants) return
-                                          setOpenLookMenu(menuOpen ? null : menuKey)
-                                        }}
-                                        disabled={!hasVariants}
-                                        className={`flex items-center gap-1.5 px-1.5 py-1 rounded border transition ${
-                                          hasVariants
-                                            ? 'bg-bg-elevated border-border hover:border-accent cursor-pointer'
-                                            : 'bg-bg-elevated/50 border-border/40 cursor-default'
-                                        }`}
-                                        title={hasVariants
-                                          ? `点击弹出下拉,选"${baseName}"的不同形象 (当前 ${variantIdx + 1}/${variants.length}: ${selectedCh.name})`
-                                          : `${selectedCh.name} (无其他形象可切换)`}
-                                      >
-                                        <div className="w-5 h-5 rounded-full overflow-hidden bg-bg-base shrink-0">
-                                          {img
-                                            ? <img src={img} alt={selectedCh.name} className="w-full h-full object-cover" />
-                                            : <div className="w-full h-full flex items-center justify-center text-[8px] text-text-muted">N/A</div>}
-                                        </div>
-                                        <span className="text-[11px] text-text-primary">{baseName}</span>
-                                        {hasVariants && (
-                                          <span className="text-[9px] px-1 rounded bg-accent/20 text-accent font-mono">
-                                            {variantIdx + 1}/{variants.length}
-                                          </span>
-                                        )}
-                                      </button>
+                                      <div className="flex items-center gap-0.5">
+                                        <button
+                                          type="button"
+                                          data-look-trigger
+                                          onClick={() => {
+                                            if (!hasVariants) return
+                                            setOpenLookMenu(menuOpen ? null : menuKey)
+                                          }}
+                                          disabled={!hasVariants}
+                                          className={`flex items-center gap-1.5 px-1.5 py-1 rounded border transition ${
+                                            hasVariants
+                                              ? 'bg-bg-elevated border-border hover:border-accent cursor-pointer'
+                                              : 'bg-bg-elevated/50 border-border/40 cursor-default'
+                                          }`}
+                                          title={hasVariants
+                                            ? `点击弹出下拉,选"${baseName}"的不同形象 (当前 ${variantIdx + 1}/${variants.length}: ${selectedCh.name})`
+                                            : `${selectedCh.name} (无其他形象可切换)`}
+                                        >
+                                          <div className="w-5 h-5 rounded-full overflow-hidden bg-bg-base shrink-0">
+                                            {img
+                                              ? <img src={img} alt={selectedCh.name} className="w-full h-full object-cover" />
+                                              : <div className="w-full h-full flex items-center justify-center text-[8px] text-text-muted">N/A</div>}
+                                          </div>
+                                          <span className="text-[11px] text-text-primary">{baseName}</span>
+                                          {hasVariants && (
+                                            <span className="text-[9px] px-1 rounded bg-accent/20 text-accent font-mono">
+                                              {variantIdx + 1}/{variants.length}
+                                            </span>
+                                          )}
+                                        </button>
+                                        {/* 2026/06:本组层级 × 移除按钮 —— 直接改 group.characterIds,
+                                            下游所有 pickShotCharacterIds(shot, group) 回退链路自动生效。
+                                            stopPropagation:避免冒泡关掉同行的 look 菜单(虽然不会关掉也没坏处,
+                                            但保持一致,像 addable 列表那样不干扰邻居状态)。 */}
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation()
+                                            setGroupCharacterIds(g.id, cid, 'remove')
+                                          }}
+                                          className="shrink-0 p-1 rounded text-text-muted hover:text-rose-400 hover:bg-rose-500/10 transition"
+                                          title={`把 ${baseName} 从本组移除(不影响其他组)`}
+                                        >
+                                          <X size={10} />
+                                        </button>
+                                      </div>
                                       {/* 下拉:列出 base name 下的所有形象变体 */}
                                       {menuOpen && hasVariants && (
                                         <div
@@ -4811,8 +5723,22 @@ function WorkspacePage() {
                                   )
                                 })}
                               </div>
-                            </div>
-                          )}
+                            ) : (
+                              <div className="text-[10px] text-text-muted italic">本组暂无角色 → 用下方按钮加</div>
+                            )}
+                            {/* + 加角色 按钮(始终渲染;为空 group 提供入口) */}
+                            <GroupMembershipEditor
+                              group={g}
+                              characters={data.characters}
+                              onAdd={(cid) => setGroupCharacterIds(g.id, cid, 'add')}
+                            />
+                          </div>
+                          {/* 场景 section —— 始终渲染 */}
+                          <GroupSceneEditor
+                            group={g}
+                            scenes={data.scenes}
+                            onSet={(sid) => setGroupScene(g.id, sid)}
+                          />
                         </div>
                         {/* 中:分镜图 + 故事板 合并 cell(2026/06 改造)
                             上面 shots 2 列网格(更紧凑,描述/camera 折叠到 <details>),
@@ -4944,7 +5870,16 @@ function WorkspacePage() {
                             <div className="flex items-center justify-between">
                               <div className="text-[10px] tracking-widest uppercase text-text-muted">故事板 · Storyboard</div>
                               {groupStoryboards[g.id]?.status === 'succeeded' ? (
-                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-accent/15 text-accent border border-accent/30">已生成</span>
+                                brokenStoryboards.has(g.id) ? (
+                                  <span
+                                    className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 border border-amber-500/30"
+                                    title="故事板图 URL 已过期 / 加载失败,点击重新生成或保存入库"
+                                  >
+                                    已过期 · 需重生成
+                                  </span>
+                                ) : (
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-accent/15 text-accent border border-accent/30">已生成</span>
+                                )
                               ) : groupStoryboards[g.id]?.status === 'running' ? (
                                 <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-elevated border border-border text-text-muted">生成中…</span>
                               ) : groupStoryboards[g.id]?.status === 'failed' ? (
@@ -4959,6 +5894,8 @@ function WorkspacePage() {
                                 <img
                                   src={groupStoryboards[g.id]!.url}
                                   alt="故事板"
+                                  onLoad={() => clearStoryboardBroken(g.id)}
+                                  onError={() => markStoryboardBroken(g.id)}
                                   onClick={() => setStoryboardPreview({ groupId: g.id })}
                                   className="max-h-28 w-auto block cursor-zoom-in object-contain"
                                 />
@@ -5458,14 +6395,23 @@ function WorkspacePage() {
           直接打字"—— 比角色更轻量。功能上跟角色对齐:点修改 → 弹输入 →
           Enter 提交 → 重生 → 关闭。 */}
 
-      {/* ============= 场景卡片点击放大 lightbox(2026/06) =============
+      {/* ============= 场景卡片点击放大 lightbox(2026/06;二次扩展加历史) =============
           跟角色的"三栏 preview modal"不一样,这里按用户要求做轻量版:
-          大图占左,描述(action / beats / dialogue)列在右,关闭走背景点击
-          或 X 按钮。编辑输入由卡片底部「编辑」按钮 → openSceneModPanel
-          触发,不重复进 lightbox。 */}
+          大图占左,描述(action / beats / dialogue)列在右。
+          **2026/06 二次扩展**:左下加"历史缩略图条"(NEW + 已选角标 +
+          "设为推荐"按钮),跟角色 preview 对齐 —— 用户能看到所有历史
+          生成 + 选中其中一张作为后续 reference(分镜/故事板/按意见重生)。
+          关闭走背景点击或 X 按钮。编辑输入由卡片底部「编辑」按钮 →
+          openSceneModPanel 触发,不重复进 lightbox。 */}
       {scenePreview && (() => {
         const s = scenePreview
-        const currentUrl = sceneImages[s.id]?.at(-1)
+        const history = sceneImages[s.id] ?? []
+        // 2026/06:选中优先,没选 fallback 最新一张
+        const pinnedUrl = selectedSceneImages[s.id]
+        const currentUrl = (pinnedUrl && history.includes(pinnedUrl))
+          ? pinnedUrl
+          : history.at(-1)
+        const currentIdx = currentUrl ? Math.max(0, history.indexOf(currentUrl)) : -1
         return (
           <div
             className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-6"
@@ -5494,7 +6440,7 @@ function WorkspacePage() {
               </div>
               {/* Body: 大图 + 描述,深色背景让大图更显质感 */}
               <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[2fr_1fr]">
-                <div className="relative bg-black flex items-center justify-center min-h-[300px] max-h-[calc(90vh-110px)]">
+                <div className="relative bg-black flex items-center justify-center min-h-[300px] max-h-[calc(90vh-180px)]">
                   {currentUrl ? (
                     <img
                       src={currentUrl}
@@ -5505,6 +6451,50 @@ function WorkspacePage() {
                     <div className="flex flex-col items-center gap-2 text-text-muted p-8">
                       <ImageIcon size={40} className="opacity-50" />
                       <p className="text-sm">还没有生成场景图</p>
+                    </div>
+                  )}
+                  {/* 历史缩略图条:贴着大图底部,跟角色 preview 的左栏对齐 */}
+                  {history.length > 0 && (
+                    <div className="absolute bottom-2 left-2 right-2 flex items-center gap-1.5 overflow-x-auto py-1 px-1 rounded bg-black/50 backdrop-blur-sm">
+                      <span className="text-[9px] font-mono text-white/70 shrink-0 pr-1">历史 ({history.length})</span>
+                      {history.map((u, i) => {
+                        const isPinned = selectedSceneImages[s.id] === u
+                        return (
+                          <button
+                            key={`${u}-${i}`}
+                            type="button"
+                            onClick={() => {
+                              // 点缩略图 = 选为推荐(reference)
+                              setSelectedSceneImages((m) => {
+                                if (isPinned) {
+                                  const { [s.id]: _omit, ...rest } = m
+                                  return rest
+                                }
+                                return { ...m, [s.id]: u }
+                              })
+                            }}
+                            title={isPinned ? '已是推荐(reference) — 再点取消' : '把这张设为场景 reference'}
+                            className={`relative shrink-0 w-12 h-9 rounded overflow-hidden border-2 transition ${
+                              i === currentIdx
+                                ? 'border-accent'
+                                : isPinned
+                                  ? 'border-emerald-400/70'
+                                  : 'border-white/30 hover:border-white/70'
+                            }`}
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={u} alt={`历史 #${i + 1}`} loading="lazy" className="absolute inset-0 w-full h-full object-cover" />
+                            {i === history.length - 1 && (
+                              <span className="absolute top-0 left-0 px-1 text-[8px] font-bold bg-accent text-accent-foreground rounded-br">NEW</span>
+                            )}
+                            {isPinned && (
+                              <span className="absolute bottom-0 right-0 px-1 text-[8px] font-bold bg-emerald-500 text-white rounded-tl inline-flex items-center gap-0.5">
+                                <Target size={7} /> 选中
+                              </span>
+                            )}
+                          </button>
+                        )
+                      })}
                     </div>
                   )}
                 </div>
@@ -5553,7 +6543,12 @@ function WorkspacePage() {
 
       {sceneModOpen && (() => {
         const s = sceneModOpen
-        const currentUrl = sceneImages[s.id]?.at(-1)
+        const history = sceneImages[s.id] ?? []
+        // 2026/06:选中优先,跟角色 selectedCharImages 同语义
+        const pinnedUrl = selectedSceneImages[s.id]
+        const currentUrl = (pinnedUrl && history.includes(pinnedUrl))
+          ? pinnedUrl
+          : history.at(-1)
         return (
           <>
             <div
@@ -5584,7 +6579,7 @@ function WorkspacePage() {
               </div>
               <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
                 <div>
-                  <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1.5">当前参考图</div>
+                  <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1.5">当前参考图(基于此图修改)</div>
                   <div className="relative w-full aspect-video bg-bg-base rounded-lg overflow-hidden border border-border">
                     {currentUrl ? (
                       <img src={currentUrl} alt={s.slug} className="absolute inset-0 w-full h-full object-contain" />
@@ -5595,6 +6590,53 @@ function WorkspacePage() {
                     )}
                   </div>
                 </div>
+                {/* 2026/06:历史缩略图条 —— 跟角色 preview 对齐,允许在修改前换 reference */}
+                {history.length > 0 && (
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1.5">
+                      历史生成 ({history.length})
+                    </div>
+                    <div className="flex items-center gap-1.5 overflow-x-auto py-1">
+                      {history.map((u, i) => {
+                        const isPinned = selectedSceneImages[s.id] === u
+                        return (
+                          <button
+                            key={`${u}-${i}`}
+                            type="button"
+                            onClick={() => {
+                              setSelectedSceneImages((m) => {
+                                if (isPinned) {
+                                  const { [s.id]: _omit, ...rest } = m
+                                  return rest
+                                }
+                                return { ...m, [s.id]: u }
+                              })
+                            }}
+                            title={isPinned ? '已选为参考(reference),再点取消' : '把这张设为参考'}
+                            className={`relative shrink-0 w-14 h-10 rounded overflow-hidden border-2 transition ${
+                              u === currentUrl
+                                ? 'border-accent'
+                                : isPinned
+                                  ? 'border-emerald-400/70'
+                                  : 'border-border hover:border-accent/60'
+                            }`}
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={u} alt={`历史 #${i + 1}`} loading="lazy" className="absolute inset-0 w-full h-full object-cover" />
+                            {i === history.length - 1 && (
+                              <span className="absolute top-0 left-0 px-1 text-[8px] font-bold bg-accent text-accent-foreground rounded-br">NEW</span>
+                            )}
+                            {isPinned && (
+                              <span className="absolute bottom-0 right-0 px-1 text-[8px] font-bold bg-emerald-500 text-white rounded-tl inline-flex items-center gap-0.5">
+                                <Target size={7} /> 选中
+                              </span>
+                            )}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
                 <div>
                   <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1.5">修改意见</div>
                   <textarea
@@ -5853,21 +6895,26 @@ function WorkspacePage() {
                       <div className="text-[10px] uppercase tracking-wide text-text-muted">剧情</div>
                       <p className="text-[11px] text-text-secondary leading-relaxed mt-0.5">{group.plotText}</p>
                     </div>
-                    {group.characterIds.length > 0 && (
-                      <div className="pt-1">
-                        <div className="text-[10px] uppercase tracking-wide text-text-muted">涉及角色</div>
-                        <div className="flex flex-wrap gap-1 mt-1">
-                          {group.characterIds.map((cid) => {
-                            const ch = data.characters.find((c) => c.id === cid)
-                            return (
-                              <span key={cid} className="text-[10px] px-1.5 py-0.5 rounded border border-border bg-bg-elevated text-text-secondary">
-                                {ch?.name ?? cid}
-                              </span>
-                            )
-                          })}
-                        </div>
-                      </div>
-                    )}
+                    {/* 2026/06:本镜头的"实际生效角色列表"(shot 覆盖 group)。
+                        UI 支持加 / 减 + 选 look + 恢复默认(group 全集)。 */}
+                    <ShotMembershipEditor
+                      group={group}
+                      shot={shot}
+                      characters={data.characters}
+                      charImages={charImages}
+                      onAdd={(cid) => setShotCharacterMembership(group.id, shot.id, cid, 'add')}
+                      onRemove={(cid) => setShotCharacterMembership(group.id, shot.id, cid, 'remove')}
+                      onSetLook={(cid, imageKey) => updateShotCharacterRef(group.id, shot.id, cid, imageKey)}
+                      onReset={() => resetShotOverrides(group.id, shot.id)}
+                    />
+                    {/* 2026/06:本镜头的场景选择(shot 覆盖 group.sceneId) */}
+                    <ShotSceneEditor
+                      group={group}
+                      shot={shot}
+                      scenes={data.scenes}
+                      onSet={(sid) => setShotScene(group.id, shot.id, sid)}
+                      onReset={() => setShotScene(group.id, shot.id, null)}
+                    />
                   </div>
 
                   <div className="shrink-0 rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2">
@@ -5910,14 +6957,17 @@ function WorkspacePage() {
       })()}
 
       {/* ============= 故事板图放大模态(2026/06 跟分镜图对齐) =============
-          故事板没有 history 多代概念(每个 group 只 1 张),模态结构最简:
-          全屏黑底 + 居中显示 9:16 故事板图(我们的 size=1620x2880 9:16 竖屏)
-          + 顶部 X 关闭按钮。背景点击也关闭。 */}
+          2026/06 二次扩展:跟分镜图 preview 一样,加修改意见输入 + 发送按钮。
+          故事板没有 history 多代概念(每个 group 只 1 张),所以模态结构比
+          shot preview 简单:全屏黑底 + 左图 + 右修改输入。
+          16:9 故事板图展示在左半,modify 区域在右半。
+          背景点击只关闭(不重置 storyboardModInput,以防误触)。 */}
       {storyboardPreview && (() => {
         const url = groupStoryboards[storyboardPreview.groupId]?.url
         if (!url) return null
         const group = data.storyboardGroups.find((gg) => gg.id === storyboardPreview.groupId)
         const title = group ? `第 ${group.index} 组 · 故事板` : '故事板'
+        const isRunning = groupStoryboards[storyboardPreview.groupId]?.status === 'running'
         return (
           <div
             className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4"
@@ -5927,7 +6977,7 @@ function WorkspacePage() {
             aria-label="故事板预览"
           >
             <div
-              className="relative w-full max-w-[720px] h-full max-h-[88vh] flex flex-col"
+              className="relative w-full max-w-[1280px] h-full max-h-[90vh] flex flex-col"
               onClick={(e) => e.stopPropagation()}
             >
               {/* 顶部 bar:标题 + 关闭 */}
@@ -5942,15 +6992,106 @@ function WorkspacePage() {
                   <X size={16} />
                 </button>
               </div>
-              {/* 故事板图:object-contain 保持 9:16 比例;cursor-zoom-out 提示再次点击关闭 */}
-              <div className="flex-1 min-h-0 flex items-center justify-center">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={url}
-                  alt={title}
-                  onClick={() => setStoryboardPreview(null)}
-                  className="max-w-full max-h-full object-contain rounded shadow-2xl cursor-zoom-out"
-                />
+
+              <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[1fr_360px] gap-3">
+                {/* 左:故事板图(16:9,占左半) */}
+                <div className="relative bg-bg-base rounded-lg overflow-hidden flex items-center justify-center min-h-0">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={url}
+                    alt={title}
+                    onLoad={() => clearStoryboardBroken(s.id)}
+                    onError={() => markStoryboardBroken(s.id)}
+                    className="max-w-full max-h-full object-contain rounded"
+                  />
+                  {storyboardModBusy && (
+                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                      <div className="flex flex-col items-center gap-2 text-white">
+                        <Loader2 size={32} className="animate-spin" />
+                        <span className="text-sm">正在按你的意见重生故事板…</span>
+                      </div>
+                    </div>
+                  )}
+                  {isRunning && !storyboardModBusy && (
+                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                      <div className="flex flex-col items-center gap-2 text-white">
+                        <Loader2 size={32} className="animate-spin" />
+                        <span className="text-sm">故事板生成中…</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* 右:上下文 + 修改输入 */}
+                <div className="flex flex-col min-h-0 gap-3">
+                  <div className="flex-1 min-h-0 overflow-y-auto rounded-lg border border-border bg-bg-surface/95 text-text-primary p-3 space-y-2">
+                    <div className="text-xs font-semibold">故事板上下文</div>
+                    {group && (
+                      <>
+                        <dl className="space-y-1.5 text-xs">
+                          <div>
+                            <dt className="text-text-muted">剧情</dt>
+                            <dd className="text-text-secondary leading-relaxed">{group.plotText || '-'}</dd>
+                          </div>
+                          {group.characterIds.length > 0 && (
+                            <div>
+                              <dt className="text-text-muted">涉及角色</dt>
+                              <dd className="flex flex-wrap gap-1 mt-1">
+                                {group.characterIds.map((cid) => {
+                                  const ch = data.characters.find((c) => c.id === cid)
+                                  return (
+                                    <span key={cid} className="text-[10px] px-1.5 py-0.5 rounded border border-border bg-bg-elevated text-text-secondary">
+                                      {ch?.name ?? cid}
+                                    </span>
+                                  )
+                                })}
+                              </dd>
+                            </div>
+                          )}
+                          {group.shots.length > 0 && (
+                            <div>
+                              <dt className="text-text-muted">镜头数</dt>
+                              <dd className="text-text-secondary">{group.shots.length} 个</dd>
+                            </div>
+                          )}
+                        </dl>
+                      </>
+                    )}
+                  </div>
+
+                  <div className="shrink-0 rounded-lg border border-border bg-bg-surface/95 text-text-primary p-3 space-y-2">
+                    <div className="text-xs font-semibold">修改故事板</div>
+                    <p className="text-[10px] text-text-muted leading-relaxed">
+                      AI 会保留当前故事板的 6-section 布局、字号层级、文字可读性、角色身份和场景。只改你描述的部分(色板 / 标题 / 故事板帧内容 / 灯光情绪 / 关键词等)。
+                    </p>
+                    <textarea
+                      value={storyboardModInput}
+                      onChange={(e) => setStoryboardModInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                          e.preventDefault()
+                          void handleRegenStoryboard()
+                        }
+                      }}
+                      placeholder="例如:整体色调换成冷色 / 故事板第 3 格改成雨天 / 标题改成英文 / 加一个'孤独'情绪关键词…"
+                      rows={4}
+                      disabled={storyboardModBusy || isRunning || !url}
+                      className="w-full rounded-md bg-bg-elevated border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-none placeholder:text-text-muted disabled:opacity-50"
+                    />
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] text-text-muted">⌘/Ctrl + Enter 发送</span>
+                      <button
+                        type="button"
+                        onClick={() => void handleRegenStoryboard()}
+                        disabled={storyboardModBusy || isRunning || !storyboardModInput.trim() || !url}
+                        className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
+                      >
+                        {storyboardModBusy ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+                        {storyboardModBusy ? '生成中…' : '发送修改'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
           </div>

@@ -167,6 +167,24 @@ export type StoryboardShot = {
    * 行为与旧版一致,完全向后兼容旧数据。
    */
   characterRefs?: Record<string, string>
+  /**
+   * 2026/06:每个 shot 自己的角色列表(覆盖 group.characterIds)。
+   *   - 没设 / 为 undefined / 为空数组 → fallback 到 group.characterIds
+   *   - 显式设值(包括空数组)→ 该 shot 严格用 shot.characterIds,**不继承 group**
+   *
+   * 用途:同一组分镜里某几帧只出现 1 个角色、其他帧是 2 个角色对话,
+   *      之前要"按 group 共享角色集合"只能把所有角色都塞进去让 I2I
+   *      "猜"哪些在画面里 —— 现在可以每帧精确指定。
+   */
+  characterIds?: string[]
+  /**
+   * 2026/06:每个 shot 自己的场景(覆盖 group.sceneId)。
+   *   - 没设或为 undefined → fallback 到 group.sceneId
+   *   - 显式设 null(显式 "无场景")→ 该 shot 不传 sceneImageUrl 给 server
+   *
+   * 用途:转场分镜 —— 一帧在室内、下一帧在室外,但还在同一组剧情里。
+   */
+  sceneId?: string | null
 }
 
 export type StoryboardGroup = {
