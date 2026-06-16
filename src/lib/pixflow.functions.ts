@@ -407,6 +407,8 @@ const PixflowChatFnInput = z.object({
   model: z.string().min(1).max(200),
   max_tokens: z.number().int().min(1).max(8192).optional(),
   temperature: z.number().min(0).max(2).optional(),
+  reasoning_effort: z.enum(['minimal', 'low', 'medium', 'high', 'xhigh']).optional(),
+  disable_response_storage: z.boolean().optional(),
 })
 
 export const chatPixflow = createServerFn({ method: 'POST' })
