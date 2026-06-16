@@ -51,6 +51,7 @@ import { Route as AccountPostsRouteImport } from './routes/account.posts'
 import { Route as AccountNotificationsRouteImport } from './routes/account.notifications'
 import { Route as AccountAssetsRouteImport } from './routes/account.assets'
 import { Route as AssetsTabIdRouteImport } from './routes/assets_.$tab.$id'
+import { Route as ApiPublicPixflowTestRouteImport } from './routes/api/public/pixflow-test'
 
 const ZoclawRoute = ZoclawRouteImport.update({
   id: '/zoclaw',
@@ -262,6 +263,11 @@ const AssetsTabIdRoute = AssetsTabIdRouteImport.update({
   path: '/assets/$tab/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiPublicPixflowTestRoute = ApiPublicPixflowTestRouteImport.update({
+  id: '/api/public/pixflow-test',
+  path: '/api/public/pixflow-test',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -305,6 +311,7 @@ export interface FileRoutesByFullPath {
   '/community/': typeof CommunityIndexRoute
   '/scripts/': typeof ScriptsIndexRoute
   '/team/': typeof TeamIndexRoute
+  '/api/public/pixflow-test': typeof ApiPublicPixflowTestRoute
   '/assets/$tab/$id': typeof AssetsTabIdRoute
 }
 export interface FileRoutesByTo {
@@ -344,6 +351,7 @@ export interface FileRoutesByTo {
   '/community': typeof CommunityIndexRoute
   '/scripts': typeof ScriptsIndexRoute
   '/team': typeof TeamIndexRoute
+  '/api/public/pixflow-test': typeof ApiPublicPixflowTestRoute
   '/assets/$tab/$id': typeof AssetsTabIdRoute
 }
 export interface FileRoutesById {
@@ -389,6 +397,7 @@ export interface FileRoutesById {
   '/community/': typeof CommunityIndexRoute
   '/scripts/': typeof ScriptsIndexRoute
   '/team/': typeof TeamIndexRoute
+  '/api/public/pixflow-test': typeof ApiPublicPixflowTestRoute
   '/assets_/$tab/$id': typeof AssetsTabIdRoute
 }
 export interface FileRouteTypes {
@@ -435,6 +444,7 @@ export interface FileRouteTypes {
     | '/community/'
     | '/scripts/'
     | '/team/'
+    | '/api/public/pixflow-test'
     | '/assets/$tab/$id'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -474,6 +484,7 @@ export interface FileRouteTypes {
     | '/community'
     | '/scripts'
     | '/team'
+    | '/api/public/pixflow-test'
     | '/assets/$tab/$id'
   id:
     | '__root__'
@@ -518,6 +529,7 @@ export interface FileRouteTypes {
     | '/community/'
     | '/scripts/'
     | '/team/'
+    | '/api/public/pixflow-test'
     | '/assets_/$tab/$id'
   fileRoutesById: FileRoutesById
 }
@@ -540,6 +552,7 @@ export interface RootRouteChildren {
   TeamRoute: typeof TeamRouteWithChildren
   ZoclawRoute: typeof ZoclawRoute
   WorkspaceWorkspaceIdRoute: typeof WorkspaceWorkspaceIdRoute
+  ApiPublicPixflowTestRoute: typeof ApiPublicPixflowTestRoute
   AssetsTabIdRoute: typeof AssetsTabIdRoute
 }
 
@@ -839,6 +852,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AssetsTabIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/public/pixflow-test': {
+      id: '/api/public/pixflow-test'
+      path: '/api/public/pixflow-test'
+      fullPath: '/api/public/pixflow-test'
+      preLoaderRoute: typeof ApiPublicPixflowTestRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -981,18 +1001,9 @@ const rootRouteChildren: RootRouteChildren = {
   TeamRoute: TeamRouteWithChildren,
   ZoclawRoute: ZoclawRoute,
   WorkspaceWorkspaceIdRoute: WorkspaceWorkspaceIdRoute,
+  ApiPublicPixflowTestRoute: ApiPublicPixflowTestRoute,
   AssetsTabIdRoute: AssetsTabIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}
