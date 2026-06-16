@@ -215,7 +215,7 @@ export function NewProjectDialog({
   //   - 非法 id(用户 pref 里残留但当前 catalog 没了)静默忽略
   // ====================================================================
   type ModelOption = { id: string; label: string; sub?: string; _pinned?: boolean; _recommended?: boolean }
-  const isPixflow = (id: string) => id.startsWith('pixflow/')
+  const isPixflow = (id: string) => id.startsWith('pixflow/') || id.startsWith('tokenflash/')
   /**
    * 重排模型列表:
    *   1) 置顶项(lastUsed)放在第 0 位,带 _pinned 标记
