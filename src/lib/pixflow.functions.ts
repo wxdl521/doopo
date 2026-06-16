@@ -121,7 +121,7 @@ export async function callPixflowImage(input: PixflowImageInput): Promise<Pixflo
   const model = stripPixflowPrefix(input.model)
   const apiKey = pickPixflowKey(model)
   const refCount = input.referenceImages?.length ?? 0
-  const protocol = /^gemini-.*image/i.test(model) ? 'gemini-native' : 'openai-compat'
+  const protocol = /^gemini-/i.test(model) ? 'gemini-native' : 'openai-compat'
   const endpointHint = protocol === 'gemini-native'
     ? `/v1beta/models/${model}:generateContent`
     : (refCount > 0 ? '/v1/images/edits' : '/v1/images/generations')
@@ -133,8 +133,8 @@ export async function callPixflowImage(input: PixflowImageInput): Promise<Pixflo
     return { url: '', urls: [], error: `${needed} not configured`, model }
   }
 
-  // ----- Gemini 图像模型走 Native generateContent -----
-  if (/^gemini-.*image/i.test(model)) {
+  // ----- Gemini 系列走 Native generateContent(图像模型返回 inlineData)-----
+  if (/^gemini-/i.test(model)) {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
     try {
