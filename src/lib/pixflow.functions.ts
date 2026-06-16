@@ -227,21 +227,32 @@ export async function callPixflowImage(input: PixflowImageInput): Promise<Pixflo
     if (hasRefs) {
       body.images = input.referenceImages!.map((image_url) => ({ image_url }))
     }
-    const res = await fetch(`${baseUrl}${endpoint}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    })
+    // 对 502/524 这种 pixflow 上游瞬时错误做一次重试(指数退避 1.5s)
+    let res: Response | null = null
+    let lastText = ''
+    for (let attempt = 0; attempt < 2; attempt++) {
+      res = await fetch(`${baseUrl}${endpoint}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      })
+      if (res.ok) break
+      lastText = await res.text().catch(() => '')
+      const transient = res.status === 502 || res.status === 503 || res.status === 504 || res.status === 524
+      if (!transient || attempt === 1) break
+      console.warn(`[pixflow⟳] model=${model} endpoint=${endpoint} status=${res.status} retry in 1.5s`)
+      await new Promise((r) => setTimeout(r, 1500))
+    }
     clearTimeout(timeout)
 
-    if (!res.ok) {
-      const text = await res.text().catch(() => '')
-      console.warn(`[pixflow×] model=${model} endpoint=${endpoint} status=${res.status} dur=${Date.now() - t0}ms body=${text.slice(0, 200)}`)
-      return { url: '', urls: [], error: `[pixflow ${model}] ${res.status}: ${text.slice(0, 300)}`, model }
+    if (!res || !res.ok) {
+      const status = res?.status ?? 0
+      console.warn(`[pixflow×] model=${model} endpoint=${endpoint} status=${status} dur=${Date.now() - t0}ms body=${lastText.slice(0, 200)}`)
+      return { url: '', urls: [], error: `[pixflow ${model}] ${status}: ${lastText.slice(0, 300)}`, model }
     }
 
     const json = (await res.json()) as {
