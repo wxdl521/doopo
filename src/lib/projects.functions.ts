@@ -1,6 +1,9 @@
 import { createServerFn } from '@tanstack/react-start'
+import { getRequestHeader } from '@tanstack/react-start/server'
+import { createClient } from '@supabase/supabase-js'
 import { z } from 'zod'
 import { requireSupabaseAuth } from '@/integrations/supabase/auth-middleware'
+import type { Database } from '@/integrations/supabase/types'
 
 const ProjectInput = z.object({
   id: z.string().min(1).max(64),
@@ -168,13 +171,37 @@ function pickThumbnail(ws: any): string | null {
 }
 
 export const listMyProjects = createServerFn({ method: 'POST' })
-  .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => z.object({}).parse(input ?? {}))
-  .handler(async ({ context }) => {
-    const { supabase } = context
+  .handler(async () => {
+    const authorization = getRequestHeader('authorization')
+    if (!authorization?.toLowerCase().startsWith('bearer ')) {
+      return { projects: [] as ProjectListItem[], error: null as string | null }
+    }
+
+    const supabaseUrl = process.env.SUPABASE_URL
+    const supabaseKey = process.env.SUPABASE_PUBLISHABLE_KEY
+    if (!supabaseUrl || !supabaseKey) {
+      return { projects: [] as ProjectListItem[], error: 'Backend configuration is missing' }
+    }
+
+    const supabase = createClient<Database>(supabaseUrl, supabaseKey, {
+      auth: {
+        storage: undefined,
+        persistSession: false,
+        autoRefreshToken: false,
+      },
+      global: { headers: { Authorization: authorization } },
+    })
+
+    const { data: authData, error: authError } = await supabase.auth.getUser()
+    if (authError || !authData.user) {
+      return { projects: [] as ProjectListItem[], error: null as string | null }
+    }
+
     const { data, error } = await supabase
       .from('projects')
       .select('id,name,custom_cover,created_at,updated_at,completed_stages,workspace_data')
+      .eq('user_id', authData.user.id)
       .order('updated_at', { ascending: false })
     if (error) return { projects: [] as ProjectListItem[], error: error.message }
     const projects: ProjectListItem[] = (data ?? []).map((row) => ({
