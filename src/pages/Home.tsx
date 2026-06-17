@@ -10,6 +10,7 @@ import CommunityCard, { type CommunityCardItem } from '../components/community/C
 import { listCommunityPosts } from '../lib/community.functions'
 import { listMyProjects, type ProjectListItem } from '../lib/projects.functions'
 import { formatRelativeTime } from '../lib/utils'
+import { useAuth } from '../hooks/useAuth'
 
 function toMeta(p: ProjectListItem): ProjectMeta {
   // 三级 fallback:customCover → 自动挑的图 → 渐变色
@@ -25,6 +26,7 @@ function toMeta(p: ProjectListItem): ProjectMeta {
 
 export default function Home() {
   const { t } = useLanguage()
+  const { isAuthenticated, loading: authLoading } = useAuth()
   const list = useServerFn(listCommunityPosts)
   const callListProjects = useServerFn(listMyProjects)
   const [community, setCommunity] = useState<CommunityCardItem[]>([])
@@ -35,6 +37,10 @@ export default function Home() {
       .catch(() => {})
   }, [list])
   useEffect(() => {
+    if (authLoading || !isAuthenticated) {
+      setRecent([])
+      return
+    }
     callListProjects({ data: {} })
       .then((r) => {
         if (r.error) return
@@ -42,7 +48,7 @@ export default function Home() {
         setRecent((r.projects ?? []).slice(0, 3).map(toMeta))
       })
       .catch(() => {})
-  }, [callListProjects])
+  }, [callListProjects, isAuthenticated, authLoading])
 
   return (
     <div className="space-y-16 animate-fade-in">
