@@ -147,7 +147,11 @@ export async function callTokenflashImage(input: TokenflashImageInput): Promise<
         n: input.n ?? 1,
         size,
         quality: input.quality ?? 'auto',
-        response_format: 'url',
+      }
+      // gpt-image-* 系列只返回 b64_json,不支持 response_format=url;
+      // 其它模型才传 response_format。
+      if (!/^gpt-image/i.test(model)) {
+        body.response_format = 'url'
       }
       requestInit = {
         method: 'POST',
@@ -180,26 +184,38 @@ export async function callTokenflashImage(input: TokenflashImageInput): Promise<
       return { url: '', urls: [], error: `[tokenflash ${model}] ${status}: ${lastText.slice(0, 300)}`, model }
     }
 
-    const json = (await res.json()) as {
-      data?: Array<{ url?: string; b64_json?: string }>
-      error?: { message?: string }
-    }
+    const rawText = await res.text()
+    let json: any = {}
+    try { json = JSON.parse(rawText) } catch {}
 
-    const items = json.data ?? []
+    // 兼容多种返回形状:
+    //   1) OpenAI 标准: { data: [{ url | b64_json }] }
+    //   2) Tokenflash 包装: { data: { data: [...] } } 或 { result: {...} }
+    //   3) 直接 { url } / { image_url } / { images: [...] }
+    const items: Array<{ url?: string; b64_json?: string; image_url?: string; b64?: string }> =
+      (Array.isArray(json?.data) && json.data) ||
+      (Array.isArray(json?.data?.data) && json.data.data) ||
+      (Array.isArray(json?.images) && json.images) ||
+      (Array.isArray(json?.result?.data) && json.result.data) ||
+      (json?.url || json?.image_url || json?.b64_json
+        ? [{ url: json.url, image_url: json.image_url, b64_json: json.b64_json }]
+        : [])
     const urls = items
       .map((d) => {
         if (d.url) return d.url
-        if (d.b64_json) return `data:image/png;base64,${d.b64_json}`
+        if (d.image_url) return d.image_url
+        const b64 = d.b64_json || d.b64
+        if (b64) return `data:image/png;base64,${b64}`
         return ''
       })
       .filter(Boolean)
 
     if (urls.length === 0) {
-      console.warn(`[tokenflash×] model=${model} endpoint=${endpoint} empty-data dur=${Date.now() - t0}ms err=${json.error?.message ?? ''}`)
+      console.warn(`[tokenflash×] model=${model} endpoint=${endpoint} empty-data dur=${Date.now() - t0}ms err=${json?.error?.message ?? ''} raw=${rawText.slice(0, 400)}`)
       return {
         url: '',
         urls: [],
-        error: `[tokenflash ${model}] no image returned: ${json.error?.message || 'empty data'}`,
+        error: `[tokenflash ${model}] no image returned: ${json?.error?.message || rawText.slice(0, 200) || 'empty data'}`,
         model,
       }
     }
