@@ -101,6 +101,27 @@ export type GenScene = {
   dialogue: { role: string; line: string; parenthetical?: string }[]
 }
 
+/**
+ * 2026/06:道具 —— 在本集中会根据剧情进行移动的物体。
+ * 由 AI 从当集剧本中自动提取，与角色/场景并列。
+ */
+export type GenProp = {
+  /** 该道具所属的集数。 */
+  episodeIndex: number
+  id: string
+  name: string
+  /** 道具的外观描述（颜色、形状、材质等）。 */
+  description: string
+  /** 在本集中的移动/变化方式（谁拿走了它、它去了哪里、发生了什么变化）。 */
+  movementDescription: string
+  /** 关键剧情节点（该道具在哪些重要时刻出现/被使用）。 */
+  keyMoments: string[]
+  /** 配色，用于卡片标识。 */
+  palette: string[]
+  /** 卡片背景渐变。 */
+  swatch: string
+}
+
 export type StoryboardPanel = {
   id: string
   index: number
@@ -198,6 +219,10 @@ export type StoryboardGroup = {
   sceneId?: string
   sceneLocation?: string
   characterIds: string[]
+  /** 2026/06:本组场景 id 列表(多选),与 GroupSceneEditor 配合 */
+  sceneIds?: string[]
+  /** 2026/06:本组道具 id 列表,与 GroupPropEditor 配合 */
+  propIds?: string[]
   shots: StoryboardShot[]
 }
 

@@ -5,11 +5,17 @@ import type { Tables, Json } from '@/integrations/supabase/types'
 export type DbCharacter = Tables<'characters'>
 export type DbScene = Tables<'scenes'>
 
+export type CharacterImageEntry = {
+  url: string
+  label: string
+}
+
 /**
  * 把 GenCharacter 转换成 characters 表的 upsert 记录。
  * coverUrl 可选 —— 调用方传入角色的最新图片 URL(同步持久化到 assets 库)。
+ * images 可选 —— 角色所有已生成的图片数组(含标签),详情页动态展示。
  */
-function charToRecord(c: GenCharacter, userId: string, coverUrl?: string | null) {
+function charToRecord(c: GenCharacter, userId: string, coverUrl?: string | null, images?: CharacterImageEntry[]) {
   return {
     id: c.id,
     user_id: userId,
@@ -28,6 +34,7 @@ function charToRecord(c: GenCharacter, userId: string, coverUrl?: string | null)
     key_prop: c.keyProp ?? null,
     gradient: c.swatch,
     cover_url: coverUrl ?? null,
+    images: (images ?? null) as Json | null,
   }
 }
 
@@ -62,16 +69,18 @@ export async function saveScenes(scenes: GenScene[], userId: string) {
 
 /**
  * 2026/06 新增:per-item 保存单个角色到资产库。
- *  - chars: 单元素的 GenCharacter 数组
+ *  - c: GenCharacter
  *  - coverUrl: 当前角色的主图 URL(从 charImages 里挑)
- * 成功时返回 { ok: true },失败返回错误信息(不进 console.error,留给调用方 toast)。
+ *  - images: 角色所有已生成的图片 URL + 标签数组,详情页动态展示
+ * 成功时返回 { ok: true },失败返回错误信息。
  */
 export async function saveOneCharacter(
   c: GenCharacter,
   userId: string,
   coverUrl?: string | null,
+  images?: CharacterImageEntry[],
 ): Promise<{ ok: boolean; error?: string }> {
-  const record = charToRecord(c, userId, coverUrl)
+  const record = charToRecord(c, userId, coverUrl, images)
   const { error } = await supabase.from('characters').upsert(record)
   if (error) return { ok: false, error: error.message }
   return { ok: true }

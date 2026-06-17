@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { ArrowLeft, Copy, Download, Sparkles, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useServerFn } from '@tanstack/react-start'
@@ -14,6 +14,8 @@ import {
 import { assetToMarkdown, downloadMarkdown } from '../lib/assetMarkdown'
 import { generateImage } from '../lib/seedream.functions'
 import { IMAGE_MODELS } from '../lib/imageModels'
+import { loadCharacters, loadScenes, type DbCharacter, type DbScene } from '../lib/assetsStorage'
+import { useAuth } from '../hooks/useAuth'
 
 export const Route = createFileRoute('/assets_/$tab/$id')({
   component: AssetDetailPage,
@@ -23,8 +25,89 @@ function AssetDetailPage() {
   const { tab, id } = Route.useParams()
   const navigate = useNavigate()
   const { t } = useLanguage()
+  const { user } = useAuth()
 
-  const asset = useMemo(() => getAssetById(tab as AssetTab, id), [tab, id])
+  const [dbAsset, setDbAsset] = useState<any>(null)
+  const [loading, setLoading] = useState(true)
+
+  const mockAsset = useMemo(() => getAssetById(tab as AssetTab, id), [tab, id])
+
+  useEffect(() => {
+    if (mockAsset) {
+      setLoading(false)
+      return
+    }
+    if (!user) {
+      setLoading(false)
+      return
+    }
+    setLoading(true)
+    ;(async () => {
+      try {
+        if (tab === 'character') {
+          const { data } = await loadCharacters(user.id)
+          const found = data?.find((c: DbCharacter) => c.id === id)
+          if (found) {
+            const dbImages: { url: string; label: string }[] =
+              Array.isArray((found as any).images) ? (found as any).images : []
+            setDbAsset({
+              id: found.id,
+              name: found.name,
+              emoji: '👤',
+              gradient: found.gradient || 'from-blue-400/40 via-purple-300/30 to-pink-200/30',
+              cover: found.cover_url || '',
+              views: { front: '', side: '', back: '', expression: '' },
+              images: dbImages.length > 0 ? dbImages : undefined,
+              role: found.role_label || found.role || '',
+              age: String(found.age ?? ''),
+              personality: found.personality || '',
+              style: '',
+              costume: found.look || '',
+              appearance: found.look || '',
+              background: found.motivation || '',
+              palette: Array.isArray(found.palette) ? found.palette : [],
+              tags: [found.role || '', found.mbti ? `MBTI ${found.mbti}` : ''].filter(Boolean),
+              summary: `${found.role_label || found.role || '角色'} · ${found.personality || ''}`,
+            })
+          }
+        } else if (tab === 'scene') {
+          const { data } = await loadScenes(user.id)
+          const found = data?.find((s: DbScene) => s.id === id)
+          if (found) {
+            setDbAsset({
+              id: found.id,
+              name: found.name || found.location,
+              emoji: '🌄',
+              gradient: found.gradient || 'from-emerald-400/40 via-teal-300/30 to-sky-200/30',
+              time: found.time_of_day || '',
+              mood: '',
+              shot: '',
+              lighting: '',
+              sound: '',
+              reference: '',
+              tags: [],
+              summary: found.action || '',
+            })
+          }
+        }
+      } catch {
+        // silently fail
+      } finally {
+        setLoading(false)
+      }
+    })()
+  }, [tab, id, user, mockAsset])
+
+  const asset = mockAsset || dbAsset
+
+  if (loading) {
+    return (
+      <div className="animate-fade-in flex flex-col items-center justify-center min-h-[60vh] gap-4">
+        <Loader2 size={24} className="animate-spin text-text-muted" />
+        <p className="text-text-muted text-sm">加载中…</p>
+      </div>
+    )
+  }
 
   if (!asset) {
     return (
@@ -107,44 +190,60 @@ function AssetDetailPage() {
 /* ---------------- Character ---------------- */
 function CharacterDetail({ c }: { c: CharacterAsset }) {
   const { t } = useLanguage()
-  const views = [
-    { key: 'master', label: t.assets_view_master, src: c.cover },
-    { key: 'front', label: t.assets_view_front, src: c.views.front },
-    { key: 'side', label: t.assets_view_side, src: c.views.side },
-    { key: 'back', label: t.assets_view_back, src: c.views.back },
-    { key: 'expression', label: t.assets_view_expression, src: c.views.expression },
-  ]
-  const [active, setActive] = useState(views[0])
+  // 优先使用 DB 中已生成的图片列表(动态),fallback 到 mock 固定 views
+  const imageList = c.images && c.images.length > 0
+    ? c.images.map((img, i) => ({ key: `img-${i}`, label: img.label, src: img.url }))
+    : c.cover
+      ? [{ key: 'cover', label: t.assets_view_master, src: c.cover }]
+      : []
+  const [active, setActive] = useState(imageList[0] || null)
+
+  if (!imageList.length) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 gap-3 text-text-muted">
+        <p>{c.name}</p>
+        <p className="text-sm">暂无已生成的图片</p>
+      </div>
+    )
+  }
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
       {/* Left: hero image + thumbs */}
       <section className="lg:col-span-7 flex flex-col gap-3">
         <div className={`panel overflow-hidden bg-gradient-to-br ${c.gradient} aspect-[4/5] flex items-center justify-center`}>
-          <img
-            key={active.key}
-            src={active.src}
-            alt={`${c.name} - ${active.label}`}
-            loading="lazy"
-            className="w-full h-full object-contain animate-fade-in"
-          />
+          {active && (
+            <img
+              key={active.key}
+              src={active.src}
+              alt={`${c.name} - ${active.label}`}
+              loading="lazy"
+              className="w-full h-full object-contain animate-fade-in"
+            />
+          )}
         </div>
-        <div className="grid grid-cols-5 gap-2">
-          {views.map(v => (
-            <button
-              key={v.key}
-              onClick={() => setActive(v)}
-              className={`relative panel overflow-hidden aspect-square flex flex-col items-center justify-center transition ${
-                active.key === v.key ? 'ring-2 ring-accent border-accent/50' : 'hover:border-accent/40'
-              }`}
-            >
-              <img src={v.src} alt={v.label} loading="lazy" className="w-full h-full object-cover" />
-              <span className="absolute bottom-1 left-1 right-1 text-[10px] text-white bg-black/40 rounded px-1 text-center">
-                {v.label}
-              </span>
-            </button>
-          ))}
-        </div>
+        {imageList.length > 1 && (
+          <div className="grid grid-cols-5 gap-2">
+            {imageList.map(v => (
+              <button
+                key={v.key}
+                onClick={() => setActive(v)}
+                className={`relative panel overflow-hidden aspect-square flex flex-col items-center justify-center transition ${
+                  active?.key === v.key ? 'ring-2 ring-accent border-accent/50' : 'hover:border-accent/40'
+                }`}
+              >
+                {v.src ? (
+                  <img src={v.src} alt={v.label} loading="lazy" className="w-full h-full object-cover" />
+                ) : (
+                  <span className="text-2xl opacity-30">?</span>
+                )}
+                <span className="absolute bottom-1 left-1 right-1 text-[10px] text-white bg-black/40 rounded px-1 text-center truncate">
+                  {v.label}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
       </section>
 
       {/* Right: meta */}

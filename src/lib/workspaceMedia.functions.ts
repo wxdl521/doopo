@@ -90,6 +90,111 @@ export const saveOneStoryboard = createServerFn({ method: "POST" })
     }
   })
 
+/**
+ * 2026/06:saveOneVideo —— 单条视频入库(自动入库链路)。
+ *
+ *   跟 saveOneStoryboard 等价,但处理视频。
+ *   路径:{userId}/{workspaceId}/videos/{groupId}.{ext}
+ *
+ *   行为:
+ *     - 已入库(URL 已在 supabase.co / 自己的 storage 域名)→ 跳过,返回原 URL
+ *     - 三方 URL → 服务端 fetch → 上传 Supabase Storage → 返回永久 URL
+ *     - fetch 失败(TOS 过期 / 网络断)→ 返回 ok:false,客户端决定是否 toast
+ *     - 空 url → noop 返回 ok:true url:''
+ */
+const SaveOneVideoInput = z.object({
+  workspaceId: z.string().min(1).max(64),
+  groupId: z.string().min(1).max(64),
+  url: z.string().min(1).max(2000),
+})
+
+export type SaveOneVideoResult = {
+  ok: boolean
+  url: string
+  persisted: boolean
+  error?: string
+}
+
+export const saveOneVideo = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((input: unknown) => SaveOneVideoInput.parse(input))
+  .handler(async ({ data, context }): Promise<SaveOneVideoResult> => {
+    const { supabase, userId } = context as { supabase: any; userId: string }
+    const { workspaceId, groupId, url } = data
+
+    if (!url) {
+      return { ok: true, url: "", persisted: false }
+    }
+    // 已入库 → 跳过
+    if (isAlreadyPersisted(url)) {
+      return { ok: true, url, persisted: false }
+    }
+
+    try {
+      const { buf, contentType } = await fetchMedia(url)
+      const path = makePath(userId, workspaceId, "video", groupId, contentType)
+      const mime = MIME_BY_KIND.video
+      const blob = new Blob([buf], { type: mime })
+      const { error: uploadErr } = await supabase.storage
+        .from(BUCKET)
+        .upload(path, blob, { contentType: mime, upsert: true })
+      if (uploadErr) {
+        return { ok: false, url, persisted: false, error: `storage upload failed: ${uploadErr.message}` }
+      }
+      const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(path)
+      const permanentUrl = pub?.publicUrl
+      if (!permanentUrl) {
+        return { ok: false, url, persisted: false, error: "no public url after upload" }
+      }
+      return { ok: true, url: permanentUrl, persisted: true }
+    } catch (e: any) {
+      return { ok: false, url, persisted: false, error: e?.message ?? String(e) }
+    }
+  })
+
+/**
+ * 2026/06:通用图片持久化 —— 下载临时 URL → 上传 workspace-media → 返回永久 URL。
+ * 用于角色/场景/道具图片的自动入库,与 saveOneStoryboard 同模式。
+ * 路径: {userId}/assets/{kind}/{id}-{timestamp}.{ext}
+ */
+const PersistAssetImageInput = z.object({
+  url: z.string().min(1).max(2000),
+  userId: z.string().min(1).max(64),
+  kind: z.enum(['character', 'scene', 'prop', 'panel', 'shot']),
+  id: z.string().min(1).max(128),
+})
+
+export const persistAssetImage = createServerFn({ method: 'POST' })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => PersistAssetImageInput.parse(d))
+  .handler(async ({ data, context }): Promise<{ ok: boolean; url: string; error?: string }> => {
+    const { supabase, userId } = context as { supabase: any; userId: string }
+    const { url, kind, id } = data
+
+    if (!url) return { ok: true, url: '', error: undefined }
+    if (isAlreadyPersisted(url)) return { ok: true, url, error: undefined }
+
+    try {
+      const { buf, contentType } = await fetchMedia(url)
+      const ct = contentType.toLowerCase()
+      let ext = 'png'
+      if (ct.includes('jpeg') || ct.includes('jpg')) ext = 'jpg'
+      else if (ct.includes('webp')) ext = 'webp'
+      else if (ct.includes('gif')) ext = 'gif'
+      const path = `${userId}/assets/${kind}/${id}-${Date.now()}.${ext}`
+      const blob = new Blob([buf], { type: contentType || 'image/png' })
+      const { error: uploadErr } = await supabase.storage
+        .from(BUCKET)
+        .upload(path, blob, { contentType: contentType || 'image/png', upsert: true })
+      if (uploadErr) return { ok: false, url: '', error: `upload failed: ${uploadErr.message}` }
+      const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(path)
+      if (!pub?.publicUrl) return { ok: false, url: '', error: 'no public url' }
+      return { ok: true, url: pub.publicUrl }
+    } catch (e: any) {
+      return { ok: false, url: '', error: e?.message ?? String(e) }
+    }
+  })
+
 const BUCKET = "workspace-media"
 const FETCH_TIMEOUT_MS = 60_000
 

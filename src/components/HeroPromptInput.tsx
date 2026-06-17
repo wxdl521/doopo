@@ -66,6 +66,7 @@ export default function HeroPromptInput() {
     // 将输入文本暂存，供项目创建后 workspace 右侧对话框预填
     try {
       sessionStorage.setItem('workspace_prefill', value.trim())
+      sessionStorage.setItem('workspace_prefill_mode', 'script')
     } catch {}
     setNpOpen(true)
   }

@@ -29,6 +29,8 @@ export type CharacterAsset = {
   gradient: string
   cover: string
   views: { front: string; side: string; back: string; expression: string }
+  /** 2026/06:从 DB 加载的实际已生成图片(动态展示),不含固定占位图 */
+  images?: { url: string; label: string }[]
   role: string
   age: string
   personality: string

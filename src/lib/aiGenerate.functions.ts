@@ -1,7 +1,7 @@
 import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
 
-const StageEnum = z.enum(['canvas', 'script', 'scene', 'character', 'character-extract', 'storyboard', 'timeline'])
+const StageEnum = z.enum(['canvas', 'script', 'scene', 'character', 'character-extract', 'storyboard', 'timeline', 'prop-extract'])
 
 const InputSchema = z.object({
   stage: StageEnum,
@@ -364,6 +364,52 @@ function stageSpec(stage: Input['stage']) {
             },
           },
           required: ['tracks', 'transitionsAt'],
+          additionalProperties: false,
+        },
+      }
+    case 'prop-extract':
+      return {
+        toolName: 'emit_props_extract',
+        system:
+          '你是一名中文短剧道具提取师。**只做一件事**:从用户提供的剧本文本中,识别并提取**在本集中会根据剧情进行移动的物体**。' +
+          '要求:不创建虚构道具,只列文本里出现过的;一个物理上独立的物体算一个道具(如"钢笔"、"广播稿"、"便签条"、"资料夹");' +
+          '道具的关键判断标准:该物体在剧情中被拿取、传递、使用、变化位置或产生情节作用 —— 只是背景装饰不提取;' +
+          'name 用简短中文名(2-6 字);description 写外观描述(颜色/形状/材质等);' +
+          'movementDescription 写该道具在本集中的移动/变化方式(谁拿走了它、它去了哪里、发生了什么变化);' +
+          'keyMoments 写该道具在哪些重要时刻出现/被使用(2-4 条);' +
+          'palette(3-4 个 hex 颜色)按道具本身颜色推断。' +
+          '单集通常 0-6 个道具,没有道具返回空数组。仅工具调用返回。',
+        schema: {
+          type: 'object',
+          properties: {
+            props: {
+              type: 'array',
+              maxItems: 12,
+              items: {
+                type: 'object',
+                properties: {
+                  name: { type: 'string', description: '道具中文名,如"钢笔"' },
+                  description: { type: 'string', description: '外观描述(颜色/形状/材质)' },
+                  movementDescription: { type: 'string', description: '在本集中的移动/变化方式' },
+                  keyMoments: {
+                    type: 'array',
+                    minItems: 2,
+                    maxItems: 4,
+                    items: { type: 'string' },
+                  },
+                  palette: {
+                    type: 'array',
+                    minItems: 3,
+                    maxItems: 4,
+                    items: { type: 'string', description: 'hex like #1e293b' },
+                  },
+                },
+                required: ['name', 'description', 'movementDescription', 'keyMoments', 'palette'],
+                additionalProperties: false,
+              },
+            },
+          },
+          required: ['props'],
           additionalProperties: false,
         },
       }
