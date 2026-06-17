@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import type { GenCharacter } from '../../data/workspaceGenerators'
 
 import linxiaFront from '@/assets/characters/linxia-front.jpg'
@@ -41,13 +42,15 @@ function hashString(s: string): number {
 }
 
 export default function CharacterPortrait({ character, className, view = 'front' }: Props) {
+  const [broken, setBroken] = useState(false)
   // Real character imagery first; for AI-generated or unknown IDs, deterministically
   // fall back to one of the bundled portraits so the UI never collapses to a flat swatch.
   const fallbackKey = FALLBACK_KEYS[hashString(character.id) % FALLBACK_KEYS.length]
-  const src = PORTRAITS[character.id]?.[view] ?? PORTRAITS[fallbackKey][view]
+  const builtInSrc = PORTRAITS[character.id]?.[view] ?? PORTRAITS[fallbackKey][view]
   const accent = character.palette[2] ?? character.palette[0] ?? '#fbbf24'
 
-  if (!src) {
+  // 如果内置头像加载失败(broken=true)，降级到纯色背景
+  if (broken || !builtInSrc) {
     return (
       <div className={className} style={{ background: character.swatch }} aria-label={character.name} />
     )
@@ -67,11 +70,12 @@ export default function CharacterPortrait({ character, className, view = 'front'
       }}
     >
       <img
-        src={src}
+        src={builtInSrc}
         alt={`${character.name} ${view}`}
         loading="lazy"
         width={768}
         height={1024}
+        onError={() => setBroken(true)}
         className={`absolute inset-0 w-full h-full ${fit}`}
         style={{ objectPosition }}
       />

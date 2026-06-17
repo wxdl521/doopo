@@ -6,7 +6,7 @@ import WorkspaceTopbar, { type WorkspaceTab } from '../components/workspace/Work
 import ZopiaChatPanel from '../components/workspace/ZopiaChatPanel'
 import { useLanguage } from '../i18n/LanguageContext'
 import { useAuth } from '../hooks/useAuth'
-import { saveOneCharacter, saveOneScene } from '../lib/assetsStorage'
+import { saveOneCharacter, saveOneScene, saveOneProp } from '../lib/assetsStorage'
 import {
   generateOutline, generateScript, generateCharacters, generateStoryboard, generateTimeline,
   type Outline, type GenScene, type GenCharacter, type GenCharacterLook, type GenProp, type StoryboardPanel, type TimelineData, type TimelineTrack, type TimelineClip,
@@ -21,7 +21,8 @@ import { generateStoryboardFromPlot, generateStoryboardShotImage, regenerateStor
 import { generateVideo } from '../lib/videoGenerate.functions'
 import { generateStoryboardPitchDeck } from '../lib/seedream.functions'
 import { getProject, saveWorkspaceData, loadWorkspaceData, type ProjectConfigRow } from '../lib/projects.functions'
-import { persistWorkspaceMedia, saveOneStoryboard, saveOneVideo, persistAssetImage } from '../lib/workspaceMedia.functions'
+import { persistWorkspaceMedia, saveOneStoryboard, saveOneVideo } from '../lib/workspaceMedia.functions'
+import { urlToBase64 } from '../lib/imageToBase64'
 import { streamSynopsis, streamEpisodeScenes, refineSynopsis, refineEpisodeScenes } from '../lib/scriptAgent.functions'
 import type { ImportedScriptResult } from '../lib/parseImportedScript.functions'
 import { resolveProjectStyle, resolveT2IModel, resolveI2IModel, buildStyleLock } from '../lib/visualStyles'
@@ -319,7 +320,7 @@ function ShotMembershipEditor({
                             title={lk === ch?.id ? '默认 look' : `变体 ${lk.split('::')[1] ?? lk}`}
                           >
                             {/* eslint-disable-next-line @next/next/no-img-element */}
-                            <img src={url} alt="" className="w-full h-full object-cover" />
+                            <img src={url} alt="" className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
                           </button>
                         )
                       })}
@@ -759,7 +760,6 @@ function WorkspacePage() {
   const callPersistMedia = useServerFn(persistWorkspaceMedia)
   const callSaveOneStoryboard = useServerFn(saveOneStoryboard)
   const callSaveOneVideo = useServerFn(saveOneVideo)
-  const callPersistAssetImage = useServerFn(persistAssetImage)
   const [project, setProject] = useState<ProjectConfigRow | null>(null)
   const [savingWorkspace, setSavingWorkspace] = useState(false)
   const [savedWorkspace, setSavedWorkspace] = useState(false)
@@ -790,6 +790,75 @@ function WorkspacePage() {
     setCharImages(next)
   }
   useEffect(() => { charImagesRef.current = charImages }, [charImages])
+
+  // 只保留 base64 持久化方案。
+  async function persistAndSetImage(
+    imageKey: string,
+    tempUrl: string,
+    kind: 'character' | 'scene' | 'prop',
+    id: string,
+    mode: 'overwrite' | 'append' = 'overwrite',
+  ) {
+    // 已经是永久/base64 URL 则跳过
+    if (isPersistedUrl(tempUrl)) {
+      if (mode === 'append') {
+        updateCharImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), tempUrl] }))
+      } else {
+        updateCharImages((m) => ({ ...m, [imageKey]: [tempUrl] }))
+      }
+      return { ok: true as const, url: tempUrl }
+    }
+
+    // 转为 base64 data URL（直接存数据库）
+    const base64Url = await urlToBase64(tempUrl)
+    if (base64Url) {
+      if (mode === 'append') {
+        updateCharImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), base64Url] }))
+      } else {
+        updateCharImages((m) => ({ ...m, [imageKey]: [base64Url] }))
+      }
+      return { ok: true as const, url: base64Url }
+    }
+
+    // 转换失败：保留临时 URL
+    if (mode === 'append') {
+      updateCharImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), tempUrl] }))
+    } else {
+      updateCharImages((m) => ({ ...m, [imageKey]: [tempUrl] }))
+    }
+    // toast.warning(`「${id}」图片保存失败，临时链接 24h 内有效`)
+    return { ok: false as const, url: tempUrl }
+  }
+
+  // 只保留 base64 持久化方案。
+  async function persistSceneImage(s: GenScene, tempUrl: string) {
+    if (isPersistedUrl(tempUrl)) {
+      setSceneImages((m) => ({ ...m, [s.id]: [...(m[s.id] ?? []), tempUrl] }))
+      return { ok: true as const, url: tempUrl }
+    }
+    const base64Url = await urlToBase64(tempUrl)
+    if (base64Url) {
+      setSceneImages((m) => ({ ...m, [s.id]: [...(m[s.id] ?? []), base64Url] }))
+      return { ok: true as const, url: base64Url }
+    }
+    setSceneImages((m) => ({ ...m, [s.id]: [...(m[s.id] ?? []), tempUrl] }))
+    // toast.warning(`场景「${s.slug}」图片保存失败，临时链接 24h 内有效`)
+    return { ok: false as const, url: tempUrl }
+  }
+  async function persistPropImage(p: GenProp, tempUrl: string) {
+    if (isPersistedUrl(tempUrl)) {
+      setPropImages((m) => ({ ...m, [p.id]: [...(m[p.id] ?? []), tempUrl] }))
+      return { ok: true as const, url: tempUrl }
+    }
+    const base64Url = await urlToBase64(tempUrl)
+    if (base64Url) {
+      setPropImages((m) => ({ ...m, [p.id]: [...(m[p.id] ?? []), base64Url] }))
+      return { ok: true as const, url: base64Url }
+    }
+    setPropImages((m) => ({ ...m, [p.id]: [...(m[p.id] ?? []), tempUrl] }))
+    // toast.warning(`道具「${p.name}」图片保存失败，临时链接 24h 内有效`)
+    return { ok: false as const, url: tempUrl }
+  }
   // processCharacter 入口 ref 守卫(2026/06):防止 useEffect 多次触发
   // 同一角色并发跑 processCharacter。state 的 busyChars 已经做了同样防御,
   // 但 ref 更可靠(不会因 React batching 漏掉)。
@@ -840,9 +909,13 @@ function WorkspacePage() {
   // characters 表的 cover_url 字段,后写的覆盖先写的。这是 schema 限制,
   // 不是这个 effect 的 bug —— 想精确每个 look 各一张图,得加独立的
   // character_images 表。
+  // 2026/06:自动持久化不再需要了 —— 每个生成点都同步 await persistAssetImage。
+  // 保留这个 effect 仅做兜底:万一有 URL 没经过生成流程(比如旧数据迁移上来
+  // 的)导致 charImages 里还有临时 URL,仍然尝试入库。
   const lastAutoSavedUrlRef = useRef<Record<string, string | undefined>>({})
   useEffect(() => {
     if (!user) return
+    // 只处理没有 savedAssetKeys 标记的旧 URL(兜底)
     const tryAutoSave = (
       key: string,
       latestUrl: string,
@@ -857,22 +930,26 @@ function WorkspacePage() {
           setSavedAssetKeys((prev) => new Set(prev).add(key))
           return
         }
-        // 失败回滚:仅当 ref 仍指向本次写入的 URL(没有被更新的写入覆盖)
         if (lastAutoSavedUrlRef.current[key] === latestUrl) {
           if (previous === undefined) delete lastAutoSavedUrlRef.current[key]
           else lastAutoSavedUrlRef.current[key] = previous
         }
         console.warn(`自动入库 ${label} 失败:`, r.error)
+        const userMsg = classifyError(r.error, '')
+        if (userMsg) {
+          // toast.warning(`「${label}」${userMsg}，临时链接 24h 内有效`)
+        } else {
+          // toast.warning(`「${label}」图片未持久化到存储，临时链接 24h 内有效`)
+        }
       })
     }
     data.characters.forEach((c) => {
+      if (savedAssetKeys.has(c.id)) return // 已成功入库过的跳过
       const latestUrl = charImages[c.id]?.at(-1)
       if (!latestUrl) return
       tryAutoSave(c.id, latestUrl, async () => {
-        // 先持久化临时 URL → 永久 URL
-        const r = await callPersistAssetImage({ data: { url: latestUrl, userId: user!.id, kind: 'character', id: c.id } })
-        const permUrl = r.ok && r.url ? r.url : latestUrl
-        // 同步更新 charImages state,让 workspace_data 保存永久 URL
+        const base64Url = await urlToBase64(latestUrl)
+        const permUrl = base64Url ?? latestUrl
         if (permUrl !== latestUrl) {
           setCharImages((m) => {
             const arr = m[c.id]
@@ -885,27 +962,7 @@ function WorkspacePage() {
         return saveOneCharacter(c, user!.id, permUrl)
       }, `角色 ${c.name}`)
     })
-    data.scenes.forEach((s) => {
-      const latestUrl = sceneImages[s.id]?.at(-1)
-      if (!latestUrl) return
-      const key = `scene::${s.id}`
-      tryAutoSave(key, latestUrl, async () => {
-        const r = await callPersistAssetImage({ data: { url: latestUrl, userId: user!.id, kind: 'scene', id: s.id } })
-        const permUrl = r.ok && r.url ? r.url : latestUrl
-        // 同步更新 sceneImages state,让 workspace_data 保存永久 URL
-        if (permUrl !== latestUrl) {
-          setSceneImages((m) => {
-            const arr = m[s.id]
-            if (!arr || arr.at(-1) !== latestUrl) return m
-            const copy = [...arr]
-            copy[copy.length - 1] = permUrl
-            return { ...m, [s.id]: copy }
-          })
-        }
-        return saveOneScene(s, user!.id, permUrl)
-      }, `场景 ${s.slug}`)
-    })
-  }, [charImages, sceneImages, data.characters, data.scenes, user])
+  }, [user])
   // 角色图片生成状态拆分:
   //   activeImageKey: 当前**正在生成**的那一张图(imageKey = c.id 或 c.id::lk.id)。
   //                   用于卡片显示 spinner(只有这一张是"生成中"状态)。
@@ -1043,6 +1100,59 @@ function WorkspacePage() {
       return next
     })
   }, [])
+  // 2026/06:角色图加载失败的 imageKey 集合。
+  // 与 brokenShotImages 对称，当角色图片 URL 过期/403 时标记 broken。
+  // 注意:只有**已持久化的 Supabase 永久 URL** 加载失败才标记为 broken；
+  //      Seedream 临时 URL 加载失败只是静默隐藏(不显示"已失效")，
+  //      因为临时 URL 可能因 CORS/签名校验短暂失败，等自动持久化完成后会被替换。
+  const [brokenCharImages, setBrokenCharImages] = useState<Set<string>>(new Set())
+  const markCharImageBroken = useCallback((key: string, url: string) => {
+    // 只有已持久化的 Supabase 永久 URL 加载失败才标记为"已失效"
+    if (!isPersistedUrl(url)) return
+    setBrokenCharImages((s) => {
+      if (s.has(key)) return s
+      const next = new Set(s)
+      next.add(key)
+      return next
+    })
+  }, [])
+  const clearCharImageBroken = useCallback((key: string) => {
+    setBrokenCharImages((s) => {
+      if (!s.has(key)) return s
+      const next = new Set(s)
+      next.delete(key)
+      return next
+    })
+  }, [])
+  // 判断 URL 是否已持久化(Supabase Storage 永久 URL 或 base64 data URL)
+  const isPersistedUrl = useCallback((url: string | undefined | null): boolean => {
+    if (!url) return false
+    // base64 data URL 视为已持久化(存在数据库里)
+    if (url.startsWith('data:')) return true
+    try {
+      const u = new URL(url)
+      const host = u.hostname.toLowerCase()
+      if (host.endsWith('.supabase.co') && u.pathname.includes('/object/public/workspace-media/')) return true
+      if (u.pathname.includes('/storage/v1/object/public/workspace-media/')) return true
+      if (u.pathname.includes('/object/public/workspace-media/')) return true
+      return false
+    } catch { return false }
+  }, [])
+  // 错误消息分类:根据 error string 返回用户可读的中文提示
+  const classifyError = useCallback((error: string | null | undefined, fallback: string): string => {
+    if (!error) return fallback
+    const e = error.toLowerCase()
+    if (e.includes('timed out') || e.includes('timeout') || e.includes('超时')) return 'AI 处理超时，请重试'
+    if (e.includes('401') || e.includes('auth') || e.includes('unauthorized') || e.includes('认证失败')) return 'AI 认证失败，请联系管理员'
+    if (e.includes('402') || e.includes('no_credits') || e.includes('credits') || e.includes('insufficient') || e.includes('额度')) return 'AI 额度不足，请充值'
+    if (e.includes('429') || e.includes('rate limit') || e.includes('too many requests')) return '请求过于频繁，请稍后重试'
+    if (e.includes('upload failed')) return `存储上传失败: ${error}`
+    if (e.includes('upstream fetch') || e.includes('fetch failed') || e.includes('无法获取')) return '图片源已失效，无法转存到存储'
+    if (e.includes('not found') || e.includes('404')) return '图片链接不存在(404)'
+    // 截断过长错误信息(超过 60 字符截断)
+    if (error.length > 60) return `${error.slice(0, 57)}...`
+    return error
+  }, [])
   // 2026 视频生成:每个 storyboard group 一条短视频,key = groupId。
   // 视频用整组所有 shot 的图作 first_frame + reference_image,
   // 涵盖整个分镜组的镜头序列(不再每张分镜单独出视频)。
@@ -1169,6 +1279,11 @@ function WorkspacePage() {
         if (wd.panelImages) setPanelImages(wd.panelImages as Record<string, string>)
         if (wd.sceneImages) setSceneImages(wd.sceneImages as Record<string, string[]>)
         if ((wd as any).selectedSceneImages) setSelectedSceneImages((wd as any).selectedSceneImages as Record<string, string | null>)
+        if (Array.isArray(wd.props) && wd.props.length) {
+          setData((d) => ({ ...d, props: wd.props as GenProp[] }))
+        }
+        if (wd.propImages) setPropImages(wd.propImages as Record<string, string[]>)
+        if ((wd as any).selectedPropImages) setSelectedPropImages((wd as any).selectedPropImages as Record<string, string | null>)
         // 2026/06:跨 session 恢复入库后的永久视频 / 故事板图 URL。
         // 这些字段是老数据没有的(2026/06 前不持久化),所以可选读。
         if (wd.groupVideos && typeof wd.groupVideos === 'object') {
@@ -1176,6 +1291,10 @@ function WorkspacePage() {
         }
         if (wd.groupStoryboards && typeof wd.groupStoryboards === 'object') {
           setGroupStoryboards(wd.groupStoryboards as Record<string, { url: string; status: 'running' | 'succeeded' | 'failed' }>)
+        }
+        // 2026/06:恢复上次选中的集数
+        if (typeof wd.selectedEpisodeIndex === 'number') {
+          setSelectedEpisodeIndex(wd.selectedEpisodeIndex)
         }
         setDataLoaded(true)
       })
@@ -1371,13 +1490,16 @@ function WorkspacePage() {
       ].filter(Boolean).join('\n')
       const res = await callImage({ data: { prompt, model: project?.sceneModel } })
       if (res.url) {
-        // 2026/06 改:sceneImages 改成数组(跟 charImages 对齐),支持"主视图 + 修改/三视图"共存
+        // 2026/06 修复:立刻显示临时 URL,再后台异步持久化
         setSceneImages((m) => ({ ...m, [s.id]: [...(m[s.id] ?? []), res.url!] }))
+        void persistSceneImage(s, res.url).then((p) => {
+          if (p.ok) toast.success(`已生成场景图「${s.slug}」`)
+        })
       } else {
-        toast.error(res.error || '场景图生成失败')
+        toast.error(classifyError(res.error, '场景图生成失败'))
       }
     } catch {
-      toast.error('场景图生成失败')
+      toast.error(classifyError(undefined, '场景图生成失败'))
     } finally {
       setBusyScene(null)
     }
@@ -1402,12 +1524,16 @@ function WorkspacePage() {
       ].filter(Boolean).join('\n')
       const res = await callImage({ data: { prompt, model: project?.sceneModel } })
       if (res.url) {
+        // 2026/06 修复:立刻显示临时 URL,再后台异步持久化
         setPropImages((m) => ({ ...m, [p.id]: [...(m[p.id] ?? []), res.url!] }))
+        void persistPropImage(p, res.url).then((presult) => {
+          if (presult.ok) toast.success(`已生成道具图「${p.name}」`)
+        })
       } else {
-        toast.error(res.error || '道具图生成失败')
+        toast.error(classifyError(res.error, '道具图生成失败'))
       }
     } catch {
-      toast.error('道具图生成失败')
+      toast.error(classifyError(undefined, '道具图生成失败'))
     } finally {
       setBusyProp(null)
     }
@@ -1939,22 +2065,21 @@ function WorkspacePage() {
         const res = await callImage({ data: { prompt, model: resolveT2IModel(project?.sceneModel), noFallback: true, negativePrompt, size: characterSize } })
         console.log(`[CHAR-AUTOGEN] callImage returned: id=${c.id} url=${res.url ? 'ok' : res.error}`)
         if (res.url) {
-          // 2026/06 防御:直接覆盖 charImages[imageKey] = [res.url](只留 1 张)。
-          // 原因:
-          //   - autoGen 旧版本会一次跑全 1+N 个 looks,堆 N+1 张图;
-          //   - 用户之前在预览模态点过几次"修改"提交意见,也会堆图;
-          //   - 这两种历史堆叠 + 新一轮只生成 1 张,会让人感觉"看到几张
-          //     主视图"难以判断哪张是新的。
-          // 修法:autoGen 跑默认 look T2I 时直接覆盖历史为 [res.url],只留
-          // 最新 1 张。变体 look(走 I2I modify 路径,代码不会跑)不受影响。
+          // 2026/06 修复:先立刻显示临时 URL,再后台异步持久化。
+          // 避免用户等持久化(可能失败/超时)才看到图。
           updateCharImages((m) => ({ ...m, [ls.imageKey]: [res.url] }))
-          console.log(`[CHAR-AUTOGEN] setCharImages WRITE: imageKey=${ls.imageKey} → [1 url] (覆盖为 1 张)`)
-          toast.success(`已生成 ${cardTitle}（${styleSpec.label}）`)
+          void persistAndSetImage(ls.imageKey, res.url, 'character', c.id).then((p) => {
+            if (p.ok) {
+              toast.success(`已生成 ${cardTitle}（${styleSpec.label}）`)
+            } else {
+              // toast.warning(`「${cardTitle}」图片持久化失败，临时链接 24h 内有效`)
+            }
+          })
         } else {
-          toast.error(res.error || '生成失败')
+          toast.error(classifyError(res.error, '生成失败'))
         }
       } catch (e) {
-        toast.error('生成失败')
+        toast.error(classifyError(e instanceof Error ? e.message : String(e), '生成失败'))
       }
     }
     // 这个角色的所有 look 都处理完,从 busyChars 移除
@@ -2076,13 +2201,20 @@ function WorkspacePage() {
         },
       })
       if (res?.ok && res.url) {
-        updateCharImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), res.url!] }))
-        toast.success(`已生成 ${c.name} · ${lk.label}`)
+        // 2026/06 修复:立刻显示临时 URL,再后台异步持久化
+        updateCharImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), res.url] }))
+        void persistAndSetImage(imageKey, res.url, "character", c.id, "append").then((p) => {
+          if (p.ok) {
+            toast.success(`已生成 ${c.name} · ${lk.label}`)
+          } else {
+            // toast.warning(`「${c.name} · ${lk.label}」图片持久化失败，临时链接 24h 内有效`)
+          }
+        })
       } else {
-        toast.error(res?.error || '生成失败')
+        toast.error(classifyError(res?.error, '生成失败'))
       }
     } catch {
-      toast.error('生成失败')
+      toast.error(classifyError(undefined, '生成失败'))
     } finally {
       setActiveImageKey((cur) => (cur === imageKey ? null : cur))
       setBusyChars((s) => {
@@ -2137,7 +2269,21 @@ function WorkspacePage() {
         },
       })
       if (res?.ok && res.url) {
+        // 2026/06 修复:立刻显示,再异步转 base64
         updateCharImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), res.url!] }))
+        void urlToBase64(res.url).then((base64Url) => {
+          if (base64Url) {
+            updateCharImages((m) => {
+              const arr = m[imageKey]
+              if (!arr) return m
+              const idx = arr.lastIndexOf(res.url)
+              if (idx === -1) return m
+              const copy = [...arr]
+              copy[idx] = base64Url
+              return { ...m, [imageKey]: copy }
+            })
+          }
+        })
         // 自动选中新生成的那张
         setSelectedGenIdx((charImages[imageKey]?.length ?? generations.length))
         setRegenInput('')
@@ -2248,13 +2394,26 @@ function WorkspacePage() {
         return true  // 视为"成功",让上层关 modal/清错误状态
       }
       if (res?.ok && res.url) {
-        // 2026/06:replaceExisting=true 时覆盖历史(只留 1 张最新),autoGen
-        // 路径需要这样避免"几张主视图"堆叠。replaceExisting=false(默认)
-        // 时 append,保留用户主动 modify 堆的迭代历史。
+        // 2026/06 修复:立刻显示临时 URL,再后台转 base64。
         updateCharImages((m) => ({
           ...m,
           [imageKey]: replaceExisting ? [res.url!] : [...(m[imageKey] ?? []), res.url!],
         }))
+        // 后台异步转 base64,成功后替换 state 中的临时 URL
+        void (async () => {
+          const base64Url = await urlToBase64(res.url)
+          if (base64Url) {
+            updateCharImages((m) => {
+              const arr = m[imageKey]
+              if (!arr) return m
+              const idx = arr.lastIndexOf(res.url)
+              if (idx === -1) return m
+              const copy = [...arr]
+              copy[idx] = base64Url
+              return { ...m, [imageKey]: copy }
+            })
+          }
+        })()
         const modeLabel =
           mode === 'modify' ? '已按意见重生' :
           mode === 'three-view' ? '已生成三视图' :
@@ -2262,10 +2421,10 @@ function WorkspacePage() {
         toast.success(modeLabel)
         return true
       }
-      toast.error(res?.error || '生成失败')
+      toast.error(classifyError(res?.error, '生成失败'))
       return false
     } catch (e) {
-      toast.error('生成失败')
+      toast.error(classifyError(undefined, '生成失败'))
       return false
     } finally {
       setRegenBusyKeys((m) => {
@@ -2434,13 +2593,15 @@ function WorkspacePage() {
       }
       if (res?.ok && res.url) {
         setSceneImages((m) => ({ ...m, [s.id]: [...(m[s.id] ?? []), res.url!] }))
+        // 2026/06 修复:后台异步持久化
+        void persistSceneImage(s, res.url)
         toast.success(mode === 'three-view' ? '已生成场景三视图' : '已按意见重生')
         return true
       }
-      toast.error(res?.error || '生成失败')
+      toast.error(classifyError(res?.error, '生成失败'))
       return false
     } catch {
-      toast.error('生成失败')
+      toast.error(classifyError(undefined, '生成失败'))
       return false
     } finally {
       setRegenBusyKeys((m) => {
@@ -2512,13 +2673,15 @@ function WorkspacePage() {
       }
       if (res?.ok && res.url) {
         setPropImages((m) => ({ ...m, [p.id]: [...(m[p.id] ?? []), res.url!] }))
+        // 2026/06 修复:后台异步持久化
+        void persistPropImage(p, res.url)
         toast.success(mode === 'three-view' ? '已生成道具三视图' : '已按意见重生')
         return true
       }
-      toast.error(res?.error || '生成失败')
+      toast.error(classifyError(res?.error, '生成失败'))
       return false
     } catch {
-      toast.error('生成失败')
+      toast.error(classifyError(undefined, '生成失败'))
       return false
     } finally {
       setRegenBusyKeys((m) => {
@@ -2625,18 +2788,20 @@ function WorkspacePage() {
       ].filter(Boolean).join('. ')
       const res = await callImage({ data: { prompt, model: project?.storyboardModel } })
       if (res.url) {
-        // 2026/06:分镜图入库 —— 避免 AI 临时 URL 24h 过期
-        let permUrl = res.url
+        // 2026/06 修复:立刻显示临时 URL,再后台异步转 base64
+        setPanelImages((m) => ({ ...m, [p.id]: res.url! }))
         if (user) {
-          const r2 = await callPersistAssetImage({ data: { url: res.url, userId: user.id, kind: 'panel', id: p.id } })
-          if (r2.ok && r2.url) permUrl = r2.url
+          void urlToBase64(res.url).then((base64Url) => {
+            if (base64Url) {
+              setPanelImages((m) => ({ ...m, [p.id]: base64Url }))
+            }
+          })
         }
-        setPanelImages((m) => ({ ...m, [p.id]: permUrl }))
       } else {
-        toast.error(res.error || '生成失败')
+        toast.error(classifyError(res.error, '生成失败'))
       }
     } catch {
-      toast.error('生成失败')
+      toast.error(classifyError(undefined, '生成失败'))
     } finally {
       setBusyPanel(null)
     }
@@ -2772,7 +2937,7 @@ function WorkspacePage() {
         toast.error('未生成任何分镜,请重试')
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '分镜生成失败')
+      toast.error(e instanceof Error ? classifyError(e.message, '分镜生成失败') : '分镜生成失败')
     } finally {
       setBusyStoryboardGen(false)
     }
@@ -3158,33 +3323,50 @@ function WorkspacePage() {
       // 看到空串仍 falsy,导致同一张图永远过不了守卫一直被重新生成 —— 循环 bug。
       // 加 url 守卫,空 url 走失败分支。
       if (!res.ok || !res.url) {
-        toast.error(res.error || '分镜图生成失败')
+        toast.error(classifyError(res.error, '分镜图生成失败'))
         return
       }
       const imageKey = `${groupId}::${shotId}`
-      // 2026/06:分镜图入库 —— 避免 AI 临时 URL 24h 过期
-      let permUrl = res.url
-      if (user) {
-        const r2 = await callPersistAssetImage({ data: { url: res.url, userId: user.id, kind: 'shot', id: imageKey } })
-        if (r2.ok && r2.url) permUrl = r2.url
-      }
-      // 写回 group.shots[i].imageUrl(保持向后兼容,旧数据读取也走这个字段)
-      // 同时 push 到 shotImages 历史数组(供预览 + 按意见重生使用)
+      // 2026/06 修复:立刻显示临时 URL,再后台异步转 base64
+      const tempUrl = res.url
       setData((d) => ({
         ...d,
         storyboardGroups: d.storyboardGroups.map((g) =>
           g.id === groupId
             ? {
                 ...g,
-                shots: g.shots.map((sh) => (sh.id === shotId ? { ...sh, imageUrl: permUrl } : sh)),
+                shots: g.shots.map((sh) => (sh.id === shotId ? { ...sh, imageUrl: tempUrl } : sh)),
               }
             : g,
         ),
       }))
-      setShotImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), permUrl] }))
+      setShotImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), tempUrl] }))
+      if (user) {
+        void urlToBase64(tempUrl).then((base64Url) => {
+          if (base64Url) {
+            setData((d) => ({
+              ...d,
+              storyboardGroups: d.storyboardGroups.map((g) =>
+                g.id === groupId
+                  ? { ...g, shots: g.shots.map((sh) => (sh.id === shotId ? { ...sh, imageUrl: base64Url } : sh)) }
+                  : g,
+              ),
+            }))
+            setShotImages((m) => {
+              const arr = m[imageKey]
+              if (!arr) return m
+              const idx = arr.lastIndexOf(tempUrl)
+              if (idx === -1) return m
+              const copy = [...arr]
+              copy[idx] = base64Url
+              return { ...m, [imageKey]: copy }
+            })
+          }
+        })
+      }
       toast.success(`分镜图 ${shot.shotTypeLabel} 已生成`)
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : '分镜图生成失败')
+      toast.error(e instanceof Error ? classifyError(e.message, '分镜图生成失败') : '分镜图生成失败')
     } finally {
       setBusyShotImages((s) => {
         const n = new Set(s)
@@ -3275,22 +3457,41 @@ function WorkspacePage() {
         return
       }
       if (res?.ok && res.url) {
-        // 2026/06:重生分镜图入库 —— 避免 AI 临时 URL 24h 过期
-        let permUrl = res.url
-        if (user) {
-          const r2 = await callPersistAssetImage({ data: { url: res.url, userId: user.id, kind: 'shot', id: imageKey } })
-          if (r2.ok && r2.url) permUrl = r2.url
-        }
+        // 2026/06 修复:立刻显示临时 URL,再后台异步转 base64
+        const tempUrl = res.url
         const newLen = (shotImages[imageKey]?.length ?? 0) + 1
-        setShotImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), permUrl] }))
+        setShotImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), tempUrl] }))
         setData((d) => ({
           ...d,
           storyboardGroups: d.storyboardGroups.map((g) =>
             g.id === groupId
-              ? { ...g, shots: g.shots.map((sh) => (sh.id === shotId ? { ...sh, imageUrl: permUrl } : sh)) }
+              ? { ...g, shots: g.shots.map((sh) => (sh.id === shotId ? { ...sh, imageUrl: tempUrl } : sh)) }
               : g,
           ),
         }))
+        if (user) {
+          void urlToBase64(tempUrl).then((base64Url) => {
+            if (base64Url) {
+              setData((d) => ({
+                ...d,
+                storyboardGroups: d.storyboardGroups.map((g) =>
+                  g.id === groupId
+                    ? { ...g, shots: g.shots.map((sh) => (sh.id === shotId ? { ...sh, imageUrl: base64Url } : sh)) }
+                    : g,
+                ),
+              }))
+              setShotImages((m) => {
+                const arr = m[imageKey]
+                if (!arr) return m
+                const idx = arr.lastIndexOf(tempUrl)
+                if (idx === -1) return m
+                const copy = [...arr]
+                copy[idx] = base64Url
+                return { ...m, [imageKey]: copy }
+              })
+            }
+          })
+        }
         setShotSelectedGenIdx(newLen - 1)
         setShotModInput('')
         toast.success('已按意见重生')
@@ -3688,11 +3889,11 @@ function WorkspacePage() {
         toast.success('故事板已生成')
       } else {
         setGroupStoryboards((m) => ({ ...m, [groupId]: { url: '', status: 'failed' } }))
-        toast.error(res?.error || '故事板生成失败')
+        toast.error(classifyError(res?.error, '故事板生成失败'))
       }
     } catch (e) {
       setGroupStoryboards((m) => ({ ...m, [groupId]: { url: '', status: 'failed' } }))
-      toast.error(e instanceof Error ? e.message : '故事板生成失败')
+      toast.error(e instanceof Error ? classifyError(e.message, '故事板生成失败') : '故事板生成失败')
     }
   }
 
@@ -4096,11 +4297,15 @@ function WorkspacePage() {
     const images = allImgs.length > 0
       ? allImgs.map((url) => ({ url, label: url === coverUrl ? '主图' : '生成图' }))
       : undefined
-    // 先把临时 URL 持久化到 Supabase Storage
+    // 只保留 base64 方案
     let permCoverUrl = coverUrl
-    if (coverUrl) {
-      const r2 = await callPersistAssetImage({ data: { url: coverUrl, userId: user.id, kind: 'character', id: c.id } })
-      if (r2.ok && r2.url) permCoverUrl = r2.url
+    if (coverUrl && !isPersistedUrl(coverUrl)) {
+      const base64Url = await urlToBase64(coverUrl)
+      if (base64Url) {
+        permCoverUrl = base64Url
+      } else {
+        // toast.warning('图片保存失败，将以临时链接保存(24h 内有效)')
+      }
     }
     const r = await saveOneCharacter(c, user.id, permCoverUrl, images)
     if (!r.ok) {
@@ -4109,6 +4314,61 @@ function WorkspacePage() {
     }
     setSavedAssetKeys((prev) => new Set(prev).add(imageKey))
     toast.success(`「${c.name}${lookId ? ` · ${c.looks?.find((l) => l.id === lookId)?.label ?? ''}` : ''}」已保存到资产库`)
+  }
+
+  // 2026/06:per-item 保存道具到资产库。
+  async function savePropToAssets(p: GenProp, imageKey: string) {
+    if (!user) {
+      toast.error('请先登录')
+      return
+    }
+    const allImgs = propImages[imageKey] ?? []
+    const coverUrl = allImgs.at(-1) ?? null
+    const images = allImgs.length > 0
+      ? allImgs.map((url) => ({ url, label: url === coverUrl ? '主图' : '生成图' }))
+      : undefined
+    let permCoverUrl = coverUrl
+    if (coverUrl && !isPersistedUrl(coverUrl)) {
+      const base64Url = await urlToBase64(coverUrl)
+      if (base64Url) {
+        permCoverUrl = base64Url
+      } else {
+        // toast.warning('道具图片保存失败，将以临时链接保存(24h 内有效)')
+      }
+    }
+    const r = await saveOneProp(p, user.id, permCoverUrl, images)
+    if (!r.ok) {
+      toast.error(`保存道具失败:${r.error}`)
+      return
+    }
+    setSavedAssetKeys((prev) => new Set(prev).add(imageKey))
+    toast.success(`「${p.name}」已保存到资产库`)
+  }
+
+  // 2026/06:per-item 保存场景到资产库。
+  async function saveSceneToAssets(s: GenScene, imageKey: string) {
+    if (!user) {
+      toast.error('请先登录')
+      return
+    }
+    const allImgs = sceneImages[imageKey] ?? []
+    const coverUrl = allImgs.at(-1) ?? null
+    let permCoverUrl = coverUrl
+    if (coverUrl && !isPersistedUrl(coverUrl)) {
+      const base64Url = await urlToBase64(coverUrl)
+      if (base64Url) {
+        permCoverUrl = base64Url
+      } else {
+        // toast.warning('场景图片保存失败，将以临时链接保存(24h 内有效)')
+      }
+    }
+    const r = await saveOneScene(s, user.id, permCoverUrl)
+    if (!r.ok) {
+      toast.error(`保存场景失败:${r.error}`)
+      return
+    }
+    setSavedAssetKeys((prev) => new Set(prev).add(imageKey))
+    toast.success(`「${s.slug}」已保存到资产库`)
   }
 
   // 追踪哪些资产已保存(用于按钮显示"已保存"反馈)
@@ -4185,6 +4445,7 @@ function WorkspacePage() {
         outline: data.outline,
         scenes: data.scenes,
         characters: data.characters,
+        props: data.props,
         storyboard: data.storyboard,
         storyboardGroups: data.storyboardGroups,
         timeline: data.timeline,
@@ -4194,7 +4455,12 @@ function WorkspacePage() {
         shotImages,
         panelImages,
         sceneImages,
+        propImages,
         selectedCharImages,
+        selectedSceneImages,
+        selectedPropImages,
+        // 2026/06:保存当前选中集数,刷新后恢复
+        selectedEpisodeIndex,
         // 2026/06:已入库或原始的 groupVideos / groupStoryboards 一并保存,
         // 跨 session 也能恢复(只要 URL 在 Storage 里就是永久的)。
         groupVideos: persistGroupVideos,
@@ -4403,6 +4669,23 @@ function WorkspacePage() {
           })
           return { characters }
         }
+        case 'prop-extract': {
+          const epForNew = extractEpIndex ?? 1
+          const props: GenProp[] = (p.props ?? []).map((pp: any, i: number) => {
+            const palette: string[] = Array.isArray(pp.palette) && pp.palette.length ? pp.palette : ['#1e293b', '#475569', '#fbbf24']
+            return {
+              id: `ai-prop-${i + 1}-${Date.now()}`,
+              episodeIndex: epForNew,
+              name: pp.name ?? `道具${i + 1}`,
+              description: pp.description ?? '',
+              movementDescription: pp.movementDescription ?? '',
+              keyMoments: Array.isArray(pp.keyMoments) ? pp.keyMoments : [],
+              palette,
+              swatch: `linear-gradient(135deg, ${palette[0]}, ${palette[palette.length - 1]})`,
+            }
+          })
+          return { props }
+        }
         case 'storyboard': {
           // Map AI panels back to UI shape; pair sceneIndex to existing scene id when possible.
           const sceneById = new Map(currentData.scenes.map((s) => [s.index, s.id]))
@@ -4529,7 +4812,7 @@ function WorkspacePage() {
         }
       }
     } catch (e) {
-      toast.error('生成失败')
+      toast.error(classifyError(undefined, '生成失败'))
     } finally {
       setSynopsisStreaming(false)
     }
@@ -4640,7 +4923,7 @@ function WorkspacePage() {
         }
       }
     } catch (e) {
-      toast.error('生成失败')
+      toast.error(classifyError(undefined, '生成失败'))
     } finally {
       setEpisodeStreaming(false)
       setStreamingBubbleId(null)
@@ -5493,11 +5776,30 @@ function WorkspacePage() {
                                 <button
                                   type="button"
                                   onClick={(e) => { e.stopPropagation(); handleUploadImage('scene', s.id, s.id) }}
-                                  className="absolute bottom-1.5 left-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] hover:bg-accent hover:text-accent-foreground transition backdrop-blur-sm"
+                                  className="absolute bottom-1.5 right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] hover:bg-accent hover:text-accent-foreground transition backdrop-blur-sm"
                                   title="上传本地图片"
                                 >
                                   <Upload size={10} /> 上传
                                 </button>
+                                {/* 保存到资产库按钮 */}
+                                {hasImg && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); void saveSceneToAssets(s, s.id) }}
+                                    title={savedAssetKeys.has(s.id) ? '已保存到资产库,点击重新保存当前封面图' : '把这张场景卡(含主图)保存到你的资产库'}
+                                    className={`absolute bottom-1.5 left-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium backdrop-blur-sm transition ${
+                                      savedAssetKeys.has(s.id)
+                                        ? 'bg-emerald-500/85 text-white shadow-sm'
+                                        : 'bg-black/70 text-white hover:bg-accent hover:text-accent-foreground'
+                                    }`}
+                                  >
+                                    {savedAssetKeys.has(s.id) ? (
+                                      <><Check size={10} /> 已保存</>
+                                    ) : (
+                                      <><BookmarkPlus size={10} /> 保存到资产</>
+                                    )}
+                                  </button>
+                                )}
                               </div>
 
                               {/* Text area — 标题 + 时段 badge + action brief + 2 按钮 */}
@@ -5644,15 +5946,34 @@ function WorkspacePage() {
                                     <span className="text-[10px]">点击生成道具图</span>
                                   </button>
                                 )}
-                                {/* 上传本地图片按钮(无图时更显眼) */}
+                                {/* 上传本地图片按钮 */}
                                 <button
                                   type="button"
                                   onClick={(e) => { e.stopPropagation(); handleUploadImage('prop', p.id, p.id) }}
-                                  className="absolute bottom-1.5 left-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] hover:bg-accent hover:text-accent-foreground transition backdrop-blur-sm"
+                                  className="absolute bottom-1.5 right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] hover:bg-accent hover:text-accent-foreground transition backdrop-blur-sm"
                                   title="上传本地图片"
                                 >
                                   <Upload size={10} /> 上传
                                 </button>
+                                {/* 保存到资产库按钮 */}
+                                {hasImg && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); void savePropToAssets(p, p.id) }}
+                                    title={savedAssetKeys.has(p.id) ? '已保存到资产库,点击重新保存当前封面图' : '把这张道具卡(含主图)保存到你的资产库'}
+                                    className={`absolute bottom-1.5 left-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium backdrop-blur-sm transition ${
+                                      savedAssetKeys.has(p.id)
+                                        ? 'bg-emerald-500/85 text-white shadow-sm'
+                                        : 'bg-black/70 text-white hover:bg-accent hover:text-accent-foreground'
+                                    }`}
+                                  >
+                                    {savedAssetKeys.has(p.id) ? (
+                                      <><Check size={10} /> 已保存</>
+                                    ) : (
+                                      <><BookmarkPlus size={10} /> 保存到资产</>
+                                    )}
+                                  </button>
+                                )}
                                 {propImgCount > 1 && (
                                   <span className="absolute top-1.5 left-1.5 text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/60 text-white">
                                     {propImgCount} 张
@@ -5898,6 +6219,15 @@ function WorkspacePage() {
                                   </div>
                                 ) : hasImg ? (
                                   <>
+                                    {/* 2026/06:封面图加载失败的遮罩 + 追踪 */}
+                                    {brokenCharImages.has(imageKey) && (
+                                      <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-1 bg-bg-base/70 backdrop-blur-[1px]">
+                                        <div className="size-7 rounded-full bg-amber-500/20 flex items-center justify-center">
+                                          <span className="text-amber-400 text-xs font-bold">!</span>
+                                        </div>
+                                        <span className="text-[10px] text-amber-400/90 font-medium">图片已失效</span>
+                                      </div>
+                                    )}
                                     {/* 2026/06:封面图 = 选中的那张(如果选了)否则最新一张。
                                         这让"点击选中 → 卡片封面变成选中的图"立即可见。 */}
                                     {(() => {
@@ -5907,7 +6237,11 @@ function WorkspacePage() {
                                           src={coverUrl}
                                           alt={cardTitle}
                                           loading="lazy"
-                                          className="absolute inset-0 w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-300"
+                                          onLoad={() => clearCharImageBroken(imageKey)}
+                                          onError={(e) => markCharImageBroken(imageKey, (e.target as HTMLImageElement).src)}
+                                          className={`absolute inset-0 w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-300 ${
+                                            brokenCharImages.has(imageKey) ? 'opacity-20' : ''
+                                          }`}
                                         />
                                       )
                                     })()}
@@ -6444,7 +6778,7 @@ function WorkspacePage() {
                                           >
                                             <div className="w-4 h-4 rounded-full overflow-hidden bg-bg-base shrink-0">
                                               {img
-                                                ? <img src={img} alt={selectedCh.name} className="w-full h-full object-cover" />
+                                                ? <img src={img} alt={selectedCh.name} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
                                                 : <div className="w-full h-full flex items-center justify-center text-[7px] text-text-muted">N/A</div>}
                                             </div>
                                             <span className="text-[10px] text-text-primary truncate max-w-[50px]">{baseName}</span>
@@ -6473,7 +6807,7 @@ function WorkspacePage() {
                                                   }`}
                                                 >
                                                   <div className="w-5 h-5 rounded-full overflow-hidden bg-bg-base shrink-0">
-                                                    {vImg ? <img src={vImg} alt={v.name} className="w-full h-full object-cover" /> : <div className="w-full h-full flex items-center justify-center text-[8px] text-text-muted">N/A</div>}
+                                                    {vImg ? <img src={vImg} alt={v.name} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} /> : <div className="w-full h-full flex items-center justify-center text-[8px] text-text-muted">N/A</div>}
                                                   </div>
                                                   <span className="flex-1 truncate">{v.name}</span>
                                                   {isSelected && <Check size={10} className="text-accent shrink-0" />}
@@ -7003,6 +7337,7 @@ function WorkspacePage() {
                             src={u}
                             alt={`${cardTitle} #${i + 1}`}
                             loading="lazy"
+                            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
                             className="absolute inset-0 w-full h-full object-cover"
                           />
                           {i === generations.length - 1 && (
@@ -7050,6 +7385,7 @@ function WorkspacePage() {
                     <img
                       src={currentUrl}
                       alt={cardTitle}
+                      onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
                       className="max-w-full max-h-full object-contain"
                     />
                   ) : (
@@ -7367,6 +7703,280 @@ function WorkspacePage() {
               </div>
             </div>
           </div>
+        )
+      })()}
+
+      {/* ============= 道具放大预览 lightbox(2026/06,与场景对称) ============= */}
+      {propPreview && (() => {
+        const p = propPreview
+        const history = propImages[p.id] ?? []
+        const pinnedUrl = selectedPropImages[p.id]
+        const currentUrl = (pinnedUrl && history.includes(pinnedUrl))
+          ? pinnedUrl
+          : history.at(-1)
+        const currentIdx = currentUrl ? Math.max(0, history.indexOf(currentUrl)) : -1
+        return (
+          <div
+            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-6"
+            onClick={() => setPropPreview(null)}
+            role="dialog"
+            aria-modal="true"
+          >
+            <div
+              className="relative bg-bg-surface border border-border rounded-2xl overflow-hidden shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Top bar */}
+              <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
+                <div className="min-w-0">
+                  <div className="text-[10px] font-mono text-text-muted">PROP</div>
+                  <div className="font-display text-base font-bold text-text-primary truncate">{p.name}</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setPropPreview(null)}
+                  className="p-1.5 rounded-md hover:bg-bg-elevated text-text-muted"
+                  aria-label="关闭"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+              {/* Body: large image + description */}
+              <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[2fr_1fr]">
+                <div className="relative bg-black flex items-center justify-center min-h-[300px] max-h-[calc(90vh-180px)]">
+                  {currentUrl ? (
+                    <img
+                      src={currentUrl}
+                      alt={p.name}
+                      className="max-w-full max-h-full object-contain"
+                    />
+                  ) : (
+                    <div className="flex flex-col items-center gap-2 text-text-muted p-8">
+                      <ImageIcon size={40} className="opacity-50" />
+                      <p className="text-sm">还没有生成道具图</p>
+                    </div>
+                  )}
+                  {/* History thumbnails bar */}
+                  {history.length > 0 && (
+                    <div className="absolute bottom-2 left-2 right-2 flex items-center gap-1.5 overflow-x-auto py-1 px-1 rounded bg-black/50 backdrop-blur-sm">
+                      <span className="text-[9px] font-mono text-white/70 shrink-0 pr-1">历史 ({history.length})</span>
+                      {history.map((u, i) => {
+                        const isPinned = selectedPropImages[p.id] === u
+                        return (
+                          <button
+                            key={`${u}-${i}`}
+                            type="button"
+                            onClick={() => {
+                              if (isPinned) {
+                                setSelectedPropImages((m) => {
+                                  const { [p.id]: _omit, ...rest } = m
+                                  return rest
+                                })
+                              } else {
+                                setSelectedPropImages((m) => ({ ...m, [p.id]: u }))
+                              }
+                            }}
+                            title={isPinned ? '已是推荐(reference) — 再点取消' : '把这张设为道具 reference'}
+                            className={`relative shrink-0 w-12 h-9 rounded overflow-hidden border-2 transition ${
+                              i === currentIdx
+                                ? 'border-accent'
+                                : isPinned
+                                  ? 'border-emerald-400/70'
+                                  : 'border-white/30 hover:border-white/70'
+                            }`}
+                          >
+                            <img src={u} alt={`历史 #${i + 1}`} loading="lazy" className="absolute inset-0 w-full h-full object-cover" />
+                            {i === history.length - 1 && (
+                              <span className="absolute top-0 left-0 px-1 text-[8px] font-bold bg-accent text-accent-foreground rounded-br">NEW</span>
+                            )}
+                            {isPinned && (
+                              <span className="absolute bottom-0 right-0 px-1 text-[8px] font-bold bg-emerald-500 text-white rounded-tl inline-flex items-center gap-0.5">
+                                <Target size={7} /> 选中
+                              </span>
+                            )}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                </div>
+                <div className="overflow-y-auto p-4 space-y-3 bg-bg-surface min-h-0">
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1">道具名称</div>
+                    <div className="text-sm text-text-primary">{p.name}</div>
+                  </div>
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1">描述</div>
+                    <p className="text-sm text-text-secondary leading-relaxed">{p.description || '—'}</p>
+                  </div>
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1">剧情运动</div>
+                    <p className="text-sm text-text-secondary leading-relaxed">{p.movementDescription || '—'}</p>
+                  </div>
+                  {p.keyMoments.length > 0 && (
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1">关键节点</div>
+                      <ul className="space-y-1 text-sm">
+                        {p.keyMoments.map((m, i) => (
+                          <li key={i} className="flex gap-2 text-text-secondary">
+                            <span className="text-accent shrink-0">·</span>
+                            <span>{m}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  {p.palette.length > 0 && (
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1">配色</div>
+                      <div className="flex gap-1.5">
+                        {p.palette.map((color, i) => (
+                          <div key={i} className="w-6 h-6 rounded-full border border-border" style={{ background: color }} title={color} />
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {/* ============= 道具修改输入弹层(2026/06,与场景对称) ============= */}
+      {propModOpen && (() => {
+        const p = propModOpen
+        const history = propImages[p.id] ?? []
+        const pinnedUrl = selectedPropImages[p.id]
+        const currentUrl = (pinnedUrl && history.includes(pinnedUrl))
+          ? pinnedUrl
+          : history.at(-1)
+        return (
+          <>
+            <div
+              className="fixed inset-0 z-40 bg-black/40"
+              onClick={closePropModPanel}
+              aria-hidden
+            />
+            <aside
+              className="fixed top-0 right-0 bottom-0 z-50 w-[400px] max-w-[90vw] bg-bg-surface border-l border-border shadow-2xl flex flex-col"
+              role="dialog"
+              aria-modal="true"
+            >
+              <div className="flex items-start justify-between px-4 py-3 border-b border-border shrink-0">
+                <div className="min-w-0">
+                  <div className="text-xs text-text-muted">修改道具</div>
+                  <div className="font-display text-base font-bold text-text-primary truncate">{p.name}</div>
+                  <div className="text-[11px] text-text-muted">{p.description?.slice(0, 40) || ''}</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={closePropModPanel}
+                  disabled={propModBusy}
+                  className="p-1.5 rounded-md hover:bg-bg-elevated text-text-muted disabled:opacity-30 disabled:cursor-not-allowed"
+                  aria-label="关闭"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+              <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1.5">当前参考图(基于此图修改)</div>
+                  <div className="relative w-full aspect-[4/3] bg-bg-base rounded-lg overflow-hidden border border-border">
+                    {currentUrl ? (
+                      <img src={currentUrl} alt={p.name} className="absolute inset-0 w-full h-full object-contain" />
+                    ) : (
+                      <div className="absolute inset-0 flex items-center justify-center text-text-muted text-xs">
+                        该道具还没生成
+                      </div>
+                    )}
+                  </div>
+                </div>
+                {history.length > 0 && (
+                  <div>
+                    <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1.5">
+                      历史生成 ({history.length})
+                    </div>
+                    <div className="flex items-center gap-1.5 overflow-x-auto py-1">
+                      {history.map((u, i) => {
+                        const isPinned = selectedPropImages[p.id] === u
+                        return (
+                          <button
+                            key={`${u}-${i}`}
+                            type="button"
+                            onClick={() => {
+                              setSelectedPropImages((m) => {
+                                if (isPinned) {
+                                  const { [p.id]: _omit, ...rest } = m
+                                  return rest
+                                }
+                                return { ...m, [p.id]: u }
+                              })
+                            }}
+                            title={isPinned ? '已选为参考(reference),再点取消' : '把这张设为参考'}
+                            className={`relative shrink-0 w-14 h-10 rounded overflow-hidden border-2 transition ${
+                              u === currentUrl
+                                ? 'border-accent'
+                                : isPinned
+                                  ? 'border-emerald-400/70'
+                                  : 'border-border hover:border-accent/60'
+                            }`}
+                          >
+                            <img src={u} alt={`历史 #${i + 1}`} loading="lazy" className="absolute inset-0 w-full h-full object-cover" />
+                            {i === history.length - 1 && (
+                              <span className="absolute top-0 left-0 px-1 text-[8px] font-bold bg-accent text-accent-foreground rounded-br">NEW</span>
+                            )}
+                            {isPinned && (
+                              <span className="absolute bottom-0 right-0 px-1 text-[8px] font-bold bg-emerald-500 text-white rounded-tl inline-flex items-center gap-0.5">
+                                <Target size={7} /> 选中
+                              </span>
+                            )}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )}
+                <div>
+                  <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1.5">修改意见</div>
+                  <textarea
+                    value={propModInput}
+                    onChange={(e) => setPropModInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault()
+                        void submitPropModPanel()
+                      }
+                    }}
+                    placeholder="例如:把颜色改成红色 / 增加金属质感 / 换成木纹材质…"
+                    rows={5}
+                    disabled={propModBusy}
+                    className="w-full rounded-md bg-bg-elevated border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-none placeholder:text-text-muted disabled:opacity-50"
+                  />
+                  <p className="text-[10px] text-text-muted mt-1.5 leading-relaxed">
+                    AI 会保留:道具本体、形状、基本构图、纯色背景、无人物。只改你描述的部分。
+                  </p>
+                </div>
+                {propModError && (
+                  <div className="px-3 py-2 rounded-md bg-rose-500/10 border border-rose-500/30 text-xs text-rose-400">
+                    {propModError}
+                  </div>
+                )}
+              </div>
+              <div className="shrink-0 border-t border-border p-3 flex items-center justify-between gap-2">
+                <span className="text-[10px] text-text-muted">Enter 发送 · Shift+Enter 换行</span>
+                <button
+                  type="button"
+                  onClick={() => void submitPropModPanel()}
+                  disabled={propModBusy || !propModInput.trim() || !currentUrl}
+                  className="px-4 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
+                >
+                  {propModBusy ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+                  {propModBusy ? '生成中…' : '发送修改'}
+                </button>
+              </div>
+            </aside>
+          </>
         )
       })()}
 

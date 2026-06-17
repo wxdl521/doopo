@@ -1,11 +1,17 @@
 import { supabase } from '@/integrations/supabase/client'
-import type { GenCharacter, GenScene } from '@/data/workspaceGenerators'
+import type { GenCharacter, GenScene, GenProp } from '@/data/workspaceGenerators'
 import type { Tables, Json } from '@/integrations/supabase/types'
 
 export type DbCharacter = Tables<'characters'>
 export type DbScene = Tables<'scenes'>
+export type DbProp = Tables<'props'>
 
 export type CharacterImageEntry = {
+  url: string
+  label: string
+}
+
+export type PropImageEntry = {
   url: string
   label: string
 }
@@ -95,6 +101,43 @@ export async function saveOneScene(
   const { error } = await supabase.from('scenes').upsert(record)
   if (error) return { ok: false, error: error.message }
   return { ok: true }
+}
+
+/**
+ * 把 GenProp 转换成 props 表的 upsert 记录。
+ */
+function propToRecord(p: GenProp, userId: string, coverUrl?: string | null, images?: PropImageEntry[]) {
+  return {
+    id: p.id,
+    user_id: userId,
+    name: p.name,
+    description: p.description,
+    movement_description: p.movementDescription,
+    key_moments: p.keyMoments,
+    palette: p.palette,
+    cover_url: coverUrl ?? null,
+    images: (images ?? null) as Json | null,
+  }
+}
+
+export async function saveOneProp(
+  p: GenProp,
+  userId: string,
+  coverUrl?: string | null,
+  images?: PropImageEntry[],
+): Promise<{ ok: boolean; error?: string }> {
+  const record = propToRecord(p, userId, coverUrl, images)
+  const { error } = await supabase.from('props').upsert(record)
+  if (error) return { ok: false, error: error.message }
+  return { ok: true }
+}
+
+export async function deleteProp(id: string, userId: string) {
+  return supabase.from('props').delete().eq('id', id).eq('user_id', userId)
+}
+
+export async function loadProps(userId: string) {
+  return supabase.from('props').select('*').eq('user_id', userId)
 }
 
 /** 从资产库移除单条角色/场景(per-item 删除按钮用) */
