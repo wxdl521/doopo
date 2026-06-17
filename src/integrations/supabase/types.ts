@@ -22,6 +22,7 @@ export type Database = {
           debut_shot: string | null
           gradient: string | null
           id: string
+          images: Json | null
           key_prop: string | null
           look: string | null
           mbti: string | null
@@ -40,6 +41,7 @@ export type Database = {
           debut_shot?: string | null
           gradient?: string | null
           id: string
+          images?: Json | null
           key_prop?: string | null
           look?: string | null
           mbti?: string | null
@@ -58,6 +60,7 @@ export type Database = {
           debut_shot?: string | null
           gradient?: string | null
           id?: string
+          images?: Json | null
           key_prop?: string | null
           look?: string | null
           mbti?: string | null
