@@ -234,6 +234,48 @@ export type Database = {
         }
         Relationships: []
       }
+      props: {
+        Row: {
+          cover_url: string | null
+          created_at: string
+          description: string | null
+          id: string
+          images: Json | null
+          key_moments: string[] | null
+          movement_description: string | null
+          name: string
+          palette: string[] | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          cover_url?: string | null
+          created_at?: string
+          description?: string | null
+          id: string
+          images?: Json | null
+          key_moments?: string[] | null
+          movement_description?: string | null
+          name: string
+          palette?: string[] | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          cover_url?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          images?: Json | null
+          key_moments?: string[] | null
+          movement_description?: string | null
+          name?: string
+          palette?: string[] | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       scenes: {
         Row: {
           action: string | null
