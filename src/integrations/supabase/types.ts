@@ -276,45 +276,6 @@ export type Database = {
         }
         Relationships: []
       }
-      props: {
-        Row: {
-          id: string
-          user_id: string
-          name: string
-          description: string | null
-          movement_description: string | null
-          key_moments: string[] | null
-          palette: string[] | null
-          cover_url: string | null
-          images: Json | null
-          created_at: string | null
-        }
-        Insert: {
-          id: string
-          user_id: string
-          name: string
-          description?: string | null
-          movement_description?: string | null
-          key_moments?: string[] | null
-          palette?: string[] | null
-          cover_url?: string | null
-          images?: Json | null
-          created_at?: string | null
-        }
-        Update: {
-          id?: string
-          user_id?: string
-          name?: string
-          description?: string | null
-          movement_description?: string | null
-          key_moments?: string[] | null
-          palette?: string[] | null
-          cover_url?: string | null
-          images?: Json | null
-          created_at?: string | null
-        }
-        Relationships: []
-      }
       scripts: {
         Row: {
           created_at: string
