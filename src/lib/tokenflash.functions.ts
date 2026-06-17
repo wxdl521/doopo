@@ -101,24 +101,55 @@ export async function callTokenflashImage(input: TokenflashImageInput): Promise<
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), IMAGE_REQUEST_TIMEOUT_MS)
   try {
-    const body: Record<string, unknown> = {
-      model,
-      prompt: input.prompt,
-      n: input.n ?? 1,
-      size,
-      quality: input.quality ?? 'auto',
-      // 实测 tokenflash 默认返回 b64_json,显式请求 url 也兼容
-      response_format: 'url',
-    }
+    // T2I 用 JSON;I2I 走 OpenAI 标准的 multipart/form-data,必须上传真实图片文件,
+    // 不能用 image_url(tokenflash 上游会报 "image_url must point to an image")。
+    let requestInit: RequestInit
     if (hasRefs) {
-      body.images = input.referenceImages!.map((image_url) => ({ image_url }))
-    }
-
-    // 对 502/503/504/524 这种上游瞬时错误做一次重试(1.5s 退避)
-    let res: Response | null = null
-    let lastText = ''
-    for (let attempt = 0; attempt < 2; attempt++) {
-      res = await fetch(`${baseUrl}${endpoint}`, {
+      const form = new FormData()
+      form.append('model', model)
+      form.append('prompt', input.prompt)
+      form.append('n', String(input.n ?? 1))
+      form.append('size', size)
+      form.append('quality', input.quality ?? 'auto')
+      form.append('response_format', 'url')
+      // 下载每张参考图为 Blob 后以 image[] 文件字段上传
+      for (let i = 0; i < input.referenceImages!.length; i++) {
+        const refUrl = input.referenceImages![i]
+        let blob: Blob
+        let filename = `ref_${i}.png`
+        let mime = 'image/png'
+        if (refUrl.startsWith('data:')) {
+          const m = refUrl.match(/^data:([^;]+);base64,(.+)$/)
+          if (!m) throw new Error(`invalid data url for ref ${i}`)
+          mime = m[1] || 'image/png'
+          const bin = Buffer.from(m[2], 'base64')
+          blob = new Blob([bin], { type: mime })
+        } else {
+          const r = await fetch(refUrl)
+          if (!r.ok) throw new Error(`fetch ref ${i} failed: ${r.status}`)
+          mime = r.headers.get('content-type') || 'image/png'
+          blob = await r.blob()
+        }
+        const ext = mime.includes('jpeg') ? 'jpg' : mime.includes('webp') ? 'webp' : 'png'
+        filename = `ref_${i}.${ext}`
+        form.append('image[]', blob, filename)
+      }
+      requestInit = {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}` },
+        body: form,
+        signal: controller.signal,
+      }
+    } else {
+      const body: Record<string, unknown> = {
+        model,
+        prompt: input.prompt,
+        n: input.n ?? 1,
+        size,
+        quality: input.quality ?? 'auto',
+        response_format: 'url',
+      }
+      requestInit = {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -126,7 +157,14 @@ export async function callTokenflashImage(input: TokenflashImageInput): Promise<
         },
         body: JSON.stringify(body),
         signal: controller.signal,
-      })
+      }
+    }
+
+    // 对 502/503/504/524 这种上游瞬时错误做一次重试(1.5s 退避)
+    let res: Response | null = null
+    let lastText = ''
+    for (let attempt = 0; attempt < 2; attempt++) {
+      res = await fetch(`${baseUrl}${endpoint}`, requestInit)
       if (res.ok) break
       lastText = await res.text().catch(() => '')
       const transient = res.status === 502 || res.status === 503 || res.status === 504 || res.status === 524
