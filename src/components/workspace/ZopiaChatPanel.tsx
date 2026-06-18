@@ -423,6 +423,8 @@ export default function ZopiaChatPanel({
     ],
     episodes: buildWorkflow("episodes", t).ctas,
     character: [
+      { key: "extract", label: t.zp_cta_extract, target: "character" },
+      { key: "select_episodes", label: t.zp_cta_select_episodes, target: "episodes" },
       { key: "enter_storyboard", label: t.zp_cta_enter_storyboard, target: "storyboard" },
     ],
     // storyboard 之前是 null(只显示文本预设),导致点击分镜流程时对话框
@@ -793,6 +795,13 @@ export default function ZopiaChatPanel({
           jumpAfter: true,
           fields: [
             {
+              key: "episode",
+              label: "选择集数",
+              default: String(selectedEpisodeIndex ?? 1),
+              options: [], // 空数组 = 让用户自行输入集数
+              custom: true,
+            },
+            {
               key: "scope",
               label: t.zp_param_f_scope,
               default: "supp",
@@ -1162,9 +1171,19 @@ export default function ZopiaChatPanel({
       return;
     }
     // extract: from episodes tab → directly send (skip param panel), extract characters + scenes from current episode
-    if (c.key === "extract" && stage === "episodes") {
-      const epIdx = selectedEpisodeIndex ?? 1;
-      send(`从第 ${epIdx} 集提取角色和场景`, { targetStage: "character", jumpAfter: true });
+    if (c.key === "extract") {
+      if (stage === "episodes") {
+        const epIdx = selectedEpisodeIndex ?? 1;
+        send(`从第 ${epIdx} 集提取角色和场景`, { targetStage: "character", jumpAfter: true });
+      } else {
+        // 从 character/storyboard 等 tab → 先弹出集数选择参数面板
+        const spec = getParamSpec(c);
+        if (spec) {
+          const defaults: Record<string, string | string[]> = {};
+          spec.fields.forEach((f) => { defaults[f.key] = f.default; });
+          setPendingCta({ cta: c, spec, values: defaults, previewing: false });
+        }
+      }
       return;
     }
     const spec = getParamSpec(c);
@@ -1236,6 +1255,14 @@ export default function ZopiaChatPanel({
       const sceneCount = values.sceneCount ?? "5";
       const text = `生成本集分镜\n分镜数：${sceneCount}`;
       send(text, { targetStage: "script", jumpAfter: false });
+      return;
+    }
+
+    // For extract (when coming from non-episodes tab with episode selection)
+    if (cta.key === "extract") {
+      setPendingCta(null);
+      const epIdx = (values.episode as string) ?? String(selectedEpisodeIndex ?? 1);
+      send(`从第 ${epIdx} 集提取角色、场景和道具`, { targetStage: "character", jumpAfter: true });
       return;
     }
 

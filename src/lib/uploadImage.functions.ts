@@ -34,3 +34,27 @@ export const uploadLocalImage = createServerFn({ method: 'POST' })
     if (!pub?.publicUrl) return { ok: false as const, error: 'no public url' }
     return { ok: true as const, url: pub.publicUrl }
   })
+
+/**
+ * 服务端下载图片 → base64 data URL（绕开浏览器跨域限制）
+ * 客户端 urlToBase64 失败时的兜底方案。
+ */
+const ServerUrlToBase64Input = z.object({
+  url: z.string().min(1).max(4000),
+})
+export const serverUrlToBase64 = createServerFn({ method: 'POST' })
+  .inputValidator((d: unknown) => ServerUrlToBase64Input.parse(d))
+  .handler(async ({ data }) => {
+    const { url } = data
+    if (url.startsWith('data:')) return { base64: url, error: null as string | null }
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(30_000) })
+      if (!res.ok) return { base64: null as string | null, error: `HTTP ${res.status}` }
+      const contentType = res.headers.get('content-type') || 'image/png'
+      const buf = await res.arrayBuffer()
+      const b64 = Buffer.from(buf).toString('base64')
+      return { base64: `data:${contentType};base64,${b64}`, error: null as string | null }
+    } catch (e: any) {
+      return { base64: null as string | null, error: e?.message ?? String(e) }
+    }
+  })
