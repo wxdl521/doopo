@@ -234,6 +234,48 @@ export type Database = {
         }
         Relationships: []
       }
+      props: {
+        Row: {
+          cover_url: string | null
+          created_at: string
+          description: string | null
+          id: string
+          images: Json | null
+          key_moments: string[] | null
+          movement_description: string | null
+          name: string
+          palette: string[] | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          cover_url?: string | null
+          created_at?: string
+          description?: string | null
+          id: string
+          images?: Json | null
+          key_moments?: string[] | null
+          movement_description?: string | null
+          name: string
+          palette?: string[] | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          cover_url?: string | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          images?: Json | null
+          key_moments?: string[] | null
+          movement_description?: string | null
+          name?: string
+          palette?: string[] | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       scenes: {
         Row: {
           action: string | null
@@ -273,45 +315,6 @@ export type Database = {
           name?: string
           time_of_day?: string | null
           user_id?: string
-        }
-        Relationships: []
-      }
-      props: {
-        Row: {
-          id: string
-          user_id: string
-          name: string
-          description: string | null
-          movement_description: string | null
-          key_moments: string[] | null
-          palette: string[] | null
-          cover_url: string | null
-          images: Json | null
-          created_at: string | null
-        }
-        Insert: {
-          id: string
-          user_id: string
-          name: string
-          description?: string | null
-          movement_description?: string | null
-          key_moments?: string[] | null
-          palette?: string[] | null
-          cover_url?: string | null
-          images?: Json | null
-          created_at?: string | null
-        }
-        Update: {
-          id?: string
-          user_id?: string
-          name?: string
-          description?: string | null
-          movement_description?: string | null
-          key_moments?: string[] | null
-          palette?: string[] | null
-          cover_url?: string | null
-          images?: Json | null
-          created_at?: string | null
         }
         Relationships: []
       }
