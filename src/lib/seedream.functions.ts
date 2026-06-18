@@ -943,6 +943,7 @@ export const generateStoryboardShotImage = createServerFn({ method: 'POST' })
     const { apiKey, baseUrl, model: defaultModel } = getArkConfig()
     if (!apiKey) return { ok: false as const, error: 'ARK_API_KEY not configured' }
     const model = requested || defaultModel
+    const prompt = appendNegative(instruction, negative)
 
     // 2026/06:查看提示词模式
     if (data.previewOnly) {
