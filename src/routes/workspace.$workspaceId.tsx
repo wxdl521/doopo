@@ -727,6 +727,13 @@ function WorkspacePage() {
   const [scenePreview, setScenePreview] = useState<GenScene | null>(null)
   // 2026/06:道具的 state —— 与场景对称
   const [propImages, setPropImages] = useState<Record<string, string[]>>({})
+  const propImagesRef = useRef<Record<string, string[]>>({})
+  const updatePropImages = (updater: (m: Record<string, string[]>) => Record<string, string[]>) => {
+    const next = updater(propImagesRef.current)
+    propImagesRef.current = next
+    setPropImages(next)
+  }
+  useEffect(() => { propImagesRef.current = propImages }, [propImages])
   const [selectedPropImages, setSelectedPropImages] = useState<Record<string, string | null>>({})
   const selectedPropImagesRef = useRef(selectedPropImages)
   useEffect(() => { selectedPropImagesRef.current = selectedPropImages }, [selectedPropImages])
@@ -874,6 +881,13 @@ function WorkspacePage() {
   const autogenRanRef = useRef<Set<string>>(new Set())
   const [panelImages, setPanelImages] = useState<Record<string, string>>({})
   const [sceneImages, setSceneImages] = useState<Record<string, string[]>>({})
+  const sceneImagesRef = useRef<Record<string, string[]>>({})
+  const updateSceneImages = (updater: (m: Record<string, string[]>) => Record<string, string[]>) => {
+    const next = updater(sceneImagesRef.current)
+    sceneImagesRef.current = next
+    setSceneImages(next)
+  }
+  useEffect(() => { sceneImagesRef.current = sceneImages }, [sceneImages])
   // 2026/06:跟角色 selectedCharImages 对称 —— 用户从历史里"选中"的某张
   // 场景图,作为分镜 / 故事板 / 按意见重生的 reference。
   // - 用 url 而不是 index 引用,避免新增图后被偏移
@@ -1579,11 +1593,15 @@ function WorkspacePage() {
           if (kind === 'character') {
             updateCharImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), res.url!] }))
           } else if (kind === 'scene') {
-            setSceneImages((m) => ({ ...m, [id]: [...(m[id] ?? []), res.url!] }))
+            updateSceneImages((m) => ({ ...m, [id]: [...(m[id] ?? []), res.url!] }))
           } else if (kind === 'prop') {
-            setPropImages((m) => ({ ...m, [id]: [...(m[id] ?? []), res.url!] }))
+            updatePropImages((m) => ({ ...m, [id]: [...(m[id] ?? []), res.url!] }))
           }
           toast.success('图片已上传')
+          // 2026/06 修复:上传后自动保存工作区,确保 URL 持久化到数据库,
+          // 避免刷新页面后丢失上传的图片(不弹 toast,静默保存)。
+          // ref 已在 updateXxxImages 中同步更新,handleSaveWorkspace 读 ref 即可拿到最新 URL。
+          void handleSaveWorkspace()
         } else {
           toast.error(res?.error || '上传失败')
         }
@@ -4445,6 +4463,7 @@ function WorkspacePage() {
       toast.error('请先登录')
       return
     }
+    if (savingWorkspace) return // 防并发:正在保存时跳过
     setSavingWorkspace(true)
     setSavedWorkspace(false)
     try {
@@ -4494,6 +4513,14 @@ function WorkspacePage() {
         }
       }
 
+      // 2026/06:保存时剥离 base64 data URL(体积太大导致 server fn 序列化失败),
+      // 只保留非 base64 URL。刷新页面后 autoGen 会重新生成图片。
+      const keepNonB64 = (url: string) => url && !url.startsWith('data:') ? url : undefined
+      const keepArr = (arr: string[] | undefined) => {
+        if (!arr) return undefined
+        const filtered = arr.map(keepNonB64).filter((u): u is string => !!u)
+        return filtered.length > 0 ? filtered : undefined
+      }
       const workspaceData: Record<string, unknown> = {
         outline: data.outline,
         scenes: data.scenes,
@@ -4504,20 +4531,21 @@ function WorkspacePage() {
         timeline: data.timeline,
         synopsisText: synopsisText || synopsisDraft,
         episodeTexts: data.episodeTexts,
-        charImages,
-        shotImages,
-        panelImages,
-        sceneImages,
-        propImages,
+        // 2026/06 修复:从 ref 读取最新图片 URL(handleUploadImage 通过 setTimeout
+        // 调 handleSaveWorkspace 时,React state 可能还没完成 batch update,ref 是最新的)
+        charImages: Object.fromEntries(Object.entries(charImagesRef.current).map(([k, v]) => [k, keepArr(v)])),
+        shotImages: Object.fromEntries(Object.entries(shotImages).map(([k, v]) => [k, keepArr(v)])),
+        sceneImages: Object.fromEntries(Object.entries(sceneImagesRef.current).map(([k, v]) => [k, keepArr(v)])),
+        propImages: Object.fromEntries(Object.entries(propImagesRef.current).map(([k, v]) => [k, keepArr(v)])),
+        panelImages: Object.fromEntries(Object.entries(panelImages).map(([k, v]) => [k, keepNonB64(v)])),
         selectedCharImages,
         selectedSceneImages,
         selectedPropImages,
-        // 2026/06:保存当前选中集数,刷新后恢复
         selectedEpisodeIndex,
-        // 2026/06:已入库或原始的 groupVideos / groupStoryboards 一并保存,
-        // 跨 session 也能恢复(只要 URL 在 Storage 里就是永久的)。
-        groupVideos: persistGroupVideos,
-        groupStoryboards: persistGroupStoryboards,
+        groupVideos,
+        groupStoryboards: Object.fromEntries(
+          Object.entries(persistGroupStoryboards).map(([k, v]) => [k, { ...v, url: keepNonB64(v.url) ?? '' }]),
+        ),
       }
       const res = await callSaveWorkspace({
         data: {

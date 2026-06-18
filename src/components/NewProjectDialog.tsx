@@ -50,6 +50,13 @@ const imageModelOptions = [
   { id: 'pixflow/gemini-3.1-flash-image', label: 'Gemini 3.1 Flash Image', sub: 'Pixflow · Google · 通用' },
   { id: 'tokenflash/gpt-image-2', label: 'GPT Image 2 (Tokenflash)', sub: 'Tokenflash · OpenAI · Image2 · 推荐' },
 
+  // ---- OneToken(OpenAI 兼容)----
+  { id: '__sep_onetoken__', label: '—— OneToken(OpenAI 兼容)——', sub: '' },
+  { id: 'onetoken/gpt-image-2', label: 'GPT Image 2 (OneToken)', sub: 'OneToken · OpenAI · Image2' },
+
+  // ---- OTU(OpenAI 兼容)----
+  { id: '__sep_otu__', label: '—— OTU(OpenAI 兼容)——', sub: '' },
+  { id: 'otu/image2', label: 'Image2 (OTU)', sub: 'OTU · T2I/I2I' },
 ]
 // 过滤掉"分隔符"项(只是 UI 视觉分组,不能选)
 const realImageModelOptions = imageModelOptions.filter((m) => m.id !== '__sep__')

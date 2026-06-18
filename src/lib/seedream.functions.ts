@@ -263,6 +263,26 @@ export const generateImage = createServerFn({ method: 'POST' })
       })
       return { url: r.url, error: r.error, model: r.model }
     }
+    // 委托给 OneToken(OpenAI 兼容,api.onetoken.one)
+    if (requested.toLowerCase().startsWith('onetoken/')) {
+      const { callOnetokenImage } = await import('./onetokenImage.functions')
+      const r = await callOnetokenImage({
+        prompt: appendNegative(data.prompt, data.negativePrompt),
+        model: requested,
+        size: data.size,
+      })
+      return { url: r.url, error: r.error, model: r.model }
+    }
+    // 委托给 OTU(OpenAI 兼容)
+    if (requested.toLowerCase().startsWith('otu/')) {
+      const { callOtuImage } = await import('./otuImage.functions')
+      const r = await callOtuImage({
+        prompt: appendNegative(data.prompt, data.negativePrompt),
+        model: requested,
+        size: data.size,
+      })
+      return { url: r.url, error: r.error, model: r.model }
+    }
     // 委托给 legacy(老 Qwen / OpenRouter 路径)
     if (requested && !isSeedreamModel(requested)) {
       // 动态 import 避免循环引用
@@ -698,6 +718,27 @@ export const regenerateCharacterLook = createServerFn({ method: 'POST' })
       if (!r.url) return { ok: false as const, error: r.error || 'Tokenflash 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
+    if (requested.toLowerCase().startsWith('onetoken/')) {
+      const { callOnetokenImage } = await import('./onetokenImage.functions')
+      const r = await callOnetokenImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'OneToken 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('otu/')) {
+      const { callOtuImage } = await import('./otuImage.functions')
+      const r = await callOtuImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'OTU 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
 
     const { apiKey, baseUrl, model: defaultModel } = getArkConfig()
     if (!apiKey) return { ok: false as const, error: 'ARK_API_KEY not configured' }
@@ -849,7 +890,7 @@ export const generateStoryboardShotImage = createServerFn({ method: 'POST' })
       if (!r.url) return { ok: false as const, error: r.error || 'Pixflow 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
-    // 委托给 legacy(Qwen / Wan / OpenRouter 等)
+    // generateStoryboardShotImage: 委托给 Tokenflash(OpenAI 兼容,api.tokenflash.cn)
     if (requested.toLowerCase().startsWith('tokenflash/')) {
       const { callTokenflashImage } = await import('./tokenflash.functions')
       const r = await callTokenflashImage({
@@ -861,7 +902,31 @@ export const generateStoryboardShotImage = createServerFn({ method: 'POST' })
       if (!r.url) return { ok: false as const, error: r.error || 'Tokenflash 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
-    if (requested && !isSeedreamModel(requested)) {
+    // generateStoryboardShotImage: 委托给 OneToken(OpenAI 兼容,api.onetoken.one)
+    if (requested.toLowerCase().startsWith('onetoken/')) {
+      const { callOnetokenImage } = await import('./onetokenImage.functions')
+      const r = await callOnetokenImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: '2K',
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'OneToken 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    // generateStoryboardShotImage: 委托给 OTU(OpenAI 兼容)
+    if (requested.toLowerCase().startsWith('otu/')) {
+      const { callOtuImage } = await import('./otuImage.functions')
+      const r = await callOtuImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: '2K',
+        referenceImages: images,
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'OTU 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    // generateStoryboardShotImage: 委托给 legacy(Qwen / Wan / OpenRouter 等)
+    if (requested && !isSeedreamModel(requested) && !requested.toLowerCase().startsWith('lovable/')) {
       const { generateImage: legacy } = await import('./openrouterImage.functions')
       const r: any = await legacy({
         data: {
@@ -878,7 +943,6 @@ export const generateStoryboardShotImage = createServerFn({ method: 'POST' })
     const { apiKey, baseUrl, model: defaultModel } = getArkConfig()
     if (!apiKey) return { ok: false as const, error: 'ARK_API_KEY not configured' }
     const model = requested || defaultModel
-    const prompt = appendNegative(instruction, negative)
 
     // 2026/06:查看提示词模式
     if (data.previewOnly) {
@@ -1015,6 +1079,27 @@ export const regenerateStoryboardShot = createServerFn({ method: 'POST' })
         referenceImages: images,
       })
       if (!r.url) return { ok: false as const, error: r.error || 'Tokenflash 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('onetoken/')) {
+      const { callOnetokenImage } = await import('./onetokenImage.functions')
+      const r = await callOnetokenImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: '2K',
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'OneToken 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('otu/')) {
+      const { callOtuImage } = await import('./otuImage.functions')
+      const r = await callOtuImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: '2K',
+        referenceImages: images,
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'OTU 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
     if (requested && !isSeedreamModel(requested)) {
@@ -1416,6 +1501,27 @@ export const generateStoryboardPitchDeck = createServerFn({ method: 'POST' })
         quality: 'high',
       })
       if (!r.url) return { ok: false as const, error: r.error || 'Tokenflash 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('onetoken/')) {
+      const { callOnetokenImage } = await import('./onetokenImage.functions')
+      const r = await callOnetokenImage({
+        prompt,
+        model: requested,
+        size: '3840x2160',
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'OneToken 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('otu/')) {
+      const { callOtuImage } = await import('./otuImage.functions')
+      const r = await callOtuImage({
+        prompt,
+        model: requested,
+        size: '3840x2160',
+        referenceImages: data.referenceImages || [],
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'OTU 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
 
@@ -1829,6 +1935,27 @@ export const regenerateSceneImage = createServerFn({ method: 'POST' })
         quality: 'high',
       })
       if (!r.url) return { ok: false as const, error: r.error || 'Tokenflash 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('onetoken/')) {
+      const { callOnetokenImage } = await import('./onetokenImage.functions')
+      const r = await callOnetokenImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'OneToken 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('otu/')) {
+      const { callOtuImage } = await import('./otuImage.functions')
+      const r = await callOtuImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'OTU 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
 
