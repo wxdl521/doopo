@@ -106,7 +106,7 @@ export type ProjectListItem = {
 
 const ALL_STAGES = ['canvas', 'script', 'character', 'storyboard', 'timeline'] as const
 
-function inferStatus(row: { completed_stages: string[]; workspace_data: any }): 'draft' | 'rendering' | 'ready' {
+function inferStatus(row: { completed_stages: string[] }): 'draft' | 'rendering' | 'ready' {
   const done = (row.completed_stages ?? []).length
   if (done >= ALL_STAGES.length) return 'ready'
   if (done === 0) return 'draft'
@@ -200,7 +200,11 @@ export const listMyProjects = createServerFn({ method: 'POST' })
 
     const { data, error } = await supabase
       .from('projects')
-      .select('id,name,custom_cover,created_at,updated_at,completed_stages,workspace_data')
+      // NOTE: workspace_data is intentionally NOT selected here — it's a large
+      // JSONB blob and pulling it for every row caused Postgres statement_timeout
+      // on accounts with many / heavy projects. Thumbnails fall back to
+      // customCover → gradient on the client.
+      .select('id,name,custom_cover,created_at,updated_at,completed_stages')
       .eq('user_id', authData.user.id)
       .order('updated_at', { ascending: false })
     if (error) return { projects: [] as ProjectListItem[], error: error.message }
@@ -211,8 +215,8 @@ export const listMyProjects = createServerFn({ method: 'POST' })
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       completedStages: row.completed_stages ?? [],
-      status: inferStatus({ completed_stages: row.completed_stages ?? [], workspace_data: row.workspace_data }),
-      thumbnail: pickThumbnail(row.workspace_data),
+      status: inferStatus({ completed_stages: row.completed_stages ?? [] }),
+      thumbnail: null,
     }))
     return { projects, error: null as string | null }
   })
