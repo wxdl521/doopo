@@ -477,6 +477,34 @@ function pickShotSceneId(shot: StoryboardShot | undefined, group: StoryboardGrou
   return group?.sceneId
 }
 
+/** 重新编号所有分镜组 index，按当前数组顺序 */
+function reindexGroups(groups: StoryboardGroup[]): StoryboardGroup[] {
+  return groups.map((g, i) => ({ ...g, index: i + 1 }))
+}
+
+/** 创建一个空的 StoryboardGroup（含一个默认空 shot） */
+function createEmptyGroup(episodeIndex: number): StoryboardGroup {
+  const id = crypto.randomUUID()
+  return {
+    episodeIndex,
+    id,
+    index: 1, // 调用方 reindexGroups 后会覆盖
+    plotText: '',
+    startSec: 0,
+    endSec: 5,
+    characterIds: [],
+    shots: [
+      {
+        id: crypto.randomUUID(),
+        shotType: 'MS',
+        shotTypeLabel: '中景',
+        action: '',
+        camera: '',
+      },
+    ],
+  }
+}
+
 /**
  * 2026/06:GroupMembershipEditor —— 分镜组层级的"+ 加角色"按钮 + addable 下拉。
  *
@@ -614,68 +642,38 @@ function GroupSceneEditor({
   const epScenes = scenes.filter((s) => s.episodeIndex === group.episodeIndex)
   const addable = epScenes.filter((s) => !(group.sceneIds ?? []).includes(s.id))
   return (
-    <div className="space-y-1.5">
-      {epScenes.length === 0 ? (
-        <div className="text-[10px] text-text-muted italic">本集还没有场景</div>
-      ) : (
-        <>
-          <div className="flex flex-wrap gap-1.5">
-            {(group.sceneIds ?? []).map((sid) => {
-              const s = scenes.find((x) => x.id === sid)
-              if (!s) return null
-              const label = s.location || s.slug || s.id
-              return (
-                <div key={sid} className="flex items-center gap-0.5">
-                  <span className="px-1.5 py-0.5 rounded text-[10px] bg-accent/20 text-accent border border-accent/30">
-                    {label.slice(0, 12)}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => onRemove(sid)}
-                    className="p-0.5 rounded text-text-muted hover:text-rose-400 hover:bg-rose-500/10 transition"
-                    title={`移除 ${label}`}
-                  >
-                    <X size={9} />
-                  </button>
-                </div>
-              )
-            })}
-          </div>
-          <div className="relative inline-block">
-            <button
-              type="button"
-              onClick={() => setAddOpen((v) => !v)}
-              disabled={addable.length === 0}
-              className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-dashed border-border text-[10px] text-text-secondary hover:border-accent hover:text-accent hover:bg-accent-dim/30 transition disabled:opacity-40 disabled:cursor-not-allowed"
-              title={addable.length === 0 ? '本集场景已全部加入' : '从本集场景库挑选一个加进来'}
-            >
-              <Plus size={9} /> 加场景
-            </button>
-            {addOpen && addable.length > 0 && (
-              <div
-                onClick={(e) => e.stopPropagation()}
-                className="absolute z-30 left-0 top-full mt-1 min-w-[180px] max-h-[260px] overflow-y-auto rounded-lg border border-border bg-bg-surface shadow-xl py-1"
+    <div className="relative inline-block">
+      <button
+        type="button"
+        onClick={() => setAddOpen((v) => !v)}
+        disabled={addable.length === 0}
+        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-dashed border-border text-[10px] text-text-secondary hover:border-accent hover:text-accent hover:bg-accent-dim/30 transition disabled:opacity-40 disabled:cursor-not-allowed"
+        title={addable.length === 0 ? '本集场景已全部加入' : '从本集场景库挑选一个加进来'}
+      >
+        <Plus size={9} /> 加场景
+      </button>
+      {addOpen && addable.length > 0 && (
+        <div
+          onClick={(e) => e.stopPropagation()}
+          className="absolute z-30 left-0 top-full mt-1 min-w-[180px] max-h-[260px] overflow-y-auto rounded-lg border border-border bg-bg-surface shadow-xl py-1"
+        >
+          {addable.map((s) => {
+            const label = s.location || s.slug || s.id
+            return (
+              <button
+                key={s.id}
+                type="button"
+                onClick={() => { onAdd(s.id); setAddOpen(false) }}
+                className="w-full flex items-center gap-2 px-2 py-1.5 text-left text-[11px] hover:bg-bg-elevated text-text-primary transition"
+                title={`加入 ${label}`}
               >
-                {addable.map((s) => {
-                  const label = s.location || s.slug || s.id
-                  return (
-                    <button
-                      key={s.id}
-                      type="button"
-                      onClick={() => { onAdd(s.id); setAddOpen(false) }}
-                      className="w-full flex items-center gap-2 px-2 py-1.5 text-left text-[11px] hover:bg-bg-elevated text-text-primary transition"
-                      title={`加入 ${label}`}
-                    >
-                      <Plus size={11} className="text-accent shrink-0" />
-                      <span className="flex-1 truncate">{label}</span>
-                      <span className="text-[9px] text-text-muted">{s.timeOfDay}</span>
-                    </button>
-                  )
-                })}
-              </div>
-            )}
-          </div>
-        </>
+                <Plus size={11} className="text-accent shrink-0" />
+                <span className="flex-1 truncate">{label}</span>
+                <span className="text-[9px] text-text-muted">{s.timeOfDay}</span>
+              </button>
+            )
+          })}
+        </div>
       )}
     </div>
   )
@@ -731,7 +729,7 @@ function WorkspacePage() {
   const [propImages, setPropImages] = useState<Record<string, string[]>>({})
   const [selectedPropImages, setSelectedPropImages] = useState<Record<string, string | null>>({})
   const selectedPropImagesRef = useRef(selectedPropImages)
-  selectedPropImagesRef.current = selectedPropImages
+  useEffect(() => { selectedPropImagesRef.current = selectedPropImages }, [selectedPropImages])
   const [busyProp, setBusyProp] = useState<string | null>(null)
   const [propPreview, setPropPreview] = useState<GenProp | null>(null)
   const [propModOpen, setPropModOpen] = useState<GenProp | null>(null)
@@ -1035,9 +1033,9 @@ function WorkspacePage() {
   // 用户在角色卡片右上角点"选中"后,该 look(imageKey)被钉住指向哪张 url。
   // 用 url 而不是 index 引用,避免新增图后被偏移。
   // 没设 → fallback 用 charImages[imageKey] 的最新一张(.at(-1))
-  const [selectedCharImages, setSelectedCharImages] = useState<Record<string, string>>({})
+  const [selectedCharImages, setSelectedCharImages] = useState<Record<string, string | null>>({})
   // ref 镜像 —— doRegen 在 event handler / await 后访问,用 ref 避免闭包过期
-  const selectedCharImagesRef = useRef<Record<string, string>>({})
+  const selectedCharImagesRef = useRef<Record<string, string | null>>({})
   useEffect(() => { selectedCharImagesRef.current = selectedCharImages }, [selectedCharImages])
   const [autoGen, setAutoGen] = useState(true)
   void setAutoGen
@@ -1167,6 +1165,8 @@ function WorkspacePage() {
   // 2026 Storyboard 接入:每个分镜组可以独立生成故事板图(Storyboard),
   // key = groupId。value 包含 storyboardUrl 和 status。不持久化(Seedream URL 24h 有效)。
   const [groupStoryboards, setGroupStoryboards] = useState<Record<string, { url: string; status: 'running' | 'succeeded' | 'failed' }>>({})
+  // 2026/06:新建空分镜组的插入位置选择弹窗
+  const [showNewGroupModal, setShowNewGroupModal] = useState(false)
   // 2026/06:故事板图加载失败的 groupId 集合。
   // 跟 brokenShotImages 同语义 —— Seedream TOS 24h 过期 / 上游 403 / 浏览器
   // 侧 DNS 不通时,state 里 url 还在,<img> 却 broken。徽章在 URL 真的"过
@@ -1281,7 +1281,7 @@ function WorkspacePage() {
         }
         if (wd.charImages) setCharImages(wd.charImages as Record<string, string[]>)
         if (wd.shotImages) setShotImages(wd.shotImages as Record<string, string[]>)
-        if ((wd as any).selectedCharImages) setSelectedCharImages((wd as any).selectedCharImages as Record<string, string>)
+        if ((wd as any).selectedCharImages) setSelectedCharImages((wd as any).selectedCharImages as Record<string, string | null>)
         if (wd.panelImages) setPanelImages(wd.panelImages as Record<string, string>)
         if (wd.sceneImages) setSceneImages(wd.sceneImages as Record<string, string[]>)
         if ((wd as any).selectedSceneImages) setSelectedSceneImages((wd as any).selectedSceneImages as Record<string, string | null>)
@@ -1348,6 +1348,7 @@ function WorkspacePage() {
       if (item.status !== 'succeeded' || !item.url) continue
       // 已入库的跳过(URL 是 supabase.co / 自己的 storage 域名)
       if (
+        item.url.startsWith('data:') ||
         item.url.includes('.supabase.co') ||
         item.url.includes('.supabase.in') ||
         item.url.includes('/storage/v1/object/public/workspace-media/') ||
@@ -2808,6 +2809,35 @@ function WorkspacePage() {
    *  4) 把返回的 groups 存到 data.storyboardGroups
    *  5) 切到 storyboard tab
    */
+  function handleInsertGroup(anchor: 'first' | 'last' | string) {
+    setData((d) => {
+      const newGroup = createEmptyGroup(selectedEpisodeIndex)
+      const groups = [...d.storyboardGroups]
+      let insertPos: number
+      if (anchor === 'first') {
+        insertPos = 0
+      } else if (anchor === 'last') {
+        insertPos = groups.length
+      } else {
+        // anchor 是 groupId:插入到该组之后
+        const idx = groups.findIndex((g) => g.id === anchor)
+        insertPos = idx >= 0 ? idx + 1 : groups.length
+      }
+      groups.splice(insertPos, 0, newGroup)
+      return { ...d, storyboardGroups: reindexGroups(groups) }
+    })
+    setShowNewGroupModal(false)
+    toast.success('已添加空分镜组')
+  }
+
+  function handleDeleteGroup(groupId: string) {
+    setData((d) => {
+      const groups = d.storyboardGroups.filter((g) => g.id !== groupId)
+      return { ...d, storyboardGroups: reindexGroups(groups) }
+    })
+    toast.success('已删除分镜组')
+  }
+
   async function runEnterStoryboard() {
     if (busyStoryboardGen) return
     const ep = data.episodeTexts.find((e) => e.epIndex === selectedEpisodeIndex)
@@ -3856,23 +3886,42 @@ function WorkspacePage() {
         return
       }
       if (res.ok && res.url) {
-        // 2026/06:立即 inline 入库(趁 TOS URL 还没过期),避免 useEffect
-        // 异步 fetch 时 URL 已失效 → img onError → "已过期"。
-        let finalUrl = res.url
-        if (user && workspaceId) {
-          try {
-            const r = await callSaveOneStoryboard({
+        // 2026/06:和其他图片一致 —— 先 await 转 base64 确保立即可见,入库 Supabase 作为额外兜底
+        const base64Url = await toBase64WithFallback(res.url)
+        let finalUrl = base64Url ?? res.url
+        if (base64Url) {
+          if (user && workspaceId) {
+            callSaveOneStoryboard({
               data: { workspaceId, groupId, url: res.url },
-            })
-            if (r.ok && r.persisted && r.url) {
-              finalUrl = r.url
+            }).then((r) => {
+              if (r.ok && r.persisted && r.url) {
+                setGroupStoryboards((m) => {
+                  const cur = m[groupId]
+                  if (!cur || cur.url !== finalUrl) return m
+                  return { ...m, [groupId]: { ...cur, url: r.url } }
+                })
+              }
+            }).catch(() => {})
+          }
+          toast.success('故事板已生成')
+        } else {
+          if (user && workspaceId) {
+            try {
+              const r = await callSaveOneStoryboard({ data: { workspaceId, groupId, url: res.url } })
+              if (r.ok && r.persisted && r.url) {
+                finalUrl = r.url
+                toast.success('故事板已生成')
+              } else {
+                toast.warning('故事板图片保存失败，临时链接 24h 内有效')
+              }
+            } catch {
+              toast.warning('故事板图片保存失败，临时链接 24h 内有效')
             }
-          } catch {
-            // inline 入库失败不阻塞 UI,后续还有 useEffect 重试
+          } else {
+            toast.warning('故事板图片保存失败，临时链接 24h 内有效')
           }
         }
         setGroupStoryboards((m) => ({ ...m, [groupId]: { url: finalUrl, status: 'succeeded' } }))
-        toast.success('故事板已生成')
       } else {
         setGroupStoryboards((m) => ({ ...m, [groupId]: { url: '', status: 'failed' } }))
         toast.error(classifyError(res?.error, '故事板生成失败'))
@@ -4003,21 +4052,25 @@ function WorkspacePage() {
         return
       }
       if (res?.ok && res.url) {
-        let finalUrl = res.url
-        if (user && workspaceId) {
-          try {
-            const r = await callSaveOneStoryboard({
-              data: { workspaceId, groupId, url: res.url },
-            })
-            if (r.ok && r.persisted && r.url) {
-              finalUrl = r.url
-            }
-          } catch {
-            // inline 入库失败不阻塞 UI
+        const base64Url = await toBase64WithFallback(res.url)
+        let finalUrl = base64Url ?? res.url
+        if (base64Url) {
+          if (user && workspaceId) {
+            callSaveOneStoryboard({ data: { workspaceId, groupId, url: res.url } })
+              .then((r) => { if (r.ok && r.persisted && r.url) { setGroupStoryboards((m) => { const cur = m[groupId]; if (!cur || cur.url !== finalUrl) return m; return { ...m, [groupId]: { ...cur, url: r.url } } }) } })
+              .catch(() => {})
           }
+          toast.success('已按意见重生故事板')
+        } else {
+          if (user && workspaceId) {
+            try {
+              const r = await callSaveOneStoryboard({ data: { workspaceId, groupId, url: res.url } })
+              if (r.ok && r.persisted && r.url) { finalUrl = r.url; toast.success('已按意见重生故事板') }
+              else { toast.warning('故事板图片保存失败，临时链接 24h 内有效') }
+            } catch { toast.warning('故事板图片保存失败，临时链接 24h 内有效') }
+          } else { toast.warning('故事板图片保存失败，临时链接 24h 内有效') }
         }
         setGroupStoryboards((m) => ({ ...m, [groupId]: { url: finalUrl, status: 'succeeded' } }))
-        toast.success('已按意见重生故事板')
         setStoryboardModInput('')
       } else {
         toast.error(res?.error || '故事板重生失败')
@@ -4104,6 +4157,20 @@ function WorkspacePage() {
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.scenes, autoGen])
+
+  // Auto-generate prop images for newly produced props
+  useEffect(() => {
+    if (!autoGen) return
+    const pending = data.props.filter((p) => !propImages[p.id]?.length)
+    if (!pending.length || busyProp) return
+    void (async () => {
+      for (const p of pending) {
+        // eslint-disable-next-line no-await-in-loop
+        await genPropImage(p)
+      }
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.props, autoGen])
 
   const [initialChatInput, setInitialChatInput] = useState<string>('')
   useEffect(() => {
@@ -4660,7 +4727,7 @@ function WorkspacePage() {
           const props: GenProp[] = (p.props ?? []).map((pp: any, i: number) => {
             const palette: string[] = Array.isArray(pp.palette) && pp.palette.length ? pp.palette : ['#1e293b', '#475569', '#fbbf24']
             return {
-              id: `ai-prop-${i + 1}-${Date.now()}`,
+              id: crypto.randomUUID(),
               episodeIndex: epForNew,
               name: pp.name ?? `道具${i + 1}`,
               description: pp.description ?? '',
@@ -5006,7 +5073,7 @@ function WorkspacePage() {
   }
 
   function createEmptyProp(episodeIndex: number): GenProp {
-    const id = `prop-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
+    const id = crypto.randomUUID()
     return {
       episodeIndex,
       id,
@@ -5759,14 +5826,25 @@ function WorkspacePage() {
                                   </button>
                                 )}
                                 {/* 上传本地图片按钮 */}
-                                <button
-                                  type="button"
-                                  onClick={(e) => { e.stopPropagation(); handleUploadImage('scene', s.id, s.id) }}
-                                  className="absolute bottom-1.5 right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] hover:bg-accent hover:text-accent-foreground transition backdrop-blur-sm"
-                                  title="上传本地图片"
-                                >
-                                  <Upload size={10} /> 上传
-                                </button>
+                                {!hasImg ? (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); handleUploadImage('scene', s.id, s.id) }}
+                                    className="absolute bottom-1.5 right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] hover:bg-accent hover:text-accent-foreground transition backdrop-blur-sm"
+                                    title="上传本地图片"
+                                  >
+                                    <Upload size={10} /> 上传
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); handleUploadImage('scene', s.id, s.id) }}
+                                    className="absolute bottom-1.5 right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] hover:bg-accent hover:text-accent-foreground transition backdrop-blur-sm"
+                                    title="上传本地图片覆盖"
+                                  >
+                                    <Upload size={10} /> 上传
+                                  </button>
+                                )}
                                 {/* 保存到资产库按钮 */}
                                 {hasImg && (
                                   <button
@@ -5933,14 +6011,25 @@ function WorkspacePage() {
                                   </button>
                                 )}
                                 {/* 上传本地图片按钮 */}
-                                <button
-                                  type="button"
-                                  onClick={(e) => { e.stopPropagation(); handleUploadImage('prop', p.id, p.id) }}
-                                  className="absolute bottom-1.5 right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] hover:bg-accent hover:text-accent-foreground transition backdrop-blur-sm"
-                                  title="上传本地图片"
-                                >
-                                  <Upload size={10} /> 上传
-                                </button>
+                                {!hasImg ? (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); handleUploadImage('prop', p.id, p.id) }}
+                                    className="absolute bottom-1.5 right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] hover:bg-accent hover:text-accent-foreground transition backdrop-blur-sm"
+                                    title="上传本地图片"
+                                  >
+                                    <Upload size={10} /> 上传
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); handleUploadImage('prop', p.id, p.id) }}
+                                    className="absolute bottom-1.5 right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] hover:bg-accent hover:text-accent-foreground transition backdrop-blur-sm"
+                                    title="上传本地图片覆盖"
+                                  >
+                                    <Upload size={10} /> 上传
+                                  </button>
+                                )}
                                 {/* 保存到资产库按钮 */}
                                 {hasImg && (
                                   <button
@@ -6003,7 +6092,7 @@ function WorkspacePage() {
                                   type="button"
                                   onClick={(e) => { e.stopPropagation(); handleUploadImage('prop', p.id, p.id) }}
                                   className="absolute bottom-1.5 left-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] hover:bg-accent hover:text-accent-foreground transition backdrop-blur-sm"
-                                  title="上传本地图片"
+                                  title="上传本地图片覆盖"
                                 >
                                   <Upload size={10} /> 上传
                                 </button>
@@ -6355,7 +6444,7 @@ function WorkspacePage() {
                                       void saveCharacterToAssets(c, card.lookId, imageKey)
                                     }}
                                     title={savedAssetKeys.has(imageKey) ? '已保存到资产库,点击重新保存当前封面图' : '把这张角色卡(含主图)保存到你的资产库'}
-                                    className={`absolute bottom-1.5 left-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium backdrop-blur-sm transition ${
+                                    className={`absolute bottom-1.5 left-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium backdrop-blur-sm transition ${
                                       savedAssetKeys.has(imageKey)
                                         ? 'bg-emerald-500/85 text-white shadow-sm'
                                         : 'bg-black/70 text-white hover:bg-accent hover:text-accent-foreground'
@@ -6589,6 +6678,13 @@ function WorkspacePage() {
                     >
                       <Sparkles size={11} /> 重新切分
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowNewGroupModal(true)}
+                      className="text-xs px-2.5 py-1 rounded border border-accent bg-accent-dim text-accent hover:bg-accent hover:text-white transition inline-flex items-center gap-1"
+                    >
+                      <Plus size={11} /> 新建空分镜
+                    </button>
                   </div>
                 </div>
                 {epGroups.map((g) => {
@@ -6657,6 +6753,17 @@ function WorkspacePage() {
                           {anyBusy ? <><Loader2 size={11} className="animate-spin" /> 生成中…</>
                             : allShotsHaveImage ? '✓ 已生成'
                             : <><Sparkles size={11} /> 一键生成全部</>}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            if (window.confirm(`确定删除第 ${g.index} 组分镜？`)) {
+                              handleDeleteGroup(g.id)
+                            }
+                          }}
+                          className="text-[11px] px-2.5 py-1 rounded border border-rose-500/40 text-rose-400 hover:bg-rose-500/10 transition inline-flex items-center gap-1 shrink-0"
+                        >
+                          <X size={11} /> 删除
                         </button>
                       </div>
                       {/* 四列:左 plot / 中-左 分镜图(2 列多行) / 中-右 故事板占位 / 右 视频占位
@@ -6828,11 +6935,17 @@ function WorkspacePage() {
                                     const s = data.scenes.find((x) => x.id === sid)
                                     if (!s) return null
                                     const label = s.location || s.slug || s.id
+                                    const img = sceneImages[sid]?.at(-1)
                                     return (
                                       <div key={sid} className="flex items-center gap-0.5">
-                                        <span className="px-1.5 py-0.5 rounded text-[9px] bg-accent/15 text-accent border border-accent/25 truncate max-w-[60px]">
-                                          {label.slice(0, 8)}
-                                        </span>
+                                        <div className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-border bg-bg-elevated/50 max-w-[90px]">
+                                          <div className="w-4 h-4 rounded overflow-hidden bg-bg-base shrink-0">
+                                            {img
+                                              ? <img src={img} alt={label} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                                              : <div className="w-full h-full flex items-center justify-center text-[6px] text-text-muted">S</div>}
+                                          </div>
+                                          <span className="text-[9px] text-text-primary truncate">{label.slice(0, 8)}</span>
+                                        </div>
                                         <button
                                           type="button"
                                           onClick={() => setGroupSceneIds(g.id, sid, 'remove')}
@@ -6867,11 +6980,17 @@ function WorkspacePage() {
                                   {(g.propIds ?? []).map((pid) => {
                                     const p = data.props.find((x) => x.id === pid)
                                     if (!p) return null
+                                    const img = propImages[pid]?.at(-1)
                                     return (
                                       <div key={pid} className="flex items-center gap-0.5">
-                                        <span className="px-1.5 py-0.5 rounded text-[9px] bg-accent/15 text-accent border border-accent/25 truncate max-w-[60px]">
-                                          {p.name.slice(0, 8)}
-                                        </span>
+                                        <div className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-border bg-bg-elevated/50 max-w-[90px]">
+                                          <div className="w-4 h-4 rounded overflow-hidden bg-bg-base shrink-0">
+                                            {img
+                                              ? <img src={img} alt={p.name} className="w-full h-full object-cover" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
+                                              : <div className="w-full h-full flex items-center justify-center text-[6px] text-text-muted">P</div>}
+                                          </div>
+                                          <span className="text-[9px] text-text-primary truncate">{p.name.slice(0, 8)}</span>
+                                        </div>
                                         <button
                                           type="button"
                                           onClick={() => setGroupPropIds(g.id, pid, 'remove')}
@@ -8522,6 +8641,51 @@ function WorkspacePage() {
           </div>
         )
       })()}
+
+      {/* ============= 新建空分镜 — 插入位置选择弹窗 ============= */}
+      {showNewGroupModal && (
+        <div
+          className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setShowNewGroupModal(false)}
+        >
+          <div
+            className="bg-bg-surface border border-border rounded-2xl p-6 max-w-sm w-full shadow-2xl space-y-3"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="font-display text-base font-bold">新建空分镜</h3>
+            <p className="text-xs text-text-muted">选择一个插入位置：</p>
+            <div className="space-y-1.5 max-h-[50vh] overflow-y-auto">
+              <button
+                onClick={() => handleInsertGroup('first')}
+                className="w-full text-left px-3 py-2 rounded-lg border border-border hover:border-accent text-sm transition"
+              >
+                ↑ 添加到最前面
+              </button>
+              {data.storyboardGroups.filter((g) => g.episodeIndex === selectedEpisodeIndex).map((g) => (
+                <button
+                  key={g.id}
+                  onClick={() => handleInsertGroup(g.id)}
+                  className="w-full text-left px-3 py-2 rounded-lg border border-border hover:border-accent text-sm transition"
+                >
+                  添加到 # {g.index} 之后
+                </button>
+              ))}
+              <button
+                onClick={() => handleInsertGroup('last')}
+                className="w-full text-left px-3 py-2 rounded-lg border border-accent bg-accent-dim text-accent text-sm transition"
+              >
+                ↓ 添加到最后面（默认）
+              </button>
+            </div>
+            <button
+              onClick={() => setShowNewGroupModal(false)}
+              className="w-full py-2 rounded-lg border border-border text-xs text-text-muted hover:border-accent transition"
+            >
+              取消
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* ============= 查看提示词模态(2026/06) =============
           全局开关 viewPromptsMode 打开时,所有生成按钮触发后不真正生成,而是

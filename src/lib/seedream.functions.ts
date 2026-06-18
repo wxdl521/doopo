@@ -350,6 +350,13 @@ function buildCharacterPrompts(opts: {
   (B) the FACE / BODY / OUTFIT text descriptions below.
 If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) exactly.`,
       ``,
+      `[PHYSICAL STATE — must be respected in ALL 3 panels]`,
+      `The character's body description (bodyDescription) below is the SINGLE SOURCE OF TRUTH for their physical condition.`,
+      `If the body description indicates a permanent physical trait (e.g. uses a wheelchair, missing limb, prosthetic, walking cane, blind, deaf), that trait MUST appear consistently in ALL 3 panels.`,
+      `DO NOT force the character into a "standing upright" pose if they use a wheelchair — show them in their wheelchair in all 3 panels (front/side/back views of the person IN the wheelchair).`,
+      `DO NOT add missing limbs back — if the description says they are missing an arm or leg, all 3 panels must show that limb missing.`,
+      `The camera angle changes between panels (front → side → back), but the character's physical state, assistive devices, and permanent condition stay identical across all 3 panels.`,
+      ``,
       `LAYOUT — strict, no exceptions:
   Output ONE image with EXACTLY 3 horizontal panels, side-by-side, equal width:
     • LEFT   = FRONT view (the reference image's angle)
@@ -357,33 +364,33 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
     • RIGHT  = BACK view (180° rotation)
   NO 4th panel. NO diagonal panel. NO detail box. NO labels. NO captions. NO arrows. NO scale indicators. NO text inside the image.`,
       ``,
-      `PER-PANEL SHOT TYPE: Each of the 3 panels is a FULL SHOT (FS) / LONG SHOT (LS) / FULL-LENGTH PORTRAIT — the same framing used in character turnaround sheets, model sheets, and costume reference sheets. The character in EACH panel is shown standing upright from head to feet.`,
+      `PER-PANEL SHOT TYPE: Each of the 3 panels is a FULL SHOT (FS) / LONG SHOT (LS) / FULL-LENGTH PORTRAIT — the same framing used in character turnaround sheets, model sheets, and costume reference sheets. The character in EACH panel is shown from head to toe (or the full extent of their body, including wheelchair/prosthetic if applicable).`,
       ``,
-      `PER-PANEL GEOMETRY: Each panel is portrait-orientation. In each panel, the character occupies 85-95% of the panel's vertical extent — from the top of the head to the soles of the feet. Small white margin above the head AND below the feet in EACH panel. Both feet clearly visible at the bottom of EACH panel. The character does NOT touch the top or bottom edge of any panel.`,
+      `PER-PANEL GEOMETRY: Each panel is portrait-orientation. In each panel, the character occupies 85-95% of the panel's vertical extent — from the top of the head to the lowest point of the body (soles of feet, wheelchair bottom, prosthetic bottom, etc.). Small white margin above the head AND below the body in EACH panel. The character does NOT touch the top or bottom edge of any panel.`,
       ``,
       `PER-PANEL COMPOSITION (apply in each of the 3 panels):
   1. Reserve a portrait-orientation panel.
   2. Place the character centered horizontally.
   3. Top of head at the top of the panel (with small margin).
-  4. Soles of feet at the bottom of the panel (with small margin).
+  4. Lowest body point at the bottom of the panel (with small margin).
   5. Body fills the vertical axis of the panel — full body, no half-body.
-  6. Both feet visible. Both hands visible at the sides.`,
+  6. Both feet visible (if applicable and the character has feet). Hands visible at the sides (if applicable).`,
       ``,
       `HARD CONSTRAINTS — the image is REJECTED if ANY of these is true in ANY of the 3 panels:
   • The panel is a half-body, waist-up, hip-up, chest-up, shoulder-up, knee-up, cowboy shot, or head-and-shoulders crop.
   • The head or top of the hair is cut off at the top of the panel.
-  • The feet or shoes are cut off at the bottom of the panel.
-  • The character is floating with no visible feet, or the lower body fades into the background.
+  • The body or wheelchair/prosthetic is cut off at the bottom of the panel.
   • The body extends beyond the panel edge.
   • The character occupies less than 80% of the panel's height.
   • The side or back panel is tighter than the front panel (this is the #1 most common failure mode — both side and back must be JUST AS FULL as the front).
-  • The image contains 4+ panels, or fewer than 3 panels.`,
+  • The image contains 4+ panels, or fewer than 3 panels.
+  • The character's physical condition (wheelchair, missing limb, etc.) differs between panels — it MUST be identical in all 3.`,
       ``,
-      `CAMERA PER PANEL: standing upright, neutral A-pose (arms relaxed at the sides, feet slightly apart), expressionless face. The ONLY thing that changes between panels is the camera rotation around the vertical axis. NO 3/4 view, NO diagonal, NO action pose, NO walking, NO sitting, NO crouching, NO hands-on-hips, NO prop-holding.`,
+      `CAMERA PER PANEL: Neutral front/side/back views. The ONLY thing that changes between panels is the camera rotation around the vertical axis. NO 3/4 view, NO diagonal, NO action pose, NO walking, NO running, NO hands-on-hips. The character stays in their natural/default state (sitting in wheelchair if applicable, standing if applicable, with their assistive devices as described).`,
       ``,
       `EXPRESSION IN ALL 3 PANELS: Neutral, expressionless, like a passport photo. No smile, no frown, no emotion, eyes open looking at the camera.`,
       ``,
-      `IDENTITY LOCK ACROSS ALL 3 PANELS: Same face, same body, same outfit, same age, same hair, same skin tone, same accessories, same shoes. The ONLY difference between panels is the camera angle. The face must be PIXEL-IDENTICAL across all 3 panels.`,
+      `IDENTITY LOCK ACROSS ALL 3 PANELS: Same face, same body, same physical condition, same outfit, same age, same hair, same skin tone, same accessories, same shoes, same wheelchair or prosthetic if applicable. The ONLY difference between panels is the camera angle.`,
       ``,
       `VISUAL STYLE (MUST match across all 3 panels — no style drift between panels):`,
       buildStyleLock(styleSpec, 'reference'),
@@ -391,17 +398,17 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
       `CHARACTER (source of truth, alongside the attached reference image):
   Name: ${cardTitle} (${data.characterRoleLabel}, age ${data.characterAge})
   Face (must remain identical in all 3 panels): ${data.faceDescription || '(use the face shown in the attached reference image)'}
-  Body (must remain identical in all 3 panels): ${data.bodyDescription || '(use the body shown in the attached reference image)'}
+  Body (must remain identical in all 3 panels — includes physical condition, disabilities, assistive devices): ${data.bodyDescription || '(use the body shown in the attached reference image)'}
   Outfit (must remain identical in all 3 panels — do NOT change the outfit between panels): ${data.clothingDescription || '(use the outfit shown in the attached reference image)'}`,
       ``,
       `BACKGROUND: Each panel has a uniform light neutral background (off-white #F5F5F5 / light grey #EEEEEE is OK — this IS a reference sheet, not a final product, so the strict pure-white rule is relaxed). NO scenery, NO floor, NO horizon, NO props, NO environment, NO shadow on the background, NO reflection.`,
       ``,
       `FINAL CHECK — verify every item before submitting. If any is false, REGENERATE the image:
   [ ] Output is ONE image with EXACTLY 3 panels (front / side / back) (yes)
-  [ ] All 3 panels show FULL BODY head-to-toe (yes)
-  [ ] All 3 panels show BOTH FEET at the bottom (yes)
+  [ ] All 3 panels show the FULL BODY (including wheelchair/prosthetic if applicable) (yes)
   [ ] All 3 panels are equally full-body (side and back NOT tighter than front) (yes)
-  [ ] Same face, body, outfit, age in all 3 panels (yes)
+  [ ] Same face, body, physical condition, outfit, age in all 3 panels (yes)
+  [ ] Physical disabilities/assistive devices are identical in all 3 panels (yes)
   [ ] Style matches "${styleSpec.label}" in all 3 panels (yes)
   [ ] Expression is neutral in all 3 panels (yes)
   [ ] No text, watermark, logo, labels, captions inside the image (yes)`,
@@ -480,11 +487,12 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
       `[SECTION 2 — 角色三视图 / THREE-VIEW]`,
       `Section title: "角色三视图 / Three-View"`,
       `Lay out THREE FULL-BODY orthographic views side-by-side:`,
-      `  • 正视图 (Front view) — character standing A-pose, facing camera, expressionless face, both feet visible`,
-      `  • 侧视图 (Side view) — 90° rotation, character's RIGHT side facing camera, same A-pose`,
-      `  • 背视图 (Back view) — 180° rotation, back facing camera, same A-pose`,
+      `  • 正视图 (Front view) — character facing camera, expressionless face, in their natural/default state (standing if able, in wheelchair if they use one, with prosthetic/assistive device if applicable)`,
+      `  • 侧视图 (Side view) — 90° rotation, character's RIGHT side facing camera, same state`,
+      `  • 背视图 (Back view) — 180° rotation, back facing camera, same state`,
       `Each view is labeled in Chinese below it: "正视图" / "侧视图" / "背视图".`,
-      `CRITICAL — PRESERVE ALL CHARACTER FEATURES across all three views: any special trait (glasses, wings, animal ears, tail, horns, special hair accessory, distinctive eye color, tattoos) MUST appear consistently. Identical proportions, identical outfit, identical height. NO perspective distortion, NO foreshortening, NO 3/4 angles. Standard orthographic.`,
+      `CRITICAL — PRESERVE ALL CHARACTER FEATURES across all three views: any special trait (glasses, wings, animal ears, tail, horns, special hair accessory, distinctive eye color, tattoos) MUST appear consistently. Identical proportions, identical outfit, identical physical condition. NO perspective distortion, NO foreshortening, NO 3/4 angles. Standard orthographic.`,
+      `IMPORTANT — The body description (bodyDescription) below is the SINGLE SOURCE OF TRUTH for the character's physical condition. If they use a wheelchair, are missing a limb, or have any permanent physical trait, that MUST be shown identically in all three views. Do NOT force "standing A-pose" if the character uses a wheelchair.`,
 
       // ========== Section 3:表情表 ==========
       `[SECTION 3 — 表情表 / EXPRESSIONS]`,
@@ -503,19 +511,20 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
       `CRITICAL — same face shape, eye shape, nose, mouth structure, hairstyle, skin tone, camera angle (front), lighting. Special features (glasses, ears, horns) consistent in every expression close-up.`,
 
       // ========== Section 4:动作姿势 ==========
-      `[SECTION 4 — 动作姿势 / POSES (personality-driven)]`,
+      `[SECTION 4 — 动作姿势 / POSES (personality-driven, must respect physical condition)]`,
       `Section title: "动作姿势 / Poses"`,
-      `Lay out 4-6 FULL-BODY dynamic poses, each labeled in Chinese below it. **Pick poses that fit THIS character's personality**, drawn from the role label (${data.characterRoleLabel}) and the description below. Different characters get different pose sets — a warrior gets combat poses, a scholar gets reading/thinking poses, a child gets playful poses, etc.`,
+      `Lay out 4-6 FULL-BODY dynamic poses, each labeled in Chinese below it. **Pick poses that fit THIS character's personality AND physical ability**, drawn from the role label (${data.characterRoleLabel}) and the body description below.`,
+      `CRITICAL — If the character uses a wheelchair or has a physical disability, ALL poses MUST be consistent with that condition. A wheelchair user can wave, turn their head, reach for something, interact with objects, etc. — but NOT stand, walk, or run. A one-armed character should NOT use the missing arm.`,
       `Examples (pick what fits; invent better-matching ones freely):`,
-      `  • 跑步 (Running) / 行走 (Walking) — for active characters`,
-      `  • 玩耍 (Playing) — for childlike or playful characters`,
-      `  • 战斗准备 (Combat ready) — for fighters`,
+      `  • 招手 (Waving) — for friendly characters (sitting or standing as applicable)`,
       `  • 思考 (Thinking) — for strategists / scholars`,
-      `  • 招手 (Waving) / 微笑挥手 — for friendly characters`,
-      `  • 坐姿 (Sitting) — composed or contemplative`,
-      `  • 回头 (Turning back) — mysterious or guarded`,
+      `  • 微笑 (Smiling at camera) — gentle, approachable`,
       `  • 持物姿态 (Holding signature prop) — if the character has a signature item`,
-      `Each pose is head-to-toe full body, both feet visible. Outfit / hair / special features (ears, tail, wings, glasses, horns) MUST stay consistent in every pose.`,
+      `  • 回头 (Turning back) — mysterious or guarded`,
+      `  • 坐姿 (Sitting) — composed or contemplative (natural for wheelchair users)`,
+      `  • 交流手势 (Gesturing while talking) — for expressive characters`,
+      `  • 阅读 (Reading) — for bookish characters`,
+      `Each pose is head-to-toe full body (including wheelchair/prosthetic if applicable). Outfit / hair / special features (ears, tail, wings, glasses, horns) MUST stay consistent in every pose. Physical condition (wheelchair, missing limb) MUST be identical in every pose.`,
 
       // ========== Section 5:配饰/道具图标 ==========
       `[SECTION 5 — 配饰 / 道具图标 / ACCESSORIES & PROPS]`,
@@ -555,9 +564,9 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
       data.faceDescription || '(no separate face description — use the face shown in the attached reference image)',
       `=== END FACE ===`,
 
-      `=== BODY — IDENTICAL across all full-body sub-images ===`,
+      `=== BODY — IDENTICAL across all full-body sub-images (includes physical condition / disabilities / assistive devices) ===`,
       data.bodyDescription || '(no separate body description — use the body shown in the attached reference image)',
-      `=== END BODY ===`,
+      `NOTE: The body description is the single source of truth for physical condition. If the character uses a wheelchair, missing a limb, or has any permanent physical trait, that MUST be shown identically in every sub-image. Do NOT force standing poses on wheelchair users.`,
 
       `=== OUTFIT — IDENTICAL across all sub-images, do NOT add/remove clothing or accessories ===`,
       data.clothingDescription || '(no separate outfit description — use the outfit shown in the attached reference image)',

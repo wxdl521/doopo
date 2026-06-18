@@ -43,7 +43,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware"
 const SaveOneStoryboardInput = z.object({
   workspaceId: z.string().min(1).max(64),
   groupId: z.string().min(1).max(64),
-  url: z.string().min(1).max(2000),
+  url: z.string().min(1).max(5000000),
 })
 
 export type SaveOneStoryboardResult = {
@@ -105,7 +105,7 @@ export const saveOneStoryboard = createServerFn({ method: "POST" })
 const SaveOneVideoInput = z.object({
   workspaceId: z.string().min(1).max(64),
   groupId: z.string().min(1).max(64),
-  url: z.string().min(1).max(2000),
+  url: z.string().min(1).max(200000),
 })
 
 export type SaveOneVideoResult = {

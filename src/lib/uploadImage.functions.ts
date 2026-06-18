@@ -40,7 +40,7 @@ export const uploadLocalImage = createServerFn({ method: 'POST' })
  * 客户端 urlToBase64 失败时的兜底方案。
  */
 const ServerUrlToBase64Input = z.object({
-  url: z.string().min(1).max(4000),
+  url: z.string().min(1).max(5000000),
 })
 export const serverUrlToBase64 = createServerFn({ method: 'POST' })
   .inputValidator((d: unknown) => ServerUrlToBase64Input.parse(d))
