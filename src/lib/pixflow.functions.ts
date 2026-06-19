@@ -206,32 +206,75 @@ export async function callPixflowImage(input: PixflowImageInput): Promise<Pixflo
 
   // ----- gpt-image-* 走 OpenAI Compatible -----
   //   - 无参考图 → POST /v1/images/generations (JSON, T2I)
-  //   - 有参考图 → POST /v1/images/edits     (JSON, images[].image_url)
-  //     文档明确:/v1/images/generations 不会把 image/images 当成参考图,
-  //     必须走 /v1/images/edits;高稳定分组支持 JSON `images[].image_url`
-  //     引用图(免去 multipart 文件上传)。
+  //   - 有参考图 → POST /v1/images/edits (multipart/form-data, image[]=<binary>)
+  //     Pixflow 上游严格要求 multipart 文件上传(JSON `images[].image_url`
+  //     会被拒为 "failed to parse multipart form")。我们从 URL 拉取参考图
+  //     转 Blob 后用 FormData 上传;若所有参考图下载失败,退回到
+  //     /v1/images/generations(纯 T2I)。
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), IMAGE_REQUEST_TIMEOUT_MS)
   try {
-    const hasRefs = !!input.referenceImages?.length
-    const endpoint = hasRefs ? '/v1/images/edits' : '/v1/images/generations'
-    const body: Record<string, unknown> = {
-      model,
-      prompt: input.prompt,
-      n: input.n ?? 1,
-      size: input.size || '1024x1024',
-      quality: input.quality ?? 'auto',
-      // 高稳定分组默认返回 url(响应体小);其他分组返回 b64_json,我们都能解析
-      response_format: 'url',
+    const wantRefs = !!input.referenceImages?.length
+    let endpoint: '/v1/images/edits' | '/v1/images/generations' = wantRefs
+      ? '/v1/images/edits'
+      : '/v1/images/generations'
+    let reqInit: RequestInit
+
+    if (wantRefs) {
+      // 把参考图 URL 全部下载成 Blob
+      const blobs: Array<{ blob: Blob; filename: string }> = []
+      for (let i = 0; i < input.referenceImages!.length; i++) {
+        const url = input.referenceImages![i]
+        try {
+          const ctl = new AbortController()
+          const tm = setTimeout(() => ctl.abort(), 20_000)
+          const r = await fetch(url, { signal: ctl.signal })
+          clearTimeout(tm)
+          if (!r.ok) {
+            console.warn(`[pixflow⚠] ref#${i} download status=${r.status} url=${url.slice(0, 80)}`)
+            continue
+          }
+          const mime = r.headers.get('content-type')?.split(';')[0]?.trim() || 'image/png'
+          const ext = mime.includes('jpeg') ? 'jpg' : mime.includes('webp') ? 'webp' : 'png'
+          const buf = await r.arrayBuffer()
+          blobs.push({ blob: new Blob([buf], { type: mime }), filename: `ref${i}.${ext}` })
+        } catch (e) {
+          console.warn(`[pixflow⚠] ref#${i} download failed: ${e instanceof Error ? e.message : 'fetch failed'}`)
+        }
+      }
+      if (blobs.length === 0) {
+        console.warn(`[pixflow⚠] model=${model} all refs failed to download, fallback to T2I /v1/images/generations`)
+        endpoint = '/v1/images/generations'
+      } else {
+        const form = new FormData()
+        form.append('model', model)
+        form.append('prompt', input.prompt)
+        form.append('n', String(input.n ?? 1))
+        form.append('size', input.size || '1024x1024')
+        form.append('quality', input.quality ?? 'auto')
+        form.append('response_format', 'url')
+        for (const { blob, filename } of blobs) {
+          form.append('image[]', blob, filename)
+        }
+        reqInit = {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${apiKey}` }, // 让 fetch 自动写 boundary
+          body: form,
+          signal: controller.signal,
+        }
+      }
     }
-    if (hasRefs) {
-      body.images = input.referenceImages!.map((image_url) => ({ image_url }))
-    }
-    // 对 502/524 这种 pixflow 上游瞬时错误做一次重试(指数退避 1.5s)
-    let res: Response | null = null
-    let lastText = ''
-    for (let attempt = 0; attempt < 2; attempt++) {
-      res = await fetch(`${baseUrl}${endpoint}`, {
+
+    if (endpoint === '/v1/images/generations') {
+      const body: Record<string, unknown> = {
+        model,
+        prompt: input.prompt,
+        n: input.n ?? 1,
+        size: input.size || '1024x1024',
+        quality: input.quality ?? 'auto',
+        response_format: 'url',
+      }
+      reqInit = {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -239,7 +282,13 @@ export async function callPixflowImage(input: PixflowImageInput): Promise<Pixflo
         },
         body: JSON.stringify(body),
         signal: controller.signal,
-      })
+      }
+    }
+    // 对 502/524 这种 pixflow 上游瞬时错误做一次重试(指数退避 1.5s)
+    let res: Response | null = null
+    let lastText = ''
+    for (let attempt = 0; attempt < 2; attempt++) {
+      res = await fetch(`${baseUrl}${endpoint}`, reqInit!)
       if (res.ok) break
       lastText = await res.text().catch(() => '')
       const transient = res.status === 502 || res.status === 503 || res.status === 504 || res.status === 524
