@@ -239,6 +239,7 @@ export type Database = {
           cover_url: string | null
           created_at: string
           description: string | null
+          episode_index: number
           id: string
           images: Json | null
           key_moments: string[] | null
@@ -252,6 +253,7 @@ export type Database = {
           cover_url?: string | null
           created_at?: string
           description?: string | null
+          episode_index?: number
           id: string
           images?: Json | null
           key_moments?: string[] | null
@@ -265,6 +267,7 @@ export type Database = {
           cover_url?: string | null
           created_at?: string
           description?: string | null
+          episode_index?: number
           id?: string
           images?: Json | null
           key_moments?: string[] | null
