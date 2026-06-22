@@ -21,7 +21,7 @@ import { generateStoryboardFromPlot, generateStoryboardShotImage, regenerateStor
 import { generateVideo } from '../lib/videoGenerate.functions'
 import { generateStoryboardPitchDeck } from '../lib/seedream.functions'
 import { getProject, saveWorkspaceData, loadWorkspaceData, type ProjectConfigRow } from '../lib/projects.functions'
-import { persistWorkspaceMedia, saveOneStoryboard, saveOneVideo } from '../lib/workspaceMedia.functions'
+import { persistWorkspaceMedia, saveOneStoryboard, saveOneVideo, persistAssetImage } from '../lib/workspaceMedia.functions'
 import { urlToBase64 } from '../lib/imageToBase64'
 import { streamSynopsis, streamEpisodeScenes, refineSynopsis, refineEpisodeScenes } from '../lib/scriptAgent.functions'
 import type { ImportedScriptResult } from '../lib/parseImportedScript.functions'
@@ -769,6 +769,7 @@ function WorkspacePage() {
   const callSaveWorkspace = useServerFn(saveWorkspaceData)
   const callLoadWorkspace = useServerFn(loadWorkspaceData)
   const callPersistMedia = useServerFn(persistWorkspaceMedia)
+  const callPersistAsset = useServerFn(persistAssetImage)
   const callSaveOneStoryboard = useServerFn(saveOneStoryboard)
   const callSaveOneVideo = useServerFn(saveOneVideo)
   const [project, setProject] = useState<ProjectConfigRow | null>(null)
@@ -802,7 +803,7 @@ function WorkspacePage() {
   }
   useEffect(() => { charImagesRef.current = charImages }, [charImages])
 
-  // 只保留 base64 持久化方案。
+  /** 服务端持久化(下载临时 URL → 上传 Storage → 永久 URL) */
   async function persistAndSetImage(
     imageKey: string,
     tempUrl: string,
@@ -810,7 +811,6 @@ function WorkspacePage() {
     id: string,
     mode: 'overwrite' | 'append' = 'overwrite',
   ) {
-    // 已经是永久/base64 URL 则跳过
     if (isPersistedUrl(tempUrl)) {
       if (mode === 'append') {
         updateCharImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), tempUrl] }))
@@ -819,55 +819,64 @@ function WorkspacePage() {
       }
       return { ok: true as const, url: tempUrl }
     }
-
-    // 转为 base64 data URL（直接存数据库）
-    const base64Url = await toBase64WithFallback(tempUrl)
-    if (base64Url) {
-      if (mode === 'append') {
-        updateCharImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), base64Url] }))
-      } else {
-        updateCharImages((m) => ({ ...m, [imageKey]: [base64Url] }))
-      }
-      return { ok: true as const, url: base64Url }
+    if (user) {
+      try {
+        const r = await callPersistAsset({ data: { url: tempUrl, userId: user.id, kind, id } })
+        if (r.ok && r.url) {
+          if (mode === 'append') {
+            updateCharImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), r.url] }))
+          } else {
+            updateCharImages((m) => ({ ...m, [imageKey]: [r.url] }))
+          }
+          return { ok: true as const, url: r.url }
+        }
+        console.warn('[persist] persistAssetImage failed:', r.error)
+      } catch { /* 持久化失败 */ }
     }
-
-    // 转换失败：保留临时 URL
+    // 没有 base64 兜底,直接保留临时 URL(浏览器 CORS 可能拦截显示,但保存后 autoGen 跳过)
     if (mode === 'append') {
       updateCharImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), tempUrl] }))
     } else {
       updateCharImages((m) => ({ ...m, [imageKey]: [tempUrl] }))
     }
-    toast.warning(`「${id}」图片保存失败，临时链接 24h 内有效`)
     return { ok: false as const, url: tempUrl }
   }
 
-  // 只保留 base64 持久化方案。
+  /** 服务端持久化场景图片 */
   async function persistSceneImage(s: GenScene, tempUrl: string) {
     if (isPersistedUrl(tempUrl)) {
       setSceneImages((m) => ({ ...m, [s.id]: [...(m[s.id] ?? []), tempUrl] }))
       return { ok: true as const, url: tempUrl }
     }
-    const base64Url = await toBase64WithFallback(tempUrl)
-    if (base64Url) {
-      setSceneImages((m) => ({ ...m, [s.id]: [...(m[s.id] ?? []), base64Url] }))
-      return { ok: true as const, url: base64Url }
+    if (user) {
+      try {
+        const r = await callPersistAsset({ data: { url: tempUrl, userId: user.id, kind: 'scene', id: s.id } })
+        if (r.ok && r.url) {
+          setSceneImages((m) => ({ ...m, [s.id]: [...(m[s.id] ?? []), r.url] }))
+          return { ok: true as const, url: r.url }
+        }
+      } catch { /* 持久化失败 */ }
     }
     setSceneImages((m) => ({ ...m, [s.id]: [...(m[s.id] ?? []), tempUrl] }))
-    toast.warning(`场景「${s.slug}」图片保存失败，临时链接 24h 内有效`)
     return { ok: false as const, url: tempUrl }
   }
+
+  /** 服务端持久化道具图片 */
   async function persistPropImage(p: GenProp, tempUrl: string) {
     if (isPersistedUrl(tempUrl)) {
       setPropImages((m) => ({ ...m, [p.id]: [...(m[p.id] ?? []), tempUrl] }))
       return { ok: true as const, url: tempUrl }
     }
-    const base64Url = await toBase64WithFallback(tempUrl)
-    if (base64Url) {
-      setPropImages((m) => ({ ...m, [p.id]: [...(m[p.id] ?? []), base64Url] }))
-      return { ok: true as const, url: base64Url }
+    if (user) {
+      try {
+        const r = await callPersistAsset({ data: { url: tempUrl, userId: user.id, kind: 'prop', id: p.id } })
+        if (r.ok && r.url) {
+          setPropImages((m) => ({ ...m, [p.id]: [...(m[p.id] ?? []), r.url] }))
+          return { ok: true as const, url: r.url }
+        }
+      } catch { /* 持久化失败 */ }
     }
     setPropImages((m) => ({ ...m, [p.id]: [...(m[p.id] ?? []), tempUrl] }))
-    toast.warning(`道具「${p.name}」图片保存失败，临时链接 24h 内有效`)
     return { ok: false as const, url: tempUrl }
   }
   // processCharacter 入口 ref 守卫(2026/06):防止 useEffect 多次触发
@@ -1145,7 +1154,7 @@ function WorkspacePage() {
   // 判断 URL 是否已持久化(Supabase Storage 永久 URL 或 base64 data URL)
   const isPersistedUrl = useCallback((url: string | undefined | null): boolean => {
     if (!url) return false
-    // base64 data URL 视为已持久化(存在数据库里)
+    // base64 视为已持久化(存在内存 state 中,显示用,但保存时会被过滤)
     if (url.startsWith('data:')) return true
     try {
       const u = new URL(url)
@@ -1511,11 +1520,9 @@ function WorkspacePage() {
       ].filter(Boolean).join('\n')
       const res = await callImage({ data: { prompt, model: project?.sceneModel } })
       if (res.url) {
-        // 2026/06 修复:ARK TOS URL <img> 加载失败，先 await 转 base64
-        const base64Url = await toBase64WithFallback(res.url)
-        const displayUrl = base64Url ?? res.url
-        setSceneImages((m) => ({ ...m, [s.id]: [...(m[s.id] ?? []), displayUrl] }))
-        if (base64Url) {
+        // 2026/06 修复:直接持久化到 Storage
+        const permResult = await persistSceneImage(s, res.url)
+        if (permResult.ok) {
           toast.success(`已生成场景图「${s.slug}」`)
         } else {
           toast.warning(`场景「${s.slug}」图片保存失败，临时链接 24h 内有效`)
@@ -1549,11 +1556,9 @@ function WorkspacePage() {
       ].filter(Boolean).join('\n')
       const res = await callImage({ data: { prompt, model: project?.sceneModel } })
       if (res.url) {
-        // 2026/06 修复:ARK TOS URL <img> 加载失败，先 await 转 base64
-        const base64Url = await toBase64WithFallback(res.url)
-        const displayUrl = base64Url ?? res.url
-        setPropImages((m) => ({ ...m, [p.id]: [...(m[p.id] ?? []), displayUrl] }))
-        if (base64Url) {
+        // 2026/06 修复:直接持久化到 Storage
+        const permResult = await persistPropImage(p, res.url)
+        if (permResult.ok) {
           toast.success(`已生成道具图「${p.name}」`)
         } else {
           toast.warning(`道具「${p.name}」图片保存失败，临时链接 24h 内有效`)
@@ -2098,12 +2103,9 @@ function WorkspacePage() {
         const res = await callImage({ data: { prompt, model: resolveT2IModel(project?.sceneModel), noFallback: true, negativePrompt, size: characterSize } })
         console.log(`[CHAR-AUTOGEN] callImage returned: id=${c.id} url=${res.url ? 'ok' : res.error}`)
         if (res.url) {
-          // 2026/06 修复:ARK TOS URL 在浏览器 <img> 中加载失败(防盗链),
-          // 所以先 await 服务端转 base64,成功后再显示。
-          const base64Url = await toBase64WithFallback(res.url)
-          const displayUrl = base64Url ?? res.url
-          updateCharImages((m) => ({ ...m, [ls.imageKey]: [displayUrl] }))
-          if (base64Url) {
+          // 2026/06 修复:直接服务端持久化到 Storage,避免 base64 超时
+          const permResult = await persistAndSetImage(ls.imageKey, res.url, 'character', c.id, 'overwrite')
+          if (permResult.ok) {
             toast.success(`已生成 ${cardTitle}（${styleSpec.label}）`)
           } else {
             toast.warning(`「${cardTitle}」图片保存失败，临时链接 24h 内有效`)
@@ -4127,6 +4129,8 @@ function WorkspacePage() {
     for (const c of data.characters) {
       if (busyChars.has(c.id)) continue
       if (autogenRanRef.current.has(c.id)) continue
+      // 2026/06 修复:已有图片(从 workspace_data 恢复的)跳过,不重新生成
+      if (charImages[c.id]?.length) continue
       charactersToStart.push(c)
     }
     console.log(`[CHAR-AUTOGEN] useEffect: charactersToStart=${charactersToStart.length} ids=${charactersToStart.map(c => c.id).join(',')}`)
@@ -4368,15 +4372,14 @@ function WorkspacePage() {
     const images = allImgs.length > 0
       ? allImgs.map((url) => ({ url, label: url === coverUrl ? '主图' : '生成图' }))
       : undefined
-    // 只保留 base64 方案
+    // 2026/06 修复:URL 不是永久 URL 则先持久化到 Storage,避免 base64 太大导致超时
     let permCoverUrl = coverUrl
     if (coverUrl && !isPersistedUrl(coverUrl)) {
-      const base64Url = await toBase64WithFallback(coverUrl)
-      if (base64Url) {
-        permCoverUrl = base64Url
-      } else {
-        toast.warning('图片保存失败，将以临时链接保存(24h 内有效)')
-      }
+      try {
+        const r = await callPersistAsset({ data: { url: coverUrl, userId: user.id, kind: 'character', id: c.id } })
+        if (r.ok && r.url) permCoverUrl = r.url
+        else toast.warning('图片保存失败，将以临时链接保存(24h 内有效)')
+      } catch { toast.warning('图片保存失败，将以临时链接保存(24h 内有效)') }
     }
     const r = await saveOneCharacter(c, user.id, permCoverUrl, images)
     if (!r.ok) {
@@ -4400,12 +4403,11 @@ function WorkspacePage() {
       : undefined
     let permCoverUrl = coverUrl
     if (coverUrl && !isPersistedUrl(coverUrl)) {
-      const base64Url = await toBase64WithFallback(coverUrl)
-      if (base64Url) {
-        permCoverUrl = base64Url
-      } else {
-        toast.warning('道具图片保存失败，将以临时链接保存(24h 内有效)')
-      }
+      try {
+        const r = await callPersistAsset({ data: { url: coverUrl, userId: user.id, kind: 'prop', id: p.id } })
+        if (r.ok && r.url) permCoverUrl = r.url
+        else toast.warning('道具图片保存失败，将以临时链接保存(24h 内有效)')
+      } catch { toast.warning('道具图片保存失败，将以临时链接保存(24h 内有效)') }
     }
     const r = await saveOneProp(p, user.id, permCoverUrl, images)
     if (!r.ok) {
@@ -4426,12 +4428,11 @@ function WorkspacePage() {
     const coverUrl = allImgs.at(-1) ?? null
     let permCoverUrl = coverUrl
     if (coverUrl && !isPersistedUrl(coverUrl)) {
-      const base64Url = await toBase64WithFallback(coverUrl)
-      if (base64Url) {
-        permCoverUrl = base64Url
-      } else {
-        toast.warning('场景图片保存失败，将以临时链接保存(24h 内有效)')
-      }
+      try {
+        const r = await callPersistAsset({ data: { url: coverUrl, userId: user.id, kind: 'scene', id: s.id } })
+        if (r.ok && r.url) permCoverUrl = r.url
+        else toast.warning('场景图片保存失败，将以临时链接保存(24h 内有效)')
+      } catch { toast.warning('场景图片保存失败，将以临时链接保存(24h 内有效)') }
     }
     const r = await saveOneScene(s, user.id, permCoverUrl)
     if (!r.ok) {
@@ -4513,8 +4514,7 @@ function WorkspacePage() {
         }
       }
 
-      // 2026/06:保存时剥离 base64 data URL(体积太大导致 server fn 序列化失败),
-      // 只保留非 base64 URL。刷新页面后 autoGen 会重新生成图片。
+      // 过滤 base64(太大无法写入),保留临时 ARK URL 和永久 Storage URL
       const keepNonB64 = (url: string) => url && !url.startsWith('data:') ? url : undefined
       const keepArr = (arr: string[] | undefined) => {
         if (!arr) return undefined
