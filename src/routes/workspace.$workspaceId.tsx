@@ -1162,6 +1162,8 @@ function WorkspacePage() {
       if (host.endsWith('.supabase.co') && u.pathname.includes('/object/public/workspace-media/')) return true
       if (u.pathname.includes('/storage/v1/object/public/workspace-media/')) return true
       if (u.pathname.includes('/object/public/workspace-media/')) return true
+      // 签名 URL
+      if (u.pathname.includes('/storage/v1/object/sign/workspace-media/')) return true
       return false
     } catch { return false }
   }, [])
@@ -1576,7 +1578,7 @@ function WorkspacePage() {
   // ============= 本地图片上传(2026/06 新增) =============
 
   async function handleUploadImage(
-    kind: 'character' | 'scene' | 'prop',
+    kind: 'character' | 'scene' | 'prop' | 'panel' | 'shot' | 'storyboard',
     id: string,
     imageKey: string,
   ) {
@@ -1601,11 +1603,14 @@ function WorkspacePage() {
             updateSceneImages((m) => ({ ...m, [id]: [...(m[id] ?? []), res.url!] }))
           } else if (kind === 'prop') {
             updatePropImages((m) => ({ ...m, [id]: [...(m[id] ?? []), res.url!] }))
+          } else if (kind === 'panel') {
+            setPanelImages((m) => ({ ...m, [id]: res.url! }))
+          } else if (kind === 'shot') {
+            setShotImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), res.url!] }))
+          } else if (kind === 'storyboard') {
+            setGroupStoryboards((m) => ({ ...m, [id]: { url: res.url!, status: 'succeeded' } }))
           }
           toast.success('图片已上传')
-          // 2026/06 修复:上传后自动保存工作区,确保 URL 持久化到数据库,
-          // 避免刷新页面后丢失上传的图片(不弹 toast,静默保存)。
-          // ref 已在 updateXxxImages 中同步更新,handleSaveWorkspace 读 ref 即可拿到最新 URL。
           void handleSaveWorkspace()
         } else {
           toast.error(res?.error || '上传失败')
@@ -7156,6 +7161,13 @@ function WorkspacePage() {
                                           ? <><RefreshCw size={9} /> 重新生成</>
                                           : <><Sparkles size={9} /> 生成本镜头</>}
                                     </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleUploadImage('shot', s.id, shotImageKey)}
+                                      className="w-full text-[10px] py-0.5 rounded border border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent transition inline-flex items-center justify-center gap-1 mt-1"
+                                    >
+                                      <Upload size={9} /> 上传图片
+                                    </button>
                                   </div>
                                 </div>
                               )
@@ -7203,6 +7215,14 @@ function WorkspacePage() {
                                   title="重新生成故事板"
                                 >
                                   <RefreshCw size={12} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleUploadImage('storyboard', g.id, g.id)}
+                                  className="absolute bottom-1.5 right-1.5 p-1 rounded bg-black/60 text-white opacity-0 group-hover:opacity-100 transition hover:bg-black/80"
+                                  title="上传图片"
+                                >
+                                  <Upload size={12} />
                                 </button>
                               </div>
                             ) : groupStoryboards[g.id]?.status === 'running' ? (
@@ -7354,6 +7374,40 @@ function WorkspacePage() {
               </div>
             )
           })()}
+          <input
+            type="file"
+            accept="video/mp4,video/webm,video/quicktime"
+            id={"video-upload-" + g.id}
+            className="hidden"
+            onChange={async (e) => {
+              const file = e.target.files?.[0]
+              if (!file) return
+              try {
+                const base64 = await new Promise<string>((resolve, reject) => {
+                  const reader = new FileReader()
+                  reader.onload = () => resolve(reader.result as string)
+                  reader.onerror = reject
+                  reader.readAsDataURL(file)
+                })
+                const res = await callUploadImage({ data: { base64, id: g.id, kind: 'video' } })
+                if (res.ok && res.url) {
+                  setGroupVideos((m) => ({ ...m, [g.id]: { url: res.url!, status: 'succeeded' } }))
+                  toast.success('视频已上传')
+                  void handleSaveWorkspace()
+                } else {
+                  toast.error(res?.error || '上传失败')
+                }
+              } catch {
+                toast.error('视频上传失败')
+              }
+            }}
+          />
+          <label
+            htmlFor={"video-upload-" + g.id}
+            className="w-full text-[10px] py-1 rounded border border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent transition cursor-pointer inline-flex items-center justify-center gap-1"
+          >
+            <Upload size={9} /> 上传视频
+          </label>
           {tab === 'timeline' && (
             <StoryboardTimeline
               groups={data.storyboardGroups}
