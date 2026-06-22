@@ -7367,6 +7367,40 @@ function WorkspacePage() {
                               </button>
                             )
                           })()}
+                          <input
+                            type="file"
+                            accept="video/mp4,video/webm,video/quicktime"
+                            id={"video-upload-" + g.id}
+                            className="hidden"
+                            onChange={async (e) => {
+                              const file = e.target.files?.[0]
+                              if (!file) return
+                              try {
+                                const base64 = await new Promise<string>((resolve, reject) => {
+                                  const reader = new FileReader()
+                                  reader.onload = () => resolve(reader.result as string)
+                                  reader.onerror = reject
+                                  reader.readAsDataURL(file)
+                                })
+                                const res = await callUploadImage({ data: { base64, id: g.id, kind: 'video' } })
+                                if (res.ok && res.url) {
+                                  setGroupVideos((m) => ({ ...m, [g.id]: { url: res.url!, status: 'succeeded' } }))
+                                  toast.success('视频已上传')
+                                  void handleSaveWorkspace()
+                                } else {
+                                  toast.error(res?.error || '上传失败')
+                                }
+                              } catch {
+                                toast.error('视频上传失败')
+                              }
+                            }}
+                          />
+                          <label
+                            htmlFor={"video-upload-" + g.id}
+                            className="w-full text-[10px] py-1 rounded border border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent transition cursor-pointer inline-flex items-center justify-center gap-1"
+                          >
+                            <Upload size={9} /> 上传视频
+                          </label>
                         </div>
                       </div>
                   )
@@ -7374,40 +7408,6 @@ function WorkspacePage() {
               </div>
             )
           })()}
-          <input
-            type="file"
-            accept="video/mp4,video/webm,video/quicktime"
-            id={"video-upload-" + g.id}
-            className="hidden"
-            onChange={async (e) => {
-              const file = e.target.files?.[0]
-              if (!file) return
-              try {
-                const base64 = await new Promise<string>((resolve, reject) => {
-                  const reader = new FileReader()
-                  reader.onload = () => resolve(reader.result as string)
-                  reader.onerror = reject
-                  reader.readAsDataURL(file)
-                })
-                const res = await callUploadImage({ data: { base64, id: g.id, kind: 'video' } })
-                if (res.ok && res.url) {
-                  setGroupVideos((m) => ({ ...m, [g.id]: { url: res.url!, status: 'succeeded' } }))
-                  toast.success('视频已上传')
-                  void handleSaveWorkspace()
-                } else {
-                  toast.error(res?.error || '上传失败')
-                }
-              } catch {
-                toast.error('视频上传失败')
-              }
-            }}
-          />
-          <label
-            htmlFor={"video-upload-" + g.id}
-            className="w-full text-[10px] py-1 rounded border border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent transition cursor-pointer inline-flex items-center justify-center gap-1"
-          >
-            <Upload size={9} /> 上传视频
-          </label>
           {tab === 'timeline' && (
             <StoryboardTimeline
               groups={data.storyboardGroups}
