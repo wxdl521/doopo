@@ -4313,6 +4313,7 @@ function WorkspacePage() {
 
   useEffect(() => {
     if (!autoGen) return
+    if (!dataLoaded) return
     const pending = data.storyboard.filter((p) => !panelImages[p.id])
     if (!pending.length || busyPanel) return
     void (async () => {
@@ -4322,11 +4323,12 @@ function WorkspacePage() {
       }
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.storyboard, autoGen])
+  }, [data.storyboard, autoGen, dataLoaded])
 
   // Auto-generate scene images for newly produced scenes
   useEffect(() => {
     if (!autoGen) return
+    if (!dataLoaded) return
     const pending = data.scenes.filter((s) => !sceneImages[s.id]?.length)
     if (!pending.length || busyScene) return
     void (async () => {
@@ -4336,11 +4338,12 @@ function WorkspacePage() {
       }
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.scenes, autoGen])
+  }, [data.scenes, autoGen, dataLoaded])
 
   // Auto-generate prop images for newly produced props
   useEffect(() => {
     if (!autoGen) return
+    if (!dataLoaded) return
     const pending = data.props.filter((p) => !propImages[p.id]?.length)
     if (!pending.length || busyProp) return
     void (async () => {
@@ -4350,7 +4353,7 @@ function WorkspacePage() {
       }
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.props, autoGen])
+  }, [data.props, autoGen, dataLoaded])
 
   const [initialChatInput, setInitialChatInput] = useState<string>('')
   useEffect(() => {
