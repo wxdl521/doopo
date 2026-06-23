@@ -8213,9 +8213,11 @@ function WorkspacePage() {
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' && !e.shiftKey) {
                           e.preventDefault()
-                          const p = sceneModOpen || s
-                          setSceneModOpen(p)
-                          void doSceneRegen(p, 'modify', sceneModInput.trim())
+                          const text = sceneModInput.trim()
+                          if (!text) return
+                          setSceneModInput('')
+                          setSceneModError(null)
+                          void doSceneRegen(s, 'modify', text)
                         }
                       }}
                       placeholder="例如:把时间改成黄昏 / 增加下雨效果 / 改成室内暖光…"
@@ -8376,7 +8378,11 @@ function WorkspacePage() {
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' && !e.shiftKey) {
                           e.preventDefault()
-                          void doPropRegen(p, 'modify', propModInput.trim())
+                          const text = propModInput.trim()
+                          if (!text) return
+                          setPropModInput('')
+                          setPropModError(null)
+                          void doPropRegen(p, 'modify', text)
                         }
                       }}
                       placeholder="例如:把颜色改成红色 / 加一个提手 / 缩小尺寸…"
