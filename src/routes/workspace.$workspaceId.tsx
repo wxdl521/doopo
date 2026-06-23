@@ -4521,6 +4521,48 @@ function WorkspacePage() {
         }
       }
 
+      // 2026/06:批量入库所有图片(角色/分镜/场景/道具),避免 24h 后裂图。
+      const persistToastId = toast.loading('正在将图片入库到你的存储…')
+      let persistCount = 0
+      let failCount = 0
+      async function persistImageMap(
+        map: Record<string, (string | undefined)[] | undefined>,
+        kind: 'character' | 'shot' | 'scene' | 'prop',
+        idPrefix: string,
+      ): Promise<Record<string, (string | undefined)[] | undefined>> {
+        const out: Record<string, (string | undefined)[] | undefined> = {}
+        for (const [key, arr] of Object.entries(map)) {
+          if (!arr || !arr.length) { out[key] = arr; continue }
+          const persisted: (string | undefined)[] = []
+          for (const url of arr) {
+            if (!url || url.startsWith('data:') || url.startsWith('blob:')) {
+              persisted.push(url)
+              continue
+            }
+            const r = await callPersistAsset({ data: { url, userId: user!.id, kind, id: `${idPrefix}-${key}` } })
+            if (r.ok && r.url) { persisted.push(r.url); persistCount++ }
+            else { persisted.push(url); failCount++ }
+          }
+          out[key] = persisted
+        }
+        return out
+      }
+      const [persistCharImages, persistShotImages, persistSceneImages, persistPropImages] = await Promise.all([
+        persistImageMap(charImagesRef.current, 'character', 'char'),
+        persistImageMap(shotImages, 'shot', 'shot'),
+        persistImageMap(sceneImagesRef.current, 'scene', 'scene'),
+        persistImageMap(propImagesRef.current, 'prop', 'prop'),
+      ])
+      // 更新 ref 和 state,后续写 workspace_data 时用永久 URL
+      charImagesRef.current = persistCharImages as any
+      sceneImagesRef.current = persistSceneImages as any
+      propImagesRef.current = persistPropImages as any
+      setShotImages(persistShotImages as any)
+      toast.dismiss(persistToastId)
+      if (persistCount > 0 || failCount > 0) {
+        toast.success(`图片入库完成:${persistCount} 张成功${failCount > 0 ? `,${failCount} 张失败` : ''}`)
+      }
+
       // 过滤 base64(太大无法写入),保留临时 ARK URL 和永久 Storage URL
       const keepNonB64 = (url: string) => url && !url.startsWith('data:') ? url : undefined
       const keepArr = (arr: string[] | undefined) => {
