@@ -14,6 +14,7 @@ import {
 } from '../data/workspaceGenerators'
 import { generateStageAi } from '../lib/aiGenerate.functions'
 import { generateImage, regenerateSceneImage } from '../lib/seedream.functions'
+import { logImageMeta } from '../lib/logImageMeta'
 import { uploadLocalImage, serverUrlToBase64 } from '../lib/uploadImage.functions'
 import { regenerateCharacterLook } from '../lib/characterRegen.functions'
 import { describeCharacterImage } from '../lib/describeCharacterImage.functions'
