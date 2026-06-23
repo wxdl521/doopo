@@ -4738,8 +4738,12 @@ function WorkspacePage() {
       // 并发池大小 5,避免 serverless 函数超时。结果不影响主流程。
       persistAllImagesInBackground(charImagesRef.current, shotImages, sceneImagesRef.current, propImagesRef.current, user!.id, callPersistAsset).catch(() => {})
 
-      // 过滤 base64(太大无法写入),保留临时 ARK URL 和永久 Storage URL
-      const keepNonB64 = (url: string) => url && !url.startsWith('data:') ? url : undefined
+      // 2026/06 修复:保留所有 URL(包括 data:/blob:),避免刷新后丢图导致重新生成。
+      //   - Storage 永久 URL → 直接保留
+      //   - 三方临时 URL (ARK/Azure/Seedream) → 保留(后台 persist 会逐步替换)
+      //   - data:base64 URL → 保留(Azure gpt-image-2 直接返回 b64,后台 persist 替换)
+      //   超大 base64 会让 JSONB 列膨胀,可接受 —— 用户体验"刷新不丢图"优先。
+      const keepNonB64 = (url: string) => url ? url : undefined
       const keepArr = (arr: string[] | undefined) => {
         if (!arr) return undefined
         const filtered = arr.map(keepNonB64).filter((u): u is string => !!u)
