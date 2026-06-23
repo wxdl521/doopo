@@ -2345,7 +2345,7 @@ function WorkspacePage() {
   }
 
   function closeModPanel() {
-    if (modBusy) return  // 正在跑就别让人关掉
+    // 即使正在生成也允许关闭,让用户在后台继续看其他内容
     setModPanel(null)
     setPreviewTarget(null)
     setModInput('')
@@ -2476,59 +2476,52 @@ function WorkspacePage() {
     const imageKey = modPanel.imageKey
     const ok = await doRegen(c, lookId, 'modify', instruction)
     if (ok) {
-      // 取刚生成的图(append 到 charImages 末尾)
-      const newUrl = charImagesRef.current[imageKey]?.at(-1)
-      if (newUrl) {
-        try {
-          const lk = lookId == null ? null : c.looks?.find((x) => x.id === lookId) ?? null
-          const res = await callDescribeCharImg({
-            data: {
-              imageUrl: newUrl,
-              characterName: c.name,
-              characterRoleLabel: c.roleLabel,
-              characterAge: c.age,
-              lookLabel: lk?.label || '默认',
-            },
-          })
-          if (res?.ok) {
-            setData((prev) => {
-              if (!prev) return prev
-              return {
-                ...prev,
-                characters: prev.characters.map((x) => {
-                  if (x.id !== c.id) return x
-                  if (lookId == null) {
-                    return {
-                      ...x,
-                      faceDescription: res.faceDescription || x.faceDescription,
-                      bodyDescription: res.bodyDescription || x.bodyDescription,
-                      clothingDescription: res.clothingDescription || x.clothingDescription,
-                    }
-                  }
-                  return {
-                    ...x,
-                    looks: (x.looks ?? []).map((lk2) =>
-                      lk2.id !== lookId
-                        ? lk2
-                        : {
-                            ...lk2,
-                            faceDescription: res.faceDescription || lk2.faceDescription,
-                            bodyDescription: res.bodyDescription || lk2.bodyDescription,
-                            clothingDescription: res.clothingDescription || lk2.clothingDescription,
-                          },
-                    ),
-                  }
-                }),
-              }
-            })
-            toast.success('文字描述已同步到新图')
-          } else {
-            console.warn('[describeCharacterImage] failed:', res?.error)
-          }
-        } catch (e) {
-          console.warn('[describeCharacterImage] error:', e)
-        }
+      // 2026/06:以用户意见为最高优先级更新描述。
+      // 解析用户输入关键词,将对应字段更新为用户意见,不再调 AI 重新描述。
+      const lk = lookId == null ? null : c.looks?.find((x) => x.id === lookId) ?? null
+      const instr = instruction.toLowerCase()
+      const updateFields: { face?: string; body?: string; clothing?: string } = {}
+      // 按关键词匹配:提到什么就更新什么,没提到的保留原值
+      if (/脸|面容|五官|face/i.test(instr)) updateFields.face = instruction
+      if (/身材|体型|body/i.test(instr)) updateFields.body = instruction
+      if (/衣服|服装|穿着|穿搭|clothing|outfit/i.test(instr)) updateFields.clothing = instruction
+      // 都没匹配到具体维度 → 全部更新
+      if (!Object.keys(updateFields).length) {
+        updateFields.face = instruction
+        updateFields.body = instruction
+        updateFields.clothing = instruction
       }
+      setData((prev) => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          characters: prev.characters.map((x) => {
+            if (x.id !== c.id) return x
+            if (lookId == null) {
+              return {
+                ...x,
+                ...(updateFields.face && { faceDescription: updateFields.face }),
+                ...(updateFields.body && { bodyDescription: updateFields.body }),
+                ...(updateFields.clothing && { clothingDescription: updateFields.clothing }),
+              }
+            }
+            return {
+              ...x,
+              looks: (x.looks ?? []).map((lk2) =>
+                lk2.id !== lookId
+                  ? lk2
+                  : {
+                      ...lk2,
+                      ...(updateFields.face && { faceDescription: updateFields.face }),
+                      ...(updateFields.body && { bodyDescription: updateFields.body }),
+                      ...(updateFields.clothing && { clothingDescription: updateFields.clothing }),
+                    },
+              ),
+            }
+          }),
+        }
+      })
+      toast.success('已按意见更新角色描述')
     }
     setModBusy(false)
     if (ok) {
@@ -2536,6 +2529,93 @@ function WorkspacePage() {
     } else {
       setModError('生成失败,请重试或换更简单的修改')
     }
+  }
+
+  /**
+   * 2026/06:从右侧对话框引用消息提交角色修改(不打开 modal)。
+   * 逻辑同 submitModPanel 但不需要 modPanel state。
+   */
+  async function submitModPanelRef(c: GenCharacter, lookId: string | null, instruction: string) {
+    const imageKey = lookId == null ? c.id : `${c.id}::${lookId}`
+    const coverUrl = charImages[imageKey]?.at(-1)
+    if (!coverUrl) { toast.error('该角色还没有图片'); return }
+    // 直接调 doRegen,成功后更新描述
+    const ok = await doRegen(c, lookId, 'modify', instruction)
+    if (ok) {
+      updateDescriptionFromInstruction(c, lookId, instruction)
+      toast.success('已按意见重生')
+    } else {
+      toast.error('生成失败')
+    }
+  }
+
+  /**
+   * 2026/06:从右侧对话框引用消息提交场景修改(不打开 modal)。
+   */
+  async function submitSceneModPanelRef(s: GenScene, instruction: string) {
+    const coverUrl = sceneImages[s.id]?.at(-1)
+    if (!coverUrl) { toast.error('该场景还没有图片'); return }
+    const ok = await doSceneRegen(s, 'modify', instruction)
+    if (ok) {
+      setData((prev) => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          scenes: prev.scenes.map((x) =>
+            x.id === s.id ? { ...x, action: instruction } : x,
+          ),
+        }
+      })
+      toast.success('已按意见重生')
+    } else {
+      toast.error('生成失败')
+    }
+  }
+
+  /**
+   * 2026/06:以用户意见更新角色描述字段(不调 AI)。
+   */
+  function updateDescriptionFromInstruction(c: GenCharacter, lookId: string | null, instruction: string) {
+    const instr = instruction.toLowerCase()
+    const updateFields: { face?: string; body?: string; clothing?: string } = {}
+    if (/脸|面容|五官|face/i.test(instr)) updateFields.face = instruction
+    if (/身材|体型|body/i.test(instr)) updateFields.body = instruction
+    if (/衣服|服装|穿着|穿搭|clothing|outfit/i.test(instr)) updateFields.clothing = instruction
+    if (!Object.keys(updateFields).length) {
+      updateFields.face = instruction
+      updateFields.body = instruction
+      updateFields.clothing = instruction
+    }
+    setData((prev) => {
+      if (!prev) return prev
+      return {
+        ...prev,
+        characters: prev.characters.map((x) => {
+          if (x.id !== c.id) return x
+          if (lookId == null) {
+            return {
+              ...x,
+              ...(updateFields.face && { faceDescription: updateFields.face }),
+              ...(updateFields.body && { bodyDescription: updateFields.body }),
+              ...(updateFields.clothing && { clothingDescription: updateFields.clothing }),
+            }
+          }
+          return {
+            ...x,
+            looks: (x.looks ?? []).map((lk2) =>
+              lk2.id !== lookId
+                ? lk2
+                : {
+                    ...lk2,
+                    ...(updateFields.face && { faceDescription: updateFields.face }),
+                    ...(updateFields.body && { bodyDescription: updateFields.body }),
+                    ...(updateFields.clothing && { clothingDescription: updateFields.clothing }),
+                  },
+            ),
+          }
+        }),
+      }
+    })
   }
 
   // 卡片"三视图" / "多维资产图"按钮:无 user input,直接跑预定义指令
@@ -6060,9 +6140,14 @@ function WorkspacePage() {
                                   </button>
                                   <button
                                     type="button"
-                                    title="打开修改输入对话框(Enter 提交)"
+                                    title="打开修改输入(右侧对话框)"
                                     disabled={!hasImg || isRegening}
-                                    onClick={() => openSceneModPanel(s)}
+                                    onClick={() => {
+                                      const coverUrl = sceneImages[s.id]?.at(-1)
+                                      if (coverUrl) {
+                                        chatPanelRef.current?.addReference('scene', s.id, s.slug || s.location || s.id, coverUrl)
+                                      }
+                                    }}
                                     className="px-1 py-1.5 rounded border border-border bg-bg-surface text-text-secondary text-[11px] leading-none hover:border-accent hover:text-accent disabled:opacity-40 disabled:cursor-not-allowed transition flex flex-col items-center justify-center gap-0.5"
                                   >
                                     <Pencil size={12} />
@@ -6672,9 +6757,14 @@ function WorkspacePage() {
                                 <div className="grid grid-cols-3 gap-1.5 pt-1 mt-auto" onClick={(e) => e.stopPropagation()}>
                                   <button
                                     type="button"
-                                    title="基于此形象给出修改意见(右侧弹输入框)"
+                                    title="基于此形象给出修改意见(右侧对话框输入)"
                                     disabled={!hasImg || isRegening}
-                                    onClick={() => openModPanel(c, card.lookId)}
+                                    onClick={() => {
+                                      const coverUrl = selectedCharImages[imageKey] || charImages[imageKey]?.at(-1)
+                                      if (coverUrl) {
+                                        chatPanelRef.current?.addReference('character', c.id, cardTitle, coverUrl, card.lookId)
+                                      }
+                                    }}
                                     className="px-1 py-1.5 rounded border border-border bg-bg-surface text-text-secondary text-[11px] leading-none hover:border-accent hover:text-accent disabled:opacity-40 disabled:cursor-not-allowed transition flex flex-col items-center justify-center gap-0.5"
                                   >
                                     <Pencil size={12} />
@@ -7584,6 +7674,15 @@ function WorkspacePage() {
           onEnterStoryboard={() => void runEnterStoryboard()}
           enterTimelineSignal={enterTimelineSignal}
           onEnterTimeline={() => setTab('timeline')}
+          onModifyReference={(refType, refId, instruction, lookId) => {
+            if (refType === 'character') {
+              const c = data.characters.find((x) => x.id === refId)
+              if (c) void submitModPanelRef(c, lookId ?? null, instruction)
+            } else {
+              const s = data.scenes.find((x) => x.id === refId)
+              if (s) void submitSceneModPanelRef(s, instruction)
+            }
+          }}
         />
       </div>
       {previewTarget && (() => {
