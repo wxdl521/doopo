@@ -43,7 +43,7 @@ function ForgotPassword() {
               已向 <span className="text-accent">{email}</span> 发送重置链接，链接 1 小时内有效。
               请前往邮箱点击链接，按提示设置新密码。
             </div>
-            <button onClick={() => setSent(false)} className="btn-secondary w-full justify-center">
+            <button onClick={() => setSent(false)} className="w-full px-4 py-2 rounded-lg border border-border hover:border-accent/60 text-sm">
               重新发送
             </button>
           </div>
