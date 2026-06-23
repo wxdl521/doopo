@@ -19,6 +19,7 @@ import { Route as PricingRouteImport } from './routes/pricing'
 import { Route as ModelsRouteImport } from './routes/models'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as HomeRouteImport } from './routes/home'
+import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as CommunityRouteImport } from './routes/community'
 import { Route as CharactersRouteImport } from './routes/characters'
 import { Route as BasesRouteImport } from './routes/bases'
@@ -101,6 +102,11 @@ const LoginRoute = LoginRouteImport.update({
 const HomeRoute = HomeRouteImport.update({
   id: '/home',
   path: '/home',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ForgotPasswordRoute = ForgotPasswordRouteImport.update({
+  id: '/forgot-password',
+  path: '/forgot-password',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CommunityRoute = CommunityRouteImport.update({
@@ -278,6 +284,7 @@ export interface FileRoutesByFullPath {
   '/bases': typeof BasesRoute
   '/characters': typeof CharactersRouteWithChildren
   '/community': typeof CommunityRouteWithChildren
+  '/forgot-password': typeof ForgotPasswordRoute
   '/home': typeof HomeRoute
   '/login': typeof LoginRoute
   '/models': typeof ModelsRoute
@@ -320,6 +327,7 @@ export interface FileRoutesByTo {
   '/assets': typeof AssetsRoute
   '/bases': typeof BasesRoute
   '/characters': typeof CharactersRouteWithChildren
+  '/forgot-password': typeof ForgotPasswordRoute
   '/home': typeof HomeRoute
   '/login': typeof LoginRoute
   '/models': typeof ModelsRoute
@@ -364,6 +372,7 @@ export interface FileRoutesById {
   '/bases': typeof BasesRoute
   '/characters': typeof CharactersRouteWithChildren
   '/community': typeof CommunityRouteWithChildren
+  '/forgot-password': typeof ForgotPasswordRoute
   '/home': typeof HomeRoute
   '/login': typeof LoginRoute
   '/models': typeof ModelsRoute
@@ -411,6 +420,7 @@ export interface FileRouteTypes {
     | '/bases'
     | '/characters'
     | '/community'
+    | '/forgot-password'
     | '/home'
     | '/login'
     | '/models'
@@ -453,6 +463,7 @@ export interface FileRouteTypes {
     | '/assets'
     | '/bases'
     | '/characters'
+    | '/forgot-password'
     | '/home'
     | '/login'
     | '/models'
@@ -496,6 +507,7 @@ export interface FileRouteTypes {
     | '/bases'
     | '/characters'
     | '/community'
+    | '/forgot-password'
     | '/home'
     | '/login'
     | '/models'
@@ -542,6 +554,7 @@ export interface RootRouteChildren {
   BasesRoute: typeof BasesRoute
   CharactersRoute: typeof CharactersRouteWithChildren
   CommunityRoute: typeof CommunityRouteWithChildren
+  ForgotPasswordRoute: typeof ForgotPasswordRoute
   HomeRoute: typeof HomeRoute
   LoginRoute: typeof LoginRoute
   ModelsRoute: typeof ModelsRoute
@@ -627,6 +640,13 @@ declare module '@tanstack/react-router' {
       path: '/home'
       fullPath: '/home'
       preLoaderRoute: typeof HomeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/forgot-password': {
+      id: '/forgot-password'
+      path: '/forgot-password'
+      fullPath: '/forgot-password'
+      preLoaderRoute: typeof ForgotPasswordRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/community': {
@@ -991,6 +1011,7 @@ const rootRouteChildren: RootRouteChildren = {
   BasesRoute: BasesRoute,
   CharactersRoute: CharactersRouteWithChildren,
   CommunityRoute: CommunityRouteWithChildren,
+  ForgotPasswordRoute: ForgotPasswordRoute,
   HomeRoute: HomeRoute,
   LoginRoute: LoginRoute,
   ModelsRoute: ModelsRoute,
