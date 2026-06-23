@@ -5380,7 +5380,7 @@ function WorkspacePage() {
             }
             return { ...d, characters, scenes, props }
           }
-          return { ...d, characters: aiPatch?.characters ?? generateCharacters() }
+          return { ...d, characters: aiPatch?.characters ?? (d.characters.length ? d.characters : generateCharacters()) }
         }
         case 'storyboard': {
           const scenes = d.scenes.length ? d.scenes : generateScript()
