@@ -264,8 +264,8 @@ export const generateImage = createServerFn({ method: 'POST' })
       return { url: r.url, error: r.error, model: r.model }
     }
     if (requested.toLowerCase().startsWith('aigcfamily/')) {
-      const { callAIGCFamilyImage } = await import('./aigcfamilyImage.functions')
-      const r = await callAIGCFamilyImage({
+      const { callAigcfamilyImage } = await import('./aigcfamilyImage.functions')
+      const r = await callAigcfamilyImage({
         prompt: appendNegative(data.prompt, data.negativePrompt),
         model: requested,
         size: data.size,
@@ -728,8 +728,8 @@ export const regenerateCharacterLook = createServerFn({ method: 'POST' })
       return { ok: true as const, url: r.url, model: r.model }
     }
     if (requested.toLowerCase().startsWith('aigcfamily/')) {
-      const { callAIGCFamilyImage } = await import('./aigcfamilyImage.functions')
-      const r = await callAIGCFamilyImage({
+      const { callAigcfamilyImage } = await import('./aigcfamilyImage.functions')
+      const r = await callAigcfamilyImage({
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
@@ -924,8 +924,8 @@ export const generateStoryboardShotImage = createServerFn({ method: 'POST' })
       return { ok: true as const, url: r.url, model: r.model }
     }
     if (requested.toLowerCase().startsWith('aigcfamily/')) {
-      const { callAIGCFamilyImage } = await import('./aigcfamilyImage.functions')
-      const r = await callAIGCFamilyImage({
+      const { callAigcfamilyImage } = await import('./aigcfamilyImage.functions')
+      const r = await callAigcfamilyImage({
         prompt: appendNegative(instruction, negative),
         model: requested,
         size: '2K',
@@ -1115,8 +1115,8 @@ export const regenerateStoryboardShot = createServerFn({ method: 'POST' })
       return { ok: true as const, url: r.url, model: r.model }
     }
     if (requested.toLowerCase().startsWith('aigcfamily/')) {
-      const { callAIGCFamilyImage } = await import('./aigcfamilyImage.functions')
-      const r = await callAIGCFamilyImage({
+      const { callAigcfamilyImage } = await import('./aigcfamilyImage.functions')
+      const r = await callAigcfamilyImage({
         prompt: appendNegative(instruction, negative),
         model: requested,
         size: '2K',
@@ -1548,8 +1548,8 @@ export const generateStoryboardPitchDeck = createServerFn({ method: 'POST' })
       return { ok: true as const, url: r.url, model: r.model }
     }
     if (requested.toLowerCase().startsWith('aigcfamily/')) {
-      const { callAIGCFamilyImage } = await import('./aigcfamilyImage.functions')
-      const r = await callAIGCFamilyImage({
+      const { callAigcfamilyImage } = await import('./aigcfamilyImage.functions')
+      const r = await callAigcfamilyImage({
         prompt,
         model: requested,
         size: '3840x2160',
@@ -1994,8 +1994,8 @@ export const regenerateSceneImage = createServerFn({ method: 'POST' })
       return { ok: true as const, url: r.url, model: r.model }
     }
     if (requested.toLowerCase().startsWith('aigcfamily/')) {
-      const { callAIGCFamilyImage } = await import('./aigcfamilyImage.functions')
-      const r = await callAIGCFamilyImage({
+      const { callAigcfamilyImage } = await import('./aigcfamilyImage.functions')
+      const r = await callAigcfamilyImage({
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
