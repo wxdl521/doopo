@@ -4466,6 +4466,55 @@ function WorkspacePage() {
 
   const ALL_STAGES: WorkspaceTab[] = ['canvas', 'script', 'character', 'storyboard', 'timeline']
 
+  /**
+   * 2026/06:后台并发入库所有图片,不阻塞保存主流程。
+   * 并发 5,避免 serverless 函数超时。
+   */
+  async function persistAllImagesInBackground(
+    charMap: Record<string, (string | undefined)[] | undefined>,
+    shotMap: Record<string, (string | undefined)[] | undefined>,
+    sceneMap: Record<string, (string | undefined)[] | undefined>,
+    propMap: Record<string, (string | undefined)[] | undefined>,
+    uid: string,
+    persist: typeof callPersistAsset,
+  ) {
+    const CONCURRENCY = 5
+    let done = 0; let fail = 0
+    async function worker(queue: Array<() => Promise<void>>) {
+      while (true) {
+        const task = queue.shift()
+        if (!task) break
+        await task()
+      }
+    }
+    const queue: Array<() => Promise<void>> = []
+    const collect = (map: Record<string, (string | undefined)[] | undefined>, kind: string, prefix: string) => {
+      for (const [key, arr] of Object.entries(map)) {
+        if (!arr || !arr.length) continue
+        for (const url of arr) {
+          if (!url || url.startsWith('data:') || url.startsWith('blob:')) continue
+          queue.push(async () => {
+            try {
+              const r = await persist({ data: { url, userId: uid, kind: kind as any, id: `${prefix}-${key}` } })
+              if (r.ok && r.url) done++
+              else fail++
+            } catch { fail++ }
+          })
+        }
+      }
+    }
+    collect(charMap, 'character', 'char')
+    collect(shotMap, 'shot', 'shot')
+    collect(sceneMap, 'scene', 'scene')
+    collect(propMap, 'prop', 'prop')
+    if (!queue.length) return
+    const workers = Array.from({ length: Math.min(CONCURRENCY, queue.length) }, () => worker(queue))
+    await Promise.all(workers)
+    if (done > 0 || fail > 0) {
+      toast.success(`图片入库完成:${done} 张成功${fail > 0 ? `,${fail} 张失败(已保留临时链接)` : ''}`)
+    }
+  }
+
   async function handleSaveWorkspace() {
     if (!user) {
       toast.error('请先登录')
@@ -4521,47 +4570,9 @@ function WorkspacePage() {
         }
       }
 
-      // 2026/06:批量入库所有图片(角色/分镜/场景/道具),避免 24h 后裂图。
-      const persistToastId = toast.loading('正在将图片入库到你的存储…')
-      let persistCount = 0
-      let failCount = 0
-      async function persistImageMap(
-        map: Record<string, (string | undefined)[] | undefined>,
-        kind: 'character' | 'shot' | 'scene' | 'prop',
-        idPrefix: string,
-      ): Promise<Record<string, (string | undefined)[] | undefined>> {
-        const out: Record<string, (string | undefined)[] | undefined> = {}
-        for (const [key, arr] of Object.entries(map)) {
-          if (!arr || !arr.length) { out[key] = arr; continue }
-          const persisted: (string | undefined)[] = []
-          for (const url of arr) {
-            if (!url || url.startsWith('data:') || url.startsWith('blob:')) {
-              persisted.push(url)
-              continue
-            }
-            const r = await callPersistAsset({ data: { url, userId: user!.id, kind, id: `${idPrefix}-${key}` } })
-            if (r.ok && r.url) { persisted.push(r.url); persistCount++ }
-            else { persisted.push(url); failCount++ }
-          }
-          out[key] = persisted
-        }
-        return out
-      }
-      const [persistCharImages, persistShotImages, persistSceneImages, persistPropImages] = await Promise.all([
-        persistImageMap(charImagesRef.current, 'character', 'char'),
-        persistImageMap(shotImages, 'shot', 'shot'),
-        persistImageMap(sceneImagesRef.current, 'scene', 'scene'),
-        persistImageMap(propImagesRef.current, 'prop', 'prop'),
-      ])
-      // 更新 ref 和 state,后续写 workspace_data 时用永久 URL
-      charImagesRef.current = persistCharImages as any
-      sceneImagesRef.current = persistSceneImages as any
-      propImagesRef.current = persistPropImages as any
-      setShotImages(persistShotImages as any)
-      toast.dismiss(persistToastId)
-      if (persistCount > 0 || failCount > 0) {
-        toast.success(`图片入库完成:${persistCount} 张成功${failCount > 0 ? `,${failCount} 张失败` : ''}`)
-      }
+      // 2026/06:后台异步入库所有图片(角色/分镜/场景/道具),不阻塞保存流程。
+      // 并发池大小 5,避免 serverless 函数超时。结果不影响主流程。
+      persistAllImagesInBackground(charImagesRef.current, shotImages, sceneImagesRef.current, propImagesRef.current, user!.id, callPersistAsset).catch(() => {})
 
       // 过滤 base64(太大无法写入),保留临时 ARK URL 和永久 Storage URL
       const keepNonB64 = (url: string) => url && !url.startsWith('data:') ? url : undefined
