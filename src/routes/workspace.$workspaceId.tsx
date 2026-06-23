@@ -1157,8 +1157,10 @@ function WorkspacePage() {
   // 判断 URL 是否已持久化(Supabase Storage 永久 URL 或 base64 data URL)
   const isPersistedUrl = useCallback((url: string | undefined | null): boolean => {
     if (!url) return false
-    // base64 视为已持久化(存在内存 state 中,显示用,但保存时会被过滤)
-    if (url.startsWith('data:')) return true
+    // 2026/06 修复:data: URL 不视为已持久化 —— 必须上传到 Storage 后再缓存,
+    // 否则刷新后会被 workspace_data 过滤(JSONB 列太大),导致 autoGen 重生。
+    if (url.startsWith('data:')) return false
+    if (url.startsWith('blob:')) return false
     try {
       const u = new URL(url)
       const host = u.hostname.toLowerCase()
@@ -4311,6 +4313,7 @@ function WorkspacePage() {
 
   useEffect(() => {
     if (!autoGen) return
+    if (!dataLoaded) return
     const pending = data.storyboard.filter((p) => !panelImages[p.id])
     if (!pending.length || busyPanel) return
     void (async () => {
@@ -4320,11 +4323,12 @@ function WorkspacePage() {
       }
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.storyboard, autoGen])
+  }, [data.storyboard, autoGen, dataLoaded])
 
   // Auto-generate scene images for newly produced scenes
   useEffect(() => {
     if (!autoGen) return
+    if (!dataLoaded) return
     const pending = data.scenes.filter((s) => !sceneImages[s.id]?.length)
     if (!pending.length || busyScene) return
     void (async () => {
@@ -4334,11 +4338,12 @@ function WorkspacePage() {
       }
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.scenes, autoGen])
+  }, [data.scenes, autoGen, dataLoaded])
 
   // Auto-generate prop images for newly produced props
   useEffect(() => {
     if (!autoGen) return
+    if (!dataLoaded) return
     const pending = data.props.filter((p) => !propImages[p.id]?.length)
     if (!pending.length || busyProp) return
     void (async () => {
@@ -4348,7 +4353,7 @@ function WorkspacePage() {
       }
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.props, autoGen])
+  }, [data.props, autoGen, dataLoaded])
 
   const [initialChatInput, setInitialChatInput] = useState<string>('')
   useEffect(() => {
@@ -4637,25 +4642,58 @@ function WorkspacePage() {
       }
     }
     const queue: Array<() => Promise<void>> = []
-    const collect = (map: Record<string, (string | undefined)[] | undefined>, kind: string, prefix: string) => {
+    type Setter = (url: string, persistedUrl: string) => void
+    const collect = (
+      map: Record<string, (string | undefined)[] | undefined>,
+      kind: string,
+      prefix: string,
+      setter: Setter,
+    ) => {
       for (const [key, arr] of Object.entries(map)) {
         if (!arr || !arr.length) continue
         for (const url of arr) {
-          if (!url || url.startsWith('data:') || url.startsWith('blob:')) continue
+          if (!url || url.startsWith('blob:')) continue
+          if (isPersistedUrl(url)) continue
           queue.push(async () => {
             try {
               const r = await persist({ data: { url, userId: uid, kind: kind as any, id: `${prefix}-${key}` } })
-              if (r.ok && r.url) done++
-              else fail++
+              if (r.ok && r.url) {
+                done++
+                // 把入库后的永久 URL 写回 state,下次保存就只保留小 URL,
+                // 不再让 data:base64 撑爆 workspace_data。
+                setter(url, r.url)
+              } else fail++
             } catch { fail++ }
           })
         }
       }
     }
-    collect(charMap, 'character', 'char')
-    collect(shotMap, 'shot', 'shot')
-    collect(sceneMap, 'scene', 'scene')
-    collect(propMap, 'prop', 'prop')
+    const replaceInMap = (
+      setMap: (updater: (m: Record<string, string[]>) => Record<string, string[]>) => void,
+      key: string,
+    ) => (url: string, persisted: string) => {
+      setMap((m) => {
+        const arr = m[key]
+        if (!arr) return m
+        const i = arr.indexOf(url)
+        if (i === -1) return m
+        const copy = [...arr]
+        copy[i] = persisted
+        return { ...m, [key]: copy }
+      })
+    }
+    for (const k of Object.keys(charMap)) {
+      collect({ [k]: charMap[k] } as any, 'character', 'char', replaceInMap(updateCharImages, k))
+    }
+    for (const k of Object.keys(shotMap)) {
+      collect({ [k]: shotMap[k] } as any, 'shot', 'shot', replaceInMap(setShotImages, k))
+    }
+    for (const k of Object.keys(sceneMap)) {
+      collect({ [k]: sceneMap[k] } as any, 'scene', 'scene', replaceInMap(updateSceneImages, k))
+    }
+    for (const k of Object.keys(propMap)) {
+      collect({ [k]: propMap[k] } as any, 'prop', 'prop', replaceInMap(updatePropImages, k))
+    }
     if (!queue.length) return
     const workers = Array.from({ length: Math.min(CONCURRENCY, queue.length) }, () => worker(queue))
     await Promise.all(workers)
@@ -4733,8 +4771,12 @@ function WorkspacePage() {
       // 并发池大小 5,避免 serverless 函数超时。结果不影响主流程。
       persistAllImagesInBackground(charImagesRef.current, shotImages, sceneImagesRef.current, propImagesRef.current, user!.id, callPersistAsset).catch(() => {})
 
-      // 过滤 base64(太大无法写入),保留临时 ARK URL 和永久 Storage URL
-      const keepNonB64 = (url: string) => url && !url.startsWith('data:') ? url : undefined
+      // 2026/06 修复:保留所有 URL(包括 data:/blob:),避免刷新后丢图导致重新生成。
+      //   - Storage 永久 URL → 直接保留
+      //   - 三方临时 URL (ARK/Azure/Seedream) → 保留(后台 persist 会逐步替换)
+      //   - data:base64 URL → 保留(Azure gpt-image-2 直接返回 b64,后台 persist 替换)
+      //   超大 base64 会让 JSONB 列膨胀,可接受 —— 用户体验"刷新不丢图"优先。
+      const keepNonB64 = (url: string) => url ? url : undefined
       const keepArr = (arr: string[] | undefined) => {
         if (!arr) return undefined
         const filtered = arr.map(keepNonB64).filter((u): u is string => !!u)
@@ -4850,12 +4892,29 @@ function WorkspacePage() {
     autoSaveTimerRef.current = setTimeout(() => {
       if (savingWorkspace) return
       void handleSaveWorkspace({ silent: true })
-    }, 1500)
+    }, 600)
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoSaveSignature, dataLoaded])
+
+  // 2026/06:页面卸载前(刷新 / 关闭 tab)强制 flush 一次保存,
+  // 避免用户在 debounce 窗口内就刷新页面导致刚生成的图片丢失。
+  useEffect(() => {
+    if (!dataLoaded || !user) return
+    const handler = () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current)
+        autoSaveTimerRef.current = null
+      }
+      // sync 触发(无 await);浏览器一般会让该 fetch 在 unload 时完成
+      void handleSaveWorkspace({ silent: true })
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataLoaded, user])
 
   // Auto-save when all stages are complete (only trigger once)
   const completedKey = ALL_STAGES.map((s) => completedStages.has(s) ? '1' : '0').join('')

@@ -1,44 +1,20 @@
-## 目标
+计划如下：
 
-让用户在工作区生成的**剧本 / 角色 / 分镜 / 时间轴**等内容自动缓存，刷新页面后仍可继续显示之前的成果，无需手动点"保存工作区"。
+1. 修复工作区刷新加载时序
+   - 当前图片缓存（charImages / sceneImages / propImages / shotImages）是异步恢复的，但 dataLoaded 过早置为 true，自动生成 effect 可能在缓存 state 生效前判断“没有图”并重新调用模型。
+   - 将工作区恢复改成一次性构建完整 restoredData / restored image maps 后再提交状态，最后再设置 dataLoaded=true，避免中间态触发生成。
 
-## 现状
+2. 加强自动生成守卫
+   - 角色、场景、道具、旧版分镜的 autoGen effect 统一增加 dataLoaded 判断。
+   - 刷新恢复后，如果已存在图片缓存或 storyboard shot 的 imageUrl，就只展示缓存，不再重新生成。
 
-- `src/routes/workspace.$workspaceId.tsx` 已经有完整的服务端持久化能力：`saveWorkspaceData` / `loadWorkspaceData`（写入 `projects.workspace_data` JSONB）。
-- 加载逻辑（约 line 1257）已经在挂载时调用 `callLoadWorkspace`，把 outline / scenes / characters / storyboard / storyboardGroups / timeline / episodeTexts / props / 各类图片缓存等还原到 state。
-- 但 **保存只在两种情况下触发**：
-  1. 用户手动点击「保存工作区」按钮；
-  2. `completedStages` 五个阶段全部完成时自动保存一次（`autoSavedRef` 只跑一次）。
-- 后果：刷新前如果没点保存、且尚未完成全部阶段，剧本/角色/分镜/时间轴等阶段性产物会丢失。
+3. 修复图片缓存保存链路
+   - 当前保存前的后台入库 persistAllImagesInBackground 不会把返回的永久 URL 写回 state/workspace_data，且 data: base64 会被过滤，可能导致 Azure gpt-image-2 返回的 b64 图刷新后丢失。
+   - 计划改为在生成成功后立即通过 persistAssetImage 持久化：角色/场景/道具/shot/旧版 panel 都把临时 URL 或 data URL 转成 backend storage URL 后写入对应 image cache。
 
-## 方案：阶段性内容自动持久化（防抖保存）
+4. 改善保存内容一致性
+   - handleSaveWorkspace 写入 workspace_data 时读取最新 ref/state，确保已生成图片 URL、选中图片、storyboardGroups 中的 shot.imageUrl 一起保存。
+   - 对无法持久化的临时 URL 保留展示，但不会因为刷新就自动重生；只在用户主动点击重新生成时才重新调用模型。
 
-在已有 `handleSaveWorkspace` 基础上，新增 **数据变更自动保存（debounce）**，保证生成的任何一个阶段内容都会在短时间内落到服务端，刷新即可恢复。
-
-### 改动点（仅 `src/routes/workspace.$workspaceId.tsx`）
-
-1. **新增 debounce 自动保存 effect**（放在 `handleSaveWorkspace` 定义之后）：
-   - 依赖项：`dataLoaded`、`data.outline`、`data.scenes.length`、`data.characters.length`、`data.storyboardGroups`（hash）、`data.timeline`、`data.episodeTexts.length`、`data.synopsisText`、`data.props.length`，以及 `charImages` / `shotImages` / `sceneImages` / `propImages` / `panelImages` / `groupVideos` / `persistGroupStoryboards` 的 hash key。
-   - 行为：`dataLoaded` 后，任意上述依赖变更 → 设置 1.5 秒 `setTimeout` 调 `handleSaveWorkspace()`，新变更进来时清掉旧 timer 重新计时（典型 debounce）。
-   - 用 `savingWorkspace` 状态做互斥：正在保存就跳过本轮，等下一次依赖变化再触发。
-   - 卸载时清理 timer，避免内存泄漏。
-   - 不弹 `toast`（"工作区已保存"由手动按钮触发）：抽出 `handleSaveWorkspace` 的 silent 版本，或加一个 `silent: boolean` 参数，自动保存走 silent 路径。
-
-2. **解除"只自动保存一次"的限制**：
-   - 现有 `autoSavedRef.current = true` 的"五阶段完成才自动保存一次"逻辑保留，但不再是唯一保存路径——上面的 debounce effect 是主路径。
-
-3. **保持现有手动保存按钮 + toast 提示行为不变**，用户手动保存仍然有反馈。
-
-### 不改动
-
-- 不动 `loadWorkspaceData` / `saveWorkspaceData` 服务端函数和 DB schema。
-- 不动 localStorage，不引入新的缓存层（服务端 JSONB 已足够，且跨设备一致）。
-- 不动 AI 生成逻辑、UI 布局、aigcfamily 模型相关代码。
-
-## 验收
-
-- 在工作区生成剧本 → 等约 2 秒 → 刷新 → 剧本仍在。
-- 生成角色后刷新 → 角色列表 + 形象图仍在。
-- 生成分镜组 / 分镜图后刷新 → 分镜组 + shot 图仍在。
-- 生成时间轴后刷新 → 时间轴仍在。
-- 多次连续编辑（如改 shot action）不会触发频繁请求，1.5 秒 debounce 合并为一次保存。
+5. 验证
+   - 用前端工作区流程检查：生成图片后等待自动保存，刷新页面，确认图片仍展示且控制台/网络不再出现新的 generateImage / Azure requestId 调用。
