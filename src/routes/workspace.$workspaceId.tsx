@@ -4899,6 +4899,23 @@ function WorkspacePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoSaveSignature, dataLoaded])
 
+  // 2026/06:页面卸载前(刷新 / 关闭 tab)强制 flush 一次保存,
+  // 避免用户在 debounce 窗口内就刷新页面导致刚生成的图片丢失。
+  useEffect(() => {
+    if (!dataLoaded || !user) return
+    const handler = () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current)
+        autoSaveTimerRef.current = null
+      }
+      // sync 触发(无 await);浏览器一般会让该 fetch 在 unload 时完成
+      void handleSaveWorkspace({ silent: true })
+    }
+    window.addEventListener('beforeunload', handler)
+    return () => window.removeEventListener('beforeunload', handler)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataLoaded, user])
+
   // Auto-save when all stages are complete (only trigger once)
   const completedKey = ALL_STAGES.map((s) => completedStages.has(s) ? '1' : '0').join('')
   useEffect(() => {
