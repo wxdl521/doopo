@@ -13,6 +13,7 @@ import { Route as ZoclawRouteImport } from './routes/zoclaw'
 import { Route as TeamRouteImport } from './routes/team'
 import { Route as ShowcaseRouteImport } from './routes/showcase'
 import { Route as ScriptsRouteImport } from './routes/scripts'
+import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as RegisterRouteImport } from './routes/register'
 import { Route as ProjectsRouteImport } from './routes/projects'
 import { Route as PricingRouteImport } from './routes/pricing'
@@ -72,6 +73,11 @@ const ShowcaseRoute = ShowcaseRouteImport.update({
 const ScriptsRoute = ScriptsRouteImport.update({
   id: '/scripts',
   path: '/scripts',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ResetPasswordRoute = ResetPasswordRouteImport.update({
+  id: '/reset-password',
+  path: '/reset-password',
   getParentRoute: () => rootRouteImport,
 } as any)
 const RegisterRoute = RegisterRouteImport.update({
@@ -291,6 +297,7 @@ export interface FileRoutesByFullPath {
   '/pricing': typeof PricingRoute
   '/projects': typeof ProjectsRouteWithChildren
   '/register': typeof RegisterRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/scripts': typeof ScriptsRouteWithChildren
   '/showcase': typeof ShowcaseRouteWithChildren
   '/team': typeof TeamRouteWithChildren
@@ -334,6 +341,7 @@ export interface FileRoutesByTo {
   '/pricing': typeof PricingRoute
   '/projects': typeof ProjectsRouteWithChildren
   '/register': typeof RegisterRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/showcase': typeof ShowcaseRouteWithChildren
   '/zoclaw': typeof ZoclawRoute
   '/account/assets': typeof AccountAssetsRoute
@@ -379,6 +387,7 @@ export interface FileRoutesById {
   '/pricing': typeof PricingRoute
   '/projects': typeof ProjectsRouteWithChildren
   '/register': typeof RegisterRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/scripts': typeof ScriptsRouteWithChildren
   '/showcase': typeof ShowcaseRouteWithChildren
   '/team': typeof TeamRouteWithChildren
@@ -427,6 +436,7 @@ export interface FileRouteTypes {
     | '/pricing'
     | '/projects'
     | '/register'
+    | '/reset-password'
     | '/scripts'
     | '/showcase'
     | '/team'
@@ -470,6 +480,7 @@ export interface FileRouteTypes {
     | '/pricing'
     | '/projects'
     | '/register'
+    | '/reset-password'
     | '/showcase'
     | '/zoclaw'
     | '/account/assets'
@@ -514,6 +525,7 @@ export interface FileRouteTypes {
     | '/pricing'
     | '/projects'
     | '/register'
+    | '/reset-password'
     | '/scripts'
     | '/showcase'
     | '/team'
@@ -561,6 +573,7 @@ export interface RootRouteChildren {
   PricingRoute: typeof PricingRoute
   ProjectsRoute: typeof ProjectsRouteWithChildren
   RegisterRoute: typeof RegisterRoute
+  ResetPasswordRoute: typeof ResetPasswordRoute
   ScriptsRoute: typeof ScriptsRouteWithChildren
   ShowcaseRoute: typeof ShowcaseRouteWithChildren
   TeamRoute: typeof TeamRouteWithChildren
@@ -598,6 +611,13 @@ declare module '@tanstack/react-router' {
       path: '/scripts'
       fullPath: '/scripts'
       preLoaderRoute: typeof ScriptsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/reset-password': {
+      id: '/reset-password'
+      path: '/reset-password'
+      fullPath: '/reset-password'
+      preLoaderRoute: typeof ResetPasswordRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/register': {
@@ -1018,6 +1038,7 @@ const rootRouteChildren: RootRouteChildren = {
   PricingRoute: PricingRoute,
   ProjectsRoute: ProjectsRouteWithChildren,
   RegisterRoute: RegisterRoute,
+  ResetPasswordRoute: ResetPasswordRoute,
   ScriptsRoute: ScriptsRouteWithChildren,
   ShowcaseRoute: ShowcaseRouteWithChildren,
   TeamRoute: TeamRouteWithChildren,
