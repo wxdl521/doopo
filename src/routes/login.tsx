@@ -56,6 +56,9 @@ function Login() {
             <label className="text-xs text-text-muted">{t.common_password}</label>
             <input value={password} onChange={(e) => setPassword(e.target.value)} type="password" required className="mt-1 w-full px-3 py-2 rounded-lg bg-bg-elevated border border-border focus:outline-none focus:border-accent/60" />
           </div>
+          <div className="text-right -mt-2">
+            <Link to="/forgot-password" className="text-xs text-accent hover:underline">忘记密码？</Link>
+          </div>
           <button type="submit" disabled={loading} className="btn-primary w-full justify-center disabled:opacity-60">
             {loading ? '登录中…' : t.auth_signin_btn}
           </button>
