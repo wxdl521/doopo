@@ -733,6 +733,8 @@ export const zh = {
   ws_save: '保存',
   ws_saving: '保存中…',
   ws_saved: '已保存',
+  ws_autosaving: '保存中…',
+  ws_autosaved: '已自动保存',
   ws_tab_canvas: '画布',
   ws_tab_script: '剧本',
   ws_tab_episodes: '集数',
