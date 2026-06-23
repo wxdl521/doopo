@@ -1523,7 +1523,7 @@ function WorkspacePage() {
         'Empty scene, no people, no characters, no figures, no silhouettes.',
         'Cinematic environment photography, wide establishing shot, detailed architecture and props, atmospheric lighting, film still quality.',
       ].filter(Boolean).join('\n')
-      const res = await callImage({ data: { prompt, model: project?.sceneModel } })
+      const res = await callImage({ data: { prompt, model: project?.sceneModel } }); logImageMeta('workspace.scene', res)
       if (res.url) {
         // 2026/06 修复:直接持久化到 Storage
         const permResult = await persistSceneImage(s, res.url)
@@ -1559,7 +1559,7 @@ function WorkspacePage() {
         'Clean product photography style, solid neutral background, no people, no characters, no hands, no figures.',
         'Isolated object shot, well-lit, detailed texture and material, centered composition, high quality.',
       ].filter(Boolean).join('\n')
-      const res = await callImage({ data: { prompt, model: project?.sceneModel } })
+      const res = await callImage({ data: { prompt, model: project?.sceneModel } }); logImageMeta('workspace.scene', res)
       if (res.url) {
         // 2026/06 修复:直接持久化到 Storage
         const permResult = await persistPropImage(p, res.url)
@@ -2108,7 +2108,7 @@ function WorkspacePage() {
         // 旧代码直接传过去会被 Seedream 400 拒掉)。改用 1664x2496=4,153,344 ✅(2:3 竖版画幅)。
         const characterSize = '1664x2496'
 
-        const res = await callImage({ data: { prompt, model: resolveT2IModel(project?.sceneModel), noFallback: true, negativePrompt, size: characterSize } })
+        const res = await callImage({ data: { prompt, model: resolveT2IModel(project?.sceneModel), noFallback: true, negativePrompt, size: characterSize } }); logImageMeta('workspace.character', res)
         console.log(`[CHAR-AUTOGEN] callImage returned: id=${c.id} url=${res.url ? 'ok' : res.error}`)
         if (res.url) {
           // 2026/06 修复:直接服务端持久化到 Storage,避免 base64 超时
@@ -2955,7 +2955,7 @@ function WorkspacePage() {
         p.action, p.emotion && `mood: ${p.emotion}`,
         'cinematic storyboard panel, dramatic composition, film still, consistent with the character design established by the reference sheet',
       ].filter(Boolean).join('. ')
-      const res = await callImage({ data: { prompt, model: project?.storyboardModel } })
+      const res = await callImage({ data: { prompt, model: project?.storyboardModel } }); logImageMeta('workspace.storyboard', res)
       if (res.url) {
         // 2026/06 修复:ARK TOS URL <img> 加载失败,先 await 转 base64
         const base64Url = await toBase64WithFallback(res.url)
