@@ -4646,7 +4646,8 @@ function WorkspacePage() {
       for (const [key, arr] of Object.entries(map)) {
         if (!arr || !arr.length) continue
         for (const url of arr) {
-          if (!url || url.startsWith('data:') || url.startsWith('blob:')) continue
+          if (!url || url.startsWith('blob:')) continue
+          // data: URL 也要上传(Azure gpt-image-2 直接返回 b64,必须落盘到 Storage)
           queue.push(async () => {
             try {
               const r = await persist({ data: { url, userId: uid, kind: kind as any, id: `${prefix}-${key}` } })
