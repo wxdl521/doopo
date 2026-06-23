@@ -1,5 +1,5 @@
 import { createFileRoute, Outlet } from '@tanstack/react-router'
-import { User, CreditCard, FolderOpen, Award, Bell, Share2 } from 'lucide-react'
+import { User, CreditCard, FolderOpen, Award, Bell, Share2, ShieldCheck } from 'lucide-react'
 import SectionSidebar from '../components/SectionSidebar'
 import { useLanguage } from '../i18n/LanguageContext'
 
@@ -17,6 +17,7 @@ function AccountLayout() {
     { to: '/account/posts', label: '我的发布', icon: Share2 },
     { to: '/account/rewards', label: t.account_rewards, icon: Award },
     { to: '/account/notifications', label: t.account_notifications, icon: Bell },
+    { to: '/account/security', label: '账户安全', icon: ShieldCheck },
   ]
   return (
     <div className="animate-fade-in flex flex-col md:flex-row gap-6">

@@ -13,12 +13,14 @@ import { Route as ZoclawRouteImport } from './routes/zoclaw'
 import { Route as TeamRouteImport } from './routes/team'
 import { Route as ShowcaseRouteImport } from './routes/showcase'
 import { Route as ScriptsRouteImport } from './routes/scripts'
+import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as RegisterRouteImport } from './routes/register'
 import { Route as ProjectsRouteImport } from './routes/projects'
 import { Route as PricingRouteImport } from './routes/pricing'
 import { Route as ModelsRouteImport } from './routes/models'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as HomeRouteImport } from './routes/home'
+import { Route as ForgotPasswordRouteImport } from './routes/forgot-password'
 import { Route as CommunityRouteImport } from './routes/community'
 import { Route as CharactersRouteImport } from './routes/characters'
 import { Route as BasesRouteImport } from './routes/bases'
@@ -46,6 +48,7 @@ import { Route as AdminTenantsRouteImport } from './routes/admin.tenants'
 import { Route as AdminModelsRouteImport } from './routes/admin.models'
 import { Route as AdminBillingRouteImport } from './routes/admin.billing'
 import { Route as AccountSubscriptionRouteImport } from './routes/account.subscription'
+import { Route as AccountSecurityRouteImport } from './routes/account.security'
 import { Route as AccountRewardsRouteImport } from './routes/account.rewards'
 import { Route as AccountPostsRouteImport } from './routes/account.posts'
 import { Route as AccountNotificationsRouteImport } from './routes/account.notifications'
@@ -71,6 +74,11 @@ const ShowcaseRoute = ShowcaseRouteImport.update({
 const ScriptsRoute = ScriptsRouteImport.update({
   id: '/scripts',
   path: '/scripts',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ResetPasswordRoute = ResetPasswordRouteImport.update({
+  id: '/reset-password',
+  path: '/reset-password',
   getParentRoute: () => rootRouteImport,
 } as any)
 const RegisterRoute = RegisterRouteImport.update({
@@ -101,6 +109,11 @@ const LoginRoute = LoginRouteImport.update({
 const HomeRoute = HomeRouteImport.update({
   id: '/home',
   path: '/home',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ForgotPasswordRoute = ForgotPasswordRouteImport.update({
+  id: '/forgot-password',
+  path: '/forgot-password',
   getParentRoute: () => rootRouteImport,
 } as any)
 const CommunityRoute = CommunityRouteImport.update({
@@ -238,6 +251,11 @@ const AccountSubscriptionRoute = AccountSubscriptionRouteImport.update({
   path: '/subscription',
   getParentRoute: () => AccountRoute,
 } as any)
+const AccountSecurityRoute = AccountSecurityRouteImport.update({
+  id: '/security',
+  path: '/security',
+  getParentRoute: () => AccountRoute,
+} as any)
 const AccountRewardsRoute = AccountRewardsRouteImport.update({
   id: '/rewards',
   path: '/rewards',
@@ -278,12 +296,14 @@ export interface FileRoutesByFullPath {
   '/bases': typeof BasesRoute
   '/characters': typeof CharactersRouteWithChildren
   '/community': typeof CommunityRouteWithChildren
+  '/forgot-password': typeof ForgotPasswordRoute
   '/home': typeof HomeRoute
   '/login': typeof LoginRoute
   '/models': typeof ModelsRoute
   '/pricing': typeof PricingRoute
   '/projects': typeof ProjectsRouteWithChildren
   '/register': typeof RegisterRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/scripts': typeof ScriptsRouteWithChildren
   '/showcase': typeof ShowcaseRouteWithChildren
   '/team': typeof TeamRouteWithChildren
@@ -292,6 +312,7 @@ export interface FileRoutesByFullPath {
   '/account/notifications': typeof AccountNotificationsRoute
   '/account/posts': typeof AccountPostsRoute
   '/account/rewards': typeof AccountRewardsRoute
+  '/account/security': typeof AccountSecurityRoute
   '/account/subscription': typeof AccountSubscriptionRoute
   '/admin/billing': typeof AdminBillingRoute
   '/admin/models': typeof AdminModelsRoute
@@ -320,18 +341,21 @@ export interface FileRoutesByTo {
   '/assets': typeof AssetsRoute
   '/bases': typeof BasesRoute
   '/characters': typeof CharactersRouteWithChildren
+  '/forgot-password': typeof ForgotPasswordRoute
   '/home': typeof HomeRoute
   '/login': typeof LoginRoute
   '/models': typeof ModelsRoute
   '/pricing': typeof PricingRoute
   '/projects': typeof ProjectsRouteWithChildren
   '/register': typeof RegisterRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/showcase': typeof ShowcaseRouteWithChildren
   '/zoclaw': typeof ZoclawRoute
   '/account/assets': typeof AccountAssetsRoute
   '/account/notifications': typeof AccountNotificationsRoute
   '/account/posts': typeof AccountPostsRoute
   '/account/rewards': typeof AccountRewardsRoute
+  '/account/security': typeof AccountSecurityRoute
   '/account/subscription': typeof AccountSubscriptionRoute
   '/admin/billing': typeof AdminBillingRoute
   '/admin/models': typeof AdminModelsRoute
@@ -364,12 +388,14 @@ export interface FileRoutesById {
   '/bases': typeof BasesRoute
   '/characters': typeof CharactersRouteWithChildren
   '/community': typeof CommunityRouteWithChildren
+  '/forgot-password': typeof ForgotPasswordRoute
   '/home': typeof HomeRoute
   '/login': typeof LoginRoute
   '/models': typeof ModelsRoute
   '/pricing': typeof PricingRoute
   '/projects': typeof ProjectsRouteWithChildren
   '/register': typeof RegisterRoute
+  '/reset-password': typeof ResetPasswordRoute
   '/scripts': typeof ScriptsRouteWithChildren
   '/showcase': typeof ShowcaseRouteWithChildren
   '/team': typeof TeamRouteWithChildren
@@ -378,6 +404,7 @@ export interface FileRoutesById {
   '/account/notifications': typeof AccountNotificationsRoute
   '/account/posts': typeof AccountPostsRoute
   '/account/rewards': typeof AccountRewardsRoute
+  '/account/security': typeof AccountSecurityRoute
   '/account/subscription': typeof AccountSubscriptionRoute
   '/admin/billing': typeof AdminBillingRoute
   '/admin/models': typeof AdminModelsRoute
@@ -411,12 +438,14 @@ export interface FileRouteTypes {
     | '/bases'
     | '/characters'
     | '/community'
+    | '/forgot-password'
     | '/home'
     | '/login'
     | '/models'
     | '/pricing'
     | '/projects'
     | '/register'
+    | '/reset-password'
     | '/scripts'
     | '/showcase'
     | '/team'
@@ -425,6 +454,7 @@ export interface FileRouteTypes {
     | '/account/notifications'
     | '/account/posts'
     | '/account/rewards'
+    | '/account/security'
     | '/account/subscription'
     | '/admin/billing'
     | '/admin/models'
@@ -453,18 +483,21 @@ export interface FileRouteTypes {
     | '/assets'
     | '/bases'
     | '/characters'
+    | '/forgot-password'
     | '/home'
     | '/login'
     | '/models'
     | '/pricing'
     | '/projects'
     | '/register'
+    | '/reset-password'
     | '/showcase'
     | '/zoclaw'
     | '/account/assets'
     | '/account/notifications'
     | '/account/posts'
     | '/account/rewards'
+    | '/account/security'
     | '/account/subscription'
     | '/admin/billing'
     | '/admin/models'
@@ -496,12 +529,14 @@ export interface FileRouteTypes {
     | '/bases'
     | '/characters'
     | '/community'
+    | '/forgot-password'
     | '/home'
     | '/login'
     | '/models'
     | '/pricing'
     | '/projects'
     | '/register'
+    | '/reset-password'
     | '/scripts'
     | '/showcase'
     | '/team'
@@ -510,6 +545,7 @@ export interface FileRouteTypes {
     | '/account/notifications'
     | '/account/posts'
     | '/account/rewards'
+    | '/account/security'
     | '/account/subscription'
     | '/admin/billing'
     | '/admin/models'
@@ -542,12 +578,14 @@ export interface RootRouteChildren {
   BasesRoute: typeof BasesRoute
   CharactersRoute: typeof CharactersRouteWithChildren
   CommunityRoute: typeof CommunityRouteWithChildren
+  ForgotPasswordRoute: typeof ForgotPasswordRoute
   HomeRoute: typeof HomeRoute
   LoginRoute: typeof LoginRoute
   ModelsRoute: typeof ModelsRoute
   PricingRoute: typeof PricingRoute
   ProjectsRoute: typeof ProjectsRouteWithChildren
   RegisterRoute: typeof RegisterRoute
+  ResetPasswordRoute: typeof ResetPasswordRoute
   ScriptsRoute: typeof ScriptsRouteWithChildren
   ShowcaseRoute: typeof ShowcaseRouteWithChildren
   TeamRoute: typeof TeamRouteWithChildren
@@ -585,6 +623,13 @@ declare module '@tanstack/react-router' {
       path: '/scripts'
       fullPath: '/scripts'
       preLoaderRoute: typeof ScriptsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/reset-password': {
+      id: '/reset-password'
+      path: '/reset-password'
+      fullPath: '/reset-password'
+      preLoaderRoute: typeof ResetPasswordRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/register': {
@@ -627,6 +672,13 @@ declare module '@tanstack/react-router' {
       path: '/home'
       fullPath: '/home'
       preLoaderRoute: typeof HomeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/forgot-password': {
+      id: '/forgot-password'
+      path: '/forgot-password'
+      fullPath: '/forgot-password'
+      preLoaderRoute: typeof ForgotPasswordRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/community': {
@@ -818,6 +870,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AccountSubscriptionRouteImport
       parentRoute: typeof AccountRoute
     }
+    '/account/security': {
+      id: '/account/security'
+      path: '/security'
+      fullPath: '/account/security'
+      preLoaderRoute: typeof AccountSecurityRouteImport
+      parentRoute: typeof AccountRoute
+    }
     '/account/rewards': {
       id: '/account/rewards'
       path: '/rewards'
@@ -868,6 +927,7 @@ interface AccountRouteChildren {
   AccountNotificationsRoute: typeof AccountNotificationsRoute
   AccountPostsRoute: typeof AccountPostsRoute
   AccountRewardsRoute: typeof AccountRewardsRoute
+  AccountSecurityRoute: typeof AccountSecurityRoute
   AccountSubscriptionRoute: typeof AccountSubscriptionRoute
   AccountIndexRoute: typeof AccountIndexRoute
 }
@@ -877,6 +937,7 @@ const AccountRouteChildren: AccountRouteChildren = {
   AccountNotificationsRoute: AccountNotificationsRoute,
   AccountPostsRoute: AccountPostsRoute,
   AccountRewardsRoute: AccountRewardsRoute,
+  AccountSecurityRoute: AccountSecurityRoute,
   AccountSubscriptionRoute: AccountSubscriptionRoute,
   AccountIndexRoute: AccountIndexRoute,
 }
@@ -991,12 +1052,14 @@ const rootRouteChildren: RootRouteChildren = {
   BasesRoute: BasesRoute,
   CharactersRoute: CharactersRouteWithChildren,
   CommunityRoute: CommunityRouteWithChildren,
+  ForgotPasswordRoute: ForgotPasswordRoute,
   HomeRoute: HomeRoute,
   LoginRoute: LoginRoute,
   ModelsRoute: ModelsRoute,
   PricingRoute: PricingRoute,
   ProjectsRoute: ProjectsRouteWithChildren,
   RegisterRoute: RegisterRoute,
+  ResetPasswordRoute: ResetPasswordRoute,
   ScriptsRoute: ScriptsRouteWithChildren,
   ShowcaseRoute: ShowcaseRouteWithChildren,
   TeamRoute: TeamRouteWithChildren,
