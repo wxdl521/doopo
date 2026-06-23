@@ -52,6 +52,20 @@ type AzureImageResult = {
   urls: string[]
   error: string | null
   model: string
+  meta?: AzureImageMeta
+}
+
+export type AzureImageMeta = {
+  requestId: string
+  azureRequestId?: string
+  region?: string
+  processingMs?: number
+  durationMs: number
+  status: number
+  deployment: string
+  endpoint: 'generations' | 'edits'
+  apiVersion: string
+  retries: number
 }
 
 const AZURE_GPT_IMAGE2_SIZES = new Set(['1024x1024', '1024x1792', '1792x1024'])
@@ -87,11 +101,17 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
   const size = normalizeAzureSize(input.size)
   const quality = normalizeAzureQuality(input.quality)
   const t0 = Date.now()
-  console.log(`[azure→] deployment=${deployment} endpoint=${hasRefs ? 'edits' : 'generations'} refs=${input.referenceImages?.length ?? 0} size=${size} quality=${quality}`)
+  const requestId = `azr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`
+  const endpoint: 'generations' | 'edits' = hasRefs ? 'edits' : 'generations'
+  const baseMeta = { requestId, deployment, endpoint, apiVersion }
+  console.log(`[azure→] rid=${requestId} deployment=${deployment} endpoint=${endpoint} apiVersion=${apiVersion} refs=${input.referenceImages?.length ?? 0} size=${size} quality=${quality}`)
 
   if (!apiKey) {
-    console.warn(`[azure×] deployment=${deployment} missing AZURE_API_KEY`)
-    return { url: '', urls: [], error: 'AZURE_API_KEY not configured', model: deployment }
+    console.warn(`[azure×] rid=${requestId} deployment=${deployment} missing AZURE_API_KEY`)
+    return {
+      url: '', urls: [], error: 'AZURE_API_KEY not configured', model: deployment,
+      meta: { ...baseMeta, durationMs: 0, status: 0, retries: 0 },
+    }
   }
 
   const controller = new AbortController()
@@ -152,6 +172,7 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
 
     let res: Response | null = null
     let lastText = ''
+    let retries = 0
     for (let attempt = 0; attempt < 3; attempt++) {
       res = await fetch(url, requestInit)
       if (res.ok) break
@@ -159,15 +180,25 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
       const transient = res.status === 429 || res.status === 502 || res.status === 503 || res.status === 504
       if (!transient || attempt === 2) break
       const wait = res.status === 429 ? 8000 : 1500
-      console.warn(`[azure⟳] deployment=${deployment} status=${res.status} retry in ${wait}ms`)
+      retries++
+      console.warn(`[azure⟳] rid=${requestId} deployment=${deployment} status=${res.status} retry#${retries} in ${wait}ms`)
       await new Promise((r) => setTimeout(r, wait))
     }
     clearTimeout(timeout)
 
+    const azureRequestId = res?.headers.get('apim-request-id') || res?.headers.get('x-request-id') || undefined
+    const region = res?.headers.get('x-ms-region') || undefined
+    const processingMsHeader = res?.headers.get('openai-processing-ms') || res?.headers.get('x-ms-processing-time')
+    const processingMs = processingMsHeader ? Number(processingMsHeader) : undefined
+
     if (!res || !res.ok) {
       const status = res?.status ?? 0
-      console.warn(`[azure×] deployment=${deployment} status=${status} dur=${Date.now() - t0}ms body=${lastText.slice(0, 200)}`)
-      return { url: '', urls: [], error: `[azure ${deployment}] ${status}: ${lastText.slice(0, 300)}`, model: deployment }
+      const dur = Date.now() - t0
+      console.warn(`[azure×] rid=${requestId} azureRid=${azureRequestId ?? '-'} region=${region ?? '-'} deployment=${deployment} status=${status} dur=${dur}ms retries=${retries} body=${lastText.slice(0, 200)}`)
+      return {
+        url: '', urls: [], error: `[azure ${deployment}] ${status}: ${lastText.slice(0, 300)} (rid=${requestId})`, model: deployment,
+        meta: { ...baseMeta, durationMs: dur, status, retries, azureRequestId, region, processingMs },
+      }
     }
 
     const rawText = await res.text()
@@ -185,24 +216,32 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
       .filter(Boolean)
 
     if (urls.length === 0) {
-      console.warn(`[azure×] deployment=${deployment} empty-data dur=${Date.now() - t0}ms raw=${rawText.slice(0, 300)}`)
+      const dur = Date.now() - t0
+      console.warn(`[azure×] rid=${requestId} azureRid=${azureRequestId ?? '-'} deployment=${deployment} empty-data dur=${dur}ms raw=${rawText.slice(0, 300)}`)
       return {
         url: '',
         urls: [],
-        error: `[azure ${deployment}] no image returned: ${json?.error?.message || rawText.slice(0, 200) || 'empty data'}`,
+        error: `[azure ${deployment}] no image returned: ${json?.error?.message || rawText.slice(0, 200) || 'empty data'} (rid=${requestId})`,
         model: deployment,
+        meta: { ...baseMeta, durationMs: dur, status: res.status, retries, azureRequestId, region, processingMs },
       }
     }
-    console.log(`[azure✓] deployment=${deployment} images=${urls.length} dur=${Date.now() - t0}ms`)
-    return { url: urls[0], urls, error: null, model: deployment }
+    const dur = Date.now() - t0
+    console.log(`[azure✓] rid=${requestId} azureRid=${azureRequestId ?? '-'} region=${region ?? '-'} deployment=${deployment} images=${urls.length} dur=${dur}ms procMs=${processingMs ?? '-'} retries=${retries}`)
+    return {
+      url: urls[0], urls, error: null, model: deployment,
+      meta: { ...baseMeta, durationMs: dur, status: res.status, retries, azureRequestId, region, processingMs },
+    }
   } catch (e) {
     clearTimeout(timeout)
-    console.warn(`[azure×] deployment=${deployment} network dur=${Date.now() - t0}ms err=${e instanceof Error ? e.message : 'fetch failed'}`)
+    const dur = Date.now() - t0
+    console.warn(`[azure×] rid=${requestId} deployment=${deployment} network dur=${dur}ms err=${e instanceof Error ? e.message : 'fetch failed'}`)
     return {
       url: '',
       urls: [],
-      error: `[azure ${deployment}] network: ${e instanceof Error ? e.message : 'fetch failed'}`,
+      error: `[azure ${deployment}] network: ${e instanceof Error ? e.message : 'fetch failed'} (rid=${requestId})`,
       model: deployment,
+      meta: { ...baseMeta, durationMs: dur, status: 0, retries: 0 },
     }
   }
 }

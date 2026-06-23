@@ -14,6 +14,7 @@ import {
 import { assetToMarkdown, downloadMarkdown } from '../lib/assetMarkdown'
 import { generateImage } from '../lib/seedream.functions'
 import { IMAGE_MODELS } from '../lib/imageModels'
+import { logImageMeta } from '../lib/logImageMeta'
 import { loadCharacters, loadScenes, type DbCharacter, type DbScene } from '../lib/assetsStorage'
 import { useAuth } from '../hooks/useAuth'
 
@@ -403,6 +404,7 @@ function ImageStage({
     setLoading(true)
     try {
       const r = await callGenerateImage({ data: { prompt, model: model || undefined } })
+      logImageMeta('assets.generate', r)
       if (r?.url) {
         setUrl(r.url)
       } else {

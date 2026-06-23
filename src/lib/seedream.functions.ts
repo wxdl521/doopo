@@ -279,7 +279,7 @@ export const generateImage = createServerFn({ method: 'POST' })
         model: requested,
         size: data.size,
       })
-      return { url: r.url, error: r.error, model: r.model }
+      return { url: r.url, error: r.error, model: r.model, meta: r.meta }
     }
     // 委托给 OneToken(OpenAI 兼容,api.onetoken.one)
     if (requested.toLowerCase().startsWith('onetoken/')) {
@@ -758,7 +758,7 @@ export const regenerateCharacterLook = createServerFn({ method: 'POST' })
         quality: 'high',
       })
       if (!r.url) return { ok: false as const, error: r.error || 'Azure 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      return { ok: true as const, url: r.url, model: r.model, meta: r.meta }
     }
     if (requested.toLowerCase().startsWith('onetoken/')) {
       const { callOnetokenImage } = await import('./onetokenImage.functions')
@@ -964,7 +964,7 @@ export const generateStoryboardShotImage = createServerFn({ method: 'POST' })
         referenceImages: images,
       })
       if (!r.url) return { ok: false as const, error: r.error || 'Azure 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      return { ok: true as const, url: r.url, model: r.model, meta: r.meta }
     }
     // generateStoryboardShotImage: 委托给 OneToken(OpenAI 兼容,api.onetoken.one)
     if (requested.toLowerCase().startsWith('onetoken/')) {
@@ -1166,7 +1166,7 @@ export const regenerateStoryboardShot = createServerFn({ method: 'POST' })
         referenceImages: images,
       })
       if (!r.url) return { ok: false as const, error: r.error || 'Azure 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      return { ok: true as const, url: r.url, model: r.model, meta: r.meta }
     }
     if (requested.toLowerCase().startsWith('onetoken/')) {
       const { callOnetokenImage } = await import('./onetokenImage.functions')
@@ -1505,7 +1505,7 @@ export const generateStoryboardPitchDeck = createServerFn({ method: 'POST' })
         quality: 'high',
       })
       if (!r.url) return { ok: false as const, error: r.error || 'Azure 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      return { ok: true as const, url: r.url, model: r.model, meta: r.meta }
     }
     if (requested.toLowerCase().startsWith('onetoken/')) {
       const { callOnetokenImage } = await import('./onetokenImage.functions')
@@ -1963,7 +1963,7 @@ export const regenerateSceneImage = createServerFn({ method: 'POST' })
         quality: 'high',
       })
       if (!r.url) return { ok: false as const, error: r.error || 'Azure 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      return { ok: true as const, url: r.url, model: r.model, meta: r.meta }
     }
     if (requested.toLowerCase().startsWith('onetoken/')) {
       const { callOnetokenImage } = await import('./onetokenImage.functions')
