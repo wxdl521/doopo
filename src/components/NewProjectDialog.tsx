@@ -61,6 +61,10 @@ const imageModelOptions = [
   // ---- OTU(OpenAI 兼容)----
   { id: '__sep_otu__', label: '—— OTU(OpenAI 兼容)——', sub: '' },
   { id: 'otu/image2', label: 'Image2 (OTU)', sub: 'OTU · T2I/I2I' },
+
+  // ---- Azure OpenAI ----
+  { id: '__sep_azure__', label: '—— Azure · OpenAI ——', sub: '' },
+  { id: 'azure/gpt-image-2', label: 'Azure-gpt-image-2', sub: 'Azure · OpenAI · gpt-image-2 · T2I/I2I' },
 ]
 // 过滤掉"分隔符"项(只是 UI 视觉分组,不能选)
 const realImageModelOptions = imageModelOptions.filter((m) => !m.id.startsWith('__sep'))
