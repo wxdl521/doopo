@@ -1157,8 +1157,10 @@ function WorkspacePage() {
   // 判断 URL 是否已持久化(Supabase Storage 永久 URL 或 base64 data URL)
   const isPersistedUrl = useCallback((url: string | undefined | null): boolean => {
     if (!url) return false
-    // base64 视为已持久化(存在内存 state 中,显示用,但保存时会被过滤)
-    if (url.startsWith('data:')) return true
+    // 2026/06 修复:data: URL 不视为已持久化 —— 必须上传到 Storage 后再缓存,
+    // 否则刷新后会被 workspace_data 过滤(JSONB 列太大),导致 autoGen 重生。
+    if (url.startsWith('data:')) return false
+    if (url.startsWith('blob:')) return false
     try {
       const u = new URL(url)
       const host = u.hostname.toLowerCase()
