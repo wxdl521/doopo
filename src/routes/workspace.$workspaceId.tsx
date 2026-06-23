@@ -4515,9 +4515,10 @@ function WorkspacePage() {
     }
   }
 
-  async function handleSaveWorkspace() {
+  async function handleSaveWorkspace(opts?: { silent?: boolean }) {
+    const silent = opts?.silent === true
     if (!user) {
-      toast.error('请先登录')
+      if (!silent) toast.error('请先登录')
       return
     }
     if (savingWorkspace) return // 防并发:正在保存时跳过
