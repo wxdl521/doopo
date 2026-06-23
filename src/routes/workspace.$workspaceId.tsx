@@ -4892,7 +4892,7 @@ function WorkspacePage() {
     autoSaveTimerRef.current = setTimeout(() => {
       if (savingWorkspace) return
       void handleSaveWorkspace({ silent: true })
-    }, 1500)
+    }, 600)
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
     }
