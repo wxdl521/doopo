@@ -4515,9 +4515,10 @@ function WorkspacePage() {
     }
   }
 
-  async function handleSaveWorkspace() {
+  async function handleSaveWorkspace(opts?: { silent?: boolean }) {
+    const silent = opts?.silent === true
     if (!user) {
-      toast.error('请先登录')
+      if (!silent) toast.error('请先登录')
       return
     }
     if (savingWorkspace) return // 防并发:正在保存时跳过
@@ -4616,7 +4617,7 @@ function WorkspacePage() {
       })
       if (res.ok) {
         setSavedWorkspace(true)
-        toast.success('工作区已保存')
+        if (!silent) toast.success('工作区已保存')
         // 2026/06:保存时自动挑一张角色图作为项目封面(不覆盖用户手动设的 customCover)。
         // 优先级:charImages(角色图)→ shotImages(分镜图)→ groupStoryboards(故事板图)。
         if (!project?.customCover) {
@@ -4645,14 +4646,48 @@ function WorkspacePage() {
         // Reset "saved" badge after 3 seconds
         setTimeout(() => setSavedWorkspace(false), 3000)
       } else {
-        toast.error(res.error || '保存失败')
+        if (!silent) toast.error(res.error || '保存失败')
       }
     } catch {
-      toast.error('保存失败')
+      if (!silent) toast.error('保存失败')
     } finally {
       setSavingWorkspace(false)
     }
   }
+
+  // 阶段性内容自动持久化:剧本/角色/分镜/时间轴等任意改变,1.5s 防抖后静默保存到服务端,
+  // 让用户刷新页面也能看到已生成内容。
+  const autoSaveSignature = JSON.stringify({
+    outline: data.outline ? 1 : 0,
+    scenesN: data.scenes.length,
+    charactersN: data.characters.length,
+    propsN: data.props.length,
+    groupsHash: data.storyboardGroups.map((g) => `${g.id}:${g.shots.length}`).join('|'),
+    timeline: data.timeline ? 1 : 0,
+    synopsis: (data.synopsisText || '').length,
+    episodes: data.episodeTexts.length,
+    charImgs: Object.keys(charImages).length,
+    shotImgs: Object.keys(shotImages).length,
+    sceneImgs: Object.keys(sceneImages).length,
+    propImgs: Object.keys(propImages).length,
+    panelImgs: Object.keys(panelImages).length,
+    groupVids: Object.keys(groupVideos).length,
+    groupSbs: Object.keys(groupStoryboards).length,
+  })
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    if (!dataLoaded) return
+    if (!user) return
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
+    autoSaveTimerRef.current = setTimeout(() => {
+      if (savingWorkspace) return
+      void handleSaveWorkspace({ silent: true })
+    }, 1500)
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoSaveSignature, dataLoaded])
 
   // Auto-save when all stages are complete (only trigger once)
   const completedKey = ALL_STAGES.map((s) => completedStages.has(s) ? '1' : '0').join('')

@@ -1,33 +1,44 @@
-## 问题
+## 目标
 
-分镜生成时调用 `pixflow/gpt-image-2` 报 `400: failed to parse multipart form`。
+让用户在工作区生成的**剧本 / 角色 / 分镜 / 时间轴**等内容自动缓存，刷新页面后仍可继续显示之前的成果，无需手动点"保存工作区"。
 
-服务端日志确认:
-```
-[pixflow→] model=gpt-image-2 endpoint=/v1/images/edits refs=3 ...
-[pixflow×] status=400 body={"error":{"message":"failed to parse multipart form","type":"upstream_error"}}
-```
+## 现状
 
-## 根因
+- `src/routes/workspace.$workspaceId.tsx` 已经有完整的服务端持久化能力：`saveWorkspaceData` / `loadWorkspaceData`（写入 `projects.workspace_data` JSONB）。
+- 加载逻辑（约 line 1257）已经在挂载时调用 `callLoadWorkspace`，把 outline / scenes / characters / storyboard / storyboardGroups / timeline / episodeTexts / props / 各类图片缓存等还原到 state。
+- 但 **保存只在两种情况下触发**：
+  1. 用户手动点击「保存工作区」按钮；
+  2. `completedStages` 五个阶段全部完成时自动保存一次（`autoSavedRef` 只跑一次）。
+- 后果：刷新前如果没点保存、且尚未完成全部阶段，剧本/角色/分镜/时间轴等阶段性产物会丢失。
 
-`src/lib/pixflow.functions.ts` 中,gpt-image-* 走 `/v1/images/edits` 时用的是 JSON body(`images[].image_url`)。Pixflow `/v1/images/edits` 上游只接受 **multipart/form-data 二进制文件**(参见 `docs/image2.md`:`-F "image[]=@ref1.png"`),所以解析失败直接 400。
+## 方案：阶段性内容自动持久化（防抖保存）
 
-## 修复方案
+在已有 `handleSaveWorkspace` 基础上，新增 **数据变更自动保存（debounce）**，保证生成的任何一个阶段内容都会在短时间内落到服务端，刷新即可恢复。
 
-只改一个函数:`callPixflowImage` 中 gpt-image-* 且有参考图的分支。
+### 改动点（仅 `src/routes/workspace.$workspaceId.tsx`）
 
-1. 把每个 `referenceImages[]` URL `fetch` 成 `Blob`(复用现有 20s 超时),失败则跳过该参考图。
-2. 用 `FormData` 组装请求:
-   - `model`, `prompt`, `n`, `size`, `quality`, `response_format=url`
-   - 对每张图 `form.append('image[]', blob, 'refN.png')`(按 Content-Type 推断扩展名,默认 png)
-3. 不再设置 `Content-Type` header,让 fetch 自动写入 boundary。
-4. 若全部参考图下载失败,退回到 `/v1/images/generations`(纯 T2I),并在日志里 warn。
-5. 保留现有的 502/503/504/524 一次重试 + 指数退避;保留无参考图走 `/v1/images/generations` JSON 分支不变;保留 Gemini Native 分支不变。
+1. **新增 debounce 自动保存 effect**（放在 `handleSaveWorkspace` 定义之后）：
+   - 依赖项：`dataLoaded`、`data.outline`、`data.scenes.length`、`data.characters.length`、`data.storyboardGroups`（hash）、`data.timeline`、`data.episodeTexts.length`、`data.synopsisText`、`data.props.length`，以及 `charImages` / `shotImages` / `sceneImages` / `propImages` / `panelImages` / `groupVideos` / `persistGroupStoryboards` 的 hash key。
+   - 行为：`dataLoaded` 后，任意上述依赖变更 → 设置 1.5 秒 `setTimeout` 调 `handleSaveWorkspace()`，新变更进来时清掉旧 timer 重新计时（典型 debounce）。
+   - 用 `savingWorkspace` 状态做互斥：正在保存就跳过本轮，等下一次依赖变化再触发。
+   - 卸载时清理 timer，避免内存泄漏。
+   - 不弹 `toast`（"工作区已保存"由手动按钮触发）：抽出 `handleSaveWorkspace` 的 silent 版本，或加一个 `silent: boolean` 参数，自动保存走 silent 路径。
 
-## 涉及文件
+2. **解除"只自动保存一次"的限制**：
+   - 现有 `autoSavedRef.current = true` 的"五阶段完成才自动保存一次"逻辑保留，但不再是唯一保存路径——上面的 debounce effect 是主路径。
 
-- `src/lib/pixflow.functions.ts` —— 仅修改 OpenAI 兼容 edits 分支(约 30 行内)。
+3. **保持现有手动保存按钮 + toast 提示行为不变**，用户手动保存仍然有反馈。
 
-## 验证
+### 不改动
 
-修复后用一次真实分镜 I2I 请求触发,确认服务端日志出现 `[pixflow✓] endpoint=/v1/images/edits images=1`,前端不再报 400。
+- 不动 `loadWorkspaceData` / `saveWorkspaceData` 服务端函数和 DB schema。
+- 不动 localStorage，不引入新的缓存层（服务端 JSONB 已足够，且跨设备一致）。
+- 不动 AI 生成逻辑、UI 布局、aigcfamily 模型相关代码。
+
+## 验收
+
+- 在工作区生成剧本 → 等约 2 秒 → 刷新 → 剧本仍在。
+- 生成角色后刷新 → 角色列表 + 形象图仍在。
+- 生成分镜组 / 分镜图后刷新 → 分镜组 + shot 图仍在。
+- 生成时间轴后刷新 → 时间轴仍在。
+- 多次连续编辑（如改 shot action）不会触发频繁请求，1.5 秒 debounce 合并为一次保存。
