@@ -139,6 +139,17 @@ const IMAGE_MODELS: ImageModel[] = [
     vendor: 'Pixflow · Google', tagline: '通用图像生成/编辑 · pixflow', taglineEn: 'General gen/edit · pixflow',
     gradient: 'from-lime-400 to-emerald-600', status: 'available',
   },
+  // ---- Tokenflash / AIGCFamily 中转 ----
+  {
+    id: 'tokenflash/gpt-image-2', name: 'GPT Image 2 (Tokenflash)', nameEn: 'GPT Image 2 (Tokenflash)',
+    vendor: 'Tokenflash · OpenAI 兼容', tagline: 'Image2 · T2I/I2I · 推荐', taglineEn: 'Image2 · T2I/I2I · recommended',
+    gradient: 'from-rose-500 to-pink-600', status: 'available',
+  },
+  {
+    id: 'aigcfamily/gpt-image-2', name: 'aigcfamily-image2', nameEn: 'aigcfamily-image2',
+    vendor: 'AIGCFamily · OpenAI 兼容', tagline: 'Image2 · T2I/I2I · 中转', taglineEn: 'Image2 · T2I/I2I · gateway',
+    gradient: 'from-fuchsia-500 to-purple-600', status: 'available',
+  },
   {
     id: 'qwen-image-2.0', name: 'Qwen Image 2.0', nameEn: 'Qwen Image 2.0',
     vendor: '通义千问 · Legacy', tagline: 'T2I 兜底层', taglineEn: 'T2I · Legacy Fallback',
