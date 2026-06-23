@@ -5,6 +5,7 @@ import { useLanguage } from '../i18n/LanguageContext'
 import { generateScript } from '../lib/openrouter.functions'
 import { generateImage } from '../lib/seedream.functions'
 import { IMAGE_MODELS } from '../lib/imageModels'
+import { logImageMeta } from '../lib/logImageMeta'
 
 type Tab = 'front' | 'side' | 'back' | 'expression' | 'accessory'
 type Step = 'brief' | 'profile' | 'style' | 'hero' | 'sheet'
@@ -166,6 +167,7 @@ export default function Characters() {
     setPromptPreview(p => ({ ...p, [v]: prompt }))
     try {
       const r = await callGenerateImage({ data: { prompt, model: imageModel || undefined } })
+      logImageMeta('characters.hero', r)
       if (r.url) {
         setGeneratedImages(prev => ({ ...prev, front: r.url }))
         setSelectedImage('front'); setActiveTab('front')
@@ -187,7 +189,11 @@ export default function Characters() {
     setPromptPreview(p => ({ ...p, ...previews }))
     try {
       const results = await Promise.allSettled(
-        restViews.map(async v => ({ v, ...(await callGenerateImage({ data: { prompt: previews[v], model: imageModel || undefined } })) })),
+        restViews.map(async v => {
+          const out = await callGenerateImage({ data: { prompt: previews[v], model: imageModel || undefined } })
+          logImageMeta(`characters.sheet.${v}`, out)
+          return { v, ...out }
+        }),
       )
       const next = { ...generatedImages }
       let imgError = ''
