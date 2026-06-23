@@ -35,6 +35,11 @@ export const IMAGE_MODELS: ImageModelOption[] = [
   { key: '', label: '—— [Tokenflash · OpenAI 兼容] ——', sub: undefined, legacy: true },
   { key: 'tokenflash/gpt-image-2', label: 'GPT Image 2', sub: '[Tokenflash·OpenAI] Image2 · T2I/I2I · 推荐' },
 
+  // ---- [AIGCFamily · OpenAI 兼容] api1.aigcfamily.top → /v1/images/generations|edits ----
+  //  2026/06 接入:实测 gpt-image-2 单次 ≈ 50s,作为 image2 的额外中转选项
+  { key: '', label: '—— [AIGCFamily · OpenAI 兼容] ——', sub: undefined, legacy: true },
+  { key: 'aigcfamily/gpt-image-2', label: 'aigcfamily-image2', sub: '[AIGCFamily·OpenAI] Image2 · T2I/I2I' },
+
   // ---- [DashScope] 阿里百炼 · 通义千问 / 万相 ----
   { key: '', label: '—— [DashScope · 阿里百炼] ——', sub: undefined, legacy: true },
   { key: 'qwen-image-2.0', label: 'Qwen Image 2.0', sub: '[DashScope] 通义千问 · T2I 稳定' },

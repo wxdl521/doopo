@@ -263,6 +263,15 @@ export const generateImage = createServerFn({ method: 'POST' })
       })
       return { url: r.url, error: r.error, model: r.model }
     }
+    if (requested.toLowerCase().startsWith('aigcfamily/')) {
+      const { callAigcfamilyImage } = await import('./aigcfamilyImage.functions')
+      const r = await callAigcfamilyImage({
+        prompt: appendNegative(data.prompt, data.negativePrompt),
+        model: requested,
+        size: data.size,
+      })
+      return { url: r.url, error: r.error, model: r.model }
+    }
     // 委托给 OneToken(OpenAI 兼容,api.onetoken.one)
     if (requested.toLowerCase().startsWith('onetoken/')) {
       const { callOnetokenImage } = await import('./onetokenImage.functions')
@@ -718,6 +727,18 @@ export const regenerateCharacterLook = createServerFn({ method: 'POST' })
       if (!r.url) return { ok: false as const, error: r.error || 'Tokenflash 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
+    if (requested.toLowerCase().startsWith('aigcfamily/')) {
+      const { callAigcfamilyImage } = await import('./aigcfamilyImage.functions')
+      const r = await callAigcfamilyImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+        quality: 'high',
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'AIGCFamily 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
     if (requested.toLowerCase().startsWith('onetoken/')) {
       const { callOnetokenImage } = await import('./onetokenImage.functions')
       const r = await callOnetokenImage({
@@ -902,6 +923,17 @@ export const generateStoryboardShotImage = createServerFn({ method: 'POST' })
       if (!r.url) return { ok: false as const, error: r.error || 'Tokenflash 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
+    if (requested.toLowerCase().startsWith('aigcfamily/')) {
+      const { callAigcfamilyImage } = await import('./aigcfamilyImage.functions')
+      const r = await callAigcfamilyImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: '2K',
+        referenceImages: images,
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'AIGCFamily 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
     // generateStoryboardShotImage: 委托给 OneToken(OpenAI 兼容,api.onetoken.one)
     if (requested.toLowerCase().startsWith('onetoken/')) {
       const { callOnetokenImage } = await import('./onetokenImage.functions')
@@ -1080,6 +1112,17 @@ export const regenerateStoryboardShot = createServerFn({ method: 'POST' })
         referenceImages: images,
       })
       if (!r.url) return { ok: false as const, error: r.error || 'Tokenflash 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('aigcfamily/')) {
+      const { callAigcfamilyImage } = await import('./aigcfamilyImage.functions')
+      const r = await callAigcfamilyImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: '2K',
+        referenceImages: images,
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'AIGCFamily 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
     if (requested.toLowerCase().startsWith('onetoken/')) {
@@ -1502,6 +1545,18 @@ export const generateStoryboardPitchDeck = createServerFn({ method: 'POST' })
         quality: 'high',
       })
       if (!r.url) return { ok: false as const, error: r.error || 'Tokenflash 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('aigcfamily/')) {
+      const { callAigcfamilyImage } = await import('./aigcfamilyImage.functions')
+      const r = await callAigcfamilyImage({
+        prompt,
+        model: requested,
+        size: '3840x2160',
+        referenceImages: data.referenceImages || [],
+        quality: 'high',
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'AIGCFamily 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
     if (requested.toLowerCase().startsWith('onetoken/')) {
@@ -1936,6 +1991,18 @@ export const regenerateSceneImage = createServerFn({ method: 'POST' })
         quality: 'high',
       })
       if (!r.url) return { ok: false as const, error: r.error || 'Tokenflash 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('aigcfamily/')) {
+      const { callAigcfamilyImage } = await import('./aigcfamilyImage.functions')
+      const r = await callAigcfamilyImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+        quality: 'high',
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'AIGCFamily 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
     if (requested.toLowerCase().startsWith('onetoken/')) {
