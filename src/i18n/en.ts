@@ -724,6 +724,8 @@ export const en: Translations = {
   ws_save: 'Save',
   ws_saving: 'Saving…',
   ws_saved: 'Saved',
+  ws_autosaving: 'Saving…',
+  ws_autosaved: 'Auto-saved',
   ws_tab_canvas: 'Canvas',
   ws_tab_script: 'Script',
   ws_tab_episodes: 'Episodes',
