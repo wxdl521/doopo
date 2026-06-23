@@ -48,6 +48,7 @@ import { Route as AdminTenantsRouteImport } from './routes/admin.tenants'
 import { Route as AdminModelsRouteImport } from './routes/admin.models'
 import { Route as AdminBillingRouteImport } from './routes/admin.billing'
 import { Route as AccountSubscriptionRouteImport } from './routes/account.subscription'
+import { Route as AccountSecurityRouteImport } from './routes/account.security'
 import { Route as AccountRewardsRouteImport } from './routes/account.rewards'
 import { Route as AccountPostsRouteImport } from './routes/account.posts'
 import { Route as AccountNotificationsRouteImport } from './routes/account.notifications'
@@ -250,6 +251,11 @@ const AccountSubscriptionRoute = AccountSubscriptionRouteImport.update({
   path: '/subscription',
   getParentRoute: () => AccountRoute,
 } as any)
+const AccountSecurityRoute = AccountSecurityRouteImport.update({
+  id: '/security',
+  path: '/security',
+  getParentRoute: () => AccountRoute,
+} as any)
 const AccountRewardsRoute = AccountRewardsRouteImport.update({
   id: '/rewards',
   path: '/rewards',
@@ -306,6 +312,7 @@ export interface FileRoutesByFullPath {
   '/account/notifications': typeof AccountNotificationsRoute
   '/account/posts': typeof AccountPostsRoute
   '/account/rewards': typeof AccountRewardsRoute
+  '/account/security': typeof AccountSecurityRoute
   '/account/subscription': typeof AccountSubscriptionRoute
   '/admin/billing': typeof AdminBillingRoute
   '/admin/models': typeof AdminModelsRoute
@@ -348,6 +355,7 @@ export interface FileRoutesByTo {
   '/account/notifications': typeof AccountNotificationsRoute
   '/account/posts': typeof AccountPostsRoute
   '/account/rewards': typeof AccountRewardsRoute
+  '/account/security': typeof AccountSecurityRoute
   '/account/subscription': typeof AccountSubscriptionRoute
   '/admin/billing': typeof AdminBillingRoute
   '/admin/models': typeof AdminModelsRoute
@@ -396,6 +404,7 @@ export interface FileRoutesById {
   '/account/notifications': typeof AccountNotificationsRoute
   '/account/posts': typeof AccountPostsRoute
   '/account/rewards': typeof AccountRewardsRoute
+  '/account/security': typeof AccountSecurityRoute
   '/account/subscription': typeof AccountSubscriptionRoute
   '/admin/billing': typeof AdminBillingRoute
   '/admin/models': typeof AdminModelsRoute
@@ -445,6 +454,7 @@ export interface FileRouteTypes {
     | '/account/notifications'
     | '/account/posts'
     | '/account/rewards'
+    | '/account/security'
     | '/account/subscription'
     | '/admin/billing'
     | '/admin/models'
@@ -487,6 +497,7 @@ export interface FileRouteTypes {
     | '/account/notifications'
     | '/account/posts'
     | '/account/rewards'
+    | '/account/security'
     | '/account/subscription'
     | '/admin/billing'
     | '/admin/models'
@@ -534,6 +545,7 @@ export interface FileRouteTypes {
     | '/account/notifications'
     | '/account/posts'
     | '/account/rewards'
+    | '/account/security'
     | '/account/subscription'
     | '/admin/billing'
     | '/admin/models'
@@ -858,6 +870,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AccountSubscriptionRouteImport
       parentRoute: typeof AccountRoute
     }
+    '/account/security': {
+      id: '/account/security'
+      path: '/security'
+      fullPath: '/account/security'
+      preLoaderRoute: typeof AccountSecurityRouteImport
+      parentRoute: typeof AccountRoute
+    }
     '/account/rewards': {
       id: '/account/rewards'
       path: '/rewards'
@@ -908,6 +927,7 @@ interface AccountRouteChildren {
   AccountNotificationsRoute: typeof AccountNotificationsRoute
   AccountPostsRoute: typeof AccountPostsRoute
   AccountRewardsRoute: typeof AccountRewardsRoute
+  AccountSecurityRoute: typeof AccountSecurityRoute
   AccountSubscriptionRoute: typeof AccountSubscriptionRoute
   AccountIndexRoute: typeof AccountIndexRoute
 }
@@ -917,6 +937,7 @@ const AccountRouteChildren: AccountRouteChildren = {
   AccountNotificationsRoute: AccountNotificationsRoute,
   AccountPostsRoute: AccountPostsRoute,
   AccountRewardsRoute: AccountRewardsRoute,
+  AccountSecurityRoute: AccountSecurityRoute,
   AccountSubscriptionRoute: AccountSubscriptionRoute,
   AccountIndexRoute: AccountIndexRoute,
 }
