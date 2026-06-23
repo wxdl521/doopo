@@ -5468,6 +5468,25 @@ function WorkspacePage() {
       />
       <div className="flex-1 flex min-h-0">
         <main className="flex-1 min-w-0 overflow-auto p-6">
+        {/* 编辑区实时保存状态提示 */}
+        <div className="sticky top-0 z-10 -mt-6 pt-3 pb-2 -mx-6 px-6 bg-bg/90 border-b border-border/60 backdrop-blur flex justify-end">
+          <div
+            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border transition ${
+              savingWorkspace
+                ? 'bg-accent/10 border-accent/40 text-accent'
+                : savedWorkspace
+                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                  : 'bg-bg-elevated/80 border-border text-text-muted'
+            }`}
+          >
+            {savingWorkspace ? (
+              <Loader2 size={12} className="animate-spin" />
+            ) : (
+              <CheckCircle2 size={12} className={savedWorkspace ? 'text-emerald-400' : 'text-text-muted'} />
+            )}
+            <span>{savingWorkspace ? t.ws_autosaving : t.ws_autosaved}</span>
+          </div>
+        </div>
           {tab === 'canvas' && (
             <div className="relative max-w-4xl mx-auto rounded-2xl border-2 border-dashed border-accent/50 bg-bg-surface p-6 min-h-[500px]">
               <div className="flex items-center justify-between mb-3">
