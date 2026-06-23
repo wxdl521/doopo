@@ -8201,6 +8201,32 @@ function WorkspacePage() {
                       </div>
                     </div>
                   )}
+                  {/* 修改场景:嵌入预览右侧底部,和角色修改对齐 */}
+                  <div className="shrink-0 rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs text-text-secondary font-semibold">修改场景</div>
+                      <span className="text-[10px] text-text-muted">Enter 发送</span>
+                    </div>
+                    <textarea
+                      value={sceneModInput}
+                      onChange={(e) => setSceneModInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault()
+                          const p = sceneModOpen || s
+                          setSceneModOpen(p)
+                          void doSceneRegen(p, 'modify', sceneModInput.trim())
+                        }
+                      }}
+                      placeholder="例如:把时间改成黄昏 / 增加下雨效果 / 改成室内暖光…"
+                      rows={3}
+                      disabled={sceneModBusy}
+                      className="w-full rounded-md bg-bg-base border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-none placeholder:text-text-muted disabled:opacity-50"
+                    />
+                    {sceneModError && (
+                      <div className="px-2.5 py-1.5 rounded-md bg-rose-500/10 border border-rose-500/30 text-[11px] text-rose-400">{sceneModError}</div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
@@ -8338,6 +8364,30 @@ function WorkspacePage() {
                       </div>
                     </div>
                   )}
+                  {/* 修改道具:嵌入预览右侧底部 */}
+                  <div className="shrink-0 rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="text-xs text-text-secondary font-semibold">修改道具</div>
+                      <span className="text-[10px] text-text-muted">Enter 发送</span>
+                    </div>
+                    <textarea
+                      value={propModInput}
+                      onChange={(e) => setPropModInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault()
+                          void doPropRegen(p, 'modify', propModInput.trim())
+                        }
+                      }}
+                      placeholder="例如:把颜色改成红色 / 加一个提手 / 缩小尺寸…"
+                      rows={3}
+                      disabled={propModBusy}
+                      className="w-full rounded-md bg-bg-base border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-none placeholder:text-text-muted disabled:opacity-50"
+                    />
+                    {propModError && (
+                      <div className="px-2.5 py-1.5 rounded-md bg-rose-500/10 border border-rose-500/30 text-[11px] text-rose-400">{propModError}</div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
