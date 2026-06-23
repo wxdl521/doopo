@@ -151,6 +151,11 @@ const IMAGE_MODELS: ImageModel[] = [
     gradient: 'from-fuchsia-500 to-purple-600', status: 'available',
   },
   {
+    id: 'azure/gpt-image-2', name: 'Azure-gpt-image-2', nameEn: 'Azure-gpt-image-2',
+    vendor: 'Azure · OpenAI', tagline: 'gpt-image-2 · T2I/I2I · 官方', taglineEn: 'gpt-image-2 · T2I/I2I · Official',
+    gradient: 'from-sky-500 to-blue-700', status: 'available',
+  },
+  {
     id: 'qwen-image-2.0', name: 'Qwen Image 2.0', nameEn: 'Qwen Image 2.0',
     vendor: '通义千问 · Legacy', tagline: 'T2I 兜底层', taglineEn: 'T2I · Legacy Fallback',
     gradient: 'from-emerald-500 to-green-600', status: 'available',
