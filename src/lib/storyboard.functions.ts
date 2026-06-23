@@ -65,8 +65,8 @@ const PlotInput = z.object({
     )
     .max(40)
     .default([]),
-  // 期望生成多少组分镜(客户端可调,默认 6)
-  groupCount: z.number().int().min(1).max(20).default(6),
+  // 期望生成多少组分镜(客户端可调,默认 6,设为 0 表示不设上限让 AI 自己决定)
+  groupCount: z.number().int().min(0).max(30).default(6),
   // 上一集剧情(可选),给 AI 提供上下文
   previousEpisodesText: z.string().max(8000).optional(),
   // 项目风格
@@ -154,17 +154,17 @@ export const generateStoryboardFromPlot = createServerFn({ method: 'POST' })
 - startSec / endSec 必填:每个 shot 自己在当集时间轴上的区间(秒)。
   - 必须严格在 group 的 startSec~endSec 范围内
   - 连续 shot 的时间区间要无缝衔接(shot N 的 endSec == shot N+1 的 startSec)
-  - 单 shot 时长 1~5 秒
+  - 单 shot 时长通常 1~5 秒,但你可以按剧情节奏自由调整,不必死守这个范围
 - shotType 必填,5 个里选
 
 【其他】
 1. 严格按剧本顺序切分,覆盖整集主要内容(开头 / 发展 / 高潮 / 结尾都要覆盖)。
 2. 景别在 [WS 远景 / MS 中景 / CU 近景 / ECU 特写 / OTS 过肩] 中选择,按剧情需要混合使用。
-3. 时间用秒(startSec / endSec),单组时长 2~10 秒;整集时长应合理。
+3. 时间用秒(startSec / endSec),单组时长由剧情内容决定,不设固定范围;整集时长应合理。
 4. 角色 ID 必须是传入的角色列表中的 id,场景 ID 必须是传入的场景列表中的 id。
 5. 只输出 JSON,不要任何解释、Markdown 包裹、代码块标记。`
 
-    const userPrompt = `请把下面第 ${data.episodeIndex} 集剧本切分成 ${data.groupCount} 组分镜,输出 JSON。
+    const userPrompt = `请把下面第 ${data.episodeIndex} 集剧本切分成若干组分镜,输出 JSON。分多少组由你按剧本内容的剧情密度和节奏自行判断,不要固定数量,跟着内容走。
 
 ===== 角色列表 =====
 ${charList}
@@ -385,7 +385,7 @@ ${data.episodeText}
                   yield { kind: 'group', group: g }
                   yieldedAny = true
                   groupCount++
-                  if (groupCount >= data.groupCount) {
+                  if (data.groupCount > 0 && groupCount >= data.groupCount) {
                     // 已达请求数量,主动中止上游 stream 节省 token
                     try { controller.abort() } catch { /* noop */ }
                     break
@@ -394,12 +394,12 @@ ${data.episodeText}
                   // 单组 JSON 解析失败,跳过(下一组可能 OK)
                 }
               }
-              if (groupCount >= data.groupCount) break
+              if (data.groupCount > 0 && groupCount >= data.groupCount) break
             } catch {
               // SSE 心跳/非 JSON 行,忽略
             }
           }
-          if (groupCount >= data.groupCount) break
+          if (data.groupCount > 0 && groupCount >= data.groupCount) break
         }
         clearTimeout(timeout)
         if (groupCount > 0) {

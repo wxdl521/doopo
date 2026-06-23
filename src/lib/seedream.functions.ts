@@ -1289,33 +1289,8 @@ function buildPitchDeckPrompt(opts: {
   const chars = data.characters || []
   const shots = data.shots || []
   const shotCount = shots.length
-
-  // ====================================================================
-  // 2026/06 用户重写:从"9:16 竖屏漫剧多格分镜"改成"16:9 横向导演预制作指南"。
-  // 整张图是一个 director's pre-production guide / pitch deck 风格,
-  // 多个清晰分节(共享创意指导 / 角色与风格参考 / 环境与场景设计 / 故事板帧 /
-  // 灯光情绪 / 关键词 / 音频音调 / 电影摄影笔记),
-  // 简洁基于网格,电影化、专业、连贯,像递到导演手里的一页设定。
-  //
-  // 关键约束:
-  //   - 故事板帧严格按本组剧情(plotText)+ AI 扩写的 shots 来展开,不允许
-  //     模型自己虚构"另一个剧情"
-  //   - 角色身份严格按 [CHARACTERS] 描述,允许细微变化(表情/姿态),
-  //     不允许换脸/换服装
-  //   - 不限制故事板帧数,根据 shots 数自调(SUGGESTED_PANELS)
-  // ====================================================================
-
-  // 推荐故事板帧数:shots 数 clamp 到 4-10
   const SUGGESTED_PANELS = Math.min(10, Math.max(4, shotCount || 6))
 
-  // 2026/06:参考图说明块。客户端会按 "场景至少 1 张 + 角色若干 ≤ 4 总数" 传图,
-  // 每张配 label(如 "场景: 教室,夜","角色: 陆深 主角")。在 prompt 里告诉
-  // 模型每张图代表什么,让 Seedream 把它们正确融合到 Section 2(角色)/3(场景)。
-  //
-  // **2026/06 二次强化**:不只是 identity 锁定,还要**画风 / 渲染技法**继承。
-  // 用户反映"故事板画风跟参考图对不上",所以这块加更狠的画风指令 —— 让模型把
-  // 参考图当作 "this exact look" 的视觉真值,storyboard 内所有插画都要复现
-  // 参考图的线条 / 笔触 / 色饱和度 / 阴影方式 / 渲染层次。
   const refImgs = data.referenceImages || []
   const refLabels = data.referenceImageLabels || []
   const referenceImageBlock = refImgs.length
@@ -1323,180 +1298,98 @@ function buildPitchDeckPrompt(opts: {
         `[REFERENCE IMAGES — ${refImgs.length} 张视觉锚点,**最高真值**,严格遵循]`,
         ...refImgs.map((_, i) => `  Image ${i + 1}: ${refLabels[i] ?? '(no label)'}`),
         ``,
-        `【身份锁定 / IDENTITY LOCK】`,
-        `Section 2(角色与风格参考):同一个角色出现在故事板里时,脸 / 身材 / 服装 / 发型 / 配饰必须严格复制对应"角色"参考图,不允许换脸 / 换服装 / 换发色。`,
-        `Section 3(环境与场景设计):场景 establishing shot 和俯视示意图都基于"场景"参考图的地点、布局、关键道具、光照氛围,不允许虚构出参考图里没有的建筑或环境元素。`,
-        `Section 5(故事板帧):每一帧里出现的角色按对应参考图来画;场景沿用参考图的环境基调。`,
-        ``,
-        `【画风继承 / STYLE INHERITANCE — 这是关键,跟身份锁定同等优先级】`,
-        `整张故事板的**所有插画**(Section 2 角色卡、Section 3 establishing shot、Section 5 每一帧 storyboard thumbnail)必须复现参考图的视觉风格:`,
-        `  • 线条质感(粗细 / 利落度 / 是否带轮廓线)`,
-        `  • 上色技法(平涂 / cel-shading / 厚涂 / 水彩 / 数码插画)`,
-        `  • 色彩饱和度与色温(暖 / 冷 / 高饱 / 低饱 / 退色感)`,
-        `  • 阴影方式与层次(硬光 / 软光 / 单色阴影 / 多层渐变)`,
-        `  • 整体写实程度(写实照片 / 半写实 / 卡通 / anime / 漫画)`,
-        `如果参考图是 anime 风,故事板所有插画也必须 anime;如果参考图是写实风,所有插画必须写实。**绝对禁止**故事板出 cel-shading 风但参考图是写实风,或反之。每一格 thumbnail 看起来都要像"从同一张参考图里裁出来的角度"。`,
-        `俯视示意图(Section 3b)是技术性线稿,允许用更简化的线条风格(但仍跟整体调色协调),不强制复现参考图的上色技法。`,
+        `【身份锁定】同一角色在所有镜头中必须保持完全一致的面部特征、发型、体型、服装细节。`,
+        `【画风继承】所有插画必须复现参考图的线条质感与人物造型。`,
       ].join('\n')
-    : '[REFERENCE IMAGES] (none provided — 按 [CHARACTERS] 文字描述 + [STYLE LOCK] 风格指纹生成,角色/场景细节可能不完全匹配项目设定)'
+    : ''
 
-  // 已有 shot 描述(模型据此填每个 panel + 显示每帧时长)
   const shotLines = shots.map((s, i) => {
     const cam = s.camera ? ` | camera: ${s.camera}` : ''
-    // 2026/06:每帧时长标注 —— 优先用 startSec/endSec 算精确时长,否则用 durationSec
     const dur = (s.startSec != null && s.endSec != null)
       ? ` | ${s.startSec.toFixed(0)}-${s.endSec.toFixed(0)}s (${(s.endSec - s.startSec).toFixed(0)}s)`
       : s.durationSec ? ` | duration: ${s.durationSec}s` : ''
     return `  Frame ${i + 1}: [${s.shotTypeLabel}] ${s.action}${cam}${dur}`
   }).join('\n')
 
-  // 角色描述块
   const charLines = chars.map((c, i) => {
     const role = c.roleLabel ? ` (${c.roleLabel}` : ''
     const age = c.age !== undefined ? `, age ${c.age}` : ''
-    const palette = c.palette?.length ? ` | palette: ${c.palette.join(', ')}` : ''
     return [
       `  Character ${i + 1}: ${c.name}${role ? role : ''}${age ? age : ''}${c.roleLabel ? ')' : ''}`,
       c.faceDescription ? `    Face: ${c.faceDescription}` : '',
       c.bodyDescription ? `    Body: ${c.bodyDescription}` : '',
       c.clothingDescription ? `    Outfit: ${c.clothingDescription}` : '',
-      palette ? `    ${palette}` : '',
     ].filter(Boolean).join('\n')
   }).join('\n')
 
-  // 场景描述块
   const sceneLine = data.scene
     ? [
         data.scene.location ? `  Location: ${data.scene.location}` : '',
         data.scene.timeOfDay ? `  Time: ${data.scene.timeOfDay}` : '',
         data.scene.profile ? `  Description: ${data.scene.profile}` : '',
       ].filter(Boolean).join('\n')
-    : '  (no specific scene — use the plot context to infer)'
+    : '  (no specific scene)'
 
   return [
-    // ========== 任务总述 ==========
-    `[MISSION] Create a 16:9 STORYBOARD / DIRECTOR'S PRE-PRODUCTION GUIDE for the scene described below. ONE single image, landscape orientation, organized like a professional pitch deck page that a director hands to the production team. The layout is clean, grid-based, divided into clearly LABELED sections (Chinese-first with optional small English subtitles). It must feel cohesive, cinematic, and professionally designed — communicating tone, pacing, and visual storytelling at a glance.`,
-
-    `[PRIMARY GOAL] This storyboard will be **directly consumed by a downstream video-generation model** as the structural & visual reference. Every shot, camera type, motion description, timing, mood note, and character anchor on this page must be unambiguous and machine-readable. Text descriptions stay TERSE but PERFECTLY LEGIBLE — short is good, garbled is fatal.`,
-
+    `[MISSION] Create a professional FILM STORYBOARD in pure PENCIL LINE-ART / SKETCH style. ONE single 16:9 landscape image. The entire board must look like a hand-drawn storyboard by a professional film pre-production artist — pencil on paper, clean lines, no color, no cel-shading, no 3D render, no watercolor.`,
     `[ASPECT RATIO] Strictly 16:9 LANDSCAPE.`,
 
-    // ========== 文字可读性(关键)==========
-    `[TEXT READABILITY — TOP PRIORITY, this storyboard is text-readability-first]`,
-    `- ALL Chinese text must be CRISP, SHARP, ACCURATE, IMMEDIATELY READABLE. No garbled glyphs, no fake/pseudo characters, no smeared strokes, no unreadable handwriting.`,
-    `- 分区标题 (section titles), 镜头编号 (shot numbers), 角色角度标签 (character angle labels) MUST be visibly LARGE and BOLD — far larger than body text. Title hierarchy is OBVIOUS at a glance.`,
-    `- 每个分镜帧的文字说明 ≤ 1–2 LINES of brief Chinese. NO long paragraphs inside frame captions. Density via short tags (e.g. "35mm 广角 · 跟拍 · 急促 · 4s"), not prose.`,
-    `- High contrast: dark text on clean white / very light grey background. Plenty of white space.`,
-    `- Use a clean printed font family (思源宋体 / 思源黑体 / Noto Sans / Songti). NEVER comic / decorative / pseudo-handwritten fonts. Print-grade typography only.`,
+    `[LINE ART STYLE — strict, no exceptions]`,
+    `- Pure pencil sketch / line-art style throughout. NO color rendering, NO photo-realism, NO watercolor, NO cel-shading, NO 3D rendering, NO oil painting, NO anime style.`,
+    `- Lines must be clean, confident, with varying thickness (thicker contour lines, thinner detail lines).`,
+    `- Shadows rendered with hatching / cross-hatching (parallel lines), NO smudging, NO gradients, NO airbrush.`,
+    `- Characters drawn in realistic proportions (NOT chibi, NOT cartoon exaggerated).`,
+    `- Backgrounds use simple lines to convey spatial relationships — no excessive detail.`,
+    `- The overall feel: a professional storyboard artist's hand-drawn pencil board for film/TV pre-production.`,
 
-    // ========== 全局布局 ==========
-    `[OVERALL LAYOUT — top to bottom, all on ONE page, grid-aligned]`,
-    `1) 顶部栏 · SHARED CREATIVE DIRECTION (full-width strip, ~10% height)`,
-    `2) 中部左 · CHARACTER & STYLE REFERENCE (~30% width)`,
-    `3) 中部中 · ENVIRONMENT & SCENE DESIGN (~35% width)`,
-    `4) 中部右 · LIGHTING / MOOD / STYLE NOTES + MOOD KEYWORDS (~35% width, stacked)`,
-    `5) 下半区 · STORYBOARD FRAMES (full-width grid)`,
-    `6) 底部栏 · AUDIO / TONE + CINEMATOGRAPHY NOTES (split, full width, ~12% height)`,
-    `Each section has a clear LARGE Chinese title (with small English subtitle), thin neutral dividers (#E8E8E8) separating sections. No overlap, no clutter. Generous gutters.`,
+    `[OVERALL LAYOUT — all on ONE page, 16:9 landscape]`,
+    `Top area: title bar showing episode/group info and shot count (${SUGGESTED_PANELS} frames).`,
+    `Main area: a grid of storyboard frames arranged left-to-right, top-to-bottom. Each frame is a pencil-sketch thumbnail of the corresponding shot.`,
+    `Below each frame: a small caption strip with shot number, duration, and brief action note in clean handwritten-style text.`,
+    `Bottom-right or side area: a small top-down scene layout diagram in simple linework showing character positions, movement arrows, and camera positions.`,
 
-    // ========== 1. 共享创意指导 ==========
-    `[SECTION 1 — 共享创意指导 / SHARED CREATIVE DIRECTION (top bar)]`,
-    `A horizontal strip carrying overall scene constraints (terse):`,
-    `  • 镜头数量 / Shot count: ${SUGGESTED_PANELS} 帧 (depends on plot density)`,
-    `  • 统一调色板 / Unified palette: 3–5 small color swatches with hex labels, derived from project visual style "${styleSpec.label}"`,
-    `  • 一般环境背景 / General environmental backdrop: ONE short Chinese sentence (≤ 20 字) describing world / time / weather`,
-    `Tone: confident, terse, director's opening note style.`,
+    `[STORYBOARD FRAMES — main content, most prominent]`,
+    `A grid of ${SUGGESTED_PANELS} frames (adjust to fit layout). Each frame:`,
+    `  • A pencil line-art thumbnail of the shot scene — characters, background, composition all in sketch style`,
+    `  • Shot number clearly labeled (镜头 1, 镜头 2, ...)`,
+    `  • Below the thumbnail: brief tags — duration, shot type, action — in small readable text`,
+    `  • Frames are separated by thin clean borders / gutters`,
 
-    // ========== 2. 角色与风格参考 ==========
-    `[SECTION 2 — 角色与风格参考 / CHARACTER & STYLE REFERENCE]`,
-    `For each character in [CHARACTERS], a multi-angle reference grid:`,
-    `  • 五个角度 / five angles per character: 正面 (front) · 背面 (back) · 侧面 (side) · 特写 (close-up face) · 放松姿态 (relaxed standing pose)`,
-    `  • Each angle is a small thumbnail with a LARGE clear Chinese label below it ("正面" / "背面" / etc.)`,
-    `  • A small "服装与配饰 / Costume & Accessories" callout box listing key clothing items and props in 1–2 brief Chinese lines`,
-    `STRICT identity consistency — face / hair / outfit / accessories MUST 100% match [CHARACTERS] descriptions. Subtle expression / posture / angle variation allowed within the scene; identity drift NOT.`,
+    `[CHARACTER CONSISTENCY — critical]`,
+    `- Same character across ALL frames must have identical face features, hairstyle, body proportion, and clothing details.`,
+    `- Adjacent frames must have visual continuity: action flow, line of sight, spatial logic.`,
+    `- No character drift between frames — they must look like the same person drawn from different angles.`,
 
-    // ========== 3. 环境与场景设计 ==========
-    `[SECTION 3 — 环境与场景设计 / ENVIRONMENT & SCENE DESIGN]`,
-    `Two parts stacked vertically:`,
-    `  (3a) ESTABLISHING SHOT: A larger illustrated wide shot of the location, capturing its dramatic features (mountains / urban skyline / interior atmosphere / weather). No characters, environment only.`,
-    `  (3b) 俯视示意图 / TOP-DOWN DIAGRAM: an overhead map view of the same location in clean simple linework + light shading. Includes:`,
-    `       - Character(s) movement path through the space (dotted/dashed line with small arrows)`,
-    `       - Numbered camera positions along the route (📷1, 📷2, … matching the storyboard frames below in Section 5)`,
-    `       - Each camera position labeled with shot type (广角 WS / 中景 MS / 特写 CU / 过肩 OTS / 微距 ECU)`,
-    `Layout the diagram below or beside the establishing shot. Both clearly labeled in Chinese.`,
+    `[TOP-DOWN DIAGRAM]`,
+    `A small overhead/schematic view of the scene in clean linework:`,
+    `  • Character positions with numbered dots`,
+    `  • Movement paths with dashed lines and arrows`,
+    `  • Camera positions with 📷 markers and shot type labels`,
 
-    // ========== 4. 灯光/情绪/风格备注 + 关键词 ==========
-    `[SECTION 4 — 灯光 / 情绪 / 风格备注 / LIGHTING · MOOD · STYLE NOTES]`,
-    `Two stacked sub-blocks:`,
-    `  (4a) 灯光与情绪 / LIGHTING & MOOD: 2–3 small visual swatches showing lighting conditions (e.g. 黄昏暖光 / 雨夜冷光 / 室内顶光) with **short** Chinese descriptions (≤ 15 字 each) covering:`,
-    `       - 光线质量变化 / Light quality shifts (warm→cold / hard→soft / bright→dim)`,
-    `       - 一天中不同时间过渡 / Time-of-day transitions if applicable`,
-    `       - 环境变化 / Environmental shifts if applicable (下雨 rain / 着火 fire / 刮风 wind / 起雾 fog / 落雪 snow)`,
-    `  (4b) 情绪与关键词 / MOOD & KEYWORDS: 4–7 concise Chinese mood / tone / theme tag chips (e.g. 孤独 / 紧张 / 温柔 / 悬疑 / 希望 / 危机 / 平静) arranged as small rounded chips on a light background.`,
-
-    // ========== 5. 故事板帧 ==========
-    `[SECTION 5 — 故事板帧 / STORYBOARD FRAMES (main grid, full-width, the most prominent section)]`,
-    `A grid of numbered storyboard frames. **数量按 [SHOT BREAKDOWN] 决定 — one frame per shot listed below**. Frames laid out left-to-right, top-to-bottom, reading order obvious.`,
-    `Each frame contains:`,
-    `  • A CINEMATIC THUMBNAIL with the actual scene visualized (faithful to [STORY PLOT] + the corresponding shot's action)`,
-    `  • A LARGE prominent shot number label: "镜头 1" / "镜头 2" / etc. — far bigger than body text`,
-    `  • A tight info strip beneath the thumbnail with these tags (each ≤ 8 字, separated by " · "):`,
-    `      ⏱ 时长 (duration in seconds, e.g. "4s")`,
-    `      🎬 镜头类型 / lens (e.g. "35mm 广角" / "85mm 长焦" / "鱼眼")`,
-    `      📐 景别 / shot size (广角 / 中景 / 特写 / 微距)`,
-    `      🎥 运动 / motion (静态 / 跟拍 / 手持 / 推镜 / 摇镜 / 升降)`,
-    `      🎭 动作+情绪 (1 short Chinese line ≤ 12 字: 什么人做什么 + 当下情绪)`,
-    `**Each frame's caption is BRIEF (1–2 lines total in tag form)** — no prose. Frames must be derived from [STORY PLOT] and [SHOT BREAKDOWN] below — do NOT invent unrelated frames.`,
-
-    // ========== 6. 音频/音调 + 电影摄影笔记 ==========
-    `[SECTION 6 — 底部栏 BOTTOM BAR (two sub-blocks side-by-side)]`,
-    `  (6a) 音频 / 音调 / AUDIO · TONE: ambient sounds (环境声), music style (音乐风格), overall sonic atmosphere (整体声音氛围) — a compact Chinese bullet list with small icons (🔊 / 🎵 / 🌀) next to each line. Each line ≤ 15 字.`,
-    `  (6b) 电影摄影笔记 / CINEMATOGRAPHY NOTES: lens characteristics (镜头特性), motion style (运动风格), post-processing feel (后期处理感觉) — 3 short Chinese sentences (≤ 20 字 each) capturing visual philosophy.`,
-
-    // ========== 内容(真值)==========
-    // 2026/06 加入:参考图说明放在 [STORY PLOT] 之前,
-    // 让模型把"图 N 是 X" 当成 identity lock 的硬约束读入
     referenceImageBlock,
 
-    // 2026/06 二次强化:把 [STYLE LOCK] 提到紧邻 referenceImageBlock 下方,
-    // 让"风格指纹 + 参考图画风继承"作为一个连贯块被模型先读到,
-    // 而不是被埋在 13 条 rule 中间。
-    `[PROJECT VISUAL STYLE — 风格指纹,跟 [REFERENCE IMAGES] 的画风继承指令配套使用]`,
-    buildStyleLock(styleSpec, 'deck'),
-    refImgs.length
-      ? `**优先级**:当 [REFERENCE IMAGES] 的实际画风与本风格指纹有冲突时,以 [REFERENCE IMAGES] 为准(参考图是最高真值)。本风格指纹用于补全参考图没说的维度(例如参考图没标颜色饱和度,就按指纹推断)。`
-      : `没有参考图时,本风格指纹是唯一的画风真值,所有插画严格按 5 维度执行。`,
-
-    `[STORY PLOT — 真值来源,故事板每一帧必须从这段剧情扩写而来,不允许虚构其他剧情]`,
+    `[STORY PLOT]`,
     data.plotText,
 
-    `[SCENE — 场景氛围,所有 frames + Environment 区域共用]`,
+    `[SCENE]`,
     sceneLine,
 
-    `[CHARACTERS — 已设定的人物形象。Section 2 + storyboard frames 里所有人脸/服装/配饰必须 100% 匹配这里描述]`,
-    charLines || '  (no specific characters — focus on environment and atmosphere)',
+    `[CHARACTERS]`,
+    charLines || '  (no specific characters)',
 
-    `[SHOT BREAKDOWN — 已有 ${shotCount} 个镜头(AI 扩写产生);Section 5 的故事板帧严格按这些镜头展开]`,
-    shotLines || `  (no explicit shots — derive all frames from the plot text above, in narrative order)`,
+    `[SHOT BREAKDOWN]`,
+    shotLines || `  (derive from plot)`,
 
-    // ========== 项目视觉风格 ==========
-    // ========== 质量约束 ==========
-    `[QUALITY RULES — 违反任一条 = 重画]`,
-    `RULE 1 — ASPECT 16:9 LANDSCAPE: 必须严格横向 16:9。不允许 9:16 / 1:1 / 4:3。`,
-    `RULE 2 — SIX-SECTION LAYOUT: 必须包含上述 6 大 section(共享创意指导 / 角色与风格参考 / 环境与场景设计 / 灯光情绪与关键词 / 故事板帧 / 底部音频与电影摄影),布局清晰、网格对齐、有中文标题。`,
-    `RULE 3 — TEXT MUST BE CRISP AND READABLE (最高优先级): 所有中文文字必须锐利、清晰、准确、可读。严禁乱码、伪文字、模糊笔画、伪手写。分区标题 / 镜头编号 / 角度标签明显放大(字号 ≫ 正文)。使用清晰印刷字体(思源宋体 / 黑体 / Noto Sans),严禁装饰字体。下游视频生成模型要直接读这些文字,可读性 = 视频质量。`,
-    `RULE 4 — BRIEF FRAME CAPTIONS: Section 5 每帧的文字说明 ≤ 1–2 行(标签形式),严禁长段落、严禁堆段落文字。所有描述用 " · " 分隔的短 tag(如 "35mm · 跟拍 · 急促 · 4s")。`,
-    `RULE 5 — STORY FAITHFULNESS: 故事板帧严格按 [STORY PLOT] 和 [SHOT BREAKDOWN] 展开,不允许出现剧本之外的剧情或人物。AI 扩写的 shot action 是真值,模型把它**视觉化**,不要"再编一遍"。`,
-    `RULE 6 — CHARACTER LOCK: 任一角色在 Section 2 和故事板帧里出现,脸 / 身 / 服 / 发 / 饰必须严格按 [CHARACTERS] 描述,允许微小表情/姿态变化,不允许换脸/换服装/换发型。**若 [REFERENCE IMAGES] 里有对应"角色"参考图,该参考图是 identity 的最高真值,文字描述次之。**`,
-    `RULE 7 — FRAME COUNT MATCHES SHOTS: Section 5 帧数 = [SHOT BREAKDOWN] 列表里的 shot 数量(${shotCount || SUGGESTED_PANELS} 个)。每帧严格对应一个 shot,顺序一致。`,
-    `RULE 8 — PER-FRAME DURATION: 每个故事板帧必须在标签条里清晰显示该镜头时长(秒,如 "4s" / "时长 4s"),时长来自 [SHOT BREAKDOWN] 给出的值。下游视频生成需要这个时间信息。`,
-    `RULE 9 — STYLE LOCK + 画风继承: 全图统一项目视觉风格 "${styleSpec.label}",严禁混搭(动漫+写实 / 3D+2D / 水彩+cel-shading)。**若有 [REFERENCE IMAGES],storyboard 内所有插画(角色卡 + establishing shot + 每帧 thumbnail)必须复现参考图的具体画风**(线条质感 / 上色技法 / 色饱和度 / 阴影方式 / 写实程度),让人一眼看出是同一套美术资产。参考图与文字风格指纹冲突时,以参考图为准。`,
-    `RULE 10 — CLEAN GRID + WHITE SPACE: section 之间用细中性分隔线(~#E8E8E8)分隔,留白充足,无装饰边框、无 logo、无水印、无外加 panel 编号或签名。背景干净(白色或极浅灰),高对比度文字。`,
-    `RULE 11 — TOP-DOWN DIAGRAM PRESENT: Section 3 必须包含俯视示意图,带移动路径(虚线/箭头)+ 编号摄像机位置 + 镜头类型标注。`,
-    `RULE 12 — ENVIRONMENTAL DETAILS IN SECTION 4: Section 4 灯光与情绪区必须涵盖光线质量变化 / 一天中时间过渡(若适用)/ 环境变化(若适用:下雨 / 着火 / 刮风 / 起雾 / 落雪 等)。这些细节会直接影响下游视频生成的氛围。`,
-    `RULE 13 — HD QUALITY: 锐利、无糊、无低分辨率伪影。文字尤其要清晰到可被 OCR 准确读取。`,
+    `[QUALITY RULES]`,
+    `RULE 1 — PENCIL LINE-ART ONLY: No color, no rendering beyond hatching/cross-hatching. Pure sketch style.`,
+    `RULE 2 — 16:9 LANDSCAPE: Strictly horizontal. No 9:16, no 1:1.`,
+    `RULE 3 — CHARACTER LOCK: Same character = same face/body/clothes across all frames. No identity drift.`,
+    `RULE 4 — STORY FAITHFULNESS: Frames strictly follow [STORY PLOT] and [SHOT BREAKDOWN]. No invented plots or characters.`,
+    `RULE 5 — FRAME COUNT: ${SUGGESTED_PANELS} frames, one per shot.`,
+    `RULE 6 — CLEAN SKETCH LINES: Confident strokes, varying line weight, hatching for shadows. No messy scribbles.`,
+    `RULE 7 — READABLE TEXT: Captions must be legible. Short tags only (shot number, duration, action).`,
 
-    `Begin. Output the 16:9 director's pre-production storyboard page (${shotCount || SUGGESTED_PANELS} frames in Section 5, one per shot in [SHOT BREAKDOWN]).`,
+    `Begin. Output a 16:9 pencil line-art storyboard with ${SUGGESTED_PANELS} frames. Pure sketch style, no color.`,
   ].filter(Boolean).join('\n\n')
 }
 
@@ -1510,12 +1403,12 @@ export const generateStoryboardPitchDeck = createServerFn({ method: 'POST' })
     // **2026/06 二次强化**:加画风漂移 negative,防故事板插画跟参考图画风不一致
     const negative = [
       'garbled text, fake characters, pseudo Chinese, jumbled glyphs, broken strokes, illegible labels, blurry text, smeared text, distorted text, unreadable captions, mismatched font widths, comic font, decorative font, handwritten scribble',
-      'long paragraphs inside frame captions, dense block text in frames, prose inside storyboard frames, walls of text, paragraph dump',
+      'color, colored rendering, full color, cel-shading, watercolor, oil painting, airbrush, gradient, photorealistic, 3D render, CGI, anime style, digital painting, thick paint, impasto, gouache, pastel, marker rendering, digital art',
       'cluttered layout, overlapping sections, missing dividers, off-grid placement, no white space, busy decorative borders, ornate frames, gold filigree',
       'wrong aspect ratio, vertical 9:16, square 1:1, 4:3, portrait orientation',
       'extra characters not in [CHARACTERS], scenery not in [SCENE], invented plot, frames unrelated to [SHOT BREAKDOWN]',
-      'low resolution, blurry, pixelated, JPEG artifacts, low quality, soft focus on text',
-      'missing top-down diagram in Section 3, missing camera position numbers, missing shot type labels in diagram',
+      'low resolution, blurry, pixelated, JPEG artifacts, low quality, soft focus',
+      'missing top-down diagram, missing camera position numbers, missing shot type labels in diagram',
       'frames without duration label, frames without shot number, frames without motion tag, frames without camera tag',
       // 画风漂移 / 不继承参考图
       'art style drift from reference images, inconsistent rendering across sections, anime when reference is realistic, realistic when reference is anime, cel-shading when reference is painterly, 3D render when reference is 2D, watercolor when reference is digital illustration, different line treatment from reference, different color saturation from reference, different shading style from reference, mixed art styles, inconsistent brush strokes between frames, mixing 2D and 3D, mixing photoreal and stylized',

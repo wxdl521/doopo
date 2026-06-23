@@ -10,7 +10,7 @@ import {
   sceneAssets as mockScenes,
   propAssets,
 } from '../data/assetsMock'
-import { loadCharacters, loadScenes, deleteCharacter, deleteScene } from '../lib/assetsStorage'
+import { loadCharacters, loadScenes, loadProps, deleteCharacter, deleteScene, deleteProp } from '../lib/assetsStorage'
 
 type Scope = 'personal' | 'team'
 
@@ -22,10 +22,11 @@ export default function AssetsLibrary() {
   const [scopeOpen, setScopeOpen] = useState(false)
   const [dbCharacters, setDbCharacters] = useState<any[]>([])
   const [dbScenes, setDbScenes] = useState<any[]>([])
+  const [dbProps, setDbProps] = useState<any[]>([])
   const [deletingId, setDeletingId] = useState<string | null>(null)
 
   // 2026/06:刷新列表的辅助函数,从资产库移除单条后重新拉
-  async function refresh(kind: 'character' | 'scene') {
+  async function refresh(kind: 'character' | 'scene' | 'prop') {
     if (!user) return
     if (kind === 'character') {
       const { data } = await loadCharacters(user.id)
@@ -36,12 +37,12 @@ export default function AssetsLibrary() {
     }
   }
 
-  async function handleDelete(kind: 'character' | 'scene', id: string, label: string) {
+  async function handleDelete(kind: 'character' | 'scene' | 'prop', id: string, label: string) {
     if (!user) return
     if (!confirm(`确定要从资产库移除「${label}」吗?`)) return
     setDeletingId(id)
     try {
-      const r = kind === 'character' ? await deleteCharacter(id, user.id) : await deleteScene(id, user.id)
+      const r = kind === 'character' ? await deleteCharacter(id, user.id) : kind === 'scene' ? await deleteScene(id, user.id) : await deleteProp(id, user.id)
       if (r.error) {
         toast.error(`删除失败:${r.error}`)
         return
@@ -60,6 +61,9 @@ export default function AssetsLibrary() {
       })
       loadScenes(user.id).then(({ data }) => {
         if (data) setDbScenes(data)
+      })
+      loadProps(user.id).then(({ data }) => {
+        if (data) setDbProps(data)
       })
     }
   }, [isAuthenticated, user])
@@ -180,18 +184,60 @@ export default function AssetsLibrary() {
         </Grid>
       )
     }
-    if (!propAssets.length) return <Empty />
-    return (
-      <Grid>
-        {propAssets.map(p => (
-          <Card key={p.id} tab="prop" id={p.id} title={p.name} emoji={p.emoji} gradient={p.gradient} summary={p.summary} tags={p.tags}>
-            <Field label={t.assets_field_owner} value={p.owner} />
-            <Field label={t.assets_field_appearance} value={p.appearance} />
-            <Field label={t.assets_field_symbol} value={p.symbol} />
-          </Card>
-        ))}
-      </Grid>
-    )
+    if (tab === 'prop') {
+      const allProps = [
+        ...dbProps.map(p => ({
+          id: p.id,
+          name: p.name,
+          emoji: '📦',
+          gradient: p.gradient || 'from-teal-400/40 via-cyan-300/30 to-emerald-200/30',
+          cover: p.cover_url || undefined,
+          summary: p.description?.slice(0, 100) || '',
+          tags: [] as string[],
+          owner: '',
+          appearance: '',
+          symbol: '',
+          fromDb: true,
+        })),
+        ...propAssets.map(p => ({
+          id: p.id,
+          name: p.name,
+          emoji: p.emoji,
+          gradient: p.gradient,
+          cover: undefined as string | undefined,
+          summary: p.summary,
+          tags: p.tags,
+          owner: p.owner,
+          appearance: p.appearance,
+          symbol: p.symbol,
+          fromDb: false,
+        })),
+      ]
+      if (!allProps.length) return <Empty />
+      return (
+        <Grid>
+          {allProps.map(p => (
+            <Card
+              key={p.id}
+              tab="prop"
+              id={p.id}
+              title={p.name}
+              emoji={p.emoji}
+              gradient={p.gradient}
+              cover={p.cover}
+              summary={p.summary}
+              tags={p.tags}
+              onDelete={p.fromDb ? () => handleDelete('prop', p.id, p.name) : undefined}
+              deleting={deletingId === p.id}
+            >
+              <Field label={t.assets_field_owner} value={p.owner} />
+              <Field label={t.assets_field_appearance} value={p.appearance} />
+              <Field label={t.assets_field_symbol} value={p.symbol} />
+            </Card>
+          ))}
+        </Grid>
+      )
+    }
   }
 
   function Empty() {

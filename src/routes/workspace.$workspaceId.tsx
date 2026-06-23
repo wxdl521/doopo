@@ -3,7 +3,7 @@ import { Fragment, useState, useEffect, useRef, useCallback } from 'react'
 import { useServerFn } from '@tanstack/react-start'
 import ReactMarkdown from 'react-markdown'
 import WorkspaceTopbar, { type WorkspaceTab } from '../components/workspace/WorkspaceTopbar'
-import ZopiaChatPanel from '../components/workspace/ZopiaChatPanel'
+import ZopiaChatPanel, { type ZopiaChatPanelHandle } from '../components/workspace/ZopiaChatPanel'
 import { useLanguage } from '../i18n/LanguageContext'
 import { useAuth } from '../hooks/useAuth'
 import { saveOneCharacter, saveOneScene, saveOneProp } from '../lib/assetsStorage'
@@ -20,7 +20,7 @@ import { describeCharacterImage } from '../lib/describeCharacterImage.functions'
 import { generateStoryboardFromPlot, generateStoryboardShotImage, regenerateStoryboardShot, regenerateStoryboardPitchDeck } from '../lib/storyboard.functions'
 import { generateVideo } from '../lib/videoGenerate.functions'
 import { generateStoryboardPitchDeck } from '../lib/seedream.functions'
-import { getProject, saveWorkspaceData, loadWorkspaceData, type ProjectConfigRow } from '../lib/projects.functions'
+import { getProject, upsertProject, saveWorkspaceData, loadWorkspaceData, type ProjectConfigRow } from '../lib/projects.functions'
 import { persistWorkspaceMedia, saveOneStoryboard, saveOneVideo, persistAssetImage } from '../lib/workspaceMedia.functions'
 import { urlToBase64 } from '../lib/imageToBase64'
 import { streamSynopsis, streamEpisodeScenes, refineSynopsis, refineEpisodeScenes } from '../lib/scriptAgent.functions'
@@ -683,6 +683,7 @@ function WorkspacePage() {
   const { t } = useLanguage()
   const { user } = useAuth()
   const [tab, setTab] = useState<WorkspaceTab>('canvas')
+  const chatPanelRef = useRef<ZopiaChatPanelHandle>(null)
   const [collapsed, setCollapsed] = useState(false)
   const [data, setData] = useState<WorkspaceData>(emptyData)
   const [flash, setFlash] = useState<WorkspaceTab | null>(null)
@@ -745,6 +746,7 @@ function WorkspacePage() {
   const [propModError, setPropModError] = useState<string | null>(null)
   const callAi = useServerFn(generateStageAi)
   const callImage = useServerFn(generateImage)
+  const callUpsertProject = useServerFn(upsertProject)
   const callRegenCharacter = useServerFn(regenerateCharacterLook)
   const callDescribeCharImg = useServerFn(describeCharacterImage)
   const callRegenScene = useServerFn(regenerateSceneImage)
@@ -2930,7 +2932,7 @@ function WorkspacePage() {
           episodeIndex: selectedEpisodeIndex,
           characterSummaries: charSummaries,
           sceneSummaries: sceneSummaries,
-          groupCount: 6,
+          groupCount: 0, // 0 = 不设上限,让 AI 按剧情自行决定
           previousEpisodesText: prevEps || undefined,
           projectStyle: project?.style,
         },
@@ -4562,6 +4564,31 @@ function WorkspacePage() {
       if (res.ok) {
         setSavedWorkspace(true)
         toast.success('工作区已保存')
+        // 2026/06:保存时自动挑一张角色图作为项目封面(不覆盖用户手动设的 customCover)。
+        // 优先级:charImages(角色图)→ shotImages(分镜图)→ groupStoryboards(故事板图)。
+        if (!project?.customCover) {
+          const pickCover = (): string | null => {
+            const imgSrc = charImagesRef.current
+            for (const k of Object.keys(imgSrc)) {
+              const arr = imgSrc[k]
+              if (Array.isArray(arr) && arr.length && arr[0] && !arr[0].startsWith('data:')) return arr[0]
+            }
+            const shots = shotImages
+            for (const k of Object.keys(shots)) {
+              const arr = shots[k]
+              if (Array.isArray(arr) && arr.length && arr[0]) return arr[0]
+            }
+            for (const k of Object.keys(persistGroupStoryboards)) {
+              const v = persistGroupStoryboards[k]
+              if (v?.url && v.status === 'succeeded') return v.url
+            }
+            return null
+          }
+          const cover = pickCover()
+          if (cover) {
+            callUpsertProject({ data: { id: workspaceId, customCover: cover } }).catch(() => {})
+          }
+        }
         // Reset "saved" badge after 3 seconds
         setTimeout(() => setSavedWorkspace(false), 3000)
       } else {
@@ -5669,7 +5696,7 @@ function WorkspacePage() {
                   {hasAnyEp && (
                     <button
                       type="button"
-                      onClick={() => void produce('character', extractPrompt)}
+                      onClick={() => { chatPanelRef.current?.triggerWorkflow('character', () => produce('character', extractPrompt), { jumpAfter: true, userMsg: extractPrompt }); }}
                       className="mt-2 inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-accent-dim text-accent text-sm font-semibold hover:bg-accent hover:text-white transition disabled:opacity-40"
                     >
                       <Sparkles size={13} /> 提取第 {selectedEpisodeIndex} 集角色、场景和道具
@@ -5730,7 +5757,7 @@ function WorkspacePage() {
                   {hasAnyEp && (
                     <button
                       type="button"
-                      onClick={() => void produce('character', extractPrompt)}
+                      onClick={() => { chatPanelRef.current?.triggerWorkflow('character', () => produce('character', extractPrompt), { jumpAfter: true, userMsg: extractPrompt }); }}
                       className="ml-auto text-[11px] px-2.5 py-1 rounded border border-border bg-bg-elevated text-text-secondary hover:border-accent hover:text-accent transition inline-flex items-center gap-1"
                       title={`重新从第 ${selectedEpisodeIndex} 集剧本提取(会覆盖本集已有角色/场景/道具)`}
                     >
@@ -5962,7 +5989,7 @@ function WorkspacePage() {
                           {hasAnyEp && (
                             <button
                               type="button"
-                              onClick={() => void produce('character', extractPrompt)}
+                              onClick={() => { chatPanelRef.current?.triggerWorkflow('character', () => produce('character', extractPrompt), { jumpAfter: true, userMsg: extractPrompt }); }}
                               className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-accent-dim text-accent text-xs font-semibold hover:bg-accent hover:text-white transition"
                             >
                               <Sparkles size={11} /> 提取本集场景
@@ -6192,7 +6219,7 @@ function WorkspacePage() {
                           {hasAnyEp && (
                             <button
                               type="button"
-                              onClick={() => void produce('character', extractPrompt)}
+                              onClick={() => { chatPanelRef.current?.triggerWorkflow('character', () => produce('character', extractPrompt), { jumpAfter: true, userMsg: extractPrompt }); }}
                               className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-accent-dim text-accent text-xs font-semibold hover:bg-accent hover:text-white transition"
                             >
                               <Sparkles size={11} /> 提取本集道具
@@ -6611,7 +6638,7 @@ function WorkspacePage() {
                       {hasAnyEp && (
                         <button
                           type="button"
-                          onClick={() => void produce('character', extractPrompt)}
+                          onClick={() => { chatPanelRef.current?.triggerWorkflow('character', () => produce('character', extractPrompt), { jumpAfter: true, userMsg: extractPrompt }); }}
                           className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-accent-dim text-accent text-xs font-semibold hover:bg-accent hover:text-white transition"
                         >
                           <Sparkles size={11} /> 提取本集角色
@@ -6649,7 +6676,10 @@ function WorkspacePage() {
                       </p>
                       <button
                         type="button"
-                        onClick={() => void runEnterStoryboard()}
+                      onClick={() => {
+                        if (busyStoryboardGen || needsChars) return;
+                        chatPanelRef.current?.triggerWorkflow('storyboard', () => runEnterStoryboard(), { jumpAfter: true, userMsg: `进入第 ${selectedEpisodeIndex} 集分镜` });
+                      }}
                         disabled={busyStoryboardGen || needsChars}
                         className="mt-2 inline-flex items-center gap-1.5 px-4 py-1.5 rounded-full bg-accent-dim text-accent text-sm font-semibold hover:bg-accent hover:text-white transition disabled:opacity-40"
                       >
@@ -6705,8 +6735,10 @@ function WorkspacePage() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => void runEnterStoryboard()}
-                      disabled={busyStoryboardGen}
+                      onClick={() => {
+                        if (busyStoryboardGen) return;
+                        chatPanelRef.current?.triggerWorkflow('storyboard', () => runEnterStoryboard(), { jumpAfter: false, userMsg: `重新切分第 ${selectedEpisodeIndex} 集分镜` });
+                      }}
                       className="text-xs px-2.5 py-1 rounded border border-border bg-bg-elevated text-text-secondary hover:border-accent hover:text-accent transition inline-flex items-center gap-1 disabled:opacity-40"
                     >
                       <Sparkles size={11} /> 重新切分
@@ -7430,6 +7462,7 @@ function WorkspacePage() {
           )}
         </main>
         <ZopiaChatPanel
+          ref={chatPanelRef}
           workspaceId={workspaceId}
           stage={tab}
           onJumpStage={setTab}

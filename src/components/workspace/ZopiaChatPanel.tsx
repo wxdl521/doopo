@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, forwardRef, useImperativeHandle, useCallback } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import {
   Plus,
@@ -103,6 +103,8 @@ type Message =
       kind: "workflow";
       steps: string[];
       doneCount: number;
+      /** 2026/06:记录此 workflow 对应的 stage,用于点击步骤时跳转到对应 tab */
+      stage?: WorkspaceTab;
       summary?: { title: string; detail: string; next: string };
       ctas?: { key: CtaKey; label: string; target: WorkspaceTab }[];
     };
@@ -242,7 +244,30 @@ function buildWorkflow(stage: WorkspaceTab, t: any): WorkflowDef {
   }
 }
 
-export default function ZopiaChatPanel({
+export type ZopiaChatPanelHandle = {
+  triggerWorkflow: (
+    targetStage: WorkspaceTab,
+    awaitable: () => unknown | Promise<unknown>,
+    opts?: { jumpAfter?: boolean; userMsg?: string },
+  ) => void;
+};
+
+const ZopiaChatPanel = forwardRef<ZopiaChatPanelHandle, {
+  workspaceId: string;
+  stage: WorkspaceTab;
+  onJumpStage: (t: WorkspaceTab) => void;
+  onProduce?: (t: WorkspaceTab, userPrompt?: string) => void | Promise<void> | Promise<unknown>;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
+  initialInput?: string;
+  locked?: boolean;
+  selectedEpisodeIndex?: number;
+  onImportScript?: (result: ImportedScriptResult) => void;
+  streaming?: boolean;
+  onEnterStoryboard?: () => void | Promise<void>;
+  enterTimelineSignal?: number;
+  onEnterTimeline?: () => void | Promise<void>;
+}>(function ZopiaChatPanel({
   workspaceId,
   stage,
   onJumpStage,
@@ -257,42 +282,7 @@ export default function ZopiaChatPanel({
   onEnterStoryboard,
   enterTimelineSignal,
   onEnterTimeline,
-}: {
-  /**
-   * 用来给 localStorage key 命名空间(每个 workspace 一份独立历史),
-   * 以及给新对话/切换工作空间时定位存哪条。
-   */
-  workspaceId: string;
-  stage: WorkspaceTab;
-  onJumpStage: (t: WorkspaceTab) => void;
-  onProduce?: (t: WorkspaceTab, userPrompt?: string) => void | Promise<void> | Promise<unknown>;
-  collapsed: boolean;
-  onToggleCollapsed: () => void;
-  initialInput?: string;
-  locked?: boolean;
-  selectedEpisodeIndex?: number;
-  onImportScript?: (result: ImportedScriptResult) => void;
-  streaming?: boolean;
-  /**
-   * 在角色流程里点"进入分镜"按钮的回调。
-   * 跟其他 CTA 不一样,这个不走 send / param sheet —— 它直接跳过分镜阶段,
-   * 把当集剧情发给 AI 切分成多组 StoryboardGroup。
-   */
-  onEnterStoryboard?: () => void | Promise<void>;
-  /**
-   * 2026/06:从分镜 row header 外部触发"进入时间轴"对话动画的信号。
-   * 父组件把数字 +1 即可触发一次 runWorkflowAnimation('timeline', ..., { jumpAfter: true })。
-   * 0 / undefined = 不触发。
-   */
-  enterTimelineSignal?: number;
-  /**
-   * 2026/06:跟 enter_storyboard 同形 —— enterTimelineSignal 触发后,
-   * 动画收尾时调用这个回调执行真正的"切换到 timeline 视图"。
-   * 由于 jumpAfter=true 已经会自动 onJumpStage('timeline'),这个回调可留空,
-   * 仅作为未来需要"先做点事再切 tab"的扩展点。
-   */
-  onEnterTimeline?: () => void | Promise<void>;
-}) {
+}, ref: React.Ref<ZopiaChatPanelHandle>) {
   const { t, lang } = useLanguage();
   const callParseScript = useServerFn(parseImportedScript);
   // 优先用 localStorage 的历史(每个 workspace 一份)初始化,这样刷新
@@ -683,7 +673,7 @@ export default function ZopiaChatPanel({
     setMessages((m) => [
       ...m,
       ...(opts?.userMsg ? [opts.userMsg] : []),
-      { id: wfId, kind: "workflow", steps: wf.steps, doneCount: 0 },
+      { id: wfId, kind: "workflow", steps: wf.steps, doneCount: 0, stage: targetStage },
     ]);
     // 2026/06:分镜流进入 + 缩略图渲染 步骤要看得清,stepDelay 700 → 1800ms
     const stepDelay = 1800;
@@ -746,6 +736,22 @@ export default function ZopiaChatPanel({
     // 只在外部 signal 变化时触发
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enterTimelineSignal]);
+
+  // 2026/06:暴露给父组件的 triggerWorkflow 实现。
+  // 当内容区域按钮(如"提取第 X 集角色")想要触发工作流动画时,
+  // 父组件通过 ref 调用此方法,内部走 runWorkflowAnimation 在左侧对话框显示动画。
+  useImperativeHandle(ref, () => ({
+    triggerWorkflow: (
+      targetStage: WorkspaceTab,
+      awaitable: () => unknown | Promise<unknown>,
+      opts?: { jumpAfter?: boolean; userMsg?: string },
+    ) => {
+      const userMsg: Message | undefined = opts?.userMsg
+        ? { id: `u-${Date.now()}`, kind: "user", text: opts.userMsg }
+        : undefined;
+      runWorkflowAnimation(targetStage, awaitable, { jumpAfter: opts?.jumpAfter, userMsg });
+    },
+  }), [runWorkflowAnimation]);
 
   const quickActions: {
     key: string;
@@ -1465,7 +1471,8 @@ export default function ZopiaChatPanel({
                   return (
                     <div
                       key={i}
-                      className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm ${done ? "border-border bg-bg-elevated/60" : "border-border bg-bg-elevated/30"}`}
+                      onClick={() => { if (m.stage) onJumpStage(m.stage); }}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition cursor-pointer ${done ? "border-border bg-bg-elevated/60" : "border-border bg-bg-elevated/30"} hover:border-accent/40`}
                     >
                       <span
                         className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 ${done ? "bg-emerald-500/20 text-emerald-400" : "bg-bg-surface text-text-muted"}`}
@@ -1964,7 +1971,9 @@ export default function ZopiaChatPanel({
       )}
     </aside>
   );
-}
+});
+
+export default ZopiaChatPanel;
 
 // 自定义数字输入框:与 quick-pick options 并排展示。
 // 关键修复:之前用受控 input + "若 value 在 options 里就清空" 的渲染会吞数字 ——
