@@ -4642,26 +4642,58 @@ function WorkspacePage() {
       }
     }
     const queue: Array<() => Promise<void>> = []
-    const collect = (map: Record<string, (string | undefined)[] | undefined>, kind: string, prefix: string) => {
+    type Setter = (url: string, persistedUrl: string) => void
+    const collect = (
+      map: Record<string, (string | undefined)[] | undefined>,
+      kind: string,
+      prefix: string,
+      setter: Setter,
+    ) => {
       for (const [key, arr] of Object.entries(map)) {
         if (!arr || !arr.length) continue
         for (const url of arr) {
           if (!url || url.startsWith('blob:')) continue
-          // data: URL 也要上传(Azure gpt-image-2 直接返回 b64,必须落盘到 Storage)
+          if (isPersistedUrl(url)) continue
           queue.push(async () => {
             try {
               const r = await persist({ data: { url, userId: uid, kind: kind as any, id: `${prefix}-${key}` } })
-              if (r.ok && r.url) done++
-              else fail++
+              if (r.ok && r.url) {
+                done++
+                // 把入库后的永久 URL 写回 state,下次保存就只保留小 URL,
+                // 不再让 data:base64 撑爆 workspace_data。
+                setter(url, r.url)
+              } else fail++
             } catch { fail++ }
           })
         }
       }
     }
-    collect(charMap, 'character', 'char')
-    collect(shotMap, 'shot', 'shot')
-    collect(sceneMap, 'scene', 'scene')
-    collect(propMap, 'prop', 'prop')
+    const replaceInMap = (
+      setMap: (updater: (m: Record<string, string[]>) => Record<string, string[]>) => void,
+      key: string,
+    ) => (url: string, persisted: string) => {
+      setMap((m) => {
+        const arr = m[key]
+        if (!arr) return m
+        const i = arr.indexOf(url)
+        if (i === -1) return m
+        const copy = [...arr]
+        copy[i] = persisted
+        return { ...m, [key]: copy }
+      })
+    }
+    for (const k of Object.keys(charMap)) {
+      collect({ [k]: charMap[k] } as any, 'character', 'char', replaceInMap(updateCharImages, k))
+    }
+    for (const k of Object.keys(shotMap)) {
+      collect({ [k]: shotMap[k] } as any, 'shot', 'shot', replaceInMap(setShotImages, k))
+    }
+    for (const k of Object.keys(sceneMap)) {
+      collect({ [k]: sceneMap[k] } as any, 'scene', 'scene', replaceInMap(updateSceneImages, k))
+    }
+    for (const k of Object.keys(propMap)) {
+      collect({ [k]: propMap[k] } as any, 'prop', 'prop', replaceInMap(updatePropImages, k))
+    }
     if (!queue.length) return
     const workers = Array.from({ length: Math.min(CONCURRENCY, queue.length) }, () => worker(queue))
     await Promise.all(workers)
