@@ -2476,52 +2476,69 @@ function WorkspacePage() {
     const imageKey = modPanel.imageKey
     const ok = await doRegen(c, lookId, 'modify', instruction)
     if (ok) {
-      // 2026/06:以用户意见为最高优先级更新描述。
-      // 解析用户输入关键词,将对应字段更新为用户意见,不再调 AI 重新描述。
+      // 2026/06:保留 AI 描述 + 追加用户意见。先调 describeCharacterImage 生成详细描述,
+      // 然后把用户的修改意见作为补充说明追加到对应字段末尾,这样既有详细描述又体现用户意图。
+      const newUrl = charImagesRef.current[imageKey]?.at(-1)
       const lk = lookId == null ? null : c.looks?.find((x) => x.id === lookId) ?? null
       const instr = instruction.toLowerCase()
-      const updateFields: { face?: string; body?: string; clothing?: string } = {}
-      // 按关键词匹配:提到什么就更新什么,没提到的保留原值
-      if (/脸|面容|五官|face/i.test(instr)) updateFields.face = instruction
-      if (/身材|体型|body/i.test(instr)) updateFields.body = instruction
-      if (/衣服|服装|穿着|穿搭|clothing|outfit/i.test(instr)) updateFields.clothing = instruction
-      // 都没匹配到具体维度 → 全部更新
-      if (!Object.keys(updateFields).length) {
-        updateFields.face = instruction
-        updateFields.body = instruction
-        updateFields.clothing = instruction
-      }
-      setData((prev) => {
-        if (!prev) return prev
-        return {
-          ...prev,
-          characters: prev.characters.map((x) => {
-            if (x.id !== c.id) return x
-            if (lookId == null) {
+      // 判断用户意见涉及哪些维度
+      const touchFace = /脸|面容|五官|face/i.test(instr)
+      const touchBody = /身材|体型|body/i.test(instr)
+      const touchClothing = /衣服|服装|穿着|穿搭|clothing|outfit/i.test(instr)
+      const touchAll = !touchFace && !touchBody && !touchClothing
+      // 调 AI 看图生成详细描述
+      if (newUrl) {
+        try {
+          const res = await callDescribeCharImg({
+            data: {
+              imageUrl: newUrl,
+              characterName: c.name,
+              characterRoleLabel: c.roleLabel,
+              characterAge: c.age,
+              lookLabel: lk?.label || '默认',
+            },
+          })
+          if (res?.ok) {
+            setData((prev) => {
+              if (!prev) return prev
               return {
-                ...x,
-                ...(updateFields.face && { faceDescription: updateFields.face }),
-                ...(updateFields.body && { bodyDescription: updateFields.body }),
-                ...(updateFields.clothing && { clothingDescription: updateFields.clothing }),
+                ...prev,
+                characters: prev.characters.map((x) => {
+                  if (x.id !== c.id) return x
+                  const append = (orig: string | undefined, userInstr: string) =>
+                    orig ? `${orig}\n【用户要求】${userInstr}` : userInstr
+                  if (lookId == null) {
+                    return {
+                      ...x,
+                      faceDescription: touchAll || touchFace ? append(res.faceDescription || x.faceDescription, instruction) : x.faceDescription,
+                      bodyDescription: touchAll || touchBody ? append(res.bodyDescription || x.bodyDescription, instruction) : x.bodyDescription,
+                      clothingDescription: touchAll || touchClothing ? append(res.clothingDescription || x.clothingDescription, instruction) : x.clothingDescription,
+                    }
+                  }
+                  return {
+                    ...x,
+                    looks: (x.looks ?? []).map((lk2) =>
+                      lk2.id !== lookId
+                        ? lk2
+                        : {
+                            ...lk2,
+                            faceDescription: touchAll || touchFace ? append(res.faceDescription || lk2.faceDescription, instruction) : lk2.faceDescription,
+                            bodyDescription: touchAll || touchBody ? append(res.bodyDescription || lk2.bodyDescription, instruction) : lk2.bodyDescription,
+                            clothingDescription: touchAll || touchClothing ? append(res.clothingDescription || lk2.clothingDescription, instruction) : lk2.clothingDescription,
+                          },
+                    ),
+                  }
+                }),
               }
-            }
-            return {
-              ...x,
-              looks: (x.looks ?? []).map((lk2) =>
-                lk2.id !== lookId
-                  ? lk2
-                  : {
-                      ...lk2,
-                      ...(updateFields.face && { faceDescription: updateFields.face }),
-                      ...(updateFields.body && { bodyDescription: updateFields.body }),
-                      ...(updateFields.clothing && { clothingDescription: updateFields.clothing }),
-                    },
-              ),
-            }
-          }),
+            })
+            toast.success('文字描述已同步到新图')
+          } else {
+            console.warn('[describeCharacterImage] failed:', res?.error)
+          }
+        } catch (e) {
+          console.warn('[describeCharacterImage] error:', e)
         }
-      })
-      toast.success('已按意见更新角色描述')
+      }
     }
     setModBusy(false)
     if (ok) {
@@ -2539,10 +2556,56 @@ function WorkspacePage() {
     const imageKey = lookId == null ? c.id : `${c.id}::${lookId}`
     const coverUrl = charImages[imageKey]?.at(-1)
     if (!coverUrl) { toast.error('该角色还没有图片'); return }
-    // 直接调 doRegen,成功后更新描述
     const ok = await doRegen(c, lookId, 'modify', instruction)
     if (ok) {
-      updateDescriptionFromInstruction(c, lookId, instruction)
+      // 同 submitModPanel:AI 看图描述 + 追加用户意见
+      const newUrl = charImagesRef.current[imageKey]?.at(-1)
+      const lk = lookId == null ? null : c.looks?.find((x) => x.id === lookId) ?? null
+      if (newUrl) {
+        try {
+          const res = await callDescribeCharImg({
+            data: {
+              imageUrl: newUrl,
+              characterName: c.name,
+              characterRoleLabel: c.roleLabel,
+              characterAge: c.age,
+              lookLabel: lk?.label || '默认',
+            },
+          })
+          if (res?.ok) {
+            setData((prev) => {
+              if (!prev) return prev
+              const append = (orig: string | undefined, userInstr: string) =>
+                orig ? `${orig}\n【用户要求】${userInstr}` : userInstr
+              return {
+                ...prev,
+                characters: prev.characters.map((x) => {
+                  if (x.id !== c.id) return x
+                  if (lookId == null) {
+                    return {
+                      ...x,
+                      faceDescription: append(res.faceDescription || x.faceDescription, instruction),
+                      bodyDescription: append(res.bodyDescription || x.bodyDescription, instruction),
+                      clothingDescription: append(res.clothingDescription || x.clothingDescription, instruction),
+                    }
+                  }
+                  return {
+                    ...x,
+                    looks: (x.looks ?? []).map((lk2) =>
+                      lk2.id !== lookId ? lk2 : {
+                        ...lk2,
+                        faceDescription: append(res.faceDescription || lk2.faceDescription, instruction),
+                        bodyDescription: append(res.bodyDescription || lk2.bodyDescription, instruction),
+                        clothingDescription: append(res.clothingDescription || lk2.clothingDescription, instruction),
+                      },
+                    ),
+                  }
+                }),
+              }
+            })
+          }
+        } catch { /* 描述更新失败不阻塞 */ }
+      }
       toast.success('已按意见重生')
     } else {
       toast.error('生成失败')
@@ -5548,25 +5611,6 @@ function WorkspacePage() {
       />
       <div className="flex-1 flex min-h-0">
         <main className="flex-1 min-w-0 overflow-auto p-6">
-        {/* 编辑区实时保存状态提示 */}
-        <div className="sticky top-0 z-10 -mt-6 pt-3 pb-2 -mx-6 px-6 bg-bg/90 border-b border-border/60 backdrop-blur flex justify-end">
-          <div
-            className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs border transition ${
-              savingWorkspace
-                ? 'bg-accent/10 border-accent/40 text-accent'
-                : savedWorkspace
-                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
-                  : 'bg-bg-elevated/80 border-border text-text-muted'
-            }`}
-          >
-            {savingWorkspace ? (
-              <Loader2 size={12} className="animate-spin" />
-            ) : (
-              <CheckCircle2 size={12} className={savedWorkspace ? 'text-emerald-400' : 'text-text-muted'} />
-            )}
-            <span>{savingWorkspace ? t.ws_autosaving : t.ws_autosaved}</span>
-          </div>
-        </div>
           {tab === 'canvas' && (
             <div className="relative max-w-4xl mx-auto rounded-2xl border-2 border-dashed border-accent/50 bg-bg-surface p-6 min-h-[500px]">
               <div className="flex items-center justify-between mb-3">
@@ -6377,7 +6421,12 @@ function WorkspacePage() {
                                     type="button"
                                     title="打开修改输入对话框"
                                     disabled={!hasImg || isRegening}
-                                    onClick={() => openPropModPanel(p)}
+                                    onClick={() => {
+                                      const coverUrl = propImages[p.id]?.at(-1)
+                                      if (coverUrl) {
+                                        chatPanelRef.current?.addReference('prop', p.id, p.name, coverUrl)
+                                      }
+                                    }}
                                     className="px-1 py-1.5 rounded border border-border bg-bg-surface text-text-secondary text-[11px] leading-none hover:border-accent hover:text-accent disabled:opacity-40 disabled:cursor-not-allowed transition flex flex-col items-center justify-center gap-0.5"
                                   >
                                     <Pencil size={12} />
@@ -7678,9 +7727,12 @@ function WorkspacePage() {
             if (refType === 'character') {
               const c = data.characters.find((x) => x.id === refId)
               if (c) void submitModPanelRef(c, lookId ?? null, instruction)
-            } else {
+            } else if (refType === 'scene') {
               const s = data.scenes.find((x) => x.id === refId)
               if (s) void submitSceneModPanelRef(s, instruction)
+            } else {
+              const p = data.props.find((x) => x.id === refId)
+              if (p) void doPropRegen(p, 'modify', instruction)
             }
           }}
         />
