@@ -2532,6 +2532,8 @@ function WorkspacePage() {
               }
             })
             toast.success('文字描述已同步到新图')
+            // 立即保存,避免刷新后数据丢失
+            void handleSaveWorkspace({ silent: true })
           } else {
             console.warn('[describeCharacterImage] failed:', res?.error)
           }
@@ -2607,6 +2609,8 @@ function WorkspacePage() {
         } catch { /* 描述更新失败不阻塞 */ }
       }
       toast.success('已按意见重生')
+      // 立即保存,确保修改后的图片和描述不会丢失
+      void handleSaveWorkspace({ silent: true })
     } else {
       toast.error('生成失败')
     }
@@ -2630,6 +2634,7 @@ function WorkspacePage() {
         }
       })
       toast.success('已按意见重生')
+      void handleSaveWorkspace({ silent: true })
     } else {
       toast.error('生成失败')
     }
@@ -4658,13 +4663,22 @@ function WorkspacePage() {
     }
   }
 
+  const pendingSaveRef = useRef(false)
+  const scheduleSave = useCallback((opts?: { silent?: boolean }) => {
+    if (savingWorkspace) {
+      pendingSaveRef.current = true
+      return
+    }
+    void handleSaveWorkspace(opts)
+  }, [savingWorkspace])
+
   async function handleSaveWorkspace(opts?: { silent?: boolean }) {
     const silent = opts?.silent === true
     if (!user) {
       if (!silent) toast.error('请先登录')
       return
     }
-    if (savingWorkspace) return // 防并发:正在保存时跳过
+    if (savingWorkspace) { pendingSaveRef.current = true; return } // 防并发:排队等下一次
     setSavingWorkspace(true)
     setSavedWorkspace(false)
     try {
@@ -4795,6 +4809,11 @@ function WorkspacePage() {
       if (!silent) toast.error('保存失败')
     } finally {
       setSavingWorkspace(false)
+      // 如果保存期间有新的保存请求排队,立即再跑一次
+      if (pendingSaveRef.current) {
+        pendingSaveRef.current = false
+        void handleSaveWorkspace({ silent: true })
+      }
     }
   }
 
@@ -6194,7 +6213,7 @@ function WorkspacePage() {
                                     onClick={() => {
                                       const coverUrl = sceneImages[s.id]?.at(-1)
                                       if (coverUrl) {
-                                        chatPanelRef.current?.addReference('scene', s.id, s.slug || s.location || s.id, coverUrl)
+                                        chatPanelRef.current?.setPendingRef('scene', s.id, s.slug || s.location || s.id, coverUrl)
                                       }
                                     }}
                                     className="px-1 py-1.5 rounded border border-border bg-bg-surface text-text-secondary text-[11px] leading-none hover:border-accent hover:text-accent disabled:opacity-40 disabled:cursor-not-allowed transition flex flex-col items-center justify-center gap-0.5"
@@ -6429,7 +6448,7 @@ function WorkspacePage() {
                                     onClick={() => {
                                       const coverUrl = propImages[p.id]?.at(-1)
                                       if (coverUrl) {
-                                        chatPanelRef.current?.addReference('prop', p.id, p.name, coverUrl)
+                                        chatPanelRef.current?.setPendingRef('prop', p.id, p.name, coverUrl)
                                       }
                                     }}
                                     className="px-1 py-1.5 rounded border border-border bg-bg-surface text-text-secondary text-[11px] leading-none hover:border-accent hover:text-accent disabled:opacity-40 disabled:cursor-not-allowed transition flex flex-col items-center justify-center gap-0.5"
@@ -6816,7 +6835,7 @@ function WorkspacePage() {
                                     onClick={() => {
                                       const coverUrl = selectedCharImages[imageKey] || charImages[imageKey]?.at(-1)
                                       if (coverUrl) {
-                                        chatPanelRef.current?.addReference('character', c.id, cardTitle, coverUrl, card.lookId)
+                                        chatPanelRef.current?.setPendingRef('character', c.id, cardTitle, coverUrl, card.lookId)
                                       }
                                     }}
                                     className="px-1 py-1.5 rounded border border-border bg-bg-surface text-text-secondary text-[11px] leading-none hover:border-accent hover:text-accent disabled:opacity-40 disabled:cursor-not-allowed transition flex flex-col items-center justify-center gap-0.5"

@@ -79,10 +79,6 @@ function saveStoredMessages(workspaceId: string, messages: Message[]) {
           attachments: m.attachments.map(({ url: _url, ...rest }) => rest),
         };
       }
-      if (m.kind === "reference") {
-        const { imageUrl: _url, ...rest } = m;
-        return rest;
-      }
       return m;
     });
     window.localStorage.setItem(chatStorageKey(workspaceId), JSON.stringify(sanitized));
@@ -112,22 +108,6 @@ type Message =
       summary?: { title: string; detail: string; next: string };
       ctas?: { key: CtaKey; label: string; target: WorkspaceTab }[];
     }
-  | {
-      id: string;
-      kind: "reference";
-      imageUrl: string;
-      label: string;
-      /** 修改类型: 'character' | 'scene' | 'prop' */
-      refType: 'character' | 'scene' | 'prop';
-      /** 关联的角色/场景 id */
-      refId: string;
-      /** 关联的 lookId(角色专属) */
-      lookId?: string | null;
-      doneCount: number;
-      summary?: { title: string; detail: string; next: string };
-      ctas?: { key: CtaKey; label: string; target: WorkspaceTab }[];
-    };
-
 type WorkflowDef = {
   steps: string[];
   summary: { title: string; detail: string; next: string };
@@ -270,10 +250,11 @@ export type ZopiaChatPanelHandle = {
     opts?: { jumpAfter?: boolean; userMsg?: string },
   ) => void;
   /**
-   * 2026/06:在对话框添加一条引用消息(小图+名称),用户可输入修改意见后发送。
-   * 用于角色/场景卡片"修改"按钮,代替打开 preview modal。
+   * 2026/06:在对话框添加一条引用卡片(小图+名称),并预填底部输入框。
+   * 用户直接在底部输入框输入修改意见发送。
+   * 用于角色/场景/道具卡片"修改"按钮。
    */
-  addReference: (
+  setPendingRef: (
     refType: 'character' | 'scene' | 'prop',
     refId: string,
     label: string,
@@ -359,6 +340,14 @@ const ZopiaChatPanel = forwardRef<ZopiaChatPanelHandle, {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [synopsisEditMode, setSynopsisEditMode] = useState(false);
+  // 2026/06:待发送的引用修改信息,设置后预填输入框,发送时带引用上下文
+  const [pendingRef, setPendingRef] = useState<{
+    refType: 'character' | 'scene' | 'prop';
+    refId: string;
+    label: string;
+    imageUrl: string;
+    lookId?: string | null;
+  } | null>(null);
   const [lockModal, setLockModal] = useState<string | null>(null);
   // Import script modal state
   const [importModal, setImportModal] = useState<
@@ -675,6 +664,19 @@ const ZopiaChatPanel = forwardRef<ZopiaChatPanelHandle, {
       return;
     }
 
+    // 2026/06:如果有待发送的引用修改(pendingRef),走 onModifyReference 回调
+    if (pendingRef) {
+      const refText = `修改${pendingRef.refType === 'character' ? '角色' : pendingRef.refType === 'scene' ? '场景' : '道具'}「${pendingRef.label}」: ${trimmed}`;
+      const userMsg: Message = { id: `u-${Date.now()}`, kind: "user", text: refText };
+      setMessages((m) => [...m, userMsg]);
+      setInput("");
+      setAttachments([]);
+      const pr = pendingRef;
+      setPendingRef(null);
+      onModifyReference?.(pr.refType, pr.refId, trimmed, pr.lookId);
+      return;
+    }
+
     // Normal mode:把"用户消息 + 工作流步骤动画 + 完成后展示 summary/CTA"
     // 这套逻辑交给 runWorkflowAnimation 统一处理(让"进入分镜阶段"这种
     // 走 onEnterStoryboard 的 CTA 也能复用同一套动画和收尾)。
@@ -783,25 +785,17 @@ const ZopiaChatPanel = forwardRef<ZopiaChatPanelHandle, {
         : undefined;
       runWorkflowAnimation(targetStage, awaitable, { jumpAfter: opts?.jumpAfter, userMsg });
     },
-    addReference: (
+    setPendingRef: (
       refType: 'character' | 'scene' | 'prop',
       refId: string,
       label: string,
       imageUrl: string,
       lookId?: string | null,
     ) => {
-      const msg: Message = {
-        id: `ref-${Date.now()}`,
-        kind: "reference",
-        imageUrl,
-        label,
-        refType,
-        refId,
-        lookId,
-        doneCount: 1,
-      };
-      setMessages((m) => [...m, msg]);
-      scrollRef.current?.scrollTo({ top: 999999, behavior: "smooth" });
+      setPendingRef({ refType, refId, label, imageUrl, lookId });
+      setInput(`修改${refType === 'character' ? '角色' : refType === 'scene' ? '场景' : '道具'}「${label}」: `);
+      setTimeout(() => textareaRef.current?.focus(), 50);
+      setTimeout(() => scrollRef.current?.scrollTo({ top: 999999, behavior: "smooth" }), 50);
     },
   }), [runWorkflowAnimation]);
 
@@ -1515,56 +1509,6 @@ const ZopiaChatPanel = forwardRef<ZopiaChatPanelHandle, {
                 </div>
               );
             }
-            if (m.kind === "reference") {
-              const sent = m.summary !== undefined;
-              return (
-                <div key={m.id} className={`space-y-2 rounded-xl border p-3 ${sent ? 'bg-accent-dim/20 border-accent/30' : 'bg-bg-elevated/40 border-border'}`}>
-                  <div className="flex items-center gap-2">
-                    <div className="w-9 h-9 rounded-lg overflow-hidden border border-border shrink-0 bg-bg-surface">
-                      {m.imageUrl ? (
-                        <img src={m.imageUrl} alt={m.label} className="w-full h-full object-cover" />
-                      ) : (
-                        <div className="w-full h-full flex items-center justify-center text-text-muted text-xs">
-                          {m.refType === 'character' ? '👤' : m.refType === 'scene' ? '🎬' : '📦'}
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-semibold text-text-primary truncate">{m.label}</div>
-                      <div className="text-xs text-text-muted">{m.refType === 'character' ? '角色' : m.refType === 'scene' ? '场景' : '道具'} · {sent ? '已发送' : '输入修改意见后发送'}</div>
-                    </div>
-                    <button
-                      onClick={() => setMessages((prev) => prev.filter((x) => x.id !== m.id))}
-                      className="p-1 rounded-md hover:bg-bg-elevated text-text-muted hover:text-text-primary"
-                    >
-                      <X size={14} />
-                    </button>
-                  </div>
-                  {sent ? (
-                    <div className="text-sm text-text-secondary px-1">{m.summary?.detail}</div>
-                  ) : (
-                    <div className="flex gap-2">
-                      <input
-                        type="text"
-                        placeholder="输入修改意见..."
-                        className="flex-1 px-3 py-2 rounded-lg border border-border bg-bg-surface text-sm text-text-primary focus:border-accent focus:outline-none placeholder:text-text-muted"
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' && e.currentTarget.value.trim()) {
-                            const text = e.currentTarget.value.trim();
-                            setMessages((prev) => prev.map((x) =>
-                              x.id === m.id && x.kind === "reference"
-                                ? { ...x, doneCount: 0, summary: { title: '已发送修改意见', detail: text, next: '' } }
-                                : x,
-                            ));
-                            onModifyReference?.(m.refType, m.refId, text, m.lookId);
-                          }
-                        }}
-                      />
-                    </div>
-                  )}
-                </div>
-              );
-            }
             return (
               <div key={m.id} className="space-y-2">
                 {m.steps.map((s, i) => {
@@ -1836,6 +1780,22 @@ const ZopiaChatPanel = forwardRef<ZopiaChatPanelHandle, {
                 setSynopsisEditMode(false);
                 setEpisodeEditMode(null);
               }}
+              className="text-text-muted hover:text-text-primary"
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
+        {pendingRef && (
+          <div className="mb-2 flex items-center justify-between px-3 py-2 rounded-lg bg-accent-dim/40 border border-accent/50 text-xs">
+            <span className="text-accent inline-flex items-center gap-2">
+              <span className="w-5 h-5 rounded overflow-hidden shrink-0 bg-bg-surface">
+                <img src={pendingRef.imageUrl} alt={pendingRef.label} className="w-full h-full object-cover" />
+              </span>
+              修改{pendingRef.refType === 'character' ? '角色' : pendingRef.refType === 'scene' ? '场景' : '道具'}「{pendingRef.label}」— 输入修改意见后发送
+            </span>
+            <button
+              onClick={() => { setPendingRef(null); setInput('') }}
               className="text-text-muted hover:text-text-primary"
             >
               <X size={12} />
