@@ -54,12 +54,16 @@ const imageModelOptions = [
   { id: '__sep_onetoken__', label: '—— OneToken(OpenAI 兼容)——', sub: '' },
   { id: 'onetoken/gpt-image-2', label: 'GPT Image 2 (OneToken)', sub: 'OneToken · OpenAI · Image2' },
 
+  // ---- AIGC Family(OpenAI 兼容)----
+  { id: '__sep_aigcfamily__', label: '—— AIGC Family(OpenAI 兼容)——', sub: '' },
+  { id: 'aigcfamily/gpt-image-2', label: 'GPT Image 2 (AIGC Family)', sub: 'AIGC Family · OpenAI · Image2' },
+
   // ---- OTU(OpenAI 兼容)----
   { id: '__sep_otu__', label: '—— OTU(OpenAI 兼容)——', sub: '' },
   { id: 'otu/image2', label: 'Image2 (OTU)', sub: 'OTU · T2I/I2I' },
 ]
 // 过滤掉"分隔符"项(只是 UI 视觉分组,不能选)
-const realImageModelOptions = imageModelOptions.filter((m) => m.id !== '__sep__')
+const realImageModelOptions = imageModelOptions.filter((m) => !m.id.startsWith('__sep'))
 void IMAGE_MODELS
 const storyboardModels = realImageModelOptions
 const sceneModels = realImageModelOptions
