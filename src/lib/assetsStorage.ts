@@ -65,12 +65,12 @@ function sceneToRecord(s: GenScene, userId: string, coverUrl?: string | null) {
 /** 批量保存(保留旧行为,cover_url 传 null) */
 export async function saveCharacters(chars: GenCharacter[], userId: string) {
   const records = chars.map((c) => charToRecord(c, userId, null))
-  return supabase.from('characters').upsert(records)
+  return supabase.from('characters').upsert(records, { onConflict: 'user_id,id' })
 }
 
 export async function saveScenes(scenes: GenScene[], userId: string) {
   const records = scenes.map((s) => sceneToRecord(s, userId, null))
-  return supabase.from('scenes').upsert(records)
+  return supabase.from('scenes').upsert(records, { onConflict: 'user_id,id' })
 }
 
 /**
@@ -87,7 +87,7 @@ export async function saveOneCharacter(
   images?: CharacterImageEntry[],
 ): Promise<{ ok: boolean; error?: string }> {
   const record = charToRecord(c, userId, coverUrl, images)
-  const { error } = await supabase.from('characters').upsert(record)
+  const { error } = await supabase.from('characters').upsert(record, { onConflict: 'user_id,id' })
   if (error) return { ok: false, error: error.message }
   return { ok: true }
 }
@@ -98,7 +98,7 @@ export async function saveOneScene(
   coverUrl?: string | null,
 ): Promise<{ ok: boolean; error?: string }> {
   const record = sceneToRecord(s, userId, coverUrl)
-  const { error } = await supabase.from('scenes').upsert(record)
+  const { error } = await supabase.from('scenes').upsert(record, { onConflict: 'user_id,id' })
   if (error) return { ok: false, error: error.message }
   return { ok: true }
 }
@@ -127,7 +127,7 @@ export async function saveOneProp(
   images?: PropImageEntry[],
 ): Promise<{ ok: boolean; error?: string }> {
   const record = propToRecord(p, userId, coverUrl, images)
-  const { error } = await supabase.from('props').upsert(record)
+  const { error } = await supabase.from('props').upsert(record, { onConflict: 'user_id,id' })
   if (error) return { ok: false, error: error.message }
   return { ok: true }
 }
