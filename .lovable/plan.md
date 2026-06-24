@@ -1,20 +1,27 @@
-计划如下：
+## 修复计划
 
-1. 修复工作区刷新加载时序
-   - 当前图片缓存（charImages / sceneImages / propImages / shotImages）是异步恢复的，但 dataLoaded 过早置为 true，自动生成 effect 可能在缓存 state 生效前判断“没有图”并重新调用模型。
-   - 将工作区恢复改成一次性构建完整 restoredData / restored image maps 后再提交状态，最后再设置 dataLoaded=true，避免中间态触发生成。
+1. **停止刷新后的兜底自动入库风暴**
+   - 移除/禁用 `workspace.$workspaceId.tsx` 中监听角色图片并自动写入 `characters` 资产表的兜底 effect。
+   - 原因：当前角色生成流程已经在生成成功后调用 `persistAssetImage` 保存图片，刷新恢复旧数据时再批量 upsert `characters` 会造成重复数据库写入，并触发 500 / statement timeout。
 
-2. 加强自动生成守卫
-   - 角色、场景、道具、旧版分镜的 autoGen effect 统一增加 dataLoaded 判断。
-   - 刷新恢复后，如果已存在图片缓存或 storyboard shot 的 imageUrl，就只展示缓存，不再重新生成。
+2. **把“图片缓存保存”限定到工作区数据**
+   - 保留 `handleSaveWorkspace` 对 `charImages / sceneImages / propImages / shotImages` 的保存，让刷新后依然展示已生成内容。
+   - 不再把恢复出来的角色图片自动写入资产库；只有用户主动点击“保存到资产库”时才写 `characters / scenes / props` 表。
 
-3. 修复图片缓存保存链路
-   - 当前保存前的后台入库 persistAllImagesInBackground 不会把返回的永久 URL 写回 state/workspace_data，且 data: base64 会被过滤，可能导致 Azure gpt-image-2 返回的 b64 图刷新后丢失。
-   - 计划改为在生成成功后立即通过 persistAssetImage 持久化：角色/场景/道具/shot/旧版 panel 都把临时 URL 或 data URL 转成 backend storage URL 后写入对应 image cache。
+3. **增强自动生成跳过逻辑**
+   - 角色自动生成 effect 继续等待 `dataLoaded + imagesRestored`。
+   - 用 `charImagesRef` 判断已有图片，避免 state/ref 同步时机导致误判为空。
+   - 刷新后已有缓存图片的角色不再进入 `processCharacter`。
 
-4. 改善保存内容一致性
-   - handleSaveWorkspace 写入 workspace_data 时读取最新 ref/state，确保已生成图片 URL、选中图片、storyboardGroups 中的 shot.imageUrl 一起保存。
-   - 对无法持久化的临时 URL 保留展示，但不会因为刷新就自动重生；只在用户主动点击重新生成时才重新调用模型。
+4. **减少数据库超时风险**
+   - 将后台 `persistAllImagesInBackground` 的并发从 5 降低到 2，避免保存时同时上传/写入过多媒体。
+   - 避免页面刷新后一边恢复、一边自动保存、一边自动入库造成数据库压力叠加。
 
-5. 验证
-   - 用前端工作区流程检查：生成图片后等待自动保存，刷新页面，确认图片仍展示且控制台/网络不再出现新的 generateImage / Azure requestId 调用。
+5. **数据库性能补强**
+   - 新增针对 `characters.user_id` 的索引；当前表只有主键，RLS 和资产库查询都会按 `user_id` 过滤，索引可降低后续查询/写入策略检查成本。
+   - 同步检查并补齐 `scenes.user_id`、`props.user_id` 等资产表索引（如缺失则一并添加）。
+
+6. **验证方式**
+   - 打开已有工作区并刷新页面：控制台应只看到 `charactersToStart=0`，不再出现“自动入库角色失败”。
+   - Network 不应再出现刷新后对 `/rest/v1/characters` 的自动 upsert 500。
+   - 已生成图片仍从工作区缓存显示，不触发新的图片生成请求。
