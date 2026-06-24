@@ -124,8 +124,11 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
       form.append('n', String(input.n ?? 1))
       form.append('size', size)
       form.append('quality', quality)
-      for (let i = 0; i < input.referenceImages!.length; i++) {
-        const refUrl = input.referenceImages![i]
+      const refs = input.referenceImages!
+      // Azure gpt-image-2 edits: 单图用 `image`，多图必须用 `image[]`（重复 `image` 会 400 Duplicate parameter）
+      const fieldName = refs.length > 1 ? 'image[]' : 'image'
+      for (let i = 0; i < refs.length; i++) {
+        const refUrl = refs[i]
         let blob: Blob
         let mime = 'image/png'
         if (refUrl.startsWith('data:')) {
@@ -141,8 +144,7 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
           blob = await r.blob()
         }
         const ext = mime.includes('jpeg') ? 'jpg' : mime.includes('webp') ? 'webp' : 'png'
-        // Azure I2I accepts repeated `image` fields (or `image[]`); use `image`.
-        form.append('image', blob, `ref_${i}.${ext}`)
+        form.append(fieldName, blob, `ref_${i}.${ext}`)
       }
       requestInit = {
         method: 'POST',
