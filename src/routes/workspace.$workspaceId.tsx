@@ -976,53 +976,10 @@ function WorkspacePage() {
   const lastAutoSavedUrlRef = useRef<Record<string, string | undefined>>({})
   useEffect(() => {
     if (!user) return
-    // 只处理没有 savedAssetKeys 标记的旧 URL(兜底)
-    const tryAutoSave = (
-      key: string,
-      latestUrl: string,
-      save: () => Promise<{ ok: boolean; error?: string }>,
-      label: string,
-    ) => {
-      if (lastAutoSavedUrlRef.current[key] === latestUrl) return
-      const previous = lastAutoSavedUrlRef.current[key]
-      lastAutoSavedUrlRef.current[key] = latestUrl
-      void save().then((r) => {
-        if (r.ok) {
-          setSavedAssetKeys((prev) => new Set(prev).add(key))
-          return
-        }
-        if (lastAutoSavedUrlRef.current[key] === latestUrl) {
-          if (previous === undefined) delete lastAutoSavedUrlRef.current[key]
-          else lastAutoSavedUrlRef.current[key] = previous
-        }
-        console.warn(`自动入库 ${label} 失败:`, r.error)
-        const userMsg = classifyError(r.error, '')
-        if (userMsg) {
-          // toast.warning(`「${label}」${userMsg}，临时链接 24h 内有效`)
-        } else {
-          // toast.warning(`「${label}」图片未持久化到存储，临时链接 24h 内有效`)
-        }
-      })
-    }
-    data.characters.forEach((c) => {
-      if (savedAssetKeys.has(c.id)) return // 已成功入库过的跳过
-      const latestUrl = charImages[c.id]?.at(-1)
-      if (!latestUrl) return
-      tryAutoSave(c.id, latestUrl, async () => {
-        const base64Url = await toBase64WithFallback(latestUrl)
-        const permUrl = base64Url ?? latestUrl
-        if (permUrl !== latestUrl) {
-          setCharImages((m) => {
-            const arr = m[c.id]
-            if (!arr || arr.at(-1) !== latestUrl) return m
-            const copy = [...arr]
-            copy[copy.length - 1] = permUrl
-            return { ...m, [c.id]: copy }
-          })
-        }
-        return saveOneCharacter(c, user!.id, permUrl)
-      }, `角色 ${c.name}`)
-    })
+    // 2026/06 修复:刷新后兜底自动入库已禁用。
+    // 之前每次 charImages 变化都会对 characters 表 upsert,在大量角色 + 自动保存
+    // 并发叠加时会触发数据库 statement timeout,导致 500 风暴。
+    // 资产库写入现在仅由"用户主动点保存"或"实际生成成功"路径触发。
   }, [user])
   // 角色图片生成状态拆分:
   //   activeImageKey: 当前**正在生成**的那一张图(imageKey = c.id 或 c.id::lk.id)。
