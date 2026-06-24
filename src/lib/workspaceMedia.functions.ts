@@ -156,7 +156,10 @@ export const saveOneVideo = createServerFn({ method: "POST" })
  * 路径: {userId}/assets/{kind}/{id}-{timestamp}.{ext}
  */
 const PersistAssetImageInput = z.object({
-  url: z.string().min(1).max(2000),
+  // 注意:生图函数(azure/aigcfamily/onetoken/pixflow/tokenflash/openrouter/lovable 等)
+  // 经常返回 data:image/png;base64,... 形式的 URL,单条可达数 MB。
+  // 上限放宽到 ~15MB 字符,覆盖常见 base64 图。
+  url: z.string().min(1).max(15_000_000),
   userId: z.string().min(1).max(64),
   kind: z.enum(['character', 'scene', 'prop', 'panel', 'shot']),
   id: z.string().min(1).max(128),
@@ -246,6 +249,22 @@ async function fetchMedia(
   url: string,
   timeoutMs = FETCH_TIMEOUT_MS,
 ): Promise<{ buf: ArrayBuffer; contentType: string }> {
+  // data: URL 在 Workers 运行时 fetch 行为不一致,直接解码 base64。
+  if (url.startsWith('data:')) {
+    // 形如 data:[<mediatype>][;base64],<data>
+    const comma = url.indexOf(',')
+    if (comma === -1) throw new Error('invalid data url: missing comma')
+    const meta = url.slice(5, comma) // 去掉 "data:"
+    const payload = url.slice(comma + 1)
+    const isBase64 = /;base64/i.test(meta)
+    const contentType = meta.replace(/;base64/i, '').split(';')[0] || 'application/octet-stream'
+    if (!isBase64) {
+      throw new Error('unsupported non-base64 data url')
+    }
+    const bin = Buffer.from(payload, 'base64')
+    const buf = bin.buffer.slice(bin.byteOffset, bin.byteOffset + bin.byteLength) as ArrayBuffer
+    return { buf, contentType }
+  }
   const controller = new AbortController()
   const t = setTimeout(() => controller.abort(), timeoutMs)
   try {
