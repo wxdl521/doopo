@@ -29,7 +29,7 @@ import type { ImportedScriptResult } from '../lib/parseImportedScript.functions'
 import { resolveProjectStyle, resolveT2IModel, resolveI2IModel, buildStyleLock } from '../lib/visualStyles'
 import { hashString } from '../lib/utils'
 import { filterByEpisode, groupByMatchKey, getEffectiveClothing, getEffectiveRoleLabel } from '../lib/characterFilters'
-import { Maximize2, FileText, Camera, Clock, Users, X, Loader2, Sparkles, Send, CheckCircle2, Pencil, Check, Image as ImageIcon, LayoutGrid, RefreshCw, Target, ChevronDown, BookmarkPlus, Plus, Upload } from 'lucide-react'
+import { Maximize2, FileText, Camera, Clock, Users, X, Loader2, Sparkles, Send, CheckCircle2, Pencil, Check, Image as ImageIcon, ImageUp, LayoutGrid, RefreshCw, Target, ChevronDown, BookmarkPlus, Plus, Upload } from 'lucide-react'
 import CharacterPortrait from '../components/workspace/CharacterPortrait'
 import StoryboardTimeline from '../components/workspace/StoryboardTimeline'
 import { toast } from 'sonner'
@@ -779,6 +779,9 @@ function WorkspacePage() {
   const [savingWorkspace, setSavingWorkspace] = useState(false)
   const [savedWorkspace, setSavedWorkspace] = useState(false)
   const [dataLoaded, setDataLoaded] = useState(false)
+  /** 2026/06 修复:所有图片状态(角色/场景/道具/分镜)从 workspace_data 恢复后才为 true,
+   * 避免 autoGen useEffect 在 charImages 还没填充时就判定"无图"→ 重新生成。 */
+  const [imagesRestored, setImagesRestored] = useState(false)
   const autoSavedRef = useRef(false)
   const [charImages, setCharImages] = useState<Record<string, string[]>>({})
   // charImages 的镜像 ref:processCharacter 内部循环里要"看最新"以跳过已
@@ -805,6 +808,34 @@ function WorkspacePage() {
     setCharImages(next)
   }
   useEffect(() => { charImagesRef.current = charImages }, [charImages])
+  // 角色/场景/道具修改面板的 I2I 参考图上传(用户上传本地图片作为图生图参考,不上传到服务端)
+  const [charModUploadedRef, setCharModUploadedRef] = useState<string | null>(null)
+  const [sceneModUploadedRef, setSceneModUploadedRef] = useState<string | null>(null)
+  const [propModUploadedRef, setPropModUploadedRef] = useState<string | null>(null)
+
+  /** 打开本地文件选择器,读取图片为 base64 data URL,供 I2I 参考图使用。不上传到服务端。 */
+  function pickLocalImageAsDataUrl(onResult: (dataUrl: string | null) => void, maxSizeMb = 10): void {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = 'image/*'
+    input.onchange = () => {
+      const file = input.files?.[0]
+      if (!file) return
+      if (file.size > maxSizeMb * 1024 * 1024) {
+        toast.error(`图片超过 ${maxSizeMb}MB，请选择更小的图片`)
+        return
+      }
+      if (!file.type.startsWith('image/')) {
+        toast.error('请选择图片文件')
+        return
+      }
+      const reader = new FileReader()
+      reader.onload = () => onResult(reader.result as string)
+      reader.onerror = () => { toast.error('读取图片失败') }
+      reader.readAsDataURL(file)
+    }
+    input.click()
+  }
 
   /** 服务端持久化(下载临时 URL → 上传 Storage → 永久 URL) */
   async function persistAndSetImage(
@@ -1154,11 +1185,10 @@ function WorkspacePage() {
       return next
     })
   }, [])
-  // 判断 URL 是否已持久化(Supabase Storage 永久 URL 或 base64 data URL)
+  // 判断 URL 是否已持久化到 Supabase Storage
   const isPersistedUrl = useCallback((url: string | undefined | null): boolean => {
     if (!url) return false
-    // 2026/06 修复:data: URL 不视为已持久化 —— 必须上传到 Storage 后再缓存,
-    // 否则刷新后会被 workspace_data 过滤(JSONB 列太大),导致 autoGen 重生。
+    // data:/blob: URL 不是持久化 URL,需要上传到 Storage 后才能视为已持久化
     if (url.startsWith('data:')) return false
     if (url.startsWith('blob:')) return false
     try {
@@ -1332,9 +1362,11 @@ function WorkspacePage() {
         if (typeof wd.selectedEpisodeIndex === 'number') {
           setSelectedEpisodeIndex(wd.selectedEpisodeIndex)
         }
+        // 2026/06 修复:在所有图片状态恢复后再标记,确保 autoGen 能看到完整数据
+        setImagesRestored(true)
         setDataLoaded(true)
       })
-      .catch(() => { setDataLoaded(true) })
+      .catch(() => { setImagesRestored(true); setDataLoaded(true) })
     return () => { cancelled = true }
   }, [workspaceId, loadProject, callLoadWorkspace])
 
@@ -2113,7 +2145,7 @@ function WorkspacePage() {
         const res = await callImage({ data: { prompt, model: resolveT2IModel(project?.sceneModel), noFallback: true, negativePrompt, size: characterSize } }); logImageMeta('workspace.character', res)
         console.log(`[CHAR-AUTOGEN] callImage returned: id=${c.id} url=${res.url ? 'ok' : res.error}`)
         if (res.url) {
-          // 2026/06 修复:直接服务端持久化到 Storage,避免 base64 超时
+          // 2026/06 修复:直接服务端持久化到 Storage,避免临时 URL 过期
           const permResult = await persistAndSetImage(ls.imageKey, res.url, 'character', c.id, 'overwrite')
           if (permResult.ok) {
             toast.success(`已生成 ${cardTitle}（${styleSpec.label}）`)
@@ -4279,6 +4311,7 @@ function WorkspacePage() {
   useEffect(() => {
     console.log(`[CHAR-AUTOGEN] useEffect 触发: dataLoaded=${dataLoaded} autoGen=${autoGen} chars=${data.characters.length} charImagesKeys=${Object.keys(charImages).length} ranSet=${[...autogenRanRef.current].join(',')}`)
     if (!dataLoaded) return
+    if (!imagesRestored) return
     if (!autoGen) return
     // 找出"还没跑过 autoGen 默认 look"的角色(无视 charImages 是否有图)。
     // 用 ref 而非 charImages 长度,避免老图持久化时 useEffect 不跑 + 状态机乱。
@@ -4303,17 +4336,19 @@ function WorkspacePage() {
         await processCharacter(c)
       }
     })()
-    // deps:[autoGen, dataLoaded, data.characters.length]
+    // deps:[autoGen, dataLoaded, imagesRestored, data.characters.length]
     //   - dataLoaded 翻 0→1 → 跑 1 次(workspace 首次 mount)
+    //   - imagesRestored 翻 0→1 → 图片恢复后才检查(避免 charImages 尚未填充)
     //   - autoGen 翻 0→1(用户切开关)→ 跑
     //   - data.characters.length 变化(用户提取新角色)→ 跑(ref 过滤老角色)
     // enrich 内部 setData 引起的引用变化 length 没变 → useEffect 不重跑
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoGen, dataLoaded, data.characters.length])
+  }, [autoGen, dataLoaded, imagesRestored, data.characters.length])
 
   useEffect(() => {
     if (!autoGen) return
     if (!dataLoaded) return
+    if (!imagesRestored) return
     const pending = data.storyboard.filter((p) => !panelImages[p.id])
     if (!pending.length || busyPanel) return
     void (async () => {
@@ -4323,12 +4358,13 @@ function WorkspacePage() {
       }
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.storyboard, autoGen, dataLoaded])
+  }, [data.storyboard, autoGen, dataLoaded, imagesRestored])
 
   // Auto-generate scene images for newly produced scenes
   useEffect(() => {
     if (!autoGen) return
     if (!dataLoaded) return
+    if (!imagesRestored) return
     const pending = data.scenes.filter((s) => !sceneImages[s.id]?.length)
     if (!pending.length || busyScene) return
     void (async () => {
@@ -4338,12 +4374,13 @@ function WorkspacePage() {
       }
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.scenes, autoGen, dataLoaded])
+  }, [data.scenes, autoGen, dataLoaded, imagesRestored])
 
   // Auto-generate prop images for newly produced props
   useEffect(() => {
     if (!autoGen) return
     if (!dataLoaded) return
+    if (!imagesRestored) return
     const pending = data.props.filter((p) => !propImages[p.id]?.length)
     if (!pending.length || busyProp) return
     void (async () => {
@@ -4353,7 +4390,7 @@ function WorkspacePage() {
       }
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.props, autoGen, dataLoaded])
+  }, [data.props, autoGen, dataLoaded, imagesRestored])
 
   const [initialChatInput, setInitialChatInput] = useState<string>('')
   useEffect(() => {
@@ -4533,7 +4570,7 @@ function WorkspacePage() {
     const images = allImgs.length > 0
       ? allImgs.map((url) => ({ url, label: url === coverUrl ? '主图' : '生成图' }))
       : undefined
-    // 2026/06 修复:URL 不是永久 URL 则先持久化到 Storage,避免 base64 太大导致超时
+    // 2026/06 修复:URL 不是永久 URL 则先持久化到 Storage,避免临时链接丢失
     let permCoverUrl = coverUrl
     if (coverUrl && !isPersistedUrl(coverUrl)) {
       try {
@@ -4659,8 +4696,8 @@ function WorkspacePage() {
               const r = await persist({ data: { url, userId: uid, kind: kind as any, id: `${prefix}-${key}` } })
               if (r.ok && r.url) {
                 done++
-                // 把入库后的永久 URL 写回 state,下次保存就只保留小 URL,
-                // 不再让 data:base64 撑爆 workspace_data。
+                // 把入库后的永久 URL 写回 state,后续保存用永久 URL 替代临时链接,
+                // 避免临时 URL 过期后图片不可用。
                 setter(url, r.url)
               } else fail++
             } catch { fail++ }
@@ -4771,15 +4808,12 @@ function WorkspacePage() {
       // 并发池大小 5,避免 serverless 函数超时。结果不影响主流程。
       persistAllImagesInBackground(charImagesRef.current, shotImages, sceneImagesRef.current, propImagesRef.current, user!.id, callPersistAsset).catch(() => {})
 
-      // 2026/06 修复:保留所有 URL(包括 data:/blob:),避免刷新后丢图导致重新生成。
-      //   - Storage 永久 URL → 直接保留
-      //   - 三方临时 URL (ARK/Azure/Seedream) → 保留(后台 persist 会逐步替换)
-      //   - data:base64 URL → 保留(Azure gpt-image-2 直接返回 b64,后台 persist 替换)
-      //   超大 base64 会让 JSONB 列膨胀,可接受 —— 用户体验"刷新不丢图"优先。
-      const keepNonB64 = (url: string) => url ? url : undefined
+      // 保留所有非空 URL(包括临时链接),避免刷新后丢图导致重新生成。
+      // 后台 persistAllImagesInBackground 会逐步将临时 URL 转存为永久 URL。
+      const keepNonEmpty = (url: string) => url ? url : undefined
       const keepArr = (arr: string[] | undefined) => {
         if (!arr) return undefined
-        const filtered = arr.map(keepNonB64).filter((u): u is string => !!u)
+        const filtered = arr.map(keepNonEmpty).filter((u): u is string => !!u)
         return filtered.length > 0 ? filtered : undefined
       }
       const workspaceData: Record<string, unknown> = {
@@ -4798,14 +4832,14 @@ function WorkspacePage() {
         shotImages: Object.fromEntries(Object.entries(shotImages).map(([k, v]) => [k, keepArr(v)])),
         sceneImages: Object.fromEntries(Object.entries(sceneImagesRef.current).map(([k, v]) => [k, keepArr(v)])),
         propImages: Object.fromEntries(Object.entries(propImagesRef.current).map(([k, v]) => [k, keepArr(v)])),
-        panelImages: Object.fromEntries(Object.entries(panelImages).map(([k, v]) => [k, keepNonB64(v)])),
+        panelImages: Object.fromEntries(Object.entries(panelImages).map(([k, v]) => [k, keepNonEmpty(v)])),
         selectedCharImages,
         selectedSceneImages,
         selectedPropImages,
         selectedEpisodeIndex,
         groupVideos,
         groupStoryboards: Object.fromEntries(
-          Object.entries(persistGroupStoryboards).map(([k, v]) => [k, { ...v, url: keepNonB64(v.url) ?? '' }]),
+          Object.entries(persistGroupStoryboards).map(([k, v]) => [k, { ...v, url: keepNonEmpty(v.url) ?? '' }]),
         ),
       }
       const res = await callSaveWorkspace({
@@ -4890,7 +4924,7 @@ function WorkspacePage() {
     if (!user) return
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
     autoSaveTimerRef.current = setTimeout(() => {
-      if (savingWorkspace) return
+      if (savingWorkspace) { pendingSaveRef.current = true; return }
       void handleSaveWorkspace({ silent: true })
     }, 600)
     return () => {
@@ -8073,6 +8107,29 @@ function WorkspacePage() {
                     <p className="text-[10px] text-text-muted leading-relaxed">
                       直接输入修改意见。AI 会保留这张形象的:脸、身材、视觉风格、正视角度、纯白 #FFFFFF 背景、无表情。只改你描述的部分。
                     </p>
+                    <div className="flex items-center gap-2 mb-2">
+                      <button
+                        type="button"
+                        onClick={() => pickLocalImageAsDataUrl((url) => setCharModUploadedRef(url))}
+                        className="btn-ghost text-xs flex items-center gap-1"
+                        title="上传本地图片作为 I2I 参考"
+                      >
+                        <ImageUp size={12} />
+                        <span>上传参考图</span>
+                      </button>
+                      {charModUploadedRef && (
+                        <div className="relative shrink-0 w-10 h-10 rounded border border-accent overflow-hidden">
+                          <img src={charModUploadedRef} alt="参考图" className="w-full h-full object-cover" />
+                          <button
+                            type="button"
+                            onClick={() => setCharModUploadedRef(null)}
+                            className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"
+                          >
+                            <X size={10} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
                     <textarea
                       value={modInput}
                       onChange={(e) => setModInput(e.target.value)}
@@ -8267,6 +8324,30 @@ function WorkspacePage() {
                       <div className="text-xs text-text-secondary font-semibold">修改场景</div>
                       <span className="text-[10px] text-text-muted">Enter 发送</span>
                     </div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <button
+                        type="button"
+                        onClick={() => pickLocalImageAsDataUrl((url) => setSceneModUploadedRef(url))}
+                        className="btn-ghost text-xs flex items-center gap-1"
+                        title="上传本地图片作为 I2I 参考"
+                      >
+                        <ImageUp size={12} />
+                        <span>上传参考图</span>
+                      </button>
+                      {sceneModUploadedRef && (
+                        <div className="relative shrink-0 w-10 h-10 rounded border border-accent overflow-hidden">
+                          <img src={sceneModUploadedRef} alt="参考图" className="w-full h-full object-cover" />
+                          <button
+                            type="button"
+                            onClick={() => setSceneModUploadedRef(null)}
+                            className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"
+                          >
+                            <X size={10} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
                     <textarea
                       value={sceneModInput}
                       onChange={(e) => setSceneModInput(e.target.value)}
@@ -8432,6 +8513,29 @@ function WorkspacePage() {
                       <div className="text-xs text-text-secondary font-semibold">修改道具</div>
                       <span className="text-[10px] text-text-muted">Enter 发送</span>
                     </div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <button
+                        type="button"
+                        onClick={() => pickLocalImageAsDataUrl((url) => setPropModUploadedRef(url))}
+                        className="btn-ghost text-xs flex items-center gap-1"
+                        title="上传本地图片作为 I2I 参考"
+                      >
+                        <ImageUp size={12} />
+                        <span>上传参考图</span>
+                      </button>
+                      {propModUploadedRef && (
+                        <div className="relative shrink-0 w-10 h-10 rounded border border-accent overflow-hidden">
+                          <img src={propModUploadedRef} alt="参考图" className="w-full h-full object-cover" />
+                          <button
+                            type="button"
+                            onClick={() => setPropModUploadedRef(null)}
+                            className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"
+                          >
+                            <X size={10} />
+                          </button>
+                        </div>
+                      )}
+                    </div>
                     <textarea
                       value={propModInput}
                       onChange={(e) => setPropModInput(e.target.value)}
@@ -8555,6 +8659,29 @@ function WorkspacePage() {
                     </div>
                   </div>
                 )}
+                <div className="flex items-center gap-2 mb-2">
+                  <button
+                    type="button"
+                    onClick={() => pickLocalImageAsDataUrl((url) => setPropModUploadedRef(url))}
+                    className="btn-ghost text-xs flex items-center gap-1"
+                    title="上传本地图片作为 I2I 参考"
+                  >
+                    <ImageUp size={12} />
+                    <span>上传参考图</span>
+                  </button>
+                  {propModUploadedRef && (
+                    <div className="relative shrink-0 w-10 h-10 rounded border border-accent overflow-hidden">
+                      <img src={propModUploadedRef} alt="参考图" className="w-full h-full object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => setPropModUploadedRef(null)}
+                        className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"
+                      >
+                        <X size={10} />
+                      </button>
+                    </div>
+                  )}
+                </div>
                 <div>
                   <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1.5">修改意见</div>
                   <textarea
@@ -8694,6 +8821,29 @@ function WorkspacePage() {
                     </div>
                   </div>
                 )}
+                <div className="flex items-center gap-2 mb-2">
+                  <button
+                    type="button"
+                    onClick={() => pickLocalImageAsDataUrl((url) => setSceneModUploadedRef(url))}
+                    className="btn-ghost text-xs flex items-center gap-1"
+                    title="上传本地图片作为 I2I 参考"
+                  >
+                    <ImageUp size={12} />
+                    <span>上传参考图</span>
+                  </button>
+                  {sceneModUploadedRef && (
+                    <div className="relative shrink-0 w-10 h-10 rounded border border-accent overflow-hidden">
+                      <img src={sceneModUploadedRef} alt="参考图" className="w-full h-full object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => setSceneModUploadedRef(null)}
+                        className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"
+                      >
+                        <X size={10} />
+                      </button>
+                    </div>
+                  )}
+                </div>
                 <div>
                   <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1.5">修改意见</div>
                   <textarea
