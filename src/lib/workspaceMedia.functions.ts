@@ -244,8 +244,8 @@ const MIME_BY_KIND: Record<"video" | "storyboard", string> = {
   storyboard: "image/png",
 }
 
-/** 抓取远端媒体 → ArrayBuffer,带超时 */
-async function fetchMedia(
+/** 抓取远端媒体 → ArrayBuffer,带超时。data: URL 直接 base64 解码。 */
+export async function fetchMedia(
   url: string,
   timeoutMs = FETCH_TIMEOUT_MS,
 ): Promise<{ buf: ArrayBuffer; contentType: string }> {
