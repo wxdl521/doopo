@@ -4626,7 +4626,7 @@ function WorkspacePage() {
     uid: string,
     persist: typeof callPersistAsset,
   ) {
-    const CONCURRENCY = 5
+    const CONCURRENCY = 2
     let done = 0; let fail = 0
     async function worker(queue: Array<() => Promise<void>>) {
       while (true) {
