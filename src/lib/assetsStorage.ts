@@ -16,6 +16,46 @@ export type PropImageEntry = {
   label: string
 }
 
+type AssetTable = 'characters' | 'scenes' | 'props'
+type AssetRecord = Record<string, unknown> & { id: string; user_id: string }
+
+/**
+ * 资产库保存不要直接 upsert。
+ * 根因:旧表曾以 id 做全局主键,不同用户/旧项目生成相同 id 时,upsert 会命中
+ * 别人的旧行并尝试 UPDATE,随后被 RLS 的 USING 拒绝,报
+ * "new row violates row-level security policy (USING expression)"。
+ * 这里先只更新当前用户自己的行;没有命中再插入当前用户的新行,避免跨用户冲突。
+ */
+async function saveOwnAssetRecord(table: AssetTable, record: AssetRecord): Promise<{ ok: boolean; error?: string }> {
+  const updateQuery = supabase.from(table) as any
+  const { data: updated, error: updateError } = await updateQuery
+    .update(record)
+    .eq('user_id', record.user_id)
+    .eq('id', record.id)
+    .select('id')
+    .maybeSingle()
+
+  if (updateError) return { ok: false, error: updateError.message }
+  if (updated) return { ok: true }
+
+  const insertQuery = supabase.from(table) as any
+  const { error: insertError } = await insertQuery.insert(record)
+  if (!insertError) return { ok: true }
+
+  // 同一用户快速重复点击时可能先后插入同一行;再按用户范围更新一次兜底。
+  if (insertError.code === '23505') {
+    const retryQuery = supabase.from(table) as any
+    const { error: retryError } = await retryQuery
+      .update(record)
+      .eq('user_id', record.user_id)
+      .eq('id', record.id)
+    if (!retryError) return { ok: true }
+    return { ok: false, error: retryError.message }
+  }
+
+  return { ok: false, error: insertError.message }
+}
+
 /**
  * 把 GenCharacter 转换成 characters 表的 upsert 记录。
  * coverUrl 可选 —— 调用方传入角色的最新图片 URL(同步持久化到 assets 库)。
@@ -65,12 +105,22 @@ function sceneToRecord(s: GenScene, userId: string, coverUrl?: string | null) {
 /** 批量保存(保留旧行为,cover_url 传 null) */
 export async function saveCharacters(chars: GenCharacter[], userId: string) {
   const records = chars.map((c) => charToRecord(c, userId, null))
-  return supabase.from('characters').upsert(records, { onConflict: 'user_id,id' })
+  for (const record of records) {
+    // eslint-disable-next-line no-await-in-loop
+    const result = await saveOwnAssetRecord('characters', record)
+    if (!result.ok) return { data: null, error: { message: result.error ?? '保存角色失败' } }
+  }
+  return { data: null, error: null }
 }
 
 export async function saveScenes(scenes: GenScene[], userId: string) {
   const records = scenes.map((s) => sceneToRecord(s, userId, null))
-  return supabase.from('scenes').upsert(records, { onConflict: 'user_id,id' })
+  for (const record of records) {
+    // eslint-disable-next-line no-await-in-loop
+    const result = await saveOwnAssetRecord('scenes', record)
+    if (!result.ok) return { data: null, error: { message: result.error ?? '保存场景失败' } }
+  }
+  return { data: null, error: null }
 }
 
 /**
@@ -87,9 +137,7 @@ export async function saveOneCharacter(
   images?: CharacterImageEntry[],
 ): Promise<{ ok: boolean; error?: string }> {
   const record = charToRecord(c, userId, coverUrl, images)
-  const { error } = await supabase.from('characters').upsert(record, { onConflict: 'user_id,id' })
-  if (error) return { ok: false, error: error.message }
-  return { ok: true }
+  return saveOwnAssetRecord('characters', record)
 }
 
 export async function saveOneScene(
@@ -98,9 +146,7 @@ export async function saveOneScene(
   coverUrl?: string | null,
 ): Promise<{ ok: boolean; error?: string }> {
   const record = sceneToRecord(s, userId, coverUrl)
-  const { error } = await supabase.from('scenes').upsert(record, { onConflict: 'user_id,id' })
-  if (error) return { ok: false, error: error.message }
-  return { ok: true }
+  return saveOwnAssetRecord('scenes', record)
 }
 
 /**
@@ -127,9 +173,7 @@ export async function saveOneProp(
   images?: PropImageEntry[],
 ): Promise<{ ok: boolean; error?: string }> {
   const record = propToRecord(p, userId, coverUrl, images)
-  const { error } = await supabase.from('props').upsert(record, { onConflict: 'user_id,id' })
-  if (error) return { ok: false, error: error.message }
-  return { ok: true }
+  return saveOwnAssetRecord('props', record)
 }
 
 export async function deleteProp(id: string, userId: string) {
