@@ -3,7 +3,7 @@
 //
 //  Base URL: https://ywkjpolandcentral.cognitiveservices.azure.com
 //            (env: AZURE_OPENAI_BASE_URL 可覆盖)
-//  Auth:     Authorization: Bearer ${AZURE_API_KEY}
+//  Auth:     api-key: ${AZURE_API_KEY}
 //
 //  - T2I: POST /openai/deployments/gpt-image-2/images/generations
 //         ?api-version=2024-02-01
@@ -18,7 +18,7 @@ import { createServerFn } from '@tanstack/react-start'
 import { z } from 'zod'
 
 const DEFAULT_BASE_URL = 'https://ywkjpolandcentral.cognitiveservices.azure.com'
-const T2I_API_VERSION = '2024-02-01'
+const T2I_API_VERSION = '2025-04-01-preview'
 const I2I_API_VERSION = '2025-04-01-preview'
 const IMAGE_REQUEST_TIMEOUT_MS = 400_000
 const AZURE_PREFIX = 'azure/'
@@ -148,7 +148,7 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
       }
       requestInit = {
         method: 'POST',
-        headers: { Authorization: `Bearer ${apiKey}` },
+        headers: { 'api-key': apiKey },
         body: form,
         signal: controller.signal,
       }
@@ -158,14 +158,12 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
         n: input.n ?? 1,
         size,
         quality,
-        output_format: 'png',
-        output_compression: 100,
       }
       requestInit = {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          Authorization: `Bearer ${apiKey}`,
+          'api-key': apiKey,
         },
         body: JSON.stringify(body),
         signal: controller.signal,

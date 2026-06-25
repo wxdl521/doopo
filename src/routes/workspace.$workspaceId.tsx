@@ -703,7 +703,6 @@ function WorkspacePage() {
   // 输入修改意见 → 发送 → 关闭面板,新图替换卡片封面(并加入历史)。
   //   modPanel: 当前要修改的 (角色, look);null 表示面板关闭
   //   modInput: 文本框
-  //   modBusy: 正在调用 regenerateCharacterLook
   //   modError: 上次错误(显示在面板里)
   const [modPanel, setModPanel] = useState<
     | { character: GenCharacter; lookId: string | null; imageKey: string }
@@ -713,7 +712,6 @@ function WorkspacePage() {
   // key = `${groupId}::${characterId}`,null = 全部关闭
   const [openLookMenu, setOpenLookMenu] = useState<string | null>(null)
   const [modInput, setModInput] = useState('')
-  const [modBusy, setModBusy] = useState(false)
   const [modError, setModError] = useState<string | null>(null)
   // 场景修改输入弹层(2026/06 跟角色修改对齐体验:打开直接输入,Enter 提交)。
   // 跟 modPanel 解耦:角色 modPanel 走的是"打开预览 + 内嵌输入",场景没
@@ -2455,17 +2453,38 @@ function WorkspacePage() {
   // 写回 data.characters 对应字段(默认 look → 角色根字段;变体 look → c.looks[i])。
   // 失败不阻塞(只 console.warn),用户至少图已更新。
   async function submitModPanel() {
-    if (!modPanel || modBusy) return
+    if (!modPanel) return
     const instruction = modInput.trim()
     if (!instruction) {
       setModError('请输入修改意见')
       return
     }
-    setModBusy(true)
-    setModError(null)
     const c = modPanel.character
     const lookId = modPanel.lookId
     const imageKey = modPanel.imageKey
+
+    // 手动添加的空角色:还没有图片,把用户输入当全量描述走 T2I 首次生成
+    const existingImages = charImagesRef.current[imageKey] ?? []
+    if (existingImages.length === 0) {
+      // 把用户输入写回角色描述
+      setData((prev) => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          characters: prev.characters.map((x) => {
+            if (x.id !== c.id) return x
+            return { ...x, faceDescription: instruction, bodyDescription: '', clothingDescription: '', personality: instruction }
+          }),
+        }
+      })
+      closeModPanel()
+      setModInput('')
+      setModError(null)
+      // 走 T2I 生成
+      await processCharacter({ ...c, faceDescription: instruction, bodyDescription: '', clothingDescription: '', personality: instruction })
+      return
+    }
+
     const ok = await doRegen(c, lookId, 'modify', instruction)
     if (ok) {
       // 2026/06:保留 AI 描述 + 追加用户意见。先调 describeCharacterImage 生成详细描述,
@@ -2534,7 +2553,6 @@ function WorkspacePage() {
         }
       }
     }
-    setModBusy(false)
     if (ok) {
       closeModPanel()
     } else {
@@ -2884,9 +2902,29 @@ function WorkspacePage() {
       setPropModError('请输入修改意见')
       return
     }
+    const p = propModOpen
+    const existingImages = propImagesRef.current[p.id] ?? []
+    if (existingImages.length === 0) {
+      // 空道具:把用户输入当描述走 T2I 首次生成
+      setData((prev) => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          props: prev.props.map((x) => {
+            if (x.id !== p.id) return x
+            return { ...x, description: instruction, name: instruction.slice(0, 30) }
+          }),
+        }
+      })
+      closePropModPanel()
+      setPropModInput('')
+      setPropModError(null)
+      await genPropImage({ ...p, description: instruction, name: instruction.slice(0, 30) })
+      return
+    }
     setPropModBusy(true)
     setPropModError(null)
-    const ok = await doPropRegen(propModOpen, 'modify', instruction)
+    const ok = await doPropRegen(p, 'modify', instruction)
     setPropModBusy(false)
     if (ok) {
       closePropModPanel()
@@ -2917,9 +2955,29 @@ function WorkspacePage() {
       setSceneModError('请输入修改意见')
       return
     }
+    const s = sceneModOpen
+    const existingImages = sceneImagesRef.current[s.id] ?? []
+    if (existingImages.length === 0) {
+      // 空场景:把用户输入当描述走 T2I 首次生成
+      setData((prev) => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          scenes: prev.scenes.map((x) => {
+            if (x.id !== s.id) return x
+            return { ...x, slug: instruction.slice(0, 60), action: instruction }
+          }),
+        }
+      })
+      closeSceneModPanel()
+      setSceneModInput('')
+      setSceneModError(null)
+      await genSceneImage({ ...s, slug: instruction.slice(0, 60), action: instruction })
+      return
+    }
     setSceneModBusy(true)
     setSceneModError(null)
-    const ok = await doSceneRegen(sceneModOpen, 'modify', instruction)
+    const ok = await doSceneRegen(s, 'modify', instruction)
     setSceneModBusy(false)
     if (ok) {
       closeSceneModPanel()
@@ -4279,6 +4337,8 @@ function WorkspacePage() {
       if (autogenRanRef.current.has(c.id)) continue
       // 2026/06 修复:已有图片(从 workspace_data 恢复的)跳过,不重新生成
       if (charImages[c.id]?.length) continue
+      // 跳过手动添加的空角色(face/body/clothing 全空 → 用户还没填内容)
+      if (!c.faceDescription?.trim() && !c.clothingDescription?.trim()) continue
       charactersToStart.push(c)
     }
     console.log(`[CHAR-AUTOGEN] useEffect: charactersToStart=${charactersToStart.length} ids=${charactersToStart.map(c => c.id).join(',')}`)
@@ -4322,7 +4382,7 @@ function WorkspacePage() {
     if (!autoGen) return
     if (!dataLoaded) return
     if (!imagesRestored) return
-    const pending = data.scenes.filter((s) => !sceneImages[s.id]?.length)
+    const pending = data.scenes.filter((s) => !sceneImages[s.id]?.length && (s.slug?.trim() || s.location?.trim()))
     if (!pending.length || busyScene) return
     void (async () => {
       for (const s of pending) {
@@ -4338,7 +4398,7 @@ function WorkspacePage() {
     if (!autoGen) return
     if (!dataLoaded) return
     if (!imagesRestored) return
-    const pending = data.props.filter((p) => !propImages[p.id]?.length)
+    const pending = data.props.filter((p) => !propImages[p.id]?.length && (p.name?.trim() !== '新道具' && p.description?.trim()))
     if (!pending.length || busyProp) return
     void (async () => {
       for (const p of pending) {
@@ -6144,7 +6204,7 @@ function WorkspacePage() {
                                 ) : (
                                   <button
                                     type="button"
-                                    onClick={(e) => { e.stopPropagation(); genSceneImage(s) }}
+                                    onClick={(e) => { e.stopPropagation(); if (!s.slug?.trim() && !s.location?.trim()) openSceneModPanel(s); else genSceneImage(s) }}
                                     className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 text-text-muted hover:text-accent hover:bg-bg-elevated/40 transition cursor-pointer"
                                   >
                                     <ImageIcon size={22} className="opacity-50" />
@@ -6374,7 +6434,7 @@ function WorkspacePage() {
                                 ) : (
                                   <button
                                     type="button"
-                                    onClick={(e) => { e.stopPropagation(); genPropImage(p) }}
+                                    onClick={(e) => { e.stopPropagation(); if (!p.description?.trim() && p.name === '新道具') openPropModPanel(p); else genPropImage(p) }}
                                     className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 text-text-muted hover:text-accent hover:bg-bg-elevated/40 transition cursor-pointer"
                                   >
                                     <ImageIcon size={22} className="opacity-50" />
@@ -6724,11 +6784,15 @@ function WorkspacePage() {
                                   // 没图:可点击生成(2026/06)
                                   //   默认 look → genCharImage → 走 processCharacter
                                   //   变体 look → generateOneCharacterLook → 走 I2I(以默认图为锚)
+                                  // 空角色(face/body/clothing 全空)点生成没有描述可发,
+                                  // 直接打开编辑面板让用户输入需求
                                   <button
                                     type="button"
                                     onClick={(e) => {
                                       e.stopPropagation()
-                                      if (card.lookId === null) {
+                                      if (!c.faceDescription?.trim() && !c.clothingDescription?.trim()) {
+                                        openModPanel(c, card.lookId)
+                                      } else if (card.lookId === null) {
                                         void genCharImage(c)
                                       } else {
                                         void generateOneCharacterLook(c, card.lookId)
@@ -8056,72 +8120,78 @@ function WorkspacePage() {
                       - 直接嵌入预览,不再弹独立 slide-in
                       - Enter 提交,Shift+Enter 换行
                       - 错误 / busy 状态内联展示 */}
-                  <div className="shrink-0 rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="text-xs text-text-secondary font-semibold">修改形象</div>
-                      <span className="text-[10px] text-text-muted">Enter 发送 · Shift+Enter 换行</span>
-                    </div>
-                    <p className="text-[10px] text-text-muted leading-relaxed">
-                      直接输入修改意见。AI 会保留这张形象的:脸、身材、视觉风格、正视角度、纯白 #FFFFFF 背景、无表情。只改你描述的部分。
-                    </p>
-                    <div className="flex items-center gap-2 mb-2">
-                      <button
-                        type="button"
-                        onClick={() => pickLocalImageAsDataUrl((url) => setCharModUploadedRef(url))}
-                        className="btn-ghost text-xs flex items-center gap-1"
-                        title="上传本地图片作为 I2I 参考"
-                      >
-                        <ImageUp size={12} />
-                        <span>上传参考图</span>
-                      </button>
-                      {charModUploadedRef && (
-                        <div className="relative shrink-0 w-10 h-10 rounded border border-accent overflow-hidden">
-                          <img src={charModUploadedRef} alt="参考图" className="w-full h-full object-cover" />
-                          <button
-                            type="button"
-                            onClick={() => setCharModUploadedRef(null)}
-                            className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"
-                          >
-                            <X size={10} />
-                          </button>
+                  {(() => {
+                    const busyKey = previewTarget.lookId == null ? c.id : `${c.id}::${previewTarget.lookId}`
+                    const thisBusy = regenBusyKeys.has(busyKey)
+                    return (
+                    <div className="shrink-0 rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="text-xs text-text-secondary font-semibold">修改形象</div>
+                        <span className="text-[10px] text-text-muted">Enter 发送 · Shift+Enter 换行</span>
+                      </div>
+                      <p className="text-[10px] text-text-muted leading-relaxed">
+                        直接输入修改意见。AI 会保留这张形象的:脸、身材、视觉风格、正视角度、纯白 #FFFFFF 背景、无表情。只改你描述的部分。
+                      </p>
+                      <div className="flex items-center gap-2 mb-2">
+                        <button
+                          type="button"
+                          onClick={() => pickLocalImageAsDataUrl((url) => setCharModUploadedRef(url))}
+                          className="btn-ghost text-xs flex items-center gap-1"
+                          title="上传本地图片作为 I2I 参考"
+                        >
+                          <ImageUp size={12} />
+                          <span>上传参考图</span>
+                        </button>
+                        {charModUploadedRef && (
+                          <div className="relative shrink-0 w-10 h-10 rounded border border-accent overflow-hidden">
+                            <img src={charModUploadedRef} alt="参考图" className="w-full h-full object-cover" />
+                            <button
+                              type="button"
+                              onClick={() => setCharModUploadedRef(null)}
+                              className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"
+                            >
+                              <X size={10} />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                      <textarea
+                        value={modInput}
+                        onChange={(e) => setModInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          // Enter 提交;Shift+Enter 换行(更符合"直接在对话框输入"的直觉)
+                          if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault()
+                            void submitModPanel()
+                          }
+                        }}
+                        placeholder="例如:把头发改成黑色短发 / 加一副黑框眼镜 / 把外套换成红色风衣…"
+                        rows={4}
+                        disabled={thisBusy}
+                        className="w-full rounded-md bg-bg-base border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-none placeholder:text-text-muted disabled:opacity-50"
+                      />
+                      {modError && (
+                        <div className="px-2.5 py-1.5 rounded-md bg-rose-500/10 border border-rose-500/30 text-[11px] text-rose-400">
+                          {modError}
                         </div>
                       )}
-                    </div>
-                    <textarea
-                      value={modInput}
-                      onChange={(e) => setModInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        // Enter 提交;Shift+Enter 换行(更符合"直接在对话框输入"的直觉)
-                        if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault()
-                          void submitModPanel()
-                        }
-                      }}
-                      placeholder="例如:把头发改成黑色短发 / 加一副黑框眼镜 / 把外套换成红色风衣…"
-                      rows={4}
-                      disabled={modBusy}
-                      className="w-full rounded-md bg-bg-base border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-none placeholder:text-text-muted disabled:opacity-50"
-                    />
-                    {modError && (
-                      <div className="px-2.5 py-1.5 rounded-md bg-rose-500/10 border border-rose-500/30 text-[11px] text-rose-400">
-                        {modError}
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] text-text-muted">
+                          {thisBusy ? '生成中…' : `参考图:第 ${currentIdx + 1} / ${generations.length} 张`}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => void submitModPanel()}
+                          disabled={thisBusy || !modInput.trim() || !currentUrl}
+                          className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
+                        >
+                          {thisBusy ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+                          {thisBusy ? '生成中…' : '发送'}
+                        </button>
                       </div>
-                    )}
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[10px] text-text-muted">
-                        {modBusy ? '生成中…' : `参考图:第 ${currentIdx + 1} / ${generations.length} 张`}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => void submitModPanel()}
-                        disabled={modBusy || !modInput.trim() || !currentUrl}
-                        className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
-                      >
-                        {modBusy ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
-                        {modBusy ? '生成中…' : '发送'}
-                      </button>
                     </div>
-                  </div>
+                    )
+                  })()}
                 </div>
               </div>
             </div>
@@ -8326,6 +8396,26 @@ function WorkspacePage() {
                     {sceneModError && (
                       <div className="px-2.5 py-1.5 rounded-md bg-rose-500/10 border border-rose-500/30 text-[11px] text-rose-400">{sceneModError}</div>
                     )}
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] text-text-muted">
+                        {sceneModBusy ? '生成中…' : `参考图:第 ${currentIdx + 1} / ${history.length} 张`}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const text = sceneModInput.trim()
+                          if (!text) return
+                          setSceneModInput('')
+                          setSceneModError(null)
+                          void doSceneRegen(s, 'modify', text)
+                        }}
+                        disabled={sceneModBusy || !sceneModInput.trim() || !currentUrl}
+                        className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
+                      >
+                        {sceneModBusy ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+                        {sceneModBusy ? '生成中…' : '发送'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -8514,6 +8604,26 @@ function WorkspacePage() {
                     {propModError && (
                       <div className="px-2.5 py-1.5 rounded-md bg-rose-500/10 border border-rose-500/30 text-[11px] text-rose-400">{propModError}</div>
                     )}
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] text-text-muted">
+                        {propModBusy ? '生成中…' : `参考图:第 ${currentIdx + 1} / ${history.length} 张`}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const text = propModInput.trim()
+                          if (!text) return
+                          setPropModInput('')
+                          setPropModError(null)
+                          void doPropRegen(p, 'modify', text)
+                        }}
+                        disabled={propModBusy || !propModInput.trim() || !currentUrl}
+                        className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
+                      >
+                        {propModBusy ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
+                        {propModBusy ? '生成中…' : '发送'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
