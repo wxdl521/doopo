@@ -3794,6 +3794,8 @@ function WorkspacePage() {
         return `Shot ${i + 1} [${x.shot.shotTypeLabel}] ${x.shot.action}${cam}`
       })
       .join(' → ')
+    // 注入项目视觉风格
+    const videoStyleSpec = resolveProjectStyle(project?.style)
     const prompt = [
       `[Storyboard sequence: ${group.plotText || ''}]`,
       ``,
@@ -3801,7 +3803,11 @@ function WorkspacePage() {
       ``,
       `Render as a single continuous video clip that flows through all ${shotImagesList.length} shots in order.`,
       `Camera transitions, lighting continuity, and character appearance MUST stay consistent across all shots.`,
-      `Cinematic motion, smooth camera movement, photorealistic, 24fps.`,
+      `Cinematic motion, smooth camera movement, 24fps.`,
+      ``,
+      buildStyleLock(videoStyleSpec, 'scene'),
+      ``,
+      `[IMPORTANT] The reference images provided are storyboard thumbnails (sketch/line-art), but your output MUST be rendered in the project's visual style described above — NOT in sketch/line-art style. Full color, full rendering, matching the style fingerprint exactly.`,
     ].filter(Boolean).join('\n')
 
     // 2026/06:查看提示词模式 —— 视频 prompt 完全 client 端拼,这里直接弹 modal
@@ -3895,6 +3901,8 @@ function WorkspacePage() {
       })
       .join(' → ')
 
+    // 注入项目视觉风格
+    const videoStyleSpec2 = resolveProjectStyle(project?.style)
     const prompt = [
       `[STORYBOARD-DRIVEN VIDEO GENERATION]`,
       `The attached first-frame image is a complete director's storyboard / pitch deck for this scene. It contains: shared creative direction, character & style reference, environment + top-down camera diagram, multiple numbered storyboard frames showing the shot sequence, lighting/mood notes, and audio/cinematography notes.`,
@@ -3906,12 +3914,14 @@ function WorkspacePage() {
       ``,
       shotDescriptions ? `[SHOT BREAKDOWN — for additional sequence hints]\n${shotDescriptions}` : '',
       ``,
+      buildStyleLock(videoStyleSpec2, 'scene'),
+      ``,
       `[CONSTRAINTS]`,
       `- Render as ONE continuous video that flows through the storyboard's shot sequence in order`,
       `- Character appearance, lighting continuity, and environment must stay consistent across the clip (follow the storyboard's reference panels)`,
       `- Cinematic motion, smooth camera movement, ${(group.endSec - group.startSec).toFixed(0)}s duration target`,
-      `- Photorealistic if the storyboard is photorealistic; illustration-style if the storyboard is illustration`,
-      `- 24fps, polished post-processing matching the storyboard's mood notes`,
+      `- The attached storyboard image is a sketch/line-art reference for composition ONLY. Your output MUST be rendered in the project's visual style described above — full color, full rendering, NOT line-art, NOT sketch.`,
+      `- 24fps, polished post-processing matching the style's mood notes`,
     ].filter(Boolean).join('\n')
 
     // 2026/06:查看提示词模式 —— 直接弹 modal

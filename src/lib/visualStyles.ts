@@ -95,27 +95,30 @@ export const PROJECT_STYLE_PROMPTS: Record<string, VisualStyleSpec> = {
     ].join(", "),
     label: "3D-皮克斯卡通",
   },
-  // Photorealistic
+  // Photorealistic — 融合真实真人皮肤质感描述
   realistic: {
     positive: [
       // 渲染
-      "photorealistic portrait, anatomically accurate, natural skin texture with visible pores, micro-detail on hair follicles, fine fabric weave",
+      "photorealistic portrait, anatomically accurate, real human skin texture, natural pores and skin grain retained, fine vellus hair (peach fuzz) on cheeks, subtle skin tone unevenness, minimal natural blemishes and minor imperfections, real makeup finish with natural texture, natural sebum/sheen on skin, soft specular highlights without excessive glare",
       // 光照
-      "cinematic Rembrandt or natural window lighting, soft falloff, no flat studio lighting, no cel-shading, no rim light glow",
+      "commercial photography grade lighting, cinematic Rembrandt or natural window lighting, soft falloff, soft key light with gentle fill, natural skin catchlight, no flat studio lighting, no cel-shading, no rim light glow",
       // 色彩
-      "naturalistic color palette, accurate skin undertones, muted real-world saturation, no over-saturation, no posterized color zones",
+      "naturalistic color palette, accurate skin undertones (warm/cool/neutral), muted real-world saturation, slight color variation across skin areas, no over-saturation, no posterized color zones, no AI beauty filter color cast",
       // 镜头
-      "shallow depth of field, 50-85mm prime lens look, bokeh on background, eye-level framing, natural body proportions",
+      "shallow depth of field, 50-85mm prime lens look, bokeh on background, eye-level framing, natural body proportions, commercial portrait photography composition",
       // 材质
-      "photographic skin, subsurface scattering, real fabric drape and weight, no plasticine / clay / pixel / cartoon shading",
+      "photographic skin with subsurface scattering, real fabric drape and weight, natural hair with individual strand detail, no plasticine / clay / pixel / cartoon shading, no wax figure appearance",
     ].join("\n"),
     negative: [
       "cartoon, anime, illustration, 2D drawing",
       "CGI, 3D render, octane shading, Pixar-style",
       "chibi, super-deformed, 2-head-tall",
       "painting, watercolor, sumi-e, oil brush",
-      "over-smoothing, plastic skin, airbrushed",
+      "over-smoothing, plastic skin, airbrushed, excessive blur, over-polished skin",
       "pixel art, low resolution, cel-shaded",
+      "wax figure, mannequin, doll-like skin, plastic-looking skin",
+      "AI beauty filter, beauty mode, beauty gaussian blur, excessive skin retouching",
+      "no pores, poreless skin, glass skin, unrealistic smoothness",
     ].join(", "),
     label: "写实-真人",
   },

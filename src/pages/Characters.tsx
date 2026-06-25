@@ -27,8 +27,8 @@ const STYLE_PROMPTS: Record<string, { positive: string; negative: string }> = {
     negative: 'bright pastel, cartoon, chibi',
   },
   Realistic: {
-    positive: 'photorealistic illustration, anatomically accurate, detailed skin texture, cinematic lighting, depth of field',
-    negative: 'cartoon, anime, flat shading',
+    positive: 'photorealistic portrait, real human skin texture with natural pores and skin grain, fine vellus hair on cheeks, subtle skin tone unevenness, minimal natural blemishes, natural makeup finish, natural sebum sheen, soft specular highlights, commercial photography grade, anatomically accurate, cinematic lighting, depth of field',
+    negative: 'cartoon, anime, flat shading, over-smoothing, plastic skin, airbrushed, wax figure, mannequin, AI beauty filter, excessive skin retouching, glass skin, poreless skin, doll-like skin',
   },
   Anime: {
     positive: 'modern anime style, vibrant cel-shading, sharp line art, dynamic hair rendering, glossy highlights',
