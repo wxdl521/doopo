@@ -30,6 +30,11 @@ export const IMAGE_MODELS: ImageModelOption[] = [
   { key: '', label: '—— [Pixflow · OpenAI 兼容] ——', sub: undefined, legacy: true },
   { key: 'pixflow/gpt-image-2', label: 'GPT Image 2', sub: '[Pixflow·OpenAI] Image2 · T2I/I2I' },
 
+  // ---- [Revora · OpenAI 兼容] revora.vip → /v1/images/generations|edits ----
+  //  2026/06 接入:OpenAI 兼容 gpt-image-2 中转
+  { key: '', label: '—— [Revora · OpenAI 兼容] ——', sub: undefined, legacy: true },
+  { key: 'revora/gpt-image-2', label: 'GPT Image 2', sub: '[Revora·OpenAI] Image2 · T2I/I2I' },
+
   // ---- [Tokenflash · OpenAI 兼容] tokenflash.cn → /v1/images/generations|edits ----
   //  2026/06 接入:实测 gpt-image-2 单次 ~45-55s,显著快于 pixflow,且未观测到 502
   { key: '', label: '—— [Tokenflash · OpenAI 兼容] ——', sub: undefined, legacy: true },
@@ -39,6 +44,26 @@ export const IMAGE_MODELS: ImageModelOption[] = [
   //  2026/06 接入:实测 gpt-image-2 单次 ≈ 50s,作为 image2 的额外中转选项
   { key: '', label: '—— [AIGCFamily · OpenAI 兼容] ——', sub: undefined, legacy: true },
   { key: 'aigcfamily/gpt-image-2', label: 'aigcfamily-image2', sub: '[AIGCFamily·OpenAI] Image2 · T2I/I2I' },
+
+  // ---- [AI Tokenvibe · OpenAI 兼容] → /v1/images/generations ----
+  { key: '', label: '—— [AI Tokenvibe · OpenAI 兼容] ——', sub: undefined, legacy: true },
+  { key: 'aitokenvibe/gpt-image-2', label: 'GPT Image 2', sub: '[AI Tokenvibe·OpenAI] Image2 · T2I/I2I' },
+
+  // ---- [天鸿智算 · OpenAI 兼容] → /v1/images/generations ----
+  { key: '', label: '—— [天鸿智算 · OpenAI 兼容] ——', sub: undefined, legacy: true },
+  { key: 'thhtcloud/gpt-image-2', label: 'GPT Image 2', sub: '[天鸿智算·OpenAI] Image2 · T2I/I2I' },
+
+  // ---- [ailinzi · OpenAI 兼容] → /v1/images/generations ----
+  { key: '', label: '—— [ailinzi · OpenAI 兼容] ——', sub: undefined, legacy: true },
+  { key: 'ailinzi/image2', label: 'GPT Image 2', sub: '[ailinzi·OpenAI] Image2 · T2I/I2I' },
+
+  // ---- [TokenHub · OpenAI 兼容] → /v1/images/generations ----
+  { key: '', label: '—— [TokenHub · OpenAI 兼容] ——', sub: undefined, legacy: true },
+  { key: 'tokenhub/gpt-image-2', label: 'GPT Image 2', sub: '[TokenHub·OpenAI] Image2 · T2I/I2I' },
+
+  // ---- [nagora.ai · OpenAI 兼容 · Azure 渠道] → /v1/images/generations ----
+  { key: '', label: '—— [nagora.ai · OpenAI 兼容 · Azure 渠道] ——', sub: undefined, legacy: true },
+  { key: 'nagora/gpt-image-2', label: 'GPT Image 2', sub: '[nagora·Azure 渠道] Image2 · T2I/I2I' },
 
   // ---- [Azure OpenAI] ywkjpolandcentral.cognitiveservices.azure.com ----
   { key: '', label: '—— [Azure · OpenAI] ——', sub: undefined, legacy: true },

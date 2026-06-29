@@ -52,10 +52,13 @@ const DASHSCOPE_TASK_GET = 'https://dashscope.aliyuncs.com/api/v1/tasks/'
  *  - ARK (Seedance):doubao-seedance-* 或 seedance-*
  *  - DashScope (HappyHorse / Wan / Wanx):其他视频模型 id 一律 fallback 到 DashScope
  */
-export function getVideoBackend(modelId: string | null | undefined): 'ark' | 'dashscope' | 'jimeng' {
+export function getVideoBackend(modelId: string | null | undefined): 'ark' | 'dashscope' | 'jimeng' | 'kuaizi' | 'toapis' | 'k99' {
   const m = (modelId || '').trim().toLowerCase()
   if (m.startsWith('doubao-seedance-') || m.startsWith('seedance-')) return 'ark'
   if (m.startsWith('jimeng-')) return 'jimeng'
+  if (m.startsWith('kuaizi-')) return 'kuaizi'
+  if (m.startsWith('toapis-')) return 'toapis'
+  if (m.startsWith('k99-')) return 'k99'
   return 'dashscope'
 }
 
@@ -76,6 +79,35 @@ export const JIMENG_MODELS = {
   'jimeng-3.0-pro': '即梦 3.0 Pro (文生视频)',
   'jimeng-3.0-pro-i2v': '即梦 3.0 Pro (图生视频·首帧)',
 } as const
+
+export const KUAIZI_MODELS = {
+  'kuaizi-lizhen-pro': '丽帧 Pro (1080p · 文/图/多模态)',
+  'kuaizi-lizhen-fast': '丽帧 Fast (720p · 快速)',
+  'kuaizi-lizhen-mini': '丽帧 Mini (轻量)',
+} as const
+
+// 筷子科技"丽帧"配置 —— 中转火山方舟 Seedance,提供链式超分 / 版权放行等增值能力
+const KUAIZI_DEFAULT_BASE_URL = 'https://aiopenapi.kuaizi.cn'
+const KUAIZI_CREATE_PATH = '/ai-open-platform-api/v1/lz/video/task/create'
+const KUAIZI_STATUS_PATH = '/ai-open-platform-api/v1/lz/video/task/status'
+
+export const TOAPIS_MODELS = {
+  'toapis-seedance-2': 'Seedance 2 (ToAPIs · 1080p/4k)',
+  'toapis-seedance-2-fast': 'Seedance 2 Fast (ToAPIs · 720p)',
+  'toapis-seedance-2-mini': 'Seedance 2 Mini (ToAPIs · 多模态参考)',
+} as const
+
+// ToAPIs 配置 —— 中转火山方舟 Seedance 2 系列
+const TOAPIS_DEFAULT_BASE_URL = 'https://toapis.com'
+
+export const K99_MODELS = {
+  'k99-SD2.0': 'SD2.0 (k99 · Seedance 2.0)',
+} as const
+
+// k99.tw 配置 —— newapi 通道,中转 Seedance 2.0
+const K99_DEFAULT_BASE_URL = 'https://k99.tw'
+const K99_CREATE_PATH = '/v1/videos/generations'
+const TOAPIS_CREATE_PATH = '/v1/videos/generations'
 
 // 即梦 3.0 Pro 文生/图生视频统一用同一个 req_key
 const JIMENG_REQ_KEY = 'jimeng_ti2v_v30_pro'
@@ -565,6 +597,348 @@ async function jimengPoll(input: {
   return { ok: true, status, videoUrl: data.video_url || null, raw: r.json }
 }
 
+// ====================================================================
+// Kuaizi (丽帧) 端实现 —— 筷子科技中转火山方舟 Seedance
+//
+//  鉴权:Header `ApiKey: <KUAIZI_API_KEY>`(注意是 ApiKey 不是 Authorization)
+//  Base URL: https://aiopenapi.kuaizi.cn
+//
+//  提交:POST /ai-open-platform-api/v1/lz/video/task/create
+//       成功响应(HTTP 200):{ code: 0, data: { task_id }, trace_id }
+//       业务错误(HTTP 200 + code != 0):{ code, message, data: {} }
+//       系统错误(HTTP 非 200):{ code, message, ... }
+//       余额不足:HTTP 429,message 含 40001
+//
+//  查询:POST /ai-open-platform-api/v1/lz/video/task/status  (注意是 POST)
+//       Body: { task_id }
+//       返回 data.status: pending / submitted / running / succeeded / failed
+//       成功时 data.video_url 返回成片
+//
+//  Model id 约定:`kuaizi-lizhen-{mode}`,mode ∈ {pro, fast, mini}
+// ====================================================================
+
+function getKuaiziConfig() {
+  return {
+    apiKey: process.env.KUAIZI_API_KEY,
+    baseUrl: (process.env.KUAIZI_BASE_URL || KUAIZI_DEFAULT_BASE_URL).replace(/\/+$/, ''),
+  }
+}
+
+/** 从 model id 提取丽帧 mode: pro / fast / mini */
+function kuaiziModelToMode(modelId: string): 'fast' | 'pro' | 'mini' {
+  const m = modelId.toLowerCase()
+  if (m.endsWith('-pro')) return 'pro'
+  if (m.endsWith('-mini')) return 'mini'
+  return 'fast'
+}
+
+/** 项目内部 resolution('480P'/'720P'/'1080P' 大写)→ 筷子小写格式 */
+function toKuaiziResolution(r: string | undefined): '480p' | '720p' | '1080p' | '4k' {
+  const s = (r || '720P').trim().toLowerCase()
+  if (s === '480p') return '480p'
+  if (s === '1080p') return '1080p'
+  if (s === '4k') return '4k'
+  return '720p'
+}
+
+/** 把筷子 status 字符串映射到项目内 SeedanceProgress */
+function kuaiziStatusToProgress(s: string | undefined): SeedanceProgress {
+  const v = (s || '').toLowerCase()
+  if (v === 'succeeded') return 'succeeded'
+  if (v === 'failed') return 'failed'
+  if (v === 'cancelled') return 'cancelled'
+  if (v === 'running') return 'running'
+  // pending / submitted / 未知 都按 queued 处理
+  return 'queued'
+}
+
+async function kuaiziSubmit(input: {
+  model: string
+  prompt: string
+  media: DashScopeMediaItem[]
+  ratio?: SeedanceRatio
+  resolution?: string
+  duration?: number
+  generateAudio?: boolean
+  watermark?: boolean
+  referenceVideoUrl?: string
+  referenceAudioUrl?: string
+  apiKey: string
+  baseUrl: string
+}): Promise<{ ok: true; taskId: string; model: string } | { ok: false; error: string }> {
+  const mode = kuaiziModelToMode(input.model)
+  const body: Record<string, unknown> = {
+    prompt: input.prompt,
+    mode,
+    resolution: toKuaiziResolution(input.resolution),
+  }
+  if (input.ratio) body.ratio = input.ratio
+  if (typeof input.duration === 'number') body.duration = input.duration
+  if (typeof input.generateAudio === 'boolean') body.generate_audio = input.generateAudio
+  if (typeof input.watermark === 'boolean') body.watermark = input.watermark
+
+  // 素材:first_frame / reference_image 都映射到 images 数组
+  const images: Array<{ url: string; role: string }> = []
+  for (const m of input.media) {
+    images.push({ url: m.url, role: m.type })  // 'first_frame' / 'reference_image'
+  }
+  if (images.length > 0) body.images = images.slice(0, 9)
+  if (input.referenceVideoUrl) body.videos = [{ url: input.referenceVideoUrl, role: 'reference_video' }]
+  if (input.referenceAudioUrl) body.audios = [{ url: input.referenceAudioUrl, role: 'reference_audio' }]
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 30_000)
+  try {
+    const res = await fetch(`${input.baseUrl}${KUAIZI_CREATE_PATH}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ApiKey: input.apiKey,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+    clearTimeout(timeout)
+    const text = await res.text().catch(() => '')
+    // 余额不足:HTTP 429
+    if (res.status === 429) {
+      return { ok: false, error: `[kuaizi] 余额不足 (429): ${text.slice(0, 200)}` }
+    }
+    if (!res.ok) {
+      return { ok: false, error: `[kuaizi] submit ${res.status}: ${text.slice(0, 300)}` }
+    }
+    let json: { code?: number; message?: string; data?: { task_id?: string } } = {}
+    try { json = JSON.parse(text) } catch {}
+    if (json.code !== 0) {
+      return { ok: false, error: `[kuaizi] submit code=${json.code}: ${json.message || text.slice(0, 200)}` }
+    }
+    const taskId = json.data?.task_id
+    if (!taskId) {
+      return { ok: false, error: `[kuaizi] no task_id: ${text.slice(0, 200)}` }
+    }
+    return { ok: true, taskId, model: input.model }
+  } catch (e) {
+    clearTimeout(timeout)
+    const msg = e instanceof Error ? (e.name === 'AbortError' ? 'submit timeout (30s)' : e.message) : 'fetch failed'
+    return { ok: false, error: `[kuaizi] network: ${msg}` }
+  }
+}
+
+async function kuaiziPoll(input: {
+  taskId: string
+  apiKey: string
+  baseUrl: string
+}): Promise<
+  | { ok: true; status: SeedanceProgress; videoUrl: string | null; raw: any }
+  | { ok: false; error: string; status?: SeedanceProgress; raw?: any }
+> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 30_000)
+  try {
+    const res = await fetch(`${input.baseUrl}${KUAIZI_STATUS_PATH}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ApiKey: input.apiKey,
+      },
+      body: JSON.stringify({ task_id: input.taskId }),
+      signal: controller.signal,
+    })
+    clearTimeout(timeout)
+    const text = await res.text().catch(() => '')
+    if (!res.ok) return { ok: false, error: `[kuaizi] poll ${res.status}: ${text.slice(0, 300)}` }
+    let json: { code?: number; message?: string; data?: { status?: string; video_url?: string; error?: string } } = {}
+    try { json = JSON.parse(text) } catch {}
+    if (json.code !== 0) {
+      return { ok: false, error: `[kuaizi] poll code=${json.code}: ${json.message || text.slice(0, 200)}` }
+    }
+    const data = json.data || {}
+    const status = kuaiziStatusToProgress(data.status)
+    const videoUrl = data.video_url || null
+    // 失败时把筷子返回的 error 字段塞进 raw,让上层 generateVideo 能取出来
+    return { ok: true, status, videoUrl, raw: { error: { message: data.error || '' }, ...data } }
+  } catch (e) {
+    clearTimeout(timeout)
+    const msg = e instanceof Error ? (e.name === 'AbortError' ? 'poll timeout (30s)' : e.message) : 'fetch failed'
+    return { ok: false, error: `[kuaizi] poll network: ${msg}` }
+  }
+}
+
+// ====================================================================
+// ToAPIs 端实现 —— 中转火山方舟 Seedance 2 系列
+//
+//  鉴权:Header `Authorization: Bearer <TOAPIS_API_KEY>`
+//  Base URL: https://toapis.com
+//
+//  提交:POST /v1/videos/generations
+//       返回:{ id, object: "generation.task", model, status, progress, created_at }
+//
+//  查询:GET /v1/videos/generations/{task_id}
+//       返回:{ id, status, progress, result: { type: "video", data: [{ url, format }] }, error: { code, message } }
+//       status: queued / in_progress / completed / failed
+//       成功时 result.data[0].url 返回成片(24 小时有效)
+//
+//  Model id 约定:`toapis-seedance-2` / `toapis-seedance-2-fast` / `toapis-seedance-2-mini`
+//  对应上游 model:seedance-2 / seedance-2-fast / seedance-2-mini
+// ====================================================================
+
+function getToapisConfig() {
+  return {
+    apiKey: process.env.TOAPIS_API_KEY,
+    baseUrl: (process.env.TOAPIS_BASE_URL || TOAPIS_DEFAULT_BASE_URL).replace(/\/+$/, ''),
+  }
+}
+
+/** 从 model id 剥离 `toapis-` 前缀,得到上游 model 名 */
+function toapisModelToUpstream(modelId: string): string {
+  return modelId.replace(/^toapis-/i, '')
+}
+
+/** 项目内部 resolution('480P'/'720P'/'1080P' 大写)→ ToAPIs 小写格式 */
+function toToapisResolution(r: string | undefined): '480p' | '720p' | '1080p' | '4k' {
+  const s = (r || '720P').trim().toLowerCase()
+  if (s === '480p') return '480p'
+  if (s === '1080p') return '1080p'
+  if (s === '4k') return '4k'
+  return '720p'
+}
+
+/** 把 ToAPIs status 字符串映射到项目内 SeedanceProgress */
+function toapisStatusToProgress(s: string | undefined): SeedanceProgress {
+  const v = (s || '').toLowerCase()
+  if (v === 'completed') return 'succeeded'
+  if (v === 'failed') return 'failed'
+  if (v === 'cancelled') return 'cancelled'
+  if (v === 'in_progress') return 'running'
+  // queued / 未知 都按 queued 处理
+  return 'queued'
+}
+
+async function toapisSubmit(input: {
+  model: string
+  prompt: string
+  media: DashScopeMediaItem[]
+  ratio?: SeedanceRatio
+  resolution?: string
+  duration?: number
+  generateAudio?: boolean
+  watermark?: boolean
+  referenceVideoUrl?: string
+  referenceAudioUrl?: string
+  apiKey: string
+  baseUrl: string
+}): Promise<{ ok: true; taskId: string; model: string } | { ok: false; error: string }> {
+  const upstreamModel = toapisModelToUpstream(input.model)
+  const body: Record<string, unknown> = {
+    model: upstreamModel,
+    prompt: input.prompt,
+  }
+  if (input.ratio) body.aspect_ratio = input.ratio
+  if (typeof input.duration === 'number') body.duration = input.duration
+  if (input.resolution) body.resolution = toToapisResolution(input.resolution)
+  if (typeof input.generateAudio === 'boolean') body.generate_audio = input.generateAudio
+
+  // 素材:image_with_roles(first_frame / reference_image)
+  const imageWithRoles: Array<{ url: string; role: string }> = []
+  for (const m of input.media) {
+    imageWithRoles.push({ url: m.url, role: m.type })  // 'first_frame' / 'reference_image'
+  }
+  if (imageWithRoles.length > 0) body.image_with_roles = imageWithRoles
+  if (input.referenceVideoUrl) body.video_with_roles = [{ url: input.referenceVideoUrl, role: 'reference_video' }]
+  if (input.referenceAudioUrl) body.audio_with_roles = [{ url: input.referenceAudioUrl, role: 'reference_audio' }]
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 30_000)
+  try {
+    const res = await fetch(`${input.baseUrl}${TOAPIS_CREATE_PATH}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${input.apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+    clearTimeout(timeout)
+    const text = await res.text().catch(() => '')
+    if (!res.ok) {
+      return { ok: false, error: `[toapis] submit ${res.status}: ${text.slice(0, 300)}` }
+    }
+    let json: { id?: string; status?: string; error?: { code?: string; message?: string } } = {}
+    try { json = JSON.parse(text) } catch {}
+    const taskId = json.id
+    if (!taskId) {
+      return { ok: false, error: `[toapis] no task id: ${json.error?.message || text.slice(0, 200)}` }
+    }
+    return { ok: true, taskId, model: input.model }
+  } catch (e) {
+    clearTimeout(timeout)
+    const msg = e instanceof Error ? (e.name === 'AbortError' ? 'submit timeout (30s)' : e.message) : 'fetch failed'
+    return { ok: false, error: `[toapis] network: ${msg}` }
+  }
+}
+
+async function toapisPoll(input: {
+  taskId: string
+  apiKey: string
+  baseUrl: string
+}): Promise<
+  | { ok: true; status: SeedanceProgress; videoUrl: string | null; raw: any }
+  | { ok: false; error: string; status?: SeedanceProgress; raw?: any }
+> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 30_000)
+  try {
+    const res = await fetch(`${input.baseUrl}${TOAPIS_CREATE_PATH}/${encodeURIComponent(input.taskId)}`, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${input.apiKey}`,
+      },
+      signal: controller.signal,
+    })
+    clearTimeout(timeout)
+    const text = await res.text().catch(() => '')
+    if (!res.ok) return { ok: false, error: `[toapis] poll ${res.status}: ${text.slice(0, 300)}` }
+    let json: {
+      id?: string
+      status?: string
+      progress?: number
+      result?: { type?: string; data?: Array<{ url?: string; format?: string }> }
+      error?: { code?: string; message?: string }
+    } = {}
+    try { json = JSON.parse(text) } catch {}
+    const status = toapisStatusToProgress(json.status)
+    const videoUrl = json.result?.data?.[0]?.url || null
+    return { ok: true, status, videoUrl, raw: { error: { message: json.error?.message || '' }, ...json } }
+  } catch (e) {
+    clearTimeout(timeout)
+    const msg = e instanceof Error ? (e.name === 'AbortError' ? 'poll timeout (30s)' : e.message) : 'fetch failed'
+    return { ok: false, error: `[toapis] poll network: ${msg}` }
+  }
+}
+
+// ====================================================================
+// k99.tw 端实现 —— newapi 通道,中转 Seedance 2.0
+//
+//  接口格式跟 ToAPIs 完全一致(都是 newapi 风格):
+//   - 提交:POST /v1/videos/generations → { id, status, ... }
+//   - 查询:GET  /v1/videos/generations/{task_id} → { status, result.data[0].url, ... }
+//
+//  所以复用 toapisSubmit / toapisPoll,只换 baseUrl + apiKey + model 映射。
+// ====================================================================
+
+function getK99Config() {
+  return {
+    apiKey: process.env.K99_API_KEY,
+    baseUrl: (process.env.K99_BASE_URL || K99_DEFAULT_BASE_URL).replace(/\/+$/, ''),
+  }
+}
+
+/** 从 model id 剥离 `k99-` 前缀,得到上游 model 名(保留大小写,如 "SD2.0") */
+function k99ModelToUpstream(modelId: string): string {
+  return modelId.replace(/^k99-/i, '')
+}
+
 type SubmitInput = {
   model: string
   prompt: string
@@ -579,7 +953,7 @@ type SubmitInput = {
   referenceAudioUrl?: string
 }
 
-type VideoBackend = 'ark' | 'dashscope' | 'jimeng'
+type VideoBackend = 'ark' | 'dashscope' | 'jimeng' | 'kuaizi' | 'toapis' | 'k99'
 type SubmitResult = { ok: true; taskId: string; model: string; backend: VideoBackend } | { ok: false; error: string }
 
 async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
@@ -630,6 +1004,87 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
       ? { ok: true, taskId: r.taskId, model: input.model, backend: 'jimeng' }
       : { ok: false, error: r.error }
   }
+  if (backend === 'kuaizi') {
+    const { apiKey, baseUrl } = getKuaiziConfig()
+    if (!apiKey) {
+      return {
+        ok: false,
+        error: '[kuaizi] 缺少 KUAIZI_API_KEY,请在 Cloudflare Secrets 或 .env.local 中配置后再试。',
+      }
+    }
+    const r = await kuaiziSubmit({
+      model: input.model,
+      prompt: input.prompt,
+      media: input.media,
+      ratio: input.ratio,
+      resolution: input.resolution,
+      duration: input.duration,
+      generateAudio: input.generateAudio,
+      watermark: input.watermark,
+      referenceVideoUrl: input.referenceVideoUrl,
+      referenceAudioUrl: input.referenceAudioUrl,
+      apiKey,
+      baseUrl,
+    })
+    return r.ok
+      ? { ok: true, taskId: r.taskId, model: r.model, backend: 'kuaizi' }
+      : { ok: false, error: r.error }
+  }
+  if (backend === 'toapis') {
+    const { apiKey, baseUrl } = getToapisConfig()
+    if (!apiKey) {
+      return {
+        ok: false,
+        error: '[toapis] 缺少 TOAPIS_API_KEY,请在 Cloudflare Secrets 或 .env.local 中配置后再试。',
+      }
+    }
+    const r = await toapisSubmit({
+      model: input.model,
+      prompt: input.prompt,
+      media: input.media,
+      ratio: input.ratio,
+      resolution: input.resolution,
+      duration: input.duration,
+      generateAudio: input.generateAudio,
+      watermark: input.watermark,
+      referenceVideoUrl: input.referenceVideoUrl,
+      referenceAudioUrl: input.referenceAudioUrl,
+      apiKey,
+      baseUrl,
+    })
+    return r.ok
+      ? { ok: true, taskId: r.taskId, model: r.model, backend: 'toapis' }
+      : { ok: false, error: r.error }
+  }
+  if (backend === 'k99') {
+    const { apiKey, baseUrl } = getK99Config()
+    if (!apiKey) {
+      return {
+        ok: false,
+        error: '[k99] 缺少 K99_API_KEY,请在 Cloudflare Secrets 或 .env.local 中配置后再试。',
+      }
+    }
+    // k99 是 newapi 通道,接口格式跟 ToAPIs 完全一致,复用 toapisSubmit/toapisPoll
+    // toapisSubmit 内部会剥离 'toapis-' 前缀,所以这里用 'toapis-' + 上游模型名绕过
+    const upstreamModel = k99ModelToUpstream(input.model)  // 'SD2.0'
+    const r = await toapisSubmit({
+      model: `toapis-${upstreamModel}`,
+      prompt: input.prompt,
+      media: input.media,
+      ratio: input.ratio,
+      resolution: input.resolution,
+      duration: input.duration,
+      generateAudio: input.generateAudio,
+      watermark: input.watermark,
+      referenceVideoUrl: input.referenceVideoUrl,
+      referenceAudioUrl: input.referenceAudioUrl,
+      apiKey,
+      baseUrl,
+    })
+    return r.ok
+      ? { ok: true, taskId: r.taskId, model: input.model, backend: 'k99' }
+      : { ok: false, error: r.error }
+  }
   // DashScope
   const { apiKey } = getDashScopeConfig()
   if (!apiKey) return { ok: false, error: 'Qwen / DASHSCOPE_API_KEY not configured' }
@@ -661,6 +1116,21 @@ async function pollVideoTask(input: PollInput): Promise<PollResult> {
     const { ak, sk } = getJimengConfig()
     if (!ak || !sk) return { ok: false, error: '[jimeng] 缺少 JIMENG_ACCESS_KEY / JIMENG_SECRET_KEY' }
     return jimengPoll({ ak, sk, taskId: input.taskId })
+  }
+  if (input.backend === 'kuaizi') {
+    const { apiKey, baseUrl } = getKuaiziConfig()
+    if (!apiKey) return { ok: false, error: '[kuaizi] 缺少 KUAIZI_API_KEY' }
+    return kuaiziPoll({ taskId: input.taskId, apiKey, baseUrl })
+  }
+  if (input.backend === 'toapis') {
+    const { apiKey, baseUrl } = getToapisConfig()
+    if (!apiKey) return { ok: false, error: '[toapis] 缺少 TOAPIS_API_KEY' }
+    return toapisPoll({ taskId: input.taskId, apiKey, baseUrl })
+  }
+  if (input.backend === 'k99') {
+    const { apiKey, baseUrl } = getK99Config()
+    if (!apiKey) return { ok: false, error: '[k99] 缺少 K99_API_KEY' }
+    return toapisPoll({ taskId: input.taskId, apiKey, baseUrl })
   }
   const { apiKey } = getDashScopeConfig()
   if (!apiKey) return { ok: false, error: 'Qwen / DASHSCOPE_API_KEY not configured' }
@@ -720,7 +1190,7 @@ export const submitVideoTaskFn = createServerFn({ method: 'POST' })
 
 const PollServerInput = z.object({
   taskId: z.string().min(1).max(200),
-  backend: z.enum(['ark', 'dashscope', 'jimeng']),
+  backend: z.enum(['ark', 'dashscope', 'jimeng', 'kuaizi', 'toapis', 'k99']),
 })
 
 export const pollVideoTaskFn = createServerFn({ method: 'POST' })

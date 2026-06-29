@@ -141,6 +141,11 @@ const IMAGE_MODELS: ImageModel[] = [
   },
   // ---- Tokenflash / AIGCFamily 中转 ----
   {
+    id: 'revora/gpt-image-2', name: 'GPT Image 2 (Revora)', nameEn: 'GPT Image 2 (Revora)',
+    vendor: 'Revora · OpenAI 兼容', tagline: 'Image2 · T2I/I2I', taglineEn: 'Image2 · T2I/I2I',
+    gradient: 'from-violet-500 to-purple-600', status: 'available',
+  },
+  {
     id: 'tokenflash/gpt-image-2', name: 'GPT Image 2 (Tokenflash)', nameEn: 'GPT Image 2 (Tokenflash)',
     vendor: 'Tokenflash · OpenAI 兼容', tagline: 'Image2 · T2I/I2I · 推荐', taglineEn: 'Image2 · T2I/I2I · recommended',
     gradient: 'from-rose-500 to-pink-600', status: 'available',

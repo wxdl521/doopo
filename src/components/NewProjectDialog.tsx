@@ -50,6 +50,10 @@ const imageModelOptions = [
   { id: 'pixflow/gemini-3.1-flash-image', label: 'Gemini 3.1 Flash Image', sub: 'Pixflow · Google · 通用' },
   { id: 'tokenflash/gpt-image-2', label: 'GPT Image 2 (Tokenflash)', sub: 'Tokenflash · OpenAI · Image2 · 推荐' },
 
+  // ---- Revora(OpenAI 兼容)----
+  { id: '__sep_revora__', label: '—— Revora(OpenAI 兼容)——', sub: '' },
+  { id: 'revora/gpt-image-2', label: 'GPT Image 2 (Revora)', sub: 'Revora · OpenAI · Image2 · T2I/I2I' },
+
   // ---- OneToken(OpenAI 兼容)----
   { id: '__sep_onetoken__', label: '—— OneToken(OpenAI 兼容)——', sub: '' },
   { id: 'onetoken/gpt-image-2', label: 'GPT Image 2 (OneToken)', sub: 'OneToken · OpenAI · Image2' },
@@ -60,7 +64,27 @@ const imageModelOptions = [
 
   // ---- OTU(OpenAI 兼容)----
   { id: '__sep_otu__', label: '—— OTU(OpenAI 兼容)——', sub: '' },
-  { id: 'otu/image2', label: 'Image2 (OTU)', sub: 'OTU · T2I/I2I' },
+  { id: 'otu/image2', label: 'GPT Image 2 (OTU)', sub: 'OTU · OpenAI · Image2 · T2I/I2I' },
+
+  // ---- AI Tokenvibe(OpenAI 兼容)----
+  { id: '__sep_aitokenvibe__', label: '—— AI Tokenvibe(OpenAI 兼容)——', sub: '' },
+  { id: 'aitokenvibe/gpt-image-2', label: 'GPT Image 2 (AI Tokenvibe)', sub: 'AI Tokenvibe · OpenAI · Image2 · T2I/I2I' },
+
+  // ---- 天鸿智算(OpenAI 兼容)----
+  { id: '__sep_thhtcloud__', label: '—— 天鸿智算(OpenAI 兼容)——', sub: '' },
+  { id: 'thhtcloud/gpt-image-2', label: 'GPT Image 2 (天鸿智算)', sub: '天鸿智算 · OpenAI · Image2 · T2I/I2I' },
+
+  // ---- ailinzi(OpenAI 兼容)----
+  { id: '__sep_ailinzi__', label: '—— ailinzi(OpenAI 兼容)——', sub: '' },
+  { id: 'ailinzi/image2', label: 'GPT Image 2 (ailinzi)', sub: 'ailinzi · OpenAI · Image2 · T2I/I2I' },
+
+  // ---- TokenHub(OpenAI 兼容)----
+  { id: '__sep_tokenhub__', label: '—— TokenHub(OpenAI 兼容)——', sub: '' },
+  { id: 'tokenhub/gpt-image-2', label: 'GPT Image 2 (TokenHub)', sub: 'TokenHub · OpenAI · Image2 · T2I/I2I' },
+
+  // ---- nagora.ai(Azure 渠道 OpenAI 官方)----
+  { id: '__sep_nagora__', label: '—— nagora.ai(Azure 渠道)——', sub: '' },
+  { id: 'nagora/gpt-image-2', label: 'GPT Image 2 (nagora)', sub: 'nagora.ai · Azure 渠道 · OpenAI · Image2 · T2I/I2I' },
 
   // ---- Azure OpenAI ----
   { id: '__sep_azure__', label: '—— Azure · OpenAI ——', sub: '' },
@@ -84,6 +108,22 @@ const videoModels = [
   { id: '__video_sep_jimeng__', label: '—— 即梦 3.0 Pro(Volcengine 视觉服务)——', sub: '' },
   { id: 'jimeng-3.0-pro', label: '即梦 3.0 Pro (文生视频)', sub: '需配置 JIMENG AK/SK' },
   { id: 'jimeng-3.0-pro-i2v', label: '即梦 3.0 Pro (图生视频·首帧)', sub: '需配置 JIMENG AK/SK' },
+
+  // ---- 筷子科技 丽帧(中转火山方舟 Seedance,需 KUAIZI_API_KEY)----
+  { id: '__video_sep_kuaizi__', label: '—— 筷子科技 丽帧(中转 Seedance)——', sub: '' },
+  { id: 'kuaizi-lizhen-pro', label: '丽帧 Pro (1080p)', sub: '筷子科技 · 多模态 · 中转 Seedance' },
+  { id: 'kuaizi-lizhen-fast', label: '丽帧 Fast (720p)', sub: '筷子科技 · 快速版 · 中转 Seedance' },
+  { id: 'kuaizi-lizhen-mini', label: '丽帧 Mini', sub: '筷子科技 · 轻量版 · 中转 Seedance' },
+
+  // ---- ToAPIs(中转火山方舟 Seedance 2,需 TOAPIS_API_KEY)----
+  { id: '__video_sep_toapis__', label: '—— ToAPIs(中转 Seedance 2)——', sub: '' },
+  { id: 'toapis-seedance-2', label: 'Seedance 2 (ToAPIs)', sub: 'ToAPIs · 1080p/4k · 多模态' },
+  { id: 'toapis-seedance-2-fast', label: 'Seedance 2 Fast (ToAPIs)', sub: 'ToAPIs · 720p · 快速版' },
+  { id: 'toapis-seedance-2-mini', label: 'Seedance 2 Mini (ToAPIs)', sub: 'ToAPIs · 720p · 多模态参考' },
+
+  // ---- k99.tw(newapi 通道 · 中转 SD2.0,需 K99_API_KEY)----
+  { id: '__video_sep_k99__', label: '—— k99.tw(newapi · SD2.0)——', sub: '' },
+  { id: 'k99-SD2.0', label: 'SD2.0 (k99)', sub: 'k99.tw · newapi · Seedance 2.0' },
 
   // ---- 备用:HappyHorse(阿里 DashScope)----
   { id: '__video_sep__', label: '—— 备用:HappyHorse(DashScope)——', sub: '' },

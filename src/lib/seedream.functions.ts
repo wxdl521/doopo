@@ -263,6 +263,16 @@ export const generateImage = createServerFn({ method: 'POST' })
       })
       return { url: r.url, error: r.error, model: r.model }
     }
+    // 委托给 Revora(OpenAI 兼容,api.revora.vip)
+    if (requested.toLowerCase().startsWith('revora/')) {
+      const { callRevoraImage } = await import('./revoraImage.functions')
+      const r = await callRevoraImage({
+        prompt: appendNegative(data.prompt, data.negativePrompt),
+        model: requested,
+        size: data.size,
+      })
+      return { url: r.url, error: r.error, model: r.model }
+    }
     if (requested.toLowerCase().startsWith('aigcfamily/')) {
       const { callAigcfamilyImage } = await import('./aigcfamilyImage.functions')
       const r = await callAigcfamilyImage({
@@ -295,6 +305,56 @@ export const generateImage = createServerFn({ method: 'POST' })
     if (requested.toLowerCase().startsWith('otu/')) {
       const { callOtuImage } = await import('./otuImage.functions')
       const r = await callOtuImage({
+        prompt: appendNegative(data.prompt, data.negativePrompt),
+        model: requested,
+        size: data.size,
+      })
+      return { url: r.url, error: r.error, model: r.model }
+    }
+    // 委托给 AI Tokenvibe(OpenAI 兼容)
+    if (requested.toLowerCase().startsWith('aitokenvibe/')) {
+      const { callAitokenvibeImage } = await import('./aitokenvibeImage.functions')
+      const r = await callAitokenvibeImage({
+        prompt: appendNegative(data.prompt, data.negativePrompt),
+        model: requested,
+        size: data.size,
+      })
+      return { url: r.url, error: r.error, model: r.model }
+    }
+    // 委托给天鸿智算(OpenAI 兼容)
+    if (requested.toLowerCase().startsWith('thhtcloud/')) {
+      const { callThhtcloudImage } = await import('./thhtcloudImage.functions')
+      const r = await callThhtcloudImage({
+        prompt: appendNegative(data.prompt, data.negativePrompt),
+        model: requested,
+        size: data.size,
+      })
+      return { url: r.url, error: r.error, model: r.model }
+    }
+    // 委托给 ailinzi(OpenAI 兼容)
+    if (requested.toLowerCase().startsWith('ailinzi/')) {
+      const { callAilinziImage } = await import('./ailinziImage.functions')
+      const r = await callAilinziImage({
+        prompt: appendNegative(data.prompt, data.negativePrompt),
+        model: requested,
+        size: data.size,
+      })
+      return { url: r.url, error: r.error, model: r.model }
+    }
+    // 委托给 TokenHub(OpenAI 兼容,tokenhub.linkstor.com)
+    if (requested.toLowerCase().startsWith('tokenhub/')) {
+      const { callTokenhubImage } = await import('./tokenhubImage.functions')
+      const r = await callTokenhubImage({
+        prompt: appendNegative(data.prompt, data.negativePrompt),
+        model: requested,
+        size: data.size,
+      })
+      return { url: r.url, error: r.error, model: r.model }
+    }
+    // 委托给 nagora.ai(Azure 渠道 OpenAI 官方)
+    if (requested.toLowerCase().startsWith('nagora/')) {
+      const { callNagoraImage } = await import('./nagoraImage.functions')
+      const r = await callNagoraImage({
         prompt: appendNegative(data.prompt, data.negativePrompt),
         model: requested,
         size: data.size,
@@ -736,6 +796,18 @@ export const regenerateCharacterLook = createServerFn({ method: 'POST' })
       if (!r.url) return { ok: false as const, error: r.error || 'Tokenflash 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
+    if (requested.toLowerCase().startsWith('revora/')) {
+      const { callRevoraImage } = await import('./revoraImage.functions')
+      const r = await callRevoraImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+        quality: 'high',
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'Revora 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
     if (requested.toLowerCase().startsWith('aigcfamily/')) {
       const { callAigcfamilyImage } = await import('./aigcfamilyImage.functions')
       const r = await callAigcfamilyImage({
@@ -779,6 +851,61 @@ export const regenerateCharacterLook = createServerFn({ method: 'POST' })
         referenceImages: [data.referenceImageUrl],
       })
       if (!r.url) return { ok: false as const, error: r.error || 'OTU 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('aitokenvibe/')) {
+      const { callAitokenvibeImage } = await import('./aitokenvibeImage.functions')
+      const r = await callAitokenvibeImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'AI Tokenvibe 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('thhtcloud/')) {
+      const { callThhtcloudImage } = await import('./thhtcloudImage.functions')
+      const r = await callThhtcloudImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+      })
+      if (!r.url) return { ok: false as const, error: r.error || '天鸿智算 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('ailinzi/')) {
+      const { callAilinziImage } = await import('./ailinziImage.functions')
+      const r = await callAilinziImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'ailinzi 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('tokenhub/')) {
+      const { callTokenhubImage } = await import('./tokenhubImage.functions')
+      const r = await callTokenhubImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'tokenhub 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('nagora/')) {
+      const { callNagoraImage } = await import('./nagoraImage.functions')
+      const r = await callNagoraImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'nagora 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
 
@@ -944,6 +1071,17 @@ export const generateStoryboardShotImage = createServerFn({ method: 'POST' })
       if (!r.url) return { ok: false as const, error: r.error || 'Tokenflash 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
+    if (requested.toLowerCase().startsWith('revora/')) {
+      const { callRevoraImage } = await import('./revoraImage.functions')
+      const r = await callRevoraImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: '2K',
+        referenceImages: images,
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'Revora 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
     if (requested.toLowerCase().startsWith('aigcfamily/')) {
       const { callAigcfamilyImage } = await import('./aigcfamilyImage.functions')
       const r = await callAigcfamilyImage({
@@ -987,6 +1125,61 @@ export const generateStoryboardShotImage = createServerFn({ method: 'POST' })
         referenceImages: images,
       })
       if (!r.url) return { ok: false as const, error: r.error || 'OTU 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('aitokenvibe/')) {
+      const { callAitokenvibeImage } = await import('./aitokenvibeImage.functions')
+      const r = await callAitokenvibeImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: '2K',
+        referenceImages: images,
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'AI Tokenvibe 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('thhtcloud/')) {
+      const { callThhtcloudImage } = await import('./thhtcloudImage.functions')
+      const r = await callThhtcloudImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: '2K',
+        referenceImages: images,
+      })
+      if (!r.url) return { ok: false as const, error: r.error || '天鸿智算 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('ailinzi/')) {
+      const { callAilinziImage } = await import('./ailinziImage.functions')
+      const r = await callAilinziImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: '2K',
+        referenceImages: images,
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'ailinzi 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('tokenhub/')) {
+      const { callTokenhubImage } = await import('./tokenhubImage.functions')
+      const r = await callTokenhubImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: '2K',
+        referenceImages: images,
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'tokenhub 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('nagora/')) {
+      const { callNagoraImage } = await import('./nagoraImage.functions')
+      const r = await callNagoraImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: '2K',
+        referenceImages: images,
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'nagora 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
     // generateStoryboardShotImage: 委托给 legacy(Qwen / Wan / OpenRouter 等)
@@ -1146,6 +1339,17 @@ export const regenerateStoryboardShot = createServerFn({ method: 'POST' })
       if (!r.url) return { ok: false as const, error: r.error || 'Tokenflash 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
+    if (requested.toLowerCase().startsWith('revora/')) {
+      const { callRevoraImage } = await import('./revoraImage.functions')
+      const r = await callRevoraImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: '2K',
+        referenceImages: images,
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'Revora 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
     if (requested.toLowerCase().startsWith('aigcfamily/')) {
       const { callAigcfamilyImage } = await import('./aigcfamilyImage.functions')
       const r = await callAigcfamilyImage({
@@ -1187,6 +1391,61 @@ export const regenerateStoryboardShot = createServerFn({ method: 'POST' })
         referenceImages: images,
       })
       if (!r.url) return { ok: false as const, error: r.error || 'OTU 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('aitokenvibe/')) {
+      const { callAitokenvibeImage } = await import('./aitokenvibeImage.functions')
+      const r = await callAitokenvibeImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: '2K',
+        referenceImages: images,
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'AI Tokenvibe 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('thhtcloud/')) {
+      const { callThhtcloudImage } = await import('./thhtcloudImage.functions')
+      const r = await callThhtcloudImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: '2K',
+        referenceImages: images,
+      })
+      if (!r.url) return { ok: false as const, error: r.error || '天鸿智算 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('ailinzi/')) {
+      const { callAilinziImage } = await import('./ailinziImage.functions')
+      const r = await callAilinziImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: '2K',
+        referenceImages: images,
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'ailinzi 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('tokenhub/')) {
+      const { callTokenhubImage } = await import('./tokenhubImage.functions')
+      const r = await callTokenhubImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: '2K',
+        referenceImages: images,
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'tokenhub 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('nagora/')) {
+      const { callNagoraImage } = await import('./nagoraImage.functions')
+      const r = await callNagoraImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: '2K',
+        referenceImages: images,
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'nagora 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
     if (requested && !isSeedreamModel(requested)) {
@@ -1483,6 +1742,18 @@ export const generateStoryboardPitchDeck = createServerFn({ method: 'POST' })
       if (!r.url) return { ok: false as const, error: r.error || 'Tokenflash 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
+    if (requested.toLowerCase().startsWith('revora/')) {
+      const { callRevoraImage } = await import('./revoraImage.functions')
+      const r = await callRevoraImage({
+        prompt,
+        model: requested,
+        size: '3840x2160',
+        referenceImages: data.referenceImages || [],
+        quality: 'high',
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'Revora 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
     if (requested.toLowerCase().startsWith('aigcfamily/')) {
       const { callAigcfamilyImage } = await import('./aigcfamilyImage.functions')
       const r = await callAigcfamilyImage({
@@ -1526,6 +1797,61 @@ export const generateStoryboardPitchDeck = createServerFn({ method: 'POST' })
         referenceImages: data.referenceImages || [],
       })
       if (!r.url) return { ok: false as const, error: r.error || 'OTU 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('aitokenvibe/')) {
+      const { callAitokenvibeImage } = await import('./aitokenvibeImage.functions')
+      const r = await callAitokenvibeImage({
+        prompt,
+        model: requested,
+        size: '3840x2160',
+        referenceImages: data.referenceImages || [],
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'AI Tokenvibe 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('thhtcloud/')) {
+      const { callThhtcloudImage } = await import('./thhtcloudImage.functions')
+      const r = await callThhtcloudImage({
+        prompt,
+        model: requested,
+        size: '3840x2160',
+        referenceImages: data.referenceImages || [],
+      })
+      if (!r.url) return { ok: false as const, error: r.error || '天鸿智算 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('ailinzi/')) {
+      const { callAilinziImage } = await import('./ailinziImage.functions')
+      const r = await callAilinziImage({
+        prompt,
+        model: requested,
+        size: '3840x2160',
+        referenceImages: data.referenceImages || [],
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'ailinzi 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('tokenhub/')) {
+      const { callTokenhubImage } = await import('./tokenhubImage.functions')
+      const r = await callTokenhubImage({
+        prompt,
+        model: requested,
+        size: '3840x2160',
+        referenceImages: data.referenceImages || [],
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'tokenhub 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('nagora/')) {
+      const { callNagoraImage } = await import('./nagoraImage.functions')
+      const r = await callNagoraImage({
+        prompt,
+        model: requested,
+        size: '3840x2160',
+        referenceImages: data.referenceImages || [],
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'nagora 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
 
@@ -1941,6 +2267,18 @@ export const regenerateSceneImage = createServerFn({ method: 'POST' })
       if (!r.url) return { ok: false as const, error: r.error || 'Tokenflash 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
+    if (requested.toLowerCase().startsWith('revora/')) {
+      const { callRevoraImage } = await import('./revoraImage.functions')
+      const r = await callRevoraImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+        quality: 'high',
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'Revora 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
     if (requested.toLowerCase().startsWith('aigcfamily/')) {
       const { callAigcfamilyImage } = await import('./aigcfamilyImage.functions')
       const r = await callAigcfamilyImage({
@@ -1984,6 +2322,61 @@ export const regenerateSceneImage = createServerFn({ method: 'POST' })
         referenceImages: [data.referenceImageUrl],
       })
       if (!r.url) return { ok: false as const, error: r.error || 'OTU 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('aitokenvibe/')) {
+      const { callAitokenvibeImage } = await import('./aitokenvibeImage.functions')
+      const r = await callAitokenvibeImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'AI Tokenvibe 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('thhtcloud/')) {
+      const { callThhtcloudImage } = await import('./thhtcloudImage.functions')
+      const r = await callThhtcloudImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+      })
+      if (!r.url) return { ok: false as const, error: r.error || '天鸿智算 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('ailinzi/')) {
+      const { callAilinziImage } = await import('./ailinziImage.functions')
+      const r = await callAilinziImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'ailinzi 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('tokenhub/')) {
+      const { callTokenhubImage } = await import('./tokenhubImage.functions')
+      const r = await callTokenhubImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'tokenhub 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('nagora/')) {
+      const { callNagoraImage } = await import('./nagoraImage.functions')
+      const r = await callNagoraImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'nagora 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
 
