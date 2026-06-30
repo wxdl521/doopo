@@ -52,13 +52,14 @@ const DASHSCOPE_TASK_GET = 'https://dashscope.aliyuncs.com/api/v1/tasks/'
  *  - ARK (Seedance):doubao-seedance-* 或 seedance-*
  *  - DashScope (HappyHorse / Wan / Wanx):其他视频模型 id 一律 fallback 到 DashScope
  */
-export function getVideoBackend(modelId: string | null | undefined): 'ark' | 'dashscope' | 'jimeng' | 'kuaizi' | 'toapis' | 'k99' {
+export function getVideoBackend(modelId: string | null | undefined): 'ark' | 'dashscope' | 'jimeng' | 'kuaizi' | 'toapis' | 'k99' | 'vapeur' {
   const m = (modelId || '').trim().toLowerCase()
   if (m.startsWith('doubao-seedance-') || m.startsWith('seedance-')) return 'ark'
   if (m.startsWith('jimeng-')) return 'jimeng'
   if (m.startsWith('kuaizi-')) return 'kuaizi'
   if (m.startsWith('toapis-')) return 'toapis'
   if (m.startsWith('k99-')) return 'k99'
+  if (m.startsWith('vapeur-')) return 'vapeur'
   return 'dashscope'
 }
 
@@ -110,6 +111,16 @@ const K99_DEFAULT_BASE_URL = 'https://k99.tw'
 const K99_CREATE_PATH = '/v1/videos'     // POST 提交
 const K99_STATUS_PATH = '/v1/videos'     // GET /v1/videos/{task_id}
 const TOAPIS_CREATE_PATH = '/v1/videos/generations'
+
+export const VAPEUR_MODELS = {
+  'vapeur-doubao-seedance-2-0-260128': 'Seedance 2.0 (vapeur)',
+  'vapeur-doubao-seedance-2-0-fast-260128': 'Seedance 2.0 Fast (vapeur)',
+} as const
+
+// vapeur.ai 配置 —— OpenAI 兼容统一网关,中转火山方舟 Seedance 2.0
+const VAPEUR_DEFAULT_BASE_URL = 'https://api.vapeur.ai'
+const VAPEUR_CREATE_PATH = '/v1/videos/generations'   // POST 提交(newapi 风格)
+const VAPEUR_STATUS_PATH = '/v1/videos/generations'   // GET /v1/videos/generations/{id} 查询
 
 // 即梦 3.0 Pro 文生/图生视频统一用同一个 req_key
 const JIMENG_REQ_KEY = 'jimeng_ti2v_v30_pro'
@@ -1058,7 +1069,30 @@ type SubmitInput = {
   referenceAudioUrl?: string
 }
 
-type VideoBackend = 'ark' | 'dashscope' | 'jimeng' | 'kuaizi' | 'toapis' | 'k99'
+type VideoBackend = 'ark' | 'dashscope' | 'jimeng' | 'kuaizi' | 'toapis' | 'k99' | 'vapeur'
+
+// ====================================================================
+// vapeur.ai 端实现 —— OpenAI 兼容统一网关,中转火山方舟 Seedance 2.0
+//
+//  2026/06 接入:接口格式推测为 newapi 风格(跟 ToAPIs 一致):
+//   - 提交:POST /v1/videos/generations → { id, status, ... }
+//   - 查询:GET  /v1/videos/generations/{task_id} → { status, result.data[0].url, ... }
+//
+//  复用 toapisSubmit / toapisPoll,只换 baseUrl + apiKey + model 映射。
+//  待用户充值后端到端验证;如返回格式不同,再改为独立实现。
+// ====================================================================
+
+function getVapeurConfig() {
+  return {
+    apiKey: process.env.VAPEUR_API_KEY,
+    baseUrl: (process.env.VAPEUR_BASE_URL || VAPEUR_DEFAULT_BASE_URL).replace(/\/+$/, ''),
+  }
+}
+
+/** 从 model id 剥离 `vapeur-` 前缀,得到上游 model 名 */
+function vapeurModelToUpstream(modelId: string): string {
+  return modelId.replace(/^vapeur-/i, '')
+}
 type SubmitResult = { ok: true; taskId: string; model: string; backend: VideoBackend } | { ok: false; error: string }
 
 async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
@@ -1182,6 +1216,35 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
       ? { ok: true, taskId: r.taskId, model: input.model, backend: 'k99' }
       : { ok: false, error: r.error }
   }
+  if (backend === 'vapeur') {
+    const { apiKey, baseUrl } = getVapeurConfig()
+    if (!apiKey) {
+      return {
+        ok: false,
+        error: '[vapeur] 缺少 VAPEUR_API_KEY,请在 Cloudflare Secrets 或 .env.local 中配置后再试。',
+      }
+    }
+    // vapeur 是 OpenAI 兼容网关,接口格式跟 ToAPIs 一致,复用 toapisSubmit/toapisPoll
+    // toapisSubmit 内部会剥离 'toapis-' 前缀,所以这里用 'toapis-' + 上游模型名绕过
+    const upstreamModel = vapeurModelToUpstream(input.model)
+    const r = await toapisSubmit({
+      model: `toapis-${upstreamModel}`,
+      prompt: input.prompt,
+      media: input.media,
+      ratio: input.ratio,
+      resolution: input.resolution,
+      duration: input.duration,
+      generateAudio: input.generateAudio,
+      watermark: input.watermark,
+      referenceVideoUrl: input.referenceVideoUrl,
+      referenceAudioUrl: input.referenceAudioUrl,
+      apiKey,
+      baseUrl,
+    })
+    return r.ok
+      ? { ok: true, taskId: r.taskId, model: input.model, backend: 'vapeur' }
+      : { ok: false, error: r.error }
+  }
   // DashScope
   const { apiKey } = getDashScopeConfig()
   if (!apiKey) return { ok: false, error: 'Qwen / DASHSCOPE_API_KEY not configured' }
@@ -1228,6 +1291,11 @@ async function pollVideoTask(input: PollInput): Promise<PollResult> {
     const { apiKey, baseUrl } = getK99Config()
     if (!apiKey) return { ok: false, error: '[k99] 缺少 K99_API_KEY' }
     return k99Poll({ taskId: input.taskId, apiKey, baseUrl })
+  }
+  if (input.backend === 'vapeur') {
+    const { apiKey, baseUrl } = getVapeurConfig()
+    if (!apiKey) return { ok: false, error: '[vapeur] 缺少 VAPEUR_API_KEY' }
+    return toapisPoll({ taskId: input.taskId, apiKey, baseUrl })
   }
   const { apiKey } = getDashScopeConfig()
   if (!apiKey) return { ok: false, error: 'Qwen / DASHSCOPE_API_KEY not configured' }
@@ -1287,7 +1355,7 @@ export const submitVideoTaskFn = createServerFn({ method: 'POST' })
 
 const PollServerInput = z.object({
   taskId: z.string().min(1).max(200),
-  backend: z.enum(['ark', 'dashscope', 'jimeng', 'kuaizi', 'toapis', 'k99']),
+  backend: z.enum(['ark', 'dashscope', 'jimeng', 'kuaizi', 'toapis', 'k99', 'vapeur']),
 })
 
 export const pollVideoTaskFn = createServerFn({ method: 'POST' })

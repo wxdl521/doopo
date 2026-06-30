@@ -65,6 +65,10 @@ export const IMAGE_MODELS: ImageModelOption[] = [
   { key: '', label: '—— [nagora.ai · OpenAI 兼容 · Azure 渠道] ——', sub: undefined, legacy: true },
   { key: 'nagora/gpt-image-2', label: 'GPT Image 2', sub: '[nagora·Azure 渠道] Image2 · T2I/I2I' },
 
+  // ---- [vapeur.ai · OpenAI 兼容] → /v1/images/generations ----
+  { key: '', label: '—— [vapeur.ai · OpenAI 兼容] ——', sub: undefined, legacy: true },
+  { key: 'vapeur/gpt-image-2', label: 'GPT Image 2', sub: '[vapeur·OpenAI] Image2 · T2I/I2I' },
+
   // ---- [Azure OpenAI] ywkjpolandcentral.cognitiveservices.azure.com ----
   { key: '', label: '—— [Azure · OpenAI] ——', sub: undefined, legacy: true },
   { key: 'azure/gpt-image-2', label: 'Azure-gpt-image-2', sub: '[Azure·OpenAI] gpt-image-2 · T2I/I2I' },

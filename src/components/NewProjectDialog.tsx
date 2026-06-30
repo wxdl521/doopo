@@ -86,6 +86,10 @@ const imageModelOptions = [
   { id: '__sep_nagora__', label: '—— nagora.ai(Azure 渠道)——', sub: '' },
   { id: 'nagora/gpt-image-2', label: 'GPT Image 2 (nagora)', sub: 'nagora.ai · Azure 渠道 · OpenAI · Image2 · T2I/I2I' },
 
+  // ---- vapeur.ai(OpenAI 兼容)----
+  { id: '__sep_vapeur__', label: '—— vapeur.ai ——', sub: '' },
+  { id: 'vapeur/gpt-image-2', label: 'GPT Image 2 (vapeur)', sub: 'vapeur.ai · OpenAI · Image2 · T2I/I2I' },
+
   // ---- Azure OpenAI ----
   { id: '__sep_azure__', label: '—— Azure · OpenAI ——', sub: '' },
   { id: 'azure/gpt-image-2', label: 'Azure-gpt-image-2', sub: 'Azure · OpenAI · gpt-image-2 · T2I/I2I' },
@@ -125,6 +129,11 @@ const videoModels = [
   { id: '__video_sep_k99__', label: '—— k99.tw ——', sub: '' },
   { id: 'k99-fast-480p', label: 'k99 快速 480p', sub: 'k99.tw · 快速 · 480p' },
   { id: 'k99-pro-1080p', label: 'k99 高清 1080p', sub: 'k99.tw · 高清 · 1080p' },
+
+  // ---- vapeur.ai(OpenAI 兼容 · Seedance 2.0,需 VAPEUR_API_KEY)----
+  { id: '__video_sep_vapeur__', label: '—— vapeur.ai ——', sub: '' },
+  { id: 'vapeur-doubao-seedance-2-0-260128', label: 'Seedance 2.0 (vapeur)', sub: 'vapeur.ai · Seedance 2.0 · 1080p' },
+  { id: 'vapeur-doubao-seedance-2-0-fast-260128', label: 'Seedance 2.0 Fast (vapeur)', sub: 'vapeur.ai · Seedance 2.0 Fast · 720p' },
 
   // ---- 备用:HappyHorse(阿里 DashScope)----
   { id: '__video_sep__', label: '—— 备用:HappyHorse(DashScope)——', sub: '' },

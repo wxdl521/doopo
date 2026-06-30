@@ -341,6 +341,16 @@ export const generateImage = createServerFn({ method: 'POST' })
       })
       return { url: r.url, error: r.error, model: r.model }
     }
+    // 委托给 vapeur(OpenAI 兼容)
+    if (requested.toLowerCase().startsWith('vapeur/')) {
+      const { callVapeurImage } = await import('./vapeurImage.functions')
+      const r = await callVapeurImage({
+        prompt: appendNegative(data.prompt, data.negativePrompt),
+        model: requested,
+        size: data.size,
+      })
+      return { url: r.url, error: r.error, model: r.model }
+    }
     // 委托给 TokenHub(OpenAI 兼容,tokenhub.linkstor.com)
     if (requested.toLowerCase().startsWith('tokenhub/')) {
       const { callTokenhubImage } = await import('./tokenhubImage.functions')
@@ -886,6 +896,17 @@ export const regenerateCharacterLook = createServerFn({ method: 'POST' })
       if (!r.url) return { ok: false as const, error: r.error || 'ailinzi 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
+    if (requested.toLowerCase().startsWith('vapeur/')) {
+      const { callVapeurImage } = await import('./vapeurImage.functions')
+      const r = await callVapeurImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'vapeur 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
     if (requested.toLowerCase().startsWith('tokenhub/')) {
       const { callTokenhubImage } = await import('./tokenhubImage.functions')
       const r = await callTokenhubImage({
@@ -1160,6 +1181,17 @@ export const generateStoryboardShotImage = createServerFn({ method: 'POST' })
       if (!r.url) return { ok: false as const, error: r.error || 'ailinzi 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
+    if (requested.toLowerCase().startsWith('vapeur/')) {
+      const { callVapeurImage } = await import('./vapeurImage.functions')
+      const r = await callVapeurImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: '2K',
+        referenceImages: images,
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'vapeur 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
     if (requested.toLowerCase().startsWith('tokenhub/')) {
       const { callTokenhubImage } = await import('./tokenhubImage.functions')
       const r = await callTokenhubImage({
@@ -1424,6 +1456,17 @@ export const regenerateStoryboardShot = createServerFn({ method: 'POST' })
         referenceImages: images,
       })
       if (!r.url) return { ok: false as const, error: r.error || 'ailinzi 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('vapeur/')) {
+      const { callVapeurImage } = await import('./vapeurImage.functions')
+      const r = await callVapeurImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: '2K',
+        referenceImages: images,
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'vapeur 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
     if (requested.toLowerCase().startsWith('tokenhub/')) {
@@ -1830,6 +1873,17 @@ export const generateStoryboardPitchDeck = createServerFn({ method: 'POST' })
         referenceImages: data.referenceImages || [],
       })
       if (!r.url) return { ok: false as const, error: r.error || 'ailinzi 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('vapeur/')) {
+      const { callVapeurImage } = await import('./vapeurImage.functions')
+      const r = await callVapeurImage({
+        prompt,
+        model: requested,
+        size: '3840x2160',
+        referenceImages: data.referenceImages || [],
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'vapeur 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
     if (requested.toLowerCase().startsWith('tokenhub/')) {
@@ -2361,6 +2415,17 @@ export const regenerateSceneImage = createServerFn({ method: 'POST' })
         referenceImages: [data.referenceImageUrl],
       })
       if (!r.url) return { ok: false as const, error: r.error || 'ailinzi 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('vapeur/')) {
+      const { callVapeurImage } = await import('./vapeurImage.functions')
+      const r = await callVapeurImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'vapeur 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
     if (requested.toLowerCase().startsWith('tokenhub/')) {
