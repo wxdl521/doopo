@@ -109,14 +109,24 @@ export const listCommunityPosts = createServerFn({ method: 'GET' })
     const fetchLimit = data.sort === 'hot' ? Math.min(120, data.limit * 4) : data.limit
     if (data.sort === 'likes') q = q.order('likes_count', { ascending: false })
     else q = q.order('created_at', { ascending: false })
-    const { data: rows, error } = await q.limit(fetchLimit)
-    if (error) throw new Error(error.message)
-    let result = ((rows ?? []) as unknown) as Omit<CommunityPost, 'payload'>[]
-    if (data.sort === 'hot') {
-      const now = Date.now()
-      result = [...result].sort((a, b) => score(b, now) - score(a, now)).slice(0, data.limit)
+    try {
+      const { data: rows, error } = await q.limit(fetchLimit)
+      if (error) {
+        console.error('[listCommunityPosts] supabase error:', error.message?.slice(0, 200))
+        return []
+      }
+      let result = ((rows ?? []) as unknown) as Omit<CommunityPost, 'payload'>[]
+      if (data.sort === 'hot') {
+        const now = Date.now()
+        result = [...result].sort((a, b) => score(b, now) - score(a, now)).slice(0, data.limit)
+      }
+      return result
+    } catch (e) {
+      // Backend transiently unreachable (e.g. Cloudflare 522 HTML page). Degrade
+      // gracefully so the home/community page renders instead of blank-screening.
+      console.error('[listCommunityPosts] backend unreachable:', (e as Error)?.message?.slice(0, 200))
+      return []
     }
-    return result
   })
 
 function score(p: { likes_count: number; views_count: number; created_at: string }, now: number) {
