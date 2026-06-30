@@ -4068,14 +4068,15 @@ function WorkspacePage() {
       referenceImageLabels.push(sLabel)
     }
     // 角色图:按 unionCharIds(各 shot 有效角色的并集)顺序填,直到 4 张上限
+    // 2026/06 修复:复用 pickShotCharImageUrl,跟分镜图走同一套 4 级 fallback,
+    // 尊重 shot 级 characterRefs + 多 look 的钉选。取第一个 shot 作为参照
+    // (故事板是组级产物,组内各 shot 共享同一套角色 look 选择)。
+    const refShot = group.shots[0]
     for (const cid of unionCharIds || []) {
       if (referenceImages.length >= REF_MAX) break
       const c = data.characters.find((x) => x.id === cid)
       if (!c) continue
-      // 选中图优先,否则最新
-      const pinned = selectedCharImages[c.id]
-      const generations = charImages[c.id] ?? []
-      const url = (pinned && generations.includes(pinned) ? pinned : generations.at(-1))
+      const url = pickShotCharImageUrl(refShot, cid)
       if (!url) continue
       referenceImages.push(url)
       referenceImageLabels.push(`角色: ${c.name}${c.roleLabel ? ` (${c.roleLabel})` : ''}`)
@@ -4253,13 +4254,14 @@ function WorkspacePage() {
         sceneObj ? `场景: ${sceneObj.location || sceneObj.slug}${sceneObj.timeOfDay ? ` · ${sceneObj.timeOfDay}` : ''}` : '场景',
       )
     }
+    // 2026/06 修复:跟 generateMangaStoryboardForGroup 对齐 —— 复用
+    // pickShotCharImageUrl(4 级 fallback),尊重 shot 级 characterRefs + 多 look 钉选。
+    const refShot = group.shots[0]
     for (const cid of unionCharIds || []) {
       if (referenceImages.length >= REF_MAX) break
       const c = data.characters.find((x) => x.id === cid)
       if (!c) continue
-      const pinned = selectedCharImages[c.id]
-      const generations = charImages[c.id] ?? []
-      const url = (pinned && generations.includes(pinned) ? pinned : generations.at(-1))
+      const url = pickShotCharImageUrl(refShot, cid)
       if (!url) continue
       referenceImages.push(url)
       referenceImageLabels.push(`角色: ${c.name}${c.roleLabel ? ` (${c.roleLabel})` : ''}`)
@@ -5527,6 +5529,13 @@ function WorkspacePage() {
     const trimmed = (userPrompt ?? '').trim()
     const meaningful = trimmed.length >= 4
 
+    // Check if this is an extract request and we have episodes
+    const isExtractFromEpisode = /^从第\s*\d+\s*集提取/.test(trimmed)
+    if (isExtractFromEpisode && data.episodeTexts.length === 0) {
+      toast.error('请先生成至少一集剧本，才能提取角色、场景和道具')
+      return null
+    }
+
     // Compute nextEpIndex from existing episodes (survives page refresh)
     const nextEpIndex = data.episodeTexts.length > 0
       ? Math.max(...data.episodeTexts.map((e) => e.epIndex)) + 1
@@ -5544,7 +5553,6 @@ function WorkspacePage() {
     const isStreamingScript = isGenerateScript || isRefineSynopsis || isModifyEpisodeScript || isScriptEpisode || isScriptContinue || isScriptModify
 
     // Detect "从第 X 集提取角色和场景" pattern (used by episodes tab extract button)
-    const isExtractFromEpisode = /^从第\s*\d+\s*集提取/.test(trimmed)
     const extractEpMatch = trimmed.match(/^从第\s*(\d+)\s*集提取/)
     const extractEpIndex = extractEpMatch ? Number(extractEpMatch[1]) : 0
 
@@ -5621,13 +5629,13 @@ function WorkspacePage() {
     }
 
     // Skip tryAi for streaming script generations — those are handled separately above.
-    // Also skip for 'character' stage when this is an extract-from-episode call,
-    // because that branch below does its own dedicated character extraction with
+    // Also skip for 'character' or 'script' stage when this is an extract-from-episode call,
+    // because that branch below does its own dedicated character/scene/prop extraction with
     // the actual episode text in the prompt (vs. just "从第 X 集提取..." which
     // produces garbage from the AI).
     const skipTopLevelTryAi =
       isStreamingScript ||
-      (stage === 'character' && isExtractFromEpisode)
+      ((stage === 'character' || stage === 'script') && isExtractFromEpisode)
     if (meaningful && !skipTopLevelTryAi && (stage === 'canvas' || stage === 'script' || stage === 'character' || stage === 'storyboard' || stage === 'timeline')) {
       aiPatch = await tryAi(stage, trimmed, snapshot)
     }
@@ -5663,6 +5671,37 @@ function WorkspacePage() {
         case 'canvas':
           return { ...d, outline: aiPatch?.outline ?? generateOutline() }
         case 'script': {
+          // Extract from episode: 跨集合并 —— 同一真人在 ep1+ep2+... 共享一个 GenCharacter,
+          // 改任一集的形象自动反映到所有集。场景仍按集硬替换(单集语义)。
+          if (isExtractFromEpisode && aiPatch) {
+            let characters = d.characters
+            let scenes = d.scenes
+            let props = d.props
+            if (aiPatch.characters) {
+              // 2026/06:跨集合并 —— 按 matchKey > siblingGroupId > name 前缀匹配,
+              // 匹配的 GenCharacter 复用(episodes 追加,描述/override 刷新)。
+              characters = mergeExtractedCharacters(
+                d.characters,
+                aiPatch.characters,
+                extractEpIndex,
+              )
+            }
+            if (aiPatch.scenes) {
+              // 场景仍是单集语义,按集硬替换
+              scenes = [
+                ...d.scenes.filter((s) => s.episodeIndex !== extractEpIndex),
+                ...aiPatch.scenes,
+              ]
+            }
+            if (aiPatch.props) {
+              // 道具也是单集语义,按集硬替换
+              props = [
+                ...d.props.filter((p) => p.episodeIndex !== extractEpIndex),
+                ...aiPatch.props,
+              ]
+            }
+            return { ...d, characters, scenes, props }
+          }
           if (isGenerateScript || isRefineSynopsis || isModifyEpisodeScript || isScriptEpisode || isScriptContinue || isScriptModify) {
             return d
           }
@@ -7867,6 +7906,7 @@ function WorkspacePage() {
           initialInput={initialChatInput}
           locked={episodeStreaming && autoRunTargetRef.current != null}
           selectedEpisodeIndex={selectedEpisodeIndex}
+          episodeCount={data.episodeTexts.length}
           onImportScript={handleImportScript}
           streaming={synopsisStreaming || episodeStreaming}
           onEnterStoryboard={() => void runEnterStoryboard()}

@@ -1597,11 +1597,11 @@ function buildPitchDeckPrompt(opts: {
   const refLabels = data.referenceImageLabels || []
   const referenceImageBlock = refImgs.length
     ? [
-        `[REFERENCE IMAGES — ${refImgs.length} 张视觉锚点,**最高真值**,严格遵循]`,
+        `[REFERENCE IMAGES — ${refImgs.length} 张视觉锚点,用于人物/场景身份锁定]`,
         ...refImgs.map((_, i) => `  Image ${i + 1}: ${refLabels[i] ?? '(no label)'}`),
         ``,
-        `【身份锁定】同一角色在所有镜头中必须保持完全一致的面部特征、发型、体型、服装细节。`,
-        `【画风继承】所有插画必须复现参考图的线条质感与人物造型。`,
+        `【身份锁定】同一角色在所有镜头中必须保持完全一致的面部特征、发型、体型、服装款式细节。参考图用于锁定"是谁"——脸型、五官比例、发型轮廓、身材比例、服装款式。`,
+        `【风格转化】参考图是彩色/渲染图,但本故事板要求纯铅笔线稿。请将参考图人物转化为铅笔素描表达:提取轮廓线、结构线、服装褶皱线,忽略参考图的色彩、光影、材质渲染。不要因为参考图是彩色就在素描里加灰阶阴影渲染。`,
       ].join('\n')
     : ''
 
@@ -2005,6 +2005,12 @@ function buildRegenPitchDeckPrompt(opts: {
     `6. Do NOT introduce new characters, scenes, or styles that aren't in 图1 or in [CONTEXT].`,
     `7. Maintain the same aspect ratio (16:9) and section grid.`,
     `8. Same Shot count as listed in [CONTEXT], in same order.`,
+    ``,
+    // ========== 参考图风格转化说明(图1 是铅笔素描,图2..N 是彩色)==========
+    `[REFERENCE IMAGES — 图 2..N are identity anchors only]`,
+    `图 1 = 当前故事板(画风/布局/文字的真值,严格遵循)。`,
+    `图 2..N = 角色/场景参考图(彩色),仅用于锁定人物身份——脸型、五官、发型、身材、服装款式。`,
+    `【关键】图 2..N 的色彩和渲染风格不影响输出。输出必须保持图 1 的铅笔线稿风格。将图 2..N 的人物转化为与图 1 一致的铅笔素描表达——提取轮廓/结构/服装褶皱线,忽略参考图的色彩、光影、材质。`,
     ``,
     // ========== 风格指纹 ==========
     `[PROJECT VISUAL STYLE — must match 图1's rendered style]`,

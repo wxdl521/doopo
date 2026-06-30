@@ -436,10 +436,35 @@ const VALID_T2I_MODELS = new Set<string>([
   "pixflow/gemini-3-pro-image-preview",
   "pixflow/gemini-3.1-flash-image-preview",
   "pixflow/gemini-3.1-flash-image",
+  "pixflow/gemini-3-flash",
+  "pixflow/gemini-3.5-flash",
   // Tokenflash gateway 前缀(tokenflash.cn,OpenAI 兼容)
   "tokenflash/gpt-image-2",
   // Revora gateway 前缀(revora.vip,OpenAI 兼容)
   "revora/gpt-image-2",
+  // AIGCFamily gateway 前缀
+  "aigcfamily/gpt-image-2",
+  // Azure OpenAI 直连
+  "azure/gpt-image-2",
+  // OneToken gateway
+  "onetoken/gpt-image-2",
+  // OTU gateway
+  "otu/gpt-image-2",
+  // AI Tokenvibe gateway
+  "aitokenvibe/gpt-image-2",
+  // 天鸿智算 gateway
+  "thhtcloud/gpt-image-2",
+  // ailinzi gateway
+  "ailinzi/gpt-image-2",
+  "ailinzi/image2",
+  // TokenHub gateway
+  "tokenhub/gpt-image-2",
+  // Nagora gateway (Azure渠道)
+  "nagora/gpt-image-2",
+  // Lovable gateway 模型
+  "lovable/google/gemini-3-flash-preview",
+  "lovable/google/gemini-3.1-flash-preview",
+  "lovable/openai/gpt-image-2",
 ]);
 
 /** I2I(图生图)可用的 model(Seedream + Qwen/Wan 兜底) */
@@ -460,9 +485,60 @@ const VALID_I2I_MODELS = new Set<string>([
   "pixflow/gemini-3-pro-image-preview",
   "pixflow/gemini-3.1-flash-image-preview",
   "pixflow/gemini-3.1-flash-image",
+  "pixflow/gemini-3-flash",
+  "pixflow/gemini-3.5-flash",
   "tokenflash/gpt-image-2",
   "revora/gpt-image-2",
+  "aigcfamily/gpt-image-2",
+  "azure/gpt-image-2",
+  "onetoken/gpt-image-2",
+  "otu/gpt-image-2",
+  "aitokenvibe/gpt-image-2",
+  "thhtcloud/gpt-image-2",
+  "ailinzi/gpt-image-2",
+  "ailinzi/image2",
+  "tokenhub/gpt-image-2",
+  "nagora/gpt-image-2",
+  "lovable/google/gemini-3-flash-preview",
+  "lovable/google/gemini-3.1-flash-preview",
+  "lovable/openai/gpt-image-2",
 ]);
+
+/** 已知的模型前缀列表 */
+const KNOWN_MODEL_PREFIXES = [
+  "pixflow/",
+  "tokenflash/",
+  "revora/",
+  "aigcfamily/",
+  "azure/",
+  "onetoken/",
+  "otu/",
+  "aitokenvibe/",
+  "thhtcloud/",
+  "ailinzi/",
+  "tokenhub/",
+  "nagora/",
+  "lovable/",
+  "openrouter/",
+  "gemini:",
+  "openai:",
+  "anthropic:",
+  "claude:",
+  "deepseek:",
+  "meta:",
+  "llama:",
+  "mistral:",
+  "xai:",
+  "grok:",
+  "qwen:",
+];
+
+/**
+ * 检查 model 是否有已知前缀
+ */
+function hasKnownPrefix(model: string): boolean {
+  return KNOWN_MODEL_PREFIXES.some(prefix => model.startsWith(prefix));
+}
 
 /**
  * 把 sceneModel 解析成 T2I 可用的 model。
@@ -473,6 +549,8 @@ export function resolveT2IModel(sceneModel: string | null | undefined): string {
   if (!m) return SEEDREAM_DEFAULT;
   if (DEPRECATED_T2I_MODELS.has(m)) return SEEDREAM_DEFAULT;
   if (VALID_T2I_MODELS.has(m)) return m;
+  // 如果有已知前缀，直接返回该模型（不在白名单里也让服务器处理）
+  if (hasKnownPrefix(m)) return m;
   // 未知 model:保守 fallback,不在服务器上乱试
   return SEEDREAM_DEFAULT;
 }
@@ -484,5 +562,7 @@ export function resolveT2IModel(sceneModel: string | null | undefined): string {
 export function resolveI2IModel(sceneModel: string | null | undefined): string {
   const m = (sceneModel || "").trim();
   if (VALID_I2I_MODELS.has(m)) return m;
+  // 如果有已知前缀，直接返回该模型
+  if (hasKnownPrefix(m)) return m;
   return SEEDREAM_I2I_DEFAULT;
 }

@@ -101,12 +101,14 @@ export const TOAPIS_MODELS = {
 const TOAPIS_DEFAULT_BASE_URL = 'https://toapis.com'
 
 export const K99_MODELS = {
-  'k99-SD2.0': 'SD2.0 (k99 · Seedance 2.0)',
+  'k99-fast-480p': 'k99 快速 480p',
+  'k99-pro-1080p': 'k99 高清 1080p',
 } as const
 
-// k99.tw 配置 —— newapi 通道,中转 Seedance 2.0
+// k99.tw 配置 —— Sora 风格 API,中转视频生成
 const K99_DEFAULT_BASE_URL = 'https://k99.tw'
-const K99_CREATE_PATH = '/v1/videos/generations'
+const K99_CREATE_PATH = '/v1/videos'     // POST 提交
+const K99_STATUS_PATH = '/v1/videos'     // GET /v1/videos/{task_id}
 const TOAPIS_CREATE_PATH = '/v1/videos/generations'
 
 // 即梦 3.0 Pro 文生/图生视频统一用同一个 req_key
@@ -918,13 +920,15 @@ async function toapisPoll(input: {
 }
 
 // ====================================================================
-// k99.tw 端实现 —— newapi 通道,中转 Seedance 2.0
+// k99.tw 端实现 —— Sora 风格 API,中转视频生成
 //
-//  接口格式跟 ToAPIs 完全一致(都是 newapi 风格):
-//   - 提交:POST /v1/videos/generations → { id, status, ... }
-//   - 查询:GET  /v1/videos/generations/{task_id} → { status, result.data[0].url, ... }
+//  2026/06 修正:之前假设 k99 跟 ToAPIs 一样用 newapi 路径 /v1/videos/generations,
+//  实测返回 404 Invalid URL。k99.tw 实际用 OpenAI Sora 风格路径:
+//   - 提交:POST /v1/videos           → { id, task_id, status: "processing", ... }
+//   - 查询:GET  /v1/videos/{task_id} → { id, status, url?, ... }
 //
-//  所以复用 toapisSubmit / toapisPoll,只换 baseUrl + apiKey + model 映射。
+//  模型名也不是 "SD2.0",而是 video-fast-480p / video-pro-1080p 等。
+//  不再复用 toapisSubmit/toapisPoll,改为独立实现。
 // ====================================================================
 
 function getK99Config() {
@@ -934,9 +938,110 @@ function getK99Config() {
   }
 }
 
-/** 从 model id 剥离 `k99-` 前缀,得到上游 model 名(保留大小写,如 "SD2.0") */
+/** 项目 model id → k99 上游 model 名 */
 function k99ModelToUpstream(modelId: string): string {
-  return modelId.replace(/^k99-/i, '')
+  const map: Record<string, string> = {
+    'k99-fast-480p': 'video-fast-480p',
+    'k99-pro-1080p': 'video-pro-1080p',
+  }
+  return map[modelId] || modelId.replace(/^k99-/i, 'video-')
+}
+
+/** k99 status 字符串 → 项目内 SeedanceProgress */
+function k99StatusToProgress(s: string | undefined): SeedanceProgress {
+  const v = (s || '').toLowerCase()
+  if (v === 'completed' || v === 'succeeded') return 'succeeded'
+  if (v === 'failed') return 'failed'
+  if (v === 'cancelled' || v === 'canceled') return 'cancelled'
+  if (v === 'processing' || v === 'in_progress') return 'running'
+  return 'queued'  // 未知 / queued
+}
+
+async function k99Submit(input: {
+  model: string
+  prompt: string
+  media: DashScopeMediaItem[]
+  ratio?: SeedanceRatio
+  duration?: number
+  apiKey: string
+  baseUrl: string
+}): Promise<{ ok: true; taskId: string; model: string } | { ok: false; error: string }> {
+  const upstreamModel = k99ModelToUpstream(input.model)
+  const body: Record<string, unknown> = {
+    model: upstreamModel,
+    prompt: input.prompt,
+  }
+  // 首帧图(Sora 风格用 image 字段)
+  const firstFrame = input.media.find((m) => m.type === 'first_frame')?.url
+  if (firstFrame) body.image = firstFrame
+  if (input.ratio) body.size = input.ratio
+  if (typeof input.duration === 'number') body.duration = input.duration
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 30_000)
+  try {
+    const res = await fetch(`${input.baseUrl}${K99_CREATE_PATH}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${input.apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+    clearTimeout(timeout)
+    const text = await res.text().catch(() => '')
+    if (!res.ok) return { ok: false, error: `[k99] submit ${res.status}: ${text.slice(0, 300)}` }
+    let json: { id?: string; task_id?: string; error?: { message?: string } } = {}
+    try { json = JSON.parse(text) } catch {}
+    const taskId = json.id || json.task_id
+    if (!taskId) return { ok: false, error: `[k99] no task id: ${json.error?.message || text.slice(0, 200)}` }
+    return { ok: true, taskId, model: input.model }
+  } catch (e) {
+    clearTimeout(timeout)
+    const msg = e instanceof Error ? (e.name === 'AbortError' ? 'submit timeout (30s)' : e.message) : 'fetch failed'
+    return { ok: false, error: `[k99] network: ${msg}` }
+  }
+}
+
+async function k99Poll(input: {
+  taskId: string
+  apiKey: string
+  baseUrl: string
+}): Promise<
+  | { ok: true; status: SeedanceProgress; videoUrl: string | null; raw: any }
+  | { ok: false; error: string; status?: SeedanceProgress; raw?: any }
+> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 30_000)
+  try {
+    const res = await fetch(`${input.baseUrl}${K99_STATUS_PATH}/${encodeURIComponent(input.taskId)}`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${input.apiKey}` },
+      signal: controller.signal,
+    })
+    clearTimeout(timeout)
+    const text = await res.text().catch(() => '')
+    if (!res.ok) return { ok: false, error: `[k99] poll ${res.status}: ${text.slice(0, 300)}` }
+    let json: {
+      id?: string
+      status?: string
+      url?: string
+      video_url?: string
+      video?: { url?: string }
+      output?: { url?: string }
+      error?: { message?: string }
+    } = {}
+    try { json = JSON.parse(text) } catch {}
+    const status = k99StatusToProgress(json.status)
+    // 视频 URL 多字段 fallback(Sora 风格主字段是 url)
+    const videoUrl = json.url || json.video_url || json.video?.url || json.output?.url || null
+    return { ok: true, status, videoUrl, raw: { error: { message: json.error?.message || '' }, ...json } }
+  } catch (e) {
+    clearTimeout(timeout)
+    const msg = e instanceof Error ? (e.name === 'AbortError' ? 'poll timeout (30s)' : e.message) : 'fetch failed'
+    return { ok: false, error: `[k99] poll network: ${msg}` }
+  }
 }
 
 type SubmitInput = {
@@ -1064,20 +1169,12 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
         error: '[k99] 缺少 K99_API_KEY,请在 Cloudflare Secrets 或 .env.local 中配置后再试。',
       }
     }
-    // k99 是 newapi 通道,接口格式跟 ToAPIs 完全一致,复用 toapisSubmit/toapisPoll
-    // toapisSubmit 内部会剥离 'toapis-' 前缀,所以这里用 'toapis-' + 上游模型名绕过
-    const upstreamModel = k99ModelToUpstream(input.model)  // 'SD2.0'
-    const r = await toapisSubmit({
-      model: `toapis-${upstreamModel}`,
+    const r = await k99Submit({
+      model: input.model,
       prompt: input.prompt,
       media: input.media,
       ratio: input.ratio,
-      resolution: input.resolution,
       duration: input.duration,
-      generateAudio: input.generateAudio,
-      watermark: input.watermark,
-      referenceVideoUrl: input.referenceVideoUrl,
-      referenceAudioUrl: input.referenceAudioUrl,
       apiKey,
       baseUrl,
     })
@@ -1130,7 +1227,7 @@ async function pollVideoTask(input: PollInput): Promise<PollResult> {
   if (input.backend === 'k99') {
     const { apiKey, baseUrl } = getK99Config()
     if (!apiKey) return { ok: false, error: '[k99] 缺少 K99_API_KEY' }
-    return toapisPoll({ taskId: input.taskId, apiKey, baseUrl })
+    return k99Poll({ taskId: input.taskId, apiKey, baseUrl })
   }
   const { apiKey } = getDashScopeConfig()
   if (!apiKey) return { ok: false, error: 'Qwen / DASHSCOPE_API_KEY not configured' }

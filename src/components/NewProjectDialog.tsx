@@ -121,9 +121,10 @@ const videoModels = [
   { id: 'toapis-seedance-2-fast', label: 'Seedance 2 Fast (ToAPIs)', sub: 'ToAPIs · 720p · 快速版' },
   { id: 'toapis-seedance-2-mini', label: 'Seedance 2 Mini (ToAPIs)', sub: 'ToAPIs · 720p · 多模态参考' },
 
-  // ---- k99.tw(newapi 通道 · 中转 SD2.0,需 K99_API_KEY)----
-  { id: '__video_sep_k99__', label: '—— k99.tw(newapi · SD2.0)——', sub: '' },
-  { id: 'k99-SD2.0', label: 'SD2.0 (k99)', sub: 'k99.tw · newapi · Seedance 2.0' },
+  // ---- k99.tw(Sora 风格 API · 视频生成,需 K99_API_KEY)----
+  { id: '__video_sep_k99__', label: '—— k99.tw ——', sub: '' },
+  { id: 'k99-fast-480p', label: 'k99 快速 480p', sub: 'k99.tw · 快速 · 480p' },
+  { id: 'k99-pro-1080p', label: 'k99 高清 1080p', sub: 'k99.tw · 高清 · 1080p' },
 
   // ---- 备用:HappyHorse(阿里 DashScope)----
   { id: '__video_sep__', label: '—— 备用:HappyHorse(DashScope)——', sub: '' },

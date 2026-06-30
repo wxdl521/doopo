@@ -202,6 +202,7 @@ function buildWorkflow(stage: WorkspaceTab, t: any): WorkflowDef {
           { key: "script_continue", label: t.zp_cta_script_continue, target: "script" },
           { key: "script_episode", label: t.zp_cta_script_episode, target: "script" },
           { key: "select_episodes", label: t.zp_cta_select_episodes, target: "episodes" },
+          { key: "extract", label: t.zp_cta_extract, target: "character" },
         ],
       };
     case "episodes":
@@ -273,6 +274,7 @@ const ZopiaChatPanel = forwardRef<ZopiaChatPanelHandle, {
   initialInput?: string;
   locked?: boolean;
   selectedEpisodeIndex?: number;
+  episodeCount?: number;
   onImportScript?: (result: ImportedScriptResult) => void;
   streaming?: boolean;
   onEnterStoryboard?: () => void | Promise<void>;
@@ -289,6 +291,7 @@ const ZopiaChatPanel = forwardRef<ZopiaChatPanelHandle, {
   initialInput,
   locked,
   selectedEpisodeIndex,
+  episodeCount,
   onImportScript,
   streaming,
   onEnterStoryboard,
@@ -431,6 +434,7 @@ const ZopiaChatPanel = forwardRef<ZopiaChatPanelHandle, {
       { key: "script_next", label: t.zp_cta_script_next, target: "script" },
       { key: "script_continue", label: t.zp_cta_script_continue, target: "script" },
       { key: "script_episode", label: t.zp_cta_script_episode, target: "script" },
+      { key: "extract", label: t.zp_cta_extract, target: "character" },
     ],
     episodes: buildWorkflow("episodes", t).ctas,
     character: [
@@ -1222,9 +1226,9 @@ const ZopiaChatPanel = forwardRef<ZopiaChatPanelHandle, {
       setTimeout(() => scrollRef.current?.scrollTo({ top: 999999, behavior: "smooth" }), 50);
       return;
     }
-    // extract: from episodes tab → directly send (skip param panel), extract characters + scenes from current episode
+    // extract: from episodes/script tab → directly send (skip param panel), extract characters + scenes from current episode
     if (c.key === "extract") {
-      if (stage === "episodes") {
+      if (stage === "episodes" || stage === "script") {
         const epIdx = selectedEpisodeIndex ?? 1;
         send(`从第 ${epIdx} 集提取角色和场景`, { targetStage: "character", jumpAfter: true });
       } else {
