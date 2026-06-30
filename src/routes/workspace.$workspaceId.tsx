@@ -5560,9 +5560,10 @@ function WorkspacePage() {
 
     // For streaming script generations, capture the promise before setState
     let scriptPromise: Promise<void> | undefined
-    // Allow modify operations from both 'script' and 'episodes' tabs
+    // Allow modify operations from both 'script' and 'episodes' tabs.
+    // Also allow generate_script from canvas stage (user clicks "生成剧本" button on canvas page).
     const isModifyOp = isModifyEpisodeScript || isRefineSynopsis
-    if (isStreamingScript && (stage === 'script' || (isModifyOp && stage === 'episodes'))) {
+    if (isStreamingScript && (stage === 'script' || stage === 'canvas' || (isModifyOp && stage === 'episodes'))) {
       if (isGenerateScript) {
         const typeMatch = trimmed.match(/类型[：:]\s*([^\n，,]+)/) ?? trimmed.match(/Type[：:]\s*([^\n，,]+)/)
         const genreLineMatch = trimmed.match(/题材[：:]\s*([^\n]+)/) ?? trimmed.match(/Genre[：:]\s*([^\n]+)/)
@@ -5669,6 +5670,8 @@ function WorkspacePage() {
     setData((d) => {
       switch (stage) {
         case 'canvas':
+          // generate_script 走流式生成,不应修改 canvas 数据
+          if (isGenerateScript || isScriptEpisode || isScriptContinue) return d
           return { ...d, outline: aiPatch?.outline ?? generateOutline() }
         case 'script': {
           // Extract from episode: 跨集合并 —— 同一真人在 ep1+ep2+... 共享一个 GenCharacter,
