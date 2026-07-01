@@ -1509,6 +1509,19 @@ function WorkspacePage() {
         `Location: ${s.slug}`,
         s.location && `${s.location}`,
         `Time: ${s.timeOfDay === 'DAY' ? 'daytime' : s.timeOfDay === 'NIGHT' ? 'nighttime' : s.timeOfDay === 'DUSK' ? 'dusk, golden hour' : 'dawn'}`,
+        // 2026/07:注入场景动作/氛围描述(action)和节拍细节(beats),让生成的场景图
+        // 带有故事感、光影情绪和具体视觉元素,而不是一张通用的空镜。
+        ...(s.action ? [
+          ``,
+          `[SCENE ATMOSPHERE & ACTION]`,
+          s.action.trim(),
+        ] : []),
+        ...(s.beats?.length ? [
+          ``,
+          `[VISUAL DETAILS]`,
+          s.beats.map((b, i) => `  ${i + 1}. ${b}`).join('\n'),
+        ] : []),
+        ``,
         'Empty scene, no people, no characters, no figures, no silhouettes.',
         'Cinematic environment photography, wide establishing shot, detailed architecture and props, atmospheric lighting, film still quality.',
       ].filter(Boolean).join('\n')
@@ -2444,6 +2457,80 @@ function WorkspacePage() {
     }
   }
 
+  // 将用户的自由文本提示词按关键词拆解为面部/身材/服装三段描述
+  // 支持 "面部 xxx 身材 xxx 服装 xxx" 或自然语言格式
+  function parseCharacterInstruction(instruction: string): {
+    faceDescription: string
+    bodyDescription: string
+    clothingDescription: string
+  } {
+    // 定义各字段的关键词（按中文语义）
+    const faceKeys = ['面部', '脸', '五官', '头发', '发型', '眼睛', '眉毛', '鼻子', '嘴巴', '耳朵', '脸型', '妆容', '肤色']
+    const bodyKeys = ['身材', '体型', '身高', '体态', '肢体', '手腕', '脚踝', '纹身', '伤痕', '肌肉', '胖瘦']
+    const clothKeys = ['服装', '衣服', '穿着', '穿搭', '上衣', '裤子', '裙子', '外套', '鞋子', '袜子', '配饰', '鞋']
+
+    // 按关键词拆分输入文本
+    const markers: { key: string; field: 'face' | 'body' | 'cloth' }[] = []
+
+    // 扫描文本中所有匹配的关键词位置
+    const regex = new RegExp(
+      [...faceKeys, ...bodyKeys, ...clothKeys].map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'),
+      'g',
+    )
+    let match: RegExpExecArray | null
+    while ((match = regex.exec(instruction)) !== null) {
+      const kw = match[0]
+      let field: 'face' | 'body' | 'cloth' = 'face'
+      if (bodyKeys.includes(kw)) field = 'body'
+      else if (clothKeys.includes(kw)) field = 'cloth'
+      markers.push({ key: kw, field })
+    }
+
+    if (markers.length === 0) {
+      // 没有识别到任何关键词，整体作为面部描述（向后兼容）
+      return { faceDescription: instruction, bodyDescription: '', clothingDescription: '' }
+    }
+
+    // 按关键词位置切分文本
+    const segments: { field: 'face' | 'body' | 'cloth'; text: string }[] = []
+    for (let i = 0; i < markers.length; i++) {
+      const startIdx = instruction.indexOf(markers[i].key)
+      // 找到关键词后的文本起始位置
+      const textStart = startIdx + markers[i].key.length
+      // 找到下一个关键词的位置作为结束
+      let textEnd = instruction.length
+      for (let j = 0; j < markers.length; j++) {
+        if (j !== i) {
+          const nextIdx = instruction.indexOf(markers[j].key, textStart)
+          if (nextIdx !== -1 && nextIdx < textEnd) {
+            textEnd = nextIdx
+          }
+        }
+      }
+      // 同时检查从 textStart 到 textEnd 之间是否有其他未标记的关键词
+      // （例如"身材 xxx 服装 yyy"中，xxx 不应包含"服装"后面的内容）
+      const segmentText = instruction.slice(textStart, textEnd).trim()
+      if (segmentText) {
+        // 移除段首可能的冒号/分隔符
+        const cleaned = segmentText.replace(/^[：:，,、\s]+/, '').trim()
+        if (cleaned) {
+          segments.push({ field: markers[i].field, text: cleaned })
+        }
+      }
+    }
+
+    // 合并同字段的多个片段
+    const faceParts = segments.filter((s) => s.field === 'face').map((s) => s.text)
+    const bodyParts = segments.filter((s) => s.field === 'body').map((s) => s.text)
+    const clothParts = segments.filter((s) => s.field === 'cloth').map((s) => s.text)
+
+    return {
+      faceDescription: faceParts.join('；'),
+      bodyDescription: bodyParts.join('；'),
+      clothingDescription: clothParts.join('；'),
+    }
+  }
+
   // 右侧面板的"发送"按钮:走 mode='modify' + 用户意见
   //
   // 2026/06 二次改造:doRegen 只生成新图、不更新角色文字描述,导致后续点
@@ -2463,9 +2550,11 @@ function WorkspacePage() {
     const lookId = modPanel.lookId
     const imageKey = modPanel.imageKey
 
-    // 手动添加的空角色:还没有图片,把用户输入当全量描述走 T2I 首次生成
+    // 手动添加的空角色:还没有图片,把用户输入解析为结构化描述走 T2I 首次生成
     const existingImages = charImagesRef.current[imageKey] ?? []
     if (existingImages.length === 0) {
+      // 将用户输入拆解为面部/身材/服装三段描述
+      const parsed = parseCharacterInstruction(instruction)
       // 把用户输入写回角色描述
       setData((prev) => {
         if (!prev) return prev
@@ -2473,7 +2562,13 @@ function WorkspacePage() {
           ...prev,
           characters: prev.characters.map((x) => {
             if (x.id !== c.id) return x
-            return { ...x, faceDescription: instruction, bodyDescription: '', clothingDescription: '', personality: instruction }
+            return {
+              ...x,
+              faceDescription: parsed.faceDescription,
+              bodyDescription: parsed.bodyDescription,
+              clothingDescription: parsed.clothingDescription,
+              personality: instruction,
+            }
           }),
         }
       })
@@ -2481,11 +2576,17 @@ function WorkspacePage() {
       setModInput('')
       setModError(null)
       // 走 T2I 生成
-      await processCharacter({ ...c, faceDescription: instruction, bodyDescription: '', clothingDescription: '', personality: instruction })
+      await processCharacter({
+        ...c,
+        faceDescription: parsed.faceDescription,
+        bodyDescription: parsed.bodyDescription,
+        clothingDescription: parsed.clothingDescription,
+        personality: instruction,
+      })
       return
     }
 
-    const ok = await doRegen(c, lookId, 'modify', instruction)
+    const ok = await doRegen(c, lookId, 'modify', instruction, charModUploadedRef ?? undefined)
     if (ok) {
       // 2026/06:保留 AI 描述 + 追加用户意见。先调 describeCharacterImage 生成详细描述,
       // 然后把用户的修改意见作为补充说明追加到对应字段末尾,这样既有详细描述又体现用户意图。
@@ -2632,7 +2733,7 @@ function WorkspacePage() {
   async function submitSceneModPanelRef(s: GenScene, instruction: string) {
     const coverUrl = sceneImages[s.id]?.at(-1)
     if (!coverUrl) { toast.error('该场景还没有图片'); return }
-    const ok = await doSceneRegen(s, 'modify', instruction)
+    const ok = await doSceneRegen(s, 'modify', instruction, sceneModUploadedRef ?? undefined)
     if (ok) {
       setData((prev) => {
         if (!prev) return prev
@@ -2724,14 +2825,18 @@ function WorkspacePage() {
     s: GenScene,
     mode: 'modify' | 'three-view',
     instruction: string,
+    /** 可选:用户手动上传的参考图,优先于 history 里的图片 */
+    referenceOverride?: string,
   ) {
     const history = sceneImages[s.id] ?? []
-    // 2026/06:跟角色 selectedCharImages 对称 —— 优先用用户"选中"的那张作 reference,
-    // 没选 / 选中的 url 已不在 history 里 → fallback 最新一张
+    // 2026/07:reference 优先级(对齐 doRegen 角色)
+    //   1) referenceOverride(用户上传的参考图)
+    //   2) selectedSceneImages —— 用户"选中"的那张
+    //   3) 最新一张 history
     const pinned = selectedSceneImagesRef.current[s.id]
-    const referenceUrl = (pinned && history.includes(pinned))
-      ? pinned
-      : history.at(-1)
+    const fallback = history.at(-1)
+    const referenceUrl = referenceOverride
+      ?? (pinned && history.includes(pinned) ? pinned : fallback)
     if (!referenceUrl) {
       toast.error('该场景还没生成,无法重生')
       return false
@@ -2977,7 +3082,7 @@ function WorkspacePage() {
     }
     setSceneModBusy(true)
     setSceneModError(null)
-    const ok = await doSceneRegen(s, 'modify', instruction)
+    const ok = await doSceneRegen(s, 'modify', instruction, sceneModUploadedRef ?? undefined)
     setSceneModBusy(false)
     if (ok) {
       closeSceneModPanel()
@@ -3172,6 +3277,10 @@ function WorkspacePage() {
       }
       if (lastError) {
         toast.error(lastError)
+      } else if (receivedCount === 1) {
+        toast.warning('仅生成 1 组分镜,可能未覆盖全部剧情。建议删除后重试,或手动补充分镜组。')
+      } else if (receivedCount === 2) {
+        toast.success(`已生成 ${receivedCount} 组分镜`, { description: '如剧本较长,可检查是否遗漏剧情段落' })
       } else if (receivedCount > 0) {
         toast.success(`已生成 ${receivedCount} 组分镜`)
       } else {
@@ -3784,8 +3893,69 @@ function WorkspacePage() {
 
     setGroupVideos((m) => ({ ...m, [groupId]: { url: '', status: 'running' } }))
 
-    const firstFrame = shotImagesList[0].url
-    const referenceUrls = shotImagesList.slice(1).map((x) => x.url)
+    // 2026/07:按分镜图数量分三种模式(匹配 toapis 互斥规则):
+    //   1 张 → 首帧模式 (imageUrl = shot[0])
+    //   2 张 → 首尾帧模式 (imageUrl = shot[0], lastFrameImageUrl = shot[1])
+    //   3+ 张 → 多模态参考模式 (全部分镜图 + 选中的人物/场景/道具图 → referenceImageUrls)
+    //           超 9 张时按 道具 > 场景 > 人物 优先级丢弃
+    const shotUrls = shotImagesList.map((x) => x.url)
+
+    // 收集补充参考图(仅 3+ 张模式使用):人物 > 场景 > 道具
+    const collectSupplementaryRefs = (): string[] => {
+      const refs: string[] = []
+      const seen = new Set(shotUrls)  // 跟分镜图去重
+      // 人物:本组各 shot 有效角色并集
+      const unionCharIds = (() => {
+        const set = new Set<string>()
+        for (const s of group.shots) {
+          for (const cid of pickShotCharacterIds(s, group)) set.add(cid)
+        }
+        return Array.from(set)
+      })()
+      for (const cid of unionCharIds) {
+        const refShot = group.shots[0]
+        const url = pickShotCharImageUrl(refShot, cid)
+        if (url && !seen.has(url)) { refs.push(url); seen.add(url) }
+      }
+      // 场景:本组的 sceneIds + sceneId
+      const groupSceneIds = new Set<string>([
+        ...(group.sceneIds ?? []),
+        ...(group.sceneId ? [group.sceneId] : []),
+      ])
+      for (const sid of groupSceneIds) {
+        const url = pickSceneImageUrl(sid)
+        if (url && !seen.has(url)) { refs.push(url); seen.add(url) }
+      }
+      // 道具:本组的 propIds
+      for (const pid of group.propIds ?? []) {
+        const arr = propImages[pid] ?? []
+        const url = arr.at(-1)
+        if (url && !seen.has(url)) { refs.push(url); seen.add(url) }
+      }
+      return refs
+    }
+
+    // 决定模式和字段
+    let firstFrame: string | undefined
+    let lastFrame: string | undefined
+    let referenceUrls: string[] = []
+    let modeLabel = ''
+
+    if (shotUrls.length === 1) {
+      firstFrame = shotUrls[0]
+      modeLabel = '首帧模式 (1 张分镜图)'
+    } else if (shotUrls.length === 2) {
+      firstFrame = shotUrls[0]
+      lastFrame = shotUrls[1]
+      modeLabel = '首尾帧模式 (2 张分镜图)'
+    } else {
+      // 3+ 张:全部分镜图 + 补充参考图,按优先级拼合并截断到 9 张
+      // 优先级(保留): 分镜 > 人物 > 场景 > 道具(丢弃)
+      const supRefs = collectSupplementaryRefs()
+      const allRefs = [...shotUrls, ...supRefs]
+      referenceUrls = allRefs.slice(0, 9)
+      modeLabel = `多模态参考模式 (${shotUrls.length} 张分镜图 + ${Math.min(supRefs.length, 9 - shotUrls.length)} 张补充参考,共 ${referenceUrls.length} 张)`
+    }
 
     // 拼整组镜头序列的 prompt
     const shotDescriptions = shotImagesList
@@ -3807,7 +3977,9 @@ function WorkspacePage() {
       ``,
       buildStyleLock(videoStyleSpec, 'scene'),
       ``,
-      `[IMPORTANT] The reference images provided are storyboard thumbnails (sketch/line-art), but your output MUST be rendered in the project's visual style described above — NOT in sketch/line-art style. Full color, full rendering, matching the style fingerprint exactly.`,
+      referenceUrls.length > 0
+        ? `[IMPORTANT] The reference images provided are storyboard thumbnails (sketch/line-art), but your output MUST be rendered in the project's visual style described above — NOT in sketch/line-art style. Full color, full rendering, matching the style fingerprint exactly.`
+        : `[IMPORTANT] The ${firstFrame && lastFrame ? 'first and last frame' : 'first frame'} image provided is a storyboard thumbnail (sketch/line-art), but your output MUST be rendered in the project's visual style described above — NOT in sketch/line-art style. Full color, full rendering, matching the style fingerprint exactly.`,
     ].filter(Boolean).join('\n')
 
     // 2026/06:查看提示词模式 —— 视频 prompt 完全 client 端拼,这里直接弹 modal
@@ -3817,9 +3989,10 @@ function WorkspacePage() {
         prompt,
         extra: {
           model: project?.videoModel || 'happyhorse-1.0-r2v',
-          route: '视频(按分镜图)',
-          first_frame: firstFrame,
-          referenceImages: referenceUrls.join(' / ') || '(none)',
+          route: `视频(按分镜图) · ${modeLabel}`,
+          first_frame: firstFrame || '(none)',
+          last_frame: lastFrame || '(none)',
+          referenceImages: referenceUrls.length ? referenceUrls.join(' / ') : '(none)',
           duration: '10s (fixed)',
           ratio: project?.aspect ?? '16:9',
         },
@@ -3837,6 +4010,7 @@ function WorkspacePage() {
         data: {
           prompt,
           imageUrl: firstFrame,
+          lastFrameImageUrl: lastFrame,
           referenceImageUrls: referenceUrls.length ? referenceUrls : undefined,
           // 多参考图模型:happyhorse-1.0-r2v (DashScope, 实测可用)
           // 单图模型 (happyhorse-1.0-i2v / Seedance) 会自动退化成只取 first_frame
@@ -3864,9 +4038,9 @@ function WorkspacePage() {
    * 2026/06 新增:基于"故事板图"生成整组视频(跟 generateVideoForGroup 并列)。
    *
    * 跟传统 generateVideoForGroup 的差别:
-   *   - 那个用每张分镜图按时间序列作 reference,first_frame=第一张分镜图
-   *   - 这个**只用故事板图**作为视觉锚点(first_frame=storyboard image),
-   *     剧情文字 plotText 作为叙事参考写进 prompt
+   *   - 那个按分镜数量分首帧/首尾帧/多模态参考三种模式
+   *   - 这个把**故事板图 + 分镜图(如有) + 选中的人物/场景/道具图**全部作为
+   *     reference_image(多模态参考模式),剧情文字 plotText 作为叙事参考写进 prompt
    *   - 适合"还没逐张生成分镜图、但故事板已就绪"的场景,或想让 AI 按故事板
    *     的画面分布/节奏直接出片
    *
@@ -3890,6 +4064,64 @@ function WorkspacePage() {
 
     setGroupVideos((m) => ({ ...m, [groupId]: { url: '', status: 'running' } }))
 
+    // 2026/07:故事板生成 → 多模态参考模式
+    //   全部作为 reference_image:故事板图 + 分镜图(如有) + 人物 + 场景 + 道具
+    //   优先级(保留): 故事板 > 分镜 > 人物 > 场景 > 道具(丢弃)
+    //   上限 9 张,超出的按 道具 > 场景 > 人物 优先丢弃
+    const referenceUrls: string[] = []
+    const seen = new Set<string>()
+
+    // 1) 故事板图(最高优先级)
+    if (storyboard.url && !seen.has(storyboard.url)) {
+      referenceUrls.push(storyboard.url)
+      seen.add(storyboard.url)
+    }
+
+    // 2) 分镜图(按 shot 顺序)
+    for (const s of group.shots) {
+      if (referenceUrls.length >= 9) break
+      const key = `${groupId}::${s.id}`
+      const gens = shotImages[key] ?? []
+      const url = gens.length ? gens[gens.length - 1] : s.imageUrl
+      if (url && !seen.has(url)) { referenceUrls.push(url); seen.add(url) }
+    }
+
+    // 3) 人物图(本组各 shot 有效角色并集)
+    const unionCharIds = (() => {
+      const set = new Set<string>()
+      for (const s of group.shots) {
+        for (const cid of pickShotCharacterIds(s, group)) set.add(cid)
+      }
+      return Array.from(set)
+    })()
+    const refShot = group.shots[0]
+    for (const cid of unionCharIds) {
+      if (referenceUrls.length >= 9) break
+      const url = pickShotCharImageUrl(refShot, cid)
+      if (url && !seen.has(url)) { referenceUrls.push(url); seen.add(url) }
+    }
+
+    // 4) 场景图
+    const groupSceneIds = new Set<string>([
+      ...(group.sceneIds ?? []),
+      ...(group.sceneId ? [group.sceneId] : []),
+    ])
+    for (const sid of groupSceneIds) {
+      if (referenceUrls.length >= 9) break
+      const url = pickSceneImageUrl(sid)
+      if (url && !seen.has(url)) { referenceUrls.push(url); seen.add(url) }
+    }
+
+    // 5) 道具图(最低优先级,先被丢弃)
+    for (const pid of group.propIds ?? []) {
+      if (referenceUrls.length >= 9) break
+      const arr = propImages[pid] ?? []
+      const url = arr.at(-1)
+      if (url && !seen.has(url)) { referenceUrls.push(url); seen.add(url) }
+    }
+
+    const modeLabel = `多模态参考模式 (${referenceUrls.length} 张参考图)`
+
     // 收集 shot 描述当作叙事提示(可选,无图也行,只是给文字 context)
     const shotDescriptions = group.shots
       .map((s, i) => {
@@ -3905,9 +4137,9 @@ function WorkspacePage() {
     const videoStyleSpec2 = resolveProjectStyle(project?.style)
     const prompt = [
       `[STORYBOARD-DRIVEN VIDEO GENERATION]`,
-      `The attached first-frame image is a complete director's storyboard / pitch deck for this scene. It contains: shared creative direction, character & style reference, environment + top-down camera diagram, multiple numbered storyboard frames showing the shot sequence, lighting/mood notes, and audio/cinematography notes.`,
+      `The attached reference images include: (1) a complete director's storyboard / pitch deck for this scene containing shared creative direction, character & style reference, environment + top-down camera diagram, multiple numbered storyboard frames showing the shot sequence, lighting/mood notes; (2) individual shot thumbnails if available; (3) character / scene / prop reference images for identity and style consistency.`,
       ``,
-      `Your task: produce a single continuous video clip that **brings the storyboard to life** — following the shot sequence, camera positions, lighting transitions, and overall mood as laid out in the storyboard. Use the storyboard's frame breakdown as the structural guide for what happens when.`,
+      `Your task: produce a single continuous video clip that **brings the storyboard to life** — following the shot sequence, camera positions, lighting transitions, and overall mood as laid out in the storyboard. Use the storyboard's frame breakdown as the structural guide for what happens when. Use the additional reference images to maintain character identity, environment consistency, and prop accuracy.`,
       ``,
       `[NARRATIVE REFERENCE — plot context, secondary]`,
       group.plotText || '(无剧情摘要)',
@@ -3918,7 +4150,7 @@ function WorkspacePage() {
       ``,
       `[CONSTRAINTS]`,
       `- Render as ONE continuous video that flows through the storyboard's shot sequence in order`,
-      `- Character appearance, lighting continuity, and environment must stay consistent across the clip (follow the storyboard's reference panels)`,
+      `- Character appearance, lighting continuity, and environment must stay consistent across the clip (follow the storyboard's reference panels and additional reference images)`,
       `- Cinematic motion, smooth camera movement, ${(group.endSec - group.startSec).toFixed(0)}s duration target`,
       `- The attached storyboard image is a sketch/line-art reference for composition ONLY. Your output MUST be rendered in the project's visual style described above — full color, full rendering, NOT line-art, NOT sketch.`,
       `- 24fps, polished post-processing matching the style's mood notes`,
@@ -3931,9 +4163,10 @@ function WorkspacePage() {
         prompt,
         extra: {
           model: project?.videoModel || 'happyhorse-1.0-r2v',
-          route: '视频(按故事板)',
-          first_frame: storyboard.url,
-          referenceImages: '(none)',
+          route: `视频(按故事板) · ${modeLabel}`,
+          first_frame: '(none)',
+          last_frame: '(none)',
+          referenceImages: referenceUrls.length ? referenceUrls.join(' / ') : '(none)',
           duration: `${Math.min(10, Math.max(5, Math.round(group.endSec - group.startSec)))}s`,
           ratio: project?.aspect ?? '16:9',
         },
@@ -3949,11 +4182,9 @@ function WorkspacePage() {
       const res = await callGenVideo({
         data: {
           prompt,
-          // 故事板图作为 first_frame —— 多数视频模型把 first_frame 当成构图/调性
-          // 的强 anchor;模型会按 storyboard 的 panel 布局推导镜头序列
-          imageUrl: storyboard.url,
-          // 不传 referenceImageUrls —— 故事板自己就是综合 reference;
-          // 再塞分镜图会让 r2v 模型困惑(参考图太多 + 风格统一压力大)
+          // 2026/07:全部作为 reference_image(多模态参考模式)
+          // 不传 imageUrl / lastFrameImageUrl —— 避免 toapis 首帧+参考混用报错
+          referenceImageUrls: referenceUrls.length ? referenceUrls : undefined,
           model: project?.videoModel || 'happyhorse-1.0-r2v',
           ratio: project?.aspect === '9:16' ? '9:16' : project?.aspect === '1:1' ? '1:1' : '16:9',
           duration: Math.min(10, Math.max(5, Math.round(group.endSec - group.startSec))),
@@ -8183,7 +8414,8 @@ function WorkspacePage() {
                         <span className="text-[10px] text-text-muted">Enter 发送 · Shift+Enter 换行</span>
                       </div>
                       <p className="text-[10px] text-text-muted leading-relaxed">
-                        直接输入修改意见。AI 会保留这张形象的:脸、身材、视觉风格、正视角度、纯白 #FFFFFF 背景、无表情。只改你描述的部分。
+                        输入你想要修改的内容，AI 会自动识别并归类到面部、身材、服装等属性。
+                        未提及的部分保持不变。
                       </p>
                       <div className="flex items-center gap-2 mb-2">
                         <button
@@ -8235,7 +8467,7 @@ function WorkspacePage() {
                         <button
                           type="button"
                           onClick={() => void submitModPanel()}
-                          disabled={thisBusy || !modInput.trim() || !currentUrl}
+                          disabled={thisBusy || !modInput.trim() || (generations.filter(Boolean).length > 0 && !currentUrl)}
                           className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
                         >
                           {thisBusy ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
@@ -8438,7 +8670,7 @@ function WorkspacePage() {
                           if (!text) return
                           setSceneModInput('')
                           setSceneModError(null)
-                          void doSceneRegen(s, 'modify', text)
+                          void doSceneRegen(s, 'modify', text, sceneModUploadedRef ?? undefined)
                         }
                       }}
                       placeholder="例如:把时间改成黄昏 / 增加下雨效果 / 改成室内暖光…"
@@ -8460,7 +8692,7 @@ function WorkspacePage() {
                           if (!text) return
                           setSceneModInput('')
                           setSceneModError(null)
-                          void doSceneRegen(s, 'modify', text)
+                          void doSceneRegen(s, 'modify', text, sceneModUploadedRef ?? undefined)
                         }}
                         disabled={sceneModBusy || !sceneModInput.trim() || !currentUrl}
                         className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"

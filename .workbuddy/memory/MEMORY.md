@@ -18,10 +18,10 @@ AI 驱动的短剧/创意内容全流程生产平台（灵感→剧本→角色/
 - 代码读取：`process.env.XXX_API_KEY`（服务端 Server Function 内）
 
 ## 当前图像供应商（2026-06）
-ARK Seedream（主力）/ Pixflow / Tokenflash / AIGCFamily / Azure / OneToken / OTU / AI Tokenvibe / 天鸿智算 / ailinzi / TokenHub / nagora.ai(Azure 渠道) / DashScope
+ARK Seedream（主力）/ Pixflow / Tokenflash / AIGCFamily / Azure / OneToken / OTU / AI Tokenvibe / 天鸿智算 / ailinzi / TokenHub / nagora.ai(Azure 渠道) / vapeur.ai / DashScope
 
 ## 视频生成后端（2026-06）
-ARK Seedance（主力）/ DashScope HappyHorse/Wan / 即梦 3.0 Pro / 筷子科技丽帧（中转 Seedance）/ ToAPIs（中转 Seedance 2）/ k99.tw（newapi · SD2.0）
+ARK Seedance（主力）/ DashScope HappyHorse/Wan / 即梦 3.0 Pro / 筷子科技丽帧（中转 Seedance）/ ToAPIs（中转 Seedance 2）/ k99.tw（Sora 风格 API）/ vapeur.ai（中转 Seedance 2.0，待充值验证）
 
 ## 视频供应商接入模式
 新增视频后端的标准流程：

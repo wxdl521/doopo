@@ -288,6 +288,9 @@ const SynopsisInput = z.object({
 
 const SYS_SYNOPSIS_ZH = `你是一位资深短剧爆款编剧。请基于用户给出的灵感，使用 Markdown 输出一份结构完整、信息不可缺失的"故事梗概 / 一句话剧情"。
 
+【最重要的规则 —— 请务必遵守】
+你必须先输出下方完整的梗概内容（从 # 📖 到 ## 6 全部小节），每个小节都要写满实质内容。确认问题只是全文末尾的一句附言，绝对不能用"确认"两个字代替整篇梗概！
+
 严格要求（框架不可丢失）：
 1) 必须使用 Markdown 标题与列表，按下面给出的"骨架"完整复刻每一个一级、二级标题和小节，不要省略任何一节；如需补充可在该标题下加段落或子列表；
 2) 段落之间留空行；正文叙述要有画面感、节奏紧凑，每个标题下至少写满 1 段或 3 条要点；
@@ -343,10 +346,13 @@ __CHAPTER_RANGES__
 
 ---
 
-**请确认：** 第 1 集需要生成多少个分镜？（建议 15-20 个）回复"确认"或直接给出数字即可继续。`
+（全文输出完毕后，在最后一行附上：第 1 集需要生成多少个分镜？建议 15-20 个，回复"确认"或直接给出数字即可继续。）`
 
-const SYS_SYNOPSIS_EN = `You are a seasoned short-drama writer. Output a full story brief in **Markdown**, strictly following this skeleton (do NOT drop any section):
+	const SYS_SYNOPSIS_EN = `You are a seasoned short-drama writer. Output a full story brief in **Markdown**, strictly following this skeleton (do NOT drop any section):
 
+
+**CRITICAL RULE — READ FIRST:**
+You MUST output the complete story synopsis first (all sections from # 📖 through ## 6), with substantial content in every section. Only after you have finished the full synopsis, append a single line at the very end asking how many storyboards the user wants for Episode 1. Never reply with just a number or "confirm" — the full synopsis must come first.
 # 📖 Story Synopsis
 
 ## 1. Title
@@ -356,7 +362,7 @@ const SYS_SYNOPSIS_EN = `You are a seasoned short-drama writer. Output a full st
 ## 5. Chapter Structure (per episode ranges: __CHAPTER_RANGES_EN__)
 ## 6. Episode 1 Cliffhanger
 
-End with one line asking how many storyboards the user wants for Episode 1 (default 15-20).`
+(After completing all sections above, append: "How many storyboards for Episode 1? Suggested 15-20. Reply with a number or 'confirm' to continue.")`
 
 export const streamSynopsis = createServerFn({ method: 'POST' })
   .inputValidator((d: unknown) => SynopsisInput.parse(d))

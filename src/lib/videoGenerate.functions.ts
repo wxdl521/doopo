@@ -275,12 +275,13 @@ function getDashScopeConfig() {
   }
 }
 
-type DashScopeMediaItem = { type: 'first_frame' | 'reference_image'; url: string }
+type DashScopeMediaItem = { type: 'first_frame' | 'last_frame' | 'reference_image'; url: string }
 
 // ----- ARK 内容拼装 -----
 type ArkReferences = {
   referenceImageUrls?: string[]
   firstFrameImageUrl?: string
+  lastFrameImageUrl?: string
   referenceVideoUrl?: string
   referenceAudioUrl?: string
 }
@@ -292,6 +293,10 @@ export function buildArkContent(prompt: string, refs: ArkReferences): ContentIte
   const content: ContentItem[] = [{ type: 'text', text: prompt }]
   if (refs.firstFrameImageUrl) {
     content.push({ type: 'image_url', image_url: { url: refs.firstFrameImageUrl }, role: 'reference_image' })
+  }
+  // ARK Seedance 没有显式 last_frame role,当 reference_image 处理(放第二张)
+  if (refs.lastFrameImageUrl) {
+    content.push({ type: 'image_url', image_url: { url: refs.lastFrameImageUrl }, role: 'reference_image' })
   }
   for (const url of refs.referenceImageUrls ?? []) {
     content.push({ type: 'image_url', image_url: { url }, role: 'reference_image' })
@@ -690,10 +695,10 @@ async function kuaiziSubmit(input: {
   if (typeof input.generateAudio === 'boolean') body.generate_audio = input.generateAudio
   if (typeof input.watermark === 'boolean') body.watermark = input.watermark
 
-  // 素材:first_frame / reference_image 都映射到 images 数组
+  // 素材:first_frame / last_frame / reference_image 都映射到 images 数组
   const images: Array<{ url: string; role: string }> = []
   for (const m of input.media) {
-    images.push({ url: m.url, role: m.type })  // 'first_frame' / 'reference_image'
+    images.push({ url: m.url, role: m.type })  // 'first_frame' / 'last_frame' / 'reference_image'
   }
   if (images.length > 0) body.images = images.slice(0, 9)
   if (input.referenceVideoUrl) body.videos = [{ url: input.referenceVideoUrl, role: 'reference_video' }]
@@ -851,10 +856,17 @@ async function toapisSubmit(input: {
   if (input.resolution) body.resolution = toToapisResolution(input.resolution)
   if (typeof input.generateAudio === 'boolean') body.generate_audio = input.generateAudio
 
-  // 素材:image_with_roles(first_frame / reference_image)
+  // 素材:image_with_roles
+  // ⚠️ toapis 三种模式互斥,不能混用:
+  //    1) 首帧模式: first_frame (1张)
+  //    2) 首尾帧模式: first_frame (1张) + last_frame (1张)
+  //    3) 多模态参考模式: reference_image (≤9张)
+  // 前端已按规则分好 mode,这里做安全守卫:有 reference_image 时只发 reference_image
+  const hasReferenceImage = input.media.some((m) => m.type === 'reference_image')
   const imageWithRoles: Array<{ url: string; role: string }> = []
   for (const m of input.media) {
-    imageWithRoles.push({ url: m.url, role: m.type })  // 'first_frame' / 'reference_image'
+    if (hasReferenceImage && m.type !== 'reference_image') continue  // 参考模式下跳过 frame
+    imageWithRoles.push({ url: m.url, role: m.type })  // 'first_frame' / 'last_frame' / 'reference_image'
   }
   if (imageWithRoles.length > 0) body.image_with_roles = imageWithRoles
   if (input.referenceVideoUrl) body.video_with_roles = [{ url: input.referenceVideoUrl, role: 'reference_video' }]
@@ -1102,9 +1114,11 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
     if (!apiKey) return { ok: false, error: 'ARK_API_KEY not configured' }
     // 构造 ARK content 数组 —— 按官方 cURL 示例:text + 多 reference_image + 可选 reference_video / reference_audio
     const firstFrameImageUrl = input.media.find((m) => m.type === 'first_frame')?.url
+    const lastFrameImageUrl = input.media.find((m) => m.type === 'last_frame')?.url
     const referenceImageUrls = input.media.filter((m) => m.type === 'reference_image').map((m) => m.url)
     const content = buildArkContent(input.prompt, {
       firstFrameImageUrl,
+      lastFrameImageUrl,
       referenceImageUrls,
       referenceVideoUrl: input.referenceVideoUrl,
       referenceAudioUrl: input.referenceAudioUrl,
@@ -1374,9 +1388,11 @@ export const pollVideoTaskFn = createServerFn({ method: 'POST' })
 // ====================================================================
 
 const GenerateVideoInput = z.object({
-  prompt: z.string().min(1).max(4000),
+  prompt: z.string().min(1).max(10000),
   // 单张图生视频(图作为首帧 / 参考图)
   imageUrl: z.string().url().optional(),
+  // 尾帧图(仅 2 张分镜图生成时使用,首帧+尾帧模式)
+  lastFrameImageUrl: z.string().url().optional(),
   referenceImageUrls: z.array(z.string().url()).max(8).optional(),
   referenceVideoUrl: z.string().url().optional(),
   referenceAudioUrl: z.string().url().optional(),
@@ -1399,6 +1415,7 @@ export const generateVideo = createServerFn({ method: 'POST' })
     const backend = getVideoBackend(data.model)
     const media: DashScopeMediaItem[] = []
     if (data.imageUrl) media.push({ type: 'first_frame', url: data.imageUrl })
+    if (data.lastFrameImageUrl) media.push({ type: 'last_frame', url: data.lastFrameImageUrl })
     if (data.referenceImageUrls?.length) {
       for (const url of data.referenceImageUrls) media.push({ type: 'reference_image', url })
     }
