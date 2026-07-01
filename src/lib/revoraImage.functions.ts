@@ -107,8 +107,11 @@ export async function callRevoraImage(input: RevoraImageInput): Promise<RevoraIm
       const form = new FormData()
       form.append('model', model)
       form.append('prompt', input.prompt)
-      form.append('n', String(input.n ?? 1))
       form.append('size', size)
+      // gpt-image-2 不支持 n 参数(始终生成 1 张)
+      if (!/^gpt-image/i.test(model)) {
+        form.append('n', String(input.n ?? 1))
+      }
       form.append('response_format', 'url')
       // 下载每张参考图为 Blob 后以 image[] 文件字段上传
       for (let i = 0; i < input.referenceImages!.length; i++) {
@@ -142,8 +145,11 @@ export async function callRevoraImage(input: RevoraImageInput): Promise<RevoraIm
       const body: Record<string, unknown> = {
         model,
         prompt: input.prompt,
-        n: input.n ?? 1,
         size,
+      }
+      // gpt-image-2 不支持 n 参数(始终生成 1 张)
+      if (!/^gpt-image/i.test(model)) {
+        body.n = input.n ?? 1
       }
       // gpt-image-* 系列只返回 b64_json,不支持 response_format=url
       if (!/^gpt-image/i.test(model)) {
