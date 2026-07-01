@@ -3304,6 +3304,8 @@ function WorkspacePage() {
             ...ev.group,
             episodeIndex: selectedEpisodeIndex,
             sceneLocation: sc?.location || sc?.slug,
+            // 同步 sceneIds 数组,让底部场景 chips 自动显示 AI 选中的场景
+            sceneIds: ev.group.sceneId ? [ev.group.sceneId] : (ev.group as any).sceneIds ?? [],
           }
           // composePlotText 现在只剥老数据的【本组分镜】尾巴(不再覆盖 AI prose),
           // 保留 server 端 LLM 写的详细剧情扩写
@@ -3517,16 +3519,21 @@ function WorkspacePage() {
   function setGroupSceneIds(groupId: string, sceneId: string, action: 'add' | 'remove') {
     setData((d) => ({
       ...d,
-      storyboardGroups: d.storyboardGroups.map((g) =>
-        g.id === groupId
-          ? {
-              ...g,
-              sceneIds: action === 'add'
-                ? [...(g.sceneIds ?? []), sceneId]
-                : (g.sceneIds ?? []).filter((id) => id !== sceneId),
-            }
-          : g,
-      ),
+      storyboardGroups: d.storyboardGroups.map((g) => {
+        if (g.id !== groupId) return g
+        const nextIds = action === 'add'
+          ? [...(g.sceneIds ?? []), sceneId]
+          : (g.sceneIds ?? []).filter((id) => id !== sceneId)
+        // 同步 sceneId + sceneLocation:取第一个场景作为 header 📍 展示
+        const primarySid = nextIds.length > 0 ? nextIds[0] : undefined
+        const sc = primarySid ? d.scenes.find((s) => s.id === primarySid) : undefined
+        return {
+          ...g,
+          sceneIds: nextIds,
+          sceneId: primarySid,
+          sceneLocation: sc ? (sc.location || sc.slug) : undefined,
+        }
+      }),
     }))
   }
 
@@ -3591,10 +3598,13 @@ function WorkspacePage() {
         ...prev,
         storyboardGroups: prev.storyboardGroups.map((g) => {
           if (g.id !== groupId) return g
+          // 同步 sceneIds 数组,保持和 setGroupSceneIds 一致
+          const nextIds = sceneId ? [sceneId] : [] as string[]
           return {
             ...g,
             sceneId: sceneId ?? undefined,
             sceneLocation: target ? (target.location || target.slug) : undefined,
+            sceneIds: nextIds,
           }
         }),
       }
