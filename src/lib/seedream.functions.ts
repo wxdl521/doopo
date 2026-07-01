@@ -1046,8 +1046,8 @@ export const generateStoryboardShotImage = createServerFn({ method: 'POST' })
     if (!images.length) {
       return { ok: false as const, error: '缺少参考图(至少需要一张角色图或场景图)' }
     }
-    if (images.length > 4) {
-      return { ok: false as const, error: `参考图过多(${images.length} 张,Seedream 最多 4 张)。请减少该分镜涉及的角色数。` }
+    if (images.length > 10) {
+      return { ok: false as const, error: `参考图过多(${images.length} 张,Seedream 最多 10 张)。请减少该分镜涉及的角色数。` }
     }
 
     const instruction = buildShotInstruction(data, styleSpec)
@@ -1264,7 +1264,7 @@ export const generateStoryboardShotImage = createServerFn({ method: 'POST' })
 // 4) regenerateStoryboardShot —— 多图融合 I2I(分镜按意见重生)
 //
 //   图 1 永远是 referenceImageUrl(当前镜头),后面是角色/场景参考。
-//   Seedream 一次最多 4 张,这里守住 3 张(给 ref + 1 char + 1 scene)或
+//   Seedream 一次最多 10 张,这里守住 3 张(给 ref + 1 char + 1 scene)或
 //   ref + 2 char,跟老代码逻辑一致。
 // ====================================================================
 
@@ -1317,7 +1317,7 @@ export const regenerateStoryboardShot = createServerFn({ method: 'POST' })
     const styleSpec = resolveProjectStyle(data.projectStyle)
 
     // 图 1 永远是 referenceImageUrl,后面再塞角色/场景参考。
-    // Seedream 限 4 张,跟老代码一致守住 3 张上限。
+    // Seedream 限 10 张,跟老代码一致守住 3 张上限。
     const hasScene = !!data.sceneImageUrl
     const maxChars = Math.max(0, 3 - 1 - (hasScene ? 1 : 0))
     const usedCharCount = Math.min(data.characterImageUrls.length, maxChars)
@@ -1328,8 +1328,8 @@ export const regenerateStoryboardShot = createServerFn({ method: 'POST' })
     }
     if (hasScene) images.push(data.sceneImageUrl!)
 
-    if (images.length > 4) {
-      return { ok: false as const, error: `参考图过多(${images.length} 张,Seedream 最多 4 张)。` }
+    if (images.length > 10) {
+      return { ok: false as const, error: `参考图过多(${images.length} 张,Seedream 最多 10 张)。` }
     }
 
     const instruction = buildRegenShotInstruction(data, styleSpec, usedCharCount, hasScene)
@@ -1587,17 +1587,17 @@ const PitchDeckInput = z.object({
     profile: z.string().max(2000).optional(),
   }).optional(),
   // 2026/06:之前 .max(3) 偷偷砍数据 —— 大场面组 4-6 角色会被丢一半。
-  // 文字描述无 token 压力,放到 8;图片层面另有 .max(4) 上限(下面)
+  // 文字描述无 token 压力,放到 8;图片层面另有 .max(10) 上限(下面)
   characters: z.array(PitchDeckCharacterSchema).max(8).default([]),
   // 2026/06:之前 .max(3) 配合 normalizeGroup 的 .slice(0, 3)。后者已撤,
   // 这里也放到 20,避免 Zod 直接 reject 整个故事板请求
   shots: z.array(PitchDeckShotSchema).max(20).default([]),
   // 2026/06:故事板 I2I 参考图 —— 用户反映"故事板不按我设定的人物形象/场景画"。
   // 根因是之前不传 image 字段,纯 T2I。改成传入参考图(场景至少 1 张 + 角色若干)。
-  // 客户端按 "场景必占 1 张,剩余给角色" 的优先级挑出最多 4 张(Seedream 上限),
+  // 客户端按 "场景必占 1 张,剩余给角色" 的优先级挑出最多 10 张(Seedream 上限),
   // 每张配一个 label,在 prompt 里说明"图 N 是 X"。
-  referenceImages: z.array(z.string().url()).max(4).default([]),
-  referenceImageLabels: z.array(z.string().max(120)).max(4).default([]),
+  referenceImages: z.array(z.string().url()).max(10).default([]),
+  referenceImageLabels: z.array(z.string().max(120)).max(10).default([]),
   // 老字段保留向后兼容,不再实际使用
   characterImageUrl: z.string().url().optional(),
   sceneImageUrl: z.string().url().optional(),
@@ -1935,7 +1935,7 @@ export const generateStoryboardPitchDeck = createServerFn({ method: 'POST' })
     // 到 **3840×2160** (16:9 4K, 8.29M pixels) —— 用户要求"文字可读性最高优先",
     // 高分辨率给中文文字 fidelity 留余量,小字/标签更不容易糊。
     //
-    // 2026/06 三次改造:加 image 字段(场景 + 角色参考图,最多 4 张)。
+    // 2026/06 三次改造:加 image 字段(场景 + 角色参考图,最多 10 张)。
     // 之前注释说"塞图会干扰 layout",实测不准 —— Seedream I2I 在多图 + 强 prompt
     // 引导下能正确把参考图融到 Section 2/3/5。客户端按"场景必占 1 张 +
     // 角色填剩余" 的顺序传 referenceImages,服务端透传到 image 字段。
@@ -1975,7 +1975,7 @@ export const generateStoryboardPitchDeck = createServerFn({ method: 'POST' })
 //     - 图 1 永远是 data.referenceImageUrl(当前故事板图,作为"画风 + 布局 +
 //       文字位置 + section 比例"的真值)
 //     - 图 2..N 是 data.referenceImages 里的角色/场景参考图,跟原 generate
-//       路径同样的 4 张上限
+//       路径同样的 10 张上限
 //     - Seedream I2I 顺序 = [当前故事板, 场景, 角色1, 角色2]
 //
 //   **Prompt 策略**:
@@ -2083,7 +2083,7 @@ export const regenerateStoryboardPitchDeck = createServerFn({ method: 'POST' })
     const prompt = buildRegenPitchDeckPrompt({ data, styleSpec })
 
     // 图 1 = 当前故事板(图布局 / 风格 / 文字位置的真值),后面跟原 referenceImages
-    // 里的角色/场景参考图 —— 跟原 generate 共享同样 4 张上限
+    // 里的角色/场景参考图 —— 跟原 generate 共享同样 10 张上限
     const images: string[] = [data.referenceImageUrl]
     const extraRefs = data.referenceImages || []
     for (const url of extraRefs) {

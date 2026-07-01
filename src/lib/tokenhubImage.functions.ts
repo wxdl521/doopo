@@ -225,7 +225,7 @@ const TokenhubImageFnInput = z.object({
   size: z.string().max(50).optional(),
   n: z.number().int().min(1).max(4).optional(),
   quality: z.enum(['auto', 'low', 'high']).optional(),
-  referenceImages: z.array(z.string().url()).max(8).optional(),
+  referenceImages: z.array(z.string().url()).max(16).optional(),
 })
 
 export const generateTokenhubImage = createServerFn({ method: 'POST' })

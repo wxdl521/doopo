@@ -202,7 +202,7 @@ const AitokenvibeImageFnInput = z.object({
   model: z.string().min(1).max(200),
   size: z.string().max(50).optional(),
   n: z.number().int().min(1).max(4).optional(),
-  referenceImages: z.array(z.string()).max(8).optional(),
+  referenceImages: z.array(z.string()).max(16).optional(),
 });
 
 export const generateAitokenvibeImage = createServerFn({ method: "POST" })
