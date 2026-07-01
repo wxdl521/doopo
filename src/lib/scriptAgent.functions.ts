@@ -346,13 +346,13 @@ __CHAPTER_RANGES__
 
 ---
 
-（全文输出完毕后，在最后一行附上：第 1 集需要生成多少个分镜？建议 15-20 个，回复"确认"或直接给出数字即可继续。）`
+（全文输出完毕后，在最后一行附上：生成完成，你可以点击"生成下一集"继续。）`
 
 	const SYS_SYNOPSIS_EN = `You are a seasoned short-drama writer. Output a full story brief in **Markdown**, strictly following this skeleton (do NOT drop any section):
 
 
 **CRITICAL RULE — READ FIRST:**
-You MUST output the complete story synopsis first (all sections from # 📖 through ## 6), with substantial content in every section. Only after you have finished the full synopsis, append a single line at the very end asking how many storyboards the user wants for Episode 1. Never reply with just a number or "confirm" — the full synopsis must come first.
+You MUST output the complete story synopsis first (all sections from # 📖 through ## 6), with substantial content in every section. Only after you have finished the full synopsis, append a single line at the very end: "Generation complete. You can click 'Generate Next Episode' to continue." Never reply with just a number or "confirm" — the full synopsis must come first.
 # 📖 Story Synopsis
 
 ## 1. Title
@@ -362,7 +362,7 @@ You MUST output the complete story synopsis first (all sections from # 📖 thro
 ## 5. Chapter Structure (per episode ranges: __CHAPTER_RANGES_EN__)
 ## 6. Episode 1 Cliffhanger
 
-(After completing all sections above, append: "How many storyboards for Episode 1? Suggested 15-20. Reply with a number or 'confirm' to continue.")`
+(After completing all sections above, append: "Generation complete. You can click 'Generate Next Episode' to continue.")`
 
 export const streamSynopsis = createServerFn({ method: 'POST' })
   .inputValidator((d: unknown) => SynopsisInput.parse(d))

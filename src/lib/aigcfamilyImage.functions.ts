@@ -32,9 +32,12 @@ export function stripAigcfamilyPrefix(modelId: string): string {
   return modelId.replace(/^aigcfamily\//i, '')
 }
 
-function getAigcfamilyConfig() {
+function getAigcfamilyConfig(model: string) {
+  const isImagen3 = /imagen-?3/i.test(model)
   return {
-    apiKey: process.env.AIGCFAMILY_API_KEY,
+    apiKey: isImagen3
+      ? (process.env.AIGCFAMILY_IMAGEN3_API_KEY || process.env.AIGCFAMILY_API_KEY)
+      : process.env.AIGCFAMILY_API_KEY,
     baseUrl: (process.env.AIGCFAMILY_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, ''),
   }
 }
@@ -81,8 +84,8 @@ function normalizeAigcfamilySize(size: string | undefined, model: string): strin
  * 返回与 Tokenflash / Pixflow / Seedream 一致的 { url, urls, error, model }。
  */
 export async function callAigcfamilyImage(input: AigcfamilyImageInput): Promise<AigcfamilyImageResult> {
-  const { apiKey, baseUrl } = getAigcfamilyConfig()
   const model = stripAigcfamilyPrefix(input.model)
+  const { apiKey, baseUrl } = getAigcfamilyConfig(model)
   const hasRefs = !!input.referenceImages?.length
   const endpoint = hasRefs ? '/v1/images/edits' : '/v1/images/generations'
   const size = normalizeAigcfamilySize(input.size, model)

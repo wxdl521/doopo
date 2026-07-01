@@ -42,8 +42,10 @@ export const IMAGE_MODELS: ImageModelOption[] = [
 
   // ---- [AIGCFamily · OpenAI 兼容] api1.aigcfamily.top → /v1/images/generations|edits ----
   //  2026/06 接入:实测 gpt-image-2 单次 ≈ 50s,作为 image2 的额外中转选项
+  //  2026/07 接入:imagen-3.0-generate-001,独立 API Key(AIGCFAMILY_IMAGEN3_API_KEY)
   { key: '', label: '—— [AIGCFamily · OpenAI 兼容] ——', sub: undefined, legacy: true },
   { key: 'aigcfamily/gpt-image-2', label: 'aigcfamily-image2', sub: '[AIGCFamily·OpenAI] Image2 · T2I/I2I' },
+  { key: 'aigcfamily/imagen-3.0-generate-001', label: 'AIGC-imagen3', sub: '[AIGCFamily·OpenAI] Imagen3 · T2I/I2I' },
 
   // ---- [AI Tokenvibe · OpenAI 兼容] → /v1/images/generations ----
   { key: '', label: '—— [AI Tokenvibe · OpenAI 兼容] ——', sub: undefined, legacy: true },
