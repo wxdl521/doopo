@@ -30,7 +30,7 @@
 | 路由 | **TanStack Router**（文件系统路由，类型安全） |
 | 数据获取 | **TanStack React Query** |
 | 样式 | **Tailwind CSS v4** + shadcn/ui（Radix UI）+ CSS 变量主题 |
-| 构建 | **Vite 7** + `@lovable.dev/vite-tanstack-config` |
+| 构建 | **Vite 7** + `@lovable.dev/vite-tanstack-config` + `@cloudflare/vite-plugin` |
 | 后端/部署 | **Cloudflare Workers**（Wrangler） |
 | 数据库 | **Supabase PostgreSQL**（RLS） |
 | 认证 | **Supabase Auth**（邮箱 + Bearer Token） |
@@ -269,6 +269,7 @@ CSS 变量主题（`styles.css`），支持亮色/暗色：
 | `docs/all.md` | 全量文档 |
 | `docs/api.md` | API 文档 |
 | `docs/image2.md` | GPT-Image2 对接说明 |
+| `docs/qwen.md` | DashScope/通义千问对接说明 |
 | `docs/seedream.md` | Seedream 对接说明 |
 | `docs/timeline-flow.md` | 时间轴流程 |
 | `docs/交接文档.md` | 项目交接文档 |

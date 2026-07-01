@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(Get-ChildItem -Recurse -Depth 3 -Path \"z:\\\\doopoo-code-hub\\\\packages\" -File -ErrorAction SilentlyContinue)"
+    ]
+  }
+}
