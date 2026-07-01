@@ -4353,9 +4353,12 @@ function WorkspacePage() {
         }
       : undefined
 
-    // 收集角色档案(2026/06:撤掉 .slice(0, 3) 让文字描述层全员上;
-    // 图片层另有 4 张总上限,在下面 referenceImages 收集时挑)
+    // 收集角色档案(2026/07:文字描述层限 6 人 + 单字段截断,
+    // 防止角色数多时 prompt 过大触发 API "too_big" 错误)
+    const MAX_CHAR_TEXT = 6
+    const CHAR_FIELD_MAX = 300
     const characters = (unionCharIds || [])
+      .slice(0, MAX_CHAR_TEXT)
       .map((cid) => {
         const c = data.characters.find((x) => x.id === cid)
         if (!c) return null
@@ -4363,9 +4366,9 @@ function WorkspacePage() {
           name: c.name,
           roleLabel: c.roleLabel,
           age: c.age,
-          faceDescription: c.faceDescription,
-          bodyDescription: c.bodyDescription,
-          clothingDescription: c.clothingDescription,
+          faceDescription: c.faceDescription?.slice(0, CHAR_FIELD_MAX),
+          bodyDescription: c.bodyDescription?.slice(0, CHAR_FIELD_MAX),
+          clothingDescription: c.clothingDescription?.slice(0, CHAR_FIELD_MAX),
           palette: c.palette,
         }
       })
@@ -4543,7 +4546,10 @@ function WorkspacePage() {
         }
       : undefined
 
+    const MAX_CHAR_TEXT = 6
+    const CHAR_FIELD_MAX = 300
     const characters = (unionCharIds || [])
+      .slice(0, MAX_CHAR_TEXT)
       .map((cid) => {
         const c = data.characters.find((x) => x.id === cid)
         if (!c) return null
@@ -4551,9 +4557,9 @@ function WorkspacePage() {
           name: c.name,
           roleLabel: c.roleLabel,
           age: c.age,
-          faceDescription: c.faceDescription,
-          bodyDescription: c.bodyDescription,
-          clothingDescription: c.clothingDescription,
+          faceDescription: c.faceDescription?.slice(0, CHAR_FIELD_MAX),
+          bodyDescription: c.bodyDescription?.slice(0, CHAR_FIELD_MAX),
+          clothingDescription: c.clothingDescription?.slice(0, CHAR_FIELD_MAX),
           palette: c.palette,
         }
       })

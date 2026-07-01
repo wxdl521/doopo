@@ -1656,14 +1656,15 @@ function buildPitchDeckPrompt(opts: {
     return `  Frame ${i + 1}: [${s.shotTypeLabel}] ${s.action}${cam}${dur}`
   }).join('\n')
 
+  const CHAR_DESC_MAX = 300
   const charLines = chars.map((c, i) => {
     const role = c.roleLabel ? ` (${c.roleLabel}` : ''
     const age = c.age !== undefined ? `, age ${c.age}` : ''
     return [
       `  Character ${i + 1}: ${c.name}${role ? role : ''}${age ? age : ''}${c.roleLabel ? ')' : ''}`,
-      c.faceDescription ? `    Face: ${c.faceDescription}` : '',
-      c.bodyDescription ? `    Body: ${c.bodyDescription}` : '',
-      c.clothingDescription ? `    Outfit: ${c.clothingDescription}` : '',
+      c.faceDescription ? `    Face: ${c.faceDescription.slice(0, CHAR_DESC_MAX)}` : '',
+      c.bodyDescription ? `    Body: ${c.bodyDescription.slice(0, CHAR_DESC_MAX)}` : '',
+      c.clothingDescription ? `    Outfit: ${c.clothingDescription.slice(0, CHAR_DESC_MAX)}` : '',
     ].filter(Boolean).join('\n')
   }).join('\n')
 
@@ -1671,7 +1672,7 @@ function buildPitchDeckPrompt(opts: {
     ? [
         data.scene.location ? `  Location: ${data.scene.location}` : '',
         data.scene.timeOfDay ? `  Time: ${data.scene.timeOfDay}` : '',
-        data.scene.profile ? `  Description: ${data.scene.profile}` : '',
+        data.scene.profile ? `  Description: ${data.scene.profile.slice(0, 500)}` : '',
       ].filter(Boolean).join('\n')
     : '  (no specific scene)'
 
@@ -1941,6 +1942,12 @@ export const generateStoryboardPitchDeck = createServerFn({ method: 'POST' })
     // 角色填剩余" 的顺序传 referenceImages,服务端透传到 image 字段。
     // 空数组时不传 image,退化回纯 T2I。
     const refImages = data.referenceImages || []
+    // 2026/07:服务端兜底 —— Seedream image 字段最多 4 张,base64 参考图过大
+    // 会触发 API "too_big" 错误。客户端 REF_MAX=4 是第一道防线,这里守第二道。
+    const MAX_REF_IMAGES = 4
+    if (refImages.length > MAX_REF_IMAGES) {
+      return { ok: false as const, error: `参考图过多(${refImages.length} 张,最多 ${MAX_REF_IMAGES} 张)。请减少该组分镜的角色/场景数量。` }
+    }
     const result = await callSeedreamImages(
       {
         model,
