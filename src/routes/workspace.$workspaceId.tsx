@@ -121,12 +121,19 @@ function explainVideoError(raw: string | undefined | null): string {
   if (/balance|insufficient.?funds|account.*not enough/i.test(s)) {
     return '账户余额不足,请充值后再试。'
   }
-  // 5) 任务超时
-  if (/timed? ?out/i.test(s)) {
+  // 5) 任务超时(英文 + 中文)
+  if (/timed? ?out|超时/i.test(s)) {
     return '任务处理超时,请稍后重试或缩短分镜组时长。'
   }
   // 6) 其它 —— 截断到 200 字避免 toast 太长
   return s.length > 200 ? `${s.slice(0, 200)}…` : s
+}
+
+/** 2026/07:秒数 → MM:SS 显示，用于生成计时器。 */
+function formatElapsed(totalSec: number): string {
+  const m = Math.floor(totalSec / 60)
+  const s = Math.floor(totalSec % 60)
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
 }
 
 // Module-scope: defined once, stable component identity across renders.
@@ -1175,11 +1182,21 @@ function WorkspacePage() {
   // 2026 视频生成:每个 storyboard group 一条短视频,key = groupId。
   // 视频用整组所有 shot 的图作 first_frame + reference_image,
   // 涵盖整个分镜组的镜头序列(不再每张分镜单独出视频)。
-  // 不持久化(视频 URL 24h 有效)。
-  const [groupVideos, setGroupVideos] = useState<Record<string, { url: string; status: 'running' | 'succeeded' | 'failed' }>>({})
+  // 2026/07:接入 localStorage 持久化，刷新页面不丢失已生成的 URL（URL 24h 有效）。
+  const [groupVideos, setGroupVideos] = useState<Record<string, { url: string; status: 'running' | 'succeeded' | 'failed'; startedAt?: number }>>({})
   // 2026 Storyboard 接入:每个分镜组可以独立生成故事板图(Storyboard),
-  // key = groupId。value 包含 storyboardUrl 和 status。不持久化(Seedream URL 24h 有效)。
-  const [groupStoryboards, setGroupStoryboards] = useState<Record<string, { url: string; status: 'running' | 'succeeded' | 'failed' }>>({})
+  // key = groupId。value 包含 storyboardUrl 和 status。
+  // 2026/07:接入 localStorage 持久化，刷新页面不丢失已生成的 URL（Seedream URL 24h 有效）。
+  const [groupStoryboards, setGroupStoryboards] = useState<Record<string, { url: string; status: 'running' | 'succeeded' | 'failed'; startedAt?: number }>>({})
+  // 2026/07:每秒 tick,驱动生成中计时器刷新。只要有任一 storyboard/video 在 running 就跑 interval。
+  const [tick, setTick] = useState(0)
+  useEffect(() => {
+    const sbRunning = Object.values(groupStoryboards).some((s) => s.status === 'running')
+    const vidRunning = Object.values(groupVideos).some((v) => v.status === 'running')
+    if (!sbRunning && !vidRunning) return
+    const id = setInterval(() => setTick((t) => t + 1), 1000)
+    return () => clearInterval(id)
+  }, [groupStoryboards, groupVideos])
   // 2026/06:新建空分镜组的插入位置选择弹窗
   const [showNewGroupModal, setShowNewGroupModal] = useState(false)
   // 2026/06:故事板图加载失败的 groupId 集合。
@@ -1236,6 +1253,39 @@ function WorkspacePage() {
   const [shotModInput, setShotModInput] = useState('')
   const [shotModBusy, setShotModBusy] = useState(false)
   const workspaceId = Route.useParams().workspaceId
+
+  // 2026/07:从 localStorage 恢复 groupVideos / groupStoryboards（刷新不丢图/视频）
+  useEffect(() => {
+    try {
+      const vRaw = localStorage.getItem(`doopoo:ws:${workspaceId}:videos`)
+      if (vRaw) {
+        const parsed = JSON.parse(vRaw) as Record<string, { url: string; status: string; startedAt?: number }>
+        for (const k of Object.keys(parsed)) {
+          if (parsed[k]?.status === 'running') parsed[k] = { url: parsed[k]?.url || '', status: 'failed', startedAt: parsed[k]?.startedAt }
+        }
+        setGroupVideos(parsed as any)
+      }
+      const sRaw = localStorage.getItem(`doopoo:ws:${workspaceId}:storyboards`)
+      if (sRaw) {
+        const parsed = JSON.parse(sRaw) as Record<string, { url: string; status: string; startedAt?: number }>
+        for (const k of Object.keys(parsed)) {
+          if (parsed[k]?.status === 'running') parsed[k] = { url: parsed[k]?.url || '', status: 'failed', startedAt: parsed[k]?.startedAt }
+        }
+        setGroupStoryboards(parsed as any)
+      }
+    } catch { /* localStorage 不可用或数据损坏，静默跳过 */ }
+  }, [workspaceId])
+
+  // 2026/07:groupVideos 变更 → 同步到 localStorage
+  useEffect(() => {
+    try { localStorage.setItem(`doopoo:ws:${workspaceId}:videos`, JSON.stringify(groupVideos)) } catch {}
+  }, [groupVideos, workspaceId])
+
+  // 2026/07:groupStoryboards 变更 → 同步到 localStorage
+  useEffect(() => {
+    try { localStorage.setItem(`doopoo:ws:${workspaceId}:storyboards`, JSON.stringify(groupStoryboards)) } catch {}
+  }, [groupStoryboards, workspaceId])
+
   useEffect(() => {
     let cancelled = false
     loadProject({ data: { id: workspaceId } })
@@ -3891,7 +3941,16 @@ function WorkspacePage() {
       return
     }
 
-    setGroupVideos((m) => ({ ...m, [groupId]: { url: '', status: 'running' } }))
+    setGroupVideos((m) => ({ ...m, [groupId]: { url: '', status: 'running', startedAt: Date.now() } }))
+
+    // 2026/07:7 分钟客户端超时(兜底 CF Worker 可能提前终止)
+    const VID_TIMEOUT_MS = 420_000
+    let vidTimedOut = false
+    const vidTimeoutId = setTimeout(() => {
+      vidTimedOut = true
+      setGroupVideos((m) => ({ ...m, [groupId]: { url: '', status: 'failed' } }))
+      toast.error('视频生成超时 (7 分钟)，请重试')
+    }, VID_TIMEOUT_MS)
 
     // 2026/07:按分镜图数量分三种模式(匹配 toapis 互斥规则):
     //   1 张 → 首帧模式 (imageUrl = shot[0])
@@ -3984,6 +4043,7 @@ function WorkspacePage() {
 
     // 2026/06:查看提示词模式 —— 视频 prompt 完全 client 端拼,这里直接弹 modal
     if (viewPromptsModeRef.current) {
+      clearTimeout(vidTimeoutId)
       setPromptPreview({
         title: `第 ${group.index} 组 · 按分镜图生成视频`,
         prompt,
@@ -4019,8 +4079,11 @@ function WorkspacePage() {
           duration: 10,  // 多镜头序列需要更长时间(默认 5s 不够)
           generateAudio: project?.audio === 'on',
           watermark: false,
+          deadlineMs: 420_000, // 7 分钟超时
         },
       })
+      if (vidTimedOut) return
+      clearTimeout(vidTimeoutId)
       if (res.ok && res.videoUrl) {
         setGroupVideos((m) => ({ ...m, [groupId]: { url: res.videoUrl!, status: 'succeeded' } }))
         toast.success(`分镜组视频已生成 (${shotImagesList.length} 个镜头,${res.videoUrl ? '已就绪' : ''})`)
@@ -4029,6 +4092,8 @@ function WorkspacePage() {
         toast.error(explainVideoError(res?.error))
       }
     } catch (e) {
+      if (vidTimedOut) return
+      clearTimeout(vidTimeoutId)
       setGroupVideos((m) => ({ ...m, [groupId]: { url: '', status: 'failed' } }))
       toast.error(explainVideoError(e instanceof Error ? e.message : '视频生成失败'))
     }
@@ -4062,7 +4127,16 @@ function WorkspacePage() {
       return
     }
 
-    setGroupVideos((m) => ({ ...m, [groupId]: { url: '', status: 'running' } }))
+    setGroupVideos((m) => ({ ...m, [groupId]: { url: '', status: 'running', startedAt: Date.now() } }))
+
+    // 2026/07:7 分钟客户端超时(兜底 CF Worker 可能提前终止)
+    const VID2_TIMEOUT_MS = 420_000
+    let vid2TimedOut = false
+    const vid2TimeoutId = setTimeout(() => {
+      vid2TimedOut = true
+      setGroupVideos((m) => ({ ...m, [groupId]: { url: '', status: 'failed' } }))
+      toast.error('视频生成超时 (7 分钟)，请重试')
+    }, VID2_TIMEOUT_MS)
 
     // 2026/07:故事板生成 → 多模态参考模式
     //   全部作为 reference_image:故事板图 + 分镜图(如有) + 人物 + 场景 + 道具
@@ -4158,6 +4232,7 @@ function WorkspacePage() {
 
     // 2026/06:查看提示词模式 —— 直接弹 modal
     if (viewPromptsModeRef.current) {
+      clearTimeout(vid2TimeoutId)
       setPromptPreview({
         title: `第 ${group.index} 组 · 按故事板生成视频`,
         prompt,
@@ -4190,8 +4265,11 @@ function WorkspacePage() {
           duration: Math.min(10, Math.max(5, Math.round(group.endSec - group.startSec))),
           generateAudio: project?.audio === 'on',
           watermark: false,
+          deadlineMs: 420_000, // 7 分钟超时
         },
       })
+      if (vid2TimedOut) return
+      clearTimeout(vid2TimeoutId)
       if (res.ok && res.videoUrl) {
         setGroupVideos((m) => ({ ...m, [groupId]: { url: res.videoUrl!, status: 'succeeded' } }))
         toast.success('按故事板的视频已生成')
@@ -4200,6 +4278,8 @@ function WorkspacePage() {
         toast.error(explainVideoError(res?.error))
       }
     } catch (e) {
+      if (vid2TimedOut) return
+      clearTimeout(vid2TimeoutId)
       setGroupVideos((m) => ({ ...m, [groupId]: { url: '', status: 'failed' } }))
       toast.error(explainVideoError(e instanceof Error ? e.message : '视频生成失败'))
     }
@@ -4224,7 +4304,16 @@ function WorkspacePage() {
       return
     }
 
-    setGroupStoryboards((m) => ({ ...m, [groupId]: { url: '', status: 'running' } }))
+    setGroupStoryboards((m) => ({ ...m, [groupId]: { url: '', status: 'running', startedAt: Date.now() } }))
+
+    // 2026/07:3 分钟客户端超时(兜底 CF Worker 可能提前终止)
+    const SB_TIMEOUT_MS = 180_000
+    let sbTimedOut = false
+    const sbTimeoutId = setTimeout(() => {
+      sbTimedOut = true
+      setGroupStoryboards((m) => ({ ...m, [groupId]: { url: '', status: 'failed' } }))
+      toast.error('故事板生成超时 (3 分钟)，请重试')
+    }, SB_TIMEOUT_MS)
 
     // 2026/06:故事板 pitch deck 是"组级"产物,代表整组的视觉摘要。
     //   - 角色:用各 shot 有效角色列表的并集(任一 shot 显式加的角色都会进 pitch deck)
@@ -4346,12 +4435,15 @@ function WorkspacePage() {
       })
       // 2026/06:查看提示词模式拦截 —— 把 running 状态清掉(也别标 failed)
       if (interceptPromptPreview(`第 ${group.index} 组 · 故事板`, res)) {
+        clearTimeout(sbTimeoutId)
         setGroupStoryboards((m) => {
           const { [groupId]: _, ...rest } = m
           return rest
         })
         return
       }
+      if (sbTimedOut) return
+      clearTimeout(sbTimeoutId)
       if (res.ok && res.url) {
         // 2026/06:和其他图片一致 —— 先 await 转 base64 确保立即可见,入库 Supabase 作为额外兜底
         const base64Url = await toBase64WithFallback(res.url)
@@ -4390,10 +4482,13 @@ function WorkspacePage() {
         }
         setGroupStoryboards((m) => ({ ...m, [groupId]: { url: finalUrl, status: 'succeeded' } }))
       } else {
+        if (sbTimedOut) return
         setGroupStoryboards((m) => ({ ...m, [groupId]: { url: '', status: 'failed' } }))
         toast.error(classifyError(res?.error, '故事板生成失败'))
       }
     } catch (e) {
+      if (sbTimedOut) return
+      clearTimeout(sbTimeoutId)
       setGroupStoryboards((m) => ({ ...m, [groupId]: { url: '', status: 'failed' } }))
       toast.error(e instanceof Error ? classifyError(e.message, '故事板生成失败') : '故事板生成失败')
     }
@@ -7937,13 +8032,22 @@ function WorkspacePage() {
                                 <span className="text-[9px] opacity-70">含剧情/角色/场景/分镜</span>
                               </div>
                             )}
-                            {(!groupStoryboards[g.id] || groupStoryboards[g.id]?.status === 'failed') && (
+                            {groupStoryboards[g.id]?.status === 'running' && groupStoryboards[g.id]?.startedAt ? (
+                              <div className="w-full text-[10px] py-1 rounded border border-accent/40 bg-accent-dim/10 text-accent inline-flex items-center justify-center gap-1.5">
+                                <Loader2 size={9} className="animate-spin" />
+                                <span>生成中… {formatElapsed((Date.now() - groupStoryboards[g.id]!.startedAt!) / 1000)}</span>
+                              </div>
+                            ) : (!groupStoryboards[g.id] || groupStoryboards[g.id]?.status === 'failed' || groupStoryboards[g.id]?.status === 'succeeded') && (
                               <button
                                 type="button"
                                 onClick={() => void generateMangaStoryboardForGroup(g.id)}
                                 className="w-full text-[10px] py-1 rounded border border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent transition inline-flex items-center justify-center gap-1"
                               >
-                                <Sparkles size={9} /> {groupStoryboards[g.id]?.status === 'failed' ? '重试生成' : '生成故事板'}
+                                {groupStoryboards[g.id]?.status === 'succeeded'
+                                  ? <><RefreshCw size={9} /> 重新生成</>
+                                  : groupStoryboards[g.id]?.status === 'failed'
+                                    ? <><Sparkles size={9} /> 重试生成</>
+                                    : <><Sparkles size={9} /> 生成故事板</>}
                               </button>
                             )}
                             <p className="text-[10px] text-text-muted leading-relaxed">
@@ -8033,7 +8137,10 @@ function WorkspacePage() {
                                 className="w-full text-[10px] py-1 rounded border border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent transition disabled:opacity-40 inline-flex items-center justify-center gap-1"
                               >
                                 {groupVideos[g.id]?.status === 'running'
-                                  ? <><Loader2 size={9} className="animate-spin" /> 视频生成中…</>
+                                  ? <span className="inline-flex items-center gap-1.5">
+                                      <Loader2 size={9} className="animate-spin" />
+                                      视频生成中… {groupVideos[g.id]?.startedAt ? formatElapsed((Date.now() - groupVideos[g.id]!.startedAt!) / 1000) : ''}
+                                    </span>
                                   : groupVideos[g.id]?.status === 'succeeded'
                                     ? <><RefreshCw size={9} /> 按分镜图重新生成视频</>
                                     : <><Camera size={9} /> 按分镜图生成视频</>}
@@ -8062,8 +8169,13 @@ function WorkspacePage() {
                                 title="基于故事板图(作为视觉锚)+ 剧情文字(作叙事参考)生成视频"
                               >
                                 {groupVideos[g.id]?.status === 'running'
-                                  ? <><Loader2 size={9} className="animate-spin" /> 视频生成中…</>
-                                  : <><LayoutGrid size={9} /> 按故事板生成视频</>}
+                                  ? <span className="inline-flex items-center gap-1.5">
+                                      <Loader2 size={9} className="animate-spin" />
+                                      视频生成中… {groupVideos[g.id]?.startedAt ? formatElapsed((Date.now() - groupVideos[g.id]!.startedAt!) / 1000) : ''}
+                                    </span>
+                                  : groupVideos[g.id]?.status === 'succeeded'
+                                    ? <><RefreshCw size={9} /> 按故事板重新生成视频</>
+                                    : <><LayoutGrid size={9} /> 按故事板生成视频</>}
                               </button>
                             )
                           })()}

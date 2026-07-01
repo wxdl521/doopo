@@ -1480,6 +1480,7 @@ export const generateVideo = createServerFn({ method: 'POST' })
       error: `[${submit.backend}] timed out after ${Math.round((data.deadlineMs ?? 300_000) / 1000)}s (last status: ${lastStatus})`,
       taskId: submit.taskId,
       backend: submit.backend,
+      lastStatus,
     }
   })
 
