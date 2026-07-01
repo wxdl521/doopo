@@ -3929,6 +3929,21 @@ function WorkspacePage() {
    * 注意:视频 URL 24h 有效(跟图片永久 URL 行为不同)。
    * 后续若要长期保存得在 server 端下载转存到 Supabase Storage。
    */
+  /** 2026/07:取消故事板生成，把 running 状态清掉回到未生成。 */
+  function cancelStoryboardGen(groupId: string) {
+    setGroupStoryboards((m) => {
+      const { [groupId]: _, ...rest } = m
+      return rest
+    })
+  }
+  /** 2026/07:取消视频生成。 */
+  function cancelVideoGen(groupId: string) {
+    setGroupVideos((m) => {
+      const { [groupId]: _, ...rest } = m
+      return rest
+    })
+  }
+
   async function generateVideoForGroup(groupId: string) {
     const group = data.storyboardGroups.find((g) => g.id === groupId)
     if (!group) return
@@ -3952,15 +3967,6 @@ function WorkspacePage() {
     }
 
     setGroupVideos((m) => ({ ...m, [groupId]: { url: '', status: 'running', startedAt: Date.now() } }))
-
-    // 2026/07:7 分钟客户端超时(兜底 CF Worker 可能提前终止)
-    const VID_TIMEOUT_MS = 420_000
-    let vidTimedOut = false
-    const vidTimeoutId = setTimeout(() => {
-      vidTimedOut = true
-      setGroupVideos((m) => ({ ...m, [groupId]: { url: '', status: 'failed' } }))
-      toast.error('视频生成超时 (7 分钟)，请重试')
-    }, VID_TIMEOUT_MS)
 
     // 2026/07:按分镜图数量分三种模式(匹配 toapis 互斥规则):
     //   1 张 → 首帧模式 (imageUrl = shot[0])
@@ -4053,7 +4059,6 @@ function WorkspacePage() {
 
     // 2026/06:查看提示词模式 —— 视频 prompt 完全 client 端拼,这里直接弹 modal
     if (viewPromptsModeRef.current) {
-      clearTimeout(vidTimeoutId)
       setPromptPreview({
         title: `第 ${group.index} 组 · 按分镜图生成视频`,
         prompt,
@@ -4089,11 +4094,8 @@ function WorkspacePage() {
           duration: 10,  // 多镜头序列需要更长时间(默认 5s 不够)
           generateAudio: project?.audio === 'on',
           watermark: false,
-          deadlineMs: 420_000, // 7 分钟超时
         },
       })
-      if (vidTimedOut) return
-      clearTimeout(vidTimeoutId)
       if (res.ok && res.videoUrl) {
         setGroupVideos((m) => ({ ...m, [groupId]: { url: res.videoUrl!, status: 'succeeded' } }))
         toast.success(`分镜组视频已生成 (${shotImagesList.length} 个镜头,${res.videoUrl ? '已就绪' : ''})`)
@@ -4102,8 +4104,6 @@ function WorkspacePage() {
         toast.error(explainVideoError(res?.error))
       }
     } catch (e) {
-      if (vidTimedOut) return
-      clearTimeout(vidTimeoutId)
       setGroupVideos((m) => ({ ...m, [groupId]: { url: '', status: 'failed' } }))
       toast.error(explainVideoError(e instanceof Error ? e.message : '视频生成失败'))
     }
@@ -4138,15 +4138,6 @@ function WorkspacePage() {
     }
 
     setGroupVideos((m) => ({ ...m, [groupId]: { url: '', status: 'running', startedAt: Date.now() } }))
-
-    // 2026/07:7 分钟客户端超时(兜底 CF Worker 可能提前终止)
-    const VID2_TIMEOUT_MS = 420_000
-    let vid2TimedOut = false
-    const vid2TimeoutId = setTimeout(() => {
-      vid2TimedOut = true
-      setGroupVideos((m) => ({ ...m, [groupId]: { url: '', status: 'failed' } }))
-      toast.error('视频生成超时 (7 分钟)，请重试')
-    }, VID2_TIMEOUT_MS)
 
     // 2026/07:故事板生成 → 多模态参考模式
     //   全部作为 reference_image:故事板图 + 分镜图(如有) + 人物 + 场景 + 道具
@@ -4242,7 +4233,6 @@ function WorkspacePage() {
 
     // 2026/06:查看提示词模式 —— 直接弹 modal
     if (viewPromptsModeRef.current) {
-      clearTimeout(vid2TimeoutId)
       setPromptPreview({
         title: `第 ${group.index} 组 · 按故事板生成视频`,
         prompt,
@@ -4275,11 +4265,8 @@ function WorkspacePage() {
           duration: Math.min(10, Math.max(5, Math.round(group.endSec - group.startSec))),
           generateAudio: project?.audio === 'on',
           watermark: false,
-          deadlineMs: 420_000, // 7 分钟超时
         },
       })
-      if (vid2TimedOut) return
-      clearTimeout(vid2TimeoutId)
       if (res.ok && res.videoUrl) {
         setGroupVideos((m) => ({ ...m, [groupId]: { url: res.videoUrl!, status: 'succeeded' } }))
         toast.success('按故事板的视频已生成')
@@ -4288,8 +4275,6 @@ function WorkspacePage() {
         toast.error(explainVideoError(res?.error))
       }
     } catch (e) {
-      if (vid2TimedOut) return
-      clearTimeout(vid2TimeoutId)
       setGroupVideos((m) => ({ ...m, [groupId]: { url: '', status: 'failed' } }))
       toast.error(explainVideoError(e instanceof Error ? e.message : '视频生成失败'))
     }
@@ -4315,15 +4300,6 @@ function WorkspacePage() {
     }
 
     setGroupStoryboards((m) => ({ ...m, [groupId]: { url: '', status: 'running', startedAt: Date.now() } }))
-
-    // 2026/07:3 分钟客户端超时(兜底 CF Worker 可能提前终止)
-    const SB_TIMEOUT_MS = 180_000
-    let sbTimedOut = false
-    const sbTimeoutId = setTimeout(() => {
-      sbTimedOut = true
-      setGroupStoryboards((m) => ({ ...m, [groupId]: { url: '', status: 'failed' } }))
-      toast.error('故事板生成超时 (3 分钟)，请重试')
-    }, SB_TIMEOUT_MS)
 
     // 2026/06:故事板 pitch deck 是"组级"产物,代表整组的视觉摘要。
     //   - 角色:用各 shot 有效角色列表的并集(任一 shot 显式加的角色都会进 pitch deck)
@@ -4448,15 +4424,12 @@ function WorkspacePage() {
       })
       // 2026/06:查看提示词模式拦截 —— 把 running 状态清掉(也别标 failed)
       if (interceptPromptPreview(`第 ${group.index} 组 · 故事板`, res)) {
-        clearTimeout(sbTimeoutId)
         setGroupStoryboards((m) => {
           const { [groupId]: _, ...rest } = m
           return rest
         })
         return
       }
-      if (sbTimedOut) return
-      clearTimeout(sbTimeoutId)
       if (res.ok && res.url) {
         // 2026/06:和其他图片一致 —— 先 await 转 base64 确保立即可见,入库 Supabase 作为额外兜底
         const base64Url = await toBase64WithFallback(res.url)
@@ -4495,13 +4468,10 @@ function WorkspacePage() {
         }
         setGroupStoryboards((m) => ({ ...m, [groupId]: { url: finalUrl, status: 'succeeded' } }))
       } else {
-        if (sbTimedOut) return
         setGroupStoryboards((m) => ({ ...m, [groupId]: { url: '', status: 'failed' } }))
         toast.error(classifyError(res?.error, '故事板生成失败'))
       }
     } catch (e) {
-      if (sbTimedOut) return
-      clearTimeout(sbTimeoutId)
       setGroupStoryboards((m) => ({ ...m, [groupId]: { url: '', status: 'failed' } }))
       toast.error(e instanceof Error ? classifyError(e.message, '故事板生成失败') : '故事板生成失败')
     }
@@ -8051,7 +8021,7 @@ function WorkspacePage() {
                             {groupStoryboards[g.id]?.status === 'running' && groupStoryboards[g.id]?.startedAt ? (
                               <div className="w-full text-[10px] py-1 rounded border border-accent/40 bg-accent-dim/10 text-accent inline-flex items-center justify-center gap-1.5">
                                 <Loader2 size={9} className="animate-spin" />
-                                <span>生成中… {formatElapsed((Date.now() - groupStoryboards[g.id]!.startedAt!) / 1000)}</span>
+                                <span>生成中… {formatElapsed((Date.now() - groupStoryboards[g.id]!.startedAt!) / 1000)}<span className="text-text-muted ml-1">· 预计 1-3 分钟</span></span>
                               </div>
                             ) : (!groupStoryboards[g.id] || groupStoryboards[g.id]?.status === 'failed' || groupStoryboards[g.id]?.status === 'succeeded') && (
                               <button
@@ -8153,9 +8123,19 @@ function WorkspacePage() {
                                 className="w-full text-[10px] py-1 rounded border border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent transition disabled:opacity-40 inline-flex items-center justify-center gap-1"
                               >
                                 {groupVideos[g.id]?.status === 'running'
-                                  ? <span className="inline-flex items-center gap-1.5">
-                                      <Loader2 size={9} className="animate-spin" />
-                                      视频生成中… {groupVideos[g.id]?.startedAt ? formatElapsed((Date.now() - groupVideos[g.id]!.startedAt!) / 1000) : ''}
+                                  ? <span className="w-full inline-flex items-center justify-between gap-1.5">
+                                      <span className="inline-flex items-center gap-1.5">
+                                        <Loader2 size={9} className="animate-spin" />
+                                        视频生成中… {groupVideos[g.id]?.startedAt ? formatElapsed((Date.now() - groupVideos[g.id]!.startedAt!) / 1000) : ''}<span className="opacity-50 ml-1">· 预计 3-5 分钟</span>
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); cancelVideoGen(g.id) }}
+                                        className="p-0.5 rounded hover:bg-accent/20 transition"
+                                        title="取消生成"
+                                      >
+                                        <X size={10} />
+                                      </button>
                                     </span>
                                   : groupVideos[g.id]?.status === 'succeeded'
                                     ? <><RefreshCw size={9} /> 按分镜图重新生成视频</>
@@ -8185,9 +8165,19 @@ function WorkspacePage() {
                                 title="基于故事板图(作为视觉锚)+ 剧情文字(作叙事参考)生成视频"
                               >
                                 {groupVideos[g.id]?.status === 'running'
-                                  ? <span className="inline-flex items-center gap-1.5">
-                                      <Loader2 size={9} className="animate-spin" />
-                                      视频生成中… {groupVideos[g.id]?.startedAt ? formatElapsed((Date.now() - groupVideos[g.id]!.startedAt!) / 1000) : ''}
+                                  ? <span className="w-full inline-flex items-center justify-between gap-1.5">
+                                      <span className="inline-flex items-center gap-1.5">
+                                        <Loader2 size={9} className="animate-spin" />
+                                        视频生成中… {groupVideos[g.id]?.startedAt ? formatElapsed((Date.now() - groupVideos[g.id]!.startedAt!) / 1000) : ''}<span className="opacity-50 ml-1">· 预计 3-5 分钟</span>
+                                      </span>
+                                      <button
+                                        type="button"
+                                        onClick={(e) => { e.stopPropagation(); cancelVideoGen(g.id) }}
+                                        className="p-0.5 rounded hover:bg-accent/20 transition"
+                                        title="取消生成"
+                                      >
+                                        <X size={10} />
+                                      </button>
                                     </span>
                                   : groupVideos[g.id]?.status === 'succeeded'
                                     ? <><RefreshCw size={9} /> 按故事板重新生成视频</>
