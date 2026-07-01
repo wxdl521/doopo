@@ -61,6 +61,7 @@ const imageModelOptions = [
   // ---- AIGC Family(OpenAI 兼容)----
   { id: '__sep_aigcfamily__', label: '—— AIGC Family(OpenAI 兼容)——', sub: '' },
   { id: 'aigcfamily/gpt-image-2', label: 'GPT Image 2 (AIGC Family)', sub: 'AIGC Family · OpenAI · Image2' },
+  { id: 'aigcfamily/imagen-3.0-generate-001', label: 'AIGC-imagen3', sub: 'AIGC Family · OpenAI · Imagen3 · T2I/I2I' },
 
   // ---- OTU(OpenAI 兼容)----
   { id: '__sep_otu__', label: '—— OTU(OpenAI 兼容)——', sub: '' },

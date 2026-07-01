@@ -156,6 +156,11 @@ const IMAGE_MODELS: ImageModel[] = [
     gradient: 'from-fuchsia-500 to-purple-600', status: 'available',
   },
   {
+    id: 'aigcfamily/imagen-3.0-generate-001', name: 'AIGC-imagen3', nameEn: 'AIGC-imagen3',
+    vendor: 'AIGCFamily · OpenAI 兼容', tagline: 'Imagen3 · T2I/I2I', taglineEn: 'Imagen3 · T2I/I2I',
+    gradient: 'from-cyan-500 to-blue-600', status: 'available',
+  },
+  {
     id: 'azure/gpt-image-2', name: 'Azure-gpt-image-2', nameEn: 'Azure-gpt-image-2',
     vendor: 'Azure · OpenAI', tagline: 'gpt-image-2 · T2I/I2I · 官方', taglineEn: 'gpt-image-2 · T2I/I2I · Official',
     gradient: 'from-sky-500 to-blue-700', status: 'available',
