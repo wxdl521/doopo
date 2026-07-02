@@ -17,6 +17,7 @@ import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as RegisterRouteImport } from './routes/register'
 import { Route as ProjectsRouteImport } from './routes/projects'
 import { Route as PricingRouteImport } from './routes/pricing'
+import { Route as MyTeamRouteImport } from './routes/my-team'
 import { Route as ModelsRouteImport } from './routes/models'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as HomeRouteImport } from './routes/home'
@@ -53,6 +54,7 @@ import { Route as AccountRewardsRouteImport } from './routes/account.rewards'
 import { Route as AccountPostsRouteImport } from './routes/account.posts'
 import { Route as AccountNotificationsRouteImport } from './routes/account.notifications'
 import { Route as AccountAssetsRouteImport } from './routes/account.assets'
+import { Route as TeamTeamIdManageRouteImport } from './routes/team/$teamId/manage'
 import { Route as AssetsTabIdRouteImport } from './routes/assets_.$tab.$id'
 import { Route as ApiPublicTestAitokenvibeRouteImport } from './routes/api/public/test-aitokenvibe'
 
@@ -94,6 +96,11 @@ const ProjectsRoute = ProjectsRouteImport.update({
 const PricingRoute = PricingRouteImport.update({
   id: '/pricing',
   path: '/pricing',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MyTeamRoute = MyTeamRouteImport.update({
+  id: '/my-team',
+  path: '/my-team',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ModelsRoute = ModelsRouteImport.update({
@@ -276,6 +283,11 @@ const AccountAssetsRoute = AccountAssetsRouteImport.update({
   path: '/assets',
   getParentRoute: () => AccountRoute,
 } as any)
+const TeamTeamIdManageRoute = TeamTeamIdManageRouteImport.update({
+  id: '/$teamId/manage',
+  path: '/$teamId/manage',
+  getParentRoute: () => TeamRoute,
+} as any)
 const AssetsTabIdRoute = AssetsTabIdRouteImport.update({
   id: '/assets_/$tab/$id',
   path: '/assets/$tab/$id',
@@ -300,6 +312,7 @@ export interface FileRoutesByFullPath {
   '/home': typeof HomeRoute
   '/login': typeof LoginRoute
   '/models': typeof ModelsRoute
+  '/my-team': typeof MyTeamRoute
   '/pricing': typeof PricingRoute
   '/projects': typeof ProjectsRouteWithChildren
   '/register': typeof RegisterRoute
@@ -335,6 +348,7 @@ export interface FileRoutesByFullPath {
   '/team/': typeof TeamIndexRoute
   '/api/public/test-aitokenvibe': typeof ApiPublicTestAitokenvibeRoute
   '/assets/$tab/$id': typeof AssetsTabIdRoute
+  '/team/$teamId/manage': typeof TeamTeamIdManageRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -345,6 +359,7 @@ export interface FileRoutesByTo {
   '/home': typeof HomeRoute
   '/login': typeof LoginRoute
   '/models': typeof ModelsRoute
+  '/my-team': typeof MyTeamRoute
   '/pricing': typeof PricingRoute
   '/projects': typeof ProjectsRouteWithChildren
   '/register': typeof RegisterRoute
@@ -378,6 +393,7 @@ export interface FileRoutesByTo {
   '/team': typeof TeamIndexRoute
   '/api/public/test-aitokenvibe': typeof ApiPublicTestAitokenvibeRoute
   '/assets/$tab/$id': typeof AssetsTabIdRoute
+  '/team/$teamId/manage': typeof TeamTeamIdManageRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -392,6 +408,7 @@ export interface FileRoutesById {
   '/home': typeof HomeRoute
   '/login': typeof LoginRoute
   '/models': typeof ModelsRoute
+  '/my-team': typeof MyTeamRoute
   '/pricing': typeof PricingRoute
   '/projects': typeof ProjectsRouteWithChildren
   '/register': typeof RegisterRoute
@@ -427,6 +444,7 @@ export interface FileRoutesById {
   '/team/': typeof TeamIndexRoute
   '/api/public/test-aitokenvibe': typeof ApiPublicTestAitokenvibeRoute
   '/assets_/$tab/$id': typeof AssetsTabIdRoute
+  '/team/$teamId/manage': typeof TeamTeamIdManageRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -442,6 +460,7 @@ export interface FileRouteTypes {
     | '/home'
     | '/login'
     | '/models'
+    | '/my-team'
     | '/pricing'
     | '/projects'
     | '/register'
@@ -477,6 +496,7 @@ export interface FileRouteTypes {
     | '/team/'
     | '/api/public/test-aitokenvibe'
     | '/assets/$tab/$id'
+    | '/team/$teamId/manage'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -487,6 +507,7 @@ export interface FileRouteTypes {
     | '/home'
     | '/login'
     | '/models'
+    | '/my-team'
     | '/pricing'
     | '/projects'
     | '/register'
@@ -520,6 +541,7 @@ export interface FileRouteTypes {
     | '/team'
     | '/api/public/test-aitokenvibe'
     | '/assets/$tab/$id'
+    | '/team/$teamId/manage'
   id:
     | '__root__'
     | '/'
@@ -533,6 +555,7 @@ export interface FileRouteTypes {
     | '/home'
     | '/login'
     | '/models'
+    | '/my-team'
     | '/pricing'
     | '/projects'
     | '/register'
@@ -568,6 +591,7 @@ export interface FileRouteTypes {
     | '/team/'
     | '/api/public/test-aitokenvibe'
     | '/assets_/$tab/$id'
+    | '/team/$teamId/manage'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -582,6 +606,7 @@ export interface RootRouteChildren {
   HomeRoute: typeof HomeRoute
   LoginRoute: typeof LoginRoute
   ModelsRoute: typeof ModelsRoute
+  MyTeamRoute: typeof MyTeamRoute
   PricingRoute: typeof PricingRoute
   ProjectsRoute: typeof ProjectsRouteWithChildren
   RegisterRoute: typeof RegisterRoute
@@ -651,6 +676,13 @@ declare module '@tanstack/react-router' {
       path: '/pricing'
       fullPath: '/pricing'
       preLoaderRoute: typeof PricingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/my-team': {
+      id: '/my-team'
+      path: '/my-team'
+      fullPath: '/my-team'
+      preLoaderRoute: typeof MyTeamRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/models': {
@@ -905,6 +937,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AccountAssetsRouteImport
       parentRoute: typeof AccountRoute
     }
+    '/team/$teamId/manage': {
+      id: '/team/$teamId/manage'
+      path: '/$teamId/manage'
+      fullPath: '/team/$teamId/manage'
+      preLoaderRoute: typeof TeamTeamIdManageRouteImport
+      parentRoute: typeof TeamRoute
+    }
     '/assets_/$tab/$id': {
       id: '/assets_/$tab/$id'
       path: '/assets/$tab/$id'
@@ -1032,6 +1071,7 @@ interface TeamRouteChildren {
   TeamMembersRoute: typeof TeamMembersRoute
   TeamUsageRoute: typeof TeamUsageRoute
   TeamIndexRoute: typeof TeamIndexRoute
+  TeamTeamIdManageRoute: typeof TeamTeamIdManageRoute
 }
 
 const TeamRouteChildren: TeamRouteChildren = {
@@ -1040,6 +1080,7 @@ const TeamRouteChildren: TeamRouteChildren = {
   TeamMembersRoute: TeamMembersRoute,
   TeamUsageRoute: TeamUsageRoute,
   TeamIndexRoute: TeamIndexRoute,
+  TeamTeamIdManageRoute: TeamTeamIdManageRoute,
 }
 
 const TeamRouteWithChildren = TeamRoute._addFileChildren(TeamRouteChildren)
@@ -1056,6 +1097,7 @@ const rootRouteChildren: RootRouteChildren = {
   HomeRoute: HomeRoute,
   LoginRoute: LoginRoute,
   ModelsRoute: ModelsRoute,
+  MyTeamRoute: MyTeamRoute,
   PricingRoute: PricingRoute,
   ProjectsRoute: ProjectsRouteWithChildren,
   RegisterRoute: RegisterRoute,
