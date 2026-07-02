@@ -37,7 +37,9 @@ import {
   UserCog,
   User,
   Check,
+  Loader2,
 } from "lucide-react";
+import { toast } from "sonner";
 import { getTeamMembers, updateMemberRole, removeMember } from "@/lib/teamMembers.functions";
 import { useLanguage } from "@/i18n/LanguageContext";
 import type { MemberRow } from "@/lib/teamMembers.functions";
@@ -76,9 +78,10 @@ export default function MembersTab({ teamId, myRole, onManageCredits }: MembersT
   const [loading, setLoading] = useState(true);
   const [deleteTarget, setDeleteTarget] = useState<MemberRow | null>(null);
   const [inviteCopied, setInviteCopied] = useState(false);
+  const [changingUserId, setChangingUserId] = useState<string | null>(null);
 
   const loadMembers = () => {
-    callGetMembers({ data: { teamId } })
+    return callGetMembers({ data: { teamId } })
       .then((r: any) => {
         if (r?.members) setMembers(r.members);
       })
@@ -91,10 +94,23 @@ export default function MembersTab({ teamId, myRole, onManageCredits }: MembersT
   }, [teamId]);
 
   const handleRoleChange = async (userId: string, newRole: string) => {
-    const r: any = await callUpdateRole({
-      data: { teamId, userId, role: newRole as "admin" | "member" },
-    });
-    if (r?.ok) loadMembers();
+    setChangingUserId(userId);
+    try {
+      const r: any = await callUpdateRole({
+        data: { teamId, userId, role: newRole as "admin" | "member" },
+      });
+      if (r?.ok) {
+        await loadMembers();
+      } else {
+        toast.error(r?.error || "角色变更失败");
+        await loadMembers(); // 回退 Select 显示值
+      }
+    } catch {
+      toast.error("角色变更失败，请重试");
+      await loadMembers(); // 回退 Select 显示值
+    } finally {
+      setChangingUserId(null);
+    }
   };
 
   const handleRemove = async () => {
@@ -216,24 +232,30 @@ export default function MembersTab({ teamId, myRole, onManageCredits }: MembersT
                     {/* 角色 */}
                     <TableCell>
                       {canChangeRole(member) ? (
-                        <Select
-                          value={member.role}
-                          onValueChange={(v) => handleRoleChange(member.userId, v)}
-                        >
-                          <SelectTrigger className="h-8 w-28">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {ROLE_OPTIONS.map((opt) => (
-                              <SelectItem key={opt.value} value={opt.value}>
-                                <span className="flex items-center gap-1.5">
-                                  <opt.icon className="w-3.5 h-3.5" />
-                                  {t[opt.labelKey]}
-                                </span>
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <div className="flex items-center gap-1.5">
+                          <Select
+                            value={member.role}
+                            onValueChange={(v) => handleRoleChange(member.userId, v)}
+                            disabled={changingUserId === member.userId}
+                          >
+                            <SelectTrigger className="h-8 w-28">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {ROLE_OPTIONS.map((opt) => (
+                                <SelectItem key={opt.value} value={opt.value}>
+                                  <span className="flex items-center gap-1.5">
+                                    <opt.icon className="w-3.5 h-3.5" />
+                                    {t[opt.labelKey]}
+                                  </span>
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          {changingUserId === member.userId && (
+                            <Loader2 className="w-3.5 h-3.5 animate-spin text-muted-foreground" />
+                          )}
+                        </div>
                       ) : (
                         <Badge variant={roleInfo.variant} className="flex items-center gap-1 w-fit">
                           <RoleIcon className="w-3 h-3" />
