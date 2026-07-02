@@ -1,9 +1,8 @@
-import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { useServerFn } from '@tanstack/react-start'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Users, History, Settings } from 'lucide-react'
-import TeamInfoBar from '@/components/team/TeamInfoBar'
+import { Users, History, Settings, Crown, UserCog, User } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
 import MembersTab from '@/components/team/MembersTab'
 import CreditsHistoryTab from '@/components/team/CreditsHistoryTab'
 import SettingsTab from '@/components/team/SettingsTab'
@@ -28,14 +27,26 @@ type TeamDetail = {
   deletedAt: string | null
 }
 
+const ROLE_CONFIG: Record<string, { label: string; icon: typeof Crown }> = {
+  owner: { label: '所有者', icon: Crown },
+  admin: { label: '管理员', icon: UserCog },
+  member: { label: '成员', icon: User },
+}
+
+const TABS = [
+  { id: 'members', label: '成员管理', icon: Users },
+  { id: 'history', label: '积分记录', icon: History },
+  { id: 'settings', label: '设置', icon: Settings, ownerOnly: true },
+] as const
+
 function TeamManagePage() {
-  const navigate = useNavigate()
   const { teamId } = Route.useParams()
   const callGetTeamDetail = useServerFn(getTeamDetail)
 
   const [team, setTeam] = useState<TeamDetail | null>(null)
   const [myRole, setMyRole] = useState<string>('member')
   const [loading, setLoading] = useState(true)
+  const [activeTab, setActiveTab] = useState<string>('members')
   const [creditTarget, setCreditTarget] = useState<{ member: MemberRow; mode: 'allocate' | 'reclaim' } | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
 
@@ -68,67 +79,77 @@ function TeamManagePage() {
     )
   }
 
-  const isOwnerOrAdmin = myRole === 'owner' || myRole === 'admin'
+  const roleInfo = ROLE_CONFIG[myRole] ?? ROLE_CONFIG.member
+  const RoleIcon = roleInfo.icon
+  const visibleTabs = TABS.filter((t) => !t.ownerOnly || myRole === 'owner')
 
   return (
-    <div className="max-w-4xl mx-auto py-8 px-4 space-y-6">
-      <TeamInfoBar
-        teamName={team.name}
-        myRole={myRole}
-        onEditClick={myRole === 'owner' ? () => {} : undefined}
-      />
+    <div className="flex gap-6 min-h-[60vh]">
+      {/* 左侧边栏 */}
+      <aside className="w-56 shrink-0">
+        <div className="panel p-4 space-y-4">
+          {/* 团队信息 */}
+          <div>
+            <h2 className="text-lg font-bold truncate">{team.name}</h2>
+            <Badge variant="outline" className="flex items-center gap-1.5 mt-1.5 w-fit">
+              <RoleIcon className="w-3.5 h-3.5" />
+              {roleInfo.label}
+            </Badge>
+          </div>
 
-      <Tabs defaultValue="members" className="w-full">
-        <TabsList className="w-full justify-start border-b rounded-none bg-transparent p-0">
-          <TabsTrigger
-            value="members"
-            className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none data-[state=active]:shadow-none"
-          >
-            <Users className="w-4 h-4 mr-2" />
-            成员管理
-          </TabsTrigger>
-          <TabsTrigger
-            value="history"
-            className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none data-[state=active]:shadow-none"
-          >
-            <History className="w-4 h-4 mr-2" />
-            积分记录
-          </TabsTrigger>
-          {myRole === 'owner' && (
-            <TabsTrigger
-              value="settings"
-              className="data-[state=active]:border-b-2 data-[state=active]:border-primary rounded-none data-[state=active]:shadow-none"
-            >
-              <Settings className="w-4 h-4 mr-2" />
-              设置
-            </TabsTrigger>
-          )}
-        </TabsList>
+          {/* Tab 导航 */}
+          <nav className="flex flex-col gap-1">
+            {visibleTabs.map((tab) => {
+              const Icon = tab.icon
+              const isActive = activeTab === tab.id
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-left transition ${
+                    isActive
+                      ? 'bg-accent-dim text-accent font-semibold'
+                      : 'text-text-secondary hover:text-text-primary hover:bg-bg-elevated'
+                  }`}
+                >
+                  <Icon size={15} />
+                  <span>{tab.label}</span>
+                </button>
+              )
+            })}
+          </nav>
+        </div>
+      </aside>
 
-        <TabsContent value="members" className="mt-6">
+      {/* 右侧内容 */}
+      <div className="flex-1 min-w-0">
+        {activeTab === 'members' && (
           <MembersTab
             key={refreshKey}
             teamId={teamId}
             myRole={myRole}
             onManageCredits={(member, mode) => setCreditTarget({ member, mode })}
           />
-        </TabsContent>
-
-        <TabsContent value="history" className="mt-6">
+        )}
+        {activeTab === 'history' && (
           <CreditsHistoryTab teamId={teamId} myRole={myRole} />
-        </TabsContent>
-
-        <TabsContent value="settings" className="mt-6">
+        )}
+        {activeTab === 'settings' && (
           <SettingsTab
             teamId={teamId}
             initialName={team.name}
             initialDescription={team.description ?? ''}
-            onUpdate={() => callGetTeamDetail({ data: { teamId } }).then((r: any) => {
-              if (r?.team) { setTeam(r.team); setMyRole(r.myRole ?? 'member') }
-            })}
+            onUpdate={() =>
+              callGetTeamDetail({ data: { teamId } }).then((r: any) => {
+                if (r?.team) {
+                  setTeam(r.team)
+                  setMyRole(r.myRole ?? 'member')
+                }
+              })
+            }
           />
-        </TabsContent>
-      </Tabs>
+        )}
+      </div>
 
       {/* 积分管理弹窗 */}
       <CreditManageDialog
