@@ -5274,8 +5274,8 @@ function WorkspacePage() {
     sceneImgs: Object.keys(sceneImages).length,
     propImgs: Object.keys(propImages).length,
     panelImgs: Object.keys(panelImages).length,
-    groupVids: Object.keys(groupVideos).length,
-    groupSbs: Object.keys(groupStoryboards).length,
+    groupVids: Object.entries(groupVideos).map(([k, v]) => `${k}:${v.status}`).join('|'),
+    groupSbs: Object.entries(groupStoryboards).map(([k, v]) => `${k}:${v.status}`).join('|'),
   })
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {
