@@ -110,11 +110,12 @@ export const getTeamMembers = createServerFn({ method: "POST" })
 
       // 通过 RPC 获取用户邮箱（需要创建 Supabase Function）
       try {
-        const { data: users } = await supabase.rpc("get_team_member_profiles", {
-          p_user_ids: userIds,
-        });
+        const { data: users } = await (supabase.rpc as any)(
+          "get_team_member_profiles",
+          { p_user_ids: userIds },
+        );
         if (users && Array.isArray(users)) {
-          for (const u of users) {
+          for (const u of users as Array<{ user_id: string; email?: string }>) {
             userProfiles.set(u.user_id, u);
           }
         }
@@ -342,9 +343,10 @@ export const inviteToTeam = createServerFn({ method: "POST" })
     }
 
     // 生成邀请 token（使用简单的 UUID + 团队 ID）
-    const { data: token, error } = await supabase.rpc("generate_team_invite_token", {
-      p_team_id: data.teamId,
-    });
+    const { data: token, error } = await (supabase.rpc as any)(
+      "generate_team_invite_token",
+      { p_team_id: data.teamId },
+    );
 
     if (error) {
       // 如果 RPC 不存在，用简单方案：返回 teamId
