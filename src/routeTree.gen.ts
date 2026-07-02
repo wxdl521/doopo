@@ -17,7 +17,6 @@ import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as RegisterRouteImport } from './routes/register'
 import { Route as ProjectsRouteImport } from './routes/projects'
 import { Route as PricingRouteImport } from './routes/pricing'
-import { Route as MyTeamRouteImport } from './routes/my-team'
 import { Route as ModelsRouteImport } from './routes/models'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as HomeRouteImport } from './routes/home'
@@ -35,10 +34,6 @@ import { Route as CommunityIndexRouteImport } from './routes/community.index'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as AccountIndexRouteImport } from './routes/account.index'
 import { Route as WorkspaceWorkspaceIdRouteImport } from './routes/workspace.$workspaceId'
-import { Route as TeamUsageRouteImport } from './routes/team.usage'
-import { Route as TeamMembersRouteImport } from './routes/team.members'
-import { Route as TeamLogsRouteImport } from './routes/team.logs'
-import { Route as TeamApprovalsRouteImport } from './routes/team.approvals'
 import { Route as ShowcaseItemIdRouteImport } from './routes/showcase.$itemId'
 import { Route as ScriptsScriptIdRouteImport } from './routes/scripts.$scriptId'
 import { Route as ProjectsProjectIdRouteImport } from './routes/projects.$projectId'
@@ -96,11 +91,6 @@ const ProjectsRoute = ProjectsRouteImport.update({
 const PricingRoute = PricingRouteImport.update({
   id: '/pricing',
   path: '/pricing',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MyTeamRoute = MyTeamRouteImport.update({
-  id: '/my-team',
-  path: '/my-team',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ModelsRoute = ModelsRouteImport.update({
@@ -187,26 +177,6 @@ const WorkspaceWorkspaceIdRoute = WorkspaceWorkspaceIdRouteImport.update({
   id: '/workspace/$workspaceId',
   path: '/workspace/$workspaceId',
   getParentRoute: () => rootRouteImport,
-} as any)
-const TeamUsageRoute = TeamUsageRouteImport.update({
-  id: '/usage',
-  path: '/usage',
-  getParentRoute: () => TeamRoute,
-} as any)
-const TeamMembersRoute = TeamMembersRouteImport.update({
-  id: '/members',
-  path: '/members',
-  getParentRoute: () => TeamRoute,
-} as any)
-const TeamLogsRoute = TeamLogsRouteImport.update({
-  id: '/logs',
-  path: '/logs',
-  getParentRoute: () => TeamRoute,
-} as any)
-const TeamApprovalsRoute = TeamApprovalsRouteImport.update({
-  id: '/approvals',
-  path: '/approvals',
-  getParentRoute: () => TeamRoute,
 } as any)
 const ShowcaseItemIdRoute = ShowcaseItemIdRouteImport.update({
   id: '/$itemId',
@@ -312,7 +282,6 @@ export interface FileRoutesByFullPath {
   '/home': typeof HomeRoute
   '/login': typeof LoginRoute
   '/models': typeof ModelsRoute
-  '/my-team': typeof MyTeamRoute
   '/pricing': typeof PricingRoute
   '/projects': typeof ProjectsRouteWithChildren
   '/register': typeof RegisterRoute
@@ -336,10 +305,6 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId': typeof ProjectsProjectIdRoute
   '/scripts/$scriptId': typeof ScriptsScriptIdRoute
   '/showcase/$itemId': typeof ShowcaseItemIdRoute
-  '/team/approvals': typeof TeamApprovalsRoute
-  '/team/logs': typeof TeamLogsRoute
-  '/team/members': typeof TeamMembersRoute
-  '/team/usage': typeof TeamUsageRoute
   '/workspace/$workspaceId': typeof WorkspaceWorkspaceIdRoute
   '/account/': typeof AccountIndexRoute
   '/admin/': typeof AdminIndexRoute
@@ -359,7 +324,6 @@ export interface FileRoutesByTo {
   '/home': typeof HomeRoute
   '/login': typeof LoginRoute
   '/models': typeof ModelsRoute
-  '/my-team': typeof MyTeamRoute
   '/pricing': typeof PricingRoute
   '/projects': typeof ProjectsRouteWithChildren
   '/register': typeof RegisterRoute
@@ -381,10 +345,6 @@ export interface FileRoutesByTo {
   '/projects/$projectId': typeof ProjectsProjectIdRoute
   '/scripts/$scriptId': typeof ScriptsScriptIdRoute
   '/showcase/$itemId': typeof ShowcaseItemIdRoute
-  '/team/approvals': typeof TeamApprovalsRoute
-  '/team/logs': typeof TeamLogsRoute
-  '/team/members': typeof TeamMembersRoute
-  '/team/usage': typeof TeamUsageRoute
   '/workspace/$workspaceId': typeof WorkspaceWorkspaceIdRoute
   '/account': typeof AccountIndexRoute
   '/admin': typeof AdminIndexRoute
@@ -408,7 +368,6 @@ export interface FileRoutesById {
   '/home': typeof HomeRoute
   '/login': typeof LoginRoute
   '/models': typeof ModelsRoute
-  '/my-team': typeof MyTeamRoute
   '/pricing': typeof PricingRoute
   '/projects': typeof ProjectsRouteWithChildren
   '/register': typeof RegisterRoute
@@ -432,10 +391,6 @@ export interface FileRoutesById {
   '/projects/$projectId': typeof ProjectsProjectIdRoute
   '/scripts/$scriptId': typeof ScriptsScriptIdRoute
   '/showcase/$itemId': typeof ShowcaseItemIdRoute
-  '/team/approvals': typeof TeamApprovalsRoute
-  '/team/logs': typeof TeamLogsRoute
-  '/team/members': typeof TeamMembersRoute
-  '/team/usage': typeof TeamUsageRoute
   '/workspace/$workspaceId': typeof WorkspaceWorkspaceIdRoute
   '/account/': typeof AccountIndexRoute
   '/admin/': typeof AdminIndexRoute
@@ -460,7 +415,6 @@ export interface FileRouteTypes {
     | '/home'
     | '/login'
     | '/models'
-    | '/my-team'
     | '/pricing'
     | '/projects'
     | '/register'
@@ -484,10 +438,6 @@ export interface FileRouteTypes {
     | '/projects/$projectId'
     | '/scripts/$scriptId'
     | '/showcase/$itemId'
-    | '/team/approvals'
-    | '/team/logs'
-    | '/team/members'
-    | '/team/usage'
     | '/workspace/$workspaceId'
     | '/account/'
     | '/admin/'
@@ -507,7 +457,6 @@ export interface FileRouteTypes {
     | '/home'
     | '/login'
     | '/models'
-    | '/my-team'
     | '/pricing'
     | '/projects'
     | '/register'
@@ -529,10 +478,6 @@ export interface FileRouteTypes {
     | '/projects/$projectId'
     | '/scripts/$scriptId'
     | '/showcase/$itemId'
-    | '/team/approvals'
-    | '/team/logs'
-    | '/team/members'
-    | '/team/usage'
     | '/workspace/$workspaceId'
     | '/account'
     | '/admin'
@@ -555,7 +500,6 @@ export interface FileRouteTypes {
     | '/home'
     | '/login'
     | '/models'
-    | '/my-team'
     | '/pricing'
     | '/projects'
     | '/register'
@@ -579,10 +523,6 @@ export interface FileRouteTypes {
     | '/projects/$projectId'
     | '/scripts/$scriptId'
     | '/showcase/$itemId'
-    | '/team/approvals'
-    | '/team/logs'
-    | '/team/members'
-    | '/team/usage'
     | '/workspace/$workspaceId'
     | '/account/'
     | '/admin/'
@@ -606,7 +546,6 @@ export interface RootRouteChildren {
   HomeRoute: typeof HomeRoute
   LoginRoute: typeof LoginRoute
   ModelsRoute: typeof ModelsRoute
-  MyTeamRoute: typeof MyTeamRoute
   PricingRoute: typeof PricingRoute
   ProjectsRoute: typeof ProjectsRouteWithChildren
   RegisterRoute: typeof RegisterRoute
@@ -676,13 +615,6 @@ declare module '@tanstack/react-router' {
       path: '/pricing'
       fullPath: '/pricing'
       preLoaderRoute: typeof PricingRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/my-team': {
-      id: '/my-team'
-      path: '/my-team'
-      fullPath: '/my-team'
-      preLoaderRoute: typeof MyTeamRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/models': {
@@ -803,34 +735,6 @@ declare module '@tanstack/react-router' {
       fullPath: '/workspace/$workspaceId'
       preLoaderRoute: typeof WorkspaceWorkspaceIdRouteImport
       parentRoute: typeof rootRouteImport
-    }
-    '/team/usage': {
-      id: '/team/usage'
-      path: '/usage'
-      fullPath: '/team/usage'
-      preLoaderRoute: typeof TeamUsageRouteImport
-      parentRoute: typeof TeamRoute
-    }
-    '/team/members': {
-      id: '/team/members'
-      path: '/members'
-      fullPath: '/team/members'
-      preLoaderRoute: typeof TeamMembersRouteImport
-      parentRoute: typeof TeamRoute
-    }
-    '/team/logs': {
-      id: '/team/logs'
-      path: '/logs'
-      fullPath: '/team/logs'
-      preLoaderRoute: typeof TeamLogsRouteImport
-      parentRoute: typeof TeamRoute
-    }
-    '/team/approvals': {
-      id: '/team/approvals'
-      path: '/approvals'
-      fullPath: '/team/approvals'
-      preLoaderRoute: typeof TeamApprovalsRouteImport
-      parentRoute: typeof TeamRoute
     }
     '/showcase/$itemId': {
       id: '/showcase/$itemId'
@@ -1066,19 +970,11 @@ const ShowcaseRouteWithChildren = ShowcaseRoute._addFileChildren(
 )
 
 interface TeamRouteChildren {
-  TeamApprovalsRoute: typeof TeamApprovalsRoute
-  TeamLogsRoute: typeof TeamLogsRoute
-  TeamMembersRoute: typeof TeamMembersRoute
-  TeamUsageRoute: typeof TeamUsageRoute
   TeamIndexRoute: typeof TeamIndexRoute
   TeamTeamIdManageRoute: typeof TeamTeamIdManageRoute
 }
 
 const TeamRouteChildren: TeamRouteChildren = {
-  TeamApprovalsRoute: TeamApprovalsRoute,
-  TeamLogsRoute: TeamLogsRoute,
-  TeamMembersRoute: TeamMembersRoute,
-  TeamUsageRoute: TeamUsageRoute,
   TeamIndexRoute: TeamIndexRoute,
   TeamTeamIdManageRoute: TeamTeamIdManageRoute,
 }
@@ -1097,7 +993,6 @@ const rootRouteChildren: RootRouteChildren = {
   HomeRoute: HomeRoute,
   LoginRoute: LoginRoute,
   ModelsRoute: ModelsRoute,
-  MyTeamRoute: MyTeamRoute,
   PricingRoute: PricingRoute,
   ProjectsRoute: ProjectsRouteWithChildren,
   RegisterRoute: RegisterRoute,
