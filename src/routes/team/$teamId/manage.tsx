@@ -119,7 +119,14 @@ function TeamManagePage() {
         </TabsContent>
 
         <TabsContent value="settings" className="mt-6">
-          <SettingsTab />
+          <SettingsTab
+            teamId={teamId}
+            initialName={team.name}
+            initialDescription={team.description ?? ''}
+            onUpdate={() => callGetTeamDetail({ data: { teamId } }).then((r: any) => {
+              if (r?.team) { setTeam(r.team); setMyRole(r.myRole ?? 'member') }
+            })}
+          />
         </TabsContent>
       </Tabs>
 
