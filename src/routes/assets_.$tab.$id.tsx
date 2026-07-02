@@ -1,105 +1,106 @@
-import { createFileRoute, Link, useNavigate } from '@tanstack/react-router'
-import { useMemo, useState, useEffect } from 'react'
-import { ArrowLeft, Copy, Download, Sparkles, Loader2 } from 'lucide-react'
-import { toast } from 'sonner'
-import { useServerFn } from '@tanstack/react-start'
-import { useLanguage } from '../i18n/LanguageContext'
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { useMemo, useState, useEffect } from "react";
+import { ArrowLeft, Copy, Download, Sparkles, Loader2 } from "lucide-react";
+import { toast } from "sonner";
+import { useServerFn } from "@tanstack/react-start";
+import { useLanguage } from "../i18n/LanguageContext";
 import {
   type AssetTab,
   type CharacterAsset,
   type SceneAsset,
   type PropAsset,
   getAssetById,
-} from '../data/assetsMock'
-import { assetToMarkdown, downloadMarkdown } from '../lib/assetMarkdown'
-import { generateImage } from '../lib/seedream.functions'
-import { IMAGE_MODELS } from '../lib/imageModels'
-import { logImageMeta } from '../lib/logImageMeta'
-import { loadCharacters, loadScenes, type DbCharacter, type DbScene } from '../lib/assetsStorage'
-import { useAuth } from '../hooks/useAuth'
+} from "../data/assetsMock";
+import { assetToMarkdown, downloadMarkdown } from "../lib/assetMarkdown";
+import { generateImage } from "../lib/seedream.functions";
+import { IMAGE_MODELS } from "../lib/imageModels";
+import { logImageMeta } from "../lib/logImageMeta";
+import { loadCharacters, loadScenes, type DbCharacter, type DbScene } from "../lib/assetsStorage";
+import { useAuth } from "../hooks/useAuth";
 
-export const Route = createFileRoute('/assets_/$tab/$id')({
+export const Route = createFileRoute("/assets_/$tab/$id")({
   component: AssetDetailPage,
-})
+});
 
 function AssetDetailPage() {
-  const { tab, id } = Route.useParams()
-  const navigate = useNavigate()
-  const { t } = useLanguage()
-  const { user } = useAuth()
+  const { tab, id } = Route.useParams();
+  const navigate = useNavigate();
+  const { t } = useLanguage();
+  const { user } = useAuth();
 
-  const [dbAsset, setDbAsset] = useState<any>(null)
-  const [loading, setLoading] = useState(true)
+  const [dbAsset, setDbAsset] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
 
-  const mockAsset = useMemo(() => getAssetById(tab as AssetTab, id), [tab, id])
+  const mockAsset = useMemo(() => getAssetById(tab as AssetTab, id), [tab, id]);
 
   useEffect(() => {
     if (mockAsset) {
-      setLoading(false)
-      return
+      setLoading(false);
+      return;
     }
     if (!user) {
-      setLoading(false)
-      return
+      setLoading(false);
+      return;
     }
-    setLoading(true)
-    ;(async () => {
+    setLoading(true);
+    (async () => {
       try {
-        if (tab === 'character') {
-          const { data } = await loadCharacters(user.id)
-          const found = data?.find((c: DbCharacter) => c.id === id)
+        if (tab === "character") {
+          const { data } = await loadCharacters(user.id);
+          const found = data?.find((c: DbCharacter) => c.id === id);
           if (found) {
-            const dbImages: { url: string; label: string }[] =
-              Array.isArray((found as any).images) ? (found as any).images : []
+            const dbImages: { url: string; label: string }[] = Array.isArray((found as any).images)
+              ? (found as any).images
+              : [];
             setDbAsset({
               id: found.id,
               name: found.name,
-              emoji: '👤',
-              gradient: found.gradient || 'from-blue-400/40 via-purple-300/30 to-pink-200/30',
-              cover: found.cover_url || '',
-              views: { front: '', side: '', back: '', expression: '' },
+              emoji: "👤",
+              gradient: found.gradient || "from-blue-400/40 via-purple-300/30 to-pink-200/30",
+              cover: found.cover_url || "",
+              views: { front: "", side: "", back: "", expression: "" },
               images: dbImages.length > 0 ? dbImages : undefined,
-              role: found.role_label || found.role || '',
-              age: String(found.age ?? ''),
-              personality: found.personality || '',
-              style: '',
-              costume: found.look || '',
-              appearance: found.look || '',
-              background: found.motivation || '',
+              role: found.role_label || found.role || "",
+              age: String(found.age ?? ""),
+              personality: found.personality || "",
+              style: "",
+              costume: found.look || "",
+              appearance: found.look || "",
+              background: found.motivation || "",
               palette: Array.isArray(found.palette) ? found.palette : [],
-              tags: [found.role || '', found.mbti ? `MBTI ${found.mbti}` : ''].filter(Boolean),
-              summary: `${found.role_label || found.role || '角色'} · ${found.personality || ''}`,
-            })
+              tags: [found.role || "", found.mbti ? `MBTI ${found.mbti}` : ""].filter(Boolean),
+              summary: `${found.role_label || found.role || "角色"} · ${found.personality || ""}`,
+            });
           }
-        } else if (tab === 'scene') {
-          const { data } = await loadScenes(user.id)
-          const found = data?.find((s: DbScene) => s.id === id)
+        } else if (tab === "scene") {
+          const { data } = await loadScenes(user.id);
+          const found = data?.find((s: DbScene) => s.id === id);
           if (found) {
             setDbAsset({
               id: found.id,
               name: found.name || found.location,
-              emoji: '🌄',
-              gradient: found.gradient || 'from-emerald-400/40 via-teal-300/30 to-sky-200/30',
-              time: found.time_of_day || '',
-              mood: '',
-              shot: '',
-              lighting: '',
-              sound: '',
-              reference: '',
+              emoji: "🌄",
+              gradient: found.gradient || "from-emerald-400/40 via-teal-300/30 to-sky-200/30",
+              time: found.time_of_day || "",
+              mood: "",
+              shot: "",
+              lighting: "",
+              sound: "",
+              reference: "",
               tags: [],
-              summary: found.action || '',
-            })
+              summary: found.action || "",
+            });
           }
         }
       } catch {
         // silently fail
       } finally {
-        setLoading(false)
+        setLoading(false);
       }
-    })()
-  }, [tab, id, user, mockAsset])
+    })();
+  }, [tab, id, user, mockAsset]);
 
-  const asset = mockAsset || dbAsset
+  const asset = mockAsset || dbAsset;
 
   if (loading) {
     return (
@@ -107,7 +108,7 @@ function AssetDetailPage() {
         <Loader2 size={24} className="animate-spin text-text-muted" />
         <p className="text-text-muted text-sm">加载中…</p>
       </div>
-    )
+    );
   }
 
   if (!asset) {
@@ -118,40 +119,55 @@ function AssetDetailPage() {
           <ArrowLeft size={14} /> {t.assets_back}
         </Link>
       </div>
-    )
+    );
   }
 
   const labels = {
-    role: t.assets_field_role, age: t.assets_field_age, personality: t.assets_field_personality,
-    style: t.assets_field_style, costume: t.assets_field_costume,
-    appearance: t.assets_field_appearance_desc, background: t.assets_field_background,
-    palette: t.assets_field_palette, tags: t.assets_field_tags, summary: t.assets_field_summary,
-    time: t.assets_field_time, mood: t.assets_field_mood, shot: t.assets_field_shot,
-    lighting: t.assets_field_lighting, sound: t.assets_field_sound, reference: t.assets_field_reference,
-    owner: t.assets_field_owner, symbol: t.assets_field_symbol,
-    material: t.assets_field_material, firstAppear: t.assets_field_first_appear,
-    lastAppear: t.assets_field_last_appear, detail: t.assets_field_detail,
-  }
+    role: t.assets_field_role,
+    age: t.assets_field_age,
+    personality: t.assets_field_personality,
+    style: t.assets_field_style,
+    costume: t.assets_field_costume,
+    appearance: t.assets_field_appearance_desc,
+    background: t.assets_field_background,
+    palette: t.assets_field_palette,
+    tags: t.assets_field_tags,
+    summary: t.assets_field_summary,
+    time: t.assets_field_time,
+    mood: t.assets_field_mood,
+    shot: t.assets_field_shot,
+    lighting: t.assets_field_lighting,
+    sound: t.assets_field_sound,
+    reference: t.assets_field_reference,
+    owner: t.assets_field_owner,
+    symbol: t.assets_field_symbol,
+    material: t.assets_field_material,
+    firstAppear: t.assets_field_first_appear,
+    lastAppear: t.assets_field_last_appear,
+    detail: t.assets_field_detail,
+  };
 
-  const md = assetToMarkdown(tab as AssetTab, asset, labels)
+  const md = assetToMarkdown(tab as AssetTab, asset, labels);
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(md)
-      toast.success(t.assets_copied)
+      await navigator.clipboard.writeText(md);
+      toast.success(t.assets_copied);
     } catch {
-      toast.error(t.common_error)
+      toast.error(t.common_error);
     }
-  }
+  };
 
   const handleExport = () => {
-    downloadMarkdown(asset.name, md)
-  }
+    downloadMarkdown(asset.name, md);
+  };
 
   const tabLabel =
-    tab === 'character' ? t.assets_tab_character
-    : tab === 'scene' ? t.assets_tab_scene
-    : t.assets_tab_prop
+    tab === "character"
+      ? t.assets_tab_character
+      : tab === "scene"
+        ? t.assets_tab_scene
+        : t.assets_tab_prop;
 
   return (
     <div className="animate-fade-in flex flex-col gap-6">
@@ -159,7 +175,7 @@ function AssetDetailPage() {
       <header className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-3">
           <button
-            onClick={() => navigate({ to: '/assets' })}
+            onClick={() => navigate({ to: "/assets" })}
             className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-primary transition"
           >
             <ArrowLeft size={14} /> {t.assets_back}
@@ -181,23 +197,24 @@ function AssetDetailPage() {
         </div>
       </header>
 
-      {tab === 'character' && <CharacterDetail c={asset as CharacterAsset} />}
-      {tab === 'scene' && <SceneDetail s={asset as SceneAsset} />}
-      {tab === 'prop' && <PropDetail p={asset as PropAsset} />}
+      {tab === "character" && <CharacterDetail c={asset as CharacterAsset} />}
+      {tab === "scene" && <SceneDetail s={asset as SceneAsset} />}
+      {tab === "prop" && <PropDetail p={asset as PropAsset} />}
     </div>
-  )
+  );
 }
 
 /* ---------------- Character ---------------- */
 function CharacterDetail({ c }: { c: CharacterAsset }) {
-  const { t } = useLanguage()
+  const { t } = useLanguage();
   // 优先使用 DB 中已生成的图片列表(动态),fallback 到 mock 固定 views
-  const imageList = c.images && c.images.length > 0
-    ? c.images.map((img, i) => ({ key: `img-${i}`, label: img.label, src: img.url }))
-    : c.cover
-      ? [{ key: 'cover', label: t.assets_view_master, src: c.cover }]
-      : []
-  const [active, setActive] = useState(imageList[0] || null)
+  const imageList =
+    c.images && c.images.length > 0
+      ? c.images.map((img, i) => ({ key: `img-${i}`, label: img.label, src: img.url }))
+      : c.cover
+        ? [{ key: "cover", label: t.assets_view_master, src: c.cover }]
+        : [];
+  const [active, setActive] = useState(imageList[0] || null);
 
   if (!imageList.length) {
     return (
@@ -205,14 +222,16 @@ function CharacterDetail({ c }: { c: CharacterAsset }) {
         <p>{c.name}</p>
         <p className="text-sm">暂无已生成的图片</p>
       </div>
-    )
+    );
   }
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
       {/* Left: hero image + thumbs */}
       <section className="lg:col-span-7 flex flex-col gap-3">
-        <div className={`panel overflow-hidden bg-gradient-to-br ${c.gradient} aspect-[4/5] flex items-center justify-center`}>
+        <div
+          className={`panel overflow-hidden bg-gradient-to-br ${c.gradient} aspect-[4/5] flex items-center justify-center`}
+        >
           {active && (
             <img
               key={active.key}
@@ -225,16 +244,23 @@ function CharacterDetail({ c }: { c: CharacterAsset }) {
         </div>
         {imageList.length > 1 && (
           <div className="grid grid-cols-5 gap-2">
-            {imageList.map(v => (
+            {imageList.map((v) => (
               <button
                 key={v.key}
                 onClick={() => setActive(v)}
                 className={`relative panel overflow-hidden aspect-square flex flex-col items-center justify-center transition ${
-                  active?.key === v.key ? 'ring-2 ring-accent border-accent/50' : 'hover:border-accent/40'
+                  active?.key === v.key
+                    ? "ring-2 ring-accent border-accent/50"
+                    : "hover:border-accent/40"
                 }`}
               >
                 {v.src ? (
-                  <img src={v.src} alt={v.label} loading="lazy" className="w-full h-full object-cover" />
+                  <img
+                    src={v.src}
+                    alt={v.label}
+                    loading="lazy"
+                    className="w-full h-full object-cover"
+                  />
                 ) : (
                   <span className="text-2xl opacity-30">?</span>
                 )}
@@ -252,8 +278,11 @@ function CharacterDetail({ c }: { c: CharacterAsset }) {
         <div>
           <h1 className="text-3xl font-bold text-text-primary tracking-tight">{c.name}</h1>
           <div className="flex flex-wrap gap-1.5 mt-2">
-            {c.tags.map(tag => (
-              <span key={tag} className="text-[11px] px-2 py-0.5 rounded-full bg-bg-elevated border border-border text-text-secondary">
+            {c.tags.map((tag) => (
+              <span
+                key={tag}
+                className="text-[11px] px-2 py-0.5 rounded-full bg-bg-elevated border border-border text-text-secondary"
+              >
                 {tag}
               </span>
             ))}
@@ -275,8 +304,11 @@ function CharacterDetail({ c }: { c: CharacterAsset }) {
         <div className="panel p-4">
           <div className="text-xs text-text-muted mb-2">{t.assets_field_palette}</div>
           <div className="flex flex-wrap gap-2">
-            {c.palette.map(hex => (
-              <div key={hex} className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-bg-elevated border border-border">
+            {c.palette.map((hex) => (
+              <div
+                key={hex}
+                className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-bg-elevated border border-border"
+              >
                 <span className="w-4 h-4 rounded" style={{ backgroundColor: hex }} />
                 <span className="text-[11px] text-text-secondary font-mono">{hex}</span>
               </div>
@@ -285,12 +317,12 @@ function CharacterDetail({ c }: { c: CharacterAsset }) {
         </div>
       </section>
     </div>
-  )
+  );
 }
 
 /* ---------------- Scene ---------------- */
 function SceneDetail({ s }: { s: SceneAsset }) {
-  const { t } = useLanguage()
+  const { t } = useLanguage();
   const prompt = [
     `Cinematic scene illustration: ${s.name}.`,
     s.summary,
@@ -298,9 +330,11 @@ function SceneDetail({ s }: { s: SceneAsset }) {
     s.mood && `Mood: ${s.mood}.`,
     s.shot && `Shot: ${s.shot}.`,
     s.lighting && `Lighting: ${s.lighting}.`,
-    s.tags?.length ? `Tags: ${s.tags.join(', ')}.` : '',
-    'High detail, atmospheric, no text, no watermark.',
-  ].filter(Boolean).join(' ')
+    s.tags?.length ? `Tags: ${s.tags.join(", ")}.` : "",
+    "High detail, atmospheric, no text, no watermark.",
+  ]
+    .filter(Boolean)
+    .join(" ");
   return (
     <div className="flex flex-col gap-6">
       <ImageStage
@@ -313,8 +347,11 @@ function SceneDetail({ s }: { s: SceneAsset }) {
         <div className="flex flex-col gap-3">
           <h1 className="text-3xl font-bold text-text-primary tracking-tight">{s.name}</h1>
           <div className="flex flex-wrap gap-1.5">
-            {s.tags.map(tag => (
-              <span key={tag} className="text-[11px] px-2 py-0.5 rounded-full bg-bg-elevated border border-border text-text-secondary">
+            {s.tags.map((tag) => (
+              <span
+                key={tag}
+                className="text-[11px] px-2 py-0.5 rounded-full bg-bg-elevated border border-border text-text-secondary"
+              >
                 {tag}
               </span>
             ))}
@@ -331,21 +368,23 @@ function SceneDetail({ s }: { s: SceneAsset }) {
         </div>
       </div>
     </div>
-  )
+  );
 }
 
 /* ---------------- Prop ---------------- */
 function PropDetail({ p }: { p: PropAsset }) {
-  const { t } = useLanguage()
+  const { t } = useLanguage();
   const prompt = [
     `Product-style illustration of a prop: ${p.name}.`,
     p.summary,
     p.detail,
     p.material && `Material: ${p.material}.`,
     p.appearance && `Appearance: ${p.appearance}.`,
-    p.tags?.length ? `Tags: ${p.tags.join(', ')}.` : '',
-    'Centered composition, soft studio lighting, no text, no watermark.',
-  ].filter(Boolean).join(' ')
+    p.tags?.length ? `Tags: ${p.tags.join(", ")}.` : "",
+    "Centered composition, soft studio lighting, no text, no watermark.",
+  ]
+    .filter(Boolean)
+    .join(" ");
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
       <div className="lg:col-span-5">
@@ -360,8 +399,11 @@ function PropDetail({ p }: { p: PropAsset }) {
         <div>
           <h1 className="text-3xl font-bold text-text-primary tracking-tight">{p.name}</h1>
           <div className="flex flex-wrap gap-1.5 mt-2">
-            {p.tags.map(tag => (
-              <span key={tag} className="text-[11px] px-2 py-0.5 rounded-full bg-bg-elevated border border-border text-text-secondary">
+            {p.tags.map((tag) => (
+              <span
+                key={tag}
+                className="text-[11px] px-2 py-0.5 rounded-full bg-bg-elevated border border-border text-text-secondary"
+              >
                 {tag}
               </span>
             ))}
@@ -379,7 +421,7 @@ function PropDetail({ p }: { p: PropAsset }) {
         <Block title={t.assets_field_detail} body={p.detail} />
       </section>
     </div>
-  )
+  );
 }
 
 /* ---------------- Shared ---------------- */
@@ -389,37 +431,39 @@ function ImageStage({
   gradient,
   heightClass,
 }: {
-  prompt: string
-  fallback: React.ReactNode
-  gradient: string
-  heightClass: string
+  prompt: string;
+  fallback: React.ReactNode;
+  gradient: string;
+  heightClass: string;
 }) {
-  const callGenerateImage = useServerFn(generateImage)
-  const [model, setModel] = useState<string>('')
-  const [url, setUrl] = useState<string>('')
-  const [loading, setLoading] = useState(false)
+  const callGenerateImage = useServerFn(generateImage);
+  const [model, setModel] = useState<string>("");
+  const [url, setUrl] = useState<string>("");
+  const [loading, setLoading] = useState(false);
 
   async function handleGenerate() {
-    if (loading) return
-    setLoading(true)
+    if (loading) return;
+    setLoading(true);
     try {
-      const r = await callGenerateImage({ data: { prompt, model: model || undefined } })
-      logImageMeta('assets.generate', r)
+      const r = await callGenerateImage({ data: { prompt, model: model || undefined } });
+      logImageMeta("assets.generate", r);
       if (r?.url) {
-        setUrl(r.url)
+        setUrl(r.url);
       } else {
-        toast.error(r?.error || 'Image generation failed')
+        toast.error(r?.error || "Image generation failed");
       }
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Image generation failed')
+      toast.error(e instanceof Error ? e.message : "Image generation failed");
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
   }
 
   return (
     <div className="flex flex-col gap-2">
-      <div className={`panel overflow-hidden bg-gradient-to-br ${gradient} ${heightClass} flex items-center justify-center relative`}>
+      <div
+        className={`panel overflow-hidden bg-gradient-to-br ${gradient} ${heightClass} flex items-center justify-center relative`}
+      >
         {url ? (
           <img src={url} alt="" className="w-full h-full object-cover animate-fade-in" />
         ) : (
@@ -439,16 +483,18 @@ function ImageStage({
           className="text-xs px-2 py-1.5 rounded-md bg-bg-elevated border border-border text-text-secondary focus:outline-none focus:border-accent"
         >
           {IMAGE_MODELS.map((m) => (
-            <option key={m.key} value={m.key}>{m.label}</option>
+            <option key={m.key} value={m.key}>
+              {m.label}
+            </option>
           ))}
         </select>
         <button onClick={handleGenerate} disabled={loading} className="btn-primary text-xs">
           {loading ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} />}
-          {url ? 'Regenerate' : 'Generate image'}
+          {url ? "Regenerate" : "Generate image"}
         </button>
       </div>
     </div>
-  )
+  );
 }
 
 function Row({ label, value }: { label: string; value: string }) {
@@ -457,7 +503,7 @@ function Row({ label, value }: { label: string; value: string }) {
       <span className="text-text-muted shrink-0 w-20">{label}</span>
       <span className="text-text-secondary">{value}</span>
     </div>
-  )
+  );
 }
 
 function Block({ title, body }: { title: string; body: string }) {
@@ -466,5 +512,5 @@ function Block({ title, body }: { title: string; body: string }) {
       <div className="text-xs text-text-muted mb-2">{title}</div>
       <p className="text-sm text-text-secondary leading-relaxed whitespace-pre-line">{body}</p>
     </div>
-  )
+  );
 }

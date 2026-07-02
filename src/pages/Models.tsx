@@ -1,214 +1,358 @@
-import { Sparkles, Zap, ImageIcon, Music2, Video, Mic2, Globe, CheckCircle2, AlertCircle } from 'lucide-react'
-import { useState, useEffect } from 'react'
-import { useLanguage } from '../i18n/LanguageContext'
+import {
+  Sparkles,
+  Zap,
+  ImageIcon,
+  Music2,
+  Video,
+  Mic2,
+  Globe,
+  CheckCircle2,
+  AlertCircle,
+} from "lucide-react";
+import { useState, useEffect } from "react";
+import { useLanguage } from "../i18n/LanguageContext";
 
 type AIModel = {
-  id: string
-  name: string
-  nameEn: string
-  vendor: string
-  tagline: string
-  taglineEn: string
-  gradient: string
-  status: 'available' | 'used'
-}
+  id: string;
+  name: string;
+  nameEn: string;
+  vendor: string;
+  tagline: string;
+  taglineEn: string;
+  gradient: string;
+  status: "available" | "used";
+};
 
 const AI_MODELS: AIModel[] = [
   {
-    id: 'deepseek/deepseek-chat-v3', name: 'DeepSeek Chat', nameEn: 'DeepSeek Chat',
-    vendor: 'DeepSeek', tagline: '快速·中文友好', taglineEn: 'Fast · Chinese-friendly',
-    gradient: 'from-cyan-500 to-teal-600', status: 'available',
+    id: "deepseek/deepseek-chat-v3",
+    name: "DeepSeek Chat",
+    nameEn: "DeepSeek Chat",
+    vendor: "DeepSeek",
+    tagline: "快速·中文友好",
+    taglineEn: "Fast · Chinese-friendly",
+    gradient: "from-cyan-500 to-teal-600",
+    status: "available",
   },
   {
-    id: 'mistralai/mistral-nemo', name: 'Mistral Nemo', nameEn: 'Mistral Nemo',
-    vendor: 'Mistral AI', tagline: '均衡·多语言', taglineEn: 'Balanced · Multilingual',
-    gradient: 'from-violet-500 to-purple-700', status: 'available',
+    id: "mistralai/mistral-nemo",
+    name: "Mistral Nemo",
+    nameEn: "Mistral Nemo",
+    vendor: "Mistral AI",
+    tagline: "均衡·多语言",
+    taglineEn: "Balanced · Multilingual",
+    gradient: "from-violet-500 to-purple-700",
+    status: "available",
   },
   {
-    id: 'meta-llama/llama-3.1-8b-instruct', name: 'Llama 3.1', nameEn: 'Llama 3.1',
-    vendor: 'Meta', tagline: '开源·推理强', taglineEn: 'Open Source · Strong Reasoning',
-    gradient: 'from-orange-500 to-rose-700', status: 'used',
+    id: "meta-llama/llama-3.1-8b-instruct",
+    name: "Llama 3.1",
+    nameEn: "Llama 3.1",
+    vendor: "Meta",
+    tagline: "开源·推理强",
+    taglineEn: "Open Source · Strong Reasoning",
+    gradient: "from-orange-500 to-rose-700",
+    status: "used",
   },
   // ---- Pixflow Gemini 全系列对话模型 ----
   {
-    id: 'pixflow/gemini-3.1-pro-preview', name: 'Gemini 3.1 Pro Preview', nameEn: 'Gemini 3.1 Pro Preview',
-    vendor: 'Pixflow · Google', tagline: '次世代推理 · pixflow', taglineEn: 'Next-gen reasoning · pixflow',
-    gradient: 'from-sky-500 to-indigo-600', status: 'available',
+    id: "pixflow/gemini-3.1-pro-preview",
+    name: "Gemini 3.1 Pro Preview",
+    nameEn: "Gemini 3.1 Pro Preview",
+    vendor: "Pixflow · Google",
+    tagline: "次世代推理 · pixflow",
+    taglineEn: "Next-gen reasoning · pixflow",
+    gradient: "from-sky-500 to-indigo-600",
+    status: "available",
   },
   {
-    id: 'pixflow/gemini-3-flash-preview', name: 'Gemini 3 Flash Preview', nameEn: 'Gemini 3 Flash Preview',
-    vendor: 'Pixflow · Google', tagline: '快速通用 · pixflow', taglineEn: 'Fast all-rounder · pixflow',
-    gradient: 'from-sky-400 to-blue-600', status: 'available',
+    id: "pixflow/gemini-3-flash-preview",
+    name: "Gemini 3 Flash Preview",
+    nameEn: "Gemini 3 Flash Preview",
+    vendor: "Pixflow · Google",
+    tagline: "快速通用 · pixflow",
+    taglineEn: "Fast all-rounder · pixflow",
+    gradient: "from-sky-400 to-blue-600",
+    status: "available",
   },
   {
-    id: 'pixflow/gemini-3.1-flash-lite-preview', name: 'Gemini 3.1 Flash Lite', nameEn: 'Gemini 3.1 Flash Lite',
-    vendor: 'Pixflow · Google', tagline: '高吞吐低成本 · pixflow', taglineEn: 'High-volume · pixflow',
-    gradient: 'from-cyan-400 to-sky-600', status: 'available',
+    id: "pixflow/gemini-3.1-flash-lite-preview",
+    name: "Gemini 3.1 Flash Lite",
+    nameEn: "Gemini 3.1 Flash Lite",
+    vendor: "Pixflow · Google",
+    tagline: "高吞吐低成本 · pixflow",
+    taglineEn: "High-volume · pixflow",
+    gradient: "from-cyan-400 to-sky-600",
+    status: "available",
   },
   {
-    id: 'pixflow/gemini-2.5-pro', name: 'Gemini 2.5 Pro', nameEn: 'Gemini 2.5 Pro',
-    vendor: 'Pixflow · Google', tagline: '强多模态推理 · pixflow', taglineEn: 'Strong multimodal · pixflow',
-    gradient: 'from-indigo-500 to-purple-700', status: 'available',
+    id: "pixflow/gemini-2.5-pro",
+    name: "Gemini 2.5 Pro",
+    nameEn: "Gemini 2.5 Pro",
+    vendor: "Pixflow · Google",
+    tagline: "强多模态推理 · pixflow",
+    taglineEn: "Strong multimodal · pixflow",
+    gradient: "from-indigo-500 to-purple-700",
+    status: "available",
   },
   {
-    id: 'pixflow/gemini-2.5-flash', name: 'Gemini 2.5 Flash', nameEn: 'Gemini 2.5 Flash',
-    vendor: 'Pixflow · Google', tagline: '均衡 · pixflow', taglineEn: 'Balanced · pixflow',
-    gradient: 'from-blue-500 to-indigo-600', status: 'available',
+    id: "pixflow/gemini-2.5-flash",
+    name: "Gemini 2.5 Flash",
+    nameEn: "Gemini 2.5 Flash",
+    vendor: "Pixflow · Google",
+    tagline: "均衡 · pixflow",
+    taglineEn: "Balanced · pixflow",
+    gradient: "from-blue-500 to-indigo-600",
+    status: "available",
   },
   {
-    id: 'pixflow/gemini-2.5-flash-lite', name: 'Gemini 2.5 Flash Lite', nameEn: 'Gemini 2.5 Flash Lite',
-    vendor: 'Pixflow · Google', tagline: '最低成本 · pixflow', taglineEn: 'Lowest cost · pixflow',
-    gradient: 'from-teal-400 to-cyan-600', status: 'available',
+    id: "pixflow/gemini-2.5-flash-lite",
+    name: "Gemini 2.5 Flash Lite",
+    nameEn: "Gemini 2.5 Flash Lite",
+    vendor: "Pixflow · Google",
+    tagline: "最低成本 · pixflow",
+    taglineEn: "Lowest cost · pixflow",
+    gradient: "from-teal-400 to-cyan-600",
+    status: "available",
   },
-]
+];
 
 type VideoModel = {
-  id: string
-  name: string
-  nameEn: string
-  vendor: string
-  tagline: string
-  taglineEn: string
-  gradient: string
-  status: 'available' | 'used'
-}
+  id: string;
+  name: string;
+  nameEn: string;
+  vendor: string;
+  tagline: string;
+  taglineEn: string;
+  gradient: string;
+  status: "available" | "used";
+};
 
 const VIDEO_MODELS: VideoModel[] = [
   {
-    id: 'doubao-seedance-2-0-260128', name: 'Doubao Seedance 2.0', nameEn: 'Doubao Seedance 2.0',
-    vendor: '火山方舟 · ARK', tagline: '多模态视频生成', taglineEn: 'Multimodal Video',
-    gradient: 'from-fuchsia-500 to-pink-600', status: 'available',
+    id: "doubao-seedance-2-0-260128",
+    name: "Doubao Seedance 2.0",
+    nameEn: "Doubao Seedance 2.0",
+    vendor: "火山方舟 · ARK",
+    tagline: "多模态视频生成",
+    taglineEn: "Multimodal Video",
+    gradient: "from-fuchsia-500 to-pink-600",
+    status: "available",
   },
   {
-    id: 'doubao-seedance-2-0-fast-260128', name: 'Doubao Seedance 2.0 Fast', nameEn: 'Doubao Seedance 2.0 Fast',
-    vendor: '火山方舟 · ARK', tagline: '720p 快速版 · 多模态', taglineEn: '720p Fast · Multimodal',
-    gradient: 'from-pink-500 to-rose-600', status: 'available',
+    id: "doubao-seedance-2-0-fast-260128",
+    name: "Doubao Seedance 2.0 Fast",
+    nameEn: "Doubao Seedance 2.0 Fast",
+    vendor: "火山方舟 · ARK",
+    tagline: "720p 快速版 · 多模态",
+    taglineEn: "720p Fast · Multimodal",
+    gradient: "from-pink-500 to-rose-600",
+    status: "available",
   },
   {
-    id: 'doubao-seedance-1-0-pro-250528', name: 'Doubao Seedance 1.0 Pro', nameEn: 'Doubao Seedance 1.0 Pro',
-    vendor: '火山方舟 · ARK', tagline: '文生视频', taglineEn: 'Text to Video',
-    gradient: 'from-rose-500 to-orange-600', status: 'available',
+    id: "doubao-seedance-1-0-pro-250528",
+    name: "Doubao Seedance 1.0 Pro",
+    nameEn: "Doubao Seedance 1.0 Pro",
+    vendor: "火山方舟 · ARK",
+    tagline: "文生视频",
+    taglineEn: "Text to Video",
+    gradient: "from-rose-500 to-orange-600",
+    status: "available",
   },
   {
-    id: 'doubao-seedance-1-0-lite-i2v-250428', name: 'Doubao Seedance 1.0 Lite', nameEn: 'Doubao Seedance 1.0 Lite',
-    vendor: '火山方舟 · ARK', tagline: '图生视频', taglineEn: 'Image to Video',
-    gradient: 'from-violet-500 to-purple-700', status: 'available',
+    id: "doubao-seedance-1-0-lite-i2v-250428",
+    name: "Doubao Seedance 1.0 Lite",
+    nameEn: "Doubao Seedance 1.0 Lite",
+    vendor: "火山方舟 · ARK",
+    tagline: "图生视频",
+    taglineEn: "Image to Video",
+    gradient: "from-violet-500 to-purple-700",
+    status: "available",
   },
   {
-    id: 'jimeng-3.0-pro', name: '即梦 3.0 Pro', nameEn: 'Jimeng 3.0 Pro',
-    vendor: '火山引擎 · 视觉服务', tagline: '多镜头叙事 · 1080P', taglineEn: 'Multi-shot · 1080P',
-    gradient: 'from-sky-500 to-indigo-600', status: 'available',
+    id: "jimeng-3.0-pro",
+    name: "即梦 3.0 Pro",
+    nameEn: "Jimeng 3.0 Pro",
+    vendor: "火山引擎 · 视觉服务",
+    tagline: "多镜头叙事 · 1080P",
+    taglineEn: "Multi-shot · 1080P",
+    gradient: "from-sky-500 to-indigo-600",
+    status: "available",
   },
   {
-    id: 'jimeng-3.0-pro-i2v', name: '即梦 3.0 Pro (图生视频)', nameEn: 'Jimeng 3.0 Pro (I2V)',
-    vendor: '火山引擎 · 视觉服务', tagline: '首帧图生视频 · 1080P', taglineEn: 'First-frame I2V · 1080P',
-    gradient: 'from-indigo-500 to-blue-700', status: 'available',
+    id: "jimeng-3.0-pro-i2v",
+    name: "即梦 3.0 Pro (图生视频)",
+    nameEn: "Jimeng 3.0 Pro (I2V)",
+    vendor: "火山引擎 · 视觉服务",
+    tagline: "首帧图生视频 · 1080P",
+    taglineEn: "First-frame I2V · 1080P",
+    gradient: "from-indigo-500 to-blue-700",
+    status: "available",
   },
-]
+];
 
 type ImageModel = {
-  id: string
-  name: string
-  nameEn: string
-  vendor: string
-  tagline: string
-  taglineEn: string
-  gradient: string
-  status: 'available' | 'used'
-}
+  id: string;
+  name: string;
+  nameEn: string;
+  vendor: string;
+  tagline: string;
+  taglineEn: string;
+  gradient: string;
+  status: "available" | "used";
+};
 
 const IMAGE_MODELS: ImageModel[] = [
   {
-    id: 'doubao-seedream-5-0-260128', name: 'Doubao Seedream 5.0', nameEn: 'Doubao Seedream 5.0',
-    vendor: '火山方舟 · ARK', tagline: '文生图·图生图·多图融合', taglineEn: 'T2I · I2I · Multi-Image Fusion',
-    gradient: 'from-amber-500 to-yellow-600', status: 'available',
+    id: "doubao-seedream-5-0-260128",
+    name: "Doubao Seedream 5.0",
+    nameEn: "Doubao Seedream 5.0",
+    vendor: "火山方舟 · ARK",
+    tagline: "文生图·图生图·多图融合",
+    taglineEn: "T2I · I2I · Multi-Image Fusion",
+    gradient: "from-amber-500 to-yellow-600",
+    status: "available",
   },
   // ---- Pixflow 图像模型 ----
   {
-    id: 'pixflow/gemini-3-pro-image-preview', name: 'Gemini 3 Pro Image', nameEn: 'Gemini 3 Pro Image',
-    vendor: 'Pixflow · Google', tagline: '高质量图像 · pixflow', taglineEn: 'High-quality · pixflow',
-    gradient: 'from-indigo-500 to-violet-700', status: 'available',
+    id: "pixflow/gemini-3-pro-image-preview",
+    name: "Gemini 3 Pro Image",
+    nameEn: "Gemini 3 Pro Image",
+    vendor: "Pixflow · Google",
+    tagline: "高质量图像 · pixflow",
+    taglineEn: "High-quality · pixflow",
+    gradient: "from-indigo-500 to-violet-700",
+    status: "available",
   },
   {
-    id: 'pixflow/gemini-3.1-flash-image-preview', name: 'Nano Banana 2', nameEn: 'Nano Banana 2',
-    vendor: 'Pixflow · Google', tagline: '快速高质量 · pixflow', taglineEn: 'Fast HQ · pixflow',
-    gradient: 'from-yellow-400 to-amber-600', status: 'available',
+    id: "pixflow/gemini-3.1-flash-image-preview",
+    name: "Nano Banana 2",
+    nameEn: "Nano Banana 2",
+    vendor: "Pixflow · Google",
+    tagline: "快速高质量 · pixflow",
+    taglineEn: "Fast HQ · pixflow",
+    gradient: "from-yellow-400 to-amber-600",
+    status: "available",
   },
   {
-    id: 'pixflow/gemini-3.1-flash-image', name: 'Gemini 3.1 Flash Image', nameEn: 'Gemini 3.1 Flash Image',
-    vendor: 'Pixflow · Google', tagline: '通用图像生成/编辑 · pixflow', taglineEn: 'General gen/edit · pixflow',
-    gradient: 'from-lime-400 to-emerald-600', status: 'available',
+    id: "pixflow/gemini-3.1-flash-image",
+    name: "Gemini 3.1 Flash Image",
+    nameEn: "Gemini 3.1 Flash Image",
+    vendor: "Pixflow · Google",
+    tagline: "通用图像生成/编辑 · pixflow",
+    taglineEn: "General gen/edit · pixflow",
+    gradient: "from-lime-400 to-emerald-600",
+    status: "available",
   },
   // ---- Tokenflash / AIGCFamily 中转 ----
   {
-    id: 'revora/gpt-image-2', name: 'GPT Image 2 (Revora)', nameEn: 'GPT Image 2 (Revora)',
-    vendor: 'Revora · OpenAI 兼容', tagline: 'Image2 · T2I/I2I', taglineEn: 'Image2 · T2I/I2I',
-    gradient: 'from-violet-500 to-purple-600', status: 'available',
+    id: "revora/gpt-image-2",
+    name: "GPT Image 2 (Revora)",
+    nameEn: "GPT Image 2 (Revora)",
+    vendor: "Revora · OpenAI 兼容",
+    tagline: "Image2 · T2I/I2I",
+    taglineEn: "Image2 · T2I/I2I",
+    gradient: "from-violet-500 to-purple-600",
+    status: "available",
   },
   {
-    id: 'tokenflash/gpt-image-2', name: 'GPT Image 2 (Tokenflash)', nameEn: 'GPT Image 2 (Tokenflash)',
-    vendor: 'Tokenflash · OpenAI 兼容', tagline: 'Image2 · T2I/I2I · 推荐', taglineEn: 'Image2 · T2I/I2I · recommended',
-    gradient: 'from-rose-500 to-pink-600', status: 'available',
+    id: "tokenflash/gpt-image-2",
+    name: "GPT Image 2 (Tokenflash)",
+    nameEn: "GPT Image 2 (Tokenflash)",
+    vendor: "Tokenflash · OpenAI 兼容",
+    tagline: "Image2 · T2I/I2I · 推荐",
+    taglineEn: "Image2 · T2I/I2I · recommended",
+    gradient: "from-rose-500 to-pink-600",
+    status: "available",
   },
   {
-    id: 'aigcfamily/gpt-image-2', name: 'aigcfamily-image2', nameEn: 'aigcfamily-image2',
-    vendor: 'AIGCFamily · OpenAI 兼容', tagline: 'Image2 · T2I/I2I · 中转', taglineEn: 'Image2 · T2I/I2I · gateway',
-    gradient: 'from-fuchsia-500 to-purple-600', status: 'available',
+    id: "aigcfamily/gpt-image-2",
+    name: "aigcfamily-image2",
+    nameEn: "aigcfamily-image2",
+    vendor: "AIGCFamily · OpenAI 兼容",
+    tagline: "Image2 · T2I/I2I · 中转",
+    taglineEn: "Image2 · T2I/I2I · gateway",
+    gradient: "from-fuchsia-500 to-purple-600",
+    status: "available",
   },
   {
-    id: 'aigcfamily/imagen-3.0-generate-001', name: 'AIGC-imagen3', nameEn: 'AIGC-imagen3',
-    vendor: 'AIGCFamily · OpenAI 兼容', tagline: 'Imagen3 · T2I/I2I', taglineEn: 'Imagen3 · T2I/I2I',
-    gradient: 'from-cyan-500 to-blue-600', status: 'available',
+    id: "aigcfamily/imagen-3.0-generate-001",
+    name: "AIGC-imagen3",
+    nameEn: "AIGC-imagen3",
+    vendor: "AIGCFamily · OpenAI 兼容",
+    tagline: "Imagen3 · T2I/I2I",
+    taglineEn: "Imagen3 · T2I/I2I",
+    gradient: "from-cyan-500 to-blue-600",
+    status: "available",
   },
   {
-    id: 'azure/gpt-image-2', name: 'Azure-gpt-image-2', nameEn: 'Azure-gpt-image-2',
-    vendor: 'Azure · OpenAI', tagline: 'gpt-image-2 · T2I/I2I · 官方', taglineEn: 'gpt-image-2 · T2I/I2I · Official',
-    gradient: 'from-sky-500 to-blue-700', status: 'available',
+    id: "azure/gpt-image-2",
+    name: "Azure-gpt-image-2",
+    nameEn: "Azure-gpt-image-2",
+    vendor: "Azure · OpenAI",
+    tagline: "gpt-image-2 · T2I/I2I · 官方",
+    taglineEn: "gpt-image-2 · T2I/I2I · Official",
+    gradient: "from-sky-500 to-blue-700",
+    status: "available",
   },
   {
-    id: 'qwen-image-2.0', name: 'Qwen Image 2.0', nameEn: 'Qwen Image 2.0',
-    vendor: '通义千问 · Legacy', tagline: 'T2I 兜底层', taglineEn: 'T2I · Legacy Fallback',
-    gradient: 'from-emerald-500 to-green-600', status: 'available',
+    id: "qwen-image-2.0",
+    name: "Qwen Image 2.0",
+    nameEn: "Qwen Image 2.0",
+    vendor: "通义千问 · Legacy",
+    tagline: "T2I 兜底层",
+    taglineEn: "T2I · Legacy Fallback",
+    gradient: "from-emerald-500 to-green-600",
+    status: "available",
   },
   {
-    id: 'wan2.6-t2i', name: '万相 2.6', nameEn: 'Wan 2.6',
-    vendor: '阿里万相 · Legacy', tagline: '文生图兜底层', taglineEn: 'T2I · Legacy Fallback',
-    gradient: 'from-cyan-500 to-blue-600', status: 'available',
+    id: "wan2.6-t2i",
+    name: "万相 2.6",
+    nameEn: "Wan 2.6",
+    vendor: "阿里万相 · Legacy",
+    tagline: "文生图兜底层",
+    taglineEn: "T2I · Legacy Fallback",
+    gradient: "from-cyan-500 to-blue-600",
+    status: "available",
   },
-]
+];
 
 function ModelCard({ model, type, t, lang }: { model: any; type: string; t: any; lang: string }) {
-  const [copied, setCopied] = useState(false)
+  const [copied, setCopied] = useState(false);
 
   const copyId = () => {
-    navigator.clipboard.writeText(model.id)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 1500)
-  }
+    navigator.clipboard.writeText(model.id);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
 
   return (
     <div className="card p-5 space-y-4 group">
       <div className="flex items-start justify-between">
-        <div className={`w-11 h-11 rounded-xl bg-gradient-to-br ${model.gradient} flex items-center justify-center shadow-lg`}>
-          {type === 'chat' && <Sparkles size={20} className="text-white" />}
-          {type === 'image' && <ImageIcon size={20} className="text-white" />}
-          {type === 'video' && <Video size={20} className="text-white" />}
+        <div
+          className={`w-11 h-11 rounded-xl bg-gradient-to-br ${model.gradient} flex items-center justify-center shadow-lg`}
+        >
+          {type === "chat" && <Sparkles size={20} className="text-white" />}
+          {type === "image" && <ImageIcon size={20} className="text-white" />}
+          {type === "video" && <Video size={20} className="text-white" />}
         </div>
         <div className="flex items-center gap-1.5">
-          <span className={`w-2 h-2 rounded-full ${model.status === 'available' ? 'bg-green-400' : 'bg-yellow-400'}`} />
+          <span
+            className={`w-2 h-2 rounded-full ${model.status === "available" ? "bg-green-400" : "bg-yellow-400"}`}
+          />
           <span className="text-xs text-text-muted">
-            {model.status === 'available' ? t.models_status_online : t.models_status_offline}
+            {model.status === "available" ? t.models_status_online : t.models_status_offline}
           </span>
         </div>
       </div>
 
       <div>
         <h3 className="font-semibold text-text-primary group-hover:text-accent transition-colors">
-          {lang === 'zh' ? model.name : model.nameEn}
+          {lang === "zh" ? model.name : model.nameEn}
         </h3>
         <p className="text-xs text-text-muted mt-0.5">{model.vendor}</p>
         <p className="text-sm text-text-secondary mt-1">
-          {lang === 'zh' ? model.tagline : model.taglineEn}
+          {lang === "zh" ? model.tagline : model.taglineEn}
         </p>
       </div>
 
@@ -218,19 +362,19 @@ function ModelCard({ model, type, t, lang }: { model: any; type: string; t: any;
           title={t.models_copy_id}
           className="flex-1 py-2 rounded-lg text-xs font-semibold bg-bg-elevated border border-border text-text-secondary hover:text-accent hover:border-accent/40 transition"
         >
-          {copied ? '✓' : '#'}
+          {copied ? "✓" : "#"}
         </button>
         <button className="flex-1 py-2 rounded-lg text-xs font-semibold btn-primary">
           {t.models_try}
         </button>
       </div>
     </div>
-  )
+  );
 }
 
 export default function Models() {
-  const { t, lang } = useLanguage()
-  const [active, setActive] = useState<string>('all')
+  const { t, lang } = useLanguage();
+  const [active, setActive] = useState<string>("all");
 
   return (
     <div className="animate-fade-in space-y-8">
@@ -242,15 +386,15 @@ export default function Models() {
       {/* Filters */}
       <div className="flex flex-wrap gap-2 justify-center">
         {[
-          { key: 'all', label: t.models_filter_all },
-          { key: 'chat', label: t.models_filter_chat },
-          { key: 'image', label: t.models_filter_image },
-          { key: 'video', label: t.models_filter_video },
-        ].map(f => (
+          { key: "all", label: t.models_filter_all },
+          { key: "chat", label: t.models_filter_chat },
+          { key: "image", label: t.models_filter_image },
+          { key: "video", label: t.models_filter_video },
+        ].map((f) => (
           <button
             key={f.key}
             onClick={() => setActive(f.key)}
-            className={`chip ${active === f.key ? 'chip-active' : ''}`}
+            className={`chip ${active === f.key ? "chip-active" : ""}`}
           >
             {f.label}
           </button>
@@ -258,14 +402,14 @@ export default function Models() {
       </div>
 
       {/* AI Models */}
-      {(active === 'all' || active === 'chat') && (
+      {(active === "all" || active === "chat") && (
         <section>
           <h2 className="font-display text-xl font-bold mb-4 flex items-center gap-2">
             <Sparkles size={18} className="text-accent" />
             {t.models_section_ai}
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {AI_MODELS.map(m => (
+            {AI_MODELS.map((m) => (
               <ModelCard key={m.id} model={m} type="chat" t={t} lang={lang} />
             ))}
           </div>
@@ -273,14 +417,14 @@ export default function Models() {
       )}
 
       {/* Image Models */}
-      {(active === 'all' || active === 'image') && (
+      {(active === "all" || active === "image") && (
         <section>
           <h2 className="font-display text-xl font-bold mb-4 flex items-center gap-2">
             <ImageIcon size={18} className="text-accent" />
             {t.models_section_image}
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {IMAGE_MODELS.map(m => (
+            {IMAGE_MODELS.map((m) => (
               <ModelCard key={m.id} model={m} type="image" t={t} lang={lang} />
             ))}
           </div>
@@ -288,19 +432,19 @@ export default function Models() {
       )}
 
       {/* Video Models */}
-      {(active === 'all' || active === 'video') && (
+      {(active === "all" || active === "video") && (
         <section>
           <h2 className="font-display text-xl font-bold mb-4 flex items-center gap-2">
             <Video size={18} className="text-accent" />
             {t.models_section_video}
           </h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {VIDEO_MODELS.map(m => (
+            {VIDEO_MODELS.map((m) => (
               <ModelCard key={m.id} model={m} type="video" t={t} lang={lang} />
             ))}
           </div>
         </section>
       )}
     </div>
-  )
+  );
 }

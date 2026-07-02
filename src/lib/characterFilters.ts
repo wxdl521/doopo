@@ -10,11 +10,11 @@
 //  这些是纯函数,无 React 依赖,可在客户端组件 / server fn / 测试中复用。
 // ====================================================================
 
-import type { GenCharacter } from '../data/workspaceGenerators'
+import type { GenCharacter } from "../data/workspaceGenerators";
 
 /** 单集过滤(替代旧的 `c.episodeIndex === ep` 写法) */
 export function filterByEpisode(chars: GenCharacter[], ep: number): GenCharacter[] {
-  return chars.filter((c) => c.episodes.includes(ep))
+  return chars.filter((c) => c.episodes.includes(ep));
 }
 
 /**
@@ -24,11 +24,11 @@ export function filterByEpisode(chars: GenCharacter[], ep: number): GenCharacter
  * episodes 取并集排序,siblingGroupId 取非空。
  */
 export function groupByMatchKey(chars: GenCharacter[]): GenCharacter[] {
-  const seen = new Map<string, GenCharacter>()
+  const seen = new Map<string, GenCharacter>();
   for (const c of chars) {
-    const exist = seen.get(c.matchKey)
+    const exist = seen.get(c.matchKey);
     if (!exist) {
-      seen.set(c.matchKey, c)
+      seen.set(c.matchKey, c);
     } else {
       seen.set(c.matchKey, {
         ...exist,
@@ -42,18 +42,18 @@ export function groupByMatchKey(chars: GenCharacter[]): GenCharacter[] {
         roleLabel: c.roleLabel || exist.roleLabel,
         palette: c.palette?.length ? c.palette : exist.palette,
         siblingGroupId: c.siblingGroupId ?? exist.siblingGroupId,
-      })
+      });
     }
   }
-  return Array.from(seen.values())
+  return Array.from(seen.values());
 }
 
 /** 读取"当集生效的 clothingDescription",有 override 用 override */
 export function getEffectiveClothing(c: GenCharacter, ep: number): string {
-  return c.perEpisodeClothingOverrides?.[ep]?.clothingDescription ?? c.clothingDescription
+  return c.perEpisodeClothingOverrides?.[ep]?.clothingDescription ?? c.clothingDescription;
 }
 
 /** 读取"当集生效的 roleLabel",有 override 用 override */
 export function getEffectiveRoleLabel(c: GenCharacter, ep: number): string {
-  return c.perEpisodeClothingOverrides?.[ep]?.roleLabel ?? c.roleLabel
+  return c.perEpisodeClothingOverrides?.[ep]?.roleLabel ?? c.roleLabel;
 }

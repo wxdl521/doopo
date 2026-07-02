@@ -4236,7 +4236,7 @@ function WorkspacePage() {
     if (!group) return;
     for (const shot of group.shots) {
       if (shot.imageUrl) continue;
-      // eslint-disable-next-line no-await-in-loop
+
       await generateShotImageForGroup(groupId, shot.id);
     }
   }
@@ -5201,7 +5201,6 @@ function WorkspacePage() {
     // 撞 429 / 构图跑偏 / 整批失败率上升 这三个问题都跟并发直接相关。
     void (async () => {
       for (const c of charactersToStart) {
-        // eslint-disable-next-line no-await-in-loop
         await processCharacter(c);
       }
     })();
@@ -5222,7 +5221,6 @@ function WorkspacePage() {
     if (!pending.length || busyPanel) return;
     void (async () => {
       for (const p of pending) {
-        // eslint-disable-next-line no-await-in-loop
         await genPanelImage(p);
       }
     })();
@@ -5240,7 +5238,6 @@ function WorkspacePage() {
     if (!pending.length || busyScene) return;
     void (async () => {
       for (const s of pending) {
-        // eslint-disable-next-line no-await-in-loop
         await genSceneImage(s);
       }
     })();
@@ -5258,7 +5255,6 @@ function WorkspacePage() {
     if (!pending.length || busyProp) return;
     void (async () => {
       for (const p of pending) {
-        // eslint-disable-next-line no-await-in-loop
         await genPropImage(p);
       }
     })();
@@ -5943,7 +5939,6 @@ function WorkspacePage() {
       if (newGroups.every((g, i) => g === d.storyboardGroups[i])) return d;
       return { ...d, storyboardGroups: newGroups };
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataLoaded, storyboardShotsHash]);
 
   // EpisodesView: Auto-select latest episode when episodes change
@@ -5956,7 +5951,6 @@ function WorkspacePage() {
     ) {
       setSelectedEpisodeIndex(episodes[episodes.length - 1].epIndex);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.episodeTexts, selectedEpisodeIndex, tab]);
 
   // EpisodesView: Scroll selected episode card into view when selectedEpisodeIndex changes
@@ -10310,7 +10304,7 @@ function WorkspacePage() {
                             setSceneModError(null);
                             void doSceneRegen(s, "modify", text, sceneModUploadedRef ?? undefined);
                           }}
-                          disabled={sceneModBusy || !sceneModInput.trim() || !currentUrl}
+                          disabled={sceneModBusy || !sceneModInput.trim()}
                           className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
                         >
                           {sceneModBusy ? (
@@ -10942,7 +10936,7 @@ function WorkspacePage() {
                   <button
                     type="button"
                     onClick={() => void submitSceneModPanel()}
-                    disabled={sceneModBusy || !sceneModInput.trim() || !currentUrl}
+                    disabled={sceneModBusy || !sceneModInput.trim()}
                     className="px-4 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
                   >
                     {sceneModBusy ? (
@@ -10959,9 +10953,6 @@ function WorkspacePage() {
         })()}
 
       {/* ============= 新增集数 对话框 =============
-          顶部下拉最底下的"+ 新增集数"触发。两条路径:
-          - AI 生成:走 runScriptEpisode 流式生成(已有集数作为上下文)
-          - 导入剧本:读 .txt/.md/.docx,内容直接当本集文本 */}
       {addEpisodeOpen && (
         <>
           <div

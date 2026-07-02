@@ -78,12 +78,16 @@ function normalizeThhtcloudSize(size: string | undefined, model: string): string
  * 天鸿智算图像生成 —— OpenAI 兼容路由。
  * 返回与 Pixflow / Tokenflash / Seedream 一致的 { url, urls, error, model }。
  */
-export async function callThhtcloudImage(input: ThhtcloudImageInput): Promise<ThhtcloudImageResult> {
+export async function callThhtcloudImage(
+  input: ThhtcloudImageInput,
+): Promise<ThhtcloudImageResult> {
   const { apiKey, baseUrl } = getThhtcloudConfig();
   const model = stripThhtcloudPrefix(input.model);
   const size = normalizeThhtcloudSize(input.size, model);
   const t0 = Date.now();
-  console.log(`[thhtcloud→] model=${model} size=${size} refs=${input.referenceImages?.length ?? 0}`);
+  console.log(
+    `[thhtcloud→] model=${model} size=${size} refs=${input.referenceImages?.length ?? 0}`,
+  );
 
   if (!apiKey) {
     console.warn(`[thhtcloud×] model=${model} missing THHTCLOUD_API_KEY`);
@@ -102,7 +106,8 @@ export async function callThhtcloudImage(input: ThhtcloudImageInput): Promise<Th
 
     // I2I: 有参考图时传入 image 字段(OpenAI 兼容格式)
     if (input.referenceImages && input.referenceImages.length > 0) {
-      body.image = input.referenceImages.length === 1 ? input.referenceImages[0] : input.referenceImages;
+      body.image =
+        input.referenceImages.length === 1 ? input.referenceImages[0] : input.referenceImages;
     }
 
     const requestInit: RequestInit = {
@@ -121,7 +126,8 @@ export async function callThhtcloudImage(input: ThhtcloudImageInput): Promise<Th
       res = await fetch(`${baseUrl}/v1/images/generations`, requestInit);
       if (res.ok) break;
       lastText = await res.text().catch(() => "");
-      const transient = res.status === 502 || res.status === 503 || res.status === 504 || res.status === 524;
+      const transient =
+        res.status === 502 || res.status === 503 || res.status === 504 || res.status === 524;
       if (!transient || attempt === 1) break;
       console.warn(`[thhtcloud⟳] model=${model} status=${res.status} retry in 1.5s`);
       await new Promise((r) => setTimeout(r, 1500));
@@ -130,8 +136,15 @@ export async function callThhtcloudImage(input: ThhtcloudImageInput): Promise<Th
 
     if (!res || !res.ok) {
       const status = res?.status ?? 0;
-      console.warn(`[thhtcloud×] model=${model} status=${status} dur=${Date.now() - t0}ms body=${lastText.slice(0, 200)}`);
-      return { url: "", urls: [], error: `[thhtcloud ${model}] ${status}: ${lastText.slice(0, 300)}`, model };
+      console.warn(
+        `[thhtcloud×] model=${model} status=${status} dur=${Date.now() - t0}ms body=${lastText.slice(0, 200)}`,
+      );
+      return {
+        url: "",
+        urls: [],
+        error: `[thhtcloud ${model}] ${status}: ${lastText.slice(0, 300)}`,
+        model,
+      };
     }
 
     const rawText = await res.text();
@@ -156,7 +169,9 @@ export async function callThhtcloudImage(input: ThhtcloudImageInput): Promise<Th
       .filter(Boolean);
 
     if (urls.length === 0) {
-      console.warn(`[thhtcloud×] model=${model} empty-data dur=${Date.now() - t0}ms raw=${rawText.slice(0, 400)}`);
+      console.warn(
+        `[thhtcloud×] model=${model} empty-data dur=${Date.now() - t0}ms raw=${rawText.slice(0, 400)}`,
+      );
       return {
         url: "",
         urls: [],
@@ -168,7 +183,9 @@ export async function callThhtcloudImage(input: ThhtcloudImageInput): Promise<Th
     return { url: urls[0], urls, error: null, model };
   } catch (e) {
     clearTimeout(timeout);
-    console.warn(`[thhtcloud×] model=${model} network dur=${Date.now() - t0}ms err=${e instanceof Error ? e.message : "fetch failed"}`);
+    console.warn(
+      `[thhtcloud×] model=${model} network dur=${Date.now() - t0}ms err=${e instanceof Error ? e.message : "fetch failed"}`,
+    );
     return {
       url: "",
       urls: [],

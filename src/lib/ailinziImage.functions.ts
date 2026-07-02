@@ -102,7 +102,8 @@ export async function callAilinziImage(input: AilinziImageInput): Promise<Ailinz
 
     // I2I: 有参考图时传入 image 字段(OpenAI 兼容格式)
     if (input.referenceImages && input.referenceImages.length > 0) {
-      body.image = input.referenceImages.length === 1 ? input.referenceImages[0] : input.referenceImages;
+      body.image =
+        input.referenceImages.length === 1 ? input.referenceImages[0] : input.referenceImages;
     }
 
     const requestInit: RequestInit = {
@@ -121,7 +122,8 @@ export async function callAilinziImage(input: AilinziImageInput): Promise<Ailinz
       res = await fetch(`${baseUrl}/v1/images/generations`, requestInit);
       if (res.ok) break;
       lastText = await res.text().catch(() => "");
-      const transient = res.status === 502 || res.status === 503 || res.status === 504 || res.status === 524;
+      const transient =
+        res.status === 502 || res.status === 503 || res.status === 504 || res.status === 524;
       if (!transient || attempt === 1) break;
       console.warn(`[ailinzi⟳] model=${model} status=${res.status} retry in 1.5s`);
       await new Promise((r) => setTimeout(r, 1500));
@@ -130,8 +132,15 @@ export async function callAilinziImage(input: AilinziImageInput): Promise<Ailinz
 
     if (!res || !res.ok) {
       const status = res?.status ?? 0;
-      console.warn(`[ailinzi×] model=${model} status=${status} dur=${Date.now() - t0}ms body=${lastText.slice(0, 200)}`);
-      return { url: "", urls: [], error: `[ailinzi ${model}] ${status}: ${lastText.slice(0, 300)}`, model };
+      console.warn(
+        `[ailinzi×] model=${model} status=${status} dur=${Date.now() - t0}ms body=${lastText.slice(0, 200)}`,
+      );
+      return {
+        url: "",
+        urls: [],
+        error: `[ailinzi ${model}] ${status}: ${lastText.slice(0, 300)}`,
+        model,
+      };
     }
 
     const rawText = await res.text();
@@ -156,7 +165,9 @@ export async function callAilinziImage(input: AilinziImageInput): Promise<Ailinz
       .filter(Boolean);
 
     if (urls.length === 0) {
-      console.warn(`[ailinzi×] model=${model} empty-data dur=${Date.now() - t0}ms raw=${rawText.slice(0, 400)}`);
+      console.warn(
+        `[ailinzi×] model=${model} empty-data dur=${Date.now() - t0}ms raw=${rawText.slice(0, 400)}`,
+      );
       return {
         url: "",
         urls: [],
@@ -168,7 +179,9 @@ export async function callAilinziImage(input: AilinziImageInput): Promise<Ailinz
     return { url: urls[0], urls, error: null, model };
   } catch (e) {
     clearTimeout(timeout);
-    console.warn(`[ailinzi×] model=${model} network dur=${Date.now() - t0}ms err=${e instanceof Error ? e.message : "fetch failed"}`);
+    console.warn(
+      `[ailinzi×] model=${model} network dur=${Date.now() - t0}ms err=${e instanceof Error ? e.message : "fetch failed"}`,
+    );
     return {
       url: "",
       urls: [],

@@ -1,23 +1,45 @@
-import Logo from './Logo'
-import { useLanguage } from '../i18n/LanguageContext'
+import Logo from "./Logo";
+import { useLanguage } from "../i18n/LanguageContext";
 
 export default function Footer() {
-  const { t } = useLanguage()
+  const { t } = useLanguage();
 
   const cols = [
-    { title: t.footer_col_product, links: [t.footer_link_seedance, t.footer_link_blog, t.footer_link_app, t.footer_link_openclaw] },
-    { title: t.footer_col_legal, links: [t.footer_link_privacy, t.footer_link_terms, t.footer_link_pricing, t.footer_link_contact] },
-    { title: t.footer_col_resources, links: [t.footer_link_discord, t.footer_link_docs, t.footer_link_status, t.footer_link_changelog] },
-  ]
+    {
+      title: t.footer_col_product,
+      links: [
+        t.footer_link_seedance,
+        t.footer_link_blog,
+        t.footer_link_app,
+        t.footer_link_openclaw,
+      ],
+    },
+    {
+      title: t.footer_col_legal,
+      links: [
+        t.footer_link_privacy,
+        t.footer_link_terms,
+        t.footer_link_pricing,
+        t.footer_link_contact,
+      ],
+    },
+    {
+      title: t.footer_col_resources,
+      links: [
+        t.footer_link_discord,
+        t.footer_link_docs,
+        t.footer_link_status,
+        t.footer_link_changelog,
+      ],
+    },
+  ];
 
   return (
     <footer className="mt-24 pt-12 pb-10 border-t border-border">
       <div className="grid grid-cols-2 md:grid-cols-5 gap-10">
         <div className="col-span-2 md:col-span-2 max-w-sm">
           <Logo />
-          <p className="mt-4 text-sm text-text-secondary leading-relaxed">
-            {t.hero_subtitle}
-          </p>
+          <p className="mt-4 text-sm text-text-secondary leading-relaxed">{t.hero_subtitle}</p>
         </div>
 
         {cols.map((c) => (
@@ -52,5 +74,5 @@ export default function Footer() {
         </span>
       </div>
     </footer>
-  )
+  );
 }

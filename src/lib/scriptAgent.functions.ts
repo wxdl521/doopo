@@ -1,6 +1,6 @@
-import { createServerFn } from '@tanstack/react-start'
-import { z } from 'zod'
-import { wrapFictionSystem, wrapFictionUser } from './promptSafety'
+import { createServerFn } from "@tanstack/react-start";
+import { z } from "zod";
+import { wrapFictionSystem, wrapFictionUser } from "./promptSafety";
 
 // ============================================================
 // 剧本智能体 — 流式生成（Qwen API，async generator）
@@ -10,16 +10,16 @@ import { wrapFictionSystem, wrapFictionUser } from './promptSafety'
 // 流结束后再 yield { done: true, text }。客户端逐字追加渲染。
 // ============================================================
 
-const Lang = z.enum(['zh', 'en'])
+const Lang = z.enum(["zh", "en"]);
 
 // const LOVABLE_ENDPOINT = 'https://ai.gateway.lovable.dev/v1/chat/completions'
 // const GEMINI_ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions'
 // const MINIMAX_ENDPOINT = 'https://api.minimaxi.com/anthropic/v1/messages'
-const QWEN_ENDPOINT = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions'
-const LOVABLE_ENDPOINT = 'https://ai.gateway.lovable.dev/v1/chat/completions'
-const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions'
+const QWEN_ENDPOINT = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
+const LOVABLE_ENDPOINT = "https://ai.gateway.lovable.dev/v1/chat/completions";
+const OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 
-type Provider = 'lovable' | 'qwen' | 'openrouter'
+type Provider = "lovable" | "qwen" | "openrouter";
 
 // 解析模型 id 并归一化为目标 provider：
 //   "lovable:xxx"     → Lovable AI Gateway，model = xxx（前端已传完整路径）
@@ -29,52 +29,49 @@ type Provider = 'lovable' | 'qwen' | 'openrouter'
 //   "qwen:xxx"        → 阿里 DashScope
 //   裸 id             → Qwen 默认
 export function pickModel(raw?: string): { provider: Provider; model: string } {
-  const v = (raw ?? '').trim() || 'qwen-plus'
-  if (v.startsWith('lovable:')) return { provider: 'lovable', model: v.slice(8) }
-  if (v.startsWith('openrouter:')) return { provider: 'openrouter', model: v.slice(11) }
-  if (v.startsWith('gemini:')) {
-    const m = v.slice(7)
-    return { provider: 'lovable', model: m.includes('/') ? m : `google/${m}` }
+  const v = (raw ?? "").trim() || "qwen-plus";
+  if (v.startsWith("lovable:")) return { provider: "lovable", model: v.slice(8) };
+  if (v.startsWith("openrouter:")) return { provider: "openrouter", model: v.slice(11) };
+  if (v.startsWith("gemini:")) {
+    const m = v.slice(7);
+    return { provider: "lovable", model: m.includes("/") ? m : `google/${m}` };
   }
-  if (v.startsWith('gpt:') || v.startsWith('openai:')) {
-    const m = v.slice(v.indexOf(':') + 1)
-    return { provider: 'lovable', model: m.includes('/') ? m : `openai/${m}` }
+  if (v.startsWith("gpt:") || v.startsWith("openai:")) {
+    const m = v.slice(v.indexOf(":") + 1);
+    return { provider: "lovable", model: m.includes("/") ? m : `openai/${m}` };
   }
-  if (v.startsWith('anthropic:') || v.startsWith('claude:')) {
-    const m = v.slice(v.indexOf(':') + 1)
-    return { provider: 'openrouter', model: m.includes('/') ? m : `anthropic/${m}` }
+  if (v.startsWith("anthropic:") || v.startsWith("claude:")) {
+    const m = v.slice(v.indexOf(":") + 1);
+    return { provider: "openrouter", model: m.includes("/") ? m : `anthropic/${m}` };
   }
-  if (v.startsWith('deepseek:')) {
-    const m = v.slice(9)
-    return { provider: 'openrouter', model: m.includes('/') ? m : `deepseek/${m}` }
+  if (v.startsWith("deepseek:")) {
+    const m = v.slice(9);
+    return { provider: "openrouter", model: m.includes("/") ? m : `deepseek/${m}` };
   }
-  if (v.startsWith('meta:') || v.startsWith('llama:')) {
-    const m = v.slice(v.indexOf(':') + 1)
-    return { provider: 'openrouter', model: m.includes('/') ? m : `meta-llama/${m}` }
+  if (v.startsWith("meta:") || v.startsWith("llama:")) {
+    const m = v.slice(v.indexOf(":") + 1);
+    return { provider: "openrouter", model: m.includes("/") ? m : `meta-llama/${m}` };
   }
-  if (v.startsWith('mistral:')) {
-    const m = v.slice(8)
-    return { provider: 'openrouter', model: m.includes('/') ? m : `mistralai/${m}` }
+  if (v.startsWith("mistral:")) {
+    const m = v.slice(8);
+    return { provider: "openrouter", model: m.includes("/") ? m : `mistralai/${m}` };
   }
-  if (v.startsWith('xai:') || v.startsWith('grok:')) {
-    const m = v.slice(v.indexOf(':') + 1)
-    return { provider: 'openrouter', model: m.includes('/') ? m : `x-ai/${m}` }
+  if (v.startsWith("xai:") || v.startsWith("grok:")) {
+    const m = v.slice(v.indexOf(":") + 1);
+    return { provider: "openrouter", model: m.includes("/") ? m : `x-ai/${m}` };
   }
-  if (v.startsWith('qwen:')) return { provider: 'qwen', model: v.slice(5) }
-  return { provider: 'qwen', model: v }
+  if (v.startsWith("qwen:")) return { provider: "qwen", model: v.slice(5) };
+  return { provider: "qwen", model: v };
 }
 
-type StreamChunk =
-  | { delta: string }
-  | { done: true; text: string }
-  | { error: string }
+type StreamChunk = { delta: string } | { done: true; text: string } | { error: string };
 
 async function* streamChat(opts: {
-  model: { provider: Provider; model: string } | string
-  system: string
-  user: string
+  model: { provider: Provider; model: string } | string;
+  system: string;
+  user: string;
 }): AsyncGenerator<StreamChunk> {
-  const picked = typeof opts.model === 'string' ? pickModel(opts.model) : opts.model
+  const picked = typeof opts.model === "string" ? pickModel(opts.model) : opts.model;
   // const apiKey =
   //   picked.provider === 'gemini'
   //     ? process.env.Default_Gemini_API_Key
@@ -84,25 +81,25 @@ async function* streamChat(opts: {
   //         ? process.env.Qwen
   //         : process.env.LOVABLE_API_KEY
   const apiKey =
-    picked.provider === 'lovable'
+    picked.provider === "lovable"
       ? process.env.LOVABLE_API_KEY
-      : picked.provider === 'openrouter'
+      : picked.provider === "openrouter"
         ? process.env.OPENROUTER_API_KEY
-        : process.env.Qwen
+        : process.env.Qwen;
   if (!apiKey) {
     yield {
       error:
-        picked.provider === 'lovable'
-          ? 'LOVABLE_API_KEY 未配置'
-          : picked.provider === 'openrouter'
-            ? 'OPENROUTER_API_KEY 未配置'
-            : 'Qwen 密钥未配置',
-    }
-    return
+        picked.provider === "lovable"
+          ? "LOVABLE_API_KEY 未配置"
+          : picked.provider === "openrouter"
+            ? "OPENROUTER_API_KEY 未配置"
+            : "Qwen 密钥未配置",
+    };
+    return;
   }
 
-  const controller = new AbortController()
-  let upstream: Response
+  const controller = new AbortController();
+  let upstream: Response;
 
   // // MiniMax 使用不同的 API 格式（非 SSE）
   // if (picked.provider === 'minimax') {
@@ -160,98 +157,97 @@ async function* streamChat(opts: {
   //       ? QWEN_ENDPOINT
   //       : LOVABLE_ENDPOINT
   const endpoint =
-    picked.provider === 'lovable'
+    picked.provider === "lovable"
       ? LOVABLE_ENDPOINT
-      : picked.provider === 'openrouter'
+      : picked.provider === "openrouter"
         ? OPENROUTER_ENDPOINT
-        : QWEN_ENDPOINT
+        : QWEN_ENDPOINT;
   try {
     upstream = await fetch(endpoint, {
-      method: 'POST',
+      method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        ...(picked.provider === 'openrouter'
-          ? { 'HTTP-Referer': 'https://doopoo.app', 'X-Title': 'Doopoo' }
+        "Content-Type": "application/json",
+        ...(picked.provider === "openrouter"
+          ? { "HTTP-Referer": "https://doopoo.app", "X-Title": "Doopoo" }
           : {}),
       },
       body: JSON.stringify({
         model: picked.model,
         stream: true,
         messages: [
-          { role: 'system', content: opts.system },
-          { role: 'user', content: opts.user },
+          { role: "system", content: opts.system },
+          { role: "user", content: opts.user },
         ],
       }),
       signal: controller.signal,
-    })
+    });
   } catch (e) {
-    yield { error: e instanceof Error ? e.message : '网络错误' }
-    return
+    yield { error: e instanceof Error ? e.message : "网络错误" };
+    return;
   }
 
   if (!upstream.ok) {
     if (upstream.status === 429) {
-      yield { error: 'rate_limit' }
-      return
+      yield { error: "rate_limit" };
+      return;
     }
     if (upstream.status === 402) {
-      yield { error: 'no_credits' }
-      return
+      yield { error: "no_credits" };
+      return;
     }
-    const txt = await upstream.text().catch(() => '')
+    const txt = await upstream.text().catch(() => "");
     // 403 ToS / 内容审核：跨服务商回退到 Lovable Gateway Gemini（对创作更宽松）
     if (
       upstream.status === 403 &&
       /terms of service|prohibited|policy|moderation/i.test(txt) &&
-      picked.provider !== 'lovable' &&
+      picked.provider !== "lovable" &&
       process.env.LOVABLE_API_KEY
     ) {
       yield* streamChat({
         ...opts,
-        model: { provider: 'lovable', model: 'google/gemini-3-flash-preview' },
-      })
-      return
+        model: { provider: "lovable", model: "google/gemini-3-flash-preview" },
+      });
+      return;
     }
     if (upstream.status === 403) {
-      yield { error: 'content_policy' }
-      return
+      yield { error: "content_policy" };
+      return;
     }
-    yield { error: `网关错误 ${upstream.status}: ${txt.slice(0, 200)}` }
-    return
+    yield { error: `网关错误 ${upstream.status}: ${txt.slice(0, 200)}` };
+    return;
   }
 
   if (!upstream.body) {
-    yield { error: '上游无响应体' }
-    return
+    yield { error: "上游无响应体" };
+    return;
   }
 
-  const reader = upstream.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  let fullText = ''
+  const reader = upstream.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let fullText = "";
 
   try {
     while (true) {
-      const { value, done } = await reader.read()
-      if (done) break
-      buffer += decoder.decode(value, { stream: true })
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
       // SSE：以双换行分隔事件
-      let nl: number
-      while ((nl = buffer.indexOf('\n')) !== -1) {
-        const line = buffer.slice(0, nl).trim()
-        buffer = buffer.slice(nl + 1)
-        if (!line.startsWith('data:')) continue
-        const payload = line.slice(5).trim()
-        if (!payload || payload === '[DONE]') continue
+      let nl: number;
+      while ((nl = buffer.indexOf("\n")) !== -1) {
+        const line = buffer.slice(0, nl).trim();
+        buffer = buffer.slice(nl + 1);
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (!payload || payload === "[DONE]") continue;
         try {
-          const json = JSON.parse(payload)
+          const json = JSON.parse(payload);
           const delta: string | undefined =
-            json?.choices?.[0]?.delta?.content ??
-            json?.choices?.[0]?.message?.content
+            json?.choices?.[0]?.delta?.content ?? json?.choices?.[0]?.message?.content;
           if (delta) {
-            fullText += delta
-            yield { delta }
+            fullText += delta;
+            yield { delta };
           }
         } catch {
           // 忽略解析失败的心跳/注释
@@ -259,17 +255,17 @@ async function* streamChat(opts: {
       }
     }
   } catch (e) {
-    yield { error: e instanceof Error ? e.message : '流读取失败' }
-    return
+    yield { error: e instanceof Error ? e.message : "流读取失败" };
+    return;
   } finally {
     try {
-      controller.abort()
+      controller.abort();
     } catch {
       /* noop */
     }
   }
 
-  yield { done: true, text: fullText }
+  yield { done: true, text: fullText };
 }
 
 // ============= 1) 故事梗概 / 一句话剧情 =============
@@ -284,7 +280,7 @@ const SynopsisInput = z.object({
   expectedEpisodes: z.number().min(1).max(200).default(100),
   totalMinutes: z.number().min(5).max(600).default(90),
   model: z.string().optional(),
-})
+});
 
 const SYS_SYNOPSIS_ZH = `你是一位资深短剧爆款编剧。请基于用户给出的灵感，使用 Markdown 输出一份结构完整、信息不可缺失的"故事梗概 / 一句话剧情"。
 
@@ -346,9 +342,9 @@ __CHAPTER_RANGES__
 
 ---
 
-（全文输出完毕后，在最后一行附上：生成完成，你可以点击"生成下一集"继续。）`
+（全文输出完毕后，在最后一行附上：生成完成，你可以点击"生成下一集"继续。）`;
 
-	const SYS_SYNOPSIS_EN = `You are a seasoned short-drama writer. Output a full story brief in **Markdown**, strictly following this skeleton (do NOT drop any section):
+const SYS_SYNOPSIS_EN = `You are a seasoned short-drama writer. Output a full story brief in **Markdown**, strictly following this skeleton (do NOT drop any section):
 
 
 **CRITICAL RULE — READ FIRST:**
@@ -362,41 +358,37 @@ You MUST output the complete story synopsis first (all sections from # 📖 thro
 ## 5. Chapter Structure (per episode ranges: __CHAPTER_RANGES_EN__)
 ## 6. Episode 1 Cliffhanger
 
-(After completing all sections above, append: "Generation complete. You can click 'Generate Next Episode' to continue.")`
+(After completing all sections above, append: "Generation complete. You can click 'Generate Next Episode' to continue.")`;
 
-export const streamSynopsis = createServerFn({ method: 'POST' })
+export const streamSynopsis = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => SynopsisInput.parse(d))
   .handler(async function* ({ data }) {
     // Build chapter range buckets that fit the requested episode count,
     // instead of the previous hardcoded 100-episode template.
-    const total = Math.max(1, Math.floor(data.expectedEpisodes))
-    const buckets = total <= 15 ? 3 : total <= 30 ? 4 : total <= 60 ? 5 : 6
-    const size = Math.max(1, Math.ceil(total / buckets))
-    const ranges: { start: number; end: number }[] = []
+    const total = Math.max(1, Math.floor(data.expectedEpisodes));
+    const buckets = total <= 15 ? 3 : total <= 30 ? 4 : total <= 60 ? 5 : 6;
+    const size = Math.max(1, Math.ceil(total / buckets));
+    const ranges: { start: number; end: number }[] = [];
     for (let i = 0; i < buckets; i++) {
-      const start = i * size + 1
-      if (start > total) break
-      const end = i === buckets - 1 ? total : Math.min((i + 1) * size, total)
-      ranges.push({ start, end })
+      const start = i * size + 1;
+      if (start > total) break;
+      const end = i === buckets - 1 ? total : Math.min((i + 1) * size, total);
+      ranges.push({ start, end });
     }
-    const rangesZh = ranges
-      .map((r) => `- **第 ${r.start}-${r.end} 集**：…`)
-      .join('\n')
-    const rangesEn = ranges
-      .map((r) => `Episodes ${r.start}-${r.end}`)
-      .join(', ')
-    const rawSys = (data.lang === 'zh' ? SYS_SYNOPSIS_ZH : SYS_SYNOPSIS_EN)
-      .replace('__TOTAL_MINUTES__', String(data.totalMinutes))
-      .replace('__CHAPTER_RANGES__', rangesZh)
-      .replace('__CHAPTER_RANGES_EN__', rangesEn)
-    const sys = wrapFictionSystem(data.lang, rawSys)
+    const rangesZh = ranges.map((r) => `- **第 ${r.start}-${r.end} 集**：…`).join("\n");
+    const rangesEn = ranges.map((r) => `Episodes ${r.start}-${r.end}`).join(", ");
+    const rawSys = (data.lang === "zh" ? SYS_SYNOPSIS_ZH : SYS_SYNOPSIS_EN)
+      .replace("__TOTAL_MINUTES__", String(data.totalMinutes))
+      .replace("__CHAPTER_RANGES__", rangesZh)
+      .replace("__CHAPTER_RANGES_EN__", rangesEn);
+    const sys = wrapFictionSystem(data.lang, rawSys);
     const rawUser =
-      data.lang === 'zh'
+      data.lang === "zh"
         ? `【类型】${data.type}\n【题材】${data.genre}\n【风格】${data.tone}\n【主题/标题】${data.theme}\n【剧情概要】${data.plot}\n【预计集数】${data.expectedEpisodes} 集\n【总时长限制】约 ${data.totalMinutes} 分钟`
-        : `[Type] ${data.type}\n[Genre] ${data.genre}\n[Tone] ${data.tone}\n[Theme] ${data.theme}\n[Plot] ${data.plot}\n[Expected episodes] ${data.expectedEpisodes}\n[Total duration] ~${data.totalMinutes} min`
-    const user = wrapFictionUser(data.lang, rawUser)
-    yield* streamChat({ model: pickModel(data.model), system: sys, user })
-  })
+        : `[Type] ${data.type}\n[Genre] ${data.genre}\n[Tone] ${data.tone}\n[Theme] ${data.theme}\n[Plot] ${data.plot}\n[Expected episodes] ${data.expectedEpisodes}\n[Total duration] ~${data.totalMinutes} min`;
+    const user = wrapFictionUser(data.lang, rawUser);
+    yield* streamChat({ model: pickModel(data.model), system: sys, user });
+  });
 
 // ============= 2) 第 N 集分镜脚本 + 后续概要 =============
 
@@ -407,7 +399,7 @@ const EpisodeInput = z.object({
   synopsisText: z.string().min(20).max(20000),
   expectedEpisodes: z.number().min(1).max(200).optional(),
   model: z.string().optional(),
-})
+});
 
 const SYS_EPISODE_ZH = `你是一位资深短剧分镜师，请基于已确认的故事梗概，写出第 N 集的完整分镜脚本。
 
@@ -418,44 +410,51 @@ const SYS_EPISODE_ZH = `你是一位资深短剧分镜师，请基于已确认�
 4) 对白单独成行，格式为：角色名（情绪）："台词"。每句对白不超过 30 字；
 5) 节奏先抑后扬，至少一次重大反转，最后一个分镜留一个强钩子；
 6) 全集结束后空一行，用一段散文写"后续走向预告"（不少于 100 字），自然提到 __NEXT_HINT_ZH__ 会发生的关键事件，不要用列表；
-7) 文末另起一段，用一句确认引导（不加 Markdown，不加列表）：询问用户是否继续生成下一集，并欢迎对本集节奏/分镜数量/人设给出调整建议。`
+7) 文末另起一段，用一句确认引导（不加 Markdown，不加列表）：询问用户是否继续生成下一集，并欢迎对本集节奏/分镜数量/人设给出调整建议。`;
 
-const SYS_EPISODE_EN = `You are a short-drama storyboarder. Write Episode N in prose paragraphs and screenplay dialogue lines only — no Markdown, no tables, no bullets, no emoji. Open with one paragraph for the episode's title and emotional goal, then X numbered storyboards, each one labeled on its own line ("Scene 1 | INT. ..."), followed by an 80-160-word prose description and dialogue lines formatted as "ROLE (emotion): \\"line\\"". End with a prose paragraph teasing __NEXT_HINT_EN__, then one prose sentence asking the user whether to continue and inviting adjustments.`
+const SYS_EPISODE_EN = `You are a short-drama storyboarder. Write Episode N in prose paragraphs and screenplay dialogue lines only — no Markdown, no tables, no bullets, no emoji. Open with one paragraph for the episode's title and emotional goal, then X numbered storyboards, each one labeled on its own line ("Scene 1 | INT. ..."), followed by an 80-160-word prose description and dialogue lines formatted as "ROLE (emotion): \\"line\\"". End with a prose paragraph teasing __NEXT_HINT_EN__, then one prose sentence asking the user whether to continue and inviting adjustments.`;
 
-export const streamEpisodeScenes = createServerFn({ method: 'POST' })
+export const streamEpisodeScenes = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => EpisodeInput.parse(d))
   .handler(async function* ({ data }) {
     // Tailor the "next episodes to tease" hint to how many are actually left,
     // instead of always saying "3-5" even when the user is on/near the finale.
-    const remaining = data.expectedEpisodes != null
-      ? Math.max(0, data.expectedEpisodes - data.epIndex)
-      : null
+    const remaining =
+      data.expectedEpisodes != null ? Math.max(0, data.expectedEpisodes - data.epIndex) : null;
     const nextHintZh =
-      remaining === null ? '接下来 3-5 集'
-        : remaining === 0 ? '下一段（这是本季的收束，直接写"全集完"作结，不再预告后续）'
-        : remaining === 1 ? '接下来 1 集（大结局）'
-        : remaining <= 3 ? `接下来 ${remaining} 集`
-        : '接下来 3-5 集'
+      remaining === null
+        ? "接下来 3-5 集"
+        : remaining === 0
+          ? '下一段（这是本季的收束，直接写"全集完"作结，不再预告后续）'
+          : remaining === 1
+            ? "接下来 1 集（大结局）"
+            : remaining <= 3
+              ? `接下来 ${remaining} 集`
+              : "接下来 3-5 集";
     const nextHintEn =
-      remaining === null ? 'the next 3-5 episodes'
-        : remaining === 0 ? 'no further episodes (this is the season finale — end with "The End")'
-        : remaining === 1 ? 'the final episode'
-        : remaining <= 3 ? `the final ${remaining} episodes`
-        : 'the next 3-5 episodes'
-    const rawSys = (data.lang === 'zh' ? SYS_EPISODE_ZH : SYS_EPISODE_EN)
+      remaining === null
+        ? "the next 3-5 episodes"
+        : remaining === 0
+          ? 'no further episodes (this is the season finale — end with "The End")'
+          : remaining === 1
+            ? "the final episode"
+            : remaining <= 3
+              ? `the final ${remaining} episodes`
+              : "the next 3-5 episodes";
+    const rawSys = (data.lang === "zh" ? SYS_EPISODE_ZH : SYS_EPISODE_EN)
       .replace(/第 N /g, `第 ${data.epIndex} `)
       .replace(/Episode N/g, `Episode ${data.epIndex}`)
       .replace(/X/g, String(data.sceneCount))
-      .replace('__NEXT_HINT_ZH__', nextHintZh)
-      .replace('__NEXT_HINT_EN__', nextHintEn)
-    const sys = wrapFictionSystem(data.lang, rawSys)
+      .replace("__NEXT_HINT_ZH__", nextHintZh)
+      .replace("__NEXT_HINT_EN__", nextHintEn);
+    const sys = wrapFictionSystem(data.lang, rawSys);
     const rawUser =
-      data.lang === 'zh'
+      data.lang === "zh"
         ? `【目标集数】第 ${data.epIndex} 集\n【分镜数量】${data.sceneCount} 个\n【故事梗概参考】\n${data.synopsisText.slice(0, 8000)}`
-        : `[Episode] ${data.epIndex}\n[Storyboards] ${data.sceneCount}\n[Synopsis]\n${data.synopsisText.slice(0, 8000)}`
-    const user = wrapFictionUser(data.lang, rawUser)
-    yield* streamChat({ model: pickModel(data.model), system: sys, user })
-  })
+        : `[Episode] ${data.epIndex}\n[Storyboards] ${data.sceneCount}\n[Synopsis]\n${data.synopsisText.slice(0, 8000)}`;
+    const user = wrapFictionUser(data.lang, rawUser);
+    yield* streamChat({ model: pickModel(data.model), system: sys, user });
+  });
 
 // 注：角色信息已并入故事梗概的"人物小传"段，不再单独成步。
 
@@ -466,10 +465,10 @@ const RefineEpisodeInput = z.object({
   epIndex: z.number().min(1).max(200).default(1),
   currentText: z.string().min(20).max(50000),
   instruction: z.string().min(1).max(2000),
-  synopsisText: z.string().max(20000).optional().default(''),
-  previousEpisodesText: z.string().max(50000).optional().default(''),
+  synopsisText: z.string().max(20000).optional().default(""),
+  previousEpisodesText: z.string().max(50000).optional().default(""),
   model: z.string().optional(),
-})
+});
 
 const SYS_REFINE_EPISODE_ZH = `你是一位资深短剧分镜师，正在协助用户修改指定集数的剧本。
 
@@ -480,7 +479,7 @@ const SYS_REFINE_EPISODE_ZH = `你是一位资深短剧分镜师，正在协助�
 1) 必须输出**完整的修改后剧本全文**，不能只输出 diff 或补丁；
 2) 严格保留原文的分镜格式：分镜序号 + 地点时段，对白格式为"角色（情绪）：台词"，禁止使用 Markdown 符号；
 3) 只针对"用户修改要求"做改动，其余内容尽量保留原文措辞；
-4) 不写任何解释、前言，直接输出修改后的剧本正文。`
+4) 不写任何解释、前言，直接输出修改后的剧本正文。`;
 
 const SYS_REFINE_EPISODE_EN = `You are a senior short-drama storyboarder helping the user revise a specific episode script.
 
@@ -491,30 +490,30 @@ Rules:
 1) Output the FULL revised episode — never a diff or patch;
 2) Preserve the original format: scene numbers + location/time, dialogue as "ROLE (emotion): line", no Markdown;
 3) Make only changes implied by the user's instruction; keep other parts intact;
-4) No preamble, start directly with the revised content.`
+4) No preamble, start directly with the revised content.`;
 
-export const refineEpisodeScenes = createServerFn({ method: 'POST' })
+export const refineEpisodeScenes = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => RefineEpisodeInput.parse(d))
   .handler(async function* ({ data }) {
-    const sys = (data.lang === 'zh' ? SYS_REFINE_EPISODE_ZH : SYS_REFINE_EPISODE_EN)
+    const sys = (data.lang === "zh" ? SYS_REFINE_EPISODE_ZH : SYS_REFINE_EPISODE_EN)
       .replace(/第 N /g, `第 ${data.epIndex} `)
-      .replace(/Episode N/g, `Episode ${data.epIndex}`)
+      .replace(/Episode N/g, `Episode ${data.epIndex}`);
     const synopsisBlock = data.synopsisText
-      ? data.lang === 'zh'
+      ? data.lang === "zh"
         ? `【故事梗概】\n${data.synopsisText.slice(0, 8000)}\n\n`
         : `[Synopsis]\n${data.synopsisText.slice(0, 8000)}\n\n`
-      : ''
+      : "";
     const prevBlock = data.previousEpisodesText
-      ? data.lang === 'zh'
+      ? data.lang === "zh"
         ? `【前序剧集内容】（仅供理解上下文，不要输出这些内容）\n${data.previousEpisodesText.slice(0, 30000)}\n\n`
         : `[Previous episodes — for context only, do NOT output this]\n${data.previousEpisodesText.slice(0, 30000)}\n\n`
-      : ''
+      : "";
     const user =
-      data.lang === 'zh'
+      data.lang === "zh"
         ? `${synopsisBlock}${prevBlock}【目标集数】第 ${data.epIndex} 集\n【当前剧本】\n${data.currentText}\n\n【用户修改要求】\n${data.instruction}\n\n请直接输出修改后的第 ${data.epIndex} 集剧本。`
-        : `${synopsisBlock}${prevBlock}[Episode] ${data.epIndex}\n[Current script]\n${data.currentText}\n\n[User instruction]\n${data.instruction}\n\nOutput the full revised Episode ${data.epIndex} script.`
-    yield* streamChat({ model: pickModel(data.model), system: sys, user })
-  })
+        : `${synopsisBlock}${prevBlock}[Episode] ${data.epIndex}\n[Current script]\n${data.currentText}\n\n[User instruction]\n${data.instruction}\n\nOutput the full revised Episode ${data.epIndex} script.`;
+    yield* streamChat({ model: pickModel(data.model), system: sys, user });
+  });
 
 // ============= 4) 梗概精修（基于当前梗概 + 用户指令 重写整份梗概）=============
 
@@ -523,12 +522,12 @@ const RefineInput = z.object({
   currentSynopsis: z.string().min(20).max(20000),
   instruction: z.string().min(1).max(2000),
   history: z
-    .array(z.object({ role: z.enum(['user', 'agent']), content: z.string().max(4000) }))
+    .array(z.object({ role: z.enum(["user", "agent"]), content: z.string().max(4000) }))
     .max(12)
     .optional()
     .default([]),
   model: z.string().optional(),
-})
+});
 
 const SYS_REFINE_ZH = `你是一位资深短剧编剧，正在协助用户精修"故事梗概"。
 
@@ -537,7 +536,7 @@ const SYS_REFINE_ZH = `你是一位资深短剧编剧，正在协助用户精修
 2) 必须严格保留原梗概的 6 段一级/二级标题骨架：① 故事名称 ② 故事核心 ③ 人物小传 ④ 剧情梗概 ⑤ 章节结构 ⑥ 第 1 集钩子预告——一节都不能少；
 3) 只针对"用户修改要求"做最小必要改动，其余段落尽量保留原文措辞；
 4) 不写任何解释、前言、"以下是修改后的版本"等元话术，直接从一级标题开始输出；
-5) 禁止生成 HTML、表格、代码块；对白仍用中文引号"…"包裹。`
+5) 禁止生成 HTML、表格、代码块；对白仍用中文引号"…"包裹。`;
 
 const SYS_REFINE_EN = `You are a senior short-drama writer helping the user refine an existing story synopsis.
 
@@ -546,21 +545,21 @@ Rules:
 2) Preserve the original 6-section skeleton (Title / Core / Characters / Plot Outline / Chapter Structure / Episode 1 Cliffhanger) — do not drop any;
 3) Make only the minimal necessary changes implied by the user's instruction; keep other paragraphs intact;
 4) No preamble, no explanations like "here is the updated version" — start directly with the H1 heading;
-5) No HTML, tables, or code fences.`
+5) No HTML, tables, or code fences.`;
 
-export const refineSynopsis = createServerFn({ method: 'POST' })
+export const refineSynopsis = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => RefineInput.parse(d))
   .handler(async function* ({ data }) {
-    const sys = wrapFictionSystem(data.lang, data.lang === 'zh' ? SYS_REFINE_ZH : SYS_REFINE_EN)
+    const sys = wrapFictionSystem(data.lang, data.lang === "zh" ? SYS_REFINE_ZH : SYS_REFINE_EN);
     const histText =
       (data.history ?? [])
         .slice(-8)
-        .map((h) => `${h.role === 'user' ? '用户' : '助手'}：${h.content}`)
-        .join('\n') || '（无）'
+        .map((h) => `${h.role === "user" ? "用户" : "助手"}：${h.content}`)
+        .join("\n") || "（无）";
     const rawUser =
-      data.lang === 'zh'
+      data.lang === "zh"
         ? `【当前梗概】\n${data.currentSynopsis}\n\n【用户本轮修改要求】\n${data.instruction}\n\n【最近精修对话】\n${histText}\n\n请直接输出修改后的完整梗概。`
-        : `[Current synopsis]\n${data.currentSynopsis}\n\n[User instruction]\n${data.instruction}\n\n[Recent dialogue]\n${histText}\n\nOutput the full revised synopsis directly.`
-    const user = wrapFictionUser(data.lang, rawUser)
-    yield* streamChat({ model: pickModel(data.model), system: sys, user })
-  })
+        : `[Current synopsis]\n${data.currentSynopsis}\n\n[User instruction]\n${data.instruction}\n\n[Recent dialogue]\n${histText}\n\nOutput the full revised synopsis directly.`;
+    const user = wrapFictionUser(data.lang, rawUser);
+    yield* streamChat({ model: pickModel(data.model), system: sys, user });
+  });

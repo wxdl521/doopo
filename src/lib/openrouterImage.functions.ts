@@ -512,7 +512,7 @@ async function callPixflowImage(
   // 兼容两种传参:OpenRouter 风格 → 剥前缀;裸 id → 原样透传;空 → 用默认。
   const useModel = model.startsWith("openai/")
     ? model.slice("openai/".length)
-    : (model || PIXFLOW_GPT_IMAGE_MODEL);
+    : model || PIXFLOW_GPT_IMAGE_MODEL;
 
   // negativePrompt 在 OpenAI Images 协议下没有专属字段,作为 "AVOID:" 段追加到 prompt 末尾
   let finalPrompt = prompt;

@@ -20,10 +20,10 @@
 //  自定义 Storage 域名 → 跳过,避免重复下载上传。
 // ====================================================================
 
-import "./loadEnv"
-import { createServerFn } from "@tanstack/react-start"
-import { z } from "zod"
-import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware"
+import "./loadEnv";
+import { createServerFn } from "@tanstack/react-start";
+import { z } from "zod";
+import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 
 /**
  * 2026/06:saveOneStoryboard —— 单条故事板图入库(自动入库链路)。
@@ -44,50 +44,55 @@ const SaveOneStoryboardInput = z.object({
   workspaceId: z.string().min(1).max(64),
   groupId: z.string().min(1).max(64),
   url: z.string().min(1).max(5000000),
-})
+});
 
 export type SaveOneStoryboardResult = {
-  ok: boolean
-  url: string  // 替换后的永久 URL(或原 URL,如果已入库 / noop)
-  persisted: boolean  // true = 这次真做了下载 + 上传;false = 跳过 / noop
-  error?: string
-}
+  ok: boolean;
+  url: string; // 替换后的永久 URL(或原 URL,如果已入库 / noop)
+  persisted: boolean; // true = 这次真做了下载 + 上传;false = 跳过 / noop
+  error?: string;
+};
 
 export const saveOneStoryboard = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => SaveOneStoryboardInput.parse(input))
   .handler(async ({ data, context }): Promise<SaveOneStoryboardResult> => {
-    const { supabase, userId } = context as { supabase: any; userId: string }
-    const { workspaceId, groupId, url } = data
+    const { supabase, userId } = context as { supabase: any; userId: string };
+    const { workspaceId, groupId, url } = data;
 
     if (!url) {
-      return { ok: true, url: "", persisted: false }
+      return { ok: true, url: "", persisted: false };
     }
     // 已入库(浏览器走的 supabase 域名)→ 跳过,直接返回原 URL
     if (isAlreadyPersisted(url)) {
-      return { ok: true, url, persisted: false }
+      return { ok: true, url, persisted: false };
     }
 
     try {
-      const { buf, contentType } = await fetchMedia(url)
-      const path = makePath(userId, workspaceId, "storyboard", groupId, contentType)
-      const mime = MIME_BY_KIND.storyboard
-      const blob = new Blob([buf], { type: mime })
+      const { buf, contentType } = await fetchMedia(url);
+      const path = makePath(userId, workspaceId, "storyboard", groupId, contentType);
+      const mime = MIME_BY_KIND.storyboard;
+      const blob = new Blob([buf], { type: mime });
       const { error: uploadErr } = await supabase.storage
         .from(BUCKET)
-        .upload(path, blob, { contentType: mime, upsert: true })
+        .upload(path, blob, { contentType: mime, upsert: true });
       if (uploadErr) {
-        return { ok: false, url, persisted: false, error: `storage upload failed: ${uploadErr.message}` }
+        return {
+          ok: false,
+          url,
+          persisted: false,
+          error: `storage upload failed: ${uploadErr.message}`,
+        };
       }
-      const { data: signed } = await supabase.storage.from(BUCKET).createSignedUrl(path, 315360000)
+      const { data: signed } = await supabase.storage.from(BUCKET).createSignedUrl(path, 315360000);
       if (!signed?.signedUrl) {
-        return { ok: false, url, persisted: false, error: "no signed url after upload" }
+        return { ok: false, url, persisted: false, error: "no signed url after upload" };
       }
-      return { ok: true, url: signed.signedUrl, persisted: true }
+      return { ok: true, url: signed.signedUrl, persisted: true };
     } catch (e: any) {
-      return { ok: false, url, persisted: false, error: e?.message ?? String(e) }
+      return { ok: false, url, persisted: false, error: e?.message ?? String(e) };
     }
-  })
+  });
 
 /**
  * 2026/06:saveOneVideo —— 单条视频入库(自动入库链路)。
@@ -105,50 +110,55 @@ const SaveOneVideoInput = z.object({
   workspaceId: z.string().min(1).max(64),
   groupId: z.string().min(1).max(64),
   url: z.string().min(1).max(200000),
-})
+});
 
 export type SaveOneVideoResult = {
-  ok: boolean
-  url: string
-  persisted: boolean
-  error?: string
-}
+  ok: boolean;
+  url: string;
+  persisted: boolean;
+  error?: string;
+};
 
 export const saveOneVideo = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => SaveOneVideoInput.parse(input))
   .handler(async ({ data, context }): Promise<SaveOneVideoResult> => {
-    const { supabase, userId } = context as { supabase: any; userId: string }
-    const { workspaceId, groupId, url } = data
+    const { supabase, userId } = context as { supabase: any; userId: string };
+    const { workspaceId, groupId, url } = data;
 
     if (!url) {
-      return { ok: true, url: "", persisted: false }
+      return { ok: true, url: "", persisted: false };
     }
     // 已入库 → 跳过
     if (isAlreadyPersisted(url)) {
-      return { ok: true, url, persisted: false }
+      return { ok: true, url, persisted: false };
     }
 
     try {
-      const { buf, contentType } = await fetchMedia(url)
-      const path = makePath(userId, workspaceId, "video", groupId, contentType)
-      const mime = MIME_BY_KIND.video
-      const blob = new Blob([buf], { type: mime })
+      const { buf, contentType } = await fetchMedia(url);
+      const path = makePath(userId, workspaceId, "video", groupId, contentType);
+      const mime = MIME_BY_KIND.video;
+      const blob = new Blob([buf], { type: mime });
       const { error: uploadErr } = await supabase.storage
         .from(BUCKET)
-        .upload(path, blob, { contentType: mime, upsert: true })
+        .upload(path, blob, { contentType: mime, upsert: true });
       if (uploadErr) {
-        return { ok: false, url, persisted: false, error: `storage upload failed: ${uploadErr.message}` }
+        return {
+          ok: false,
+          url,
+          persisted: false,
+          error: `storage upload failed: ${uploadErr.message}`,
+        };
       }
-      const { data: signed } = await supabase.storage.from(BUCKET).createSignedUrl(path, 315360000)
+      const { data: signed } = await supabase.storage.from(BUCKET).createSignedUrl(path, 315360000);
       if (!signed?.signedUrl) {
-        return { ok: false, url, persisted: false, error: "no signed url after upload" }
+        return { ok: false, url, persisted: false, error: "no signed url after upload" };
       }
-      return { ok: true, url: signed.signedUrl, persisted: true }
+      return { ok: true, url: signed.signedUrl, persisted: true };
     } catch (e: any) {
-      return { ok: false, url, persisted: false, error: e?.message ?? String(e) }
+      return { ok: false, url, persisted: false, error: e?.message ?? String(e) };
     }
-  })
+  });
 
 /**
  * 2026/06:通用图片持久化 —— 下载临时 URL → 上传 workspace-media → 返回永久 URL。
@@ -161,88 +171,86 @@ const PersistAssetImageInput = z.object({
   // 上限放宽到 ~15MB 字符,覆盖常见 base64 图。
   url: z.string().min(1).max(15_000_000),
   userId: z.string().min(1).max(64),
-  kind: z.enum(['character', 'scene', 'prop', 'panel', 'shot']),
+  kind: z.enum(["character", "scene", "prop", "panel", "shot"]),
   id: z.string().min(1).max(128),
-})
+});
 
-export const persistAssetImage = createServerFn({ method: 'POST' })
+export const persistAssetImage = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => PersistAssetImageInput.parse(d))
   .handler(async ({ data, context }): Promise<{ ok: boolean; url: string; error?: string }> => {
-    const { supabase, userId } = context as { supabase: any; userId: string }
-    const { url, kind, id } = data
+    const { supabase, userId } = context as { supabase: any; userId: string };
+    const { url, kind, id } = data;
 
-    if (!url) return { ok: true, url: '', error: undefined }
-    if (isAlreadyPersisted(url)) return { ok: true, url, error: undefined }
+    if (!url) return { ok: true, url: "", error: undefined };
+    if (isAlreadyPersisted(url)) return { ok: true, url, error: undefined };
 
     try {
-      const { buf, contentType } = await fetchMedia(url)
-      const ct = contentType.toLowerCase()
-      let ext = 'png'
-      if (ct.includes('jpeg') || ct.includes('jpg')) ext = 'jpg'
-      else if (ct.includes('webp')) ext = 'webp'
-      else if (ct.includes('gif')) ext = 'gif'
-      const path = `${userId}/assets/${kind}/${id}-${Date.now()}.${ext}`
-      const blob = new Blob([buf], { type: contentType || 'image/png' })
+      const { buf, contentType } = await fetchMedia(url);
+      const ct = contentType.toLowerCase();
+      let ext = "png";
+      if (ct.includes("jpeg") || ct.includes("jpg")) ext = "jpg";
+      else if (ct.includes("webp")) ext = "webp";
+      else if (ct.includes("gif")) ext = "gif";
+      const path = `${userId}/assets/${kind}/${id}-${Date.now()}.${ext}`;
+      const blob = new Blob([buf], { type: contentType || "image/png" });
       const { error: uploadErr } = await supabase.storage
         .from(BUCKET)
-        .upload(path, blob, { contentType: contentType || 'image/png', upsert: true })
-      if (uploadErr) return { ok: false, url: '', error: `upload failed: ${uploadErr.message}` }
+        .upload(path, blob, { contentType: contentType || "image/png", upsert: true });
+      if (uploadErr) return { ok: false, url: "", error: `upload failed: ${uploadErr.message}` };
       // 用签名 URL（10年有效期），避免 RLS 限制导致 <img> 无法加载
-      const { data: signed } = await supabase.storage
-        .from(BUCKET)
-        .createSignedUrl(path, 315360000) // 10 years
-      if (!signed?.signedUrl) return { ok: false, url: '', error: 'no signed url' }
-      return { ok: true, url: signed.signedUrl }
+      const { data: signed } = await supabase.storage.from(BUCKET).createSignedUrl(path, 315360000); // 10 years
+      if (!signed?.signedUrl) return { ok: false, url: "", error: "no signed url" };
+      return { ok: true, url: signed.signedUrl };
     } catch (e: any) {
-      return { ok: false, url: '', error: e?.message ?? String(e) }
+      return { ok: false, url: "", error: e?.message ?? String(e) };
     }
-  })
+  });
 
-const BUCKET = "workspace-media"
-const FETCH_TIMEOUT_MS = 60_000
+const BUCKET = "workspace-media";
+const FETCH_TIMEOUT_MS = 60_000;
 
 type MediaItem = {
-  url: string
-  status: "running" | "succeeded" | "failed"
-}
+  url: string;
+  status: "running" | "succeeded" | "failed";
+};
 
 /** 检测 URL 是否已经是我们自己的 Supabase Storage 链接(已入库) */
 function isAlreadyPersisted(url: string): boolean {
-  if (!url) return false
+  if (!url) return false;
   try {
-    const u = new URL(url)
-    const host = u.hostname.toLowerCase()
+    const u = new URL(url);
+    const host = u.hostname.toLowerCase();
     // Supabase 默认的 storage 域名
     if (host.endsWith(".supabase.co") && u.pathname.includes(`/object/public/${BUCKET}/`)) {
-      return true
+      return true;
     }
     // 自部署 Supabase 也走 *.supabase.in 或自定域名,但路径特征一致
     if (u.pathname.includes(`/storage/v1/object/public/${BUCKET}/`)) {
-      return true
+      return true;
     }
     if (u.pathname.includes(`/object/public/${BUCKET}/`)) {
-      return true
+      return true;
     }
     // 签名 URL
     if (u.pathname.includes(`/storage/v1/object/sign/${BUCKET}/`)) {
-      return true
+      return true;
     }
   } catch {
     // 非合法 URL,当 ephemeral 处理
   }
-  return false
+  return false;
 }
 
 const EXT_BY_KIND: Record<"video" | "storyboard", string> = {
   video: "mp4",
   storyboard: "png",
-}
+};
 
 const MIME_BY_KIND: Record<"video" | "storyboard", string> = {
   video: "video/mp4",
   storyboard: "image/png",
-}
+};
 
 /** 抓取远端媒体 → ArrayBuffer,带超时。data: URL 直接 base64 解码。 */
 export async function fetchMedia(
@@ -250,31 +258,31 @@ export async function fetchMedia(
   timeoutMs = FETCH_TIMEOUT_MS,
 ): Promise<{ buf: ArrayBuffer; contentType: string }> {
   // data: URL 在 Workers 运行时 fetch 行为不一致,直接解码 base64。
-  if (url.startsWith('data:')) {
+  if (url.startsWith("data:")) {
     // 形如 data:[<mediatype>][;base64],<data>
-    const comma = url.indexOf(',')
-    if (comma === -1) throw new Error('invalid data url: missing comma')
-    const meta = url.slice(5, comma) // 去掉 "data:"
-    const payload = url.slice(comma + 1)
-    const isBase64 = /;base64/i.test(meta)
-    const contentType = meta.replace(/;base64/i, '').split(';')[0] || 'application/octet-stream'
+    const comma = url.indexOf(",");
+    if (comma === -1) throw new Error("invalid data url: missing comma");
+    const meta = url.slice(5, comma); // 去掉 "data:"
+    const payload = url.slice(comma + 1);
+    const isBase64 = /;base64/i.test(meta);
+    const contentType = meta.replace(/;base64/i, "").split(";")[0] || "application/octet-stream";
     if (!isBase64) {
-      throw new Error('unsupported non-base64 data url')
+      throw new Error("unsupported non-base64 data url");
     }
-    const bin = Buffer.from(payload, 'base64')
-    const buf = bin.buffer.slice(bin.byteOffset, bin.byteOffset + bin.byteLength) as ArrayBuffer
-    return { buf, contentType }
+    const bin = Buffer.from(payload, "base64");
+    const buf = bin.buffer.slice(bin.byteOffset, bin.byteOffset + bin.byteLength) as ArrayBuffer;
+    return { buf, contentType };
   }
-  const controller = new AbortController()
-  const t = setTimeout(() => controller.abort(), timeoutMs)
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const res = await fetch(url, { signal: controller.signal })
-    if (!res.ok) throw new Error(`upstream fetch ${res.status}`)
-    const buf = await res.arrayBuffer()
-    const contentType = res.headers.get("content-type") || ""
-    return { buf, contentType }
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) throw new Error(`upstream fetch ${res.status}`);
+    const buf = await res.arrayBuffer();
+    const contentType = res.headers.get("content-type") || "";
+    return { buf, contentType };
   } finally {
-    clearTimeout(t)
+    clearTimeout(t);
   }
 }
 
@@ -287,20 +295,20 @@ function makePath(
   contentType: string,
 ): string {
   // 优先用 response content-type 推断扩展名,失败兜底
-  const ct = (contentType || "").toLowerCase()
-  let ext = EXT_BY_KIND[kind]
+  const ct = (contentType || "").toLowerCase();
+  let ext = EXT_BY_KIND[kind];
   if (kind === "storyboard") {
-    if (ct.includes("jpeg") || ct.includes("jpg")) ext = "jpg"
-    else if (ct.includes("webp")) ext = "webp"
-    else ext = "png"
+    if (ct.includes("jpeg") || ct.includes("jpg")) ext = "jpg";
+    else if (ct.includes("webp")) ext = "webp";
+    else ext = "png";
   } else if (kind === "video") {
-    if (ct.includes("webm")) ext = "webm"
-    else if (ct.includes("quicktime")) ext = "mov"
-    else ext = "mp4"
+    if (ct.includes("webm")) ext = "webm";
+    else if (ct.includes("quicktime")) ext = "mov";
+    else ext = "mp4";
   }
   // groupId 可能含特殊字符(grp-N-xxx),URL encode 一下保险
-  const safeGroupId = encodeURIComponent(groupId)
-  return `${userId}/${workspaceId}/${kind === "video" ? "videos" : "storyboards"}/${safeGroupId}.${ext}`
+  const safeGroupId = encodeURIComponent(groupId);
+  return `${userId}/${workspaceId}/${kind === "video" ? "videos" : "storyboards"}/${safeGroupId}.${ext}`;
 }
 
 // ====================================================================
@@ -316,29 +324,27 @@ function makePath(
 
 const PersistInput = z.object({
   workspaceId: z.string().min(1).max(64),
-  groupVideos: z
-    .record(z.string(), z.object({ url: z.string(), status: z.string() }))
-    .optional(),
+  groupVideos: z.record(z.string(), z.object({ url: z.string(), status: z.string() })).optional(),
   groupStoryboards: z
     .record(z.string(), z.object({ url: z.string(), status: z.string() }))
     .optional(),
-})
+});
 
 export type PersistWorkspaceMediaResult = {
-  groupVideos: Record<string, MediaItem>
-  groupStoryboards: Record<string, MediaItem>
-  persistedCount: number
-  skippedCount: number
-  failedCount: number
-  errors: string[]
-}
+  groupVideos: Record<string, MediaItem>;
+  groupStoryboards: Record<string, MediaItem>;
+  persistedCount: number;
+  skippedCount: number;
+  failedCount: number;
+  errors: string[];
+};
 
 export const persistWorkspaceMedia = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input) => PersistInput.parse(input))
   .handler(async ({ data, context }) => {
-    const { supabase, userId } = context as { supabase: any; userId: string }
-    const { workspaceId, groupVideos = {}, groupStoryboards = {} } = data
+    const { supabase, userId } = context as { supabase: any; userId: string };
+    const { workspaceId, groupVideos = {}, groupStoryboards = {} } = data;
 
     const result: PersistWorkspaceMediaResult = {
       groupVideos: {},
@@ -347,7 +353,7 @@ export const persistWorkspaceMedia = createServerFn({ method: "POST" })
       skippedCount: 0,
       failedCount: 0,
       errors: [],
-    }
+    };
 
     /**
      * 处理一份 map 的通用逻辑:
@@ -361,46 +367,48 @@ export const persistWorkspaceMedia = createServerFn({ method: "POST" })
       inputMap: Record<string, { url: string; status: string }>,
       outputMap: Record<string, MediaItem>,
     ) {
-      const entries = Object.entries(inputMap)
+      const entries = Object.entries(inputMap);
       for (const [groupId, item] of entries) {
         // 1) 原样保留
         if (item.status !== "succeeded" || !item.url) {
-          outputMap[groupId] = { url: item.url, status: item.status as MediaItem["status"] }
-          continue
+          outputMap[groupId] = { url: item.url, status: item.status as MediaItem["status"] };
+          continue;
         }
         // 3) 已入库 → 跳过
         if (isAlreadyPersisted(item.url)) {
-          outputMap[groupId] = { url: item.url, status: item.status as MediaItem["status"] }
-          result.skippedCount++
-          continue
+          outputMap[groupId] = { url: item.url, status: item.status as MediaItem["status"] };
+          result.skippedCount++;
+          continue;
         }
         // 4) 下载 + 上传
         try {
-          const { buf, contentType } = await fetchMedia(item.url)
-          const path = makePath(userId, workspaceId, kind, groupId, contentType)
-          const mime = MIME_BY_KIND[kind]
-          const blob = new Blob([buf], { type: mime })
+          const { buf, contentType } = await fetchMedia(item.url);
+          const path = makePath(userId, workspaceId, kind, groupId, contentType);
+          const mime = MIME_BY_KIND[kind];
+          const blob = new Blob([buf], { type: mime });
           const { error: uploadErr } = await supabase.storage
             .from(BUCKET)
-            .upload(path, blob, { contentType: mime, upsert: true })
+            .upload(path, blob, { contentType: mime, upsert: true });
           if (uploadErr) {
-            throw new Error(`storage upload failed: ${uploadErr.message}`)
+            throw new Error(`storage upload failed: ${uploadErr.message}`);
           }
-          const { data: signed } = await supabase.storage.from(BUCKET).createSignedUrl(path, 315360000)
-          if (!signed?.signedUrl) throw new Error("no signed url after upload")
-          outputMap[groupId] = { url: signed.signedUrl, status: "succeeded" }
-          result.persistedCount++
+          const { data: signed } = await supabase.storage
+            .from(BUCKET)
+            .createSignedUrl(path, 315360000);
+          if (!signed?.signedUrl) throw new Error("no signed url after upload");
+          outputMap[groupId] = { url: signed.signedUrl, status: "succeeded" };
+          result.persistedCount++;
         } catch (e: any) {
           // 失败 → 原样保留 ephemeral URL,统计错误
-          outputMap[groupId] = { url: item.url, status: item.status as MediaItem["status"] }
-          result.failedCount++
-          result.errors.push(`[${kind}:${groupId}] ${e?.message ?? String(e)}`.slice(0, 200))
+          outputMap[groupId] = { url: item.url, status: item.status as MediaItem["status"] };
+          result.failedCount++;
+          result.errors.push(`[${kind}:${groupId}] ${e?.message ?? String(e)}`.slice(0, 200));
         }
       }
     }
 
-    await processMap("video", groupVideos, result.groupVideos)
-    await processMap("storyboard", groupStoryboards, result.groupStoryboards)
+    await processMap("video", groupVideos, result.groupVideos);
+    await processMap("storyboard", groupStoryboards, result.groupStoryboards);
 
-    return result
-  })
+    return result;
+  });

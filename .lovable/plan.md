@@ -4,7 +4,7 @@
 
 ```ts
 if (!apiKey) {
-  return { url: '', urls: [], error: 'OTU_API_KEY not configured', model }
+  return { url: "", urls: [], error: "OTU_API_KEY not configured", model };
 }
 ```
 

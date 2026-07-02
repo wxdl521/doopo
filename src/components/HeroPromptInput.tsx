@@ -1,81 +1,122 @@
-import { useState, useRef, useEffect } from 'react'
-import { ArrowRight, ChevronDown, FileText, ImagePlus, Loader2, Plus, RefreshCw, Sparkles, X, MessageCircle, Film } from 'lucide-react'
-import { useNavigate } from '@tanstack/react-router'
-import { useLanguage } from '../i18n/LanguageContext'
-import { useAuth } from '../hooks/useAuth'
-import { NewProjectDialog } from './NewProjectDialog'
+import { useState, useRef, useEffect } from "react";
+import {
+  ArrowRight,
+  ChevronDown,
+  FileText,
+  ImagePlus,
+  Loader2,
+  Plus,
+  RefreshCw,
+  Sparkles,
+  X,
+  MessageCircle,
+  Film,
+} from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
+import { useLanguage } from "../i18n/LanguageContext";
+import { useAuth } from "../hooks/useAuth";
+import { NewProjectDialog } from "./NewProjectDialog";
 
-const PROXY_URL = 'http://43.130.52.57:8080/v1/chat/completions'
+const PROXY_URL = "http://43.130.52.57:8080/v1/chat/completions";
 
 export default function HeroPromptInput() {
-  const { t, lang } = useLanguage()
-  const navigate = useNavigate()
-  const { isAuthenticated } = useAuth()
+  const { t, lang } = useLanguage();
+  const navigate = useNavigate();
+  const { isAuthenticated } = useAuth();
   const AI_MODELS = [
-    { id: 'gemini-3.5-flash', label: '✨ Gemini 3.5 Flash', desc: lang === 'zh' ? '最新·快·准' : 'Latest · Fast · Precise' },
-    { id: 'gemini-2.5-flash', label: '✨ Gemini 2.5 Flash', desc: lang === 'zh' ? '均衡·多模态' : 'Balanced · Multimodal' },
-    { id: 'gemini-2.5-pro', label: '✨ Gemini 2.5 Pro', desc: lang === 'zh' ? '最强·长上下文' : 'Most capable · Long context' },
-    { id: 'deepseek/deepseek-chat-v3', label: 'DeepSeek Chat', desc: lang === 'zh' ? '快速·中文友好' : 'Fast · Chinese-friendly' },
-    { id: 'mistralai/mistral-nemo', label: 'Mistral Nemo', desc: lang === 'zh' ? '均衡·多语言' : 'Balanced · Multilingual' },
-    { id: 'meta-llama/llama-3.1-8b-instruct', label: 'Llama 3.1', desc: lang === 'zh' ? '开源·推理强' : 'Open Source · Strong Reasoning' },
-  ]
-  const placeholders = [t.prompt_placeholder_1, t.prompt_placeholder_2, t.prompt_placeholder_3, t.prompt_placeholder_4]
+    {
+      id: "gemini-3.5-flash",
+      label: "✨ Gemini 3.5 Flash",
+      desc: lang === "zh" ? "最新·快·准" : "Latest · Fast · Precise",
+    },
+    {
+      id: "gemini-2.5-flash",
+      label: "✨ Gemini 2.5 Flash",
+      desc: lang === "zh" ? "均衡·多模态" : "Balanced · Multimodal",
+    },
+    {
+      id: "gemini-2.5-pro",
+      label: "✨ Gemini 2.5 Pro",
+      desc: lang === "zh" ? "最强·长上下文" : "Most capable · Long context",
+    },
+    {
+      id: "deepseek/deepseek-chat-v3",
+      label: "DeepSeek Chat",
+      desc: lang === "zh" ? "快速·中文友好" : "Fast · Chinese-friendly",
+    },
+    {
+      id: "mistralai/mistral-nemo",
+      label: "Mistral Nemo",
+      desc: lang === "zh" ? "均衡·多语言" : "Balanced · Multilingual",
+    },
+    {
+      id: "meta-llama/llama-3.1-8b-instruct",
+      label: "Llama 3.1",
+      desc: lang === "zh" ? "开源·推理强" : "Open Source · Strong Reasoning",
+    },
+  ];
+  const placeholders = [
+    t.prompt_placeholder_1,
+    t.prompt_placeholder_2,
+    t.prompt_placeholder_3,
+    t.prompt_placeholder_4,
+  ];
 
-  const [value, setValue] = useState('')
-  const [selectedModel, setSelectedModel] = useState(AI_MODELS[0])
-  const [showModels, setShowModels] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [response, setResponse] = useState('')
-  const [showResponse, setShowResponse] = useState(false)
-  const [error, setError] = useState('')
+  const [value, setValue] = useState("");
+  const [selectedModel, setSelectedModel] = useState(AI_MODELS[0]);
+  const [showModels, setShowModels] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [response, setResponse] = useState("");
+  const [showResponse, setShowResponse] = useState(false);
+  const [error, setError] = useState("");
   // ⚠️ 必须 SSR-safe:初值用 0(跟服务端 HTML 一致),挂载后再随机。
   // 用 useState(() => Math.random()) 会让 server 渲染一个 placeholder,client
   // 渲染另一个,触发 React hydration mismatch warning。
-  const [phIndex, setPhIndex] = useState(0)
+  const [phIndex, setPhIndex] = useState(0);
   useEffect(() => {
-    setPhIndex(Math.floor(Math.random() * placeholders.length))
+    setPhIndex(Math.floor(Math.random() * placeholders.length));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  }, []);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   // 剧本生成模式：开启后点击"创建"直接跳转剧本页
-  const [scriptMode, setScriptMode] = useState(false)
+  const [scriptMode, setScriptMode] = useState(false);
   // 项目创建弹窗开关
-  const [npOpen, setNpOpen] = useState(false)
+  const [npOpen, setNpOpen] = useState(false);
 
   const goToScripts = () => {
     try {
       sessionStorage.setItem(
-        'script_prefill',
-        JSON.stringify({ type: '', genre: '', tone: '', theme: '', plot: value.trim() }),
-      )
+        "script_prefill",
+        JSON.stringify({ type: "", genre: "", tone: "", theme: "", plot: value.trim() }),
+      );
     } catch {}
     if (!isAuthenticated) {
-      navigate({ to: '/login' })
+      navigate({ to: "/login" });
     } else {
-      navigate({ to: '/scripts' })
+      navigate({ to: "/scripts" });
     }
-  }
+  };
 
   const handleCreate = async () => {
-    if (!value.trim() || loading) return
+    if (!value.trim() || loading) return;
     if (scriptMode) {
-      goToScripts()
-      return
+      goToScripts();
+      return;
     }
     // 将输入文本暂存，供项目创建后 workspace 右侧对话框预填
     try {
-      sessionStorage.setItem('workspace_prefill', value.trim())
-      sessionStorage.setItem('workspace_prefill_mode', 'script')
+      sessionStorage.setItem("workspace_prefill", value.trim());
+      sessionStorage.setItem("workspace_prefill_mode", "script");
     } catch {}
-    setNpOpen(true)
-  }
+    setNpOpen(true);
+  };
 
   const closeResponse = () => {
-    setShowResponse(false)
-    setResponse('')
-    setError('')
-  }
+    setShowResponse(false);
+    setResponse("");
+    setError("");
+  };
 
   return (
     <div className="space-y-4">
@@ -83,7 +124,8 @@ export default function HeroPromptInput() {
       <div className="relative">
         <div className="absolute -inset-4 bg-glow-orb opacity-70 blur-2xl pointer-events-none" />
         <div className="relative corner-frame panel p-5 md:p-6 animate-slide-up">
-          <span className="c-tr" /><span className="c-bl" />
+          <span className="c-tr" />
+          <span className="c-bl" />
 
           <textarea
             ref={textareaRef}
@@ -96,27 +138,30 @@ export default function HeroPromptInput() {
           />
 
           <div className="mt-4 flex flex-wrap items-center gap-2 md:gap-3">
-            <button className="btn-ghost !px-3" title={t.hero_attach}><Plus size={16} /></button>
-            <button className="btn-ghost"><FileText size={15} /> {t.hero_upload_script}</button>
-            <button className="btn-ghost"><ImagePlus size={15} /> {t.hero_upload_storyboard}</button>
+            <button className="btn-ghost !px-3" title={t.hero_attach}>
+              <Plus size={16} />
+            </button>
+            <button className="btn-ghost">
+              <FileText size={15} /> {t.hero_upload_script}
+            </button>
+            <button className="btn-ghost">
+              <ImagePlus size={15} /> {t.hero_upload_storyboard}
+            </button>
 
             {/* 剧本生成模式切换 */}
             <button
               onClick={() => setScriptMode((s) => !s)}
-              className={`btn-ghost ${scriptMode ? 'border-accent/50 bg-accent-dim text-accent' : ''}`}
+              className={`btn-ghost ${scriptMode ? "border-accent/50 bg-accent-dim text-accent" : ""}`}
               title={t.hero_script_entry}
             >
-              <Film size={14} className={scriptMode ? 'text-accent' : 'text-accent'} />
+              <Film size={14} className={scriptMode ? "text-accent" : "text-accent"} />
               {t.hero_script_entry}
               {scriptMode && <span className="ml-1 text-[10px] opacity-80">●</span>}
             </button>
 
             {/* 模型选择器 */}
             <div className="relative" hidden={scriptMode}>
-              <button
-                onClick={() => setShowModels((s) => !s)}
-                className="btn-ghost"
-              >
+              <button onClick={() => setShowModels((s) => !s)} className="btn-ghost">
                 <RefreshCw size={14} className="text-accent" />
                 {selectedModel.label}
                 <ChevronDown size={14} className="opacity-60" />
@@ -126,14 +171,21 @@ export default function HeroPromptInput() {
                   {AI_MODELS.map((m) => (
                     <button
                       key={m.id}
-                      onClick={() => { setSelectedModel(m); setShowModels(false) }}
+                      onClick={() => {
+                        setSelectedModel(m);
+                        setShowModels(false);
+                      }}
                       className={`w-full text-left px-3 py-2.5 rounded-lg text-sm transition
-                        ${m.id === selectedModel.id
-                          ? 'bg-accent-dim text-accent border border-accent/30'
-                          : 'text-text-secondary hover:bg-bg-elevated hover:text-text-primary'}`}
+                        ${
+                          m.id === selectedModel.id
+                            ? "bg-accent-dim text-accent border border-accent/30"
+                            : "text-text-secondary hover:bg-bg-elevated hover:text-text-primary"
+                        }`}
                     >
                       <div className="font-medium">{m.label}</div>
-                      <div className="text-xs opacity-60 mt-0.5">{m.desc} · {m.id}</div>
+                      <div className="text-xs opacity-60 mt-0.5">
+                        {m.desc} · {m.id}
+                      </div>
                     </button>
                   ))}
                 </div>
@@ -141,7 +193,9 @@ export default function HeroPromptInput() {
             </div>
 
             <div className="ml-auto flex items-center gap-2 text-xs text-text-muted">
-              <span className="hidden md:inline">{value.length} {t.hero_chars_suffix}</span>
+              <span className="hidden md:inline">
+                {value.length} {t.hero_chars_suffix}
+              </span>
               <button
                 onClick={handleCreate}
                 disabled={!value.trim() || loading}
@@ -149,10 +203,12 @@ export default function HeroPromptInput() {
               >
                 {loading ? (
                   <Loader2 size={14} className="animate-spin" />
+                ) : scriptMode ? (
+                  <Film size={14} />
                 ) : (
-                  scriptMode ? <Film size={14} /> : <Sparkles size={14} />
+                  <Sparkles size={14} />
                 )}
-                {loading ? t.hero_thinking : (scriptMode ? t.hero_script_start : t.hero_create)}
+                {loading ? t.hero_thinking : scriptMode ? t.hero_script_start : t.hero_create}
                 {!loading && <ArrowRight size={14} />}
               </button>
             </div>
@@ -198,7 +254,7 @@ export default function HeroPromptInput() {
       {/* 项目创建弹窗（受控） */}
       <NewProjectDialog open={npOpen} onOpenChange={setNpOpen} />
     </div>
-  )
+  );
 }
 
 function ChipRow({
@@ -207,17 +263,17 @@ function ChipRow({
   value,
   onChange,
 }: {
-  label: string
-  options: readonly string[]
-  value: string
-  onChange: (v: string) => void
+  label: string;
+  options: readonly string[];
+  value: string;
+  onChange: (v: string) => void;
 }) {
   return (
     <div>
       <div className="text-[11px] uppercase tracking-wide text-text-muted mb-1.5">{label}</div>
       <div className="flex flex-wrap gap-1.5">
         {options.map((opt) => {
-          const active = opt === value
+          const active = opt === value;
           return (
             <button
               key={opt}
@@ -225,15 +281,15 @@ function ChipRow({
               onClick={() => onChange(opt)}
               className={`px-2.5 py-1 rounded-full text-xs border transition ${
                 active
-                  ? 'bg-accent text-bg-base border-accent font-medium'
-                  : 'bg-bg-elevated text-text-secondary border-border hover:text-text-primary hover:border-accent/40'
+                  ? "bg-accent text-bg-base border-accent font-medium"
+                  : "bg-bg-elevated text-text-secondary border-border hover:text-text-primary hover:border-accent/40"
               }`}
             >
               {opt}
             </button>
-          )
+          );
         })}
       </div>
     </div>
-  )
+  );
 }

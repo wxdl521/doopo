@@ -13,11 +13,11 @@
 //  positive 末尾的 "FORBIDDEN: ..." 块。
 // ====================================================================
 
-import { createServerFn } from '@tanstack/react-start'
-import { z } from 'zod'
+import { createServerFn } from "@tanstack/react-start";
+import { z } from "zod";
 
 const Input = z.object({
-  referenceImageUrl: z.string().url(),  // 必填,重生必须看原图
+  referenceImageUrl: z.string().url(), // 必填,重生必须看原图
   userInstruction: z.string().min(1).max(2000),
   faceDescription: z.string().max(4000),
   bodyDescription: z.string().max(4000),
@@ -42,12 +42,12 @@ const Input = z.object({
    *
    * 默认 'modify' 保持原有行为;三视图/角色设定稿由客户端按钮触发。
    */
-  mode: z.enum(['modify', 'three-view', 'multi-asset']).default('modify'),
+  mode: z.enum(["modify", "three-view", "multi-asset"]).default("modify"),
   // 2026/06:查看提示词模式 —— true 时 server 只 build prompt 返回,不实际调 Seedream
   previewOnly: z.boolean().default(false),
-})
+});
 
-export type RegenerateInput = z.infer<typeof Input>
+export type RegenerateInput = z.infer<typeof Input>;
 
 /**
  * 重导出 / 委托。
@@ -55,10 +55,10 @@ export type RegenerateInput = z.infer<typeof Input>
  * 实际 prompt 构建和 Seedream 调用都搬到 seedream.functions.ts 里去了,
  * 这里只保留 Zod schema(客户端类型推导需要)和 server function 入口。
  */
-export const regenerateCharacterLook = createServerFn({ method: 'POST' })
+export const regenerateCharacterLook = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => Input.parse(d))
   .handler(async ({ data }) => {
     // 动态 import 避免循环引用
-    const { regenerateCharacterLook: seedreamImpl } = await import('./seedream.functions')
-    return seedreamImpl({ data } as any)
-  })
+    const { regenerateCharacterLook: seedreamImpl } = await import("./seedream.functions");
+    return seedreamImpl({ data } as any);
+  });

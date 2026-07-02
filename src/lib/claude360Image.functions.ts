@@ -75,12 +75,16 @@ function normalizeClaude360Size(size: string | undefined, model: string): string
  * claude360 图像生成 —— OpenAI 兼容路由。
  * 返回与 Pixflow / Vapeur / Tokenflash / Seedream 一致的 { url, urls, error, model }。
  */
-export async function callClaude360Image(input: Claude360ImageInput): Promise<Claude360ImageResult> {
+export async function callClaude360Image(
+  input: Claude360ImageInput,
+): Promise<Claude360ImageResult> {
   const { apiKey, baseUrl } = getClaude360Config();
   const model = stripClaude360Prefix(input.model);
   const size = normalizeClaude360Size(input.size, model);
   const t0 = Date.now();
-  console.log(`[claude360→] model=${model} size=${size} refs=${input.referenceImages?.length ?? 0}`);
+  console.log(
+    `[claude360→] model=${model} size=${size} refs=${input.referenceImages?.length ?? 0}`,
+  );
 
   if (!apiKey) {
     console.warn(`[claude360×] model=${model} missing CLAUDE360_API_KEY`);
@@ -99,7 +103,8 @@ export async function callClaude360Image(input: Claude360ImageInput): Promise<Cl
 
     // I2I: 有参考图时传入 image 字段(OpenAI 兼容格式)
     if (input.referenceImages && input.referenceImages.length > 0) {
-      body.image = input.referenceImages.length === 1 ? input.referenceImages[0] : input.referenceImages;
+      body.image =
+        input.referenceImages.length === 1 ? input.referenceImages[0] : input.referenceImages;
     }
 
     const requestInit: RequestInit = {
@@ -118,7 +123,8 @@ export async function callClaude360Image(input: Claude360ImageInput): Promise<Cl
       res = await fetch(`${baseUrl}/v1/images/generations`, requestInit);
       if (res.ok) break;
       lastText = await res.text().catch(() => "");
-      const transient = res.status === 502 || res.status === 503 || res.status === 504 || res.status === 524;
+      const transient =
+        res.status === 502 || res.status === 503 || res.status === 504 || res.status === 524;
       if (!transient || attempt === 1) break;
       console.warn(`[claude360⟳] model=${model} status=${res.status} retry in 1.5s`);
       await new Promise((r) => setTimeout(r, 1500));
@@ -127,8 +133,15 @@ export async function callClaude360Image(input: Claude360ImageInput): Promise<Cl
 
     if (!res || !res.ok) {
       const status = res?.status ?? 0;
-      console.warn(`[claude360×] model=${model} status=${status} dur=${Date.now() - t0}ms body=${lastText.slice(0, 200)}`);
-      return { url: "", urls: [], error: `[claude360 ${model}] ${status}: ${lastText.slice(0, 300)}`, model };
+      console.warn(
+        `[claude360×] model=${model} status=${status} dur=${Date.now() - t0}ms body=${lastText.slice(0, 200)}`,
+      );
+      return {
+        url: "",
+        urls: [],
+        error: `[claude360 ${model}] ${status}: ${lastText.slice(0, 300)}`,
+        model,
+      };
     }
 
     const rawText = await res.text();
@@ -153,7 +166,9 @@ export async function callClaude360Image(input: Claude360ImageInput): Promise<Cl
       .filter(Boolean);
 
     if (urls.length === 0) {
-      console.warn(`[claude360×] model=${model} empty-data dur=${Date.now() - t0}ms raw=${rawText.slice(0, 400)}`);
+      console.warn(
+        `[claude360×] model=${model} empty-data dur=${Date.now() - t0}ms raw=${rawText.slice(0, 400)}`,
+      );
       return {
         url: "",
         urls: [],
@@ -165,7 +180,9 @@ export async function callClaude360Image(input: Claude360ImageInput): Promise<Cl
     return { url: urls[0], urls, error: null, model };
   } catch (e) {
     clearTimeout(timeout);
-    console.warn(`[claude360×] model=${model} network dur=${Date.now() - t0}ms err=${e instanceof Error ? e.message : "fetch failed"}`);
+    console.warn(
+      `[claude360×] model=${model} network dur=${Date.now() - t0}ms err=${e instanceof Error ? e.message : "fetch failed"}`,
+    );
     return {
       url: "",
       urls: [],

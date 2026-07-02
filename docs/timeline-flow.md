@@ -30,28 +30,37 @@
 
 ```ts
 type Props = {
-  groups: StoryboardGroup[]                              // 全部分镜组
-  groupVideos: Record<string, { url; status }>            // 已生成的视频
-  clipOrder: string[]                                    // groupId 顺序（父组件管理）
-  onClipReorder: (nextOrder: string[]) => void           // 重排回调
-  clipDurationSec?: number                                // 每段时长（默认 10s）
-  i18n: {                                                // 文案
-    title; hint; play; pause; resetOrder;
-    noVideo; generating; failed; empty; reorderChanged
-  }
-}
+  groups: StoryboardGroup[]; // 全部分镜组
+  groupVideos: Record<string, { url; status }>; // 已生成的视频
+  clipOrder: string[]; // groupId 顺序（父组件管理）
+  onClipReorder: (nextOrder: string[]) => void; // 重排回调
+  clipDurationSec?: number; // 每段时长（默认 10s）
+  i18n: {
+    // 文案
+    title;
+    hint;
+    play;
+    pause;
+    resetOrder;
+    noVideo;
+    generating;
+    failed;
+    empty;
+    reorderChanged;
+  };
+};
 ```
 
 #### 内部状态
 
-| 状态 | 作用 |
-|---|---|
-| `activeClipIndex` | 当前正在播放的 clip 序号 |
-| `isPlaying` | 是否在播放 |
-| `currentSec` | playhead 在整条时间轴上的秒数 |
-| `draggingClipId` | 正在拖拽的 clip |
-| `dragOverIndex` | clip 拖拽时的目标落点 index（视觉预览用） |
-| `userReordered` | 用户是否拖动过 clip（控制"重置顺序"按钮显隐） |
+| 状态              | 作用                                          |
+| ----------------- | --------------------------------------------- |
+| `activeClipIndex` | 当前正在播放的 clip 序号                      |
+| `isPlaying`       | 是否在播放                                    |
+| `currentSec`      | playhead 在整条时间轴上的秒数                 |
+| `draggingClipId`  | 正在拖拽的 clip                               |
+| `dragOverIndex`   | clip 拖拽时的目标落点 index（视觉预览用）     |
+| `userReordered`   | 用户是否拖动过 clip（控制"重置顺序"按钮显隐） |
 
 ---
 
@@ -87,6 +96,7 @@ onPointerUp    → releasePointerCapture + splice 重排 → onClipReorder(next)
 ```
 
 **视觉规则**（`previewOffset(currentIndex)` 函数）：
+
 - 拖拽 from→target 时，中间 clip 平移 1 槽，预演落点
 - 被拖的 clip 自身半透明 + scale 1.02（z-10 浮起）
 - 其他 clip 用 `transform: translateX(±100%)` 平移，`transition` 200ms ease
@@ -115,6 +125,7 @@ onPointerUp    → releasePointerCapture + splice 重排 → onClipReorder(next)
 ```
 
 `clipOrder` 不持久化的原因：
+
 1. 视频 URL 本身不持久化（24h 失效），顺序也跟着失效
 2. 新生成的分镜组会自动追加到末尾
 3. 切换集数 / 重新切分时通过 `useEffect` 自动同步清理
@@ -123,26 +134,26 @@ onPointerUp    → releasePointerCapture + splice 重排 → onClipReorder(next)
 
 ## 边界情况
 
-| 场景 | 行为 |
-|---|---|
-| 0 个分镜组 | 显示 `i18n.empty` 空态文案 |
+| 场景                      | 行为                                                                                    |
+| ------------------------- | --------------------------------------------------------------------------------------- |
+| 0 个分镜组                | 显示 `i18n.empty` 空态文案                                                              |
 | 有 group 但全部未生成视频 | 主视频区显示 `i18n.noVideo` 占位，时间轴显示未生成标记（Loader2/AlertCircle/Film 图标） |
-| 部分组视频已生成 | 只播放已生成的 clip，未生成的 clip 显示灰色 + 跳过 |
-| 拖 playhead 到末尾 | currentSec = totalSec，自动暂停 |
-| 拖 playhead 时视频在播 | 强制暂停，松手后保持暂停 |
-| 拖 clip 落点 = 原位置 | 不触发 onClipReorder（避免无意义 state 更新） |
+| 部分组视频已生成          | 只播放已生成的 clip，未生成的 clip 显示灰色 + 跳过                                      |
+| 拖 playhead 到末尾        | currentSec = totalSec，自动暂停                                                         |
+| 拖 playhead 时视频在播    | 强制暂停，松手后保持暂停                                                                |
+| 拖 clip 落点 = 原位置     | 不触发 onClipReorder（避免无意义 state 更新）                                           |
 
 ---
 
 ## 修改文件清单
 
-| 动作 | 路径 |
-|---|---|
+| 动作 | 路径                                              |
+| ---- | ------------------------------------------------- |
 | 新建 | `src/components/workspace/StoryboardTimeline.tsx` |
-| 修改 | `src/routes/workspace.$workspaceId.tsx` |
-| 修改 | `src/components/workspace/ZopiaChatPanel.tsx` |
-| 修改 | `src/i18n/zh.ts` |
-| 修改 | `src/i18n/en.ts` |
+| 修改 | `src/routes/workspace.$workspaceId.tsx`           |
+| 修改 | `src/components/workspace/ZopiaChatPanel.tsx`     |
+| 修改 | `src/i18n/zh.ts`                                  |
+| 修改 | `src/i18n/en.ts`                                  |
 
 ---
 

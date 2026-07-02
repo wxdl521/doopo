@@ -1,26 +1,26 @@
-import { Check, Sparkles, Star, Zap } from 'lucide-react'
-import { useState } from 'react'
-import { useLanguage } from '../i18n/LanguageContext'
+import { Check, Sparkles, Star, Zap } from "lucide-react";
+import { useState } from "react";
+import { useLanguage } from "../i18n/LanguageContext";
 
 type Plan = {
-  id: string
-  name: string
-  tagline: string
-  monthly: number
-  yearly: number
-  points: number
-  features: string[]
-  highlight?: boolean
-  ribbon?: string
-}
+  id: string;
+  name: string;
+  tagline: string;
+  monthly: number;
+  yearly: number;
+  points: number;
+  features: string[];
+  highlight?: boolean;
+  ribbon?: string;
+};
 
 export default function Pricing() {
-  const { t } = useLanguage()
-  const [annual, setAnnual] = useState(true)
+  const { t } = useLanguage();
+  const [annual, setAnnual] = useState(true);
 
   const plans: Plan[] = [
     {
-      id: 'free',
+      id: "free",
       name: t.pricing_plan_starter_name,
       tagline: t.pricing_plan_starter_tag,
       monthly: 0,
@@ -34,7 +34,7 @@ export default function Pricing() {
       ],
     },
     {
-      id: 'pro',
+      id: "pro",
       name: t.pricing_plan_pro_name,
       tagline: t.pricing_plan_pro_tag,
       monthly: 29,
@@ -51,7 +51,7 @@ export default function Pricing() {
       ribbon: t.pricing_ribbon_popular,
     },
     {
-      id: 'studio',
+      id: "studio",
       name: t.pricing_plan_studio_name,
       tagline: t.pricing_plan_studio_tag,
       monthly: 99,
@@ -65,14 +65,14 @@ export default function Pricing() {
         t.pricing_plan_studio_f5,
       ],
     },
-  ]
+  ];
 
   const faq: Array<[string, string]> = [
     [t.pricing_faq_q1, t.pricing_faq_a1],
     [t.pricing_faq_q2, t.pricing_faq_a2],
     [t.pricing_faq_q3, t.pricing_faq_a3],
     [t.pricing_faq_q4, t.pricing_faq_a4],
-  ]
+  ];
 
   return (
     <div className="animate-fade-in">
@@ -85,32 +85,39 @@ export default function Pricing() {
         <div className="mt-6 inline-flex items-center gap-1 p-1 rounded-full bg-bg-elevated border border-border">
           <button
             onClick={() => setAnnual(false)}
-            className={`px-4 py-1.5 rounded-full text-sm transition ${!annual ? 'bg-accent text-bg font-semibold' : 'text-text-secondary'}`}
+            className={`px-4 py-1.5 rounded-full text-sm transition ${!annual ? "bg-accent text-bg font-semibold" : "text-text-secondary"}`}
           >
             {t.pricing_billing_monthly}
           </button>
           <button
             onClick={() => setAnnual(true)}
-            className={`px-4 py-1.5 rounded-full text-sm transition ${annual ? 'bg-accent text-bg font-semibold' : 'text-text-secondary'}`}
+            className={`px-4 py-1.5 rounded-full text-sm transition ${annual ? "bg-accent text-bg font-semibold" : "text-text-secondary"}`}
           >
-            {t.pricing_billing_annual} <span className="ml-1 text-[10px] uppercase tracking-wider">{t.pricing_save_badge}</span>
+            {t.pricing_billing_annual}{" "}
+            <span className="ml-1 text-[10px] uppercase tracking-wider">
+              {t.pricing_save_badge}
+            </span>
           </button>
         </div>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5 max-w-6xl mx-auto">
         {plans.map((p) => {
-          const price = annual ? Math.round(p.yearly / 12) : p.monthly
+          const price = annual ? Math.round(p.yearly / 12) : p.monthly;
           return (
             <div
               key={p.id}
               className={`relative panel p-7 flex flex-col ${
-                p.highlight ? 'border-accent/60 shadow-glow-lg bg-gradient-to-b from-accent-dim/10 to-transparent' : ''
+                p.highlight
+                  ? "border-accent/60 shadow-glow-lg bg-gradient-to-b from-accent-dim/10 to-transparent"
+                  : ""
               }`}
             >
               {p.ribbon && (
-                <span className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full
-                                 bg-accent text-bg text-xs font-bold uppercase tracking-wider shadow-glow flex items-center gap-1">
+                <span
+                  className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full
+                                 bg-accent text-bg text-xs font-bold uppercase tracking-wider shadow-glow flex items-center gap-1"
+                >
                   <Star size={12} fill="currentColor" /> {p.ribbon}
                 </span>
               )}
@@ -132,9 +139,10 @@ export default function Pricing() {
               </div>
 
               <button
-                className={`mt-6 w-full justify-center ${p.highlight ? 'btn-primary' : 'btn-outline'}`}
+                className={`mt-6 w-full justify-center ${p.highlight ? "btn-primary" : "btn-outline"}`}
               >
-                <Sparkles size={14} /> {p.id === 'free' ? t.pricing_start_free : `${t.pricing_choose} ${p.name}`}
+                <Sparkles size={14} />{" "}
+                {p.id === "free" ? t.pricing_start_free : `${t.pricing_choose} ${p.name}`}
               </button>
 
               <ul className="mt-7 space-y-3">
@@ -148,7 +156,7 @@ export default function Pricing() {
                 ))}
               </ul>
             </div>
-          )
+          );
         })}
       </div>
 
@@ -167,5 +175,5 @@ export default function Pricing() {
         </div>
       </section>
     </div>
-  )
+  );
 }

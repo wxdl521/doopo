@@ -27,21 +27,21 @@
 //  用户在 docs/qwen.md 加了 HappyHorse 接口后,扩展成双后端 dispatcher。
 // ====================================================================
 
-import './loadEnv'  // 2026 修复:必须最先导入,让 ARK/Qwen env 在读取前就绪
-import { createServerFn } from '@tanstack/react-start'
-import { z } from 'zod'
-import { createHash, createHmac } from 'node:crypto'
+import "./loadEnv"; // 2026 修复:必须最先导入,让 ARK/Qwen env 在读取前就绪
+import { createServerFn } from "@tanstack/react-start";
+import { z } from "zod";
+import { createHash, createHmac } from "node:crypto";
 
 // ---------- ARK (Seedance) 配置 ----------
 
-const ARK_DEFAULT_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3'
-const ARK_DEFAULT_MODEL = 'doubao-seedance-2-0-260128'
+const ARK_DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
+const ARK_DEFAULT_MODEL = "doubao-seedance-2-0-260128";
 
 // ---------- DashScope (HappyHorse / Wanx) 配置 ----------
 
 const DASHSCOPE_VIDEO_ENDPOINT =
-  'https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis'
-const DASHSCOPE_TASK_GET = 'https://dashscope.aliyuncs.com/api/v1/tasks/'
+  "https://dashscope.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis";
+const DASHSCOPE_TASK_GET = "https://dashscope.aliyuncs.com/api/v1/tasks/";
 
 // ====================================================================
 // 模型路由
@@ -52,97 +52,99 @@ const DASHSCOPE_TASK_GET = 'https://dashscope.aliyuncs.com/api/v1/tasks/'
  *  - ARK (Seedance):doubao-seedance-* 或 seedance-*
  *  - DashScope (HappyHorse / Wan / Wanx):其他视频模型 id 一律 fallback 到 DashScope
  */
-export function getVideoBackend(modelId: string | null | undefined): 'ark' | 'dashscope' | 'jimeng' | 'kuaizi' | 'toapis' | 'k99' | 'vapeur' {
-  const m = (modelId || '').trim().toLowerCase()
-  if (m.startsWith('doubao-seedance-') || m.startsWith('seedance-')) return 'ark'
-  if (m.startsWith('jimeng-')) return 'jimeng'
-  if (m.startsWith('kuaizi-')) return 'kuaizi'
-  if (m.startsWith('toapis-')) return 'toapis'
-  if (m.startsWith('k99-')) return 'k99'
-  if (m.startsWith('vapeur-')) return 'vapeur'
-  return 'dashscope'
+export function getVideoBackend(
+  modelId: string | null | undefined,
+): "ark" | "dashscope" | "jimeng" | "kuaizi" | "toapis" | "k99" | "vapeur" {
+  const m = (modelId || "").trim().toLowerCase();
+  if (m.startsWith("doubao-seedance-") || m.startsWith("seedance-")) return "ark";
+  if (m.startsWith("jimeng-")) return "jimeng";
+  if (m.startsWith("kuaizi-")) return "kuaizi";
+  if (m.startsWith("toapis-")) return "toapis";
+  if (m.startsWith("k99-")) return "k99";
+  if (m.startsWith("vapeur-")) return "vapeur";
+  return "dashscope";
 }
 
 export const SEEDANCE_MODELS = {
-  'doubao-seedance-2-0-260128': 'Doubao Seedance 2.0',
-  'doubao-seedance-2-0-fast-260128': 'Doubao Seedance 2.0 Fast (720p)',
-  'doubao-seedance-1-0-pro-250528': 'Doubao Seedance 1.0 Pro (T2V)',
-  'doubao-seedance-1-0-lite-i2v-250428': 'Doubao Seedance 1.0 Lite (I2V)',
-} as const
+  "doubao-seedance-2-0-260128": "Doubao Seedance 2.0",
+  "doubao-seedance-2-0-fast-260128": "Doubao Seedance 2.0 Fast (720p)",
+  "doubao-seedance-1-0-pro-250528": "Doubao Seedance 1.0 Pro (T2V)",
+  "doubao-seedance-1-0-lite-i2v-250428": "Doubao Seedance 1.0 Lite (I2V)",
+} as const;
 
 export const HAPPYHORSE_MODELS = {
-  'happyhorse-1.0-t2v': 'HappyHorse 1.0 (文生视频)',
-  'happyhorse-1.0-i2v': 'HappyHorse 1.0 (图生视频·首帧)',
-  'happyhorse-1.0-r2v': 'HappyHorse 1.0 (参考生视频)',
-} as const
+  "happyhorse-1.0-t2v": "HappyHorse 1.0 (文生视频)",
+  "happyhorse-1.0-i2v": "HappyHorse 1.0 (图生视频·首帧)",
+  "happyhorse-1.0-r2v": "HappyHorse 1.0 (参考生视频)",
+} as const;
 
 export const JIMENG_MODELS = {
-  'jimeng-3.0-pro': '即梦 3.0 Pro (文生视频)',
-  'jimeng-3.0-pro-i2v': '即梦 3.0 Pro (图生视频·首帧)',
-} as const
+  "jimeng-3.0-pro": "即梦 3.0 Pro (文生视频)",
+  "jimeng-3.0-pro-i2v": "即梦 3.0 Pro (图生视频·首帧)",
+} as const;
 
 export const KUAIZI_MODELS = {
-  'kuaizi-lizhen-pro': '丽帧 Pro (1080p · 文/图/多模态)',
-  'kuaizi-lizhen-fast': '丽帧 Fast (720p · 快速)',
-  'kuaizi-lizhen-mini': '丽帧 Mini (轻量)',
-} as const
+  "kuaizi-lizhen-pro": "丽帧 Pro (1080p · 文/图/多模态)",
+  "kuaizi-lizhen-fast": "丽帧 Fast (720p · 快速)",
+  "kuaizi-lizhen-mini": "丽帧 Mini (轻量)",
+} as const;
 
 // 筷子科技"丽帧"配置 —— 中转火山方舟 Seedance,提供链式超分 / 版权放行等增值能力
-const KUAIZI_DEFAULT_BASE_URL = 'https://aiopenapi.kuaizi.cn'
-const KUAIZI_CREATE_PATH = '/ai-open-platform-api/v1/lz/video/task/create'
-const KUAIZI_STATUS_PATH = '/ai-open-platform-api/v1/lz/video/task/status'
+const KUAIZI_DEFAULT_BASE_URL = "https://aiopenapi.kuaizi.cn";
+const KUAIZI_CREATE_PATH = "/ai-open-platform-api/v1/lz/video/task/create";
+const KUAIZI_STATUS_PATH = "/ai-open-platform-api/v1/lz/video/task/status";
 
 export const TOAPIS_MODELS = {
-  'toapis-seedance-2': 'Seedance 2 (ToAPIs · 1080p/4k)',
-  'toapis-seedance-2-fast': 'Seedance 2 Fast (ToAPIs · 720p)',
-  'toapis-seedance-2-mini': 'Seedance 2 Mini (ToAPIs · 多模态参考)',
-} as const
+  "toapis-seedance-2": "Seedance 2 (ToAPIs · 1080p/4k)",
+  "toapis-seedance-2-fast": "Seedance 2 Fast (ToAPIs · 720p)",
+  "toapis-seedance-2-mini": "Seedance 2 Mini (ToAPIs · 多模态参考)",
+} as const;
 
 // ToAPIs 配置 —— 中转火山方舟 Seedance 2 系列
-const TOAPIS_DEFAULT_BASE_URL = 'https://toapis.com'
+const TOAPIS_DEFAULT_BASE_URL = "https://toapis.com";
 
 export const K99_MODELS = {
-  'k99-fast-480p': 'k99 快速 480p',
-  'k99-pro-1080p': 'k99 高清 1080p',
-} as const
+  "k99-fast-480p": "k99 快速 480p",
+  "k99-pro-1080p": "k99 高清 1080p",
+} as const;
 
 // k99.tw 配置 —— Sora 风格 API,中转视频生成
-const K99_DEFAULT_BASE_URL = 'https://k99.tw'
-const K99_CREATE_PATH = '/v1/videos'     // POST 提交
-const K99_STATUS_PATH = '/v1/videos'     // GET /v1/videos/{task_id}
-const TOAPIS_CREATE_PATH = '/v1/videos/generations'
+const K99_DEFAULT_BASE_URL = "https://k99.tw";
+const K99_CREATE_PATH = "/v1/videos"; // POST 提交
+const K99_STATUS_PATH = "/v1/videos"; // GET /v1/videos/{task_id}
+const TOAPIS_CREATE_PATH = "/v1/videos/generations";
 
 export const VAPEUR_MODELS = {
-  'vapeur-doubao-seedance-2-0-260128': 'Seedance 2.0 (vapeur)',
-  'vapeur-doubao-seedance-2-0-fast-260128': 'Seedance 2.0 Fast (vapeur)',
-} as const
+  "vapeur-doubao-seedance-2-0-260128": "Seedance 2.0 (vapeur)",
+  "vapeur-doubao-seedance-2-0-fast-260128": "Seedance 2.0 Fast (vapeur)",
+} as const;
 
 // vapeur.ai 配置 —— OpenAI 兼容统一网关,中转火山方舟 Seedance 2.0
-const VAPEUR_DEFAULT_BASE_URL = 'https://api.vapeur.ai'
-const VAPEUR_CREATE_PATH = '/v1/videos/generations'   // POST 提交(newapi 风格)
-const VAPEUR_STATUS_PATH = '/v1/videos/generations'   // GET /v1/videos/generations/{id} 查询
+const VAPEUR_DEFAULT_BASE_URL = "https://api.vapeur.ai";
+const VAPEUR_CREATE_PATH = "/v1/videos/generations"; // POST 提交(newapi 风格)
+const VAPEUR_STATUS_PATH = "/v1/videos/generations"; // GET /v1/videos/generations/{id} 查询
 
 // 即梦 3.0 Pro 文生/图生视频统一用同一个 req_key
-const JIMENG_REQ_KEY = 'jimeng_ti2v_v30_pro'
-const JIMENG_HOST = 'visual.volcengineapi.com'
-const JIMENG_REGION = 'cn-north-1'
-const JIMENG_SERVICE = 'cv'
-const JIMENG_VERSION = '2022-08-31'
+const JIMENG_REQ_KEY = "jimeng_ti2v_v30_pro";
+const JIMENG_HOST = "visual.volcengineapi.com";
+const JIMENG_REGION = "cn-north-1";
+const JIMENG_SERVICE = "cv";
+const JIMENG_VERSION = "2022-08-31";
 
 // ====================================================================
 // 通用类型
 // ====================================================================
 
 type ContentItem =
-  | { type: 'text'; text: string }
-  | { type: 'image_url'; image_url: { url: string }; role?: 'reference_image' }
-  | { type: 'video_url'; video_url: { url: string }; role?: 'reference_video' }
-  | { type: 'audio_url'; audio_url: { url: string }; role?: 'reference_audio' }
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string }; role?: "reference_image" }
+  | { type: "video_url"; video_url: { url: string }; role?: "reference_video" }
+  | { type: "audio_url"; audio_url: { url: string }; role?: "reference_audio" };
 
-export type SeedanceProgress = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled'
+export type SeedanceProgress = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 
-export const SUPPORTED_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', 'adaptive'] as const
-export type SeedanceRatio = (typeof SUPPORTED_RATIOS)[number]
+export const SUPPORTED_RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9", "adaptive"] as const;
+export type SeedanceRatio = (typeof SUPPORTED_RATIOS)[number];
 
 // ====================================================================
 // ARK (Seedance) 端实现
@@ -151,92 +153,117 @@ export type SeedanceRatio = (typeof SUPPORTED_RATIOS)[number]
 function getArkConfig() {
   return {
     apiKey: process.env.ARK_API_KEY,
-    baseUrl: (process.env.ARK_BASE_URL || ARK_DEFAULT_BASE_URL).replace(/\/+$/, ''),
+    baseUrl: (process.env.ARK_BASE_URL || ARK_DEFAULT_BASE_URL).replace(/\/+$/, ""),
     model: process.env.ARK_VIDEO_MODEL || ARK_DEFAULT_MODEL,
-  }
+  };
 }
 
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 async function arkSubmit(input: {
-  model: string
-  content: ContentItem[]
-  ratio?: SeedanceRatio
-  duration?: number
-  generateAudio?: boolean
-  watermark?: boolean
-  apiKey: string
-  baseUrl: string
+  model: string;
+  content: ContentItem[];
+  ratio?: SeedanceRatio;
+  duration?: number;
+  generateAudio?: boolean;
+  watermark?: boolean;
+  apiKey: string;
+  baseUrl: string;
 }): Promise<{ ok: true; taskId: string; model: string } | { ok: false; error: string }> {
   const body: Record<string, unknown> = {
     model: input.model,
     content: input.content,
-  }
-  if (input.ratio) body.ratio = input.ratio
-  if (typeof input.duration === 'number') body.duration = input.duration
-  if (typeof input.generateAudio === 'boolean') body.generate_audio = input.generateAudio
-  if (typeof input.watermark === 'boolean') body.watermark = input.watermark
+  };
+  if (input.ratio) body.ratio = input.ratio;
+  if (typeof input.duration === "number") body.duration = input.duration;
+  if (typeof input.generateAudio === "boolean") body.generate_audio = input.generateAudio;
+  if (typeof input.watermark === "boolean") body.watermark = input.watermark;
 
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 30_000)
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
   try {
     const res = await fetch(`${input.baseUrl}/contents/generations/tasks`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
         Authorization: `Bearer ${input.apiKey}`,
       },
       body: JSON.stringify(body),
       signal: controller.signal,
-    })
-    clearTimeout(timeout)
-    const text = await res.text().catch(() => '')
-    if (!res.ok) return { ok: false, error: `[ark-seedance] submit ${res.status}: ${text.slice(0, 300)}` }
+    });
+    clearTimeout(timeout);
+    const text = await res.text().catch(() => "");
+    if (!res.ok)
+      return { ok: false, error: `[ark-seedance] submit ${res.status}: ${text.slice(0, 300)}` };
     // 2026/06 Bugfix:res.text() 已经把 body 流消费了,res.json() 必然失败。
     // 改成 JSON.parse(text) 复用同一份 text,不再二次读 body。
-    let json: { id?: string; error?: { code?: string; message?: string } } = {}
-    try { json = JSON.parse(text) } catch {}
-    if (!json.id) return { ok: false, error: `[ark-seedance] no task_id: ${json.error?.message || text.slice(0, 200)}` }
-    return { ok: true, taskId: json.id, model: input.model }
+    let json: { id?: string; error?: { code?: string; message?: string } } = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    if (!json.id)
+      return {
+        ok: false,
+        error: `[ark-seedance] no task_id: ${json.error?.message || text.slice(0, 200)}`,
+      };
+    return { ok: true, taskId: json.id, model: input.model };
   } catch (e) {
-    clearTimeout(timeout)
-    const msg = e instanceof Error ? (e.name === 'AbortError' ? 'submit timeout (30s)' : e.message) : 'fetch failed'
-    return { ok: false, error: `[ark-seedance] network: ${msg}` }
+    clearTimeout(timeout);
+    const msg =
+      e instanceof Error
+        ? e.name === "AbortError"
+          ? "submit timeout (30s)"
+          : e.message
+        : "fetch failed";
+    return { ok: false, error: `[ark-seedance] network: ${msg}` };
   }
 }
 
 async function arkPoll(input: {
-  taskId: string
-  apiKey: string
-  baseUrl: string
+  taskId: string;
+  apiKey: string;
+  baseUrl: string;
 }): Promise<
   | { ok: true; status: SeedanceProgress; videoUrl: string | null; raw: any }
   | { ok: false; error: string; status?: SeedanceProgress; raw?: any }
 > {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 30_000)
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
   try {
     const res = await fetch(`${input.baseUrl}/contents/generations/tasks/${input.taskId}`, {
-      method: 'GET',
+      method: "GET",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
         Authorization: `Bearer ${input.apiKey}`,
       },
       signal: controller.signal,
-    })
-    clearTimeout(timeout)
-    const text = await res.text().catch(() => '')
-    if (!res.ok) return { ok: false, error: `[ark-seedance] poll ${res.status}: ${text.slice(0, 300)}` }
+    });
+    clearTimeout(timeout);
+    const text = await res.text().catch(() => "");
+    if (!res.ok)
+      return { ok: false, error: `[ark-seedance] poll ${res.status}: ${text.slice(0, 300)}` };
     // 2026/06 Bugfix:见 arkSubmit —— 改用 JSON.parse(text) 而不是 res.json()
-    let json: { id?: string; status?: string; content?: { video_url?: string }; error?: { code?: string; message?: string } } = {}
-    try { json = JSON.parse(text) } catch {}
-    const status = (json.status?.toLowerCase() || '') as SeedanceProgress
-    const videoUrl = json.content?.video_url || null
-    return { ok: true, status, videoUrl, raw: json }
+    let json: {
+      id?: string;
+      status?: string;
+      content?: { video_url?: string };
+      error?: { code?: string; message?: string };
+    } = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    const status = (json.status?.toLowerCase() || "") as SeedanceProgress;
+    const videoUrl = json.content?.video_url || null;
+    return { ok: true, status, videoUrl, raw: json };
   } catch (e) {
-    clearTimeout(timeout)
-    const msg = e instanceof Error ? (e.name === 'AbortError' ? 'poll timeout (30s)' : e.message) : 'fetch failed'
-    return { ok: false, error: `[ark-seedance] poll network: ${msg}` }
+    clearTimeout(timeout);
+    const msg =
+      e instanceof Error
+        ? e.name === "AbortError"
+          ? "poll timeout (30s)"
+          : e.message
+        : "fetch failed";
+    return { ok: false, error: `[ark-seedance] poll network: ${msg}` };
   }
 }
 
@@ -272,52 +299,68 @@ async function arkPoll(input: {
 function getDashScopeConfig() {
   return {
     apiKey: process.env.Qwen || process.env.DASHSCOPE_API_KEY,
-  }
+  };
 }
 
-type DashScopeMediaItem = { type: 'first_frame' | 'last_frame' | 'reference_image'; url: string }
+type DashScopeMediaItem = { type: "first_frame" | "last_frame" | "reference_image"; url: string };
 
 // ----- ARK 内容拼装 -----
 type ArkReferences = {
-  referenceImageUrls?: string[]
-  firstFrameImageUrl?: string
-  lastFrameImageUrl?: string
-  referenceVideoUrl?: string
-  referenceAudioUrl?: string
-}
+  referenceImageUrls?: string[];
+  firstFrameImageUrl?: string;
+  lastFrameImageUrl?: string;
+  referenceVideoUrl?: string;
+  referenceAudioUrl?: string;
+};
 
 /**
  * 按 ARK 官方 cURL 示例拼 content 数组(text + 多个 image_url + 可选 video_url / audio_url)
  */
 export function buildArkContent(prompt: string, refs: ArkReferences): ContentItem[] {
-  const content: ContentItem[] = [{ type: 'text', text: prompt }]
+  const content: ContentItem[] = [{ type: "text", text: prompt }];
   if (refs.firstFrameImageUrl) {
-    content.push({ type: 'image_url', image_url: { url: refs.firstFrameImageUrl }, role: 'reference_image' })
+    content.push({
+      type: "image_url",
+      image_url: { url: refs.firstFrameImageUrl },
+      role: "reference_image",
+    });
   }
   // ARK Seedance 没有显式 last_frame role,当 reference_image 处理(放第二张)
   if (refs.lastFrameImageUrl) {
-    content.push({ type: 'image_url', image_url: { url: refs.lastFrameImageUrl }, role: 'reference_image' })
+    content.push({
+      type: "image_url",
+      image_url: { url: refs.lastFrameImageUrl },
+      role: "reference_image",
+    });
   }
   for (const url of refs.referenceImageUrls ?? []) {
-    content.push({ type: 'image_url', image_url: { url }, role: 'reference_image' })
+    content.push({ type: "image_url", image_url: { url }, role: "reference_image" });
   }
   if (refs.referenceVideoUrl) {
-    content.push({ type: 'video_url', video_url: { url: refs.referenceVideoUrl }, role: 'reference_video' })
+    content.push({
+      type: "video_url",
+      video_url: { url: refs.referenceVideoUrl },
+      role: "reference_video",
+    });
   }
   if (refs.referenceAudioUrl) {
-    content.push({ type: 'audio_url', audio_url: { url: refs.referenceAudioUrl }, role: 'reference_audio' })
+    content.push({
+      type: "audio_url",
+      audio_url: { url: refs.referenceAudioUrl },
+      role: "reference_audio",
+    });
   }
-  return content
+  return content;
 }
 
 async function dashscopeSubmit(input: {
-  model: string
-  prompt: string
-  media: DashScopeMediaItem[]
-  ratio?: string
-  resolution?: string
-  duration?: number
-  apiKey: string
+  model: string;
+  prompt: string;
+  media: DashScopeMediaItem[];
+  ratio?: string;
+  resolution?: string;
+  duration?: number;
+  apiKey: string;
 }): Promise<{ ok: true; taskId: string; model: string } | { ok: false; error: string }> {
   const body: Record<string, unknown> = {
     model: input.model,
@@ -326,77 +369,106 @@ async function dashscopeSubmit(input: {
       ...(input.media.length > 0 ? { media: input.media } : {}),
     },
     parameters: {
-      resolution: input.resolution || '720P',
+      resolution: input.resolution || "720P",
       ...(input.ratio ? { ratio: input.ratio } : {}),
-      ...(typeof input.duration === 'number' ? { duration: input.duration } : {}),
+      ...(typeof input.duration === "number" ? { duration: input.duration } : {}),
     },
-  }
+  };
 
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 30_000)
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
   try {
     const res = await fetch(DASHSCOPE_VIDEO_ENDPOINT, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
         Authorization: `Bearer ${input.apiKey}`,
-        'X-DashScope-Async': 'enable',
+        "X-DashScope-Async": "enable",
       },
       body: JSON.stringify(body),
       signal: controller.signal,
-    })
-    clearTimeout(timeout)
-    const text = await res.text().catch(() => '')
-    if (!res.ok) return { ok: false, error: `[dashscope-video] submit ${res.status}: ${text.slice(0, 300)}` }
+    });
+    clearTimeout(timeout);
+    const text = await res.text().catch(() => "");
+    if (!res.ok)
+      return { ok: false, error: `[dashscope-video] submit ${res.status}: ${text.slice(0, 300)}` };
     // 2026/06 Bugfix:见 arkSubmit —— 改用 JSON.parse(text) 而不是 res.json()
-    let json: { output?: { task_id?: string; task_status?: string }; error?: { code?: string; message?: string } } = {}
-    try { json = JSON.parse(text) } catch {}
-    const taskId = json.output?.task_id
+    let json: {
+      output?: { task_id?: string; task_status?: string };
+      error?: { code?: string; message?: string };
+    } = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    const taskId = json.output?.task_id;
     if (!taskId) {
-      return { ok: false, error: `[dashscope-video] no task_id: ${json.error?.message || text.slice(0, 200)}` }
+      return {
+        ok: false,
+        error: `[dashscope-video] no task_id: ${json.error?.message || text.slice(0, 200)}`,
+      };
     }
-    return { ok: true, taskId, model: input.model }
+    return { ok: true, taskId, model: input.model };
   } catch (e) {
-    clearTimeout(timeout)
-    const msg = e instanceof Error ? (e.name === 'AbortError' ? 'submit timeout (30s)' : e.message) : 'fetch failed'
-    return { ok: false, error: `[dashscope-video] network: ${msg}` }
+    clearTimeout(timeout);
+    const msg =
+      e instanceof Error
+        ? e.name === "AbortError"
+          ? "submit timeout (30s)"
+          : e.message
+        : "fetch failed";
+    return { ok: false, error: `[dashscope-video] network: ${msg}` };
   }
 }
 
 async function dashscopePoll(input: {
-  taskId: string
-  apiKey: string
+  taskId: string;
+  apiKey: string;
 }): Promise<
   | { ok: true; status: SeedanceProgress; videoUrl: string | null; raw: any }
   | { ok: false; error: string; status?: SeedanceProgress; raw?: any }
 > {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 30_000)
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
   try {
     const res = await fetch(DASHSCOPE_TASK_GET + input.taskId, {
       headers: { Authorization: `Bearer ${input.apiKey}` },
       signal: controller.signal,
-    })
-    clearTimeout(timeout)
-    const text = await res.text().catch(() => '')
-    if (!res.ok) return { ok: false, error: `[dashscope-video] poll ${res.status}: ${text.slice(0, 300)}` }
+    });
+    clearTimeout(timeout);
+    const text = await res.text().catch(() => "");
+    if (!res.ok)
+      return { ok: false, error: `[dashscope-video] poll ${res.status}: ${text.slice(0, 300)}` };
     // 2026/06 Bugfix:见 arkSubmit —— 改用 JSON.parse(text) 而不是 res.json()
-    let json: { output?: { task_status?: string; video_url?: string; results?: Array<{ video_url?: string; url?: string }> }; error?: { code?: string; message?: string } } = {}
-    try { json = JSON.parse(text) } catch {}
-    const rawStatus = (json.output?.task_status || '').toUpperCase()
-    const status = rawStatus.toLowerCase() as SeedanceProgress
+    let json: {
+      output?: {
+        task_status?: string;
+        video_url?: string;
+        results?: Array<{ video_url?: string; url?: string }>;
+      };
+      error?: { code?: string; message?: string };
+    } = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    const rawStatus = (json.output?.task_status || "").toUpperCase();
+    const status = rawStatus.toLowerCase() as SeedanceProgress;
     // 成功时 video_url 在 output.video_url(DashScope 视频任务的字段);
     // 但有少数版本也用 output.results[0].video_url / .url,做一下兜底
     const videoUrl =
       json.output?.video_url ||
       json.output?.results?.[0]?.video_url ||
       json.output?.results?.[0]?.url ||
-      null
-    return { ok: true, status, videoUrl, raw: json }
+      null;
+    return { ok: true, status, videoUrl, raw: json };
   } catch (e) {
-    clearTimeout(timeout)
-    const msg = e instanceof Error ? (e.name === 'AbortError' ? 'poll timeout (30s)' : e.message) : 'fetch failed'
-    return { ok: false, error: `[dashscope-video] poll network: ${msg}` }
+    clearTimeout(timeout);
+    const msg =
+      e instanceof Error
+        ? e.name === "AbortError"
+          ? "poll timeout (30s)"
+          : e.message
+        : "fetch failed";
+    return { ok: false, error: `[dashscope-video] poll network: ${msg}` };
   }
 }
 
@@ -419,42 +491,41 @@ async function dashscopePoll(input: {
 // ====================================================================
 
 function hmac(key: Buffer | string, data: string): Buffer {
-  return createHmac('sha256', key).update(data, 'utf8').digest()
+  return createHmac("sha256", key).update(data, "utf8").digest();
 }
 function sha256Hex(data: string): string {
-  return createHash('sha256').update(data, 'utf8').digest('hex')
+  return createHash("sha256").update(data, "utf8").digest("hex");
 }
 
 function volcSign(opts: {
-  ak: string
-  sk: string
-  method: 'GET' | 'POST'
-  host: string
-  path: string         // 始终 '/'
-  query: string        // 已经按 RFC3986 编码 & 字典排序的 query string,不带前导 '?'
-  body: string         // 原始请求体(JSON 字符串)
-  region: string
-  service: string
+  ak: string;
+  sk: string;
+  method: "GET" | "POST";
+  host: string;
+  path: string; // 始终 '/'
+  query: string; // 已经按 RFC3986 编码 & 字典排序的 query string,不带前导 '?'
+  body: string; // 原始请求体(JSON 字符串)
+  region: string;
+  service: string;
 }): Record<string, string> {
-  const now = new Date()
+  const now = new Date();
   // X-Date: 20240720T103939Z
-  const pad = (n: number) => String(n).padStart(2, '0')
+  const pad = (n: number) => String(n).padStart(2, "0");
   const xDate =
     `${now.getUTCFullYear()}${pad(now.getUTCMonth() + 1)}${pad(now.getUTCDate())}` +
-    `T${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}Z`
-  const shortDate = xDate.slice(0, 8)
+    `T${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}Z`;
+  const shortDate = xDate.slice(0, 8);
 
-  const bodyHash = sha256Hex(opts.body)
+  const bodyHash = sha256Hex(opts.body);
   const headers: Record<string, string> = {
-    'host': opts.host,
-    'x-date': xDate,
-    'x-content-sha256': bodyHash,
-    'content-type': 'application/json',
-  }
-  const signedHeaderNames = Object.keys(headers).sort()
-  const canonicalHeaders =
-    signedHeaderNames.map((k) => `${k}:${headers[k].trim()}\n`).join('')
-  const signedHeaders = signedHeaderNames.join(';')
+    host: opts.host,
+    "x-date": xDate,
+    "x-content-sha256": bodyHash,
+    "content-type": "application/json",
+  };
+  const signedHeaderNames = Object.keys(headers).sort();
+  const canonicalHeaders = signedHeaderNames.map((k) => `${k}:${headers[k].trim()}\n`).join("");
+  const signedHeaders = signedHeaderNames.join(";");
 
   const canonicalRequest = [
     opts.method,
@@ -463,126 +534,142 @@ function volcSign(opts: {
     canonicalHeaders,
     signedHeaders,
     bodyHash,
-  ].join('\n')
+  ].join("\n");
 
-  const credentialScope = `${shortDate}/${opts.region}/${opts.service}/request`
-  const stringToSign = [
-    'HMAC-SHA256',
-    xDate,
-    credentialScope,
-    sha256Hex(canonicalRequest),
-  ].join('\n')
+  const credentialScope = `${shortDate}/${opts.region}/${opts.service}/request`;
+  const stringToSign = ["HMAC-SHA256", xDate, credentialScope, sha256Hex(canonicalRequest)].join(
+    "\n",
+  );
 
-  const kDate = hmac(opts.sk, shortDate)
-  const kRegion = hmac(kDate, opts.region)
-  const kService = hmac(kRegion, opts.service)
-  const kSigning = hmac(kService, 'request')
-  const signature = createHmac('sha256', kSigning).update(stringToSign, 'utf8').digest('hex')
+  const kDate = hmac(opts.sk, shortDate);
+  const kRegion = hmac(kDate, opts.region);
+  const kService = hmac(kRegion, opts.service);
+  const kSigning = hmac(kService, "request");
+  const signature = createHmac("sha256", kSigning).update(stringToSign, "utf8").digest("hex");
 
   const authorization =
     `HMAC-SHA256 Credential=${opts.ak}/${credentialScope}, ` +
-    `SignedHeaders=${signedHeaders}, Signature=${signature}`
+    `SignedHeaders=${signedHeaders}, Signature=${signature}`;
 
   return {
     Host: opts.host,
-    'X-Date': xDate,
-    'X-Content-Sha256': bodyHash,
-    'Content-Type': 'application/json',
+    "X-Date": xDate,
+    "X-Content-Sha256": bodyHash,
+    "Content-Type": "application/json",
     Authorization: authorization,
-  }
+  };
 }
 
 function getJimengConfig() {
   return {
     ak: process.env.JIMENG_ACCESS_KEY || process.env.VOLC_ACCESSKEY,
     sk: process.env.JIMENG_SECRET_KEY || process.env.VOLC_SECRETKEY,
-  }
+  };
 }
 
 /** frames = 24 * 秒数 + 1,且仅取 [121, 241](即 5s / 10s) */
 function jimengFramesFromDuration(duration?: number): number {
-  if (!duration) return 121
-  return duration >= 8 ? 241 : 121
+  if (!duration) return 121;
+  return duration >= 8 ? 241 : 121;
 }
 
 async function jimengCall(opts: {
-  ak: string
-  sk: string
-  action: 'CVSync2AsyncSubmitTask' | 'CVSync2AsyncGetResult'
-  body: Record<string, unknown>
+  ak: string;
+  sk: string;
+  action: "CVSync2AsyncSubmitTask" | "CVSync2AsyncGetResult";
+  body: Record<string, unknown>;
 }): Promise<{ ok: true; json: any } | { ok: false; error: string }> {
   // Query 必须按字典序、RFC3986 编码,且不带前导 '?'
   // Action & Version 都不含特殊字符,直接拼即可
-  const query = `Action=${opts.action}&Version=${JIMENG_VERSION}`
-  const bodyStr = JSON.stringify(opts.body)
+  const query = `Action=${opts.action}&Version=${JIMENG_VERSION}`;
+  const bodyStr = JSON.stringify(opts.body);
   const headers = volcSign({
     ak: opts.ak,
     sk: opts.sk,
-    method: 'POST',
+    method: "POST",
     host: JIMENG_HOST,
-    path: '/',
+    path: "/",
     query,
     body: bodyStr,
     region: JIMENG_REGION,
     service: JIMENG_SERVICE,
-  })
+  });
 
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 30_000)
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
   try {
     const res = await fetch(`https://${JIMENG_HOST}/?${query}`, {
-      method: 'POST',
+      method: "POST",
       headers,
       body: bodyStr,
       signal: controller.signal,
-    })
-    clearTimeout(timeout)
-    const text = await res.text().catch(() => '')
-    let json: any = {}
-    try { json = JSON.parse(text) } catch {}
+    });
+    clearTimeout(timeout);
+    const text = await res.text().catch(() => "");
+    let json: any = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
     if (!res.ok && (json?.code ?? 0) !== 10000) {
-      return { ok: false, error: `[jimeng] ${opts.action} HTTP ${res.status}: ${text.slice(0, 300)}` }
+      return {
+        ok: false,
+        error: `[jimeng] ${opts.action} HTTP ${res.status}: ${text.slice(0, 300)}`,
+      };
     }
-    return { ok: true, json }
+    return { ok: true, json };
   } catch (e) {
-    clearTimeout(timeout)
-    const msg = e instanceof Error ? (e.name === 'AbortError' ? `${opts.action} timeout (30s)` : e.message) : 'fetch failed'
-    return { ok: false, error: `[jimeng] network: ${msg}` }
+    clearTimeout(timeout);
+    const msg =
+      e instanceof Error
+        ? e.name === "AbortError"
+          ? `${opts.action} timeout (30s)`
+          : e.message
+        : "fetch failed";
+    return { ok: false, error: `[jimeng] network: ${msg}` };
   }
 }
 
 async function jimengSubmit(input: {
-  ak: string
-  sk: string
-  prompt: string
-  firstFrameImageUrl?: string
-  aspectRatio?: string
-  duration?: number
-  seed?: number
+  ak: string;
+  sk: string;
+  prompt: string;
+  firstFrameImageUrl?: string;
+  aspectRatio?: string;
+  duration?: number;
+  seed?: number;
 }): Promise<{ ok: true; taskId: string } | { ok: false; error: string }> {
   const body: Record<string, unknown> = {
     req_key: JIMENG_REQ_KEY,
     prompt: input.prompt,
     frames: jimengFramesFromDuration(input.duration),
-    aspect_ratio: input.aspectRatio && input.aspectRatio !== 'adaptive' ? input.aspectRatio : '16:9',
-    seed: typeof input.seed === 'number' ? input.seed : -1,
-  }
-  if (input.firstFrameImageUrl) body.image_urls = [input.firstFrameImageUrl]
+    aspect_ratio:
+      input.aspectRatio && input.aspectRatio !== "adaptive" ? input.aspectRatio : "16:9",
+    seed: typeof input.seed === "number" ? input.seed : -1,
+  };
+  if (input.firstFrameImageUrl) body.image_urls = [input.firstFrameImageUrl];
 
-  const r = await jimengCall({ ak: input.ak, sk: input.sk, action: 'CVSync2AsyncSubmitTask', body })
-  if (!r.ok) return r
-  const code = r.json?.code
-  const taskId = r.json?.data?.task_id
+  const r = await jimengCall({
+    ak: input.ak,
+    sk: input.sk,
+    action: "CVSync2AsyncSubmitTask",
+    body,
+  });
+  if (!r.ok) return r;
+  const code = r.json?.code;
+  const taskId = r.json?.data?.task_id;
   if (code !== 10000 || !taskId) {
-    return { ok: false, error: `[jimeng] submit code=${code} msg=${r.json?.message || 'no task_id'}` }
+    return {
+      ok: false,
+      error: `[jimeng] submit code=${code} msg=${r.json?.message || "no task_id"}`,
+    };
   }
-  return { ok: true, taskId }
+  return { ok: true, taskId };
 }
 
 async function jimengPoll(input: {
-  ak: string
-  sk: string
-  taskId: string
+  ak: string;
+  sk: string;
+  taskId: string;
 }): Promise<
   | { ok: true; status: SeedanceProgress; videoUrl: string | null; raw: any }
   | { ok: false; error: string; status?: SeedanceProgress; raw?: any }
@@ -590,29 +677,29 @@ async function jimengPoll(input: {
   const r = await jimengCall({
     ak: input.ak,
     sk: input.sk,
-    action: 'CVSync2AsyncGetResult',
+    action: "CVSync2AsyncGetResult",
     body: { req_key: JIMENG_REQ_KEY, task_id: input.taskId },
-  })
-  if (!r.ok) return { ok: false, error: r.error }
-  const code = r.json?.code
-  const data = r.json?.data || {}
+  });
+  if (!r.ok) return { ok: false, error: r.error };
+  const code = r.json?.code;
+  const data = r.json?.data || {};
   // code != 10000 表示业务错误(审核 / 限流 / 内部错误等)
   if (code !== 10000) {
     return {
       ok: false,
-      error: `[jimeng] poll code=${code} msg=${r.json?.message || 'unknown'}`,
-      status: 'failed',
+      error: `[jimeng] poll code=${code} msg=${r.json?.message || "unknown"}`,
+      status: "failed",
       raw: r.json,
-    }
+    };
   }
   // status: in_queue / generating / done / not_found / expired
-  const raw = (data.status || '').toLowerCase()
-  let status: SeedanceProgress = 'queued'
-  if (raw === 'in_queue') status = 'queued'
-  else if (raw === 'generating') status = 'running'
-  else if (raw === 'done') status = data.video_url ? 'succeeded' : 'failed'
-  else if (raw === 'not_found' || raw === 'expired') status = 'failed'
-  return { ok: true, status, videoUrl: data.video_url || null, raw: r.json }
+  const raw = (data.status || "").toLowerCase();
+  let status: SeedanceProgress = "queued";
+  if (raw === "in_queue") status = "queued";
+  else if (raw === "generating") status = "running";
+  else if (raw === "done") status = data.video_url ? "succeeded" : "failed";
+  else if (raw === "not_found" || raw === "expired") status = "failed";
+  return { ok: true, status, videoUrl: data.video_url || null, raw: r.json };
 }
 
 // ====================================================================
@@ -638,147 +725,173 @@ async function jimengPoll(input: {
 function getKuaiziConfig() {
   return {
     apiKey: process.env.KUAIZI_API_KEY,
-    baseUrl: (process.env.KUAIZI_BASE_URL || KUAIZI_DEFAULT_BASE_URL).replace(/\/+$/, ''),
-  }
+    baseUrl: (process.env.KUAIZI_BASE_URL || KUAIZI_DEFAULT_BASE_URL).replace(/\/+$/, ""),
+  };
 }
 
 /** 从 model id 提取丽帧 mode: pro / fast / mini */
-function kuaiziModelToMode(modelId: string): 'fast' | 'pro' | 'mini' {
-  const m = modelId.toLowerCase()
-  if (m.endsWith('-pro')) return 'pro'
-  if (m.endsWith('-mini')) return 'mini'
-  return 'fast'
+function kuaiziModelToMode(modelId: string): "fast" | "pro" | "mini" {
+  const m = modelId.toLowerCase();
+  if (m.endsWith("-pro")) return "pro";
+  if (m.endsWith("-mini")) return "mini";
+  return "fast";
 }
 
 /** 项目内部 resolution('480P'/'720P'/'1080P' 大写)→ 筷子小写格式 */
-function toKuaiziResolution(r: string | undefined): '480p' | '720p' | '1080p' | '4k' {
-  const s = (r || '720P').trim().toLowerCase()
-  if (s === '480p') return '480p'
-  if (s === '1080p') return '1080p'
-  if (s === '4k') return '4k'
-  return '720p'
+function toKuaiziResolution(r: string | undefined): "480p" | "720p" | "1080p" | "4k" {
+  const s = (r || "720P").trim().toLowerCase();
+  if (s === "480p") return "480p";
+  if (s === "1080p") return "1080p";
+  if (s === "4k") return "4k";
+  return "720p";
 }
 
 /** 把筷子 status 字符串映射到项目内 SeedanceProgress */
 function kuaiziStatusToProgress(s: string | undefined): SeedanceProgress {
-  const v = (s || '').toLowerCase()
-  if (v === 'succeeded') return 'succeeded'
-  if (v === 'failed') return 'failed'
-  if (v === 'cancelled') return 'cancelled'
-  if (v === 'running') return 'running'
+  const v = (s || "").toLowerCase();
+  if (v === "succeeded") return "succeeded";
+  if (v === "failed") return "failed";
+  if (v === "cancelled") return "cancelled";
+  if (v === "running") return "running";
   // pending / submitted / 未知 都按 queued 处理
-  return 'queued'
+  return "queued";
 }
 
 async function kuaiziSubmit(input: {
-  model: string
-  prompt: string
-  media: DashScopeMediaItem[]
-  ratio?: SeedanceRatio
-  resolution?: string
-  duration?: number
-  generateAudio?: boolean
-  watermark?: boolean
-  referenceVideoUrl?: string
-  referenceAudioUrl?: string
-  apiKey: string
-  baseUrl: string
+  model: string;
+  prompt: string;
+  media: DashScopeMediaItem[];
+  ratio?: SeedanceRatio;
+  resolution?: string;
+  duration?: number;
+  generateAudio?: boolean;
+  watermark?: boolean;
+  referenceVideoUrl?: string;
+  referenceAudioUrl?: string;
+  apiKey: string;
+  baseUrl: string;
 }): Promise<{ ok: true; taskId: string; model: string } | { ok: false; error: string }> {
-  const mode = kuaiziModelToMode(input.model)
+  const mode = kuaiziModelToMode(input.model);
   const body: Record<string, unknown> = {
     prompt: input.prompt,
     mode,
     resolution: toKuaiziResolution(input.resolution),
-  }
-  if (input.ratio) body.ratio = input.ratio
-  if (typeof input.duration === 'number') body.duration = input.duration
-  if (typeof input.generateAudio === 'boolean') body.generate_audio = input.generateAudio
-  if (typeof input.watermark === 'boolean') body.watermark = input.watermark
+  };
+  if (input.ratio) body.ratio = input.ratio;
+  if (typeof input.duration === "number") body.duration = input.duration;
+  if (typeof input.generateAudio === "boolean") body.generate_audio = input.generateAudio;
+  if (typeof input.watermark === "boolean") body.watermark = input.watermark;
 
   // 素材:first_frame / last_frame / reference_image 都映射到 images 数组
-  const images: Array<{ url: string; role: string }> = []
+  const images: Array<{ url: string; role: string }> = [];
   for (const m of input.media) {
-    images.push({ url: m.url, role: m.type })  // 'first_frame' / 'last_frame' / 'reference_image'
+    images.push({ url: m.url, role: m.type }); // 'first_frame' / 'last_frame' / 'reference_image'
   }
-  if (images.length > 0) body.images = images.slice(0, 9)
-  if (input.referenceVideoUrl) body.videos = [{ url: input.referenceVideoUrl, role: 'reference_video' }]
-  if (input.referenceAudioUrl) body.audios = [{ url: input.referenceAudioUrl, role: 'reference_audio' }]
+  if (images.length > 0) body.images = images.slice(0, 9);
+  if (input.referenceVideoUrl)
+    body.videos = [{ url: input.referenceVideoUrl, role: "reference_video" }];
+  if (input.referenceAudioUrl)
+    body.audios = [{ url: input.referenceAudioUrl, role: "reference_audio" }];
 
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 30_000)
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
   try {
     const res = await fetch(`${input.baseUrl}${KUAIZI_CREATE_PATH}`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
         ApiKey: input.apiKey,
       },
       body: JSON.stringify(body),
       signal: controller.signal,
-    })
-    clearTimeout(timeout)
-    const text = await res.text().catch(() => '')
+    });
+    clearTimeout(timeout);
+    const text = await res.text().catch(() => "");
     // 余额不足:HTTP 429
     if (res.status === 429) {
-      return { ok: false, error: `[kuaizi] 余额不足 (429): ${text.slice(0, 200)}` }
+      return { ok: false, error: `[kuaizi] 余额不足 (429): ${text.slice(0, 200)}` };
     }
     if (!res.ok) {
-      return { ok: false, error: `[kuaizi] submit ${res.status}: ${text.slice(0, 300)}` }
+      return { ok: false, error: `[kuaizi] submit ${res.status}: ${text.slice(0, 300)}` };
     }
-    let json: { code?: number; message?: string; data?: { task_id?: string } } = {}
-    try { json = JSON.parse(text) } catch {}
+    let json: { code?: number; message?: string; data?: { task_id?: string } } = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
     if (json.code !== 0) {
-      return { ok: false, error: `[kuaizi] submit code=${json.code}: ${json.message || text.slice(0, 200)}` }
+      return {
+        ok: false,
+        error: `[kuaizi] submit code=${json.code}: ${json.message || text.slice(0, 200)}`,
+      };
     }
-    const taskId = json.data?.task_id
+    const taskId = json.data?.task_id;
     if (!taskId) {
-      return { ok: false, error: `[kuaizi] no task_id: ${text.slice(0, 200)}` }
+      return { ok: false, error: `[kuaizi] no task_id: ${text.slice(0, 200)}` };
     }
-    return { ok: true, taskId, model: input.model }
+    return { ok: true, taskId, model: input.model };
   } catch (e) {
-    clearTimeout(timeout)
-    const msg = e instanceof Error ? (e.name === 'AbortError' ? 'submit timeout (30s)' : e.message) : 'fetch failed'
-    return { ok: false, error: `[kuaizi] network: ${msg}` }
+    clearTimeout(timeout);
+    const msg =
+      e instanceof Error
+        ? e.name === "AbortError"
+          ? "submit timeout (30s)"
+          : e.message
+        : "fetch failed";
+    return { ok: false, error: `[kuaizi] network: ${msg}` };
   }
 }
 
 async function kuaiziPoll(input: {
-  taskId: string
-  apiKey: string
-  baseUrl: string
+  taskId: string;
+  apiKey: string;
+  baseUrl: string;
 }): Promise<
   | { ok: true; status: SeedanceProgress; videoUrl: string | null; raw: any }
   | { ok: false; error: string; status?: SeedanceProgress; raw?: any }
 > {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 30_000)
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
   try {
     const res = await fetch(`${input.baseUrl}${KUAIZI_STATUS_PATH}`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
         ApiKey: input.apiKey,
       },
       body: JSON.stringify({ task_id: input.taskId }),
       signal: controller.signal,
-    })
-    clearTimeout(timeout)
-    const text = await res.text().catch(() => '')
-    if (!res.ok) return { ok: false, error: `[kuaizi] poll ${res.status}: ${text.slice(0, 300)}` }
-    let json: { code?: number; message?: string; data?: { status?: string; video_url?: string; error?: string } } = {}
-    try { json = JSON.parse(text) } catch {}
+    });
+    clearTimeout(timeout);
+    const text = await res.text().catch(() => "");
+    if (!res.ok) return { ok: false, error: `[kuaizi] poll ${res.status}: ${text.slice(0, 300)}` };
+    let json: {
+      code?: number;
+      message?: string;
+      data?: { status?: string; video_url?: string; error?: string };
+    } = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
     if (json.code !== 0) {
-      return { ok: false, error: `[kuaizi] poll code=${json.code}: ${json.message || text.slice(0, 200)}` }
+      return {
+        ok: false,
+        error: `[kuaizi] poll code=${json.code}: ${json.message || text.slice(0, 200)}`,
+      };
     }
-    const data = json.data || {}
-    const status = kuaiziStatusToProgress(data.status)
-    const videoUrl = data.video_url || null
+    const data = json.data || {};
+    const status = kuaiziStatusToProgress(data.status);
+    const videoUrl = data.video_url || null;
     // 失败时把筷子返回的 error 字段塞进 raw,让上层 generateVideo 能取出来
-    return { ok: true, status, videoUrl, raw: { error: { message: data.error || '' }, ...data } }
+    return { ok: true, status, videoUrl, raw: { error: { message: data.error || "" }, ...data } };
   } catch (e) {
-    clearTimeout(timeout)
-    const msg = e instanceof Error ? (e.name === 'AbortError' ? 'poll timeout (30s)' : e.message) : 'fetch failed'
-    return { ok: false, error: `[kuaizi] poll network: ${msg}` }
+    clearTimeout(timeout);
+    const msg =
+      e instanceof Error
+        ? e.name === "AbortError"
+          ? "poll timeout (30s)"
+          : e.message
+        : "fetch failed";
+    return { ok: false, error: `[kuaizi] poll network: ${msg}` };
   }
 }
 
@@ -803,58 +916,58 @@ async function kuaiziPoll(input: {
 function getToapisConfig() {
   return {
     apiKey: process.env.TOAPIS_API_KEY,
-    baseUrl: (process.env.TOAPIS_BASE_URL || TOAPIS_DEFAULT_BASE_URL).replace(/\/+$/, ''),
-  }
+    baseUrl: (process.env.TOAPIS_BASE_URL || TOAPIS_DEFAULT_BASE_URL).replace(/\/+$/, ""),
+  };
 }
 
 /** 从 model id 剥离 `toapis-` 前缀,得到上游 model 名 */
 function toapisModelToUpstream(modelId: string): string {
-  return modelId.replace(/^toapis-/i, '')
+  return modelId.replace(/^toapis-/i, "");
 }
 
 /** 项目内部 resolution('480P'/'720P'/'1080P' 大写)→ ToAPIs 小写格式 */
-function toToapisResolution(r: string | undefined): '480p' | '720p' | '1080p' | '4k' {
-  const s = (r || '720P').trim().toLowerCase()
-  if (s === '480p') return '480p'
-  if (s === '1080p') return '1080p'
-  if (s === '4k') return '4k'
-  return '720p'
+function toToapisResolution(r: string | undefined): "480p" | "720p" | "1080p" | "4k" {
+  const s = (r || "720P").trim().toLowerCase();
+  if (s === "480p") return "480p";
+  if (s === "1080p") return "1080p";
+  if (s === "4k") return "4k";
+  return "720p";
 }
 
 /** 把 ToAPIs status 字符串映射到项目内 SeedanceProgress */
 function toapisStatusToProgress(s: string | undefined): SeedanceProgress {
-  const v = (s || '').toLowerCase()
-  if (v === 'completed') return 'succeeded'
-  if (v === 'failed') return 'failed'
-  if (v === 'cancelled') return 'cancelled'
-  if (v === 'in_progress') return 'running'
+  const v = (s || "").toLowerCase();
+  if (v === "completed") return "succeeded";
+  if (v === "failed") return "failed";
+  if (v === "cancelled") return "cancelled";
+  if (v === "in_progress") return "running";
   // queued / 未知 都按 queued 处理
-  return 'queued'
+  return "queued";
 }
 
 async function toapisSubmit(input: {
-  model: string
-  prompt: string
-  media: DashScopeMediaItem[]
-  ratio?: SeedanceRatio
-  resolution?: string
-  duration?: number
-  generateAudio?: boolean
-  watermark?: boolean
-  referenceVideoUrl?: string
-  referenceAudioUrl?: string
-  apiKey: string
-  baseUrl: string
+  model: string;
+  prompt: string;
+  media: DashScopeMediaItem[];
+  ratio?: SeedanceRatio;
+  resolution?: string;
+  duration?: number;
+  generateAudio?: boolean;
+  watermark?: boolean;
+  referenceVideoUrl?: string;
+  referenceAudioUrl?: string;
+  apiKey: string;
+  baseUrl: string;
 }): Promise<{ ok: true; taskId: string; model: string } | { ok: false; error: string }> {
-  const upstreamModel = toapisModelToUpstream(input.model)
+  const upstreamModel = toapisModelToUpstream(input.model);
   const body: Record<string, unknown> = {
     model: upstreamModel,
     prompt: input.prompt,
-  }
-  if (input.ratio) body.aspect_ratio = input.ratio
-  if (typeof input.duration === 'number') body.duration = input.duration
-  if (input.resolution) body.resolution = toToapisResolution(input.resolution)
-  if (typeof input.generateAudio === 'boolean') body.generate_audio = input.generateAudio
+  };
+  if (input.ratio) body.aspect_ratio = input.ratio;
+  if (typeof input.duration === "number") body.duration = input.duration;
+  if (input.resolution) body.resolution = toToapisResolution(input.resolution);
+  if (typeof input.generateAudio === "boolean") body.generate_audio = input.generateAudio;
 
   // 素材:image_with_roles
   // ⚠️ toapis 三种模式互斥,不能混用:
@@ -862,83 +975,110 @@ async function toapisSubmit(input: {
   //    2) 首尾帧模式: first_frame (1张) + last_frame (1张)
   //    3) 多模态参考模式: reference_image (≤9张)
   // 前端已按规则分好 mode,这里做安全守卫:有 reference_image 时只发 reference_image
-  const hasReferenceImage = input.media.some((m) => m.type === 'reference_image')
-  const imageWithRoles: Array<{ url: string; role: string }> = []
+  const hasReferenceImage = input.media.some((m) => m.type === "reference_image");
+  const imageWithRoles: Array<{ url: string; role: string }> = [];
   for (const m of input.media) {
-    if (hasReferenceImage && m.type !== 'reference_image') continue  // 参考模式下跳过 frame
-    imageWithRoles.push({ url: m.url, role: m.type })  // 'first_frame' / 'last_frame' / 'reference_image'
+    if (hasReferenceImage && m.type !== "reference_image") continue; // 参考模式下跳过 frame
+    imageWithRoles.push({ url: m.url, role: m.type }); // 'first_frame' / 'last_frame' / 'reference_image'
   }
-  if (imageWithRoles.length > 0) body.image_with_roles = imageWithRoles
-  if (input.referenceVideoUrl) body.video_with_roles = [{ url: input.referenceVideoUrl, role: 'reference_video' }]
-  if (input.referenceAudioUrl) body.audio_with_roles = [{ url: input.referenceAudioUrl, role: 'reference_audio' }]
+  if (imageWithRoles.length > 0) body.image_with_roles = imageWithRoles;
+  if (input.referenceVideoUrl)
+    body.video_with_roles = [{ url: input.referenceVideoUrl, role: "reference_video" }];
+  if (input.referenceAudioUrl)
+    body.audio_with_roles = [{ url: input.referenceAudioUrl, role: "reference_audio" }];
 
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 30_000)
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
   try {
     const res = await fetch(`${input.baseUrl}${TOAPIS_CREATE_PATH}`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
         Authorization: `Bearer ${input.apiKey}`,
       },
       body: JSON.stringify(body),
       signal: controller.signal,
-    })
-    clearTimeout(timeout)
-    const text = await res.text().catch(() => '')
+    });
+    clearTimeout(timeout);
+    const text = await res.text().catch(() => "");
     if (!res.ok) {
-      return { ok: false, error: `[toapis] submit ${res.status}: ${text.slice(0, 300)}` }
+      return { ok: false, error: `[toapis] submit ${res.status}: ${text.slice(0, 300)}` };
     }
-    let json: { id?: string; status?: string; error?: { code?: string; message?: string } } = {}
-    try { json = JSON.parse(text) } catch {}
-    const taskId = json.id
+    let json: { id?: string; status?: string; error?: { code?: string; message?: string } } = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    const taskId = json.id;
     if (!taskId) {
-      return { ok: false, error: `[toapis] no task id: ${json.error?.message || text.slice(0, 200)}` }
+      return {
+        ok: false,
+        error: `[toapis] no task id: ${json.error?.message || text.slice(0, 200)}`,
+      };
     }
-    return { ok: true, taskId, model: input.model }
+    return { ok: true, taskId, model: input.model };
   } catch (e) {
-    clearTimeout(timeout)
-    const msg = e instanceof Error ? (e.name === 'AbortError' ? 'submit timeout (30s)' : e.message) : 'fetch failed'
-    return { ok: false, error: `[toapis] network: ${msg}` }
+    clearTimeout(timeout);
+    const msg =
+      e instanceof Error
+        ? e.name === "AbortError"
+          ? "submit timeout (30s)"
+          : e.message
+        : "fetch failed";
+    return { ok: false, error: `[toapis] network: ${msg}` };
   }
 }
 
 async function toapisPoll(input: {
-  taskId: string
-  apiKey: string
-  baseUrl: string
+  taskId: string;
+  apiKey: string;
+  baseUrl: string;
 }): Promise<
   | { ok: true; status: SeedanceProgress; videoUrl: string | null; raw: any }
   | { ok: false; error: string; status?: SeedanceProgress; raw?: any }
 > {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 30_000)
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
   try {
-    const res = await fetch(`${input.baseUrl}${TOAPIS_CREATE_PATH}/${encodeURIComponent(input.taskId)}`, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${input.apiKey}`,
+    const res = await fetch(
+      `${input.baseUrl}${TOAPIS_CREATE_PATH}/${encodeURIComponent(input.taskId)}`,
+      {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${input.apiKey}`,
+        },
+        signal: controller.signal,
       },
-      signal: controller.signal,
-    })
-    clearTimeout(timeout)
-    const text = await res.text().catch(() => '')
-    if (!res.ok) return { ok: false, error: `[toapis] poll ${res.status}: ${text.slice(0, 300)}` }
+    );
+    clearTimeout(timeout);
+    const text = await res.text().catch(() => "");
+    if (!res.ok) return { ok: false, error: `[toapis] poll ${res.status}: ${text.slice(0, 300)}` };
     let json: {
-      id?: string
-      status?: string
-      progress?: number
-      result?: { type?: string; data?: Array<{ url?: string; format?: string }> }
-      error?: { code?: string; message?: string }
-    } = {}
-    try { json = JSON.parse(text) } catch {}
-    const status = toapisStatusToProgress(json.status)
-    const videoUrl = json.result?.data?.[0]?.url || null
-    return { ok: true, status, videoUrl, raw: { error: { message: json.error?.message || '' }, ...json } }
+      id?: string;
+      status?: string;
+      progress?: number;
+      result?: { type?: string; data?: Array<{ url?: string; format?: string }> };
+      error?: { code?: string; message?: string };
+    } = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    const status = toapisStatusToProgress(json.status);
+    const videoUrl = json.result?.data?.[0]?.url || null;
+    return {
+      ok: true,
+      status,
+      videoUrl,
+      raw: { error: { message: json.error?.message || "" }, ...json },
+    };
   } catch (e) {
-    clearTimeout(timeout)
-    const msg = e instanceof Error ? (e.name === 'AbortError' ? 'poll timeout (30s)' : e.message) : 'fetch failed'
-    return { ok: false, error: `[toapis] poll network: ${msg}` }
+    clearTimeout(timeout);
+    const msg =
+      e instanceof Error
+        ? e.name === "AbortError"
+          ? "poll timeout (30s)"
+          : e.message
+        : "fetch failed";
+    return { ok: false, error: `[toapis] poll network: ${msg}` };
   }
 }
 
@@ -957,131 +1097,154 @@ async function toapisPoll(input: {
 function getK99Config() {
   return {
     apiKey: process.env.K99_API_KEY,
-    baseUrl: (process.env.K99_BASE_URL || K99_DEFAULT_BASE_URL).replace(/\/+$/, ''),
-  }
+    baseUrl: (process.env.K99_BASE_URL || K99_DEFAULT_BASE_URL).replace(/\/+$/, ""),
+  };
 }
 
 /** 项目 model id → k99 上游 model 名 */
 function k99ModelToUpstream(modelId: string): string {
   const map: Record<string, string> = {
-    'k99-fast-480p': 'video-fast-480p',
-    'k99-pro-1080p': 'video-pro-1080p',
-  }
-  return map[modelId] || modelId.replace(/^k99-/i, 'video-')
+    "k99-fast-480p": "video-fast-480p",
+    "k99-pro-1080p": "video-pro-1080p",
+  };
+  return map[modelId] || modelId.replace(/^k99-/i, "video-");
 }
 
 /** k99 status 字符串 → 项目内 SeedanceProgress */
 function k99StatusToProgress(s: string | undefined): SeedanceProgress {
-  const v = (s || '').toLowerCase()
-  if (v === 'completed' || v === 'succeeded') return 'succeeded'
-  if (v === 'failed') return 'failed'
-  if (v === 'cancelled' || v === 'canceled') return 'cancelled'
-  if (v === 'processing' || v === 'in_progress') return 'running'
-  return 'queued'  // 未知 / queued
+  const v = (s || "").toLowerCase();
+  if (v === "completed" || v === "succeeded") return "succeeded";
+  if (v === "failed") return "failed";
+  if (v === "cancelled" || v === "canceled") return "cancelled";
+  if (v === "processing" || v === "in_progress") return "running";
+  return "queued"; // 未知 / queued
 }
 
 async function k99Submit(input: {
-  model: string
-  prompt: string
-  media: DashScopeMediaItem[]
-  ratio?: SeedanceRatio
-  duration?: number
-  apiKey: string
-  baseUrl: string
+  model: string;
+  prompt: string;
+  media: DashScopeMediaItem[];
+  ratio?: SeedanceRatio;
+  duration?: number;
+  apiKey: string;
+  baseUrl: string;
 }): Promise<{ ok: true; taskId: string; model: string } | { ok: false; error: string }> {
-  const upstreamModel = k99ModelToUpstream(input.model)
+  const upstreamModel = k99ModelToUpstream(input.model);
   const body: Record<string, unknown> = {
     model: upstreamModel,
     prompt: input.prompt,
-  }
+  };
   // 首帧图(Sora 风格用 image 字段)
-  const firstFrame = input.media.find((m) => m.type === 'first_frame')?.url
-  if (firstFrame) body.image = firstFrame
-  if (input.ratio) body.size = input.ratio
-  if (typeof input.duration === 'number') body.duration = input.duration
+  const firstFrame = input.media.find((m) => m.type === "first_frame")?.url;
+  if (firstFrame) body.image = firstFrame;
+  if (input.ratio) body.size = input.ratio;
+  if (typeof input.duration === "number") body.duration = input.duration;
 
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 30_000)
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
   try {
     const res = await fetch(`${input.baseUrl}${K99_CREATE_PATH}`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
         Authorization: `Bearer ${input.apiKey}`,
       },
       body: JSON.stringify(body),
       signal: controller.signal,
-    })
-    clearTimeout(timeout)
-    const text = await res.text().catch(() => '')
-    if (!res.ok) return { ok: false, error: `[k99] submit ${res.status}: ${text.slice(0, 300)}` }
-    let json: { id?: string; task_id?: string; error?: { message?: string } } = {}
-    try { json = JSON.parse(text) } catch {}
-    const taskId = json.id || json.task_id
-    if (!taskId) return { ok: false, error: `[k99] no task id: ${json.error?.message || text.slice(0, 200)}` }
-    return { ok: true, taskId, model: input.model }
+    });
+    clearTimeout(timeout);
+    const text = await res.text().catch(() => "");
+    if (!res.ok) return { ok: false, error: `[k99] submit ${res.status}: ${text.slice(0, 300)}` };
+    let json: { id?: string; task_id?: string; error?: { message?: string } } = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    const taskId = json.id || json.task_id;
+    if (!taskId)
+      return { ok: false, error: `[k99] no task id: ${json.error?.message || text.slice(0, 200)}` };
+    return { ok: true, taskId, model: input.model };
   } catch (e) {
-    clearTimeout(timeout)
-    const msg = e instanceof Error ? (e.name === 'AbortError' ? 'submit timeout (30s)' : e.message) : 'fetch failed'
-    return { ok: false, error: `[k99] network: ${msg}` }
+    clearTimeout(timeout);
+    const msg =
+      e instanceof Error
+        ? e.name === "AbortError"
+          ? "submit timeout (30s)"
+          : e.message
+        : "fetch failed";
+    return { ok: false, error: `[k99] network: ${msg}` };
   }
 }
 
 async function k99Poll(input: {
-  taskId: string
-  apiKey: string
-  baseUrl: string
+  taskId: string;
+  apiKey: string;
+  baseUrl: string;
 }): Promise<
   | { ok: true; status: SeedanceProgress; videoUrl: string | null; raw: any }
   | { ok: false; error: string; status?: SeedanceProgress; raw?: any }
 > {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 30_000)
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
   try {
-    const res = await fetch(`${input.baseUrl}${K99_STATUS_PATH}/${encodeURIComponent(input.taskId)}`, {
-      method: 'GET',
-      headers: { Authorization: `Bearer ${input.apiKey}` },
-      signal: controller.signal,
-    })
-    clearTimeout(timeout)
-    const text = await res.text().catch(() => '')
-    if (!res.ok) return { ok: false, error: `[k99] poll ${res.status}: ${text.slice(0, 300)}` }
+    const res = await fetch(
+      `${input.baseUrl}${K99_STATUS_PATH}/${encodeURIComponent(input.taskId)}`,
+      {
+        method: "GET",
+        headers: { Authorization: `Bearer ${input.apiKey}` },
+        signal: controller.signal,
+      },
+    );
+    clearTimeout(timeout);
+    const text = await res.text().catch(() => "");
+    if (!res.ok) return { ok: false, error: `[k99] poll ${res.status}: ${text.slice(0, 300)}` };
     let json: {
-      id?: string
-      status?: string
-      url?: string
-      video_url?: string
-      video?: { url?: string }
-      output?: { url?: string }
-      error?: { message?: string }
-    } = {}
-    try { json = JSON.parse(text) } catch {}
-    const status = k99StatusToProgress(json.status)
+      id?: string;
+      status?: string;
+      url?: string;
+      video_url?: string;
+      video?: { url?: string };
+      output?: { url?: string };
+      error?: { message?: string };
+    } = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    const status = k99StatusToProgress(json.status);
     // 视频 URL 多字段 fallback(Sora 风格主字段是 url)
-    const videoUrl = json.url || json.video_url || json.video?.url || json.output?.url || null
-    return { ok: true, status, videoUrl, raw: { error: { message: json.error?.message || '' }, ...json } }
+    const videoUrl = json.url || json.video_url || json.video?.url || json.output?.url || null;
+    return {
+      ok: true,
+      status,
+      videoUrl,
+      raw: { error: { message: json.error?.message || "" }, ...json },
+    };
   } catch (e) {
-    clearTimeout(timeout)
-    const msg = e instanceof Error ? (e.name === 'AbortError' ? 'poll timeout (30s)' : e.message) : 'fetch failed'
-    return { ok: false, error: `[k99] poll network: ${msg}` }
+    clearTimeout(timeout);
+    const msg =
+      e instanceof Error
+        ? e.name === "AbortError"
+          ? "poll timeout (30s)"
+          : e.message
+        : "fetch failed";
+    return { ok: false, error: `[k99] poll network: ${msg}` };
   }
 }
 
 type SubmitInput = {
-  model: string
-  prompt: string
-  media: DashScopeMediaItem[]  // 同时给 ARK 和 DashScope 用
-  ratio?: SeedanceRatio
-  resolution?: string
-  duration?: number
-  generateAudio?: boolean
-  watermark?: boolean
+  model: string;
+  prompt: string;
+  media: DashScopeMediaItem[]; // 同时给 ARK 和 DashScope 用
+  ratio?: SeedanceRatio;
+  resolution?: string;
+  duration?: number;
+  generateAudio?: boolean;
+  watermark?: boolean;
   // 新增:ARK Seedance 完整参考素材(2026/06)
-  referenceVideoUrl?: string
-  referenceAudioUrl?: string
-}
+  referenceVideoUrl?: string;
+  referenceAudioUrl?: string;
+};
 
-type VideoBackend = 'ark' | 'dashscope' | 'jimeng' | 'kuaizi' | 'toapis' | 'k99' | 'vapeur'
+type VideoBackend = "ark" | "dashscope" | "jimeng" | "kuaizi" | "toapis" | "k99" | "vapeur";
 
 // ====================================================================
 // vapeur.ai 端实现 —— 透传火山方舟 ARK Seedance 原生格式
@@ -1097,116 +1260,147 @@ type VideoBackend = 'ark' | 'dashscope' | 'jimeng' | 'kuaizi' | 'toapis' | 'k99'
 function getVapeurConfig() {
   return {
     apiKey: process.env.VAPEUR_API_KEY,
-    baseUrl: (process.env.VAPEUR_BASE_URL || VAPEUR_DEFAULT_BASE_URL).replace(/\/+$/, ''),
-  }
+    baseUrl: (process.env.VAPEUR_BASE_URL || VAPEUR_DEFAULT_BASE_URL).replace(/\/+$/, ""),
+  };
 }
 
 /** 从 model id 剥离 `vapeur-` 前缀,得到上游 model 名 */
 function vapeurModelToUpstream(modelId: string): string {
-  return modelId.replace(/^vapeur-/i, '')
+  return modelId.replace(/^vapeur-/i, "");
 }
 
 async function vapeurSubmit(input: {
-  model: string
-  prompt: string
-  content: ContentItem[]
-  imageUrl?: string
-  ratio?: SeedanceRatio
-  resolution?: string
-  duration?: number
-  watermark?: boolean
-  apiKey: string
-  baseUrl: string
+  model: string;
+  prompt: string;
+  content: ContentItem[];
+  imageUrl?: string;
+  ratio?: SeedanceRatio;
+  resolution?: string;
+  duration?: number;
+  watermark?: boolean;
+  apiKey: string;
+  baseUrl: string;
 }): Promise<{ ok: true; taskId: string; model: string } | { ok: false; error: string }> {
-  const upstreamModel = vapeurModelToUpstream(input.model)
+  const upstreamModel = vapeurModelToUpstream(input.model);
   const body: Record<string, unknown> = {
     model: upstreamModel,
     prompt: input.prompt,
     content: input.content,
-  }
-  if (input.imageUrl) body.image_url = input.imageUrl
-  if (input.ratio) body.ratio = input.ratio
-  if (typeof input.duration === 'number') body.duration = input.duration
-  if (input.resolution) body.resolution = input.resolution
-  if (typeof input.watermark === 'boolean') body.watermark = input.watermark
+  };
+  if (input.imageUrl) body.image_url = input.imageUrl;
+  if (input.ratio) body.ratio = input.ratio;
+  if (typeof input.duration === "number") body.duration = input.duration;
+  if (input.resolution) body.resolution = input.resolution;
+  if (typeof input.watermark === "boolean") body.watermark = input.watermark;
 
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 30_000)
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
   try {
     const res = await fetch(`${input.baseUrl}/doubao/v1/videos/generations/submit`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
         Authorization: `Bearer ${input.apiKey}`,
       },
       body: JSON.stringify(body),
       signal: controller.signal,
-    })
-    clearTimeout(timeout)
-    const text = await res.text().catch(() => '')
-    if (!res.ok) return { ok: false, error: `[vapeur] submit ${res.status}: ${text.slice(0, 300)}` }
-    let json: { id?: string; error?: { code?: string; message?: string } } = {}
-    try { json = JSON.parse(text) } catch {}
-    if (!json.id) return { ok: false, error: `[vapeur] no task_id: ${json.error?.message || text.slice(0, 200)}` }
-    return { ok: true, taskId: json.id, model: input.model }
+    });
+    clearTimeout(timeout);
+    const text = await res.text().catch(() => "");
+    if (!res.ok)
+      return { ok: false, error: `[vapeur] submit ${res.status}: ${text.slice(0, 300)}` };
+    let json: { id?: string; error?: { code?: string; message?: string } } = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    if (!json.id)
+      return {
+        ok: false,
+        error: `[vapeur] no task_id: ${json.error?.message || text.slice(0, 200)}`,
+      };
+    return { ok: true, taskId: json.id, model: input.model };
   } catch (e) {
-    clearTimeout(timeout)
-    const msg = e instanceof Error ? (e.name === 'AbortError' ? 'submit timeout (30s)' : e.message) : 'fetch failed'
-    return { ok: false, error: `[vapeur] network: ${msg}` }
+    clearTimeout(timeout);
+    const msg =
+      e instanceof Error
+        ? e.name === "AbortError"
+          ? "submit timeout (30s)"
+          : e.message
+        : "fetch failed";
+    return { ok: false, error: `[vapeur] network: ${msg}` };
   }
 }
 
 async function vapeurPoll(input: {
-  taskId: string
-  apiKey: string
-  baseUrl: string
+  taskId: string;
+  apiKey: string;
+  baseUrl: string;
 }): Promise<
   | { ok: true; status: SeedanceProgress; videoUrl: string | null; raw: any }
   | { ok: false; error: string; status?: SeedanceProgress; raw?: any }
 > {
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 30_000)
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
   try {
-    const res = await fetch(`${input.baseUrl}/doubao/v1/videos/generations/${encodeURIComponent(input.taskId)}`, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${input.apiKey}`,
+    const res = await fetch(
+      `${input.baseUrl}/doubao/v1/videos/generations/${encodeURIComponent(input.taskId)}`,
+      {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${input.apiKey}`,
+        },
+        signal: controller.signal,
       },
-      signal: controller.signal,
-    })
-    clearTimeout(timeout)
-    const text = await res.text().catch(() => '')
-    if (!res.ok) return { ok: false, error: `[vapeur] poll ${res.status}: ${text.slice(0, 300)}` }
-    let json: { id?: string; status?: string; content?: { video_url?: string }; error?: { code?: string; message?: string } } = {}
-    try { json = JSON.parse(text) } catch {}
-    const status = (json.status?.toLowerCase() || '') as SeedanceProgress
-    const videoUrl = json.content?.video_url || null
-    return { ok: true, status, videoUrl, raw: json }
+    );
+    clearTimeout(timeout);
+    const text = await res.text().catch(() => "");
+    if (!res.ok) return { ok: false, error: `[vapeur] poll ${res.status}: ${text.slice(0, 300)}` };
+    let json: {
+      id?: string;
+      status?: string;
+      content?: { video_url?: string };
+      error?: { code?: string; message?: string };
+    } = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    const status = (json.status?.toLowerCase() || "") as SeedanceProgress;
+    const videoUrl = json.content?.video_url || null;
+    return { ok: true, status, videoUrl, raw: json };
   } catch (e) {
-    clearTimeout(timeout)
-    const msg = e instanceof Error ? (e.name === 'AbortError' ? 'poll timeout (30s)' : e.message) : 'fetch failed'
-    return { ok: false, error: `[vapeur] poll network: ${msg}` }
+    clearTimeout(timeout);
+    const msg =
+      e instanceof Error
+        ? e.name === "AbortError"
+          ? "poll timeout (30s)"
+          : e.message
+        : "fetch failed";
+    return { ok: false, error: `[vapeur] poll network: ${msg}` };
   }
 }
-type SubmitResult = { ok: true; taskId: string; model: string; backend: VideoBackend } | { ok: false; error: string }
+type SubmitResult =
+  | { ok: true; taskId: string; model: string; backend: VideoBackend }
+  | { ok: false; error: string };
 
 async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
-  const backend = getVideoBackend(input.model)
-  if (backend === 'ark') {
-    const { apiKey, baseUrl } = getArkConfig()
-    if (!apiKey) return { ok: false, error: 'ARK_API_KEY not configured' }
+  const backend = getVideoBackend(input.model);
+  if (backend === "ark") {
+    const { apiKey, baseUrl } = getArkConfig();
+    if (!apiKey) return { ok: false, error: "ARK_API_KEY not configured" };
     // 构造 ARK content 数组 —— 按官方 cURL 示例:text + 多 reference_image + 可选 reference_video / reference_audio
-    const firstFrameImageUrl = input.media.find((m) => m.type === 'first_frame')?.url
-    const lastFrameImageUrl = input.media.find((m) => m.type === 'last_frame')?.url
-    const referenceImageUrls = input.media.filter((m) => m.type === 'reference_image').map((m) => m.url)
+    const firstFrameImageUrl = input.media.find((m) => m.type === "first_frame")?.url;
+    const lastFrameImageUrl = input.media.find((m) => m.type === "last_frame")?.url;
+    const referenceImageUrls = input.media
+      .filter((m) => m.type === "reference_image")
+      .map((m) => m.url);
     const content = buildArkContent(input.prompt, {
       firstFrameImageUrl,
       lastFrameImageUrl,
       referenceImageUrls,
       referenceVideoUrl: input.referenceVideoUrl,
       referenceAudioUrl: input.referenceAudioUrl,
-    })
+    });
     const r = await arkSubmit({
       model: input.model,
       content,
@@ -1216,38 +1410,42 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
       watermark: input.watermark,
       apiKey,
       baseUrl,
-    })
-    return r.ok ? { ok: true, taskId: r.taskId, model: r.model, backend: 'ark' } : { ok: false, error: r.error }
+    });
+    return r.ok
+      ? { ok: true, taskId: r.taskId, model: r.model, backend: "ark" }
+      : { ok: false, error: r.error };
   }
-  if (backend === 'jimeng') {
-    const { ak, sk } = getJimengConfig()
+  if (backend === "jimeng") {
+    const { ak, sk } = getJimengConfig();
     if (!ak || !sk) {
       return {
         ok: false,
-        error: '[jimeng] 缺少 JIMENG_ACCESS_KEY / JIMENG_SECRET_KEY,请在 Project Settings → Secrets 添加后再试。',
-      }
+        error:
+          "[jimeng] 缺少 JIMENG_ACCESS_KEY / JIMENG_SECRET_KEY,请在 Project Settings → Secrets 添加后再试。",
+      };
     }
     const firstFrameImageUrl =
-      input.media.find((m) => m.type === 'first_frame')?.url ||
-      input.media.find((m) => m.type === 'reference_image')?.url
+      input.media.find((m) => m.type === "first_frame")?.url ||
+      input.media.find((m) => m.type === "reference_image")?.url;
     const r = await jimengSubmit({
-      ak, sk,
+      ak,
+      sk,
       prompt: input.prompt,
       firstFrameImageUrl,
       aspectRatio: input.ratio,
       duration: input.duration,
-    })
+    });
     return r.ok
-      ? { ok: true, taskId: r.taskId, model: input.model, backend: 'jimeng' }
-      : { ok: false, error: r.error }
+      ? { ok: true, taskId: r.taskId, model: input.model, backend: "jimeng" }
+      : { ok: false, error: r.error };
   }
-  if (backend === 'kuaizi') {
-    const { apiKey, baseUrl } = getKuaiziConfig()
+  if (backend === "kuaizi") {
+    const { apiKey, baseUrl } = getKuaiziConfig();
     if (!apiKey) {
       return {
         ok: false,
-        error: '[kuaizi] 缺少 KUAIZI_API_KEY,请在 Cloudflare Secrets 或 .env.local 中配置后再试。',
-      }
+        error: "[kuaizi] 缺少 KUAIZI_API_KEY,请在 Cloudflare Secrets 或 .env.local 中配置后再试。",
+      };
     }
     const r = await kuaiziSubmit({
       model: input.model,
@@ -1262,18 +1460,18 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
       referenceAudioUrl: input.referenceAudioUrl,
       apiKey,
       baseUrl,
-    })
+    });
     return r.ok
-      ? { ok: true, taskId: r.taskId, model: r.model, backend: 'kuaizi' }
-      : { ok: false, error: r.error }
+      ? { ok: true, taskId: r.taskId, model: r.model, backend: "kuaizi" }
+      : { ok: false, error: r.error };
   }
-  if (backend === 'toapis') {
-    const { apiKey, baseUrl } = getToapisConfig()
+  if (backend === "toapis") {
+    const { apiKey, baseUrl } = getToapisConfig();
     if (!apiKey) {
       return {
         ok: false,
-        error: '[toapis] 缺少 TOAPIS_API_KEY,请在 Cloudflare Secrets 或 .env.local 中配置后再试。',
-      }
+        error: "[toapis] 缺少 TOAPIS_API_KEY,请在 Cloudflare Secrets 或 .env.local 中配置后再试。",
+      };
     }
     const r = await toapisSubmit({
       model: input.model,
@@ -1288,18 +1486,18 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
       referenceAudioUrl: input.referenceAudioUrl,
       apiKey,
       baseUrl,
-    })
+    });
     return r.ok
-      ? { ok: true, taskId: r.taskId, model: r.model, backend: 'toapis' }
-      : { ok: false, error: r.error }
+      ? { ok: true, taskId: r.taskId, model: r.model, backend: "toapis" }
+      : { ok: false, error: r.error };
   }
-  if (backend === 'k99') {
-    const { apiKey, baseUrl } = getK99Config()
+  if (backend === "k99") {
+    const { apiKey, baseUrl } = getK99Config();
     if (!apiKey) {
       return {
         ok: false,
-        error: '[k99] 缺少 K99_API_KEY,请在 Cloudflare Secrets 或 .env.local 中配置后再试。',
-      }
+        error: "[k99] 缺少 K99_API_KEY,请在 Cloudflare Secrets 或 .env.local 中配置后再试。",
+      };
     }
     const r = await k99Submit({
       model: input.model,
@@ -1309,30 +1507,32 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
       duration: input.duration,
       apiKey,
       baseUrl,
-    })
+    });
     return r.ok
-      ? { ok: true, taskId: r.taskId, model: input.model, backend: 'k99' }
-      : { ok: false, error: r.error }
+      ? { ok: true, taskId: r.taskId, model: input.model, backend: "k99" }
+      : { ok: false, error: r.error };
   }
-  if (backend === 'vapeur') {
-    const { apiKey, baseUrl } = getVapeurConfig()
+  if (backend === "vapeur") {
+    const { apiKey, baseUrl } = getVapeurConfig();
     if (!apiKey) {
       return {
         ok: false,
-        error: '[vapeur] 缺少 VAPEUR_API_KEY,请在 Cloudflare Secrets 或 .env.local 中配置后再试。',
-      }
+        error: "[vapeur] 缺少 VAPEUR_API_KEY,请在 Cloudflare Secrets 或 .env.local 中配置后再试。",
+      };
     }
     // vapeur 豆包视频接口是 ARK 原生格式透传,用独立的 vapeurSubmit
-    const firstFrameUrl = input.media.find((m) => m.type === 'first_frame')?.url
-    const lastFrameUrl = input.media.find((m) => m.type === 'last_frame')?.url
-    const referenceImageUrls = input.media.filter((m) => m.type === 'reference_image').map((m) => m.url)
+    const firstFrameUrl = input.media.find((m) => m.type === "first_frame")?.url;
+    const lastFrameUrl = input.media.find((m) => m.type === "last_frame")?.url;
+    const referenceImageUrls = input.media
+      .filter((m) => m.type === "reference_image")
+      .map((m) => m.url);
     const content = buildArkContent(input.prompt, {
       firstFrameImageUrl: firstFrameUrl,
       lastFrameImageUrl: lastFrameUrl,
       referenceImageUrls,
       referenceVideoUrl: input.referenceVideoUrl,
       referenceAudioUrl: input.referenceAudioUrl,
-    })
+    });
     const r = await vapeurSubmit({
       model: input.model,
       prompt: input.prompt,
@@ -1344,14 +1544,14 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
       watermark: input.watermark,
       apiKey,
       baseUrl,
-    })
+    });
     return r.ok
-      ? { ok: true, taskId: r.taskId, model: input.model, backend: 'vapeur' }
-      : { ok: false, error: r.error }
+      ? { ok: true, taskId: r.taskId, model: input.model, backend: "vapeur" }
+      : { ok: false, error: r.error };
   }
   // DashScope
-  const { apiKey } = getDashScopeConfig()
-  if (!apiKey) return { ok: false, error: 'Qwen / DASHSCOPE_API_KEY not configured' }
+  const { apiKey } = getDashScopeConfig();
+  if (!apiKey) return { ok: false, error: "Qwen / DASHSCOPE_API_KEY not configured" };
   const r = await dashscopeSubmit({
     model: input.model,
     prompt: input.prompt,
@@ -1360,50 +1560,53 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
     resolution: input.resolution,
     duration: input.duration,
     apiKey,
-  })
-  return r.ok ? { ok: true, taskId: r.taskId, model: r.model, backend: 'dashscope' } : { ok: false, error: r.error }
+  });
+  return r.ok
+    ? { ok: true, taskId: r.taskId, model: r.model, backend: "dashscope" }
+    : { ok: false, error: r.error };
 }
 
-type PollInput = { taskId: string; backend: VideoBackend }
+type PollInput = { taskId: string; backend: VideoBackend };
 
 type PollResult =
   | { ok: true; status: SeedanceProgress; videoUrl: string | null; raw: any }
-  | { ok: false; error: string; status?: SeedanceProgress; raw?: any }
+  | { ok: false; error: string; status?: SeedanceProgress; raw?: any };
 
 async function pollVideoTask(input: PollInput): Promise<PollResult> {
-  if (input.backend === 'ark') {
-    const { apiKey, baseUrl } = getArkConfig()
-    if (!apiKey) return { ok: false, error: 'ARK_API_KEY not configured' }
-    return arkPoll({ taskId: input.taskId, apiKey, baseUrl })
+  if (input.backend === "ark") {
+    const { apiKey, baseUrl } = getArkConfig();
+    if (!apiKey) return { ok: false, error: "ARK_API_KEY not configured" };
+    return arkPoll({ taskId: input.taskId, apiKey, baseUrl });
   }
-  if (input.backend === 'jimeng') {
-    const { ak, sk } = getJimengConfig()
-    if (!ak || !sk) return { ok: false, error: '[jimeng] 缺少 JIMENG_ACCESS_KEY / JIMENG_SECRET_KEY' }
-    return jimengPoll({ ak, sk, taskId: input.taskId })
+  if (input.backend === "jimeng") {
+    const { ak, sk } = getJimengConfig();
+    if (!ak || !sk)
+      return { ok: false, error: "[jimeng] 缺少 JIMENG_ACCESS_KEY / JIMENG_SECRET_KEY" };
+    return jimengPoll({ ak, sk, taskId: input.taskId });
   }
-  if (input.backend === 'kuaizi') {
-    const { apiKey, baseUrl } = getKuaiziConfig()
-    if (!apiKey) return { ok: false, error: '[kuaizi] 缺少 KUAIZI_API_KEY' }
-    return kuaiziPoll({ taskId: input.taskId, apiKey, baseUrl })
+  if (input.backend === "kuaizi") {
+    const { apiKey, baseUrl } = getKuaiziConfig();
+    if (!apiKey) return { ok: false, error: "[kuaizi] 缺少 KUAIZI_API_KEY" };
+    return kuaiziPoll({ taskId: input.taskId, apiKey, baseUrl });
   }
-  if (input.backend === 'toapis') {
-    const { apiKey, baseUrl } = getToapisConfig()
-    if (!apiKey) return { ok: false, error: '[toapis] 缺少 TOAPIS_API_KEY' }
-    return toapisPoll({ taskId: input.taskId, apiKey, baseUrl })
+  if (input.backend === "toapis") {
+    const { apiKey, baseUrl } = getToapisConfig();
+    if (!apiKey) return { ok: false, error: "[toapis] 缺少 TOAPIS_API_KEY" };
+    return toapisPoll({ taskId: input.taskId, apiKey, baseUrl });
   }
-  if (input.backend === 'k99') {
-    const { apiKey, baseUrl } = getK99Config()
-    if (!apiKey) return { ok: false, error: '[k99] 缺少 K99_API_KEY' }
-    return k99Poll({ taskId: input.taskId, apiKey, baseUrl })
+  if (input.backend === "k99") {
+    const { apiKey, baseUrl } = getK99Config();
+    if (!apiKey) return { ok: false, error: "[k99] 缺少 K99_API_KEY" };
+    return k99Poll({ taskId: input.taskId, apiKey, baseUrl });
   }
-  if (input.backend === 'vapeur') {
-    const { apiKey, baseUrl } = getVapeurConfig()
-    if (!apiKey) return { ok: false, error: '[vapeur] 缺少 VAPEUR_API_KEY' }
-    return vapeurPoll({ taskId: input.taskId, apiKey, baseUrl })
+  if (input.backend === "vapeur") {
+    const { apiKey, baseUrl } = getVapeurConfig();
+    if (!apiKey) return { ok: false, error: "[vapeur] 缺少 VAPEUR_API_KEY" };
+    return vapeurPoll({ taskId: input.taskId, apiKey, baseUrl });
   }
-  const { apiKey } = getDashScopeConfig()
-  if (!apiKey) return { ok: false, error: 'Qwen / DASHSCOPE_API_KEY not configured' }
-  return dashscopePoll({ taskId: input.taskId, apiKey })
+  const { apiKey } = getDashScopeConfig();
+  if (!apiKey) return { ok: false, error: "Qwen / DASHSCOPE_API_KEY not configured" };
+  return dashscopePoll({ taskId: input.taskId, apiKey });
 }
 
 // ====================================================================
@@ -1419,26 +1622,26 @@ const SubmitServerInput = z.object({
   duration: z.number().int().min(1).max(60).optional(),
   generateAudio: z.boolean().optional(),
   watermark: z.boolean().optional(),
-})
+});
 
-export const submitVideoTaskFn = createServerFn({ method: 'POST' })
+export const submitVideoTaskFn = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => SubmitServerInput.parse(d))
   .handler(async ({ data }) => {
     // 把 ARK 风格的 content 数组转成统一 media + ref 形式
-    const media: DashScopeMediaItem[] = []
-    let referenceVideoUrl: string | undefined
-    let referenceAudioUrl: string | undefined
-    for (const item of (data.content as any[])) {
-      if (item?.type === 'image_url' && item?.image_url?.url) {
-        media.push({ type: 'reference_image', url: item.image_url.url })
-      } else if (item?.type === 'video_url' && item?.video_url?.url) {
-        referenceVideoUrl = item.video_url.url
-      } else if (item?.type === 'audio_url' && item?.audio_url?.url) {
-        referenceAudioUrl = item.audio_url.url
+    const media: DashScopeMediaItem[] = [];
+    let referenceVideoUrl: string | undefined;
+    let referenceAudioUrl: string | undefined;
+    for (const item of data.content as any[]) {
+      if (item?.type === "image_url" && item?.image_url?.url) {
+        media.push({ type: "reference_image", url: item.image_url.url });
+      } else if (item?.type === "video_url" && item?.video_url?.url) {
+        referenceVideoUrl = item.video_url.url;
+      } else if (item?.type === "audio_url" && item?.audio_url?.url) {
+        referenceAudioUrl = item.audio_url.url;
       }
     }
-    const prompt = (data.content as any[]).find((i) => i?.type === 'text')?.text || ''
-    const model = data.model || ARK_DEFAULT_MODEL
+    const prompt = (data.content as any[]).find((i) => i?.type === "text")?.text || "";
+    const model = data.model || ARK_DEFAULT_MODEL;
 
     const r = await submitVideoTask({
       model,
@@ -1450,25 +1653,25 @@ export const submitVideoTaskFn = createServerFn({ method: 'POST' })
       watermark: data.watermark,
       referenceVideoUrl,
       referenceAudioUrl,
-    })
-    if (!r.ok) return { ok: false as const, error: r.error }
-    return { ok: true as const, taskId: r.taskId, model: r.model, backend: r.backend }
-  })
+    });
+    if (!r.ok) return { ok: false as const, error: r.error };
+    return { ok: true as const, taskId: r.taskId, model: r.model, backend: r.backend };
+  });
 
 // ---- 2) pollVideoTaskFn (server fn) ----
 
 const PollServerInput = z.object({
   taskId: z.string().min(1).max(200),
-  backend: z.enum(['ark', 'dashscope', 'jimeng', 'kuaizi', 'toapis', 'k99', 'vapeur']),
-})
+  backend: z.enum(["ark", "dashscope", "jimeng", "kuaizi", "toapis", "k99", "vapeur"]),
+});
 
-export const pollVideoTaskFn = createServerFn({ method: 'POST' })
+export const pollVideoTaskFn = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => PollServerInput.parse(d))
   .handler(async ({ data }) => {
-    const r = await pollVideoTask({ taskId: data.taskId, backend: data.backend })
-    if (!r.ok) return { ok: false as const, error: r.error, status: r.status }
-    return { ok: true as const, status: r.status, videoUrl: r.videoUrl }
-  })
+    const r = await pollVideoTask({ taskId: data.taskId, backend: data.backend });
+    if (!r.ok) return { ok: false as const, error: r.error, status: r.status };
+    return { ok: true as const, status: r.status, videoUrl: r.videoUrl };
+  });
 
 // ====================================================================
 // 3) generateVideo —— 高层 helper(根据 model id 自动派发到 ARK / DashScope)
@@ -1487,30 +1690,30 @@ const GenerateVideoInput = z.object({
   referenceVideoUrl: z.string().url().optional(),
   referenceAudioUrl: z.string().url().optional(),
   model: z.string().max(200).optional(),
-  ratio: z.enum(SUPPORTED_RATIOS).default('16:9'),
-  duration: z.number().int().min(1).max(60).default(5),  // ARK 示例最大 11s,这里留余量到 60
-  resolution: z.enum(['480P', '720P', '1080P']).default('720P'),
+  ratio: z.enum(SUPPORTED_RATIOS).default("16:9"),
+  duration: z.number().int().min(1).max(60).default(5), // ARK 示例最大 11s,这里留余量到 60
+  resolution: z.enum(["480P", "720P", "1080P"]).default("720P"),
   generateAudio: z.boolean().optional(),
   watermark: z.boolean().optional(),
   onProgress: z.function().optional(),
   deadlineMs: z.number().int().min(5_000).max(600_000).optional(),
   pollMs: z.number().int().min(1_000).max(30_000).optional(),
-})
+});
 
-export type GenerateVideoInputType = z.infer<typeof GenerateVideoInput>
+export type GenerateVideoInputType = z.infer<typeof GenerateVideoInput>;
 
-export const generateVideo = createServerFn({ method: 'POST' })
+export const generateVideo = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => GenerateVideoInput.parse(d))
   .handler(async ({ data }) => {
-    const backend = getVideoBackend(data.model)
-    const media: DashScopeMediaItem[] = []
-    if (data.imageUrl) media.push({ type: 'first_frame', url: data.imageUrl })
-    if (data.lastFrameImageUrl) media.push({ type: 'last_frame', url: data.lastFrameImageUrl })
+    const backend = getVideoBackend(data.model);
+    const media: DashScopeMediaItem[] = [];
+    if (data.imageUrl) media.push({ type: "first_frame", url: data.imageUrl });
+    if (data.lastFrameImageUrl) media.push({ type: "last_frame", url: data.lastFrameImageUrl });
     if (data.referenceImageUrls?.length) {
-      for (const url of data.referenceImageUrls) media.push({ type: 'reference_image', url })
+      for (const url of data.referenceImageUrls) media.push({ type: "reference_image", url });
     }
 
-    const model = data.model || (backend === 'ark' ? ARK_DEFAULT_MODEL : 'happyhorse-1.0-i2v')
+    const model = data.model || (backend === "ark" ? ARK_DEFAULT_MODEL : "happyhorse-1.0-i2v");
 
     // 1) 提交
     const submit = await submitVideoTask({
@@ -1524,46 +1727,51 @@ export const generateVideo = createServerFn({ method: 'POST' })
       watermark: data.watermark,
       referenceVideoUrl: data.referenceVideoUrl,
       referenceAudioUrl: data.referenceAudioUrl,
-    })
+    });
     if (!submit.ok) {
-      return { ok: false as const, error: submit.error, taskId: undefined, backend }
+      return { ok: false as const, error: submit.error, taskId: undefined, backend };
     }
 
-    data.onProgress?.('queued', { taskId: submit.taskId, backend })
+    data.onProgress?.("queued", { taskId: submit.taskId, backend });
 
     // 2) 轮询
-    const deadline = Date.now() + (data.deadlineMs ?? 300_000)  // 5 min default(视频生成比图慢)
-    const pollInterval = data.pollMs ?? 5_000
-    let lastStatus: SeedanceProgress = 'queued'
+    const deadline = Date.now() + (data.deadlineMs ?? 300_000); // 5 min default(视频生成比图慢)
+    const pollInterval = data.pollMs ?? 5_000;
+    let lastStatus: SeedanceProgress = "queued";
     while (Date.now() < deadline) {
-      await sleep(pollInterval)
-      const poll = await pollVideoTask({ taskId: submit.taskId, backend: submit.backend })
+      await sleep(pollInterval);
+      const poll = await pollVideoTask({ taskId: submit.taskId, backend: submit.backend });
       if (!poll.ok) {
         // 网络抖动,继续轮询
-        continue
+        continue;
       }
-      lastStatus = poll.status
-      if (poll.status === 'succeeded') {
-        data.onProgress?.('succeeded', { taskId: submit.taskId, videoUrl: poll.videoUrl, backend: submit.backend })
+      lastStatus = poll.status;
+      if (poll.status === "succeeded") {
+        data.onProgress?.("succeeded", {
+          taskId: submit.taskId,
+          videoUrl: poll.videoUrl,
+          backend: submit.backend,
+        });
         return {
           ok: true as const,
           taskId: submit.taskId,
-          videoUrl: poll.videoUrl || '',
+          videoUrl: poll.videoUrl || "",
           model: submit.model,
           backend: submit.backend,
-        }
+        };
       }
-      if (poll.status === 'failed' || poll.status === 'cancelled') {
-        const raw = (poll as any).raw
-        const errMsg = raw?.error?.message || raw?.output?.error_message || `${poll.status} (no error detail)`
+      if (poll.status === "failed" || poll.status === "cancelled") {
+        const raw = (poll as any).raw;
+        const errMsg =
+          raw?.error?.message || raw?.output?.error_message || `${poll.status} (no error detail)`;
         return {
           ok: false as const,
           error: `[${submit.backend}] ${poll.status}: ${errMsg}`,
           taskId: submit.taskId,
           backend: submit.backend,
-        }
+        };
       }
-      data.onProgress?.(poll.status, { taskId: submit.taskId, backend: submit.backend })
+      data.onProgress?.(poll.status, { taskId: submit.taskId, backend: submit.backend });
     }
     return {
       ok: false as const,
@@ -1571,12 +1779,12 @@ export const generateVideo = createServerFn({ method: 'POST' })
       taskId: submit.taskId,
       backend: submit.backend,
       lastStatus,
-    }
-  })
+    };
+  });
 
 // ====================================================================
 // Backwards-compat alias —— 2026 早期版本叫 generateSeedanceVideo
 // 老代码若还在 import 这个名字,会落到 ARK 后端(因为现在 model id 决定 backend)。
 // 新代码请直接用 generateVideo。
 // ====================================================================
-export const generateSeedanceVideo = generateVideo
+export const generateSeedanceVideo = generateVideo;

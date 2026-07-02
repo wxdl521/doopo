@@ -1,0 +1,134 @@
+======================================================================
+  故事板生成提示词 (generateStoryboardPitchDeck) — 完整示例
+  来源: src/lib/seedream.functions.ts → buildPitchDeckPrompt()
+======================================================================
+
+【示例场景】短剧《暗恋倒计时》第3集 — 天台告白场景
+----------------------------------------------------------------------
+
+=== PROMPT 正文 ===
+
+[MISSION] Create a professional FILM STORYBOARD in pure PENCIL LINE-ART / SKETCH style. ONE single 16:9 landscape image. The entire board must look like a hand-drawn storyboard by a professional film pre-production artist — pencil on paper, clean lines, no color, no cel-shading, no 3D render, no watercolor.
+
+[ASPECT RATIO] Strictly 16:9 LANDSCAPE.
+
+[LINE ART STYLE — strict, no exceptions]
+- Pure pencil sketch / line-art style throughout. NO color rendering, NO photo-realism, NO watercolor, NO cel-shading, NO 3D rendering, NO oil painting, NO anime style.
+- Lines must be clean, confident, with varying thickness (thicker contour lines, thinner detail lines).
+- Shadows rendered with hatching / cross-hatching (parallel lines), NO smudging, NO gradients, NO airbrush.
+- Characters drawn in realistic proportions (NOT chibi, NOT cartoon exaggerated).
+- Backgrounds use simple lines to convey spatial relationships — no excessive detail.
+- The overall feel: a professional storyboard artist's hand-drawn pencil board for film/TV pre-production.
+
+[OVERALL LAYOUT — all on ONE page, 16:9 landscape]
+Top area: title bar showing episode/group info and shot count (5 frames).
+Main area: a grid of storyboard frames arranged left-to-right, top-to-bottom. Each frame is a pencil-sketch thumbnail of the corresponding shot.
+Below each frame: a small caption strip with shot number, duration, and brief action note in clean handwritten-style text.
+Bottom-right or side area: a small top-down scene layout diagram in simple linework showing character positions, movement arrows, and camera positions.
+
+[STORYBOARD FRAMES — main content, most prominent]
+A grid of 5 frames (adjust to fit layout). Each frame:
+  • A pencil line-art thumbnail of the shot scene — characters, background, composition all in sketch style
+  • Shot number clearly labeled (镜头 1, 镜头 2, ...)
+  • Below the thumbnail: brief tags — duration, shot type, action — in small readable text
+  • Frames are separated by thin clean borders / gutters
+
+[CHARACTER CONSISTENCY — critical]
+- Same character across ALL frames must have identical face features, hairstyle, body proportion, and clothing details.
+- Adjacent frames must have visual continuity: action flow, line of sight, spatial logic.
+- No character drift between frames — they must look like the same person drawn from different angles.
+
+[TOP-DOWN DIAGRAM]
+A small overhead/schematic view of the scene in clean linework:
+  • Character positions with numbered dots
+  • Movement paths with dashed lines and arrows
+  • Camera positions with 📷 markers and shot type labels
+
+[REFERENCE IMAGES — 3 张视觉锚点,用于人物/场景身份锁定]
+  Image 1: 场景: 学校天台 · 黄昏
+  Image 2: 角色: 林夏 (女主角)
+  Image 3: 角色: 江野 (男主角)
+
+【身份锁定】同一角色在所有镜头中必须保持完全一致的面部特征、发型、体型、服装款式细节。参考图用于锁定"是谁"——脸型、五官比例、发型轮廓、身材比例、服装款式。
+【风格转化】参考图是彩色/渲染图,但本故事板要求纯铅笔线稿。请将参考图人物转化为铅笔素描表达:提取轮廓线、结构线、服装褶皱线,忽略参考图的色彩、光影、材质渲染。不要因为参考图是彩色就在素描里加灰阶阴影渲染。
+
+[STORY PLOT]
+林夏在天台上等了很久，江野终于出现。她深吸一口气，从口袋里掏出那封写了又改的情书。江野愣住，然后笑了——原来他也一直喜欢她。夕阳把两个人的影子拉得很长。
+
+[SCENE]
+  Location: 学校天台
+  Time: 黄昏（golden hour）
+  Description: 开阔的学校天台，远处是城市天际线，夕阳西下，金色光线洒满整个天台。天台边缘有铁丝网围栏，地面上有几张废弃的课桌。
+
+[CHARACTERS]
+  Character 1: 林夏 (女主角, age 17)
+    Face: 鹅蛋脸，大圆眼，眼角微微下垂给人温柔感，小巧的鼻子，薄唇，左眉尾有一颗小痣，黑色长直发齐刘海
+    Body: 身高165cm，偏瘦，肩膀略窄，站姿略微驼背显得有些不自信
+    Outfit: 白色校服短袖衬衫，深蓝色百褶裙，白色帆布鞋，左手腕戴一条红色编织手链
+
+  Character 2: 江野 (男主角, age 18)
+    Face: 棱角分明的脸型，剑眉，单眼皮但眼睛有神，高鼻梁，嘴角天生微微上扬，黑色短发略微凌乱
+    Body: 身高182cm，运动员体型，宽肩窄腰，站立时重心习惯放在右脚
+    Outfit: 白色校服短袖衬衫（袖子卷到肘部），深蓝色校服长裤，黑色运动鞋
+
+[SHOT BREAKDOWN]
+  Frame 1: [全景] 林夏独自站在天台中央，望着远处的夕阳，手不自觉地摸着口袋里的信封 | camera: 中远景 | 0-5s (5s)
+  Frame 2: [中景] 天台门被推开，江野走进来，逆光中他的轮廓被金色光线勾勒 | camera: 越肩·林夏视角 | 5-11s (6s)
+  Frame 3: [近景] 林夏从口袋掏出皱巴巴的信封，低头不敢看江野，手指微微发抖 | camera: 侧面近景 | 11-17s (6s)
+  Frame 4: [特写] 江野的表情变化：困惑→惊讶→温柔的笑容，伸手接过信封 | camera: 正面特写·江野 | 17-22s (5s)
+  Frame 5: [全景] 两人相对而立，夕阳把他们的影子拉得很长，远处城市灯火开始亮起 | camera: 大远景 | 22-30s (8s)
+
+[QUALITY RULES]
+RULE 1 — PENCIL LINE-ART ONLY: No color, no rendering beyond hatching/cross-hatching. Pure sketch style.
+RULE 2 — 16:9 LANDSCAPE: Strictly horizontal. No 9:16, no 1:1.
+RULE 3 — CHARACTER LOCK: Same character = same face/body/clothes across all frames. No identity drift.
+RULE 4 — STORY FAITHFULNESS: Frames strictly follow [STORY PLOT] and [SHOT BREAKDOWN]. No invented plots or characters.
+RULE 5 — FRAME COUNT: 5 frames, one per shot.
+RULE 6 — CLEAN SKETCH LINES: Confident strokes, varying line weight, hatching for shadows. No messy scribbles.
+RULE 7 — READABLE TEXT: Captions must be legible. Short tags only (shot number, duration, action).
+
+Begin. Output a 16:9 pencil line-art storyboard with 5 frames. Pure sketch style, no color.
+
+
+=== NEGATIVE PROMPT（自动拼接在 prompt 末尾）===
+
+garbled text, fake characters, pseudo Chinese, jumbled glyphs, broken strokes, illegible labels, blurry text, smeared text, distorted text, unreadable captions, mismatched font widths, comic font, decorative font, handwritten scribble, color, colored rendering, full color, cel-shading, watercolor, oil painting, airbrush, gradient, photorealistic, 3D render, CGI, anime style, digital painting, thick paint, impasto, gouache, pastel, marker rendering, digital art, cluttered layout, overlapping sections, missing dividers, off-grid placement, no white space, busy decorative borders, ornate frames, gold filigree, wrong aspect ratio, vertical 9:16, square 1:1, 4:3, portrait orientation, extra characters not in [CHARACTERS], scenery not in [SCENE], invented plot, frames unrelated to [SHOT BREAKDOWN], low resolution, blurry, pixelated, JPEG artifacts, low quality, soft focus, missing top-down diagram, missing camera position numbers, missing shot type labels in diagram, frames without duration label, frames without shot number, frames without motion tag, frames without camera tag, art style drift from reference images, inconsistent rendering across sections, anime when reference is realistic, realistic when reference is anime, cel-shading when reference is painterly, 3D render when reference is 2D, watercolor when reference is digital illustration, different line treatment from reference, different color saturation from reference, different shading style from reference, mixed art styles, inconsistent brush strokes between frames, mixing 2D and 3D, mixing photoreal and stylized
+
+
+======================================================================
+  参考图收集逻辑 (workspace.$workspaceId.tsx 第 4858-4889 行)
+======================================================================
+
+最多 4 张参考图，优先级：
+  1. 场景图（必占 1 张）— pickSceneImageUrl(sceneId)
+  2. 角色图（按 unionCharIds 顺序填满剩余 ≤3 张）— pickShotCharImageUrl(shot, charId)
+
+取图规则：
+  - 场景图：用户选中的那张，fallback 最新一张
+  - 角色图：优先 selectedCharImages（用户钉选的），否则 charImages 最新
+
+参考图 URL 来源：
+  - 角色图：data.characters[i].charImages[] 或 selectedCharImages[]
+    这些图片来自「角色重生」生成的 reference sheet / 三视图
+  - 场景图：data.scenes[i] 对应的生成图
+    这些图片来自「场景图生成」
+
+本例中的参考图（3 张）：
+  - Image 1: 场景参考图 → 天台黄昏的环境/光照/空间参考
+  - Image 2: 角色参考图 → 林夏的 reference sheet（脸型/身材/服装）
+  - Image 3: 角色参考图 → 江野的 reference sheet（脸型/身材/服装）
+
+======================================================================
+  关键参数汇总
+======================================================================
+
+| 参数             | 值                | 说明                          |
+|------------------|-------------------|-------------------------------|
+| model            | 用户选择的模型    | 如 doubao-seedream-5-0-260128 |
+| size             | 3840x2160         | 16:9, 8.3MP（>3.68MP 底线）   |
+| referenceImages  | 最多 4 张 URL     | 场景 + 角色的 reference sheet |
+| quality          | "high"            | Pixflow 路由时传              |
+| projectStyle     | 项目视觉风格      | 通过 resolveProjectStyle 查到 |
+| previewOnly      | true/false        | 查看提示词模式（跳过实际生成）  |
+
+======================================================================

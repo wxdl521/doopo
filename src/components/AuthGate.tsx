@@ -1,37 +1,30 @@
-import { useLocation, Link } from '@tanstack/react-router'
-import { LogIn, UserPlus, Lock } from 'lucide-react'
-import { useAuth } from '../hooks/useAuth'
-import type { ReactNode } from 'react'
+import { useLocation, Link } from "@tanstack/react-router";
+import { LogIn, UserPlus, Lock } from "lucide-react";
+import { useAuth } from "../hooks/useAuth";
+import type { ReactNode } from "react";
 
 // 公开路径：无需登录即可访问
 // 首页（社区精选展示）、社区浏览、登录注册、定价、官方 Showcase
-const PUBLIC_PREFIXES = [
-  '/home',
-  '/login',
-  '/register',
-  '/community',
-  '/showcase',
-  '/pricing',
-]
+const PUBLIC_PREFIXES = ["/home", "/login", "/register", "/community", "/showcase", "/pricing"];
 
 function isPublicPath(pathname: string) {
-  if (pathname === '/' ) return true
-  return PUBLIC_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + '/'))
+  if (pathname === "/") return true;
+  return PUBLIC_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + "/"));
 }
 
 export default function AuthGate({ children }: { children: ReactNode }) {
-  const location = useLocation()
-  const { isAuthenticated, loading } = useAuth()
+  const location = useLocation();
+  const { isAuthenticated, loading } = useAuth();
 
-  if (isPublicPath(location.pathname)) return <>{children}</>
+  if (isPublicPath(location.pathname)) return <>{children}</>;
   if (loading) {
     return (
       <div className="flex items-center justify-center py-24 text-sm text-text-secondary">
         正在加载…
       </div>
-    )
+    );
   }
-  if (isAuthenticated) return <>{children}</>
+  if (isAuthenticated) return <>{children}</>;
 
   return (
     <div className="flex items-center justify-center py-16 animate-fade-in">
@@ -53,9 +46,11 @@ export default function AuthGate({ children }: { children: ReactNode }) {
           </Link>
         </div>
         <div className="mt-6 text-xs text-text-secondary">
-          <Link to="/home" className="hover:text-accent">← 返回首页浏览社区精选</Link>
+          <Link to="/home" className="hover:text-accent">
+            ← 返回首页浏览社区精选
+          </Link>
         </div>
       </div>
     </div>
-  )
+  );
 }

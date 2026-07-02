@@ -20,37 +20,37 @@
 //  "FORBIDDEN: ..." 块追加到 positive prompt 末尾。
 // ====================================================================
 
-import './loadEnv'  // ← 必须在所有 env 读取之前导入,触发 .env.local 加载
-import { createServerFn } from '@tanstack/react-start'
-import { z } from 'zod'
-import { buildStyleLock, type VisualStyleSpec } from './visualStyles'
+import "./loadEnv"; // ← 必须在所有 env 读取之前导入,触发 .env.local 加载
+import { createServerFn } from "@tanstack/react-start";
+import { z } from "zod";
+import { buildStyleLock, type VisualStyleSpec } from "./visualStyles";
 
-const DEFAULT_BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3'
-const DEFAULT_MODEL = 'doubao-seedream-5-0-260128'
-const RETRY_BACKOFF_MS = [1_000, 2_000, 4_000] as const
+const DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
+const DEFAULT_MODEL = "doubao-seedream-5-0-260128";
+const RETRY_BACKOFF_MS = [1_000, 2_000, 4_000] as const;
 // 2026/06 修复:50_000 经常被 Seedream 5.0 多参考图融合 + 高分辨率 2K
 // 出图流程超时报错。先提到 120s,后又因新 multi-asset(3 区域 + 13 子图概念)
 // 和 16:9 故事板(6 section, ~3500 字 prompt)单图渲染负担更重,
 // **2026/06 二次提到 180s**(3 分钟)给单次重活兜底。
 // 极端情况 3+ 分钟的请求仍可能超,但 retry 1s/2s/4s 退避 + 用户体验上更平滑。
-const REQUEST_TIMEOUT_MS = 180_000
-const I2I_TIMEOUT_MS = 180_000
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms))
+const REQUEST_TIMEOUT_MS = 180_000;
+const I2I_TIMEOUT_MS = 180_000;
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 // ---------- 工具函数 ----------
 
 function getArkConfig() {
   return {
     apiKey: process.env.ARK_API_KEY,
-    baseUrl: (process.env.ARK_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, ''),
+    baseUrl: (process.env.ARK_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, ""),
     model: process.env.ARK_IMAGE_MODEL || DEFAULT_MODEL,
-  }
+  };
 }
 
 /** 是否 Seedream 模型 id */
 export function isSeedreamModel(modelId: string | null | undefined): boolean {
-  const m = (modelId || '').trim().toLowerCase()
-  return m === '' || m.startsWith('doubao-seedream-') || m.startsWith('seedream-')
+  const m = (modelId || "").trim().toLowerCase();
+  return m === "" || m.startsWith("doubao-seedream-") || m.startsWith("seedream-");
 }
 
 /**
@@ -58,10 +58,10 @@ export function isSeedreamModel(modelId: string | null | undefined): boolean {
  * 必须归一到 Pixflow 前缀路由,否则会被错误 POST 到 ARK /images/generations 并 404。
  */
 export function normalizeImageModelForRouting(modelId: string | null | undefined): string {
-  const m = (modelId || '').trim()
-  const lower = m.toLowerCase()
-  if (lower === 'openai/gpt-image-2' || lower === 'gpt-image-2') return 'pixflow/gpt-image-2'
-  return m
+  const m = (modelId || "").trim();
+  const lower = m.toLowerCase();
+  if (lower === "openai/gpt-image-2" || lower === "gpt-image-2") return "pixflow/gpt-image-2";
+  return m;
 }
 
 /**
@@ -72,7 +72,7 @@ export function normalizeImageModelForRouting(modelId: string | null | undefined
  * 2560x1280 = 3,276,800 ❌ (常见误用,3-view 模式之前的硬编码就是它)
  * 1104x1472 = 1,623,888 ❌ (legacy Qwen 尺寸,不该传给 Seedream)
  */
-export const SEEDREAM_MIN_PIXELS = 3_686_400
+export const SEEDREAM_MIN_PIXELS = 3_686_400;
 
 /**
  * 把 DashScope 风格的 size 规整成 Seedream 可接受的形态。
@@ -84,51 +84,51 @@ export const SEEDREAM_MIN_PIXELS = 3_686_400
  * "image size must be at least 3686400 pixels" 的硬错误。
  */
 export function normalizeSeedreamSize(size: string | undefined): string {
-  const fallback = '2K'
-  if (!size) return fallback
-  const s = String(size).trim()
-  if (!s) return fallback
+  const fallback = "2K";
+  if (!size) return fallback;
+  const s = String(size).trim();
+  if (!s) return fallback;
   // '2K' / '4K' / '1K' 直接透传(都已满足最小像素)
-  if (/^\dK$/i.test(s)) return s.toUpperCase().replace('k', 'K')
+  if (/^\dK$/i.test(s)) return s.toUpperCase().replace("k", "K");
   // '2048*2048' → '2048x2048'
-  const normalized = s.includes('*') ? s.replace(/\*/g, 'x') : s
+  const normalized = s.includes("*") ? s.replace(/\*/g, "x") : s;
   // 像素数校验:小尺寸自动升级
-  const m = normalized.match(/^(\d+)\s*x\s*(\d+)$/i)
+  const m = normalized.match(/^(\d+)\s*x\s*(\d+)$/i);
   if (m) {
-    const w = parseInt(m[1], 10)
-    const h = parseInt(m[2], 10)
+    const w = parseInt(m[1], 10);
+    const h = parseInt(m[2], 10);
     if (w * h < SEEDREAM_MIN_PIXELS) {
-      return fallback  // 自动升级到 2K,不让 Seedream 拒
+      return fallback; // 自动升级到 2K,不让 Seedream 拒
     }
   }
-  return normalized
+  return normalized;
 }
 
 /** 把 negative prompt 拼到 positive 末尾 */
 function appendNegative(positive: string, negative: string | undefined): string {
-  if (!negative || !negative.trim()) return positive
-  return `${positive}\n\nFORBIDDEN (avoid these): ${negative}`
+  if (!negative || !negative.trim()) return positive;
+  return `${positive}\n\nFORBIDDEN (avoid these): ${negative}`;
 }
 
 // ---------- 内部 HTTP helper ----------
 
 type SeedreamImageBody = {
-  model: string
-  prompt: string
-  image?: string | string[]
-  size?: string
-  sequential_image_generation?: 'disabled' | 'auto'
-  sequential_image_generation_options?: { max_images?: number }
-  output_format?: 'png' | 'jpeg' | 'jpg' | 'webp'
-  watermark?: boolean
-}
+  model: string;
+  prompt: string;
+  image?: string | string[];
+  size?: string;
+  sequential_image_generation?: "disabled" | "auto";
+  sequential_image_generation_options?: { max_images?: number };
+  output_format?: "png" | "jpeg" | "jpg" | "webp";
+  watermark?: boolean;
+};
 
 type SeedreamImageResult = {
-  url: string
-  error: string | null
-  model: string
-  size?: string
-}
+  url: string;
+  error: string | null;
+  model: string;
+  size?: string;
+};
 
 /**
  * 统一 Seedream 图像生成调用。带 429 指数退避,网络异常转成 {error}。
@@ -145,65 +145,70 @@ async function callSeedreamImages(
   // 这次报 400 "Model not exist" —— 如果 model 字段是 "undefined" 或 "null",
   // 说明 process.env.ARK_IMAGE_MODEL 没被 Vite 加载,代码走了 DEFAULT_MODEL 兜底
   // 但某处被 string() 强制转了 → 这就是真根因。
-  const envDebug = `[env: apiKey=${apiKey ? apiKey.slice(0, 12) + '...' : 'UNDEFINED'}, baseUrl=${baseUrl}, model=${body.model}]`
+  const envDebug = `[env: apiKey=${apiKey ? apiKey.slice(0, 12) + "..." : "UNDEFINED"}, baseUrl=${baseUrl}, model=${body.model}]`;
 
-  let lastErr: string | null = null
+  let lastErr: string | null = null;
   for (let attempt = 0; attempt <= RETRY_BACKOFF_MS.length; attempt++) {
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), timeoutMs)
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const res = await fetch(`${baseUrl}/images/generations`, {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify({
           // Seedream 全部必填默认值
-          sequential_image_generation: 'disabled',
-          response_format: 'url',
+          sequential_image_generation: "disabled",
+          response_format: "url",
           stream: false,
           watermark: true,
           ...body,
         }),
         signal: controller.signal,
-      })
-      clearTimeout(timeout)
+      });
+      clearTimeout(timeout);
       if (res.ok) {
         const json = (await res.json().catch(() => ({}))) as {
-          data?: Array<{ url?: string; size?: string }>
-          error?: { code?: string; message?: string }
-          message?: string
-        }
-        const first = json.data?.[0]
-        const url = first?.url
+          data?: Array<{ url?: string; size?: string }>;
+          error?: { code?: string; message?: string };
+          message?: string;
+        };
+        const first = json.data?.[0];
+        const url = first?.url;
         if (!url) {
           return {
-            url: '',
-            error: `[seedream] ${body.model} 未返回 URL: ${json.error?.message || json.message || 'no data'}`,
+            url: "",
+            error: `[seedream] ${body.model} 未返回 URL: ${json.error?.message || json.message || "no data"}`,
             model: body.model,
             size: first?.size,
-          }
+          };
         }
-        return { url, error: null, model: body.model, size: first.size }
+        return { url, error: null, model: body.model, size: first.size };
       }
-      const text = await res.text().catch(() => '')
-      lastErr = `[seedream] ${body.model} ${res.status}: ${text.slice(0, 300)} ${envDebug}`
+      const text = await res.text().catch(() => "");
+      lastErr = `[seedream] ${body.model} ${res.status}: ${text.slice(0, 300)} ${envDebug}`;
       // 429 / 5xx 才重试,其他(400 鉴权 / 401 / 402 计费)立即返回
-      const isRetryable = res.status === 429 || res.status >= 500
+      const isRetryable = res.status === 429 || res.status >= 500;
       if (!isRetryable) {
-        return { url: '', error: lastErr, model: body.model }
+        return { url: "", error: lastErr, model: body.model };
       }
     } catch (e) {
-      clearTimeout(timeout)
-      const msg = e instanceof Error ? (e.name === 'AbortError' ? 'timed out' : e.message) : 'fetch failed'
-      lastErr = `[seedream] ${body.model} network: ${msg}`
+      clearTimeout(timeout);
+      const msg =
+        e instanceof Error ? (e.name === "AbortError" ? "timed out" : e.message) : "fetch failed";
+      lastErr = `[seedream] ${body.model} network: ${msg}`;
     }
     if (attempt < RETRY_BACKOFF_MS.length) {
-      await sleep(RETRY_BACKOFF_MS[attempt] ?? 1_000)
+      await sleep(RETRY_BACKOFF_MS[attempt] ?? 1_000);
     }
   }
-  return { url: '', error: (lastErr || `[seedream] ${body.model} failed after retries`) + ' ' + envDebug, model: body.model }
+  return {
+    url: "",
+    error: (lastErr || `[seedream] ${body.model} failed after retries`) + " " + envDebug,
+    model: body.model,
+  };
 }
 
 // ====================================================================
@@ -225,166 +230,177 @@ const GenerateImageInput = z.object({
   noFallback: z.boolean().optional(),
   // 2026/06:查看提示词模式
   previewOnly: z.boolean().default(false),
-})
+});
 
-export const generateImage = createServerFn({ method: 'POST' })
+export const generateImage = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => GenerateImageInput.parse(d))
   .handler(async ({ data }) => {
-    const requested = normalizeImageModelForRouting(data.model)
+    const requested = normalizeImageModelForRouting(data.model);
     // 委托给 Lovable AI Gateway(openai/gpt-image-*, google/gemini-*-image*)
     {
-      const { isLovableGatewayImageModel, callLovableGatewayImage } = await import('./lovableImage.functions')
+      const { isLovableGatewayImageModel, callLovableGatewayImage } =
+        await import("./lovableImage.functions");
       if (isLovableGatewayImageModel(requested)) {
         const r = await callLovableGatewayImage({
           prompt: appendNegative(data.prompt, data.negativePrompt),
           model: requested,
           size: data.size,
-        })
-        return { url: r.url, error: r.error, model: r.model }
+        });
+        return { url: r.url, error: r.error, model: r.model };
       }
     }
     // 委托给 Pixflow(OpenAI 兼容的 gpt-image-2 / gemini 系列)
-    if (requested.toLowerCase().startsWith('pixflow/')) {
-      const { callPixflowImage } = await import('./pixflow.functions')
+    if (requested.toLowerCase().startsWith("pixflow/")) {
+      const { callPixflowImage } = await import("./pixflow.functions");
       const r = await callPixflowImage({
         prompt: appendNegative(data.prompt, data.negativePrompt),
         model: requested,
         size: data.size,
-      })
-      return { url: r.url, error: r.error, model: r.model }
+      });
+      return { url: r.url, error: r.error, model: r.model };
     }
     // 委托给 Claude360(OpenAI 兼容,claude360.xyz)
-    if (requested.toLowerCase().startsWith('claude360/')) {
-      const { callClaude360Image } = await import('./claude360Image.functions')
+    if (requested.toLowerCase().startsWith("claude360/")) {
+      const { callClaude360Image } = await import("./claude360Image.functions");
       const r = await callClaude360Image({
         prompt: appendNegative(data.prompt, data.negativePrompt),
         model: requested,
         size: data.size,
-      })
-      return { url: r.url, error: r.error, model: r.model }
+      });
+      return { url: r.url, error: r.error, model: r.model };
     }
     // 委托给 Tokenflash(OpenAI 兼容,api.tokenflash.cn)
-    if (requested.toLowerCase().startsWith('tokenflash/')) {
-      const { callTokenflashImage } = await import('./tokenflash.functions')
+    if (requested.toLowerCase().startsWith("tokenflash/")) {
+      const { callTokenflashImage } = await import("./tokenflash.functions");
       const r = await callTokenflashImage({
         prompt: appendNegative(data.prompt, data.negativePrompt),
         model: requested,
         size: data.size,
-      })
-      return { url: r.url, error: r.error, model: r.model }
+      });
+      return { url: r.url, error: r.error, model: r.model };
     }
     // 委托给 Revora(OpenAI 兼容,api.revora.vip)
-    if (requested.toLowerCase().startsWith('revora/')) {
-      const { callRevoraImage } = await import('./revoraImage.functions')
+    if (requested.toLowerCase().startsWith("revora/")) {
+      const { callRevoraImage } = await import("./revoraImage.functions");
       const r = await callRevoraImage({
         prompt: appendNegative(data.prompt, data.negativePrompt),
         model: requested,
         size: data.size,
-      })
-      return { url: r.url, error: r.error, model: r.model }
+      });
+      return { url: r.url, error: r.error, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('aigcfamily/')) {
-      const { callAigcfamilyImage } = await import('./aigcfamilyImage.functions')
+    if (requested.toLowerCase().startsWith("aigcfamily/")) {
+      const { callAigcfamilyImage } = await import("./aigcfamilyImage.functions");
       const r = await callAigcfamilyImage({
         prompt: appendNegative(data.prompt, data.negativePrompt),
         model: requested,
         size: data.size,
-      })
-      return { url: r.url, error: r.error, model: r.model }
+      });
+      return { url: r.url, error: r.error, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('azure/')) {
-      const { callAzureImage } = await import('./azureImage.functions')
+    if (requested.toLowerCase().startsWith("azure/")) {
+      const { callAzureImage } = await import("./azureImage.functions");
       const r = await callAzureImage({
         prompt: appendNegative(data.prompt, data.negativePrompt),
         model: requested,
         size: data.size,
-      })
-      return { url: r.url, error: r.error, model: r.model, meta: r.meta }
+      });
+      return { url: r.url, error: r.error, model: r.model, meta: r.meta };
     }
     // 委托给 OneToken(OpenAI 兼容,api.onetoken.one)
-    if (requested.toLowerCase().startsWith('onetoken/')) {
-      const { callOnetokenImage } = await import('./onetokenImage.functions')
+    if (requested.toLowerCase().startsWith("onetoken/")) {
+      const { callOnetokenImage } = await import("./onetokenImage.functions");
       const r = await callOnetokenImage({
         prompt: appendNegative(data.prompt, data.negativePrompt),
         model: requested,
         size: data.size,
-      })
-      return { url: r.url, error: r.error, model: r.model }
+      });
+      return { url: r.url, error: r.error, model: r.model };
     }
     // 委托给 OTU(OpenAI 兼容)
-    if (requested.toLowerCase().startsWith('otu/')) {
-      const { callOtuImage } = await import('./otuImage.functions')
+    if (requested.toLowerCase().startsWith("otu/")) {
+      const { callOtuImage } = await import("./otuImage.functions");
       const r = await callOtuImage({
         prompt: appendNegative(data.prompt, data.negativePrompt),
         model: requested,
         size: data.size,
-      })
-      return { url: r.url, error: r.error, model: r.model }
+      });
+      return { url: r.url, error: r.error, model: r.model };
     }
     // 委托给 AI Tokenvibe(OpenAI 兼容)
-    if (requested.toLowerCase().startsWith('aitokenvibe/')) {
-      const { callAitokenvibeImage } = await import('./aitokenvibeImage.functions')
+    if (requested.toLowerCase().startsWith("aitokenvibe/")) {
+      const { callAitokenvibeImage } = await import("./aitokenvibeImage.functions");
       const r = await callAitokenvibeImage({
         prompt: appendNegative(data.prompt, data.negativePrompt),
         model: requested,
         size: data.size,
-      })
-      return { url: r.url, error: r.error, model: r.model }
+      });
+      return { url: r.url, error: r.error, model: r.model };
     }
     // 委托给天鸿智算(OpenAI 兼容)
-    if (requested.toLowerCase().startsWith('thhtcloud/')) {
-      const { callThhtcloudImage } = await import('./thhtcloudImage.functions')
+    if (requested.toLowerCase().startsWith("thhtcloud/")) {
+      const { callThhtcloudImage } = await import("./thhtcloudImage.functions");
       const r = await callThhtcloudImage({
         prompt: appendNegative(data.prompt, data.negativePrompt),
         model: requested,
         size: data.size,
-      })
-      return { url: r.url, error: r.error, model: r.model }
+      });
+      return { url: r.url, error: r.error, model: r.model };
     }
     // 委托给 ailinzi(OpenAI 兼容)
-    if (requested.toLowerCase().startsWith('ailinzi/')) {
-      const { callAilinziImage } = await import('./ailinziImage.functions')
+    if (requested.toLowerCase().startsWith("ailinzi/")) {
+      const { callAilinziImage } = await import("./ailinziImage.functions");
       const r = await callAilinziImage({
         prompt: appendNegative(data.prompt, data.negativePrompt),
         model: requested,
         size: data.size,
-      })
-      return { url: r.url, error: r.error, model: r.model }
+      });
+      return { url: r.url, error: r.error, model: r.model };
     }
     // 委托给 vapeur(OpenAI 兼容)
-    if (requested.toLowerCase().startsWith('vapeur/')) {
-      const { callVapeurImage } = await import('./vapeurImage.functions')
+    if (requested.toLowerCase().startsWith("vapeur/")) {
+      const { callVapeurImage } = await import("./vapeurImage.functions");
       const r = await callVapeurImage({
         prompt: appendNegative(data.prompt, data.negativePrompt),
         model: requested,
         size: data.size,
-      })
-      return { url: r.url, error: r.error, model: r.model }
+      });
+      return { url: r.url, error: r.error, model: r.model };
     }
     // 委托给 TokenHub(OpenAI 兼容,tokenhub.linkstor.com)
-    if (requested.toLowerCase().startsWith('tokenhub/')) {
-      const { callTokenhubImage } = await import('./tokenhubImage.functions')
+    if (requested.toLowerCase().startsWith("tokenhub/")) {
+      const { callTokenhubImage } = await import("./tokenhubImage.functions");
       const r = await callTokenhubImage({
         prompt: appendNegative(data.prompt, data.negativePrompt),
         model: requested,
         size: data.size,
-      })
-      return { url: r.url, error: r.error, model: r.model }
+      });
+      return { url: r.url, error: r.error, model: r.model };
     }
     // 委托给 nagora.ai(Azure 渠道 OpenAI 官方)
-    if (requested.toLowerCase().startsWith('nagora/')) {
-      const { callNagoraImage } = await import('./nagoraImage.functions')
+    if (requested.toLowerCase().startsWith("nagora/")) {
+      const { callNagoraImage } = await import("./nagoraImage.functions");
       const r = await callNagoraImage({
         prompt: appendNegative(data.prompt, data.negativePrompt),
         model: requested,
         size: data.size,
-      })
-      return { url: r.url, error: r.error, model: r.model }
+      });
+      return { url: r.url, error: r.error, model: r.model };
+    }
+    // 委托给 MeridianAI(OpenAI 兼容,www.meridiangolf.xyz)
+    if (requested.toLowerCase().startsWith("meridian/")) {
+      const { callMeridianImage } = await import("./meridianImage.functions");
+      const r = await callMeridianImage({
+        prompt: appendNegative(data.prompt, data.negativePrompt),
+        model: requested,
+        size: data.size,
+      });
+      return { url: r.url, error: r.error, model: r.model };
     }
     // 委托给 legacy(老 Qwen / OpenRouter 路径)
     if (requested && !isSeedreamModel(requested)) {
       // 动态 import 避免循环引用
-      const { generateImage: legacy } = await import('./openrouterImage.functions')
+      const { generateImage: legacy } = await import("./openrouterImage.functions");
       return legacy({
         data: {
           prompt: data.prompt,
@@ -393,36 +409,37 @@ export const generateImage = createServerFn({ method: 'POST' })
           negativePrompt: data.negativePrompt,
           noFallback: data.noFallback,
         },
-      } as any)
+      } as any);
     }
 
     // Seedream 路径
-    const { apiKey, baseUrl, model: defaultModel } = getArkConfig()
-    if (!apiKey) return { url: '', error: 'ARK_API_KEY not configured', model: requested || defaultModel }
-    const model = requested || defaultModel
-    const size = normalizeSeedreamSize(data.size || '2K')
-    const prompt = appendNegative(data.prompt, data.negativePrompt)
+    const { apiKey, baseUrl, model: defaultModel } = getArkConfig();
+    if (!apiKey)
+      return { url: "", error: "ARK_API_KEY not configured", model: requested || defaultModel };
+    const model = requested || defaultModel;
+    const size = normalizeSeedreamSize(data.size || "2K");
+    const prompt = appendNegative(data.prompt, data.negativePrompt);
 
     // 2026/06:查看提示词模式
     if (data.previewOnly) {
       return {
-        url: '',
+        url: "",
         error: null,
         model,
         size,
         previewPrompt: prompt,
         negativePrompt: data.negativePrompt,
         promptSize: size,
-        promptExtra: { model, route: 'T2I (generateImage)' },
-      } as any
+        promptExtra: { model, route: "T2I (generateImage)" },
+      } as any;
     }
 
     return callSeedreamImages(
-      { model, prompt, size, output_format: 'png', watermark: false },
+      { model, prompt, size, output_format: "png", watermark: false },
       apiKey,
       baseUrl,
-    )
-  })
+    );
+  });
 
 // ====================================================================
 // 2) regenerateCharacterLook —— 单图 I2I(角色重生,3 模式)
@@ -444,22 +461,22 @@ const RegenerateInput = z.object({
   palette: z.array(z.string()).max(8).optional(),
   projectStyle: z.string().max(50).optional(),
   model: z.string().max(100).optional(),
-  mode: z.enum(['modify', 'three-view', 'multi-asset']).default('modify'),
+  mode: z.enum(["modify", "three-view", "multi-asset"]).default("modify"),
   // 2026/06:查看提示词模式
   previewOnly: z.boolean().default(false),
-})
+});
 
-export type RegenerateInputType = z.infer<typeof RegenerateInput>
+export type RegenerateInputType = z.infer<typeof RegenerateInput>;
 
 /** 根据 mode 拼不同的 positive / negative prompt(平移自 characterRegen.functions.ts:61-278) */
 function buildCharacterPrompts(opts: {
-  data: RegenerateInputType
-  styleSpec: { label: string; positive: string; negative: string }
-  cardTitle: string
+  data: RegenerateInputType;
+  styleSpec: { label: string; positive: string; negative: string };
+  cardTitle: string;
 }): { positive: string; negative: string; size: string } {
-  const { data, styleSpec, cardTitle } = opts
+  const { data, styleSpec, cardTitle } = opts;
 
-  if (data.mode === 'three-view') {
+  if (data.mode === "three-view") {
     const positive = [
       `Generate ONE standard 3-view character reference sheet of "${cardTitle}" — a ${data.characterRoleLabel}, age ${data.characterAge}. The output is a SINGLE image with EXACTLY 3 panels (left = front, middle = side profile, right = back).`,
       ``,
@@ -511,13 +528,13 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
       `IDENTITY LOCK ACROSS ALL 3 PANELS: Same face, same body, same physical condition, same outfit, same age, same hair, same skin tone, same accessories, same shoes, same wheelchair or prosthetic if applicable. The ONLY difference between panels is the camera angle.`,
       ``,
       `VISUAL STYLE (MUST match across all 3 panels — no style drift between panels):`,
-      buildStyleLock(styleSpec, 'reference'),
+      buildStyleLock(styleSpec, "reference"),
       ``,
       `CHARACTER (source of truth, alongside the attached reference image):
   Name: ${cardTitle} (${data.characterRoleLabel}, age ${data.characterAge})
-  Face (must remain identical in all 3 panels): ${data.faceDescription || '(use the face shown in the attached reference image)'}
-  Body (must remain identical in all 3 panels — includes physical condition, disabilities, assistive devices): ${data.bodyDescription || '(use the body shown in the attached reference image)'}
-  Outfit (must remain identical in all 3 panels — do NOT change the outfit between panels): ${data.clothingDescription || '(use the outfit shown in the attached reference image)'}`,
+  Face (must remain identical in all 3 panels): ${data.faceDescription || "(use the face shown in the attached reference image)"}
+  Body (must remain identical in all 3 panels — includes physical condition, disabilities, assistive devices): ${data.bodyDescription || "(use the body shown in the attached reference image)"}
+  Outfit (must remain identical in all 3 panels — do NOT change the outfit between panels): ${data.clothingDescription || "(use the outfit shown in the attached reference image)"}`,
       ``,
       `BACKGROUND: Each panel has a uniform light neutral background (off-white #F5F5F5 / light grey #EEEEEE is OK — this IS a reference sheet, not a final product, so the strict pure-white rule is relaxed). NO scenery, NO floor, NO horizon, NO props, NO environment, NO shadow on the background, NO reflection.`,
       ``,
@@ -532,24 +549,26 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
   [ ] No text, watermark, logo, labels, captions inside the image (yes)`,
       ``,
       `Begin. Output the 3-view full-body reference sheet.`,
-    ].filter(Boolean).join('\n')
+    ]
+      .filter(Boolean)
+      .join("\n");
     const negative = [
-      'medium shot, medium close-up, MCU, MS, mid-shot, mid close-up, half body, half-body, half-length, three-quarter body, 3/4 body, three-quarter length, cowboy shot, american shot, knee-up shot, knee-up, mid-thigh shot, thigh-up, hip-up, waist-up shot, waist-up, midriff-up, chest-up shot, chest-up, shoulder-up, head and shoulders, head-and-shoulders, head only, headshot, head shot, tight headshot, tight crop, tight framing, close-up, close up, CU, extreme close-up, ECU, bust shot, bust, portrait crop, portrait shot, passport photo, ID photo',
-      'cropped at knees, cropped at calves, cropped at shins, cropped at ankles, cropped at waist, cropped at hips, cropped at thighs, cropped at chest, cropped at shoulders, cropped at neck, head cut off, top of head cut off, top of head clipped, hair cut off, feet cut off, shoes cut off, hands cut off, body extending beyond frame, body touching frame edge, body touching top of frame, body touching bottom of frame, figure touching top of frame, figure touching bottom of frame, half-body in side panel, half-body in back panel, half-body in any panel, 3/4 body in any panel, close-up of torso in side or back panel, tight framing in side panel, tight framing in back panel, side panel tighter than front, back panel tighter than front, side panel showing only upper body, back panel showing only upper body',
-      'missing feet, missing shoes, missing head, missing legs, missing lower body, missing upper body, head only, torso only, legs only, partial body, incomplete body, amputated limbs, no legs, no feet, legless, feet-less, lower body cut off, lower body fading out, lower body blended with background, character floating with no feet, character shown only from the waist up, from waist up only, from chest up only, from hips up only, from knees up only',
-      'low angle, low-angle shot, worm\'s eye view, worm eye view, hero shot, looking up at subject, upward camera, upward tilt, camera below subject, dutch angle, dutch tilt, tilted camera, canted angle, fisheye, wide-angle distortion, 3/4 view, three-quarter view, diagonal angle, perspective, action pose, walking, sitting, crouching, jumping, leaning, hands on hips, prop holding, dynamic pose, tilted head, looking up, looking down, top-down, bird\'s eye view, bottom-up',
-      'different art style, style drift, photorealistic when input is anime, anime when input is realistic, different medium, different line treatment, different color grading, inconsistent rendering between panels, mixing anime and realistic, mixing 3D and 2D, mixing watercolor and cel-shading',
-      'smile, smirk, grin, frown, scowl, angry eyes, sad eyes, laughing, crying, pouting, raised eyebrow, looking sideways, eyes closed, eyes squinting, teeth showing, emotional expression, character personality face',
-      'different face, different face shape, different eye shape, different eye color, different nose, different mouth, different eyebrows, different skin tone, different hairstyle, different hair color, different hair length, different facial proportions, age change, different body, different body proportions, different height, different weight, different gender presentation, different outfit, different clothing color, different clothing style, different accessories, different hat, different glasses, different jewelry, different bag, different weapon, different shoes, different makeup, extra clothing item, missing clothing item, outfit change between panels',
-      'scenery, furniture, props, ground texture, horizon line, floor, wall, sky, busy background, complex background, detailed background, color cast, gradient background, vignette, shadow on background, floor reflection, environment, room, indoor, outdoor',
-      'watermark, logo, text, signature, label, panel number, caption, annotation, arrow, callout, extra limbs, deformed hands, extra fingers, extra people, multiple characters, bystander, blurred face, low quality, 4 panels, 5 panels, more than 3 views, fewer than 3 views, single panel',
-    ].join(', ')
+      "medium shot, medium close-up, MCU, MS, mid-shot, mid close-up, half body, half-body, half-length, three-quarter body, 3/4 body, three-quarter length, cowboy shot, american shot, knee-up shot, knee-up, mid-thigh shot, thigh-up, hip-up, waist-up shot, waist-up, midriff-up, chest-up shot, chest-up, shoulder-up, head and shoulders, head-and-shoulders, head only, headshot, head shot, tight headshot, tight crop, tight framing, close-up, close up, CU, extreme close-up, ECU, bust shot, bust, portrait crop, portrait shot, passport photo, ID photo",
+      "cropped at knees, cropped at calves, cropped at shins, cropped at ankles, cropped at waist, cropped at hips, cropped at thighs, cropped at chest, cropped at shoulders, cropped at neck, head cut off, top of head cut off, top of head clipped, hair cut off, feet cut off, shoes cut off, hands cut off, body extending beyond frame, body touching frame edge, body touching top of frame, body touching bottom of frame, figure touching top of frame, figure touching bottom of frame, half-body in side panel, half-body in back panel, half-body in any panel, 3/4 body in any panel, close-up of torso in side or back panel, tight framing in side panel, tight framing in back panel, side panel tighter than front, back panel tighter than front, side panel showing only upper body, back panel showing only upper body",
+      "missing feet, missing shoes, missing head, missing legs, missing lower body, missing upper body, head only, torso only, legs only, partial body, incomplete body, amputated limbs, no legs, no feet, legless, feet-less, lower body cut off, lower body fading out, lower body blended with background, character floating with no feet, character shown only from the waist up, from waist up only, from chest up only, from hips up only, from knees up only",
+      "low angle, low-angle shot, worm's eye view, worm eye view, hero shot, looking up at subject, upward camera, upward tilt, camera below subject, dutch angle, dutch tilt, tilted camera, canted angle, fisheye, wide-angle distortion, 3/4 view, three-quarter view, diagonal angle, perspective, action pose, walking, sitting, crouching, jumping, leaning, hands on hips, prop holding, dynamic pose, tilted head, looking up, looking down, top-down, bird's eye view, bottom-up",
+      "different art style, style drift, photorealistic when input is anime, anime when input is realistic, different medium, different line treatment, different color grading, inconsistent rendering between panels, mixing anime and realistic, mixing 3D and 2D, mixing watercolor and cel-shading",
+      "smile, smirk, grin, frown, scowl, angry eyes, sad eyes, laughing, crying, pouting, raised eyebrow, looking sideways, eyes closed, eyes squinting, teeth showing, emotional expression, character personality face",
+      "different face, different face shape, different eye shape, different eye color, different nose, different mouth, different eyebrows, different skin tone, different hairstyle, different hair color, different hair length, different facial proportions, age change, different body, different body proportions, different height, different weight, different gender presentation, different outfit, different clothing color, different clothing style, different accessories, different hat, different glasses, different jewelry, different bag, different weapon, different shoes, different makeup, extra clothing item, missing clothing item, outfit change between panels",
+      "scenery, furniture, props, ground texture, horizon line, floor, wall, sky, busy background, complex background, detailed background, color cast, gradient background, vignette, shadow on background, floor reflection, environment, room, indoor, outdoor",
+      "watermark, logo, text, signature, label, panel number, caption, annotation, arrow, callout, extra limbs, deformed hands, extra fingers, extra people, multiple characters, bystander, blurred face, low quality, 4 panels, 5 panels, more than 3 views, fewer than 3 views, single panel",
+    ].join(", ");
     // Seedream 用 'x' 分隔画幅;三视图横向 3 面板 → 长方形画布
     // 3072x1280 = 3,932,160 像素,稳过 Seedream 3,686,400 的最小要求
-    return { positive, negative, size: '3072x1280' }
+    return { positive, negative, size: "3072x1280" };
   }
 
-  if (data.mode === 'multi-asset') {
+  if (data.mode === "multi-asset") {
     // ====================================================================
     // 角色多维资产图 —— 2026/06 用户二次扩展
     //
@@ -673,23 +692,28 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
 
       // ========== 风格 / 角色数据 ==========
       `[PROJECT VISUAL STYLE — must match across all sub-images]`,
-      buildStyleLock(styleSpec, 'character'),
+      buildStyleLock(styleSpec, "character"),
 
       `[CHARACTER IDENTITY — source of truth, copy into the image EXACTLY]`,
       `Name: ${cardTitle} (${data.characterRoleLabel}, age ${data.characterAge})`,
 
       `=== FACE — IDENTICAL across every face/head in the image ===`,
-      data.faceDescription || '(no separate face description — use the face shown in the attached reference image)',
+      data.faceDescription ||
+        "(no separate face description — use the face shown in the attached reference image)",
       `=== END FACE ===`,
 
       `=== BODY — IDENTICAL across all full-body sub-images (includes physical condition / disabilities / assistive devices) ===`,
-      data.bodyDescription || '(no separate body description — use the body shown in the attached reference image)',
+      data.bodyDescription ||
+        "(no separate body description — use the body shown in the attached reference image)",
       `NOTE: The body description is the single source of truth for physical condition. If the character uses a wheelchair, missing a limb, or has any permanent physical trait, that MUST be shown identically in every sub-image. Do NOT force standing poses on wheelchair users.`,
 
       `=== OUTFIT — IDENTICAL across all sub-images, do NOT add/remove clothing or accessories ===`,
-      data.clothingDescription || '(no separate outfit description — use the outfit shown in the attached reference image)',
+      data.clothingDescription ||
+        "(no separate outfit description — use the outfit shown in the attached reference image)",
       `=== END OUTFIT ===`,
-      data.palette?.length ? `\n=== PALETTE (hex colors) — apply consistently ===\n${data.palette.join(', ')}\n=== END PALETTE ===` : '',
+      data.palette?.length
+        ? `\n=== PALETTE (hex colors) — apply consistently ===\n${data.palette.join(", ")}\n=== END PALETTE ===`
+        : "",
 
       // 把用户在 instruction 里写的语义提示也带上(client 那边传简短中文 instruction,作为 EDIT REQUEST)
       `[USER REQUEST]`,
@@ -709,24 +733,26 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
       `[ ] No other characters, no extra limbs, no perspective errors in the three-view`,
 
       `Begin. Output the character multi-asset sheet.`,
-    ].filter(Boolean).join('\n\n')
+    ]
+      .filter(Boolean)
+      .join("\n\n");
     const negative = [
-      'different art style, style drift, photorealistic when input is anime, anime when input is realistic, inconsistent rendering between sub-images',
-      'different face, different face shape, different eye shape, different eye color, different nose, different mouth, different eyebrows, different skin tone, different hairstyle, different hair color, different hair length, different facial proportions, age change, different body, different body proportions, different height, different gender presentation, different outfit, different clothing color, different clothing style, different accessories, different glasses, different jewelry, different shoes',
-      'missing glasses when source has glasses, missing wings when source has wings, missing tail when source has tail, missing animal ears when source has them, missing horns when source has horns, missing distinctive feature, feature drift, lost accessory',
-      'perspective distortion in three-view, fish-eye, wide-angle distortion, foreshortening, hero shot, low angle, 3/4 view in front/side/back, diagonal angle',
-      'cropped at knees, cropped at waist, cropped at chest, head cut off, feet cut off, body extending beyond frame, missing feet, missing hands, missing legs',
-      'inconsistent proportions across the three views, taller in one view, shorter in another, scale mismatch between sub-images',
-      'extra people, bystander, multiple characters, extra limbs, deformed hands, extra fingers, deformed face, blurred face, low quality',
-      'detailed scenery, busy backgrounds, room interior, outdoor landscape, props cluttering the frame, floor, wall, sky, scenery, furniture, ground texture, horizon line, shadow on background, gradient background',
-      'English-only labels, garbled Chinese, missing labels, illegible text, decorative borders, ornate frames, gold filigree',
-      'rigid 3x3 grid template when content needs different layout, forced 4 panels, forced 5 panels, padding cells, blank cells',
-      'profile bar with illustration, profile bar with icon, profile bar that is not text-only',
-      'accessory icons held by the character, accessory icons worn by the character, accessory icons in a scene, accessory icons with background scenery',
-      'main portrait too small, main portrait same size as thumbnails, no clear visual centerpiece, hero portrait demoted to side thumbnail',
-      'combat poses for a peaceful character, scholarly poses for a child, mismatched poses for character personality',
-    ].join(', ')
-    return { positive, negative, size: '2160x2880' }
+      "different art style, style drift, photorealistic when input is anime, anime when input is realistic, inconsistent rendering between sub-images",
+      "different face, different face shape, different eye shape, different eye color, different nose, different mouth, different eyebrows, different skin tone, different hairstyle, different hair color, different hair length, different facial proportions, age change, different body, different body proportions, different height, different gender presentation, different outfit, different clothing color, different clothing style, different accessories, different glasses, different jewelry, different shoes",
+      "missing glasses when source has glasses, missing wings when source has wings, missing tail when source has tail, missing animal ears when source has them, missing horns when source has horns, missing distinctive feature, feature drift, lost accessory",
+      "perspective distortion in three-view, fish-eye, wide-angle distortion, foreshortening, hero shot, low angle, 3/4 view in front/side/back, diagonal angle",
+      "cropped at knees, cropped at waist, cropped at chest, head cut off, feet cut off, body extending beyond frame, missing feet, missing hands, missing legs",
+      "inconsistent proportions across the three views, taller in one view, shorter in another, scale mismatch between sub-images",
+      "extra people, bystander, multiple characters, extra limbs, deformed hands, extra fingers, deformed face, blurred face, low quality",
+      "detailed scenery, busy backgrounds, room interior, outdoor landscape, props cluttering the frame, floor, wall, sky, scenery, furniture, ground texture, horizon line, shadow on background, gradient background",
+      "English-only labels, garbled Chinese, missing labels, illegible text, decorative borders, ornate frames, gold filigree",
+      "rigid 3x3 grid template when content needs different layout, forced 4 panels, forced 5 panels, padding cells, blank cells",
+      "profile bar with illustration, profile bar with icon, profile bar that is not text-only",
+      "accessory icons held by the character, accessory icons worn by the character, accessory icons in a scene, accessory icons with background scenery",
+      "main portrait too small, main portrait same size as thumbnails, no clear visual centerpiece, hero portrait demoted to side thumbnail",
+      "combat poses for a peaceful character, scholarly poses for a child, mismatched poses for character personality",
+    ].join(", ");
+    return { positive, negative, size: "2160x2880" };
   }
 
   // ---- 默认 'modify' ----
@@ -754,32 +780,31 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
   • "加个 X" / "换成 X" → only add/change X, nothing else`,
     `[Subject] ${cardTitle} — ${data.characterRoleLabel}, age ${data.characterAge}.`,
     ``,
-    buildStyleLock(styleSpec, 'regen'),
-  ].join('\n')
+    buildStyleLock(styleSpec, "regen"),
+  ].join("\n");
   const negative = [
-    'different art style, style drift, photorealistic when input is anime, anime when input is realistic, different medium, different line treatment, different color grading',
-    '3/4 view, side view, profile, back view, tilted head, looking up, looking down, top-down, bottom-up, hero shot, low angle, high angle, camera pan, camera tilt',
-    'cropped at knees, cropped at waist, cropped at chest, cropped at thighs, head cut off, feet cut off, close-up, medium shot, half body',
-    'smile, smirk, grin, frown, scowl, angry eyes, sad eyes, laughing, crying, pouting, raised eyebrow, eyes closed, eyes squinting, teeth showing, emotional expression',
-    'off-white background, cream background, ivory background, beige background, light grey background, gradient background, vignette, scenery, furniture, props, ground texture, horizon line, floor, wall, sky, shadow on background, floor reflection, color cast',
-    'different face, different face shape, different eye shape, different eye color, different nose, different mouth, different eyebrows, different skin tone, different hairstyle, different hair color, different hair length, different facial proportions, age change',
-    'watermark, logo, text, signature, extra limbs, deformed hands, extra fingers, extra people, blurred face, low quality',
-  ].join(', ')
-  return { positive, negative, size: '2K' }
+    "different art style, style drift, photorealistic when input is anime, anime when input is realistic, different medium, different line treatment, different color grading",
+    "3/4 view, side view, profile, back view, tilted head, looking up, looking down, top-down, bottom-up, hero shot, low angle, high angle, camera pan, camera tilt",
+    "cropped at knees, cropped at waist, cropped at chest, cropped at thighs, head cut off, feet cut off, close-up, medium shot, half body",
+    "smile, smirk, grin, frown, scowl, angry eyes, sad eyes, laughing, crying, pouting, raised eyebrow, eyes closed, eyes squinting, teeth showing, emotional expression",
+    "off-white background, cream background, ivory background, beige background, light grey background, gradient background, vignette, scenery, furniture, props, ground texture, horizon line, floor, wall, sky, shadow on background, floor reflection, color cast",
+    "different face, different face shape, different eye shape, different eye color, different nose, different mouth, different eyebrows, different skin tone, different hairstyle, different hair color, different hair length, different facial proportions, age change",
+    "watermark, logo, text, signature, extra limbs, deformed hands, extra fingers, extra people, blurred face, low quality",
+  ].join(", ");
+  return { positive, negative, size: "2K" };
 }
 
-export const regenerateCharacterLook = createServerFn({ method: 'POST' })
+export const regenerateCharacterLook = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => RegenerateInput.parse(d))
   .handler(async ({ data }) => {
-    const { resolveProjectStyle } = await import('./visualStyles')
-    const styleSpec = resolveProjectStyle(data.projectStyle)
-    const cardTitle = data.lookLabel === '默认'
-      ? data.characterName
-      : `${data.characterName} · ${data.lookLabel}`
+    const { resolveProjectStyle } = await import("./visualStyles");
+    const styleSpec = resolveProjectStyle(data.projectStyle);
+    const cardTitle =
+      data.lookLabel === "默认" ? data.characterName : `${data.characterName} · ${data.lookLabel}`;
 
-    const { positive, negative, size } = buildCharacterPrompts({ data, styleSpec, cardTitle })
-    const requested = normalizeImageModelForRouting(data.model)
-    const prompt = appendNegative(positive, negative)
+    const { positive, negative, size } = buildCharacterPrompts({ data, styleSpec, cardTitle });
+    const requested = normalizeImageModelForRouting(data.model);
+    const prompt = appendNegative(positive, negative);
 
     // 2026/06:查看提示词模式 —— 不调 Seedream,直接把 prompt 返回
     if (data.previewOnly) {
@@ -788,188 +813,212 @@ export const regenerateCharacterLook = createServerFn({ method: 'POST' })
         previewPrompt: prompt,
         negativePrompt: negative,
         promptSize: normalizeSeedreamSize(size),
-        promptExtra: { model: requested || DEFAULT_MODEL, mode: data.mode, referenceImage: data.referenceImageUrl },
-      }
+        promptExtra: {
+          model: requested || DEFAULT_MODEL,
+          mode: data.mode,
+          referenceImage: data.referenceImageUrl,
+        },
+      };
     }
 
-    if (requested.toLowerCase().startsWith('pixflow/')) {
-      const { callPixflowImage } = await import('./pixflow.functions')
+    if (requested.toLowerCase().startsWith("pixflow/")) {
+      const { callPixflowImage } = await import("./pixflow.functions");
       const r = await callPixflowImage({
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-        quality: 'high',
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'Pixflow 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+        quality: "high",
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "Pixflow 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('claude360/')) {
-      const { callClaude360Image } = await import('./claude360Image.functions')
+    if (requested.toLowerCase().startsWith("claude360/")) {
+      const { callClaude360Image } = await import("./claude360Image.functions");
       const r = await callClaude360Image({
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'Claude360 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "Claude360 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('tokenflash/')) {
-      const { callTokenflashImage } = await import('./tokenflash.functions')
+    if (requested.toLowerCase().startsWith("tokenflash/")) {
+      const { callTokenflashImage } = await import("./tokenflash.functions");
       const r = await callTokenflashImage({
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-        quality: 'high',
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'Tokenflash 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+        quality: "high",
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "Tokenflash 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('revora/')) {
-      const { callRevoraImage } = await import('./revoraImage.functions')
+    if (requested.toLowerCase().startsWith("revora/")) {
+      const { callRevoraImage } = await import("./revoraImage.functions");
       const r = await callRevoraImage({
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-        quality: 'high',
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'Revora 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+        quality: "high",
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "Revora 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('aigcfamily/')) {
-      const { callAigcfamilyImage } = await import('./aigcfamilyImage.functions')
+    if (requested.toLowerCase().startsWith("aigcfamily/")) {
+      const { callAigcfamilyImage } = await import("./aigcfamilyImage.functions");
       const r = await callAigcfamilyImage({
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-        quality: 'high',
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'AIGCFamily 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+        quality: "high",
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "AIGCFamily 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('azure/')) {
-      const { callAzureImage } = await import('./azureImage.functions')
+    if (requested.toLowerCase().startsWith("azure/")) {
+      const { callAzureImage } = await import("./azureImage.functions");
       const r = await callAzureImage({
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-        quality: 'high',
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'Azure 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model, meta: r.meta }
+        quality: "high",
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "Azure 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model, meta: r.meta };
     }
-    if (requested.toLowerCase().startsWith('onetoken/')) {
-      const { callOnetokenImage } = await import('./onetokenImage.functions')
+    if (requested.toLowerCase().startsWith("onetoken/")) {
+      const { callOnetokenImage } = await import("./onetokenImage.functions");
       const r = await callOnetokenImage({
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'OneToken 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "OneToken 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('otu/')) {
-      const { callOtuImage } = await import('./otuImage.functions')
+    if (requested.toLowerCase().startsWith("otu/")) {
+      const { callOtuImage } = await import("./otuImage.functions");
       const r = await callOtuImage({
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'OTU 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "OTU 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('aitokenvibe/')) {
-      const { callAitokenvibeImage } = await import('./aitokenvibeImage.functions')
+    if (requested.toLowerCase().startsWith("aitokenvibe/")) {
+      const { callAitokenvibeImage } = await import("./aitokenvibeImage.functions");
       const r = await callAitokenvibeImage({
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'AI Tokenvibe 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "AI Tokenvibe 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('thhtcloud/')) {
-      const { callThhtcloudImage } = await import('./thhtcloudImage.functions')
+    if (requested.toLowerCase().startsWith("thhtcloud/")) {
+      const { callThhtcloudImage } = await import("./thhtcloudImage.functions");
       const r = await callThhtcloudImage({
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-      })
-      if (!r.url) return { ok: false as const, error: r.error || '天鸿智算 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "天鸿智算 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('ailinzi/')) {
-      const { callAilinziImage } = await import('./ailinziImage.functions')
+    if (requested.toLowerCase().startsWith("ailinzi/")) {
+      const { callAilinziImage } = await import("./ailinziImage.functions");
       const r = await callAilinziImage({
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'ailinzi 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "ailinzi 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('vapeur/')) {
-      const { callVapeurImage } = await import('./vapeurImage.functions')
+    if (requested.toLowerCase().startsWith("vapeur/")) {
+      const { callVapeurImage } = await import("./vapeurImage.functions");
       const r = await callVapeurImage({
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'vapeur 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "vapeur 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('tokenhub/')) {
-      const { callTokenhubImage } = await import('./tokenhubImage.functions')
+    if (requested.toLowerCase().startsWith("tokenhub/")) {
+      const { callTokenhubImage } = await import("./tokenhubImage.functions");
       const r = await callTokenhubImage({
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'tokenhub 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "tokenhub 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('nagora/')) {
-      const { callNagoraImage } = await import('./nagoraImage.functions')
+    if (requested.toLowerCase().startsWith("nagora/")) {
+      const { callNagoraImage } = await import("./nagoraImage.functions");
       const r = await callNagoraImage({
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'nagora 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "nagora 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
+    }
+    if (requested.toLowerCase().startsWith("meridian/")) {
+      const { callMeridianImage } = await import("./meridianImage.functions");
+      const r = await callMeridianImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "meridian 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
 
-    const { apiKey, baseUrl, model: defaultModel } = getArkConfig()
-    if (!apiKey) return { ok: false as const, error: 'ARK_API_KEY not configured' }
-    const model = requested || defaultModel
+    const { apiKey, baseUrl, model: defaultModel } = getArkConfig();
+    if (!apiKey) return { ok: false as const, error: "ARK_API_KEY not configured" };
+    const model = requested || defaultModel;
 
     const result = await callSeedreamImages(
-      { model, prompt, image: data.referenceImageUrl, size: normalizeSeedreamSize(size), output_format: 'png', watermark: false },
+      {
+        model,
+        prompt,
+        image: data.referenceImageUrl,
+        size: normalizeSeedreamSize(size),
+        output_format: "png",
+        watermark: false,
+      },
       apiKey,
       baseUrl,
       I2I_TIMEOUT_MS,
-    )
+    );
     if (!result.url) {
       // 中文错误映射(保持跟原来一致的用户体验)
-      if (/401/i.test(result.error || '')) return { ok: false as const, error: 'Seedream auth failed (401)' }
-      if (/402/i.test(result.error || '')) return { ok: false as const, error: 'no_credits' }
-      if (/timed out/i.test(result.error || '')) return { ok: false as const, error: 'AI 处理超时(>180s),请重试或换更简单的修改' }
-      return { ok: false as const, error: result.error || 'Seedream 未返回图片' }
+      if (/401/i.test(result.error || ""))
+        return { ok: false as const, error: "Seedream auth failed (401)" };
+      if (/402/i.test(result.error || "")) return { ok: false as const, error: "no_credits" };
+      if (/timed out/i.test(result.error || ""))
+        return { ok: false as const, error: "AI 处理超时(>180s),请重试或换更简单的修改" };
+      return { ok: false as const, error: result.error || "Seedream 未返回图片" };
     }
-    return { ok: true as const, url: result.url, model: result.model }
-  })
+    return { ok: true as const, url: result.url, model: result.model };
+  });
 
 // ====================================================================
 // 3) generateStoryboardShotImage —— 多图融合 I2I(分镜)
@@ -980,40 +1029,40 @@ export const regenerateCharacterLook = createServerFn({ method: 'POST' })
 
 const ShotInput = z.object({
   plotText: z.string().min(1).max(2000),
-  shotType: z.enum(['WS', 'MS', 'CU', 'ECU', 'OTS']),
+  shotType: z.enum(["WS", "MS", "CU", "ECU", "OTS"]),
   shotTypeLabel: z.string().min(1).max(20),
   action: z.string().min(1).max(400),
-  camera: z.string().max(200).default(''),
+  camera: z.string().max(200).default(""),
   // Seedream 实际接受更多张(经验上 ≤4 稳定),这里跟老代码一样守住 ≤3 防意外
   characterImageUrls: z.array(z.string().url()).max(3).default([]),
   characterNames: z.array(z.string().max(50)).max(3).default([]),
   sceneImageUrl: z.string().url().optional(),
-  sceneLocation: z.string().max(200).default(''),
-  sceneTimeOfDay: z.string().max(50).default(''),
+  sceneLocation: z.string().max(200).default(""),
+  sceneTimeOfDay: z.string().max(50).default(""),
   projectStyle: z.string().max(50).optional(),
   model: z.string().max(100).optional(),
   // 2026/06:查看提示词模式
   previewOnly: z.boolean().default(false),
-})
+});
 
-export type ShotInputType = z.infer<typeof ShotInput>
+export type ShotInputType = z.infer<typeof ShotInput>;
 
 function buildShotInstruction(data: ShotInputType, styleSpec: VisualStyleSpec): string {
   const charRefs = data.characterImageUrls.length
     ? data.characterImageUrls
         .map((_, i) => `图${i + 1} = 「${data.characterNames[i] || `角色${i + 1}`}」`)
-        .join(', ')
-    : ''
+        .join(", ")
+    : "";
   const sceneRef = data.sceneImageUrl
-    ? `图${data.characterImageUrls.length + 1} = 场景(${data.sceneLocation || '当前场景'}${data.sceneTimeOfDay ? ' / ' + data.sceneTimeOfDay : ''})`
-    : ''
+    ? `图${data.characterImageUrls.length + 1} = 场景(${data.sceneLocation || "当前场景"}${data.sceneTimeOfDay ? " / " + data.sceneTimeOfDay : ""})`
+    : "";
 
   return [
     `[任务] 生成一张「${data.shotTypeLabel}」分镜图,严格按下面的融合规则。`,
     ``,
     `[剧情上下文] ${data.plotText}`,
     `[本镜头] ${data.shotType} ${data.shotTypeLabel} —— ${data.action}`,
-    data.camera ? `[机位] ${data.camera}` : '',
+    data.camera ? `[机位] ${data.camera}` : "",
     ``,
     `[参考图清单(严格按下面的对应关系使用)]`,
     charRefs,
@@ -1027,244 +1076,267 @@ function buildShotInstruction(data: ShotInputType, styleSpec: VisualStyleSpec): 
       ? `2. 场景构图、空间布局、光照氛围请以场景参考图为准,本镜头发生在这个场景内。`
       : `2. 没有场景参考,根据剧情推断合理的环境。`,
     `3. 这是 ${data.shotTypeLabel} 镜头:`,
-    data.shotType === 'WS'
+    data.shotType === "WS"
       ? `   - 远景:人物在画面中占比较小,环境占据画面主体;展示空间感、地理关系、整体氛围。`
-      : data.shotType === 'MS'
+      : data.shotType === "MS"
         ? `   - 中景:人物从膝盖以上,展示肢体语言和主要动作;既能看到人物也能看到周围环境。`
-        : data.shotType === 'CU'
+        : data.shotType === "CU"
           ? `   - 近景:人物胸部以上,重点是表情、眼神、情绪;环境退到背景。`
-          : data.shotType === 'ECU'
+          : data.shotType === "ECU"
             ? `   - 特写:画面聚焦在某个细节(眼睛、嘴唇、手、道具),情绪张力最强。`
             : `   - 过肩:从某人肩膀后面拍另一人,常用于对话场景,有空间纵深。`,
     `4. 画面必须是单张分镜图,不能有面板分割、文字、标号。`,
     `5. 角色动作 / 表情 / 视线方向严格按本镜头的"${data.action}"执行。`,
     ``,
-    buildStyleLock(styleSpec, 'panel'),
-  ].filter(Boolean).join('\n')
+    buildStyleLock(styleSpec, "panel"),
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function buildShotNegative(): string {
   return [
-    'different art style, style drift, photorealistic when input is anime, anime when input is realistic, different medium, different line treatment, different color grading',
-    'multiple panels, panel, grid, storyboard template, before/after, comparison, text, watermark, logo, signature, label, caption, annotation, arrow, callout',
-    'different face, different face shape, different eye shape, different eye color, different nose, different mouth, different eyebrows, different skin tone, different hairstyle, different hair color, different hair length, different outfit, different clothing color, different accessories, different age',
-    'medium shot when shot type is full body, close-up when shot type is mid, headshot, bust, half body, cropped at feet, missing feet, missing legs',
-    'extreme low angle, worm\'s eye view, hero shot, extreme dutch angle, fisheye, wide-angle distortion',
-    'extra people, bystander, crowd, extra limbs, deformed hands, extra fingers, blurred face, low quality',
-  ].join(', ')
+    "different art style, style drift, photorealistic when input is anime, anime when input is realistic, different medium, different line treatment, different color grading",
+    "multiple panels, panel, grid, storyboard template, before/after, comparison, text, watermark, logo, signature, label, caption, annotation, arrow, callout",
+    "different face, different face shape, different eye shape, different eye color, different nose, different mouth, different eyebrows, different skin tone, different hairstyle, different hair color, different hair length, different outfit, different clothing color, different accessories, different age",
+    "medium shot when shot type is full body, close-up when shot type is mid, headshot, bust, half body, cropped at feet, missing feet, missing legs",
+    "extreme low angle, worm's eye view, hero shot, extreme dutch angle, fisheye, wide-angle distortion",
+    "extra people, bystander, crowd, extra limbs, deformed hands, extra fingers, blurred face, low quality",
+  ].join(", ");
 }
 
-export const generateStoryboardShotImage = createServerFn({ method: 'POST' })
+export const generateStoryboardShotImage = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => ShotInput.parse(d))
   .handler(async ({ data }) => {
-    const { resolveProjectStyle } = await import('./visualStyles')
-    const styleSpec = resolveProjectStyle(data.projectStyle)
+    const { resolveProjectStyle } = await import("./visualStyles");
+    const styleSpec = resolveProjectStyle(data.projectStyle);
 
-    const images: string[] = []
-    data.characterImageUrls.forEach((url) => { if (url) images.push(url) })
-    if (data.sceneImageUrl) images.push(data.sceneImageUrl)
+    const images: string[] = [];
+    data.characterImageUrls.forEach((url) => {
+      if (url) images.push(url);
+    });
+    if (data.sceneImageUrl) images.push(data.sceneImageUrl);
 
     if (!images.length) {
-      return { ok: false as const, error: '缺少参考图(至少需要一张角色图或场景图)' }
+      return { ok: false as const, error: "缺少参考图(至少需要一张角色图或场景图)" };
     }
     if (images.length > 10) {
-      return { ok: false as const, error: `参考图过多(${images.length} 张,Seedream 最多 10 张)。请减少该分镜涉及的角色数。` }
+      return {
+        ok: false as const,
+        error: `参考图过多(${images.length} 张,Seedream 最多 10 张)。请减少该分镜涉及的角色数。`,
+      };
     }
 
-    const instruction = buildShotInstruction(data, styleSpec)
-    const negative = buildShotNegative()
+    const instruction = buildShotInstruction(data, styleSpec);
+    const negative = buildShotNegative();
 
-    const requested = normalizeImageModelForRouting(data.model)
+    const requested = normalizeImageModelForRouting(data.model);
     // 委托给 Pixflow(gpt-image-2 / gemini 图像模型)。gpt-image-* 有参考图时
     // 在 pixflow.functions.ts 内部切到 /v1/images/edits,避免误走 ARK/Seedream。
     {
-      const { isLovableGatewayImageModel, callLovableGatewayImage } = await import('./lovableImage.functions')
+      const { isLovableGatewayImageModel, callLovableGatewayImage } =
+        await import("./lovableImage.functions");
       if (isLovableGatewayImageModel(requested)) {
         const r = await callLovableGatewayImage({
           prompt: appendNegative(instruction, negative),
           model: requested,
-          size: '2K',
+          size: "2K",
           referenceImages: images,
-        })
-        if (!r.url) return { ok: false as const, error: r.error || 'Lovable Gateway 未返回图片' }
-        return { ok: true as const, url: r.url, model: r.model }
+        });
+        if (!r.url) return { ok: false as const, error: r.error || "Lovable Gateway 未返回图片" };
+        return { ok: true as const, url: r.url, model: r.model };
       }
     }
-    if (requested.toLowerCase().startsWith('pixflow/')) {
-      const { callPixflowImage } = await import('./pixflow.functions')
+    if (requested.toLowerCase().startsWith("pixflow/")) {
+      const { callPixflowImage } = await import("./pixflow.functions");
       const r = await callPixflowImage({
         prompt: appendNegative(instruction, negative),
         model: requested,
-        size: '2K',
+        size: "2K",
         referenceImages: images,
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'Pixflow 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "Pixflow 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('claude360/')) {
-      const { callClaude360Image } = await import('./claude360Image.functions')
+    if (requested.toLowerCase().startsWith("claude360/")) {
+      const { callClaude360Image } = await import("./claude360Image.functions");
       const r = await callClaude360Image({
         prompt: appendNegative(instruction, negative),
         model: requested,
-        size: '2K',
+        size: "2K",
         referenceImages: images,
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'Claude360 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "Claude360 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
     // generateStoryboardShotImage: 委托给 Tokenflash(OpenAI 兼容,api.tokenflash.cn)
-    if (requested.toLowerCase().startsWith('tokenflash/')) {
-      const { callTokenflashImage } = await import('./tokenflash.functions')
+    if (requested.toLowerCase().startsWith("tokenflash/")) {
+      const { callTokenflashImage } = await import("./tokenflash.functions");
       const r = await callTokenflashImage({
         prompt: appendNegative(instruction, negative),
         model: requested,
-        size: '2K',
+        size: "2K",
         referenceImages: images,
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'Tokenflash 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "Tokenflash 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('revora/')) {
-      const { callRevoraImage } = await import('./revoraImage.functions')
+    if (requested.toLowerCase().startsWith("revora/")) {
+      const { callRevoraImage } = await import("./revoraImage.functions");
       const r = await callRevoraImage({
         prompt: appendNegative(instruction, negative),
         model: requested,
-        size: '2K',
+        size: "2K",
         referenceImages: images,
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'Revora 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "Revora 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('aigcfamily/')) {
-      const { callAigcfamilyImage } = await import('./aigcfamilyImage.functions')
+    if (requested.toLowerCase().startsWith("aigcfamily/")) {
+      const { callAigcfamilyImage } = await import("./aigcfamilyImage.functions");
       const r = await callAigcfamilyImage({
         prompt: appendNegative(instruction, negative),
         model: requested,
-        size: '2K',
+        size: "2K",
         referenceImages: images,
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'AIGCFamily 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "AIGCFamily 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('azure/')) {
-      const { callAzureImage } = await import('./azureImage.functions')
+    if (requested.toLowerCase().startsWith("azure/")) {
+      const { callAzureImage } = await import("./azureImage.functions");
       const r = await callAzureImage({
         prompt: appendNegative(instruction, negative),
         model: requested,
-        size: '2K',
+        size: "2K",
         referenceImages: images,
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'Azure 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model, meta: r.meta }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "Azure 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model, meta: r.meta };
     }
     // generateStoryboardShotImage: 委托给 OneToken(OpenAI 兼容,api.onetoken.one)
-    if (requested.toLowerCase().startsWith('onetoken/')) {
-      const { callOnetokenImage } = await import('./onetokenImage.functions')
+    if (requested.toLowerCase().startsWith("onetoken/")) {
+      const { callOnetokenImage } = await import("./onetokenImage.functions");
       const r = await callOnetokenImage({
         prompt: appendNegative(instruction, negative),
         model: requested,
-        size: '2K',
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'OneToken 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+        size: "2K",
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "OneToken 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
     // generateStoryboardShotImage: 委托给 OTU(OpenAI 兼容)
-    if (requested.toLowerCase().startsWith('otu/')) {
-      const { callOtuImage } = await import('./otuImage.functions')
+    if (requested.toLowerCase().startsWith("otu/")) {
+      const { callOtuImage } = await import("./otuImage.functions");
       const r = await callOtuImage({
         prompt: appendNegative(instruction, negative),
         model: requested,
-        size: '2K',
+        size: "2K",
         referenceImages: images,
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'OTU 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "OTU 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('aitokenvibe/')) {
-      const { callAitokenvibeImage } = await import('./aitokenvibeImage.functions')
+    if (requested.toLowerCase().startsWith("aitokenvibe/")) {
+      const { callAitokenvibeImage } = await import("./aitokenvibeImage.functions");
       const r = await callAitokenvibeImage({
         prompt: appendNegative(instruction, negative),
         model: requested,
-        size: '2K',
+        size: "2K",
         referenceImages: images,
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'AI Tokenvibe 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "AI Tokenvibe 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('thhtcloud/')) {
-      const { callThhtcloudImage } = await import('./thhtcloudImage.functions')
+    if (requested.toLowerCase().startsWith("thhtcloud/")) {
+      const { callThhtcloudImage } = await import("./thhtcloudImage.functions");
       const r = await callThhtcloudImage({
         prompt: appendNegative(instruction, negative),
         model: requested,
-        size: '2K',
+        size: "2K",
         referenceImages: images,
-      })
-      if (!r.url) return { ok: false as const, error: r.error || '天鸿智算 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "天鸿智算 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('ailinzi/')) {
-      const { callAilinziImage } = await import('./ailinziImage.functions')
+    if (requested.toLowerCase().startsWith("ailinzi/")) {
+      const { callAilinziImage } = await import("./ailinziImage.functions");
       const r = await callAilinziImage({
         prompt: appendNegative(instruction, negative),
         model: requested,
-        size: '2K',
+        size: "2K",
         referenceImages: images,
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'ailinzi 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "ailinzi 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('vapeur/')) {
-      const { callVapeurImage } = await import('./vapeurImage.functions')
+    if (requested.toLowerCase().startsWith("vapeur/")) {
+      const { callVapeurImage } = await import("./vapeurImage.functions");
       const r = await callVapeurImage({
         prompt: appendNegative(instruction, negative),
         model: requested,
-        size: '2K',
+        size: "2K",
         referenceImages: images,
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'vapeur 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "vapeur 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('tokenhub/')) {
-      const { callTokenhubImage } = await import('./tokenhubImage.functions')
+    if (requested.toLowerCase().startsWith("tokenhub/")) {
+      const { callTokenhubImage } = await import("./tokenhubImage.functions");
       const r = await callTokenhubImage({
         prompt: appendNegative(instruction, negative),
         model: requested,
-        size: '2K',
+        size: "2K",
         referenceImages: images,
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'tokenhub 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "tokenhub 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('nagora/')) {
-      const { callNagoraImage } = await import('./nagoraImage.functions')
+    if (requested.toLowerCase().startsWith("nagora/")) {
+      const { callNagoraImage } = await import("./nagoraImage.functions");
       const r = await callNagoraImage({
         prompt: appendNegative(instruction, negative),
         model: requested,
-        size: '2K',
+        size: "2K",
         referenceImages: images,
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'nagora 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "nagora 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
+    }
+    if (requested.toLowerCase().startsWith("meridian/")) {
+      const { callMeridianImage } = await import("./meridianImage.functions");
+      const r = await callMeridianImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: "2K",
+        referenceImages: images,
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "meridian 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
     // generateStoryboardShotImage: 委托给 legacy(Qwen / Wan / OpenRouter 等)
-    if (requested && !isSeedreamModel(requested) && !requested.toLowerCase().startsWith('lovable/')) {
-      const { generateImage: legacy } = await import('./openrouterImage.functions')
+    if (
+      requested &&
+      !isSeedreamModel(requested) &&
+      !requested.toLowerCase().startsWith("lovable/")
+    ) {
+      const { generateImage: legacy } = await import("./openrouterImage.functions");
       const r: any = await legacy({
         data: {
           prompt: appendNegative(instruction, negative),
           model: requested,
-          size: '1328*1328',
+          size: "1328*1328",
           negativePrompt: negative,
         },
-      } as any)
-      if (!r?.url) return { ok: false as const, error: r?.error || 'Legacy 模型未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      } as any);
+      if (!r?.url) return { ok: false as const, error: r?.error || "Legacy 模型未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
 
-    const { apiKey, baseUrl, model: defaultModel } = getArkConfig()
-    if (!apiKey) return { ok: false as const, error: 'ARK_API_KEY not configured' }
-    const model = requested || defaultModel
-    const prompt = appendNegative(instruction, negative)
+    const { apiKey, baseUrl, model: defaultModel } = getArkConfig();
+    if (!apiKey) return { ok: false as const, error: "ARK_API_KEY not configured" };
+    const model = requested || defaultModel;
+    const prompt = appendNegative(instruction, negative);
 
     // 2026/06:查看提示词模式
     if (data.previewOnly) {
@@ -1272,25 +1344,27 @@ export const generateStoryboardShotImage = createServerFn({ method: 'POST' })
         ok: true as const,
         previewPrompt: prompt,
         negativePrompt: negative,
-        promptSize: '2K',
-        promptExtra: { model, route: 'I2I 分镜图', refImages: images.join(' / ') },
-      } as any
+        promptSize: "2K",
+        promptExtra: { model, route: "I2I 分镜图", refImages: images.join(" / ") },
+      } as any;
     }
 
     const result = await callSeedreamImages(
-      { model, prompt, image: images, size: '2K', output_format: 'png', watermark: false },
+      { model, prompt, image: images, size: "2K", output_format: "png", watermark: false },
       apiKey,
       baseUrl,
       I2I_TIMEOUT_MS,
-    )
+    );
     if (!result.url) {
-      if (/401/i.test(result.error || '')) return { ok: false as const, error: 'Seedream auth failed (401)' }
-      if (/402/i.test(result.error || '')) return { ok: false as const, error: 'no_credits' }
-      if (/timed out/i.test(result.error || '')) return { ok: false as const, error: 'AI 处理超时(>180s)' }
-      return { ok: false as const, error: result.error || 'Seedream 未返回图片' }
+      if (/401/i.test(result.error || ""))
+        return { ok: false as const, error: "Seedream auth failed (401)" };
+      if (/402/i.test(result.error || "")) return { ok: false as const, error: "no_credits" };
+      if (/timed out/i.test(result.error || ""))
+        return { ok: false as const, error: "AI 处理超时(>180s)" };
+      return { ok: false as const, error: result.error || "Seedream 未返回图片" };
     }
-    return { ok: true as const, url: result.url, model: result.model }
-  })
+    return { ok: true as const, url: result.url, model: result.model };
+  });
 
 // ====================================================================
 // 4) regenerateStoryboardShot —— 多图融合 I2I(分镜按意见重生)
@@ -1303,19 +1377,25 @@ export const generateStoryboardShotImage = createServerFn({ method: 'POST' })
 const RegenShotInput = ShotInput.extend({
   referenceImageUrl: z.string().url(),
   userInstruction: z.string().min(1).max(500),
-})
+});
 
-export type RegenShotInputType = z.infer<typeof RegenShotInput>
+export type RegenShotInputType = z.infer<typeof RegenShotInput>;
 
-function buildRegenShotInstruction(data: RegenShotInputType, styleSpec: VisualStyleSpec, usedCharCount: number, hasScene: boolean): string {
-  const charRefs = usedCharCount > 0
-    ? usedCharCount === 1
-      ? `图2 = 「${data.characterNames[0] || '角色'}」(脸/衣服锁定)`
-      : `图2..${1 + usedCharCount} = ${usedCharCount} 个角色(脸/衣服锁定)`
-    : ''
+function buildRegenShotInstruction(
+  data: RegenShotInputType,
+  styleSpec: VisualStyleSpec,
+  usedCharCount: number,
+  hasScene: boolean,
+): string {
+  const charRefs =
+    usedCharCount > 0
+      ? usedCharCount === 1
+        ? `图2 = 「${data.characterNames[0] || "角色"}」(脸/衣服锁定)`
+        : `图2..${1 + usedCharCount} = ${usedCharCount} 个角色(脸/衣服锁定)`
+      : "";
   const sceneRef = hasScene
-    ? `图${1 + usedCharCount + 1} = 场景(${data.sceneLocation || '当前场景'}${data.sceneTimeOfDay ? ' / ' + data.sceneTimeOfDay : ''})`
-    : ''
+    ? `图${1 + usedCharCount + 1} = 场景(${data.sceneLocation || "当前场景"}${data.sceneTimeOfDay ? " / " + data.sceneTimeOfDay : ""})`
+    : "";
 
   return [
     `[任务] 修改「图1」(当前分镜镜头),严格按下面的"修改意见"调整,只改用户提到的部分。`,
@@ -1324,7 +1404,7 @@ function buildRegenShotInstruction(data: RegenShotInputType, styleSpec: VisualSt
     ``,
     `[剧情上下文] ${data.plotText}`,
     `[本镜头] ${data.shotType} ${data.shotTypeLabel} —— ${data.action}`,
-    data.camera ? `[机位] ${data.camera}` : '',
+    data.camera ? `[机位] ${data.camera}` : "",
     ``,
     `[参考图清单(严格按下面的对应关系使用)]`,
     `图1 = 当前分镜镜头(要被修改的)`,
@@ -1334,224 +1414,240 @@ function buildRegenShotInstruction(data: RegenShotInputType, styleSpec: VisualSt
     `[修改规则 — 必须遵守]`,
     `1. 以图1为基础,在它的构图 / 景别 / 风格上修改,**不要重新构图或换景别**。`,
     `2. 只调整"修改意见"里明确提到的元素;没提到的部分(角色脸/衣服、场景、构图、视角、风格)全部保留图1的样子。`,
-    `3. ${usedCharCount > 0 ? `图 2..N 的角色是参考,他们的脸/身材/衣服必须跟图1 一致(不能换脸)。` : '本镜头没有角色参考,只改场景/构图相关的部分。'}`,
-    hasScene ? `4. 场景构图 / 光照沿用图1 当前的样子(场景参考图只是兜底,跟图1 冲突时以图1 为准)。` : '',
+    `3. ${usedCharCount > 0 ? `图 2..N 的角色是参考,他们的脸/身材/衣服必须跟图1 一致(不能换脸)。` : "本镜头没有角色参考,只改场景/构图相关的部分。"}`,
+    hasScene
+      ? `4. 场景构图 / 光照沿用图1 当前的样子(场景参考图只是兜底,跟图1 冲突时以图1 为准)。`
+      : "",
     `5. 保持单张分镜图,不能有面板分割、文字、标号。`,
     ``,
-    buildStyleLock(styleSpec, 'panel'),
-  ].filter(Boolean).join('\n')
+    buildStyleLock(styleSpec, "panel"),
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
-export const regenerateStoryboardShot = createServerFn({ method: 'POST' })
+export const regenerateStoryboardShot = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => RegenShotInput.parse(d))
   .handler(async ({ data }) => {
-    const { resolveProjectStyle } = await import('./visualStyles')
-    const styleSpec = resolveProjectStyle(data.projectStyle)
+    const { resolveProjectStyle } = await import("./visualStyles");
+    const styleSpec = resolveProjectStyle(data.projectStyle);
 
     // 图 1 永远是 referenceImageUrl,后面再塞角色/场景参考。
     // Seedream 限 10 张,跟老代码一致守住 3 张上限。
-    const hasScene = !!data.sceneImageUrl
-    const maxChars = Math.max(0, 3 - 1 - (hasScene ? 1 : 0))
-    const usedCharCount = Math.min(data.characterImageUrls.length, maxChars)
-    const images: string[] = [data.referenceImageUrl]
+    const hasScene = !!data.sceneImageUrl;
+    const maxChars = Math.max(0, 3 - 1 - (hasScene ? 1 : 0));
+    const usedCharCount = Math.min(data.characterImageUrls.length, maxChars);
+    const images: string[] = [data.referenceImageUrl];
     for (let i = 0; i < usedCharCount; i++) {
-      const url = data.characterImageUrls[i]
-      if (url) images.push(url)
+      const url = data.characterImageUrls[i];
+      if (url) images.push(url);
     }
-    if (hasScene) images.push(data.sceneImageUrl!)
+    if (hasScene) images.push(data.sceneImageUrl!);
 
     if (images.length > 10) {
-      return { ok: false as const, error: `参考图过多(${images.length} 张,Seedream 最多 10 张)。` }
+      return { ok: false as const, error: `参考图过多(${images.length} 张,Seedream 最多 10 张)。` };
     }
 
-    const instruction = buildRegenShotInstruction(data, styleSpec, usedCharCount, hasScene)
-    const negative = buildShotNegative()
+    const instruction = buildRegenShotInstruction(data, styleSpec, usedCharCount, hasScene);
+    const negative = buildShotNegative();
 
-    const requested = normalizeImageModelForRouting(data.model)
+    const requested = normalizeImageModelForRouting(data.model);
     {
-      const { isLovableGatewayImageModel, callLovableGatewayImage } = await import('./lovableImage.functions')
+      const { isLovableGatewayImageModel, callLovableGatewayImage } =
+        await import("./lovableImage.functions");
       if (isLovableGatewayImageModel(requested)) {
         const r = await callLovableGatewayImage({
           prompt: appendNegative(instruction, negative),
           model: requested,
-          size: '2K',
+          size: "2K",
           referenceImages: images,
-        })
-        if (!r.url) return { ok: false as const, error: r.error || 'Lovable Gateway 未返回图片' }
-        return { ok: true as const, url: r.url, model: r.model }
+        });
+        if (!r.url) return { ok: false as const, error: r.error || "Lovable Gateway 未返回图片" };
+        return { ok: true as const, url: r.url, model: r.model };
       }
     }
-    if (requested.toLowerCase().startsWith('pixflow/')) {
-      const { callPixflowImage } = await import('./pixflow.functions')
+    if (requested.toLowerCase().startsWith("pixflow/")) {
+      const { callPixflowImage } = await import("./pixflow.functions");
       const r = await callPixflowImage({
         prompt: appendNegative(instruction, negative),
         model: requested,
-        size: '2K',
+        size: "2K",
         referenceImages: images,
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'Pixflow 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "Pixflow 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('claude360/')) {
-      const { callClaude360Image } = await import('./claude360Image.functions')
+    if (requested.toLowerCase().startsWith("claude360/")) {
+      const { callClaude360Image } = await import("./claude360Image.functions");
       const r = await callClaude360Image({
         prompt: appendNegative(instruction, negative),
         model: requested,
-        size: '2K',
+        size: "2K",
         referenceImages: images,
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'Claude360 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "Claude360 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('tokenflash/')) {
-      const { callTokenflashImage } = await import('./tokenflash.functions')
+    if (requested.toLowerCase().startsWith("tokenflash/")) {
+      const { callTokenflashImage } = await import("./tokenflash.functions");
       const r = await callTokenflashImage({
         prompt: appendNegative(instruction, negative),
         model: requested,
-        size: '2K',
+        size: "2K",
         referenceImages: images,
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'Tokenflash 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "Tokenflash 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('revora/')) {
-      const { callRevoraImage } = await import('./revoraImage.functions')
+    if (requested.toLowerCase().startsWith("revora/")) {
+      const { callRevoraImage } = await import("./revoraImage.functions");
       const r = await callRevoraImage({
         prompt: appendNegative(instruction, negative),
         model: requested,
-        size: '2K',
+        size: "2K",
         referenceImages: images,
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'Revora 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "Revora 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('aigcfamily/')) {
-      const { callAigcfamilyImage } = await import('./aigcfamilyImage.functions')
+    if (requested.toLowerCase().startsWith("aigcfamily/")) {
+      const { callAigcfamilyImage } = await import("./aigcfamilyImage.functions");
       const r = await callAigcfamilyImage({
         prompt: appendNegative(instruction, negative),
         model: requested,
-        size: '2K',
+        size: "2K",
         referenceImages: images,
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'AIGCFamily 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "AIGCFamily 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('azure/')) {
-      const { callAzureImage } = await import('./azureImage.functions')
+    if (requested.toLowerCase().startsWith("azure/")) {
+      const { callAzureImage } = await import("./azureImage.functions");
       const r = await callAzureImage({
         prompt: appendNegative(instruction, negative),
         model: requested,
-        size: '2K',
+        size: "2K",
         referenceImages: images,
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'Azure 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model, meta: r.meta }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "Azure 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model, meta: r.meta };
     }
-    if (requested.toLowerCase().startsWith('onetoken/')) {
-      const { callOnetokenImage } = await import('./onetokenImage.functions')
+    if (requested.toLowerCase().startsWith("onetoken/")) {
+      const { callOnetokenImage } = await import("./onetokenImage.functions");
       const r = await callOnetokenImage({
         prompt: appendNegative(instruction, negative),
         model: requested,
-        size: '2K',
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'OneToken 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+        size: "2K",
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "OneToken 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('otu/')) {
-      const { callOtuImage } = await import('./otuImage.functions')
+    if (requested.toLowerCase().startsWith("otu/")) {
+      const { callOtuImage } = await import("./otuImage.functions");
       const r = await callOtuImage({
         prompt: appendNegative(instruction, negative),
         model: requested,
-        size: '2K',
+        size: "2K",
         referenceImages: images,
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'OTU 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "OTU 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('aitokenvibe/')) {
-      const { callAitokenvibeImage } = await import('./aitokenvibeImage.functions')
+    if (requested.toLowerCase().startsWith("aitokenvibe/")) {
+      const { callAitokenvibeImage } = await import("./aitokenvibeImage.functions");
       const r = await callAitokenvibeImage({
         prompt: appendNegative(instruction, negative),
         model: requested,
-        size: '2K',
+        size: "2K",
         referenceImages: images,
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'AI Tokenvibe 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "AI Tokenvibe 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('thhtcloud/')) {
-      const { callThhtcloudImage } = await import('./thhtcloudImage.functions')
+    if (requested.toLowerCase().startsWith("thhtcloud/")) {
+      const { callThhtcloudImage } = await import("./thhtcloudImage.functions");
       const r = await callThhtcloudImage({
         prompt: appendNegative(instruction, negative),
         model: requested,
-        size: '2K',
+        size: "2K",
         referenceImages: images,
-      })
-      if (!r.url) return { ok: false as const, error: r.error || '天鸿智算 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "天鸿智算 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('ailinzi/')) {
-      const { callAilinziImage } = await import('./ailinziImage.functions')
+    if (requested.toLowerCase().startsWith("ailinzi/")) {
+      const { callAilinziImage } = await import("./ailinziImage.functions");
       const r = await callAilinziImage({
         prompt: appendNegative(instruction, negative),
         model: requested,
-        size: '2K',
+        size: "2K",
         referenceImages: images,
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'ailinzi 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "ailinzi 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('vapeur/')) {
-      const { callVapeurImage } = await import('./vapeurImage.functions')
+    if (requested.toLowerCase().startsWith("vapeur/")) {
+      const { callVapeurImage } = await import("./vapeurImage.functions");
       const r = await callVapeurImage({
         prompt: appendNegative(instruction, negative),
         model: requested,
-        size: '2K',
+        size: "2K",
         referenceImages: images,
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'vapeur 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "vapeur 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('tokenhub/')) {
-      const { callTokenhubImage } = await import('./tokenhubImage.functions')
+    if (requested.toLowerCase().startsWith("tokenhub/")) {
+      const { callTokenhubImage } = await import("./tokenhubImage.functions");
       const r = await callTokenhubImage({
         prompt: appendNegative(instruction, negative),
         model: requested,
-        size: '2K',
+        size: "2K",
         referenceImages: images,
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'tokenhub 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "tokenhub 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('nagora/')) {
-      const { callNagoraImage } = await import('./nagoraImage.functions')
+    if (requested.toLowerCase().startsWith("nagora/")) {
+      const { callNagoraImage } = await import("./nagoraImage.functions");
       const r = await callNagoraImage({
         prompt: appendNegative(instruction, negative),
         model: requested,
-        size: '2K',
+        size: "2K",
         referenceImages: images,
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'nagora 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "nagora 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
+    }
+    if (requested.toLowerCase().startsWith("meridian/")) {
+      const { callMeridianImage } = await import("./meridianImage.functions");
+      const r = await callMeridianImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: "2K",
+        referenceImages: images,
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "meridian 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
     if (requested && !isSeedreamModel(requested)) {
-      const { generateImage: legacy } = await import('./openrouterImage.functions')
+      const { generateImage: legacy } = await import("./openrouterImage.functions");
       const r: any = await legacy({
         data: {
           prompt: appendNegative(instruction, negative),
           model: requested,
-          size: '1328*1328',
+          size: "1328*1328",
           negativePrompt: negative,
         },
-      } as any)
-      if (!r?.url) return { ok: false as const, error: r?.error || 'Legacy 模型未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      } as any);
+      if (!r?.url) return { ok: false as const, error: r?.error || "Legacy 模型未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
 
-    const { apiKey, baseUrl, model: defaultModel } = getArkConfig()
-    if (!apiKey) return { ok: false as const, error: 'ARK_API_KEY not configured' }
-    const model = requested || defaultModel
-    const prompt = appendNegative(instruction, negative)
+    const { apiKey, baseUrl, model: defaultModel } = getArkConfig();
+    if (!apiKey) return { ok: false as const, error: "ARK_API_KEY not configured" };
+    const model = requested || defaultModel;
+    const prompt = appendNegative(instruction, negative);
 
     // 2026/06:查看提示词模式
     if (data.previewOnly) {
@@ -1559,25 +1655,32 @@ export const regenerateStoryboardShot = createServerFn({ method: 'POST' })
         ok: true as const,
         previewPrompt: prompt,
         negativePrompt: negative,
-        promptSize: '2K',
-        promptExtra: { model, route: 'I2I 分镜重生', userInstruction: data.userInstruction, refImages: images.join(' / ') },
-      } as any
+        promptSize: "2K",
+        promptExtra: {
+          model,
+          route: "I2I 分镜重生",
+          userInstruction: data.userInstruction,
+          refImages: images.join(" / "),
+        },
+      } as any;
     }
 
     const result = await callSeedreamImages(
-      { model, prompt, image: images, size: '2K', output_format: 'png', watermark: false },
+      { model, prompt, image: images, size: "2K", output_format: "png", watermark: false },
       apiKey,
       baseUrl,
       I2I_TIMEOUT_MS,
-    )
+    );
     if (!result.url) {
-      if (/401/i.test(result.error || '')) return { ok: false as const, error: 'Seedream auth failed (401)' }
-      if (/402/i.test(result.error || '')) return { ok: false as const, error: 'no_credits' }
-      if (/timed out/i.test(result.error || '')) return { ok: false as const, error: 'AI 处理超时(>180s)' }
-      return { ok: false as const, error: result.error || 'Seedream 未返回图片' }
+      if (/401/i.test(result.error || ""))
+        return { ok: false as const, error: "Seedream auth failed (401)" };
+      if (/402/i.test(result.error || "")) return { ok: false as const, error: "no_credits" };
+      if (/timed out/i.test(result.error || ""))
+        return { ok: false as const, error: "AI 处理超时(>180s)" };
+      return { ok: false as const, error: result.error || "Seedream 未返回图片" };
     }
-    return { ok: true as const, url: result.url, model: result.model }
-  })
+    return { ok: true as const, url: result.url, model: result.model };
+  });
 
 // ====================================================================
 // 5) generateStoryboardPitchDeck —— 漫剧故事板(Manga-Style Storyboard)
@@ -1606,29 +1709,31 @@ const PitchDeckCharacterSchema = z.object({
   bodyDescription: z.string().max(2000).optional(),
   clothingDescription: z.string().max(2000).optional(),
   palette: z.array(z.string()).max(8).optional(),
-})
+});
 
 const PitchDeckShotSchema = z.object({
-  shotType: z.enum(['WS', 'MS', 'CU', 'ECU', 'OTS']),
+  shotType: z.enum(["WS", "MS", "CU", "ECU", "OTS"]),
   shotTypeLabel: z.string().min(1).max(20),
   action: z.string().min(1).max(400),
-  camera: z.string().max(200).default(''),
+  camera: z.string().max(200).default(""),
   durationSec: z.number().optional(),
   // 2026/06 新增:用户要求每帧标注时长,把 shot 自身的时间区间也传过来
   startSec: z.number().optional(),
   endSec: z.number().optional(),
-})
+});
 
 const PitchDeckInput = z.object({
   projectStyle: z.string().max(50).optional(),
   groupLabel: z.string().max(200).optional(),
   plotText: z.string().min(1).max(2000),
-  scene: z.object({
-    slug: z.string().max(200).optional(),
-    location: z.string().max(200).optional(),
-    timeOfDay: z.string().max(50).optional(),
-    profile: z.string().max(2000).optional(),
-  }).optional(),
+  scene: z
+    .object({
+      slug: z.string().max(200).optional(),
+      location: z.string().max(200).optional(),
+      timeOfDay: z.string().max(50).optional(),
+      profile: z.string().max(2000).optional(),
+    })
+    .optional(),
   // 2026/06:之前 .max(3) 偷偷砍数据 —— 大场面组 4-6 角色会被丢一半。
   // 文字描述无 token 压力,放到 8;图片层面另有 .max(10) 上限(下面)
   characters: z.array(PitchDeckCharacterSchema).max(8).default([]),
@@ -1647,9 +1752,9 @@ const PitchDeckInput = z.object({
   model: z.string().max(100).optional(),
   // 2026/06:查看提示词模式
   previewOnly: z.boolean().default(false),
-})
+});
 
-export type PitchDeckInputType = z.infer<typeof PitchDeckInput>
+export type PitchDeckInputType = z.infer<typeof PitchDeckInput>;
 
 /**
  * 把分镜数据翻译成"漫剧故事板"多格分镜 prompt。
@@ -1670,54 +1775,65 @@ export type PitchDeckInputType = z.infer<typeof PitchDeckInput>
  *   7) 风格锁到项目视觉风格
  */
 function buildPitchDeckPrompt(opts: {
-  data: PitchDeckInputType
-  styleSpec: { label: string; positive: string; negative: string }
+  data: PitchDeckInputType;
+  styleSpec: { label: string; positive: string; negative: string };
 }): string {
-  const { data, styleSpec } = opts
-  const chars = data.characters || []
-  const shots = data.shots || []
-  const shotCount = shots.length
-  const SUGGESTED_PANELS = Math.min(10, Math.max(4, shotCount || 6))
+  const { data, styleSpec } = opts;
+  const chars = data.characters || [];
+  const shots = data.shots || [];
+  const shotCount = shots.length;
+  const SUGGESTED_PANELS = Math.min(10, Math.max(4, shotCount || 6));
 
-  const refImgs = data.referenceImages || []
-  const refLabels = data.referenceImageLabels || []
+  const refImgs = data.referenceImages || [];
+  const refLabels = data.referenceImageLabels || [];
   const referenceImageBlock = refImgs.length
     ? [
         `[REFERENCE IMAGES — ${refImgs.length} 张视觉锚点,用于人物/场景身份锁定]`,
-        ...refImgs.map((_, i) => `  Image ${i + 1}: ${refLabels[i] ?? '(no label)'}`),
+        ...refImgs.map((_, i) => `  Image ${i + 1}: ${refLabels[i] ?? "(no label)"}`),
         ``,
         `【身份锁定】同一角色在所有镜头中必须保持完全一致的面部特征、发型、体型、服装款式细节。参考图用于锁定"是谁"——脸型、五官比例、发型轮廓、身材比例、服装款式。`,
         `【风格转化】参考图是彩色/渲染图,但本故事板要求纯铅笔线稿。请将参考图人物转化为铅笔素描表达:提取轮廓线、结构线、服装褶皱线,忽略参考图的色彩、光影、材质渲染。不要因为参考图是彩色就在素描里加灰阶阴影渲染。`,
-      ].join('\n')
-    : ''
+      ].join("\n")
+    : "";
 
-  const shotLines = shots.map((s, i) => {
-    const cam = s.camera ? ` | camera: ${s.camera}` : ''
-    const dur = (s.startSec != null && s.endSec != null)
-      ? ` | ${s.startSec.toFixed(0)}-${s.endSec.toFixed(0)}s (${(s.endSec - s.startSec).toFixed(0)}s)`
-      : s.durationSec ? ` | duration: ${s.durationSec}s` : ''
-    return `  Frame ${i + 1}: [${s.shotTypeLabel}] ${s.action}${cam}${dur}`
-  }).join('\n')
+  const shotLines = shots
+    .map((s, i) => {
+      const cam = s.camera ? ` | camera: ${s.camera}` : "";
+      const dur =
+        s.startSec != null && s.endSec != null
+          ? ` | ${s.startSec.toFixed(0)}-${s.endSec.toFixed(0)}s (${(s.endSec - s.startSec).toFixed(0)}s)`
+          : s.durationSec
+            ? ` | duration: ${s.durationSec}s`
+            : "";
+      return `  Frame ${i + 1}: [${s.shotTypeLabel}] ${s.action}${cam}${dur}`;
+    })
+    .join("\n");
 
-  const CHAR_DESC_MAX = 300
-  const charLines = chars.map((c, i) => {
-    const role = c.roleLabel ? ` (${c.roleLabel}` : ''
-    const age = c.age !== undefined ? `, age ${c.age}` : ''
-    return [
-      `  Character ${i + 1}: ${c.name}${role ? role : ''}${age ? age : ''}${c.roleLabel ? ')' : ''}`,
-      c.faceDescription ? `    Face: ${c.faceDescription.slice(0, CHAR_DESC_MAX)}` : '',
-      c.bodyDescription ? `    Body: ${c.bodyDescription.slice(0, CHAR_DESC_MAX)}` : '',
-      c.clothingDescription ? `    Outfit: ${c.clothingDescription.slice(0, CHAR_DESC_MAX)}` : '',
-    ].filter(Boolean).join('\n')
-  }).join('\n')
+  const CHAR_DESC_MAX = 300;
+  const charLines = chars
+    .map((c, i) => {
+      const role = c.roleLabel ? ` (${c.roleLabel}` : "";
+      const age = c.age !== undefined ? `, age ${c.age}` : "";
+      return [
+        `  Character ${i + 1}: ${c.name}${role ? role : ""}${age ? age : ""}${c.roleLabel ? ")" : ""}`,
+        c.faceDescription ? `    Face: ${c.faceDescription.slice(0, CHAR_DESC_MAX)}` : "",
+        c.bodyDescription ? `    Body: ${c.bodyDescription.slice(0, CHAR_DESC_MAX)}` : "",
+        c.clothingDescription ? `    Outfit: ${c.clothingDescription.slice(0, CHAR_DESC_MAX)}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n");
+    })
+    .join("\n");
 
   const sceneLine = data.scene
     ? [
-        data.scene.location ? `  Location: ${data.scene.location}` : '',
-        data.scene.timeOfDay ? `  Time: ${data.scene.timeOfDay}` : '',
-        data.scene.profile ? `  Description: ${data.scene.profile.slice(0, 500)}` : '',
-      ].filter(Boolean).join('\n')
-    : '  (no specific scene)'
+        data.scene.location ? `  Location: ${data.scene.location}` : "",
+        data.scene.timeOfDay ? `  Time: ${data.scene.timeOfDay}` : "",
+        data.scene.profile ? `  Description: ${data.scene.profile.slice(0, 500)}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n")
+    : "  (no specific scene)";
 
   return [
     `[MISSION] Create a professional FILM STORYBOARD in pure PENCIL LINE-ART / SKETCH style. ONE single 16:9 landscape image. The entire board must look like a hand-drawn storyboard by a professional film pre-production artist — pencil on paper, clean lines, no color, no cel-shading, no 3D render, no watercolor.`,
@@ -1764,7 +1880,7 @@ function buildPitchDeckPrompt(opts: {
     sceneLine,
 
     `[CHARACTERS]`,
-    charLines || '  (no specific characters)',
+    charLines || "  (no specific characters)",
 
     `[SHOT BREAKDOWN]`,
     shotLines || `  (derive from plot)`,
@@ -1779,194 +1895,207 @@ function buildPitchDeckPrompt(opts: {
     `RULE 7 — READABLE TEXT: Captions must be legible. Short tags only (shot number, duration, action).`,
 
     `Begin. Output a 16:9 pencil line-art storyboard with ${SUGGESTED_PANELS} frames. Pure sketch style, no color.`,
-  ].filter(Boolean).join('\n\n')
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
-export const generateStoryboardPitchDeck = createServerFn({ method: 'POST' })
+export const generateStoryboardPitchDeck = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => PitchDeckInput.parse(d))
   .handler(async ({ data }) => {
-    const { resolveProjectStyle } = await import('./visualStyles')
-    const styleSpec = resolveProjectStyle(data.projectStyle)
+    const { resolveProjectStyle } = await import("./visualStyles");
+    const styleSpec = resolveProjectStyle(data.projectStyle);
     // 2026/06:加 negative prompt 主攻 "文字乱码 / 文字模糊 / 伪手写"等
     // 文字渲染常见问题,呼应 prompt 里 RULE 3(文字最高优先级)。
     // **2026/06 二次强化**:加画风漂移 negative,防故事板插画跟参考图画风不一致
     const negative = [
-      'garbled text, fake characters, pseudo Chinese, jumbled glyphs, broken strokes, illegible labels, blurry text, smeared text, distorted text, unreadable captions, mismatched font widths, comic font, decorative font, handwritten scribble',
-      'color, colored rendering, full color, cel-shading, watercolor, oil painting, airbrush, gradient, photorealistic, 3D render, CGI, anime style, digital painting, thick paint, impasto, gouache, pastel, marker rendering, digital art',
-      'cluttered layout, overlapping sections, missing dividers, off-grid placement, no white space, busy decorative borders, ornate frames, gold filigree',
-      'wrong aspect ratio, vertical 9:16, square 1:1, 4:3, portrait orientation',
-      'extra characters not in [CHARACTERS], scenery not in [SCENE], invented plot, frames unrelated to [SHOT BREAKDOWN]',
-      'low resolution, blurry, pixelated, JPEG artifacts, low quality, soft focus',
-      'missing top-down diagram, missing camera position numbers, missing shot type labels in diagram',
-      'frames without duration label, frames without shot number, frames without motion tag, frames without camera tag',
+      "garbled text, fake characters, pseudo Chinese, jumbled glyphs, broken strokes, illegible labels, blurry text, smeared text, distorted text, unreadable captions, mismatched font widths, comic font, decorative font, handwritten scribble",
+      "color, colored rendering, full color, cel-shading, watercolor, oil painting, airbrush, gradient, photorealistic, 3D render, CGI, anime style, digital painting, thick paint, impasto, gouache, pastel, marker rendering, digital art",
+      "cluttered layout, overlapping sections, missing dividers, off-grid placement, no white space, busy decorative borders, ornate frames, gold filigree",
+      "wrong aspect ratio, vertical 9:16, square 1:1, 4:3, portrait orientation",
+      "extra characters not in [CHARACTERS], scenery not in [SCENE], invented plot, frames unrelated to [SHOT BREAKDOWN]",
+      "low resolution, blurry, pixelated, JPEG artifacts, low quality, soft focus",
+      "missing top-down diagram, missing camera position numbers, missing shot type labels in diagram",
+      "frames without duration label, frames without shot number, frames without motion tag, frames without camera tag",
       // 画风漂移 / 不继承参考图
-      'art style drift from reference images, inconsistent rendering across sections, anime when reference is realistic, realistic when reference is anime, cel-shading when reference is painterly, 3D render when reference is 2D, watercolor when reference is digital illustration, different line treatment from reference, different color saturation from reference, different shading style from reference, mixed art styles, inconsistent brush strokes between frames, mixing 2D and 3D, mixing photoreal and stylized',
-    ].join(', ')
-    const prompt = appendNegative(buildPitchDeckPrompt({ data, styleSpec }), negative)
+      "art style drift from reference images, inconsistent rendering across sections, anime when reference is realistic, realistic when reference is anime, cel-shading when reference is painterly, 3D render when reference is 2D, watercolor when reference is digital illustration, different line treatment from reference, different color saturation from reference, different shading style from reference, mixed art styles, inconsistent brush strokes between frames, mixing 2D and 3D, mixing photoreal and stylized",
+    ].join(", ");
+    const prompt = appendNegative(buildPitchDeckPrompt({ data, styleSpec }), negative);
 
-    const requested = normalizeImageModelForRouting(data.model)
-    if (requested.toLowerCase().startsWith('pixflow/')) {
-      const { callPixflowImage } = await import('./pixflow.functions')
+    const requested = normalizeImageModelForRouting(data.model);
+    if (requested.toLowerCase().startsWith("pixflow/")) {
+      const { callPixflowImage } = await import("./pixflow.functions");
       const r = await callPixflowImage({
         prompt,
         model: requested,
-        size: '3840x2160',
+        size: "3840x2160",
         referenceImages: data.referenceImages || [],
-        quality: 'high',
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'Pixflow 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+        quality: "high",
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "Pixflow 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('claude360/')) {
-      const { callClaude360Image } = await import('./claude360Image.functions')
+    if (requested.toLowerCase().startsWith("claude360/")) {
+      const { callClaude360Image } = await import("./claude360Image.functions");
       const r = await callClaude360Image({
         prompt,
         model: requested,
-        size: '3840x2160',
+        size: "3840x2160",
         referenceImages: data.referenceImages || [],
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'Claude360 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "Claude360 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('tokenflash/')) {
-      const { callTokenflashImage } = await import('./tokenflash.functions')
+    if (requested.toLowerCase().startsWith("tokenflash/")) {
+      const { callTokenflashImage } = await import("./tokenflash.functions");
       const r = await callTokenflashImage({
         prompt,
         model: requested,
-        size: '3840x2160',
+        size: "3840x2160",
         referenceImages: data.referenceImages || [],
-        quality: 'high',
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'Tokenflash 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+        quality: "high",
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "Tokenflash 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('revora/')) {
-      const { callRevoraImage } = await import('./revoraImage.functions')
+    if (requested.toLowerCase().startsWith("revora/")) {
+      const { callRevoraImage } = await import("./revoraImage.functions");
       const r = await callRevoraImage({
         prompt,
         model: requested,
-        size: '3840x2160',
+        size: "3840x2160",
         referenceImages: data.referenceImages || [],
-        quality: 'high',
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'Revora 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+        quality: "high",
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "Revora 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('aigcfamily/')) {
-      const { callAigcfamilyImage } = await import('./aigcfamilyImage.functions')
+    if (requested.toLowerCase().startsWith("aigcfamily/")) {
+      const { callAigcfamilyImage } = await import("./aigcfamilyImage.functions");
       const r = await callAigcfamilyImage({
         prompt,
         model: requested,
-        size: '3840x2160',
+        size: "3840x2160",
         referenceImages: data.referenceImages || [],
-        quality: 'high',
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'AIGCFamily 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+        quality: "high",
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "AIGCFamily 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('azure/')) {
-      const { callAzureImage } = await import('./azureImage.functions')
+    if (requested.toLowerCase().startsWith("azure/")) {
+      const { callAzureImage } = await import("./azureImage.functions");
       const r = await callAzureImage({
         prompt,
         model: requested,
-        size: '3840x2160',
+        size: "3840x2160",
         referenceImages: data.referenceImages || [],
-        quality: 'high',
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'Azure 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model, meta: r.meta }
+        quality: "high",
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "Azure 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model, meta: r.meta };
     }
-    if (requested.toLowerCase().startsWith('onetoken/')) {
-      const { callOnetokenImage } = await import('./onetokenImage.functions')
+    if (requested.toLowerCase().startsWith("onetoken/")) {
+      const { callOnetokenImage } = await import("./onetokenImage.functions");
       const r = await callOnetokenImage({
         prompt,
         model: requested,
-        size: '3840x2160',
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'OneToken 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+        size: "3840x2160",
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "OneToken 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('otu/')) {
-      const { callOtuImage } = await import('./otuImage.functions')
+    if (requested.toLowerCase().startsWith("otu/")) {
+      const { callOtuImage } = await import("./otuImage.functions");
       const r = await callOtuImage({
         prompt,
         model: requested,
-        size: '3840x2160',
+        size: "3840x2160",
         referenceImages: data.referenceImages || [],
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'OTU 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "OTU 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('aitokenvibe/')) {
-      const { callAitokenvibeImage } = await import('./aitokenvibeImage.functions')
+    if (requested.toLowerCase().startsWith("aitokenvibe/")) {
+      const { callAitokenvibeImage } = await import("./aitokenvibeImage.functions");
       const r = await callAitokenvibeImage({
         prompt,
         model: requested,
-        size: '3840x2160',
+        size: "3840x2160",
         referenceImages: data.referenceImages || [],
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'AI Tokenvibe 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "AI Tokenvibe 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('thhtcloud/')) {
-      const { callThhtcloudImage } = await import('./thhtcloudImage.functions')
+    if (requested.toLowerCase().startsWith("thhtcloud/")) {
+      const { callThhtcloudImage } = await import("./thhtcloudImage.functions");
       const r = await callThhtcloudImage({
         prompt,
         model: requested,
-        size: '3840x2160',
+        size: "3840x2160",
         referenceImages: data.referenceImages || [],
-      })
-      if (!r.url) return { ok: false as const, error: r.error || '天鸿智算 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "天鸿智算 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('ailinzi/')) {
-      const { callAilinziImage } = await import('./ailinziImage.functions')
+    if (requested.toLowerCase().startsWith("ailinzi/")) {
+      const { callAilinziImage } = await import("./ailinziImage.functions");
       const r = await callAilinziImage({
         prompt,
         model: requested,
-        size: '3840x2160',
+        size: "3840x2160",
         referenceImages: data.referenceImages || [],
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'ailinzi 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "ailinzi 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('vapeur/')) {
-      const { callVapeurImage } = await import('./vapeurImage.functions')
+    if (requested.toLowerCase().startsWith("vapeur/")) {
+      const { callVapeurImage } = await import("./vapeurImage.functions");
       const r = await callVapeurImage({
         prompt,
         model: requested,
-        size: '3840x2160',
+        size: "3840x2160",
         referenceImages: data.referenceImages || [],
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'vapeur 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "vapeur 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('tokenhub/')) {
-      const { callTokenhubImage } = await import('./tokenhubImage.functions')
+    if (requested.toLowerCase().startsWith("tokenhub/")) {
+      const { callTokenhubImage } = await import("./tokenhubImage.functions");
       const r = await callTokenhubImage({
         prompt,
         model: requested,
-        size: '3840x2160',
+        size: "3840x2160",
         referenceImages: data.referenceImages || [],
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'tokenhub 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "tokenhub 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('nagora/')) {
-      const { callNagoraImage } = await import('./nagoraImage.functions')
+    if (requested.toLowerCase().startsWith("nagora/")) {
+      const { callNagoraImage } = await import("./nagoraImage.functions");
       const r = await callNagoraImage({
         prompt,
         model: requested,
-        size: '3840x2160',
+        size: "3840x2160",
         referenceImages: data.referenceImages || [],
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'nagora 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "nagora 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
+    }
+    if (requested.toLowerCase().startsWith("meridian/")) {
+      const { callMeridianImage } = await import("./meridianImage.functions");
+      const r = await callMeridianImage({
+        prompt,
+        model: requested,
+        size: "3840x2160",
+        referenceImages: data.referenceImages || [],
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "meridian 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
 
-    const { apiKey, baseUrl, model: defaultModel } = getArkConfig()
-    if (!apiKey) return { ok: false as const, error: 'ARK_API_KEY not configured' }
-    const model = requested || defaultModel
+    const { apiKey, baseUrl, model: defaultModel } = getArkConfig();
+    if (!apiKey) return { ok: false as const, error: "ARK_API_KEY not configured" };
+    const model = requested || defaultModel;
 
     // 2026/06:查看提示词模式 —— 跳过实际生成
     if (data.previewOnly) {
@@ -1974,15 +2103,15 @@ export const generateStoryboardPitchDeck = createServerFn({ method: 'POST' })
         ok: true as const,
         previewPrompt: prompt,
         negativePrompt: negative,
-        promptSize: '3840x2160',
+        promptSize: "3840x2160",
         promptExtra: {
           model,
-          route: '故事板 (Pitch Deck)',
-          refImages: (data.referenceImages || []).join(' / ') || '(none)',
-          characters: (data.characters || []).map((c) => c.name).join(', ') || '(none)',
+          route: "故事板 (Pitch Deck)",
+          refImages: (data.referenceImages || []).join(" / ") || "(none)",
+          characters: (data.characters || []).map((c) => c.name).join(", ") || "(none)",
           shotCount: String((data.shots || []).length),
         },
-      } as any
+      } as any;
     }
 
     // 2026/06 用户重写:从 9:16 竖屏漫剧分镜改成 16:9 横向导演预制作 pitch deck。
@@ -1995,34 +2124,39 @@ export const generateStoryboardPitchDeck = createServerFn({ method: 'POST' })
     // 引导下能正确把参考图融到 Section 2/3/5。客户端按"场景必占 1 张 +
     // 角色填剩余" 的顺序传 referenceImages,服务端透传到 image 字段。
     // 空数组时不传 image,退化回纯 T2I。
-    const refImages = data.referenceImages || []
+    const refImages = data.referenceImages || [];
     // 2026/07:服务端兜底 —— Seedream image 字段最多 4 张,base64 参考图过大
     // 会触发 API "too_big" 错误。客户端 REF_MAX=4 是第一道防线,这里守第二道。
-    const MAX_REF_IMAGES = 4
+    const MAX_REF_IMAGES = 4;
     if (refImages.length > MAX_REF_IMAGES) {
-      return { ok: false as const, error: `参考图过多(${refImages.length} 张,最多 ${MAX_REF_IMAGES} 张)。请减少该组分镜的角色/场景数量。` }
+      return {
+        ok: false as const,
+        error: `参考图过多(${refImages.length} 张,最多 ${MAX_REF_IMAGES} 张)。请减少该组分镜的角色/场景数量。`,
+      };
     }
     const result = await callSeedreamImages(
       {
         model,
         prompt,
         ...(refImages.length ? { image: refImages.length === 1 ? refImages[0] : refImages } : {}),
-        size: '3840x2160',
-        output_format: 'png',
+        size: "3840x2160",
+        output_format: "png",
         watermark: false,
       },
       apiKey,
       baseUrl,
       I2I_TIMEOUT_MS,
-    )
+    );
     if (!result.url) {
-      if (/401/i.test(result.error || '')) return { ok: false as const, error: 'Seedream auth failed (401)' }
-      if (/402/i.test(result.error || '')) return { ok: false as const, error: 'no_credits' }
-      if (/timed out/i.test(result.error || '')) return { ok: false as const, error: 'AI 处理超时(>180s),设定稿内容多,建议重试' }
-      return { ok: false as const, error: result.error || 'Seedream 未返回图片' }
+      if (/401/i.test(result.error || ""))
+        return { ok: false as const, error: "Seedream auth failed (401)" };
+      if (/402/i.test(result.error || "")) return { ok: false as const, error: "no_credits" };
+      if (/timed out/i.test(result.error || ""))
+        return { ok: false as const, error: "AI 处理超时(>180s),设定稿内容多,建议重试" };
+      return { ok: false as const, error: result.error || "Seedream 未返回图片" };
     }
-    return { ok: true as const, url: result.url, model: result.model }
-  })
+    return { ok: true as const, url: result.url, model: result.model };
+  });
 
 // ====================================================================
 // 5b) regenerateStoryboardPitchDeck —— 故事板图按用户意见重生(2026/06 新增)
@@ -2051,29 +2185,36 @@ export const generateStoryboardPitchDeck = createServerFn({ method: 'POST' })
 const RegeneratePitchDeckInput = PitchDeckInput.extend({
   referenceImageUrl: z.string().url(),
   userInstruction: z.string().min(1).max(500),
-})
+});
 
-export type RegeneratePitchDeckInputType = z.infer<typeof RegeneratePitchDeckInput>
+export type RegeneratePitchDeckInputType = z.infer<typeof RegeneratePitchDeckInput>;
 
 function buildRegenPitchDeckPrompt(opts: {
-  data: RegeneratePitchDeckInputType
-  styleSpec: VisualStyleSpec
+  data: RegeneratePitchDeckInputType;
+  styleSpec: VisualStyleSpec;
 }): string {
-  const { data, styleSpec } = opts
-  const chars = data.characters || []
-  const shots = data.shots || []
+  const { data, styleSpec } = opts;
+  const chars = data.characters || [];
+  const shots = data.shots || [];
 
   // 角色描述块(简化版,regen 主要靠参考图锁定)
   const charLines = chars.length
-    ? chars.map((c) => `  · ${c.name}${c.roleLabel ? ` (${c.roleLabel})` : ''}: ${c.faceDescription || '(face from ref image)'}`).join('\n')
-    : '  (no characters in this group)'
+    ? chars
+        .map(
+          (c) =>
+            `  · ${c.name}${c.roleLabel ? ` (${c.roleLabel})` : ""}: ${c.faceDescription || "(face from ref image)"}`,
+        )
+        .join("\n")
+    : "  (no characters in this group)";
 
   const sceneLine = data.scene
     ? [
-        data.scene.location ? `  Location: ${data.scene.location}` : '',
-        data.scene.timeOfDay ? `  Time: ${data.scene.timeOfDay}` : '',
-      ].filter(Boolean).join('\n') || '  (no scene info)'
-    : '  (no specific scene)'
+        data.scene.location ? `  Location: ${data.scene.location}` : "",
+        data.scene.timeOfDay ? `  Time: ${data.scene.timeOfDay}` : "",
+      ]
+        .filter(Boolean)
+        .join("\n") || "  (no scene info)"
+    : "  (no specific scene)";
 
   return [
     // ========== 任务:在图 1 基础上按意见修改 ==========
@@ -2085,7 +2226,7 @@ function buildRegenPitchDeckPrompt(opts: {
     ``,
     `[CONTEXT — preserved unchanged from 图1]`,
     `Style: ${styleSpec.label} (${styleSpec.positive.slice(0, 80)}...)`,
-    `Plot: ${data.plotText || '(no plot text)'}`,
+    `Plot: ${data.plotText || "(no plot text)"}`,
     `Scene:`,
     sceneLine,
     `Characters (face/body must stay identical to 图1 unless user feedback says otherwise):`,
@@ -2129,62 +2270,64 @@ function buildRegenPitchDeckPrompt(opts: {
     ``,
     // ========== 风格指纹 ==========
     `[PROJECT VISUAL STYLE — must match 图1's rendered style]`,
-    buildStyleLock(styleSpec, 'deck'),
+    buildStyleLock(styleSpec, "deck"),
     ``,
     `[OUTPUT] Regenerate the entire 16:9 pre-production guide with the user's changes applied. One image, landscape.`,
-  ].filter(Boolean).join('\n')
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
-export const regenerateStoryboardPitchDeck = createServerFn({ method: 'POST' })
+export const regenerateStoryboardPitchDeck = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => RegeneratePitchDeckInput.parse(d))
   .handler(async ({ data }) => {
-    const { resolveProjectStyle } = await import('./visualStyles')
-    const styleSpec = resolveProjectStyle(data.projectStyle)
+    const { resolveProjectStyle } = await import("./visualStyles");
+    const styleSpec = resolveProjectStyle(data.projectStyle);
 
-    const prompt = buildRegenPitchDeckPrompt({ data, styleSpec })
+    const prompt = buildRegenPitchDeckPrompt({ data, styleSpec });
 
     // 图 1 = 当前故事板(图布局 / 风格 / 文字位置的真值),后面跟原 referenceImages
     // 里的角色/场景参考图 —— 跟原 generate 共享同样 10 张上限
-    const images: string[] = [data.referenceImageUrl]
-    const extraRefs = data.referenceImages || []
+    const images: string[] = [data.referenceImageUrl];
+    const extraRefs = data.referenceImages || [];
     for (const url of extraRefs) {
-      if (!url || url === data.referenceImageUrl) continue
-      if (images.length >= 4) break
-      images.push(url)
+      if (!url || url === data.referenceImageUrl) continue;
+      if (images.length >= 4) break;
+      images.push(url);
     }
 
     if (images.length > 4) {
-      return { ok: false as const, error: `参考图过多(${images.length} 张,Seedream 最多 4 张)` }
+      return { ok: false as const, error: `参考图过多(${images.length} 张,Seedream 最多 4 张)` };
     }
 
     // 路由:跟 generateStoryboardPitchDeck 完全对齐(Seedream 主力,
     // Pixflow/Lovable 不支持 4K 8.3M pixels 故跳过兜底)
-    const requested = normalizeImageModelForRouting(data.model)
+    const requested = normalizeImageModelForRouting(data.model);
     if (requested && !isSeedreamModel(requested)) {
       return {
         ok: false as const,
         error: `故事板按意见重生目前只支持 Seedream 模型(用户选了 ${requested},Seedream 4K 是唯一能稳定输出 3840×2160 的)。`,
-      }
+      };
     }
 
-    const { apiKey, baseUrl, model: defaultModel } = getArkConfig()
-    if (!apiKey) return { ok: false as const, error: 'ARK_API_KEY not configured' }
-    const model = requested || defaultModel
+    const { apiKey, baseUrl, model: defaultModel } = getArkConfig();
+    if (!apiKey) return { ok: false as const, error: "ARK_API_KEY not configured" };
+    const model = requested || defaultModel;
 
     // 2026/06:查看提示词模式
     if (data.previewOnly) {
       return {
         ok: true as const,
         previewPrompt: prompt,
-        negativePrompt: '',
-        promptSize: '3840x2160',
+        negativePrompt: "",
+        promptSize: "3840x2160",
         promptExtra: {
           model,
-          route: 'I2I 故事板按意见重生',
+          route: "I2I 故事板按意见重生",
           userInstruction: data.userInstruction,
-          refImages: images.join(' / '),
+          refImages: images.join(" / "),
         },
-      } as any
+      } as any;
     }
 
     const result = await callSeedreamImages(
@@ -2192,22 +2335,24 @@ export const regenerateStoryboardPitchDeck = createServerFn({ method: 'POST' })
         model,
         prompt,
         image: images,
-        size: '3840x2160',
-        output_format: 'png',
+        size: "3840x2160",
+        output_format: "png",
         watermark: false,
       },
       apiKey,
       baseUrl,
       I2I_TIMEOUT_MS,
-    )
+    );
     if (!result.url) {
-      if (/401/i.test(result.error || '')) return { ok: false as const, error: 'Seedream auth failed (401)' }
-      if (/402/i.test(result.error || '')) return { ok: false as const, error: 'no_credits' }
-      if (/timed out/i.test(result.error || '')) return { ok: false as const, error: 'AI 处理超时(>180s)' }
-      return { ok: false as const, error: result.error || 'Seedream 未返回图片' }
+      if (/401/i.test(result.error || ""))
+        return { ok: false as const, error: "Seedream auth failed (401)" };
+      if (/402/i.test(result.error || "")) return { ok: false as const, error: "no_credits" };
+      if (/timed out/i.test(result.error || ""))
+        return { ok: false as const, error: "AI 处理超时(>180s)" };
+      return { ok: false as const, error: result.error || "Seedream 未返回图片" };
     }
-    return { ok: true as const, url: result.url, model: result.model }
-  })
+    return { ok: true as const, url: result.url, model: result.model };
+  });
 
 // ====================================================================
 // 5) regenerateSceneImage —— 场景图按意见重生 / 场景三视图(2026/06 新增)
@@ -2228,26 +2373,26 @@ export const regenerateStoryboardPitchDeck = createServerFn({ method: 'POST' })
 // ====================================================================
 
 const RegenerateSceneInput = z.object({
-  referenceImageUrl: z.string().url(),          // 当前场景主视图作 I2I anchor
+  referenceImageUrl: z.string().url(), // 当前场景主视图作 I2I anchor
   userInstruction: z.string().min(1).max(2000), // modify 模式必填;three-view 模式会被忽略
-  sceneSlug: z.string().min(1).max(200),        // e.g. "INT. CAFE - DAY"
-  sceneLocation: z.string().max(200).default(''),
-  sceneTimeOfDay: z.string().max(50).default(''),
-  sceneAction: z.string().max(2000).default(''),
+  sceneSlug: z.string().min(1).max(200), // e.g. "INT. CAFE - DAY"
+  sceneLocation: z.string().max(200).default(""),
+  sceneTimeOfDay: z.string().max(50).default(""),
+  sceneAction: z.string().max(2000).default(""),
   projectStyle: z.string().max(50).optional(),
   model: z.string().max(100).optional(),
-  mode: z.enum(['modify', 'three-view']).default('modify'),
+  mode: z.enum(["modify", "three-view"]).default("modify"),
   // 2026/06:查看提示词模式
   previewOnly: z.boolean().default(false),
-})
+});
 
-export type RegenerateSceneInputType = z.infer<typeof RegenerateSceneInput>
+export type RegenerateSceneInputType = z.infer<typeof RegenerateSceneInput>;
 
 function buildScenePrompts(
   data: RegenerateSceneInputType,
   styleSpec: VisualStyleSpec,
 ): { positive: string; negative: string; size: string } {
-  if (data.mode === 'three-view') {
+  if (data.mode === "three-view") {
     // ----------------------------------------------------------------
     // 场景三视图(横向 3 面板,横向 3072x1280 ≈ 3.93M 像素,过 Seedream 最小门槛)
     // 语义:同一场景的 3 个景别变体,无人物,共用同一套构图 / 光照 / 风格
@@ -2261,7 +2406,7 @@ function buildScenePrompts(
     // ----------------------------------------------------------------
     const positive = [
       `[STYLE LOCK — 场景三视图(3 景别变体),适用对象:scene]`,
-      buildStyleLock(styleSpec, 'scene'),
+      buildStyleLock(styleSpec, "scene"),
       ``,
       `[关键:这是 I2I 任务,图1 是当前主视图]`,
       `图1 是这个场景的"基线真值" —— 已经有确定的色板 / 光照方向 / 建筑或自然要素 / 装饰物 / 材质 / 时代风格。`,
@@ -2271,9 +2416,9 @@ function buildScenePrompts(
       `[任务] 生成一张「场景三视图」,3 个面板都是图1 同一地点的景别变体。`,
       ``,
       `[地点] ${data.sceneSlug}`,
-      data.sceneLocation ? `[具体地点] ${data.sceneLocation}` : '',
-      data.sceneTimeOfDay ? `[时段] ${data.sceneTimeOfDay}` : '',
-      data.sceneAction ? `[场景动作] ${data.sceneAction}` : '',
+      data.sceneLocation ? `[具体地点] ${data.sceneLocation}` : "",
+      data.sceneTimeOfDay ? `[时段] ${data.sceneTimeOfDay}` : "",
+      data.sceneAction ? `[场景动作] ${data.sceneAction}` : "",
       ``,
       `[画布] 一张横图,3 个等宽面板(左/中/右),格间干净留白(gutter ~3-5% panel 宽度)。`,
       ``,
@@ -2296,20 +2441,20 @@ function buildScenePrompts(
       `• 不要文字(除非图1 已有)、不要 logo、不要面板编号、不要分割线外的标注。`,
     ]
       .filter(Boolean)
-      .join('\n')
+      .join("\n");
     const negative = [
-      'people, character, figure, silhouette, human, bystander',
-      'different location, different time of day, different weather between panels',
-      'different color palette between panels, color shift between panels, inconsistent lighting between panels',
-      'style drift, mixing styles, different art style between panels, photorealistic when input is anime, anime when input is realistic',
-      'different furniture, different furniture color, different furniture shape between panels',
-      'different wall color, different floor color, different building shape between panels',
-      'adding new objects not in 图1, inventing new details not in 图1, hallucinating extra elements',
-      'changing the architecture, modifying the scene layout, redesigning the environment',
-      'panel borders, separator lines, text, watermark, logo, panel number, label, caption, arrow, callout',
-      'low quality, blurry, low resolution, jpeg artifacts',
-    ].join(', ')
-    return { positive, negative, size: '3072x1280' }
+      "people, character, figure, silhouette, human, bystander",
+      "different location, different time of day, different weather between panels",
+      "different color palette between panels, color shift between panels, inconsistent lighting between panels",
+      "style drift, mixing styles, different art style between panels, photorealistic when input is anime, anime when input is realistic",
+      "different furniture, different furniture color, different furniture shape between panels",
+      "different wall color, different floor color, different building shape between panels",
+      "adding new objects not in 图1, inventing new details not in 图1, hallucinating extra elements",
+      "changing the architecture, modifying the scene layout, redesigning the environment",
+      "panel borders, separator lines, text, watermark, logo, panel number, label, caption, arrow, callout",
+      "low quality, blurry, low resolution, jpeg artifacts",
+    ].join(", ");
+    return { positive, negative, size: "3072x1280" };
   }
 
   // ----------------------------------------------------------------
@@ -2317,14 +2462,14 @@ function buildScenePrompts(
   // ----------------------------------------------------------------
   const positive = [
     `[STYLE LOCK — 场景图按意见重生,适用对象:scene]`,
-    buildStyleLock(styleSpec, 'scene'),
+    buildStyleLock(styleSpec, "scene"),
     ``,
     `[任务] 修改「图1」(当前场景图),严格按下面的"修改意见"调整,只改用户提到的部分。`,
     ``,
     `[修改意见] ${data.userInstruction}`,
     ``,
-    `[地点 / 时段] ${data.sceneSlug}${data.sceneTimeOfDay ? ' / ' + data.sceneTimeOfDay : ''}`,
-    data.sceneAction ? `[场景动作参考] ${data.sceneAction}` : '',
+    `[地点 / 时段] ${data.sceneSlug}${data.sceneTimeOfDay ? " / " + data.sceneTimeOfDay : ""}`,
+    data.sceneAction ? `[场景动作参考] ${data.sceneAction}` : "",
     ``,
     `[修改规则 — 必须遵守]`,
     `1. 以图1为基础,在它的构图 / 光照 / 地点 / 时段上修改,**不要重新构图或换地点**。`,
@@ -2333,25 +2478,25 @@ function buildScenePrompts(
     `4. 保持与图1 相同的视觉风格,严禁风格漂移。`,
   ]
     .filter(Boolean)
-    .join('\n')
+    .join("\n");
   const negative = [
-    'people, character, figure, silhouette, human, crowd',
-    'different art style, style drift, photorealistic when input is anime, anime when input is realistic, different medium, different color grading',
-    'different location, different time of day, different camera angle, different aspect ratio',
-    'watermark, logo, text, signature, label, panel number, caption, annotation, arrow, layout grid lines',
-    'blurry, low quality, low resolution, jpeg artifacts',
-  ].join(', ')
-  return { positive, negative, size: '2K' }
+    "people, character, figure, silhouette, human, crowd",
+    "different art style, style drift, photorealistic when input is anime, anime when input is realistic, different medium, different color grading",
+    "different location, different time of day, different camera angle, different aspect ratio",
+    "watermark, logo, text, signature, label, panel number, caption, annotation, arrow, layout grid lines",
+    "blurry, low quality, low resolution, jpeg artifacts",
+  ].join(", ");
+  return { positive, negative, size: "2K" };
 }
 
-export const regenerateSceneImage = createServerFn({ method: 'POST' })
+export const regenerateSceneImage = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => RegenerateSceneInput.parse(d))
   .handler(async ({ data }) => {
-    const { resolveProjectStyle } = await import('./visualStyles')
-    const styleSpec = resolveProjectStyle(data.projectStyle)
-    const { positive, negative, size } = buildScenePrompts(data, styleSpec)
-    const requested = normalizeImageModelForRouting(data.model)
-    const prompt = appendNegative(positive, negative)
+    const { resolveProjectStyle } = await import("./visualStyles");
+    const styleSpec = resolveProjectStyle(data.projectStyle);
+    const { positive, negative, size } = buildScenePrompts(data, styleSpec);
+    const requested = normalizeImageModelForRouting(data.model);
+    const prompt = appendNegative(positive, negative);
 
     // 2026/06:查看提示词模式
     if (data.previewOnly) {
@@ -2360,172 +2505,188 @@ export const regenerateSceneImage = createServerFn({ method: 'POST' })
         previewPrompt: prompt,
         negativePrompt: negative,
         promptSize: normalizeSeedreamSize(size),
-        promptExtra: { model: requested || DEFAULT_MODEL, route: '场景图重生', mode: data.mode, referenceImage: data.referenceImageUrl },
-      } as any
+        promptExtra: {
+          model: requested || DEFAULT_MODEL,
+          route: "场景图重生",
+          mode: data.mode,
+          referenceImage: data.referenceImageUrl,
+        },
+      } as any;
     }
 
-    if (requested.toLowerCase().startsWith('pixflow/')) {
-      const { callPixflowImage } = await import('./pixflow.functions')
+    if (requested.toLowerCase().startsWith("pixflow/")) {
+      const { callPixflowImage } = await import("./pixflow.functions");
       const r = await callPixflowImage({
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-        quality: 'high',
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'Pixflow 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+        quality: "high",
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "Pixflow 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('claude360/')) {
-      const { callClaude360Image } = await import('./claude360Image.functions')
+    if (requested.toLowerCase().startsWith("claude360/")) {
+      const { callClaude360Image } = await import("./claude360Image.functions");
       const r = await callClaude360Image({
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'Claude360 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "Claude360 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('tokenflash/')) {
-      const { callTokenflashImage } = await import('./tokenflash.functions')
+    if (requested.toLowerCase().startsWith("tokenflash/")) {
+      const { callTokenflashImage } = await import("./tokenflash.functions");
       const r = await callTokenflashImage({
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-        quality: 'high',
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'Tokenflash 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+        quality: "high",
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "Tokenflash 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('revora/')) {
-      const { callRevoraImage } = await import('./revoraImage.functions')
+    if (requested.toLowerCase().startsWith("revora/")) {
+      const { callRevoraImage } = await import("./revoraImage.functions");
       const r = await callRevoraImage({
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-        quality: 'high',
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'Revora 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+        quality: "high",
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "Revora 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('aigcfamily/')) {
-      const { callAigcfamilyImage } = await import('./aigcfamilyImage.functions')
+    if (requested.toLowerCase().startsWith("aigcfamily/")) {
+      const { callAigcfamilyImage } = await import("./aigcfamilyImage.functions");
       const r = await callAigcfamilyImage({
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-        quality: 'high',
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'AIGCFamily 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+        quality: "high",
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "AIGCFamily 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('azure/')) {
-      const { callAzureImage } = await import('./azureImage.functions')
+    if (requested.toLowerCase().startsWith("azure/")) {
+      const { callAzureImage } = await import("./azureImage.functions");
       const r = await callAzureImage({
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-        quality: 'high',
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'Azure 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model, meta: r.meta }
+        quality: "high",
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "Azure 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model, meta: r.meta };
     }
-    if (requested.toLowerCase().startsWith('onetoken/')) {
-      const { callOnetokenImage } = await import('./onetokenImage.functions')
+    if (requested.toLowerCase().startsWith("onetoken/")) {
+      const { callOnetokenImage } = await import("./onetokenImage.functions");
       const r = await callOnetokenImage({
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'OneToken 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "OneToken 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('otu/')) {
-      const { callOtuImage } = await import('./otuImage.functions')
+    if (requested.toLowerCase().startsWith("otu/")) {
+      const { callOtuImage } = await import("./otuImage.functions");
       const r = await callOtuImage({
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'OTU 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "OTU 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('aitokenvibe/')) {
-      const { callAitokenvibeImage } = await import('./aitokenvibeImage.functions')
+    if (requested.toLowerCase().startsWith("aitokenvibe/")) {
+      const { callAitokenvibeImage } = await import("./aitokenvibeImage.functions");
       const r = await callAitokenvibeImage({
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'AI Tokenvibe 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "AI Tokenvibe 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('thhtcloud/')) {
-      const { callThhtcloudImage } = await import('./thhtcloudImage.functions')
+    if (requested.toLowerCase().startsWith("thhtcloud/")) {
+      const { callThhtcloudImage } = await import("./thhtcloudImage.functions");
       const r = await callThhtcloudImage({
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-      })
-      if (!r.url) return { ok: false as const, error: r.error || '天鸿智算 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "天鸿智算 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('ailinzi/')) {
-      const { callAilinziImage } = await import('./ailinziImage.functions')
+    if (requested.toLowerCase().startsWith("ailinzi/")) {
+      const { callAilinziImage } = await import("./ailinziImage.functions");
       const r = await callAilinziImage({
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'ailinzi 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "ailinzi 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('vapeur/')) {
-      const { callVapeurImage } = await import('./vapeurImage.functions')
+    if (requested.toLowerCase().startsWith("vapeur/")) {
+      const { callVapeurImage } = await import("./vapeurImage.functions");
       const r = await callVapeurImage({
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'vapeur 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "vapeur 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('tokenhub/')) {
-      const { callTokenhubImage } = await import('./tokenhubImage.functions')
+    if (requested.toLowerCase().startsWith("tokenhub/")) {
+      const { callTokenhubImage } = await import("./tokenhubImage.functions");
       const r = await callTokenhubImage({
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'tokenhub 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "tokenhub 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith('nagora/')) {
-      const { callNagoraImage } = await import('./nagoraImage.functions')
+    if (requested.toLowerCase().startsWith("nagora/")) {
+      const { callNagoraImage } = await import("./nagoraImage.functions");
       const r = await callNagoraImage({
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-      })
-      if (!r.url) return { ok: false as const, error: r.error || 'nagora 未返回图片' }
-      return { ok: true as const, url: r.url, model: r.model }
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "nagora 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
+    }
+    if (requested.toLowerCase().startsWith("meridian/")) {
+      const { callMeridianImage } = await import("./meridianImage.functions");
+      const r = await callMeridianImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "meridian 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
     }
 
-    const { apiKey, baseUrl, model: defaultModel } = getArkConfig()
-    if (!apiKey) return { ok: false as const, error: 'ARK_API_KEY not configured' }
-    const model = requested || defaultModel
+    const { apiKey, baseUrl, model: defaultModel } = getArkConfig();
+    if (!apiKey) return { ok: false as const, error: "ARK_API_KEY not configured" };
+    const model = requested || defaultModel;
 
     const result = await callSeedreamImages(
       {
@@ -2533,18 +2694,20 @@ export const regenerateSceneImage = createServerFn({ method: 'POST' })
         prompt,
         image: data.referenceImageUrl,
         size: normalizeSeedreamSize(size),
-        output_format: 'png',
+        output_format: "png",
         watermark: false,
       },
       apiKey,
       baseUrl,
       I2I_TIMEOUT_MS,
-    )
+    );
     if (!result.url) {
-      if (/401/i.test(result.error || '')) return { ok: false as const, error: 'Seedream auth failed (401)' }
-      if (/402/i.test(result.error || '')) return { ok: false as const, error: 'no_credits' }
-      if (/timed out/i.test(result.error || '')) return { ok: false as const, error: 'AI 处理超时(>180s),请重试' }
-      return { ok: false as const, error: result.error || 'Seedream 未返回图片' }
+      if (/401/i.test(result.error || ""))
+        return { ok: false as const, error: "Seedream auth failed (401)" };
+      if (/402/i.test(result.error || "")) return { ok: false as const, error: "no_credits" };
+      if (/timed out/i.test(result.error || ""))
+        return { ok: false as const, error: "AI 处理超时(>180s),请重试" };
+      return { ok: false as const, error: result.error || "Seedream 未返回图片" };
     }
-    return { ok: true as const, url: result.url, model: result.model }
-  })
+    return { ok: true as const, url: result.url, model: result.model };
+  });

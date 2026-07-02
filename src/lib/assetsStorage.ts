@@ -1,23 +1,23 @@
-import { supabase } from '@/integrations/supabase/client'
-import type { GenCharacter, GenScene, GenProp } from '@/data/workspaceGenerators'
-import type { Tables, Json } from '@/integrations/supabase/types'
+import { supabase } from "@/integrations/supabase/client";
+import type { GenCharacter, GenScene, GenProp } from "@/data/workspaceGenerators";
+import type { Tables, Json } from "@/integrations/supabase/types";
 
-export type DbCharacter = Tables<'characters'>
-export type DbScene = Tables<'scenes'>
-export type DbProp = Tables<'props'>
+export type DbCharacter = Tables<"characters">;
+export type DbScene = Tables<"scenes">;
+export type DbProp = Tables<"props">;
 
 export type CharacterImageEntry = {
-  url: string
-  label: string
-}
+  url: string;
+  label: string;
+};
 
 export type PropImageEntry = {
-  url: string
-  label: string
-}
+  url: string;
+  label: string;
+};
 
-type AssetTable = 'characters' | 'scenes' | 'props'
-type AssetRecord = Record<string, unknown> & { id: string; user_id: string }
+type AssetTable = "characters" | "scenes" | "props";
+type AssetRecord = Record<string, unknown> & { id: string; user_id: string };
 
 /**
  * 资产库保存不要直接 upsert。
@@ -26,34 +26,37 @@ type AssetRecord = Record<string, unknown> & { id: string; user_id: string }
  * "new row violates row-level security policy (USING expression)"。
  * 这里先只更新当前用户自己的行;没有命中再插入当前用户的新行,避免跨用户冲突。
  */
-async function saveOwnAssetRecord(table: AssetTable, record: AssetRecord): Promise<{ ok: boolean; error?: string }> {
-  const updateQuery = supabase.from(table) as any
+async function saveOwnAssetRecord(
+  table: AssetTable,
+  record: AssetRecord,
+): Promise<{ ok: boolean; error?: string }> {
+  const updateQuery = supabase.from(table) as any;
   const { data: updated, error: updateError } = await updateQuery
     .update(record)
-    .eq('user_id', record.user_id)
-    .eq('id', record.id)
-    .select('id')
-    .maybeSingle()
+    .eq("user_id", record.user_id)
+    .eq("id", record.id)
+    .select("id")
+    .maybeSingle();
 
-  if (updateError) return { ok: false, error: updateError.message }
-  if (updated) return { ok: true }
+  if (updateError) return { ok: false, error: updateError.message };
+  if (updated) return { ok: true };
 
-  const insertQuery = supabase.from(table) as any
-  const { error: insertError } = await insertQuery.insert(record)
-  if (!insertError) return { ok: true }
+  const insertQuery = supabase.from(table) as any;
+  const { error: insertError } = await insertQuery.insert(record);
+  if (!insertError) return { ok: true };
 
   // 同一用户快速重复点击时可能先后插入同一行;再按用户范围更新一次兜底。
-  if (insertError.code === '23505') {
-    const retryQuery = supabase.from(table) as any
+  if (insertError.code === "23505") {
+    const retryQuery = supabase.from(table) as any;
     const { error: retryError } = await retryQuery
       .update(record)
-      .eq('user_id', record.user_id)
-      .eq('id', record.id)
-    if (!retryError) return { ok: true }
-    return { ok: false, error: retryError.message }
+      .eq("user_id", record.user_id)
+      .eq("id", record.id);
+    if (!retryError) return { ok: true };
+    return { ok: false, error: retryError.message };
   }
 
-  return { ok: false, error: insertError.message }
+  return { ok: false, error: insertError.message };
 }
 
 /**
@@ -61,7 +64,12 @@ async function saveOwnAssetRecord(table: AssetTable, record: AssetRecord): Promi
  * coverUrl 可选 —— 调用方传入角色的最新图片 URL(同步持久化到 assets 库)。
  * images 可选 —— 角色所有已生成的图片数组(含标签),详情页动态展示。
  */
-function charToRecord(c: GenCharacter, userId: string, coverUrl?: string | null, images?: CharacterImageEntry[]) {
+function charToRecord(
+  c: GenCharacter,
+  userId: string,
+  coverUrl?: string | null,
+  images?: CharacterImageEntry[],
+) {
   return {
     id: c.id,
     user_id: userId,
@@ -69,9 +77,7 @@ function charToRecord(c: GenCharacter, userId: string, coverUrl?: string | null,
     role: c.role,
     role_label: c.roleLabel,
     age: c.age,
-    look: [c.faceDescription, c.bodyDescription, c.clothingDescription]
-      .filter(Boolean)
-      .join(' / '),
+    look: [c.faceDescription, c.bodyDescription, c.clothingDescription].filter(Boolean).join(" / "),
     personality: c.personality,
     motivation: null,
     debut_shot: null,
@@ -81,7 +87,7 @@ function charToRecord(c: GenCharacter, userId: string, coverUrl?: string | null,
     gradient: c.swatch,
     cover_url: coverUrl ?? null,
     images: (images ?? null) as Json | null,
-  }
+  };
 }
 
 /**
@@ -91,7 +97,7 @@ function sceneToRecord(s: GenScene, userId: string, coverUrl?: string | null) {
   return {
     id: s.id,
     user_id: userId,
-    name: s.slug.split('—')[0].trim() || s.location,
+    name: s.slug.split("—")[0].trim() || s.location,
     location: s.location,
     time_of_day: s.timeOfDay,
     action: s.action,
@@ -99,28 +105,26 @@ function sceneToRecord(s: GenScene, userId: string, coverUrl?: string | null) {
     dialogue: s.dialogue as unknown as Json,
     gradient: null,
     cover_url: coverUrl ?? null,
-  }
+  };
 }
 
 /** 批量保存(保留旧行为,cover_url 传 null) */
 export async function saveCharacters(chars: GenCharacter[], userId: string) {
-  const records = chars.map((c) => charToRecord(c, userId, null))
+  const records = chars.map((c) => charToRecord(c, userId, null));
   for (const record of records) {
-    // eslint-disable-next-line no-await-in-loop
-    const result = await saveOwnAssetRecord('characters', record)
-    if (!result.ok) return { data: null, error: { message: result.error ?? '保存角色失败' } }
+    const result = await saveOwnAssetRecord("characters", record);
+    if (!result.ok) return { data: null, error: { message: result.error ?? "保存角色失败" } };
   }
-  return { data: null, error: null }
+  return { data: null, error: null };
 }
 
 export async function saveScenes(scenes: GenScene[], userId: string) {
-  const records = scenes.map((s) => sceneToRecord(s, userId, null))
+  const records = scenes.map((s) => sceneToRecord(s, userId, null));
   for (const record of records) {
-    // eslint-disable-next-line no-await-in-loop
-    const result = await saveOwnAssetRecord('scenes', record)
-    if (!result.ok) return { data: null, error: { message: result.error ?? '保存场景失败' } }
+    const result = await saveOwnAssetRecord("scenes", record);
+    if (!result.ok) return { data: null, error: { message: result.error ?? "保存场景失败" } };
   }
-  return { data: null, error: null }
+  return { data: null, error: null };
 }
 
 /**
@@ -136,8 +140,8 @@ export async function saveOneCharacter(
   coverUrl?: string | null,
   images?: CharacterImageEntry[],
 ): Promise<{ ok: boolean; error?: string }> {
-  const record = charToRecord(c, userId, coverUrl, images)
-  return saveOwnAssetRecord('characters', record)
+  const record = charToRecord(c, userId, coverUrl, images);
+  return saveOwnAssetRecord("characters", record);
 }
 
 export async function saveOneScene(
@@ -145,14 +149,19 @@ export async function saveOneScene(
   userId: string,
   coverUrl?: string | null,
 ): Promise<{ ok: boolean; error?: string }> {
-  const record = sceneToRecord(s, userId, coverUrl)
-  return saveOwnAssetRecord('scenes', record)
+  const record = sceneToRecord(s, userId, coverUrl);
+  return saveOwnAssetRecord("scenes", record);
 }
 
 /**
  * 把 GenProp 转换成 props 表的 upsert 记录。
  */
-function propToRecord(p: GenProp, userId: string, coverUrl?: string | null, images?: PropImageEntry[]) {
+function propToRecord(
+  p: GenProp,
+  userId: string,
+  coverUrl?: string | null,
+  images?: PropImageEntry[],
+) {
   return {
     id: p.id,
     user_id: userId,
@@ -163,7 +172,7 @@ function propToRecord(p: GenProp, userId: string, coverUrl?: string | null, imag
     palette: p.palette,
     cover_url: coverUrl ?? null,
     images: (images ?? null) as Json | null,
-  }
+  };
 }
 
 export async function saveOneProp(
@@ -172,31 +181,31 @@ export async function saveOneProp(
   coverUrl?: string | null,
   images?: PropImageEntry[],
 ): Promise<{ ok: boolean; error?: string }> {
-  const record = propToRecord(p, userId, coverUrl, images)
-  return saveOwnAssetRecord('props', record)
+  const record = propToRecord(p, userId, coverUrl, images);
+  return saveOwnAssetRecord("props", record);
 }
 
 export async function deleteProp(id: string, userId: string) {
-  return supabase.from('props').delete().eq('id', id).eq('user_id', userId)
+  return supabase.from("props").delete().eq("id", id).eq("user_id", userId);
 }
 
 export async function loadProps(userId: string) {
-  return supabase.from('props').select('*').eq('user_id', userId)
+  return supabase.from("props").select("*").eq("user_id", userId);
 }
 
 /** 从资产库移除单条角色/场景(per-item 删除按钮用) */
 export async function deleteCharacter(id: string, userId: string) {
-  return supabase.from('characters').delete().eq('id', id).eq('user_id', userId)
+  return supabase.from("characters").delete().eq("id", id).eq("user_id", userId);
 }
 
 export async function deleteScene(id: string, userId: string) {
-  return supabase.from('scenes').delete().eq('id', id).eq('user_id', userId)
+  return supabase.from("scenes").delete().eq("id", id).eq("user_id", userId);
 }
 
 export async function loadCharacters(userId: string) {
-  return supabase.from('characters').select('*').eq('user_id', userId)
+  return supabase.from("characters").select("*").eq("user_id", userId);
 }
 
 export async function loadScenes(userId: string) {
-  return supabase.from('scenes').select('*').eq('user_id', userId)
+  return supabase.from("scenes").select("*").eq("user_id", userId);
 }

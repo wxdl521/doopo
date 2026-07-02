@@ -1,9 +1,9 @@
-import { createServerFn } from '@tanstack/react-start'
-import { getRequestHeader } from '@tanstack/react-start/server'
-import { createClient } from '@supabase/supabase-js'
-import { z } from 'zod'
-import { requireSupabaseAuth } from '@/integrations/supabase/auth-middleware'
-import type { Database } from '@/integrations/supabase/types'
+import { createServerFn } from "@tanstack/react-start";
+import { getRequestHeader } from "@tanstack/react-start/server";
+import { createClient } from "@supabase/supabase-js";
+import { z } from "zod";
+import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import type { Database } from "@/integrations/supabase/types";
 
 const ProjectInput = z.object({
   id: z.string().min(1).max(64),
@@ -12,30 +12,30 @@ const ProjectInput = z.object({
   storyboardModel: z.string().max(100).optional(),
   sceneModel: z.string().max(100).optional(),
   videoModel: z.string().max(100).optional(),
-  audio: z.enum(['on', 'off']).optional(),
+  audio: z.enum(["on", "off"]).optional(),
   workflow: z.string().max(50).optional(),
   style: z.string().max(50).optional(),
   customCover: z.string().max(2000).nullable().optional(),
-})
+});
 
 export type ProjectConfigRow = {
-  id: string
-  name: string
-  aspect: string
-  storyboardModel: string
-  sceneModel: string
-  videoModel: string
-  audio: 'on' | 'off'
-  workflow: string
-  style: string
-  customCover: string | null
-}
+  id: string;
+  name: string;
+  aspect: string;
+  storyboardModel: string;
+  sceneModel: string;
+  videoModel: string;
+  audio: "on" | "off";
+  workflow: string;
+  style: string;
+  customCover: string | null;
+};
 
-export const upsertProject = createServerFn({ method: 'POST' })
+export const upsertProject = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => ProjectInput.parse(input))
   .handler(async ({ data, context }) => {
-    const { supabase, userId } = context
+    const { supabase, userId } = context;
     const row = {
       id: data.id,
       user_id: userId,
@@ -48,24 +48,26 @@ export const upsertProject = createServerFn({ method: 'POST' })
       ...(data.workflow !== undefined && { workflow: data.workflow }),
       ...(data.style !== undefined && { style: data.style }),
       ...(data.customCover !== undefined && { custom_cover: data.customCover }),
-    }
-    const { error } = await supabase.from('projects').upsert(row, { onConflict: 'id' })
-    if (error) return { ok: false as const, error: error.message }
-    return { ok: true as const }
-  })
+    };
+    const { error } = await supabase.from("projects").upsert(row, { onConflict: "id" });
+    if (error) return { ok: false as const, error: error.message };
+    return { ok: true as const };
+  });
 
-export const getProject = createServerFn({ method: 'POST' })
+export const getProject = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => z.object({ id: z.string().min(1).max(64) }).parse(input))
   .handler(async ({ data, context }) => {
-    const { supabase } = context
+    const { supabase } = context;
     const { data: row, error } = await supabase
-      .from('projects')
-      .select('id,name,aspect,storyboard_model,scene_model,video_model,audio,workflow,style,custom_cover')
-      .eq('id', data.id)
-      .maybeSingle()
-    if (error) return { project: null, error: error.message }
-    if (!row) return { project: null, error: null as string | null }
+      .from("projects")
+      .select(
+        "id,name,aspect,storyboard_model,scene_model,video_model,audio,workflow,style,custom_cover",
+      )
+      .eq("id", data.id)
+      .maybeSingle();
+    if (error) return { project: null, error: error.message };
+    if (!row) return { project: null, error: null as string | null };
     const project: ProjectConfigRow = {
       id: row.id,
       name: row.name,
@@ -73,13 +75,13 @@ export const getProject = createServerFn({ method: 'POST' })
       storyboardModel: row.storyboard_model,
       sceneModel: row.scene_model,
       videoModel: row.video_model,
-      audio: row.audio as 'on' | 'off',
+      audio: row.audio as "on" | "off",
       workflow: row.workflow,
       style: row.style,
       customCover: row.custom_cover,
-    }
-    return { project, error: null as string | null }
-  })
+    };
+    return { project, error: null as string | null };
+  });
 
 // ====================================================================
 // listMyProjects —— 当前用户的项目列表(只列 user_id = 自己 的)
@@ -89,28 +91,28 @@ export const getProject = createServerFn({ method: 'POST' })
 // ====================================================================
 
 export type ProjectListItem = {
-  id: string
-  name: string
-  customCover: string | null
-  createdAt: string
-  updatedAt: string
-  completedStages: string[]
+  id: string;
+  name: string;
+  customCover: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedStages: string[];
   /** 计算字段:draft / rendering / ready */
-  status: 'draft' | 'rendering' | 'ready'
+  status: "draft" | "rendering" | "ready";
   /**
    * 自动从 workspace_data 里挑出来的缩略图 URL(故事板图 → 分镜图 → 角色图)。
    * 客户端会优先用 customCover → thumbnail → 渐变占位 三级 fallback。
    */
-  thumbnail: string | null
-}
+  thumbnail: string | null;
+};
 
-const ALL_STAGES = ['canvas', 'script', 'character', 'storyboard', 'timeline'] as const
+const ALL_STAGES = ["canvas", "script", "character", "storyboard", "timeline"] as const;
 
-function inferStatus(row: { completed_stages: string[] }): 'draft' | 'rendering' | 'ready' {
-  const done = (row.completed_stages ?? []).length
-  if (done >= ALL_STAGES.length) return 'ready'
-  if (done === 0) return 'draft'
-  return 'rendering'
+function inferStatus(row: { completed_stages: string[] }): "draft" | "rendering" | "ready" {
+  const done = (row.completed_stages ?? []).length;
+  if (done >= ALL_STAGES.length) return "ready";
+  if (done === 0) return "draft";
+  return "rendering";
 }
 
 /**
@@ -124,64 +126,70 @@ function inferStatus(row: { completed_stages: string[] }): 'draft' | 'rendering'
  * 返回 URL 字符串,没有则 null。
  */
 function pickThumbnail(ws: any): string | null {
-  if (!ws || typeof ws !== 'object') return null
+  if (!ws || typeof ws !== "object") return null;
   // 1) 故事板图
-  const sb = ws.groupStoryboards
-  if (sb && typeof sb === 'object') {
+  const sb = ws.groupStoryboards;
+  if (sb && typeof sb === "object") {
     for (const gid of Object.keys(sb)) {
-      const v = sb[gid]
-      if (v && typeof v === 'object' && v.status === 'succeeded' && typeof v.url === 'string' && v.url) {
-        return v.url
+      const v = sb[gid];
+      if (
+        v &&
+        typeof v === "object" &&
+        v.status === "succeeded" &&
+        typeof v.url === "string" &&
+        v.url
+      ) {
+        return v.url;
       }
     }
   }
   // 2) 分镜图(shotImages 是 `${groupId}::${shotId}` → url[])
-  const shots = ws.shotImages
-  if (shots && typeof shots === 'object') {
+  const shots = ws.shotImages;
+  if (shots && typeof shots === "object") {
     for (const k of Object.keys(shots)) {
-      const arr = shots[k]
-      if (Array.isArray(arr) && arr.length && typeof arr[0] === 'string') return arr[0]
+      const arr = shots[k];
+      if (Array.isArray(arr) && arr.length && typeof arr[0] === "string") return arr[0];
     }
   }
   // 3) 角色图
-  const chars = ws.charImages
-  if (chars && typeof chars === 'object') {
+  const chars = ws.charImages;
+  if (chars && typeof chars === "object") {
     for (const k of Object.keys(chars)) {
-      const arr = chars[k]
-      if (Array.isArray(arr) && arr.length && typeof arr[0] === 'string') return arr[0]
+      const arr = chars[k];
+      if (Array.isArray(arr) && arr.length && typeof arr[0] === "string") return arr[0];
     }
   }
   // 4) 旧版分镜图
-  const panels = ws.panelImages
-  if (panels && typeof panels === 'object') {
+  const panels = ws.panelImages;
+  if (panels && typeof panels === "object") {
     for (const k of Object.keys(panels)) {
-      const v = panels[k]
-      if (typeof v === 'string' && v) return v
+      const v = panels[k];
+      if (typeof v === "string" && v) return v;
     }
   }
   // 5) 场景图
-  const scenes = ws.sceneImages
-  if (scenes && typeof scenes === 'object') {
+  const scenes = ws.sceneImages;
+  if (scenes && typeof scenes === "object") {
     for (const k of Object.keys(scenes)) {
-      const arr = scenes[k]
-      if (Array.isArray(arr) && arr.length && typeof arr[0] === 'string') return arr[0]
+      const arr = scenes[k];
+      if (Array.isArray(arr) && arr.length && typeof arr[0] === "string") return arr[0];
     }
   }
-  return null
+  return null;
 }
 
-export const listMyProjects = createServerFn({ method: 'POST' })
+export const listMyProjects = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => z.object({}).parse(input ?? {}))
   .handler(async () => {
-    const authorization = getRequestHeader('authorization')
-    if (!authorization?.toLowerCase().startsWith('bearer ')) {
-      return { projects: [] as ProjectListItem[], error: null as string | null }
+    const authorization = getRequestHeader("authorization");
+    if (!authorization?.toLowerCase().startsWith("bearer ")) {
+      return { projects: [] as ProjectListItem[], error: null as string | null };
     }
 
-    const supabaseUrl = process.env.SUPABASE_URL
-    const supabaseKey = process.env.SUPABASE_PUBLISHABLE_KEY
+    const supabaseUrl = process.env.SUPABASE_URL;
+    const supabaseKey = process.env.SUPABASE_PUBLISHABLE_KEY;
     if (!supabaseUrl || !supabaseKey) {
-      return { projects: [] as ProjectListItem[], error: 'Backend configuration is missing' }
+      return { projects: [] as ProjectListItem[], error: "Backend configuration is missing" };
     }
 
     const supabase = createClient<Database>(supabaseUrl, supabaseKey, {
@@ -191,23 +199,23 @@ export const listMyProjects = createServerFn({ method: 'POST' })
         autoRefreshToken: false,
       },
       global: { headers: { Authorization: authorization } },
-    })
+    });
 
-    const { data: authData, error: authError } = await supabase.auth.getUser()
+    const { data: authData, error: authError } = await supabase.auth.getUser();
     if (authError || !authData.user) {
-      return { projects: [] as ProjectListItem[], error: null as string | null }
+      return { projects: [] as ProjectListItem[], error: null as string | null };
     }
 
     const { data, error } = await supabase
-      .from('projects')
+      .from("projects")
       // NOTE: workspace_data is intentionally NOT selected here — it's a large
       // JSONB blob and pulling it for every row caused Postgres statement_timeout
       // on accounts with many / heavy projects. Thumbnails fall back to
       // customCover → gradient on the client.
-      .select('id,name,custom_cover,created_at,updated_at,completed_stages')
-      .eq('user_id', authData.user.id)
-      .order('updated_at', { ascending: false })
-    if (error) return { projects: [] as ProjectListItem[], error: error.message }
+      .select("id,name,custom_cover,created_at,updated_at,completed_stages")
+      .eq("user_id", authData.user.id)
+      .order("updated_at", { ascending: false });
+    if (error) return { projects: [] as ProjectListItem[], error: error.message };
     const projects: ProjectListItem[] = (data ?? []).map((row) => ({
       id: row.id,
       name: row.name,
@@ -217,35 +225,37 @@ export const listMyProjects = createServerFn({ method: 'POST' })
       completedStages: row.completed_stages ?? [],
       status: inferStatus({ completed_stages: row.completed_stages ?? [] }),
       thumbnail: null,
-    }))
-    return { projects, error: null as string | null }
-  })
+    }));
+    return { projects, error: null as string | null };
+  });
 
 // ====================================================================
 // renameProject —— 改名。只允许改自己 user_id 的项目(RLS + 中间件双重保险)。
 // ====================================================================
 
-export const renameProject = createServerFn({ method: 'POST' })
+export const renameProject = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) =>
-    z.object({
-      id: z.string().min(1).max(64),
-      name: z.string().min(1).max(200),
-    }).parse(input),
+    z
+      .object({
+        id: z.string().min(1).max(64),
+        name: z.string().min(1).max(200),
+      })
+      .parse(input),
   )
   .handler(async ({ data, context }) => {
-    const { supabase, userId } = context
+    const { supabase, userId } = context;
     const { data: row, error } = await supabase
-      .from('projects')
+      .from("projects")
       .update({ name: data.name, updated_at: new Date().toISOString() })
-      .eq('id', data.id)
-      .eq('user_id', userId)  // 二次保险,虽然 RLS 已经能挡住
-      .select('id')
-      .maybeSingle()
-    if (error) return { ok: false as const, error: error.message }
-    if (!row) return { ok: false as const, error: 'project not found or not owned by you' }
-    return { ok: true as const, error: null as string | null }
-  })
+      .eq("id", data.id)
+      .eq("user_id", userId) // 二次保险,虽然 RLS 已经能挡住
+      .select("id")
+      .maybeSingle();
+    if (error) return { ok: false as const, error: error.message };
+    if (!row) return { ok: false as const, error: "project not found or not owned by you" };
+    return { ok: true as const, error: null as string | null };
+  });
 
 // ====================================================================
 // deleteProject —— 删除项目(workspace_data / cover 等会一起被删)。
@@ -253,22 +263,20 @@ export const renameProject = createServerFn({ method: 'POST' })
 // 如果要彻底清理可以再加个 server fn 跑 supabase.storage.remove。
 // ====================================================================
 
-export const deleteProject = createServerFn({ method: 'POST' })
+export const deleteProject = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) =>
-    z.object({ id: z.string().min(1).max(64) }).parse(input),
-  )
+  .inputValidator((input: unknown) => z.object({ id: z.string().min(1).max(64) }).parse(input))
   .handler(async ({ data, context }) => {
-    const { supabase, userId } = context
+    const { supabase, userId } = context;
     const { error, count } = await supabase
-      .from('projects')
-      .delete({ count: 'exact' })
-      .eq('id', data.id)
-      .eq('user_id', userId)
-    if (error) return { ok: false as const, error: error.message }
-    if (count === 0) return { ok: false as const, error: 'project not found or not owned by you' }
-    return { ok: true as const, error: null as string | null }
-  })
+      .from("projects")
+      .delete({ count: "exact" })
+      .eq("id", data.id)
+      .eq("user_id", userId);
+    if (error) return { ok: false as const, error: error.message };
+    if (count === 0) return { ok: false as const, error: "project not found or not owned by you" };
+    return { ok: true as const, error: null as string | null };
+  });
 
 // ====================================================================
 // deleteAllMyProjects —— 清空当前用户所有项目。
@@ -277,63 +285,77 @@ export const deleteProject = createServerFn({ method: 'POST' })
 // 这里**不级联删 workspace-media bucket 里的文件**(老素材保留)。
 // ====================================================================
 
-export const deleteAllMyProjects = createServerFn({ method: 'POST' })
+export const deleteAllMyProjects = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   // 客户端必须传 confirm: true 作为"二次确认",避免被误触发
   .inputValidator((input: unknown) =>
-    z.object({
-      confirm: z.literal(true),
-    }).parse(input),
+    z
+      .object({
+        confirm: z.literal(true),
+      })
+      .parse(input),
   )
   .handler(async ({ context }) => {
-    const { supabase, userId } = context
+    const { supabase, userId } = context;
     const { error, count } = await supabase
-      .from('projects')
-      .delete({ count: 'exact' })
-      .eq('user_id', userId)
-    if (error) return { ok: false as const, error: error.message, deletedCount: 0 }
-    return { ok: true as const, error: null as string | null, deletedCount: count ?? 0 }
-  })
+      .from("projects")
+      .delete({ count: "exact" })
+      .eq("user_id", userId);
+    if (error) return { ok: false as const, error: error.message, deletedCount: 0 };
+    return { ok: true as const, error: null as string | null, deletedCount: count ?? 0 };
+  });
 
 // ===== Workspace data persistence =====
 
-export const saveWorkspaceData = createServerFn({ method: 'POST' })
+export const saveWorkspaceData = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) =>
-    z.object({
-      id: z.string().min(1).max(64),
-      workspaceData: z.record(z.string(), z.unknown()),
-      completedStages: z.array(z.string()),
-    }).parse(input)
+    z
+      .object({
+        id: z.string().min(1).max(64),
+        workspaceData: z.record(z.string(), z.unknown()),
+        completedStages: z.array(z.string()),
+      })
+      .parse(input),
   )
   .handler(async ({ data, context }) => {
-    const { supabase } = context
+    const { supabase } = context;
     const { error } = await supabase
-      .from('projects')
+      .from("projects")
       .update({
         workspace_data: data.workspaceData as any,
         completed_stages: data.completedStages,
       })
-      .eq('id', data.id)
-    if (error) return { ok: false as const, error: error.message }
-    return { ok: true as const, error: null as string | null }
-  })
+      .eq("id", data.id);
+    if (error) return { ok: false as const, error: error.message };
+    return { ok: true as const, error: null as string | null };
+  });
 
-export const loadWorkspaceData = createServerFn({ method: 'POST' })
+export const loadWorkspaceData = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => z.object({ id: z.string().min(1).max(64) }).parse(input))
   .handler(async ({ data, context }) => {
-    const { supabase } = context
+    const { supabase } = context;
     const { data: row, error } = await supabase
-      .from('projects')
-      .select('workspace_data,completed_stages')
-      .eq('id', data.id)
-      .maybeSingle()
-    if (error) return { workspaceData: null as Record<string, string> | null, completedStages: null as string[] | null, error: error.message }
-    if (!row) return { workspaceData: null as Record<string, string> | null, completedStages: null as string[] | null, error: null as string | null }
+      .from("projects")
+      .select("workspace_data,completed_stages")
+      .eq("id", data.id)
+      .maybeSingle();
+    if (error)
+      return {
+        workspaceData: null as Record<string, string> | null,
+        completedStages: null as string[] | null,
+        error: error.message,
+      };
+    if (!row)
+      return {
+        workspaceData: null as Record<string, string> | null,
+        completedStages: null as string[] | null,
+        error: null as string | null,
+      };
     return {
       workspaceData: (row.workspace_data ?? {}) as unknown as Record<string, string>,
       completedStages: (row.completed_stages ?? []) as string[],
       error: null as string | null,
-    }
-  })
+    };
+  });

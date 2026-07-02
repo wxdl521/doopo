@@ -1,8 +1,8 @@
-import ShowcaseGrid from '../components/ShowcaseGrid'
-import { useLanguage } from '../i18n/LanguageContext'
+import ShowcaseGrid from "../components/ShowcaseGrid";
+import { useLanguage } from "../i18n/LanguageContext";
 
 export default function Showcase() {
-  const { t } = useLanguage()
+  const { t } = useLanguage();
   return (
     <div className="animate-fade-in">
       <div className="mb-8 max-w-3xl">
@@ -11,5 +11,5 @@ export default function Showcase() {
       </div>
       <ShowcaseGrid initial="All" />
     </div>
-  )
+  );
 }

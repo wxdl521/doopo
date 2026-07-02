@@ -98,29 +98,27 @@ export const getTeamMembers = createServerFn({ method: "POST" })
 
     // 批量获取用户 profile 信息
     const userIds = (members ?? []).map((m: any) => m.user_id);
-    let userProfiles: Map<string, any> = new Map();
+    const userProfiles: Map<string, any> = new Map();
 
     if (userIds.length > 0) {
-      // 通过 Supabase auth admin 获取用户信息（这里用 RPC 或直接查 auth.users）
-      // 由于 RLS 限制，这里只返回基本字段，邮箱等敏感信息由服务端控制
-      const { data: profiles } = await supabase
-        .from("team_members")
-        .select("user_id")
-        .eq("team_id", data.teamId);
-
-      // 通过 RPC 获取用户邮箱（需要创建 Supabase Function）
       try {
-        const { data: users } = await (supabase.rpc as any)(
+        // 通过 RPC 函数查询 auth.users（SECURITY DEFINER，需先在 Supabase 创建函数）
+        const { data: users } = await supabase.rpc(
           "get_team_member_profiles",
           { p_user_ids: userIds },
         );
         if (users && Array.isArray(users)) {
-          for (const u of users as Array<{ user_id: string; email?: string }>) {
-            userProfiles.set(u.user_id, u);
+          for (const u of users) {
+            const meta = (u.raw_user_meta_data ?? {}) as Record<string, any>;
+            userProfiles.set(u.user_id, {
+              email: u.email ?? null,
+              displayName:
+                meta.display_name ?? meta.full_name ?? meta.name ?? null,
+            });
           }
         }
       } catch {
-        // RPC 可能不存在，降级处理
+        // RPC 函数尚未创建时降级处理，成员列表照常返回
       }
     }
 
@@ -134,8 +132,8 @@ export const getTeamMembers = createServerFn({ method: "POST" })
       joinedAt: m.joined_at,
       invitedBy: m.invited_by,
       email: userProfiles.get(m.user_id)?.email ?? null,
-      displayName: userProfiles.get(m.user_id)?.display_name ?? null,
-      avatarUrl: userProfiles.get(m.user_id)?.avatar_url ?? null,
+      displayName: userProfiles.get(m.user_id)?.displayName ?? null,
+      avatarUrl: userProfiles.get(m.user_id)?.avatarUrl ?? null,
     }));
 
     return { members: result, error: null as string | null };
@@ -380,25 +378,24 @@ export const joinTeam = createServerFn({ method: "POST" })
       return { ok: false as const, error: "You are already a member of this team" };
     }
 
-    // 检查团队是否存在且未删除
-    const { data: team } = await supabase
-      .from("teams")
-      .select("id")
-      .eq("id", data.teamId)
-      .is("deleted_at", null)
-      .maybeSingle();
-
-    if (!team) {
-      return { ok: false as const, error: "Team not found" };
-    }
-
-    // 加入团队
+    // 尝试加入团队（FK 约束会自动校验团队是否存在，无需单独查询 teams 表）
     const { error } = await supabase.from("team_members").insert({
       team_id: data.teamId,
       user_id: userId,
       role: "member",
     });
 
-    if (error) return { ok: false as const, error: error.message };
+    if (error) {
+      // 外键约束违反 → 团队不存在或已删除
+      if (error.code === "23503" || error.message?.includes("foreign key")) {
+        return { ok: false as const, error: "Team not found" };
+      }
+      // 唯一约束违反 → 已是成员（并发场景）
+      if (error.code === "23505") {
+        return { ok: false as const, error: "You are already a member of this team" };
+      }
+      return { ok: false as const, error: error.message };
+    }
+
     return { ok: true as const };
   });

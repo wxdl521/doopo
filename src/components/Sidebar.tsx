@@ -1,4 +1,4 @@
-import { Link } from '@tanstack/react-router'
+import { Link } from "@tanstack/react-router";
 import {
   Home,
   FolderOpen,
@@ -9,39 +9,41 @@ import {
   Headphones,
   FileText,
   Library,
-} from 'lucide-react'
-import { useLanguage } from '../i18n/LanguageContext'
+} from "lucide-react";
+import { useLanguage } from "../i18n/LanguageContext";
 
 export default function Sidebar() {
-  const { t } = useLanguage()
+  const { t } = useLanguage();
 
   const items = [
-    { to: '/home', label: t.nav_home, icon: Home },
-    { to: '/scripts', label: t.nav_scripts, icon: FileText },
-    { to: '/projects', label: t.nav_projects, icon: FolderOpen },
-    { to: '/assets', label: t.nav_assets, icon: Library },
-    { to: '/bases', label: t.nav_bases, icon: Bookmark },
-    { to: '/zoclaw', label: t.nav_zoclaw, icon: WandSparkles },
-    { to: '/models', label: t.nav_models, icon: Sparkles },
-  ]
+    { to: "/home", label: t.nav_home, icon: Home },
+    { to: "/scripts", label: t.nav_scripts, icon: FileText },
+    { to: "/projects", label: t.nav_projects, icon: FolderOpen },
+    { to: "/assets", label: t.nav_assets, icon: Library },
+    { to: "/bases", label: t.nav_bases, icon: Bookmark },
+    { to: "/zoclaw", label: t.nav_zoclaw, icon: WandSparkles },
+    { to: "/models", label: t.nav_models, icon: Sparkles },
+  ];
 
   const footerItems = [
-    { to: '#', label: t.nav_support, icon: Headphones },
-    { to: '#', label: t.nav_contact, icon: Mail },
-  ]
+    { to: "#", label: t.nav_support, icon: Headphones },
+    { to: "#", label: t.nav_contact, icon: Mail },
+  ];
 
   return (
-    <aside className="hidden md:flex flex-col items-center justify-between gap-4
+    <aside
+      className="hidden md:flex flex-col items-center justify-between gap-4
                       w-[88px] py-6 border-r border-border bg-bg-soft/50 backdrop-blur-sm
                       sticky top-[57px] self-start"
-           style={{ height: 'calc(100vh - 57px)' }}>
+      style={{ height: "calc(100vh - 57px)" }}
+    >
       <nav className="flex flex-col items-center gap-2">
         {items.map(({ to, label, icon: Icon }, i) => (
           <Link
             key={to}
             to={to}
             className="nav-item"
-            activeProps={{ className: 'nav-item nav-item-active' }}
+            activeProps={{ className: "nav-item nav-item-active" }}
             style={{ animationDelay: `${i * 60}ms` }}
           >
             <Icon size={20} />
@@ -62,5 +64,5 @@ export default function Sidebar() {
         ))}
       </nav>
     </aside>
-  )
+  );
 }

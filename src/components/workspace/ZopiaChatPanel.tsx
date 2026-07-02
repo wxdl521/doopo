@@ -107,7 +107,7 @@ type Message =
       stage?: WorkspaceTab;
       summary?: { title: string; detail: string; next: string };
       ctas?: { key: CtaKey; label: string; target: WorkspaceTab }[];
-    }
+    };
 type WorkflowDef = {
   steps: string[];
   summary: { title: string; detail: string; next: string };
@@ -145,9 +145,7 @@ function buildWorkflow(stage: WorkspaceTab, t: any): WorkflowDef {
           detail: t.zp_summary_char_detail,
           next: t.zp_summary_char_next,
         },
-        ctas: [
-          { key: "enter_storyboard", label: t.zp_cta_enter_storyboard, target: "storyboard" },
-        ],
+        ctas: [{ key: "enter_storyboard", label: t.zp_cta_enter_storyboard, target: "storyboard" }],
       };
     case "storyboard":
       return {
@@ -256,7 +254,7 @@ export type ZopiaChatPanelHandle = {
    * 用于角色/场景/道具卡片"修改"按钮。
    */
   setPendingRef: (
-    refType: 'character' | 'scene' | 'prop',
+    refType: "character" | "scene" | "prop",
     refId: string,
     label: string,
     imageUrl: string,
@@ -264,41 +262,52 @@ export type ZopiaChatPanelHandle = {
   ) => void;
 };
 
-const ZopiaChatPanel = forwardRef<ZopiaChatPanelHandle, {
-  workspaceId: string;
-  stage: WorkspaceTab;
-  onJumpStage: (t: WorkspaceTab) => void;
-  onProduce?: (t: WorkspaceTab, userPrompt?: string) => void | Promise<void> | Promise<unknown>;
-  collapsed: boolean;
-  onToggleCollapsed: () => void;
-  initialInput?: string;
-  locked?: boolean;
-  selectedEpisodeIndex?: number;
-  episodeCount?: number;
-  onImportScript?: (result: ImportedScriptResult) => void;
-  streaming?: boolean;
-  onEnterStoryboard?: () => void | Promise<void>;
-  enterTimelineSignal?: number;
-  onEnterTimeline?: () => void | Promise<void>;
-  onModifyReference?: (refType: 'character' | 'scene' | 'prop', refId: string, instruction: string, lookId?: string | null) => void;
-}>(function ZopiaChatPanel({
-  workspaceId,
-  stage,
-  onJumpStage,
-  onProduce,
-  collapsed,
-  onToggleCollapsed,
-  initialInput,
-  locked,
-  selectedEpisodeIndex,
-  episodeCount,
-  onImportScript,
-  streaming,
-  onEnterStoryboard,
-  enterTimelineSignal,
-  onEnterTimeline,
-  onModifyReference,
-}, ref: React.Ref<ZopiaChatPanelHandle>) {
+const ZopiaChatPanel = forwardRef<
+  ZopiaChatPanelHandle,
+  {
+    workspaceId: string;
+    stage: WorkspaceTab;
+    onJumpStage: (t: WorkspaceTab) => void;
+    onProduce?: (t: WorkspaceTab, userPrompt?: string) => void | Promise<void> | Promise<unknown>;
+    collapsed: boolean;
+    onToggleCollapsed: () => void;
+    initialInput?: string;
+    locked?: boolean;
+    selectedEpisodeIndex?: number;
+    episodeCount?: number;
+    onImportScript?: (result: ImportedScriptResult) => void;
+    streaming?: boolean;
+    onEnterStoryboard?: () => void | Promise<void>;
+    enterTimelineSignal?: number;
+    onEnterTimeline?: () => void | Promise<void>;
+    onModifyReference?: (
+      refType: "character" | "scene" | "prop",
+      refId: string,
+      instruction: string,
+      lookId?: string | null,
+    ) => void;
+  }
+>(function ZopiaChatPanel(
+  {
+    workspaceId,
+    stage,
+    onJumpStage,
+    onProduce,
+    collapsed,
+    onToggleCollapsed,
+    initialInput,
+    locked,
+    selectedEpisodeIndex,
+    episodeCount,
+    onImportScript,
+    streaming,
+    onEnterStoryboard,
+    enterTimelineSignal,
+    onEnterTimeline,
+    onModifyReference,
+  },
+  ref: React.Ref<ZopiaChatPanelHandle>,
+) {
   const { t, lang } = useLanguage();
   const callParseScript = useServerFn(parseImportedScript);
   // 优先用 localStorage 的历史(每个 workspace 一份)初始化,这样刷新
@@ -345,7 +354,7 @@ const ZopiaChatPanel = forwardRef<ZopiaChatPanelHandle, {
   const [synopsisEditMode, setSynopsisEditMode] = useState(false);
   // 2026/06:待发送的引用修改信息,设置后预填输入框,发送时带引用上下文
   const [pendingRef, setPendingRef] = useState<{
-    refType: 'character' | 'scene' | 'prop';
+    refType: "character" | "scene" | "prop";
     refId: string;
     label: string;
     imageUrl: string;
@@ -378,7 +387,6 @@ const ZopiaChatPanel = forwardRef<ZopiaChatPanelHandle, {
     if (initialInput && initialInput.trim()) {
       setInput(initialInput);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialInput]);
 
   // 切换流程(stage)或选择不同集数时,重置临时 UI 状态(参数面板 /
@@ -670,7 +678,7 @@ const ZopiaChatPanel = forwardRef<ZopiaChatPanelHandle, {
 
     // 2026/06:如果有待发送的引用修改(pendingRef),走 onModifyReference 回调
     if (pendingRef) {
-      const refText = `修改${pendingRef.refType === 'character' ? '角色' : pendingRef.refType === 'scene' ? '场景' : '道具'}「${pendingRef.label}」: ${trimmed}`;
+      const refText = `修改${pendingRef.refType === "character" ? "角色" : pendingRef.refType === "scene" ? "场景" : "道具"}「${pendingRef.label}」: ${trimmed}`;
       const userMsg: Message = { id: `u-${Date.now()}`, kind: "user", text: refText };
       setMessages((m) => [...m, userMsg]);
       setInput("");
@@ -778,30 +786,36 @@ const ZopiaChatPanel = forwardRef<ZopiaChatPanelHandle, {
   // 2026/06:暴露给父组件的 triggerWorkflow 实现。
   // 当内容区域按钮(如"提取第 X 集角色")想要触发工作流动画时,
   // 父组件通过 ref 调用此方法,内部走 runWorkflowAnimation 在左侧对话框显示动画。
-  useImperativeHandle(ref, () => ({
-    triggerWorkflow: (
-      targetStage: WorkspaceTab,
-      awaitable: () => unknown | Promise<unknown>,
-      opts?: { jumpAfter?: boolean; userMsg?: string },
-    ) => {
-      const userMsg: Message | undefined = opts?.userMsg
-        ? { id: `u-${Date.now()}`, kind: "user", text: opts.userMsg }
-        : undefined;
-      runWorkflowAnimation(targetStage, awaitable, { jumpAfter: opts?.jumpAfter, userMsg });
-    },
-    setPendingRef: (
-      refType: 'character' | 'scene' | 'prop',
-      refId: string,
-      label: string,
-      imageUrl: string,
-      lookId?: string | null,
-    ) => {
-      setPendingRef({ refType, refId, label, imageUrl, lookId });
-      setInput(`修改${refType === 'character' ? '角色' : refType === 'scene' ? '场景' : '道具'}「${label}」: `);
-      setTimeout(() => textareaRef.current?.focus(), 50);
-      setTimeout(() => scrollRef.current?.scrollTo({ top: 999999, behavior: "smooth" }), 50);
-    },
-  }), [runWorkflowAnimation]);
+  useImperativeHandle(
+    ref,
+    () => ({
+      triggerWorkflow: (
+        targetStage: WorkspaceTab,
+        awaitable: () => unknown | Promise<unknown>,
+        opts?: { jumpAfter?: boolean; userMsg?: string },
+      ) => {
+        const userMsg: Message | undefined = opts?.userMsg
+          ? { id: `u-${Date.now()}`, kind: "user", text: opts.userMsg }
+          : undefined;
+        runWorkflowAnimation(targetStage, awaitable, { jumpAfter: opts?.jumpAfter, userMsg });
+      },
+      setPendingRef: (
+        refType: "character" | "scene" | "prop",
+        refId: string,
+        label: string,
+        imageUrl: string,
+        lookId?: string | null,
+      ) => {
+        setPendingRef({ refType, refId, label, imageUrl, lookId });
+        setInput(
+          `修改${refType === "character" ? "角色" : refType === "scene" ? "场景" : "道具"}「${label}」: `,
+        );
+        setTimeout(() => textareaRef.current?.focus(), 50);
+        setTimeout(() => scrollRef.current?.scrollTo({ top: 999999, behavior: "smooth" }), 50);
+      },
+    }),
+    [runWorkflowAnimation],
+  );
 
   const quickActions: {
     key: string;
@@ -1236,7 +1250,9 @@ const ZopiaChatPanel = forwardRef<ZopiaChatPanelHandle, {
         const spec = getParamSpec(c);
         if (spec) {
           const defaults: Record<string, string | string[]> = {};
-          spec.fields.forEach((f) => { defaults[f.key] = f.default; });
+          spec.fields.forEach((f) => {
+            defaults[f.key] = f.default;
+          });
           setPendingCta({ cta: c, spec, values: defaults, previewing: false });
         }
       }
@@ -1521,7 +1537,9 @@ const ZopiaChatPanel = forwardRef<ZopiaChatPanelHandle, {
                   return (
                     <div
                       key={i}
-                      onClick={() => { if (m.stage) onJumpStage(m.stage); }}
+                      onClick={() => {
+                        if (m.stage) onJumpStage(m.stage);
+                      }}
                       className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm transition cursor-pointer ${done ? "border-border bg-bg-elevated/60" : "border-border bg-bg-elevated/30"} hover:border-accent/40`}
                     >
                       <span
@@ -1794,12 +1812,25 @@ const ZopiaChatPanel = forwardRef<ZopiaChatPanelHandle, {
           <div className="mb-2 flex items-center justify-between px-3 py-2 rounded-lg bg-accent-dim/40 border border-accent/50 text-xs">
             <span className="text-accent inline-flex items-center gap-2">
               <span className="w-5 h-5 rounded overflow-hidden shrink-0 bg-bg-surface">
-                <img src={pendingRef.imageUrl} alt={pendingRef.label} className="w-full h-full object-cover" />
+                <img
+                  src={pendingRef.imageUrl}
+                  alt={pendingRef.label}
+                  className="w-full h-full object-cover"
+                />
               </span>
-              修改{pendingRef.refType === 'character' ? '角色' : pendingRef.refType === 'scene' ? '场景' : '道具'}「{pendingRef.label}」— 输入修改意见后发送
+              修改
+              {pendingRef.refType === "character"
+                ? "角色"
+                : pendingRef.refType === "scene"
+                  ? "场景"
+                  : "道具"}
+              「{pendingRef.label}」— 输入修改意见后发送
             </span>
             <button
-              onClick={() => { setPendingRef(null); setInput('') }}
+              onClick={() => {
+                setPendingRef(null);
+                setInput("");
+              }}
               className="text-text-muted hover:text-text-primary"
             >
               <X size={12} />

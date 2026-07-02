@@ -1,17 +1,17 @@
-import { Plus, MoreHorizontal, Pencil, Upload, Trash2 } from 'lucide-react'
-import { Link } from '@tanstack/react-router'
-import { useLanguage } from '../i18n/LanguageContext'
-import { NewProjectDialog } from './NewProjectDialog'
+import { Plus, MoreHorizontal, Pencil, Upload, Trash2 } from "lucide-react";
+import { Link } from "@tanstack/react-router";
+import { useLanguage } from "../i18n/LanguageContext";
+import { NewProjectDialog } from "./NewProjectDialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from './ui/dropdown-menu'
+} from "./ui/dropdown-menu";
 
 export function NewProjectCard({ label }: { to?: string; label?: string }) {
-  const { t } = useLanguage()
-  const text = label ?? t.projects_new
+  const { t } = useLanguage();
+  const text = label ?? t.projects_new;
   return (
     <NewProjectDialog
       trigger={
@@ -20,10 +20,13 @@ export function NewProjectCard({ label }: { to?: string; label?: string }) {
           className="corner-frame card group flex flex-col items-center justify-center
                      aspect-[16/10] text-center hover:bg-accent-dim/30 w-full"
         >
-          <span className="c-tr" /><span className="c-bl" />
-          <div className="w-12 h-12 rounded-full bg-bg-elevated border border-border
+          <span className="c-tr" />
+          <span className="c-bl" />
+          <div
+            className="w-12 h-12 rounded-full bg-bg-elevated border border-border
                           flex items-center justify-center group-hover:border-accent
-                          group-hover:text-accent transition">
+                          group-hover:text-accent transition"
+          >
             <Plus size={22} />
           </div>
           <span className="mt-3 font-medium text-text-secondary group-hover:text-text-primary">
@@ -32,37 +35,37 @@ export function NewProjectCard({ label }: { to?: string; label?: string }) {
         </button>
       }
     />
-  )
+  );
 }
 
 export type ProjectMeta = {
-  id: string
-  title: string
-  thumbnail: string // Tailwind gradient classes OR absolute image URL (http/https)
-  status?: 'draft' | 'rendering' | 'ready'
-  updated?: string
-}
+  id: string;
+  title: string;
+  thumbnail: string; // Tailwind gradient classes OR absolute image URL (http/https)
+  status?: "draft" | "rendering" | "ready";
+  updated?: string;
+};
 
-export type ProjectMenuAction = 'rename' | 'export' | 'delete'
+export type ProjectMenuAction = "rename" | "export" | "delete";
 
 export function ProjectCard({
   project,
   onMenuAction,
 }: {
-  project: ProjectMeta
-  onMenuAction?: (action: ProjectMenuAction, project: ProjectMeta) => void
+  project: ProjectMeta;
+  onMenuAction?: (action: ProjectMenuAction, project: ProjectMeta) => void;
 }) {
-  const { t } = useLanguage()
-  const statusColors: Record<NonNullable<ProjectMeta['status']>, string> = {
-    draft: 'bg-amber-400/20 text-amber-300 border-amber-400/30',
-    rendering: 'bg-accent-dim text-accent border-accent/30',
-    ready: 'bg-emerald-500/20 text-emerald-300 border-emerald-400/30',
-  }
-  const statusLabels: Record<NonNullable<ProjectMeta['status']>, string> = {
+  const { t } = useLanguage();
+  const statusColors: Record<NonNullable<ProjectMeta["status"]>, string> = {
+    draft: "bg-amber-400/20 text-amber-300 border-amber-400/30",
+    rendering: "bg-accent-dim text-accent border-accent/30",
+    ready: "bg-emerald-500/20 text-emerald-300 border-emerald-400/30",
+  };
+  const statusLabels: Record<NonNullable<ProjectMeta["status"]>, string> = {
     draft: t.projects_status_draft,
     rendering: t.projects_status_rendering,
     ready: t.projects_status_ready,
-  }
+  };
   return (
     <div className="card group cursor-pointer relative">
       <Link to="/workspace/$workspaceId" params={{ workspaceId: project.id }} className="block">
@@ -76,16 +79,20 @@ export function ProjectCard({
             />
           ) : (
             <div className={`absolute inset-0 bg-gradient-to-br ${project.thumbnail}`}>
-              <div className="absolute inset-0 opacity-30 mix-blend-overlay"
-                   style={{
-                     backgroundImage:
-                       'linear-gradient(0deg, rgba(255,255,255,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px)',
-                     backgroundSize: '24px 24px',
-                   }} />
+              <div
+                className="absolute inset-0 opacity-30 mix-blend-overlay"
+                style={{
+                  backgroundImage:
+                    "linear-gradient(0deg, rgba(255,255,255,0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.05) 1px, transparent 1px)",
+                  backgroundSize: "24px 24px",
+                }}
+              />
             </div>
           )}
           {project.status && (
-            <span className={`absolute top-3 right-3 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider border ${statusColors[project.status]}`}>
+            <span
+              className={`absolute top-3 right-3 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider border ${statusColors[project.status]}`}
+            >
               {statusLabels[project.status]}
             </span>
           )}
@@ -93,7 +100,9 @@ export function ProjectCard({
         <div className="px-4 py-3 pr-10">
           <h4 className="font-semibold text-text-primary truncate">{project.title}</h4>
           {project.updated && (
-            <p className="text-xs text-text-muted mt-0.5">{t.projects_updated_prefix} {project.updated}</p>
+            <p className="text-xs text-text-muted mt-0.5">
+              {t.projects_updated_prefix} {project.updated}
+            </p>
           )}
         </div>
       </Link>
@@ -103,7 +112,10 @@ export function ProjectCard({
             <DropdownMenuTrigger asChild>
               <button
                 type="button"
-                onClick={(e) => { e.preventDefault(); e.stopPropagation() }}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
                 className="p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-bg-elevated transition"
                 aria-label="menu"
               >
@@ -111,14 +123,14 @@ export function ProjectCard({
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-              <DropdownMenuItem onSelect={() => onMenuAction('rename', project)}>
+              <DropdownMenuItem onSelect={() => onMenuAction("rename", project)}>
                 <Pencil size={14} className="mr-2" /> {t.projects_menu_rename}
               </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => onMenuAction('export', project)}>
+              <DropdownMenuItem onSelect={() => onMenuAction("export", project)}>
                 <Upload size={14} className="mr-2" /> {t.projects_menu_export}
               </DropdownMenuItem>
               <DropdownMenuItem
-                onSelect={() => onMenuAction('delete', project)}
+                onSelect={() => onMenuAction("delete", project)}
                 className="text-rose-400 focus:text-rose-400"
               >
                 <Trash2 size={14} className="mr-2" /> {t.projects_menu_delete}
@@ -128,5 +140,5 @@ export function ProjectCard({
         </div>
       )}
     </div>
-  )
+  );
 }

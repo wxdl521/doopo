@@ -1,20 +1,24 @@
-import { useState, type ReactNode } from 'react'
-import { useLocation } from '@tanstack/react-router'
-import Sidebar from '../components/Sidebar'
-import Header from '../components/Header'
-import PromoBanner from '../components/PromoBanner'
-import Footer from '../components/Footer'
-import MobileNav from '../components/MobileNav'
-import AuthGate from '../components/AuthGate'
+import { useState, type ReactNode } from "react";
+import { useLocation } from "@tanstack/react-router";
+import Sidebar from "../components/Sidebar";
+import Header from "../components/Header";
+import PromoBanner from "../components/PromoBanner";
+import Footer from "../components/Footer";
+import MobileNav from "../components/MobileNav";
+import AuthGate from "../components/AuthGate";
 
 export default function MainLayout({ children }: { children: ReactNode }) {
-  const [showPromo, setShowPromo] = useState(true)
-  const location = useLocation()
-  const isWorkspace = location.pathname.startsWith('/workspace/')
+  const [showPromo, setShowPromo] = useState(true);
+  const location = useLocation();
+  const isWorkspace = location.pathname.startsWith("/workspace/");
 
   if (isWorkspace) {
     // Workspace owns its own full-screen chrome (top bar + chat panel).
-    return <div className="min-h-screen flex flex-col bg-bg"><AuthGate>{children}</AuthGate></div>
+    return (
+      <div className="min-h-screen flex flex-col bg-bg">
+        <AuthGate>{children}</AuthGate>
+      </div>
+    );
   }
 
   return (
@@ -30,5 +34,5 @@ export default function MainLayout({ children }: { children: ReactNode }) {
       </div>
       <MobileNav />
     </div>
-  )
+  );
 }

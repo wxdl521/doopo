@@ -1,23 +1,28 @@
-import { createFileRoute } from '@tanstack/react-router'
-import PageHeader from '../components/PageHeader'
-import { mockCharacters, mockCharacterRelations } from '../data/mock'
-import { useLanguage } from '../i18n/LanguageContext'
+import { createFileRoute } from "@tanstack/react-router";
+import PageHeader from "../components/PageHeader";
+import { mockCharacters, mockCharacterRelations } from "../data/mock";
+import { useLanguage } from "../i18n/LanguageContext";
 
-export const Route = createFileRoute('/characters/relations')({
-  head: () => ({ meta: [{ title: 'Character Relations — Doopoo' }] }),
+export const Route = createFileRoute("/characters/relations")({
+  head: () => ({ meta: [{ title: "Character Relations — Doopoo" }] }),
   component: Relations,
-})
+});
 
 function Relations() {
-  const { t } = useLanguage()
-  const radius = 160
-  const cx = 240
-  const cy = 200
+  const { t } = useLanguage();
+  const radius = 160;
+  const cx = 240;
+  const cy = 200;
   const positions = mockCharacters.map((c, i) => {
-    const angle = (i / mockCharacters.length) * Math.PI * 2 - Math.PI / 2
-    return { id: c.id, name: c.name, x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius }
-  })
-  const find = (id: string) => positions.find((p) => p.id === id)!
+    const angle = (i / mockCharacters.length) * Math.PI * 2 - Math.PI / 2;
+    return {
+      id: c.id,
+      name: c.name,
+      x: cx + Math.cos(angle) * radius,
+      y: cy + Math.sin(angle) * radius,
+    };
+  });
+  const find = (id: string) => positions.find((p) => p.id === id)!;
   return (
     <div className="animate-fade-in">
       <PageHeader title={t.chd_relations_title} subtitle={t.chd_relations_sub} />
@@ -29,25 +34,58 @@ function Relations() {
             </marker>
           </defs>
           {mockCharacterRelations.map((r, i) => {
-            const a = find(r.from)
-            const b = find(r.to)
-            const mx = (a.x + b.x) / 2
-            const my = (a.y + b.y) / 2
+            const a = find(r.from);
+            const b = find(r.to);
+            const mx = (a.x + b.x) / 2;
+            const my = (a.y + b.y) / 2;
             return (
               <g key={i}>
-                <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="currentColor" className="text-accent/60" strokeWidth={1.5} markerEnd="url(#arrow)" />
-                <text x={mx} y={my - 6} className="fill-text-muted" fontSize="10" textAnchor="middle">{r.label}</text>
+                <line
+                  x1={a.x}
+                  y1={a.y}
+                  x2={b.x}
+                  y2={b.y}
+                  stroke="currentColor"
+                  className="text-accent/60"
+                  strokeWidth={1.5}
+                  markerEnd="url(#arrow)"
+                />
+                <text
+                  x={mx}
+                  y={my - 6}
+                  className="fill-text-muted"
+                  fontSize="10"
+                  textAnchor="middle"
+                >
+                  {r.label}
+                </text>
               </g>
-            )
+            );
           })}
           {positions.map((p) => (
             <g key={p.id}>
-              <circle cx={p.x} cy={p.y} r={36} fill="currentColor" className="text-bg-elevated" stroke="currentColor" strokeWidth={2} />
-              <text x={p.x} y={p.y + 4} fontSize="11" textAnchor="middle" className="fill-text-primary font-semibold">{p.name}</text>
+              <circle
+                cx={p.x}
+                cy={p.y}
+                r={36}
+                fill="currentColor"
+                className="text-bg-elevated"
+                stroke="currentColor"
+                strokeWidth={2}
+              />
+              <text
+                x={p.x}
+                y={p.y + 4}
+                fontSize="11"
+                textAnchor="middle"
+                className="fill-text-primary font-semibold"
+              >
+                {p.name}
+              </text>
             </g>
           ))}
         </svg>
       </section>
     </div>
-  )
+  );
 }

@@ -1,8 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Play, Pause, RotateCcw, Clock, Film, Loader2, AlertCircle, GripVertical, CloudCheck, CloudOff,
-} from 'lucide-react'
-import type { StoryboardGroup } from '../../data/workspaceGenerators'
+  Play,
+  Pause,
+  RotateCcw,
+  Clock,
+  Film,
+  Loader2,
+  AlertCircle,
+  GripVertical,
+  CloudCheck,
+  CloudOff,
+} from "lucide-react";
+import type { StoryboardGroup } from "../../data/workspaceGenerators";
 
 /**
  * 检测 URL 是否已入库到用户自己的 Supabase Storage(workspace-media bucket)。
@@ -10,14 +19,16 @@ import type { StoryboardGroup } from '../../data/workspaceGenerators'
  * 跟 workspaceMedia.functions.ts 的 isAlreadyPersisted 同语义,客户端用于徽章展示。
  */
 function isPersistedUrl(url: string | undefined | null): boolean {
-  if (!url) return false
+  if (!url) return false;
   try {
-    const u = new URL(url)
-    const path = u.pathname || ''
-    return path.includes('/storage/v1/object/public/workspace-media/')
-        || path.includes('/object/public/workspace-media/')
+    const u = new URL(url);
+    const path = u.pathname || "";
+    return (
+      path.includes("/storage/v1/object/public/workspace-media/") ||
+      path.includes("/object/public/workspace-media/")
+    );
   } catch {
-    return false
+    return false;
   }
 }
 
@@ -35,32 +46,35 @@ function isPersistedUrl(url: string | undefined | null): boolean {
  *  不做的事:不做转场、裁切、调时长、关键帧 —— 仅"类似剪辑的播放+拖拽"预览体验。
  */
 
-export type GroupVideoMap = Record<string, { url: string; status: 'running' | 'succeeded' | 'failed' }>
+export type GroupVideoMap = Record<
+  string,
+  { url: string; status: "running" | "succeeded" | "failed" }
+>;
 
 type Props = {
-  groups: StoryboardGroup[]
-  groupVideos: GroupVideoMap
+  groups: StoryboardGroup[];
+  groupVideos: GroupVideoMap;
   /** 用户可调整的播放顺序(groupId 数组)。父组件管理以便持久化/重置。 */
-  clipOrder: string[]
-  onClipReorder: (nextOrder: string[]) => void
+  clipOrder: string[];
+  onClipReorder: (nextOrder: string[]) => void;
   /** 默认每个 clip 长度(秒)。当前分镜视频固定 10s。 */
-  clipDurationSec?: number
+  clipDurationSec?: number;
   /** i18n 文案 */
   i18n: {
-    title: string
-    hint: string
-    play: string
-    pause: string
-    resetOrder: string
-    noVideo: string
-    generating: string
-    failed: string
-    empty: string
-    reorderChanged: string
-  }
-}
+    title: string;
+    hint: string;
+    play: string;
+    pause: string;
+    resetOrder: string;
+    noVideo: string;
+    generating: string;
+    failed: string;
+    empty: string;
+    reorderChanged: string;
+  };
+};
 
-const DEFAULT_CLIP_DUR = 10
+const DEFAULT_CLIP_DUR = 10;
 
 export default function StoryboardTimeline({
   groups,
@@ -73,206 +87,218 @@ export default function StoryboardTimeline({
   // ----- 派生数据 -----
   // 按 clipOrder 排列的 clip,包含 group + video 元数据
   type Clip = {
-    groupId: string
-    group: StoryboardGroup
-    video: GroupVideoMap[string] | undefined
+    groupId: string;
+    group: StoryboardGroup;
+    video: GroupVideoMap[string] | undefined;
     /** 当前 clip 是否已生成可播放视频(用做 active candidate) */
-    playable: boolean
+    playable: boolean;
     /** 缩略图:优先用第一张分镜图,没有就用 storyboard 图 */
-    thumb: string | undefined
+    thumb: string | undefined;
     /** 是否已入库到用户自己的 Supabase Storage(永久有效) */
-    persisted: boolean
-  }
+    persisted: boolean;
+  };
   const clips: Clip[] = useMemo(() => {
     return clipOrder
       .map((id) => groups.find((g) => g.id === id))
       .filter((g): g is StoryboardGroup => !!g)
       .map((g) => {
-        const v = groupVideos[g.id]
-        const firstShotImg = g.shots.find((s) => s.imageUrl)?.imageUrl
-        const thumb = firstShotImg
+        const v = groupVideos[g.id];
+        const firstShotImg = g.shots.find((s) => s.imageUrl)?.imageUrl;
+        const thumb = firstShotImg;
         return {
           groupId: g.id,
           group: g,
           video: v,
-          playable: !!v && v.status === 'succeeded',
+          playable: !!v && v.status === "succeeded",
           thumb,
           persisted: isPersistedUrl(v?.url),
-        }
-      })
-  }, [clipOrder, groups, groupVideos])
+        };
+      });
+  }, [clipOrder, groups, groupVideos]);
 
-  const playableClips = useMemo(() => clips.filter((c) => c.playable), [clips])
-  const totalSec = clips.length * clipDurationSec
-  const playableTotalSec = playableClips.length * clipDurationSec
+  const playableClips = useMemo(() => clips.filter((c) => c.playable), [clips]);
+  const totalSec = clips.length * clipDurationSec;
+  const playableTotalSec = playableClips.length * clipDurationSec;
 
   // ----- 播放状态 -----
-  const [activeClipIndex, setActiveClipIndex] = useState(0)
-  const [isPlaying, setIsPlaying] = useState(false)
-  const [currentSec, setCurrentSec] = useState(0)
-  const [userReordered, setUserReordered] = useState(false)
+  const [activeClipIndex, setActiveClipIndex] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentSec, setCurrentSec] = useState(0);
+  const [userReordered, setUserReordered] = useState(false);
 
   // ----- Refs -----
-  const trackRef = useRef<HTMLDivElement | null>(null)
-  const videoRefs = useRef<Record<string, HTMLVideoElement | null>>({})
+  const trackRef = useRef<HTMLDivElement | null>(null);
+  const videoRefs = useRef<Record<string, HTMLVideoElement | null>>({});
   /** playhead 拖拽快照 */
-  const playheadDrag = useRef<{ startX: number; startSec: number } | null>(null)
+  const playheadDrag = useRef<{ startX: number; startSec: number } | null>(null);
   /** clip 拖拽快照 */
   const clipDrag = useRef<{
-    clipId: string
-    fromIndex: number
-    pointerId: number
-  } | null>(null)
+    clipId: string;
+    fromIndex: number;
+    pointerId: number;
+  } | null>(null);
   /** clip 拖拽时的目标 index(用于视觉预览),null 表示尚未移出原始槽 */
-  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null)
-  const [draggingClipId, setDraggingClipId] = useState<string | null>(null)
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+  const [draggingClipId, setDraggingClipId] = useState<string | null>(null);
 
   // active 视频 id
-  const activeClip = playableClips[activeClipIndex] ?? null
+  const activeClip = playableClips[activeClipIndex] ?? null;
 
   // ----- 自动播放头同步(active video 推进时,把 currentSec 同步过来) -----
   useEffect(() => {
-    if (!activeClip) return
-    const v = videoRefs.current[activeClip.groupId]
-    if (!v) return
+    if (!activeClip) return;
+    const v = videoRefs.current[activeClip.groupId];
+    if (!v) return;
     if (isPlaying) {
       // 切到新的 clip 时,把 currentSec 对齐到该 clip 的"绝对起始"
-      const offset = playableClips.findIndex((c) => c.groupId === activeClip.groupId) * clipDurationSec
-      v.currentTime = Math.max(0, currentSec - offset)
-      void v.play().catch(() => {/* 用户没交互时 autoplay 可能被拒,忽略 */})
+      const offset =
+        playableClips.findIndex((c) => c.groupId === activeClip.groupId) * clipDurationSec;
+      v.currentTime = Math.max(0, currentSec - offset);
+      void v.play().catch(() => {
+        /* 用户没交互时 autoplay 可能被拒,忽略 */
+      });
     } else {
-      v.pause()
+      v.pause();
     }
-  // 仅在 activeClip / isPlaying 切换时同步,避免每帧重跑
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeClip?.groupId, isPlaying])
+    // 仅在 activeClip / isPlaying 切换时同步,避免每帧重跑
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeClip?.groupId, isPlaying]);
 
   // ----- 推进播放(currentSec + activeClipIndex 联动) -----
   useEffect(() => {
-    if (!isPlaying) return
-    let raf = 0
-    let last = performance.now()
+    if (!isPlaying) return;
+    let raf = 0;
+    let last = performance.now();
     const tick = (now: number) => {
-      const dt = (now - last) / 1000
-      last = now
+      const dt = (now - last) / 1000;
+      last = now;
       setCurrentSec((cur) => {
-        const next = cur + dt
+        const next = cur + dt;
         if (next >= totalSec) {
           // 全部播完 → 停在末尾并暂停
-          setIsPlaying(false)
-          return totalSec
+          setIsPlaying(false);
+          return totalSec;
         }
-        return next
-      })
-      raf = requestAnimationFrame(tick)
-    }
-    raf = requestAnimationFrame(tick)
-    return () => cancelAnimationFrame(raf)
-  }, [isPlaying, totalSec])
+        return next;
+      });
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [isPlaying, totalSec]);
 
   // currentSec → activeClipIndex 联动(自动切到下一个)
   useEffect(() => {
-    if (playableClips.length === 0) return
-    const idx = Math.min(
-      playableClips.length - 1,
-      Math.floor(currentSec / clipDurationSec),
-    )
-    if (idx !== activeClipIndex) setActiveClipIndex(idx)
-  }, [currentSec, playableClips, clipDurationSec, activeClipIndex])
+    if (playableClips.length === 0) return;
+    const idx = Math.min(playableClips.length - 1, Math.floor(currentSec / clipDurationSec));
+    if (idx !== activeClipIndex) setActiveClipIndex(idx);
+  }, [currentSec, playableClips, clipDurationSec, activeClipIndex]);
 
   // ----- seek -----
-  const seekTo = useCallback((sec: number) => {
-    const clamped = Math.max(0, Math.min(totalSec, sec))
-    setCurrentSec(clamped)
-    if (playableClips.length === 0) return
-    const nextIdx = Math.min(
-      playableClips.length - 1,
-      Math.floor(clamped / clipDurationSec),
-    )
-    setActiveClipIndex(nextIdx)
-    const nextClip = playableClips[nextIdx]
-    const nextVid = nextClip ? videoRefs.current[nextClip.groupId] : null
-    if (nextVid) {
-      const offset = nextIdx * clipDurationSec
-      nextVid.currentTime = Math.max(0, clamped - offset)
-    }
-  }, [totalSec, playableClips, clipDurationSec])
+  const seekTo = useCallback(
+    (sec: number) => {
+      const clamped = Math.max(0, Math.min(totalSec, sec));
+      setCurrentSec(clamped);
+      if (playableClips.length === 0) return;
+      const nextIdx = Math.min(playableClips.length - 1, Math.floor(clamped / clipDurationSec));
+      setActiveClipIndex(nextIdx);
+      const nextClip = playableClips[nextIdx];
+      const nextVid = nextClip ? videoRefs.current[nextClip.groupId] : null;
+      if (nextVid) {
+        const offset = nextIdx * clipDurationSec;
+        nextVid.currentTime = Math.max(0, clamped - offset);
+      }
+    },
+    [totalSec, playableClips, clipDurationSec],
+  );
 
   // ----- 切到 tab / 重置时,自动对齐到 0 -----
   useEffect(() => {
-    setCurrentSec(0)
-    setActiveClipIndex(0)
-    setIsPlaying(false)
-  }, [clipOrder.join(','), groups.length])
+    setCurrentSec(0);
+    setActiveClipIndex(0);
+    setIsPlaying(false);
+  }, [clipOrder.join(","), groups.length]);
 
   // ----- playhead 拖拽 -----
   const onPlayheadPointerDown = (e: React.PointerEvent) => {
-    if (e.button !== 0) return
-    e.preventDefault()
-    e.stopPropagation()
-    const target = e.currentTarget as HTMLElement
-    target.setPointerCapture(e.pointerId)
-    playheadDrag.current = { startX: e.clientX, startSec: currentSec }
-    if (isPlaying) setIsPlaying(false)
-  }
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const target = e.currentTarget as HTMLElement;
+    target.setPointerCapture(e.pointerId);
+    playheadDrag.current = { startX: e.clientX, startSec: currentSec };
+    if (isPlaying) setIsPlaying(false);
+  };
   const onPlayheadPointerMove = (e: React.PointerEvent) => {
-    const d = playheadDrag.current
-    const track = trackRef.current
-    if (!d || !track) return
-    const rect = track.getBoundingClientRect()
-    const dxSec = ((e.clientX - d.startX) / rect.width) * totalSec
-    seekTo(d.startSec + dxSec)
-  }
+    const d = playheadDrag.current;
+    const track = trackRef.current;
+    if (!d || !track) return;
+    const rect = track.getBoundingClientRect();
+    const dxSec = ((e.clientX - d.startX) / rect.width) * totalSec;
+    seekTo(d.startSec + dxSec);
+  };
   const onPlayheadPointerUp = (e: React.PointerEvent) => {
-    const target = e.currentTarget as HTMLElement
-    try { target.releasePointerCapture(e.pointerId) } catch { /* may already be released */ }
-    playheadDrag.current = null
-  }
+    const target = e.currentTarget as HTMLElement;
+    try {
+      target.releasePointerCapture(e.pointerId);
+    } catch {
+      /* may already be released */
+    }
+    playheadDrag.current = null;
+  };
 
   // ----- clip 拖拽重排 -----
   const onClipPointerDown = (e: React.PointerEvent, clipId: string, index: number) => {
-    if (e.button !== 0) return
-    e.preventDefault()
-    e.stopPropagation()
-    const target = e.currentTarget as HTMLElement
-    target.setPointerCapture(e.pointerId)
-    clipDrag.current = { clipId, fromIndex: index, pointerId: e.pointerId }
-    setDraggingClipId(clipId)
-    setDragOverIndex(index)
-  }
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const target = e.currentTarget as HTMLElement;
+    target.setPointerCapture(e.pointerId);
+    clipDrag.current = { clipId, fromIndex: index, pointerId: e.pointerId };
+    setDraggingClipId(clipId);
+    setDragOverIndex(index);
+  };
   const onClipPointerMove = (e: React.PointerEvent) => {
-    const d = clipDrag.current
-    const track = trackRef.current
-    if (!d || !track) return
-    const rect = track.getBoundingClientRect()
-    const relX = e.clientX - rect.left
-    const slotW = rect.width / clips.length
+    const d = clipDrag.current;
+    const track = trackRef.current;
+    if (!d || !track) return;
+    const rect = track.getBoundingClientRect();
+    const relX = e.clientX - rect.left;
+    const slotW = rect.width / clips.length;
     // 中心点命中目标 slot
-    const target = Math.max(0, Math.min(clips.length - 1, Math.floor((relX + slotW / 2) / slotW)))
-    if (target !== dragOverIndex) setDragOverIndex(target)
-  }
+    const target = Math.max(0, Math.min(clips.length - 1, Math.floor((relX + slotW / 2) / slotW)));
+    if (target !== dragOverIndex) setDragOverIndex(target);
+  };
   const onClipPointerUp = (e: React.PointerEvent) => {
-    const d = clipDrag.current
-    const target = e.currentTarget as HTMLElement
-    try { target.releasePointerCapture(e.pointerId) } catch { /* ignore */ }
-    if (d && dragOverIndex != null && dragOverIndex !== d.fromIndex) {
-      const next = [...clipOrder]
-      const [moved] = next.splice(d.fromIndex, 1)
-      next.splice(dragOverIndex, 0, moved)
-      onClipReorder(next)
-      setUserReordered(true)
+    const d = clipDrag.current;
+    const target = e.currentTarget as HTMLElement;
+    try {
+      target.releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
     }
-    clipDrag.current = null
-    setDraggingClipId(null)
-    setDragOverIndex(null)
-  }
+    if (d && dragOverIndex != null && dragOverIndex !== d.fromIndex) {
+      const next = [...clipOrder];
+      const [moved] = next.splice(d.fromIndex, 1);
+      next.splice(dragOverIndex, 0, moved);
+      onClipReorder(next);
+      setUserReordered(true);
+    }
+    clipDrag.current = null;
+    setDraggingClipId(null);
+    setDragOverIndex(null);
+  };
   const onClipPointerCancel = (e: React.PointerEvent) => {
-    const target = e.currentTarget as HTMLElement
-    try { target.releasePointerCapture(e.pointerId) } catch { /* ignore */ }
-    clipDrag.current = null
-    setDraggingClipId(null)
-    setDragOverIndex(null)
-  }
+    const target = e.currentTarget as HTMLElement;
+    try {
+      target.releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+    clipDrag.current = null;
+    setDraggingClipId(null);
+    setDragOverIndex(null);
+  };
 
   // ----- 计算"被拖 clip 之外其他 clip 的预演位移" -----
   // 视觉规则:
@@ -280,36 +306,36 @@ export default function StoryboardTimeline({
   //   from > target: 区间 [target .. from-1] 的 clip 右移 1 槽
   //   from === target: 不动
   function previewOffset(currentIndex: number): number {
-    const d = clipDrag.current
-    if (!d || dragOverIndex == null) return 0
-    if (d.fromIndex === dragOverIndex) return 0
-    if (currentIndex === d.fromIndex) return 0 // 被拖的 clip 不参与预演
+    const d = clipDrag.current;
+    if (!d || dragOverIndex == null) return 0;
+    if (d.fromIndex === dragOverIndex) return 0;
+    if (currentIndex === d.fromIndex) return 0; // 被拖的 clip 不参与预演
     if (d.fromIndex < dragOverIndex) {
-      if (currentIndex > d.fromIndex && currentIndex <= dragOverIndex) return -1
+      if (currentIndex > d.fromIndex && currentIndex <= dragOverIndex) return -1;
     } else {
-      if (currentIndex >= dragOverIndex && currentIndex < d.fromIndex) return 1
+      if (currentIndex >= dragOverIndex && currentIndex < d.fromIndex) return 1;
     }
-    return 0
+    return 0;
   }
 
   // ----- 工具 -----
   const formatTime = (sec: number) => {
-    const s = Math.max(0, Math.floor(sec))
-    const m = Math.floor(s / 60)
-    const r = s % 60
-    return `${m}:${r.toString().padStart(2, '0')}`
-  }
+    const s = Math.max(0, Math.floor(sec));
+    const m = Math.floor(s / 60);
+    const r = s % 60;
+    return `${m}:${r.toString().padStart(2, "0")}`;
+  };
 
   const togglePlay = () => {
-    if (playableClips.length === 0) return
-    if (currentSec >= totalSec - 0.05) setCurrentSec(0)
-    setIsPlaying((p) => !p)
-  }
+    if (playableClips.length === 0) return;
+    if (currentSec >= totalSec - 0.05) setCurrentSec(0);
+    setIsPlaying((p) => !p);
+  };
 
   const resetOrder = () => {
-    onClipReorder(groups.map((g) => g.id))
-    setUserReordered(false)
-  }
+    onClipReorder(groups.map((g) => g.id));
+    setUserReordered(false);
+  };
 
   // ----- 渲染:空态 -----
   if (clips.length === 0) {
@@ -318,10 +344,10 @@ export default function StoryboardTimeline({
         <Film size={32} className="mx-auto text-text-muted mb-3" />
         <p className="text-text-muted text-sm">{i18n.empty}</p>
       </div>
-    )
+    );
   }
 
-  const playheadPercent = totalSec > 0 ? Math.min(100, (currentSec / totalSec) * 100) : 0
+  const playheadPercent = totalSec > 0 ? Math.min(100, (currentSec / totalSec) * 100) : 0;
 
   return (
     <div className="max-w-5xl mx-auto space-y-4">
@@ -366,17 +392,19 @@ export default function StoryboardTimeline({
         <div className="relative w-full max-w-3xl mx-auto bg-black rounded-lg overflow-hidden aspect-video">
           {activeClip ? (
             <video
-              ref={(el) => { videoRefs.current[activeClip.groupId] = el }}
+              ref={(el) => {
+                videoRefs.current[activeClip.groupId] = el;
+              }}
               src={activeClip.video?.url}
               className="absolute inset-0 w-full h-full"
               playsInline
               muted={false}
               onEnded={() => {
                 // 推进 currentSec 到下一个 clip 的起始
-                setCurrentSec((cur) => Math.min(totalSec, cur + clipDurationSec))
-                const nextIdx = activeClipIndex + 1
-                if (nextIdx < playableClips.length) setActiveClipIndex(nextIdx)
-                else setIsPlaying(false)
+                setCurrentSec((cur) => Math.min(totalSec, cur + clipDurationSec));
+                const nextIdx = activeClipIndex + 1;
+                if (nextIdx < playableClips.length) setActiveClipIndex(nextIdx);
+                else setIsPlaying(false);
               }}
             />
           ) : (
@@ -390,7 +418,7 @@ export default function StoryboardTimeline({
           {/* 当前播放的 clip 标签 */}
           {activeClip && (
             <div className="absolute top-2 left-2 px-2 py-0.5 rounded bg-black/60 backdrop-blur text-[10px] text-white font-mono">
-              #{activeClip.group.index} · {activeClip.group.sceneLocation || ''}
+              #{activeClip.group.index} · {activeClip.group.sceneLocation || ""}
             </div>
           )}
         </div>
@@ -423,17 +451,13 @@ export default function StoryboardTimeline({
         {/* 标尺 */}
         <div className="relative h-4 px-1 text-[10px] font-mono text-text-muted select-none">
           {Array.from({ length: clips.length + 1 }).map((_, i) => {
-            const sec = i * clipDurationSec
-            const left = clips.length > 0 ? (i / clips.length) * 100 : 0
+            const sec = i * clipDurationSec;
+            const left = clips.length > 0 ? (i / clips.length) * 100 : 0;
             return (
-              <span
-                key={i}
-                className="absolute -translate-x-1/2"
-                style={{ left: `${left}%` }}
-              >
+              <span key={i} className="absolute -translate-x-1/2" style={{ left: `${left}%` }}>
                 {sec}s
               </span>
-            )
+            );
           })}
         </div>
 
@@ -444,8 +468,8 @@ export default function StoryboardTimeline({
           style={{ height: 72 }}
         >
           {clips.map((c, i) => {
-            const isDragging = draggingClipId === c.groupId
-            const offset = previewOffset(i)
+            const isDragging = draggingClipId === c.groupId;
+            const offset = previewOffset(i);
             return (
               <div
                 key={c.groupId}
@@ -454,13 +478,13 @@ export default function StoryboardTimeline({
                 onPointerUp={onClipPointerUp}
                 onPointerCancel={onClipPointerCancel}
                 className={`relative shrink-0 grow basis-0 border-r last:border-r-0 border-border/60 cursor-grab active:cursor-grabbing transition-transform ${
-                  isDragging ? 'opacity-60 scale-[1.02] z-10' : ''
+                  isDragging ? "opacity-60 scale-[1.02] z-10" : ""
                 }`}
                 style={{
                   transform: `translateX(${offset * 100}%)`,
-                  transition: isDragging ? 'none' : 'transform 200ms ease',
+                  transition: isDragging ? "none" : "transform 200ms ease",
                 }}
-                title={`#${c.group.index} · ${c.group.sceneLocation || '未命名场景'}${c.playable ? '' : ' · 未生成视频'}`}
+                title={`#${c.group.index} · ${c.group.sceneLocation || "未命名场景"}${c.playable ? "" : " · 未生成视频"}`}
               >
                 {/* 缩略图背景 */}
                 {c.thumb ? (
@@ -486,23 +510,27 @@ export default function StoryboardTimeline({
                       <span
                         className={`inline-flex items-center gap-0.5 px-1 rounded ${
                           isPersistedUrl(c.video?.url)
-                            ? 'bg-emerald-500/70 text-white'
-                            : 'bg-amber-500/70 text-white'
+                            ? "bg-emerald-500/70 text-white"
+                            : "bg-amber-500/70 text-white"
                         }`}
-                        title={isPersistedUrl(c.video?.url)
-                          ? '已入库到你的存储,永久有效'
-                          : '临时链接,24h 后过期(点左上角保存可入库)'}
+                        title={
+                          isPersistedUrl(c.video?.url)
+                            ? "已入库到你的存储,永久有效"
+                            : "临时链接,24h 后过期(点左上角保存可入库)"
+                        }
                       >
-                        {isPersistedUrl(c.video?.url)
-                          ? <CloudCheck size={9} />
-                          : <CloudOff size={9} />}
+                        {isPersistedUrl(c.video?.url) ? (
+                          <CloudCheck size={9} />
+                        ) : (
+                          <CloudOff size={9} />
+                        )}
                       </span>
                     )}
                     {!c.playable && (
                       <span className="inline-flex items-center gap-0.5 bg-black/60 px-1 rounded text-amber-300">
-                        {c.video?.status === 'running' ? (
+                        {c.video?.status === "running" ? (
                           <Loader2 size={9} className="animate-spin" />
-                        ) : c.video?.status === 'failed' ? (
+                        ) : c.video?.status === "failed" ? (
                           <AlertCircle size={9} />
                         ) : (
                           <Film size={9} />
@@ -520,7 +548,7 @@ export default function StoryboardTimeline({
                   <div className="absolute inset-0 ring-2 ring-accent pointer-events-none rounded-sm" />
                 )}
               </div>
-            )
+            );
           })}
 
           {/* Playhead 竖线(覆盖整个 track) */}
@@ -529,7 +557,7 @@ export default function StoryboardTimeline({
             onPointerMove={onPlayheadPointerMove}
             onPointerUp={onPlayheadPointerUp}
             className="absolute top-0 bottom-0 w-0.5 bg-accent cursor-ew-resize z-20"
-            style={{ left: `${playheadPercent}%`, boxShadow: '0 0 8px var(--color-accent)' }}
+            style={{ left: `${playheadPercent}%`, boxShadow: "0 0 8px var(--color-accent)" }}
             aria-label="playhead"
           >
             {/* playhead 顶部把手 */}
@@ -538,10 +566,8 @@ export default function StoryboardTimeline({
         </div>
 
         {/* 改动提示 */}
-        {userReordered && (
-          <div className="text-[10px] text-accent px-1">{i18n.reorderChanged}</div>
-        )}
+        {userReordered && <div className="text-[10px] text-accent px-1">{i18n.reorderChanged}</div>}
       </div>
     </div>
-  )
+  );
 }

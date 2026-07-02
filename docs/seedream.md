@@ -1,8 +1,8 @@
 seedream文生图
 输入
 curl https://ark.cn-beijing.volces.com/api/v3/images/generations \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $ARK_API_KEY" \
+ -H "Content-Type: application/json" \
+ -H "Authorization: Bearer $ARK_API_KEY" \
   -d '{
     "model": "doubao-seedream-5-0-260128",
     "prompt": "充满活力的特写编辑肖像，模特眼神犀利，头戴雕塑感帽子，色彩拼接丰富，眼部焦点锐利，景深较浅，具有Vogue杂志封面的美学风格，采用中画幅拍摄，工作室灯光效果强烈。",
@@ -174,76 +174,76 @@ curl https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks \
 查询视频任务
 TASK_ID="your_task_id"
 curl -X GET "https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks/$TASK_ID" \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $ARK_API_KEY"
+ -H "Content-Type: application/json" \
+ -H "Authorization: Bearer $ARK_API_KEY"
 返回
 {
-    "id": "cgt-2026****-****",
-    "model": "doubao-seedance-2-0-260128",
-    "status": "succeeded",
-    "content": {
-        "video_url": "https://ark-content-generation-cn-beijing.tos-cn-beijing.volces.com/xxx"
-    },
-    "usage": {
-        "completion_tokens": 108900,
-        "total_tokens": 108900
-    },
-    "created_at": 1779348818,
-    "updated_at": 1779348874,
-    "seed": 78674,
-    "resolution": "720p",
-    "ratio": "16:9",
-    "duration": 5,
-    "framespersecond": 24,
-    "service_tier": "default",
-    "execution_expires_after": 172800,
-    "generate_audio": true,
-    "draft": false,
-    "priority": 0
+"id": "cgt-2026\***\*-\*\***",
+"model": "doubao-seedance-2-0-260128",
+"status": "succeeded",
+"content": {
+"video_url": "https://ark-content-generation-cn-beijing.tos-cn-beijing.volces.com/xxx"
+},
+"usage": {
+"completion_tokens": 108900,
+"total_tokens": 108900
+},
+"created_at": 1779348818,
+"updated_at": 1779348874,
+"seed": 78674,
+"resolution": "720p",
+"ratio": "16:9",
+"duration": 5,
+"framespersecond": 24,
+"service_tier": "default",
+"execution_expires_after": 172800,
+"generate_audio": true,
+"draft": false,
+"priority": 0
 }
 seedream图生视频base64
 curl -X POST https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $ARK_API_KEY" \
-  -d '{
-    "model": "doubao-seedance-1-0-lite-i2v-250428",
-    "content": [
-        {
-            "type": "text",
-            "text": "女孩抱着狐狸，女孩睁开眼，温柔地看向镜头，狐狸友善地抱着，镜头缓缓拉出，女孩的头发被风吹动"
-        },
-        {
-            "type": "image_url",
-            "image_url": {
-                "url": "data:image/png;base64,aHR0******cG5n"
-            }
-        }
-    ],
-    "ratio": "adaptive",
-    "duration": 5,
-    "watermark": false
+ -H "Content-Type: application/json" \
+ -H "Authorization: Bearer $ARK_API_KEY" \
+ -d '{
+"model": "doubao-seedance-1-0-lite-i2v-250428",
+"content": [
+{
+"type": "text",
+"text": "女孩抱着狐狸，女孩睁开眼，温柔地看向镜头，狐狸友善地抱着，镜头缓缓拉出，女孩的头发被风吹动"
+},
+{
+"type": "image_url",
+"image_url": {
+"url": "data:image/png;base64,aHR0******cG5n"
+}
+}
+],
+"ratio": "adaptive",
+"duration": 5,
+"watermark": false
 }'
 返回
 {
-  "id": "cgt-2025******-****"
+"id": "cgt-2025**\*\***-\***\*"
 }
 seedream文生视频
 curl -X POST https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $ARK_API_KEY" \
-  -d '{
-    "model": "doubao-seedance-1-0-pro-250528",
-    "content": [
-        {
-            "type": "text",
-            "text": "写实风格，晴朗的蓝天之下，一大片白色的雏菊花田，镜头逐渐拉近，最终定格在一朵雏菊花的特写上，花瓣上有几颗晶莹的露珠"
-        }
-    ],
-    "ratio": "16:9",
-    "duration": 5,
-    "watermark": false
+ -H "Content-Type: application/json" \
+ -H "Authorization: Bearer $ARK_API_KEY" \
+ -d '{
+"model": "doubao-seedance-1-0-pro-250528",
+"content": [
+{
+"type": "text",
+"text": "写实风格，晴朗的蓝天之下，一大片白色的雏菊花田，镜头逐渐拉近，最终定格在一朵雏菊花的特写上，花瓣上有几颗晶莹的露珠"
+}
+],
+"ratio": "16:9",
+"duration": 5,
+"watermark": false
 }'
 返回
 {
-  "id": "cgt-2026******-****"
+"id": "cgt-2026\*\*\*\***-\*\*\*\*"
 }

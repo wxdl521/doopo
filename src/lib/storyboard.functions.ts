@@ -29,8 +29,8 @@
 //   - "对已生成的镜头,按用户意见重生"
 // ====================================================================
 
-import { createServerFn } from '@tanstack/react-start'
-import { z } from 'zod'
+import { createServerFn } from "@tanstack/react-start";
+import { z } from "zod";
 
 // --------------------------------------------------------------------
 // 1) generateStoryboardFromPlot —— 文本任务
@@ -73,9 +73,9 @@ const PlotInput = z.object({
   projectStyle: z.string().max(50).optional(),
   // 文本生成模型
   model: z.string().max(100).optional(),
-})
+});
 
-export type GenerateStoryboardFromPlotInput = z.infer<typeof PlotInput>
+export type GenerateStoryboardFromPlotInput = z.infer<typeof PlotInput>;
 
 /**
  * 2026/06 改造:从一次性返回改为**流式输出**。
@@ -96,27 +96,33 @@ export type GenerateStoryboardFromPlotInput = z.infer<typeof PlotInput>
  *   - error:    任何阶段失败,客户端展示错误并停止
  */
 export type StoryboardStreamEvent =
-  | { kind: 'progress'; message: string }
-  | { kind: 'group'; group: ReturnType<typeof normalizeGroup> }
-  | { kind: 'done'; model: string; count: number }
-  | { kind: 'error'; message: string }
+  | { kind: "progress"; message: string }
+  | { kind: "group"; group: ReturnType<typeof normalizeGroup> }
+  | { kind: "done"; model: string; count: number }
+  | { kind: "error"; message: string };
 
-export const generateStoryboardFromPlot = createServerFn({ method: 'POST' })
+export const generateStoryboardFromPlot = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => PlotInput.parse(d))
   .handler(async function* ({ data }): AsyncGenerator<StoryboardStreamEvent> {
-    const { resolveProjectStyle } = await import('./visualStyles')
-    const styleSpec = resolveProjectStyle(data.projectStyle)
+    const { resolveProjectStyle } = await import("./visualStyles");
+    const styleSpec = resolveProjectStyle(data.projectStyle);
 
     const charList = data.characterSummaries.length
       ? data.characterSummaries
-          .map((c) => `- id="${c.id}" name="${c.name}"${c.role ? ` role="${c.role}"` : ''}: ${c.profile}`)
-          .join('\n')
-      : '(无角色信息)'
+          .map(
+            (c) =>
+              `- id="${c.id}" name="${c.name}"${c.role ? ` role="${c.role}"` : ""}: ${c.profile}`,
+          )
+          .join("\n")
+      : "(无角色信息)";
     const sceneList = data.sceneSummaries.length
       ? data.sceneSummaries
-          .map((s) => `- id="${s.id}" slug="${s.slug}"${s.location ? ` location="${s.location}"` : ''}${s.timeOfDay ? ` time=${s.timeOfDay}` : ''}: ${s.profile}`)
-          .join('\n')
-      : '(无场景信息)'
+          .map(
+            (s) =>
+              `- id="${s.id}" slug="${s.slug}"${s.location ? ` location="${s.location}"` : ""}${s.timeOfDay ? ` time=${s.timeOfDay}` : ""}: ${s.profile}`,
+          )
+          .join("\n")
+      : "(无场景信息)";
 
     // 强制 JSON 输出,避免模型输出自然语言;prompt 里明确告诉模型输出 schema。
     const systemPrompt = `你是一名资深影视分镜师。你的任务是把一集剧本切分成若干组分镜。
@@ -185,7 +191,7 @@ export const generateStoryboardFromPlot = createServerFn({ method: 'POST' })
 3. 景别在 [WS 远景 / MS 中景 / CU 近景 / ECU 特写 / OTS 过肩] 中选择,按剧情需要混合使用。
 4. 时间用秒(startSec / endSec),单组时长由剧情内容决定,不设固定范围;整集时长应合理。
 5. 角色 ID 必须是传入的角色列表中的 id,场景 ID 必须是传入的场景列表中的 id。
-6. 只输出 JSON,不要任何解释、Markdown 包裹、代码块标记。`
+6. 只输出 JSON,不要任何解释、Markdown 包裹、代码块标记。`;
 
     const userPrompt = `请把下面第 ${data.episodeIndex} 集剧本切分成若干组分镜,输出 JSON。
 
@@ -204,7 +210,7 @@ ${sceneList}
 ===== 项目视觉风格 =====
 ${styleSpec.label} —— ${styleSpec.positive}
 
-${data.previousEpisodesText ? `===== 前面集数上下文 =====\n${data.previousEpisodesText}\n` : ''}
+${data.previousEpisodesText ? `===== 前面集数上下文 =====\n${data.previousEpisodesText}\n` : ""}
 ===== 第 ${data.episodeIndex} 集剧本 =====
 ${data.episodeText}
 
@@ -308,63 +314,63 @@ ${data.episodeText}
   也不要总是用同一个数量,让数量服从内容。
 - **严禁所有 group 都套相同的 shot 数量**(尤其严禁全部 3 个 —— 这是示例数量,不是要求)。
   正常分布大致:简短/单动作段 1 shot,常规对白 2 shot,复合场面 3 shot,
-  极复杂动作戏可到 4-5 shot。整集 shot 数应有明显的差异分布。`
+  极复杂动作戏可到 4-5 shot。整集 shot 数应有明显的差异分布。`;
 
     // ---- 调 DashScope Qwen 文本模型 (SSE 流式) ----
     // 跟图片生成共用同一个 Qwen API key。优先 flash(快),失败再试 plus(更强)。
-    const apiKey = process.env.Qwen || process.env.DASHSCOPE_API_KEY
+    const apiKey = process.env.Qwen || process.env.DASHSCOPE_API_KEY;
     if (!apiKey) {
-      yield { kind: 'error', message: 'Qwen API key 未配置(请设置 Qwen 或 DASHSCOPE_API_KEY)' }
-      return
+      yield { kind: "error", message: "Qwen API key 未配置(请设置 Qwen 或 DASHSCOPE_API_KEY)" };
+      return;
     }
 
-    const DASHSCOPE_CHAT = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions'
+    const DASHSCOPE_CHAT = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
     // 2026/06 修法:[qwen3.7-max] timed out (>60s) 经常超时。
     // 1) 模型顺序:小 → 大(flash 60s 内必出;plus 90s;max 给 180s)
     // 2) 显式 prompt 是大 prompt(长 context + 结构化 JSON 4000 token),
     //    max 模型 60s 根本不够
     // 3) flash 失败时,**优先再试一次 flash** 再跳 plus(网络抖动的概率)
     const MODEL_TIMEOUTS: Record<string, number> = {
-      'qwen3.6-flash': 60_000,
-      'qwen3.6-plus': 90_000,
-      'qwen3.7-max': 180_000,
-    }
+      "qwen3.6-flash": 60_000,
+      "qwen3.6-plus": 90_000,
+      "qwen3.7-max": 180_000,
+    };
     const modelAttempts = [
-      data.model || 'qwen3.6-flash',
-      'qwen3.6-flash',  // flash 再试一次(网络抖动 fallback)
-      'qwen3.6-plus',
-      'qwen3.7-max',
-    ].filter(Boolean)
-    const FALLBACK_RETRYABLE = new Set([403, 404, 429, 500, 502, 503])
+      data.model || "qwen3.6-flash",
+      "qwen3.6-flash", // flash 再试一次(网络抖动 fallback)
+      "qwen3.6-plus",
+      "qwen3.7-max",
+    ].filter(Boolean);
+    const FALLBACK_RETRYABLE = new Set([403, 404, 429, 500, 502, 503]);
 
-    yield { kind: 'progress', message: '正在加载分镜工作流…' }
+    yield { kind: "progress", message: "正在加载分镜工作流…" };
 
-    let lastError = ''
+    let lastError = "";
     for (const model of modelAttempts) {
-      const timeoutMs = MODEL_TIMEOUTS[model] ?? 90_000
-      const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), timeoutMs)
+      const timeoutMs = MODEL_TIMEOUTS[model] ?? 90_000;
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
       // 单模型尝试期间是否已成功 yield 过 group。已经 yield 出去的 group
       // 是不可撤回的(客户端已经展示了),后续即便流出错也不能切换模型重头来。
-      let yieldedAny = false
-      let modelSucceeded = false
+      let yieldedAny = false;
+      let modelSucceeded = false;
       try {
-        yield { kind: 'progress', message: `已提交 ${model},等待 AI 输出第一组…` }
+        yield { kind: "progress", message: `已提交 ${model},等待 AI 输出第一组…` };
         const res = await fetch(DASHSCOPE_CHAT, {
-          method: 'POST',
+          method: "POST",
           headers: {
             Authorization: `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
+            "Content-Type": "application/json",
           },
           body: JSON.stringify({
             model,
             stream: true,
             messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: userPrompt },
+              { role: "system", content: systemPrompt },
+              { role: "user", content: userPrompt },
             ],
             // Qwen 支持 response_format 强制 JSON;streaming 下 delta 也都是 JSON 片段
-            response_format: { type: 'json_object' },
+            response_format: { type: "json_object" },
             temperature: 0.6,
             // plotText 改成详细扩写(每 group 200~800 字)+ 强制覆盖完整性,
             // 8000 不够多组用(长剧本 8-10 组会被截断,丢结尾剧情)。
@@ -372,123 +378,127 @@ ${data.episodeText}
             max_tokens: 12000,
           }),
           signal: controller.signal,
-        })
+        });
         if (!res.ok) {
-          const text = await res.text().catch(() => '')
-          lastError = `[${model}] ${res.status}: ${text.slice(0, 200)}`
+          const text = await res.text().catch(() => "");
+          lastError = `[${model}] ${res.status}: ${text.slice(0, 200)}`;
           if (FALLBACK_RETRYABLE.has(res.status)) {
-            clearTimeout(timeout)
-            continue
+            clearTimeout(timeout);
+            continue;
           }
-          clearTimeout(timeout)
-          yield { kind: 'error', message: lastError }
-          return
+          clearTimeout(timeout);
+          yield { kind: "error", message: lastError };
+          return;
         }
         if (!res.body) {
-          lastError = `[${model}] 上游无响应体`
-          clearTimeout(timeout)
-          continue
+          lastError = `[${model}] 上游无响应体`;
+          clearTimeout(timeout);
+          continue;
         }
         // SSE 流式消费 + StreamingGroupExtractor:每个 group `{...}` 闭合一份
         // 就立刻 normalize 并 yield 给客户端。
-        const reader = res.body.getReader()
-        const decoder = new TextDecoder()
-        let buffer = ''
-        let fullText = ''
-        const extractor = new StreamingGroupExtractor()
-        let groupIndex = 0
-        let groupCount = 0
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let fullText = "";
+        const extractor = new StreamingGroupExtractor();
+        let groupIndex = 0;
+        let groupCount = 0;
         while (true) {
-          const { value, done } = await reader.read()
-          if (done) break
-          buffer += decoder.decode(value, { stream: true })
-          let nl: number
-          while ((nl = buffer.indexOf('\n')) !== -1) {
-            const line = buffer.slice(0, nl).trim()
-            buffer = buffer.slice(nl + 1)
-            if (!line.startsWith('data:')) continue
-            const payload = line.slice(5).trim()
-            if (!payload || payload === '[DONE]') continue
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          let nl: number;
+          while ((nl = buffer.indexOf("\n")) !== -1) {
+            const line = buffer.slice(0, nl).trim();
+            buffer = buffer.slice(nl + 1);
+            if (!line.startsWith("data:")) continue;
+            const payload = line.slice(5).trim();
+            if (!payload || payload === "[DONE]") continue;
             try {
-              const json = JSON.parse(payload)
+              const json = JSON.parse(payload);
               const delta: string | undefined =
-                json?.choices?.[0]?.delta?.content ??
-                json?.choices?.[0]?.message?.content
-              if (!delta) continue
-              fullText += delta
-              const completed = extractor.feed(delta)
+                json?.choices?.[0]?.delta?.content ?? json?.choices?.[0]?.message?.content;
+              if (!delta) continue;
+              fullText += delta;
+              const completed = extractor.feed(delta);
               for (const groupJson of completed) {
                 try {
-                  const raw = JSON.parse(groupJson)
-                  const g = normalizeGroup(raw, groupIndex, data)
-                  groupIndex++
-                  if (!g) continue
-                  yield { kind: 'group', group: g }
-                  yieldedAny = true
-                  groupCount++
+                  const raw = JSON.parse(groupJson);
+                  const g = normalizeGroup(raw, groupIndex, data);
+                  groupIndex++;
+                  if (!g) continue;
+                  yield { kind: "group", group: g };
+                  yieldedAny = true;
+                  groupCount++;
                   if (data.groupCount > 0 && groupCount >= data.groupCount) {
                     // 已达请求数量,主动中止上游 stream 节省 token
-                    try { controller.abort() } catch { /* noop */ }
-                    break
+                    try {
+                      controller.abort();
+                    } catch {
+                      /* noop */
+                    }
+                    break;
                   }
                 } catch {
                   // 单组 JSON 解析失败,跳过(下一组可能 OK)
                 }
               }
-              if (data.groupCount > 0 && groupCount >= data.groupCount) break
+              if (data.groupCount > 0 && groupCount >= data.groupCount) break;
             } catch {
               // SSE 心跳/非 JSON 行,忽略
             }
           }
-          if (data.groupCount > 0 && groupCount >= data.groupCount) break
+          if (data.groupCount > 0 && groupCount >= data.groupCount) break;
         }
-        clearTimeout(timeout)
+        clearTimeout(timeout);
         if (groupCount > 0) {
-          yield { kind: 'done', model, count: groupCount }
-          modelSucceeded = true
-          return
+          yield { kind: "done", model, count: groupCount };
+          modelSucceeded = true;
+          return;
         }
         // 流结束但一组都没拿到 — 兜底:尝试整体解析 fullText
-        const jsonText = extractJsonBlock(fullText)
+        const jsonText = extractJsonBlock(fullText);
         if (jsonText) {
           try {
-            const parsed = JSON.parse(jsonText) as { groups?: any[] }
+            const parsed = JSON.parse(jsonText) as { groups?: any[] };
             if (Array.isArray(parsed.groups) && parsed.groups.length > 0) {
               for (const g of parsed.groups.slice(0, data.groupCount)) {
-                const normalized = normalizeGroup(g, groupIndex, data)
-                groupIndex++
-                if (!normalized) continue
-                yield { kind: 'group', group: normalized }
-                yieldedAny = true
-                groupCount++
+                const normalized = normalizeGroup(g, groupIndex, data);
+                groupIndex++;
+                if (!normalized) continue;
+                yield { kind: "group", group: normalized };
+                yieldedAny = true;
+                groupCount++;
               }
               if (groupCount > 0) {
-                yield { kind: 'done', model, count: groupCount }
-                modelSucceeded = true
-                return
+                yield { kind: "done", model, count: groupCount };
+                modelSucceeded = true;
+                return;
               }
             }
           } catch {
             // fall through to model fallback
           }
         }
-        lastError = `[${model}] 流结束但未解析到任何分镜组 (raw: ${fullText.slice(0, 200)})`
+        lastError = `[${model}] 流结束但未解析到任何分镜组 (raw: ${fullText.slice(0, 200)})`;
       } catch (e) {
-        lastError = e instanceof Error && e.name === 'AbortError'
-          ? `[${model}] timed out (>${Math.round(timeoutMs / 1000)}s)`
-          : `[${model}] ${e instanceof Error ? e.message : 'network error'}`
-        clearTimeout(timeout)
+        lastError =
+          e instanceof Error && e.name === "AbortError"
+            ? `[${model}] timed out (>${Math.round(timeoutMs / 1000)}s)`
+            : `[${model}] ${e instanceof Error ? e.message : "network error"}`;
+        clearTimeout(timeout);
       }
       // 关键:已经 yield 过 group 的模型不能 fallback 重试 —— 客户端那边
       // 已经展示了部分组,换模型重新来一遍会重复。
       if (yieldedAny && !modelSucceeded) {
         // 部分组成功 + 流中断:按"已达本次能拿到的"结束,客户端拿到 done 也好告知用户。
-        yield { kind: 'done', model, count: 0 /* 客户端用累计计数 */ }
-        return
+        yield { kind: "done", model, count: 0 /* 客户端用累计计数 */ };
+        return;
       }
     }
-    yield { kind: 'error', message: lastError || '分镜生成失败' }
-  })
+    yield { kind: "error", message: lastError || "分镜生成失败" };
+  });
 
 // --------------------------------------------------------------------
 // StreamingGroupExtractor
@@ -501,62 +511,62 @@ ${data.episodeText}
 //   - 字符串/转义处理:在 string 内的 `{` `}` 不计 depth(`"a{b}c"` 不算嵌套)
 // --------------------------------------------------------------------
 class StreamingGroupExtractor {
-  private buf = ''
-  private state: 'waiting_array' | 'inside_array' = 'waiting_array'
-  private depth = 0
-  private inString = false
-  private escape = false
-  private current = ''
+  private buf = "";
+  private state: "waiting_array" | "inside_array" = "waiting_array";
+  private depth = 0;
+  private inString = false;
+  private escape = false;
+  private current = "";
 
   feed(delta: string): string[] {
-    const completed: string[] = []
+    const completed: string[] = [];
     for (let i = 0; i < delta.length; i++) {
-      const ch = delta[i]
-      if (this.state === 'waiting_array') {
-        this.buf += ch
+      const ch = delta[i];
+      if (this.state === "waiting_array") {
+        this.buf += ch;
         // 等待 "groups" 之后(可能跨多个 delta)的第一个 `[`
-        if (ch === '[' && this.buf.includes('"groups"')) {
-          this.state = 'inside_array'
-          this.buf = ''
+        if (ch === "[" && this.buf.includes('"groups"')) {
+          this.state = "inside_array";
+          this.buf = "";
         }
-        continue
+        continue;
       }
       // inside_array
       if (this.depth === 0) {
         // 跳过 array 里的空白 / 逗号 / 关闭括号
-        if (ch === '{') {
-          this.depth = 1
-          this.current = '{'
-        } else if (ch === ']') {
+        if (ch === "{") {
+          this.depth = 1;
+          this.current = "{";
+        } else if (ch === "]") {
           // 整个 groups 数组结束;后面字符直接吞掉
-          this.state = 'waiting_array'
-          this.buf = ''
+          this.state = "waiting_array";
+          this.buf = "";
         }
         // 其他(空白、`,`)忽略
-        continue
+        continue;
       }
       // depth > 0
-      this.current += ch
+      this.current += ch;
       if (this.escape) {
-        this.escape = false
-        continue
+        this.escape = false;
+        continue;
       }
       if (this.inString) {
-        if (ch === '\\') this.escape = true
-        else if (ch === '"') this.inString = false
-        continue
+        if (ch === "\\") this.escape = true;
+        else if (ch === '"') this.inString = false;
+        continue;
       }
-      if (ch === '"') this.inString = true
-      else if (ch === '{') this.depth++
-      else if (ch === '}') {
-        this.depth--
+      if (ch === '"') this.inString = true;
+      else if (ch === "{") this.depth++;
+      else if (ch === "}") {
+        this.depth--;
         if (this.depth === 0) {
-          completed.push(this.current)
-          this.current = ''
+          completed.push(this.current);
+          this.current = "";
         }
       }
     }
-    return completed
+    return completed;
   }
 }
 
@@ -566,44 +576,46 @@ function normalizeGroup(
   index: number,
   data: GenerateStoryboardFromPlotInput,
 ): {
-  id: string
-  index: number
-  plotText: string
-  startSec: number
-  endSec: number
-  sceneId?: string
-  characterIds: string[]
+  id: string;
+  index: number;
+  plotText: string;
+  startSec: number;
+  endSec: number;
+  sceneId?: string;
+  characterIds: string[];
   shots: Array<{
-    id: string
-    shotType: 'WS' | 'MS' | 'CU' | 'ECU' | 'OTS'
-    shotTypeLabel: string
-    action: string
-    camera: string
-    startSec?: number
-    endSec?: number
-  }>
+    id: string;
+    shotType: "WS" | "MS" | "CU" | "ECU" | "OTS";
+    shotTypeLabel: string;
+    action: string;
+    camera: string;
+    startSec?: number;
+    endSec?: number;
+  }>;
 } | null {
-  if (!g || typeof g !== 'object') return null
-  const plotText = typeof g.plotText === 'string' && g.plotText.trim()
-    ? g.plotText.trim().slice(0, 2000)
-    : ''
-  if (!plotText) return null
-  const startSec = Number.isFinite(g.startSec) ? Math.max(0, Number(g.startSec)) : index * 5
-  const endSec = Number.isFinite(g.endSec) ? Math.max(startSec + 1, Number(g.endSec)) : startSec + 5
-  const validSceneIds = new Set(data.sceneSummaries.map((s) => s.id))
-  const sceneId = typeof g.sceneId === 'string' && validSceneIds.has(g.sceneId) ? g.sceneId : undefined
-  const validCharIds = new Set(data.characterSummaries.map((c) => c.id))
+  if (!g || typeof g !== "object") return null;
+  const plotText =
+    typeof g.plotText === "string" && g.plotText.trim() ? g.plotText.trim().slice(0, 2000) : "";
+  if (!plotText) return null;
+  const startSec = Number.isFinite(g.startSec) ? Math.max(0, Number(g.startSec)) : index * 5;
+  const endSec = Number.isFinite(g.endSec)
+    ? Math.max(startSec + 1, Number(g.endSec))
+    : startSec + 5;
+  const validSceneIds = new Set(data.sceneSummaries.map((s) => s.id));
+  const sceneId =
+    typeof g.sceneId === "string" && validSceneIds.has(g.sceneId) ? g.sceneId : undefined;
+  const validCharIds = new Set(data.characterSummaries.map((c) => c.id));
   const characterIds: string[] = Array.isArray(g.characterIds)
-    ? g.characterIds.filter((x: any) => typeof x === 'string' && validCharIds.has(x))
-    : []
-  const rawShots: any[] = Array.isArray(g.shots) ? g.shots : []
+    ? g.characterIds.filter((x: any) => typeof x === "string" && validCharIds.has(x))
+    : [];
+  const rawShots: any[] = Array.isArray(g.shots) ? g.shots : [];
   // 2026/06:之前这里有 .slice(0, 3) 把 shots 硬截到 3 个 —— 用户诉求改成
   // **不设上限**,AI 给几个就保几个。normalizeShot 内部还是会做单条字段
   // 校验(没 action 会丢),所以"多了也不会污染数据"这一点是安全的。
   const shots = rawShots
     .map((s: any, i: number, arr: any[]) => normalizeShot(s, index, i, startSec, endSec, arr))
-    .filter((s): s is NonNullable<ReturnType<typeof normalizeShot>> => s !== null)
-  if (!shots.length) return null
+    .filter((s): s is NonNullable<ReturnType<typeof normalizeShot>> => s !== null);
+  if (!shots.length) return null;
   return {
     id: `grp-${index + 1}-${Date.now().toString(36)}`,
     index: index + 1,
@@ -613,17 +625,17 @@ function normalizeGroup(
     sceneId,
     characterIds,
     shots,
-  }
+  };
 }
 
-const SHOT_TYPES = new Set(['WS', 'MS', 'CU', 'ECU', 'OTS'])
+const SHOT_TYPES = new Set(["WS", "MS", "CU", "ECU", "OTS"]);
 const SHOT_LABEL_CN: Record<string, string> = {
-  WS: '远景',
-  MS: '中景',
-  CU: '近景',
-  ECU: '特写',
-  OTS: '过肩',
-}
+  WS: "远景",
+  MS: "中景",
+  CU: "近景",
+  ECU: "特写",
+  OTS: "过肩",
+};
 
 function normalizeShot(
   s: any,
@@ -633,38 +645,36 @@ function normalizeShot(
   groupEndSec: number,
   allShots: any[],
 ): {
-  id: string
-  shotType: 'WS' | 'MS' | 'CU' | 'ECU' | 'OTS'
-  shotTypeLabel: string
-  action: string
-  camera: string
-  startSec?: number
-  endSec?: number
+  id: string;
+  shotType: "WS" | "MS" | "CU" | "ECU" | "OTS";
+  shotTypeLabel: string;
+  action: string;
+  camera: string;
+  startSec?: number;
+  endSec?: number;
 } | null {
-  if (!s || typeof s !== 'object') return null
-  const shotType = SHOT_TYPES.has(s.shotType) ? s.shotType : 'MS'
-  const action = typeof s.action === 'string' && s.action.trim()
-    ? s.action.trim().slice(0, 200)
-    : ''
-  const camera = typeof s.camera === 'string' && s.camera.trim()
-    ? s.camera.trim().slice(0, 100)
-    : ''
-  if (!action) return null
+  if (!s || typeof s !== "object") return null;
+  const shotType = SHOT_TYPES.has(s.shotType) ? s.shotType : "MS";
+  const action =
+    typeof s.action === "string" && s.action.trim() ? s.action.trim().slice(0, 200) : "";
+  const camera =
+    typeof s.camera === "string" && s.camera.trim() ? s.camera.trim().slice(0, 100) : "";
+  if (!action) return null;
 
   // 2026/06:每个 shot 自己的时间范围(秒,绝对值,在当集时间轴上)
   // 优先用 AI 给的 startSec / endSec;否则按 group 区间 + shot 个数均分(兜底)
-  let shotStart = Number.isFinite(s.startSec) ? Math.max(groupStartSec, Number(s.startSec)) : null
-  let shotEnd = Number.isFinite(s.endSec) ? Number(s.endSec) : null
+  let shotStart = Number.isFinite(s.startSec) ? Math.max(groupStartSec, Number(s.startSec)) : null;
+  let shotEnd = Number.isFinite(s.endSec) ? Number(s.endSec) : null;
   if (shotStart !== null && shotEnd !== null) {
-    shotEnd = Math.max(shotStart + 1, Math.min(groupEndSec, shotEnd))
+    shotEnd = Math.max(shotStart + 1, Math.min(groupEndSec, shotEnd));
   } else {
     // 兜底:均分 group 区间
-    const validShots = allShots.filter((x) => x && typeof x === 'object')
-    const totalCount = Math.max(1, validShots.length)
-    const span = groupEndSec - groupStartSec
-    const slice = span / totalCount
-    shotStart = groupStartSec + slice * shotIndex
-    shotEnd = groupStartSec + slice * (shotIndex + 1)
+    const validShots = allShots.filter((x) => x && typeof x === "object");
+    const totalCount = Math.max(1, validShots.length);
+    const span = groupEndSec - groupStartSec;
+    const slice = span / totalCount;
+    shotStart = groupStartSec + slice * shotIndex;
+    shotEnd = groupStartSec + slice * (shotIndex + 1);
   }
 
   return {
@@ -675,22 +685,22 @@ function normalizeShot(
     camera,
     startSec: shotStart,
     endSec: shotEnd,
-  }
+  };
 }
 
 /** 从模型输出中尽量提取 JSON 块(容忍 ```json ... ``` 包裹) */
 function extractJsonBlock(s: string): string {
-  const trimmed = s.trim()
-  if (!trimmed) return ''
-  if (trimmed.startsWith('{') && trimmed.endsWith('}')) return trimmed
-  const fence = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)
-  if (fence) return fence[1].trim()
-  const first = trimmed.indexOf('{')
-  const last = trimmed.lastIndexOf('}')
+  const trimmed = s.trim();
+  if (!trimmed) return "";
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) return trimmed;
+  const fence = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fence) return fence[1].trim();
+  const first = trimmed.indexOf("{");
+  const last = trimmed.lastIndexOf("}");
   if (first !== -1 && last !== -1 && last > first) {
-    return trimmed.slice(first, last + 1)
+    return trimmed.slice(first, last + 1);
   }
-  return ''
+  return "";
 }
 
 // --------------------------------------------------------------------
@@ -704,10 +714,10 @@ function extractJsonBlock(s: string): string {
 const ShotInput = z.object({
   // 上下文(用于 prompt)
   plotText: z.string().min(1).max(2000),
-  shotType: z.enum(['WS', 'MS', 'CU', 'ECU', 'OTS']),
+  shotType: z.enum(["WS", "MS", "CU", "ECU", "OTS"]),
   shotTypeLabel: z.string().min(1).max(20),
   action: z.string().min(1).max(400),
-  camera: z.string().max(200).default(''),
+  camera: z.string().max(200).default(""),
   // 2026/06:每 shot 自带时间范围(秒,绝对值,在当集时间轴上)
   startSec: z.number().min(0).max(3600).optional(),
   endSec: z.number().min(0).max(3600).optional(),
@@ -717,25 +727,25 @@ const ShotInput = z.object({
   characterImageUrls: z.array(z.string().url()).max(3).default([]),
   characterNames: z.array(z.string().max(50)).max(3).default([]),
   sceneImageUrl: z.string().url().optional(),
-  sceneLocation: z.string().max(200).default(''),
-  sceneTimeOfDay: z.string().max(50).default(''),
+  sceneLocation: z.string().max(200).default(""),
+  sceneTimeOfDay: z.string().max(50).default(""),
   // 视觉风格
   projectStyle: z.string().max(50).optional(),
   // 模型(默认 doubao-seedream-5-0-260128,由 seedream 模块解析)
   model: z.string().max(100).optional(),
   // 2026/06:查看提示词模式
   previewOnly: z.boolean().default(false),
-})
+});
 
-export type GenerateStoryboardShotInput = z.infer<typeof ShotInput>
+export type GenerateStoryboardShotInput = z.infer<typeof ShotInput>;
 
-export const generateStoryboardShotImage = createServerFn({ method: 'POST' })
+export const generateStoryboardShotImage = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => ShotInput.parse(d))
   .handler(async ({ data }) => {
     // 动态 import 避免循环引用
-    const { generateStoryboardShotImage: seedreamImpl } = await import('./seedream.functions')
-    return seedreamImpl({ data } as any)
-  })
+    const { generateStoryboardShotImage: seedreamImpl } = await import("./seedream.functions");
+    return seedreamImpl({ data } as any);
+  });
 
 // --------------------------------------------------------------------
 // 3) regenerateStoryboardShot —— 按修改意见重生分镜图
@@ -752,30 +762,30 @@ const RegenShotInput = z.object({
   userInstruction: z.string().min(1).max(500),
   // 上下文(跟 generateStoryboardShotImage 一样)
   plotText: z.string().min(1).max(2000),
-  shotType: z.enum(['WS', 'MS', 'CU', 'ECU', 'OTS']),
+  shotType: z.enum(["WS", "MS", "CU", "ECU", "OTS"]),
   shotTypeLabel: z.string().min(1).max(20),
   action: z.string().min(1).max(400),
-  camera: z.string().max(200).default(''),
+  camera: z.string().max(200).default(""),
   characterImageUrls: z.array(z.string().url()).max(3).default([]),
   characterNames: z.array(z.string().max(50)).max(3).default([]),
   sceneImageUrl: z.string().url().optional(),
-  sceneLocation: z.string().max(200).default(''),
-  sceneTimeOfDay: z.string().max(50).default(''),
+  sceneLocation: z.string().max(200).default(""),
+  sceneTimeOfDay: z.string().max(50).default(""),
   projectStyle: z.string().max(50).optional(),
   model: z.string().max(100).optional(),
   // 2026/06:查看提示词模式
   previewOnly: z.boolean().default(false),
-})
+});
 
-export type RegenerateStoryboardShotInput = z.infer<typeof RegenShotInput>
+export type RegenerateStoryboardShotInput = z.infer<typeof RegenShotInput>;
 
-export const regenerateStoryboardShot = createServerFn({ method: 'POST' })
+export const regenerateStoryboardShot = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => RegenShotInput.parse(d))
   .handler(async ({ data }) => {
     // 动态 import 避免循环引用
-    const { regenerateStoryboardShot: seedreamImpl } = await import('./seedream.functions')
-    return seedreamImpl({ data } as any)
-  })
+    const { regenerateStoryboardShot: seedreamImpl } = await import("./seedream.functions");
+    return seedreamImpl({ data } as any);
+  });
 
 // --------------------------------------------------------------------
 // 4) regenerateStoryboardPitchDeck —— 故事板图按意见重生(2026/06 新增)
@@ -788,30 +798,42 @@ const RegenPitchDeckInput = z.object({
   projectStyle: z.string().max(50).optional(),
   groupLabel: z.string().max(200).optional(),
   plotText: z.string().min(1).max(2000),
-  scene: z.object({
-    slug: z.string().max(200).optional(),
-    location: z.string().max(200).optional(),
-    timeOfDay: z.string().max(50).optional(),
-    profile: z.string().max(2000).optional(),
-  }).optional(),
-  characters: z.array(z.object({
-    name: z.string().min(1).max(100),
-    roleLabel: z.string().max(200).optional(),
-    age: z.number().int().min(0).max(200).optional(),
-    faceDescription: z.string().max(2000).optional(),
-    bodyDescription: z.string().max(2000).optional(),
-    clothingDescription: z.string().max(2000).optional(),
-    palette: z.array(z.string()).max(8).optional(),
-  })).max(8).default([]),
-  shots: z.array(z.object({
-    shotType: z.enum(['WS', 'MS', 'CU', 'ECU', 'OTS']),
-    shotTypeLabel: z.string().min(1).max(20),
-    action: z.string().min(1).max(400),
-    camera: z.string().max(200).default(''),
-    durationSec: z.number().optional(),
-    startSec: z.number().optional(),
-    endSec: z.number().optional(),
-  })).max(20).default([]),
+  scene: z
+    .object({
+      slug: z.string().max(200).optional(),
+      location: z.string().max(200).optional(),
+      timeOfDay: z.string().max(50).optional(),
+      profile: z.string().max(2000).optional(),
+    })
+    .optional(),
+  characters: z
+    .array(
+      z.object({
+        name: z.string().min(1).max(100),
+        roleLabel: z.string().max(200).optional(),
+        age: z.number().int().min(0).max(200).optional(),
+        faceDescription: z.string().max(2000).optional(),
+        bodyDescription: z.string().max(2000).optional(),
+        clothingDescription: z.string().max(2000).optional(),
+        palette: z.array(z.string()).max(8).optional(),
+      }),
+    )
+    .max(8)
+    .default([]),
+  shots: z
+    .array(
+      z.object({
+        shotType: z.enum(["WS", "MS", "CU", "ECU", "OTS"]),
+        shotTypeLabel: z.string().min(1).max(20),
+        action: z.string().min(1).max(400),
+        camera: z.string().max(200).default(""),
+        durationSec: z.number().optional(),
+        startSec: z.number().optional(),
+        endSec: z.number().optional(),
+      }),
+    )
+    .max(20)
+    .default([]),
   referenceImages: z.array(z.string().url()).max(10).default([]),
   referenceImageLabels: z.array(z.string().max(120)).max(10).default([]),
   characterImageUrl: z.string().url().optional(),
@@ -820,13 +842,13 @@ const RegenPitchDeckInput = z.object({
   previewOnly: z.boolean().default(false),
   referenceImageUrl: z.string().url(),
   userInstruction: z.string().min(1).max(500),
-})
+});
 
-export type RegenerateStoryboardPitchDeckInput = z.infer<typeof RegenPitchDeckInput>
+export type RegenerateStoryboardPitchDeckInput = z.infer<typeof RegenPitchDeckInput>;
 
-export const regenerateStoryboardPitchDeck = createServerFn({ method: 'POST' })
+export const regenerateStoryboardPitchDeck = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => RegenPitchDeckInput.parse(d))
   .handler(async ({ data }) => {
-    const { regenerateStoryboardPitchDeck: seedreamImpl } = await import('./seedream.functions')
-    return seedreamImpl({ data } as any)
-  })
+    const { regenerateStoryboardPitchDeck: seedreamImpl } = await import("./seedream.functions");
+    return seedreamImpl({ data } as any);
+  });

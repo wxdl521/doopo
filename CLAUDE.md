@@ -6,17 +6,17 @@
 
 ## 命令
 
-| 命令 | 说明 |
-|---|---|
-| `bun run dev` | 启动 Vite 开发服务器（HMR） |
-| `bun run build` | 生产构建 |
-| `bun run build:dev` | 开发模式构建 |
-| `bun run preview` | 预览构建产物 |
-| `bun run test` | 运行 Vitest 测试 |
-| `bun run lint` | ESLint 检查 |
-| `bun run format` | Prettier 格式化 |
-| `bun run db:push` | 推送 Supabase 数据库迁移 |
-| `bunx wrangler deploy` | 部署到 Cloudflare Workers |
+| 命令                   | 说明                        |
+| ---------------------- | --------------------------- |
+| `bun run dev`          | 启动 Vite 开发服务器（HMR） |
+| `bun run build`        | 生产构建                    |
+| `bun run build:dev`    | 开发模式构建                |
+| `bun run preview`      | 预览构建产物                |
+| `bun run test`         | 运行 Vitest 测试            |
+| `bun run lint`         | ESLint 检查                 |
+| `bun run format`       | Prettier 格式化             |
+| `bun run db:push`      | 推送 Supabase 数据库迁移    |
+| `bunx wrangler deploy` | 部署到 Cloudflare Workers   |
 
 **包管理只能用 Bun**（`bun install`），不要用 npm/pnpm，否则 lock 文件冲突。
 
@@ -24,21 +24,21 @@
 
 ## 技术栈
 
-| 层 | 技术 |
-|---|---|
-| 全栈框架 | **TanStack Start**（React 19 SSR/SSG + Server Functions） |
-| 路由 | **TanStack Router**（文件系统路由，类型安全） |
-| 数据获取 | **TanStack React Query** |
-| 样式 | **Tailwind CSS v4** + shadcn/ui（Radix UI）+ CSS 变量主题 |
-| 构建 | **Vite 7** + `@lovable.dev/vite-tanstack-config` + `@cloudflare/vite-plugin` |
-| 后端/部署 | **Cloudflare Workers**（Wrangler） |
-| 数据库 | **Supabase PostgreSQL**（RLS） |
-| 认证 | **Supabase Auth**（邮箱 + Bearer Token） |
-| 校验 | Zod + React Hook Form |
-| i18n | 自研 Context API（`en.ts` / `zh.ts`，1000+ 键值） |
-| 测试 | Vitest + jsdom + Testing Library |
-| 图表 | Recharts |
-| 图标 | Lucide React |
+| 层        | 技术                                                                         |
+| --------- | ---------------------------------------------------------------------------- |
+| 全栈框架  | **TanStack Start**（React 19 SSR/SSG + Server Functions）                    |
+| 路由      | **TanStack Router**（文件系统路由，类型安全）                                |
+| 数据获取  | **TanStack React Query**                                                     |
+| 样式      | **Tailwind CSS v4** + shadcn/ui（Radix UI）+ CSS 变量主题                    |
+| 构建      | **Vite 7** + `@lovable.dev/vite-tanstack-config` + `@cloudflare/vite-plugin` |
+| 后端/部署 | **Cloudflare Workers**（Wrangler）                                           |
+| 数据库    | **Supabase PostgreSQL**（RLS）                                               |
+| 认证      | **Supabase Auth**（邮箱 + Bearer Token）                                     |
+| 校验      | Zod + React Hook Form                                                        |
+| i18n      | 自研 Context API（`en.ts` / `zh.ts`，1000+ 键值）                            |
+| 测试      | Vitest + jsdom + Testing Library                                             |
+| 图表      | Recharts                                                                     |
+| 图标      | Lucide React                                                                 |
 
 ---
 
@@ -104,12 +104,15 @@ export const generateImage = createServerFn({ method: "POST" })
   .validator(z.object({ prompt: z.string(), size: z.string().optional() }))
   .handler(async ({ data }) => {
     // 这里只在服务端运行，可以安全使用 process.env.ARK_API_KEY
-    const response = await fetch(arkUrl, { /* ... */ });
+    const response = await fetch(arkUrl, {
+      /* ... */
+    });
     return { url: response.data.url };
   });
 ```
 
 **规则：**
+
 - Server Function 文件不需要 `.server.ts` 后缀（TanStack Start 自动检测 `createServerFn`）
 - **禁止** `import "server-only"`——ESLint 会报错
 - 所有 `.env` 读取必须通过 `process.env.*`（服务端），客户端用 `import.meta.env.VITE_*`
@@ -139,8 +142,8 @@ src/routes/
 
 ```ts
 export const startInstance = createStart(() => ({
-  requestMiddleware: [errorMiddleware],          // 全局错误捕获
-  functionMiddleware: [attachSupabaseAuth],      // 自动注入 Supabase 认证
+  requestMiddleware: [errorMiddleware], // 全局错误捕获
+  functionMiddleware: [attachSupabaseAuth], // 自动注入 Supabase 认证
 }));
 ```
 
@@ -149,12 +152,13 @@ export const startInstance = createStart(() => ({
 
 ### 4. Supabase 双客户端
 
-| 客户端 | 文件 | 用途 |
-|---|---|---|
-| 浏览器端 | `integrations/supabase/client.ts` | 用户认证、RLS 查询 |
-| 服务端 | `integrations/supabase/client.server.ts` | Service Role 密钥（绕过 RLS） |
+| 客户端   | 文件                                     | 用途                          |
+| -------- | ---------------------------------------- | ----------------------------- |
+| 浏览器端 | `integrations/supabase/client.ts`        | 用户认证、RLS 查询            |
+| 服务端   | `integrations/supabase/client.server.ts` | Service Role 密钥（绕过 RLS） |
 
 客户端用 Proxy 懒初始化：
+
 ```ts
 import { supabase } from "@/integrations/supabase/client";
 ```
@@ -168,6 +172,7 @@ import { supabase } from "@/integrations/supabase/client";
 **主力**：火山方舟 ARK（Seedream 5.0），无前缀或 `doubao-seedream-*`
 
 **路由规则**（`seedream.functions.ts`）：
+
 - 空 / `doubao-seedream-*` → ARK Seedream
 - `pixflow/*` → Pixflow 中转
 - `tokenflash/*` → Tokenflash
@@ -191,8 +196,12 @@ const { t } = useLanguage();
 CSS 变量主题（`styles.css`），支持亮色/暗色：
 
 ```css
-:root { --background: 0 0% 100%; /* ... */ }
-.dark { --background: 0 0% 3.9%; /* ... */ }
+:root {
+  --background: 0 0% 100%; /* ... */
+}
+.dark {
+  --background: 0 0% 3.9%; /* ... */
+}
 ```
 
 使用 Tailwind 类名：`bg-background`、`text-foreground`、`text-muted-foreground` 等。
@@ -202,11 +211,13 @@ CSS 变量主题（`styles.css`），支持亮色/暗色：
 ## 重要约束与坑
 
 ### 开发环境
+
 1. **只能用 Bun**，不要混用 npm/pnpm
 2. 首次 `bun install` 较慢（CF Worker polyfill 体积大）
 3. 本地 dev 需在 `.env.local` 中配置 API Key（`.env` 中的 Key 已移至 Secrets）
 
 ### AI 模型调用
+
 4. **Azure gpt-image-2**：认证头用 `api-key:` 而非 `Authorization: Bearer`，且不支持 `output_format` / `output_compression` 参数（否则 400）
 5. **Seedream 5.0 最小像素数**：3,686,400（`2048x2048` ✅，`1104x1472` ❌，`2560x1280` ❌）
 6. **Seedream 超时**：已设为 180s，但多参考图融合 + 高分辨率仍可能超时
@@ -214,20 +225,24 @@ CSS 变量主题（`styles.css`），支持亮色/暗色：
 8. 各供应商请求格式不同，修改前务必参考 `docs/` 目录对应文档
 
 ### 样式
+
 9. **Tailwind CSS v4**，不是 v3——类名语法有差异
 10. shadcn/ui 组件在 `src/components/ui/`，已 eject 可修改
 11. 主题基于 CSS 变量，`bg-background` / `text-foreground` 等会自动适配暗色模式
 
 ### 部署
+
 12. Cloudflare Workers **10MB 代码包限制**，注意构建产物体积
 13. 需启用 `nodejs_compat` 兼容性标志
 14. 部分 Node.js 原生模块在 CF Workers 中不可用
 
 ### 数据库
+
 15. RLS 策略变更通过 Supabase Migration（`supabase/migrations/`）
 16. 服务端用 Service Role 可绕过 RLS，**谨慎操作**
 
 ### Vite 配置
+
 17. `vite.config.ts` 使用 `@lovable.dev/vite-tanstack-config` 封装，**不要手动添加** tanstackStart、viteReact、tailwindcss、tsConfigPaths、cloudflare 等插件——会导致重复插件错误
 
 ---
@@ -257,6 +272,7 @@ CSS 变量主题（`styles.css`），支持亮色/暗色：
 生产部署命令：`bunx wrangler deploy`
 
 **Git 仓库信息：**
+
 - 远程地址：`https://github.com/cellan/doopoo-code-hub.git`
 - 默认分支：`main`
 
@@ -264,12 +280,12 @@ CSS 变量主题（`styles.css`），支持亮色/暗色：
 
 ## 文档索引
 
-| 文件 | 内容 |
-|---|---|
-| `docs/all.md` | 全量文档 |
-| `docs/api.md` | API 文档 |
-| `docs/image2.md` | GPT-Image2 对接说明 |
-| `docs/qwen.md` | DashScope/通义千问对接说明 |
-| `docs/seedream.md` | Seedream 对接说明 |
-| `docs/timeline-flow.md` | 时间轴流程 |
-| `docs/交接文档.md` | 项目交接文档 |
+| 文件                    | 内容                       |
+| ----------------------- | -------------------------- |
+| `docs/all.md`           | 全量文档                   |
+| `docs/api.md`           | API 文档                   |
+| `docs/image2.md`        | GPT-Image2 对接说明        |
+| `docs/qwen.md`          | DashScope/通义千问对接说明 |
+| `docs/seedream.md`      | Seedream 对接说明          |
+| `docs/timeline-flow.md` | 时间轴流程                 |
+| `docs/交接文档.md`      | 项目交接文档               |

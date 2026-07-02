@@ -1,54 +1,86 @@
-import { useState } from 'react'
+import { useState } from "react";
 // no Link needed; Logo provides home link
-import { ChevronDown, MoreHorizontal, Layers, FileText, Users, Grid3x3, Clock, Settings, Download, Loader2, CheckCircle2, Save, Plus, Eye, EyeOff } from 'lucide-react'
-import Logo from '../Logo'
-import { useLanguage } from '../../i18n/LanguageContext'
-import { NewProjectDialog } from '../NewProjectDialog'
-import type { ProjectConfig } from '../NewProjectDialog'
+import {
+  ChevronDown,
+  MoreHorizontal,
+  Layers,
+  FileText,
+  Users,
+  Grid3x3,
+  Clock,
+  Settings,
+  Download,
+  Loader2,
+  CheckCircle2,
+  Save,
+  Plus,
+  Eye,
+  EyeOff,
+} from "lucide-react";
+import Logo from "../Logo";
+import { useLanguage } from "../../i18n/LanguageContext";
+import { NewProjectDialog } from "../NewProjectDialog";
+import type { ProjectConfig } from "../NewProjectDialog";
 
-export type WorkspaceTab = 'canvas' | 'script' | 'episodes' | 'character' | 'storyboard' | 'timeline'
+export type WorkspaceTab =
+  | "canvas"
+  | "script"
+  | "episodes"
+  | "character"
+  | "storyboard"
+  | "timeline";
 
 // 'episodes' is intentionally excluded from the workflow bar — it is accessed via the top-left episode dropdown
-const tabs: { id: Exclude<WorkspaceTab, 'episodes'>; icon: typeof Layers }[] = [
-  { id: 'canvas', icon: Layers },
-  { id: 'script', icon: FileText },
-  { id: 'character', icon: Users },
-  { id: 'storyboard', icon: Grid3x3 },
-  { id: 'timeline', icon: Clock },
-]
+const tabs: { id: Exclude<WorkspaceTab, "episodes">; icon: typeof Layers }[] = [
+  { id: "canvas", icon: Layers },
+  { id: "script", icon: FileText },
+  { id: "character", icon: Users },
+  { id: "storyboard", icon: Grid3x3 },
+  { id: "timeline", icon: Clock },
+];
 
 export default function WorkspaceTopbar({
-  tab, onTabChange, episodeCount, selectedEpisodeIndex, onEpisodeIndexChange,
-  onSave, saving, saved, completedStages, onAddEpisode,
-  viewPromptsMode, onToggleViewPromptsMode,
-  currentProject, onProjectSaved,
+  tab,
+  onTabChange,
+  episodeCount,
+  selectedEpisodeIndex,
+  onEpisodeIndexChange,
+  onSave,
+  saving,
+  saved,
+  completedStages,
+  onAddEpisode,
+  viewPromptsMode,
+  onToggleViewPromptsMode,
+  currentProject,
+  onProjectSaved,
 }: {
-  tab: WorkspaceTab
-  onTabChange: (t: WorkspaceTab) => void
-  episodeCount: number
-  selectedEpisodeIndex: number
-  onEpisodeIndexChange: (n: number) => void
-  onSave?: () => void
-  saving?: boolean
-  saved?: boolean
-  completedStages?: Set<WorkspaceTab>
+  tab: WorkspaceTab;
+  onTabChange: (t: WorkspaceTab) => void;
+  episodeCount: number;
+  selectedEpisodeIndex: number;
+  onEpisodeIndexChange: (n: number) => void;
+  onSave?: () => void;
+  saving?: boolean;
+  saved?: boolean;
+  completedStages?: Set<WorkspaceTab>;
   /** 顶部下拉里"+ 新增集数"按钮的回调。 */
-  onAddEpisode?: () => void
+  onAddEpisode?: () => void;
   /** 2026/06:查看提示词模式 —— 开启后所有生成按钮变成"展示 prompt"而不是真正生成 */
-  viewPromptsMode?: boolean
-  onToggleViewPromptsMode?: () => void
+  viewPromptsMode?: boolean;
+  onToggleViewPromptsMode?: () => void;
   /**
    * 2026/06:当前工作区的项目配置。
    * 透传给 NewProjectDialog 作为 initial —— 用户点左上"基础设置"看到的是
    * 项目当前设置,而不是 userPrefs 里的"上次选择"。
    */
-  currentProject?: ProjectConfig & { id: string }
+  currentProject?: ProjectConfig & { id: string };
   /** 编辑保存成功回调(用于刷新本地 project state) */
-  onProjectSaved?: (saved: ProjectConfig & { id: string }) => void
+  onProjectSaved?: (saved: ProjectConfig & { id: string }) => void;
 }) {
-  const { t, lang, toggleLang } = useLanguage()
-  const [epOpen, setEpOpen] = useState(false)
-  const [moreOpen, setMoreOpen] = useState(false)
+  const { t, lang, toggleLang } = useLanguage();
+  const [epOpen, setEpOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   const tabLabel: Record<WorkspaceTab, string> = {
     canvas: t.ws_tab_canvas,
@@ -57,18 +89,30 @@ export default function WorkspaceTopbar({
     character: t.ws_tab_character,
     storyboard: t.ws_tab_storyboard,
     timeline: t.ws_tab_timeline,
-  }
+  };
 
   return (
     <header className="h-14 border-b border-border bg-bg-surface/90 backdrop-blur flex items-center px-4 gap-3 shrink-0">
-      <div className="shrink-0"><Logo size="sm" /></div>
+      <div className="shrink-0">
+        <Logo size="sm" />
+      </div>
 
       <div className="flex items-center gap-1 text-sm shrink-0">
         <span className="text-text-secondary">{t.ws_new_workspace}</span>
         <span className="text-text-muted">/</span>
         <div className="relative">
-          <button onClick={() => { setEpOpen((v) => !v); setMoreOpen(false) }} className="inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-bg-elevated">
-            <span className="font-semibold">{episodeCount > 0 ? `${t.ws_episode_prefix}${selectedEpisodeIndex}${t.ws_episode_suffix}` : t.ws_tab_episodes}</span>
+          <button
+            onClick={() => {
+              setEpOpen((v) => !v);
+              setMoreOpen(false);
+            }}
+            className="inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-bg-elevated"
+          >
+            <span className="font-semibold">
+              {episodeCount > 0
+                ? `${t.ws_episode_prefix}${selectedEpisodeIndex}${t.ws_episode_suffix}`
+                : t.ws_tab_episodes}
+            </span>
             <ChevronDown size={14} />
           </button>
           {epOpen && (
@@ -76,9 +120,18 @@ export default function WorkspaceTopbar({
               {episodeCount > 0 ? (
                 <>
                   {Array.from({ length: episodeCount }, (_, i) => i + 1).map((n) => (
-                    <button key={n} onClick={() => { onEpisodeIndexChange(n); onTabChange('episodes'); setEpOpen(false) }}
-                      className={`w-full text-left px-3 py-1.5 text-sm hover:bg-bg-elevated ${n === selectedEpisodeIndex ? 'text-accent font-semibold' : ''}`}>
-                      {t.ws_episode_prefix}{n}{t.ws_episode_suffix}
+                    <button
+                      key={n}
+                      onClick={() => {
+                        onEpisodeIndexChange(n);
+                        onTabChange("episodes");
+                        setEpOpen(false);
+                      }}
+                      className={`w-full text-left px-3 py-1.5 text-sm hover:bg-bg-elevated ${n === selectedEpisodeIndex ? "text-accent font-semibold" : ""}`}
+                    >
+                      {t.ws_episode_prefix}
+                      {n}
+                      {t.ws_episode_suffix}
                     </button>
                   ))}
                 </>
@@ -92,7 +145,10 @@ export default function WorkspaceTopbar({
                   {episodeCount > 0 && <div className="my-1 border-t border-border/60" />}
                   <button
                     type="button"
-                    onClick={() => { setEpOpen(false); onAddEpisode() }}
+                    onClick={() => {
+                      setEpOpen(false);
+                      onAddEpisode();
+                    }}
                     className="w-full text-left px-3 py-1.5 text-sm hover:bg-bg-elevated inline-flex items-center gap-1.5 text-accent font-semibold"
                   >
                     <Plus size={13} /> 新增集数
@@ -110,21 +166,36 @@ export default function WorkspaceTopbar({
             disabled={saving}
             className={`inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold transition ${
               saved
-                ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
-                : 'border border-border text-text-secondary hover:text-text-primary hover:border-accent hover:bg-bg-elevated'
+                ? "bg-emerald-500/15 text-emerald-400 border border-emerald-500/30"
+                : "border border-border text-text-secondary hover:text-text-primary hover:border-accent hover:bg-bg-elevated"
             } disabled:opacity-60`}
           >
-            {saving ? <Loader2 size={13} className="animate-spin" /> : saved ? <CheckCircle2 size={13} /> : <Save size={13} />}
+            {saving ? (
+              <Loader2 size={13} className="animate-spin" />
+            ) : saved ? (
+              <CheckCircle2 size={13} />
+            ) : (
+              <Save size={13} />
+            )}
             {saving ? t.ws_saving : saved ? t.ws_saved : t.ws_save}
           </button>
         )}
 
         <div className="relative">
-          <button onClick={() => { setMoreOpen((v) => !v); setEpOpen(false) }} className="p-1 rounded-md hover:bg-bg-elevated text-text-muted">
+          <button
+            onClick={() => {
+              setMoreOpen((v) => !v);
+              setEpOpen(false);
+            }}
+            className="p-1 rounded-md hover:bg-bg-elevated text-text-muted"
+          >
             <MoreHorizontal size={16} />
           </button>
           {moreOpen && (
-            <div className="absolute top-full left-0 mt-1 min-w-[180px] bg-bg-surface border border-border rounded-lg shadow-card py-1 z-[100]" onMouseLeave={() => setMoreOpen(false)}>
+            <div
+              className="absolute top-full left-0 mt-1 min-w-[180px] bg-bg-surface border border-border rounded-lg shadow-card py-1 z-[100]"
+              onMouseLeave={() => setMoreOpen(false)}
+            >
               <NewProjectDialog
                 initial={currentProject}
                 onSaved={onProjectSaved}
@@ -145,49 +216,64 @@ export default function WorkspaceTopbar({
       {/* Workflow tabs */}
       <nav className="flex-1 flex items-center justify-center gap-1">
         {tabs.map((tt, i) => {
-          const Icon = tt.icon
-          const active = tab === tt.id
+          const Icon = tt.icon;
+          const active = tab === tt.id;
           return (
             <div key={tt.id} className="flex items-center gap-1">
-              <button onClick={() => onTabChange(tt.id)}
+              <button
+                onClick={() => onTabChange(tt.id)}
                 className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm transition border ${
                   active
-                    ? 'bg-accent-dim text-accent border-accent shadow-glow font-semibold'
-                    : 'border-transparent text-text-secondary hover:text-text-primary hover:bg-bg-elevated'
-                }`}>
+                    ? "bg-accent-dim text-accent border-accent shadow-glow font-semibold"
+                    : "border-transparent text-text-secondary hover:text-text-primary hover:bg-bg-elevated"
+                }`}
+              >
                 <Icon size={14} /> {tabLabel[tt.id]}
-                {completedStages?.has(tt.id) && <CheckCircle2 size={12} className="text-emerald-400 shrink-0" />}
+                {completedStages?.has(tt.id) && (
+                  <CheckCircle2 size={12} className="text-emerald-400 shrink-0" />
+                )}
               </button>
               {i < tabs.length - 1 && <span className="text-text-muted/40 text-xs">·····</span>}
             </div>
-          )
+          );
         })}
       </nav>
 
       <div className="flex items-center gap-2 shrink-0">
-        <button onClick={toggleLang} className="px-2 py-1 text-xs rounded-md border border-border text-text-secondary hover:text-text-primary inline-flex items-center gap-1">
-          {lang === 'zh' ? '中文' : 'EN'} <ChevronDown size={12} />
+        <button
+          onClick={toggleLang}
+          className="px-2 py-1 text-xs rounded-md border border-border text-text-secondary hover:text-text-primary inline-flex items-center gap-1"
+        >
+          {lang === "zh" ? "中文" : "EN"} <ChevronDown size={12} />
         </button>
         {/* 2026/06:查看提示词 toggle —— 开启后所有生成按钮变成"展示 prompt"而不是真正生成 */}
         {onToggleViewPromptsMode && (
           <button
             type="button"
             onClick={onToggleViewPromptsMode}
-            title={viewPromptsMode ? '退出查看提示词模式' : '开启查看提示词模式 — 点生成按钮显示提示词,不实际生成'}
+            title={
+              viewPromptsMode
+                ? "退出查看提示词模式"
+                : "开启查看提示词模式 — 点生成按钮显示提示词,不实际生成"
+            }
             className={`px-2 py-1 text-xs rounded-md border inline-flex items-center gap-1 transition ${
               viewPromptsMode
-                ? 'bg-accent-dim/60 border-accent text-accent font-semibold shadow-glow'
-                : 'border-border text-text-secondary hover:text-text-primary hover:border-accent'
+                ? "bg-accent-dim/60 border-accent text-accent font-semibold shadow-glow"
+                : "border-border text-text-secondary hover:text-text-primary hover:border-accent"
             }`}
           >
             {viewPromptsMode ? <Eye size={12} /> : <EyeOff size={12} />}
             查看提示词
           </button>
         )}
-        <span className="px-2 py-1 text-xs rounded-full bg-bg-elevated border border-border text-accent font-semibold">✦ 73</span>
-        <button className="px-3 py-1 text-xs rounded-full bg-gradient-to-r from-rose-500 to-orange-500 text-white font-semibold">{t.header_upgrade}</button>
+        <span className="px-2 py-1 text-xs rounded-full bg-bg-elevated border border-border text-accent font-semibold">
+          ✦ 73
+        </span>
+        <button className="px-3 py-1 text-xs rounded-full bg-gradient-to-r from-rose-500 to-orange-500 text-white font-semibold">
+          {t.header_upgrade}
+        </button>
         <div className="w-8 h-8 rounded-full bg-gradient-to-br from-accent to-accent-mint" />
       </div>
     </header>
-  )
+  );
 }

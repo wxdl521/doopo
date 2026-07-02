@@ -1,22 +1,34 @@
-import type {
-  AssetTab,
-  CharacterAsset,
-  SceneAsset,
-  PropAsset,
-} from '../data/assetsMock'
+import type { AssetTab, CharacterAsset, SceneAsset, PropAsset } from "../data/assetsMock";
 
 type Labels = {
-  role: string; age: string; personality: string; style: string; costume: string;
-  appearance: string; background: string; palette: string; tags: string;
-  time: string; mood: string; shot: string; lighting: string; sound: string; reference: string;
-  owner: string; symbol: string; material: string; firstAppear: string; lastAppear: string; detail: string;
+  role: string;
+  age: string;
+  personality: string;
+  style: string;
+  costume: string;
+  appearance: string;
+  background: string;
+  palette: string;
+  tags: string;
+  time: string;
+  mood: string;
+  shot: string;
+  lighting: string;
+  sound: string;
+  reference: string;
+  owner: string;
+  symbol: string;
+  material: string;
+  firstAppear: string;
+  lastAppear: string;
+  detail: string;
   summary: string;
-}
+};
 
 export function characterToMd(c: CharacterAsset, L: Labels) {
   return [
     `# ${c.name}`,
-    `> ${L.tags}：${c.tags.join(' · ')}`,
+    `> ${L.tags}：${c.tags.join(" · ")}`,
     ``,
     `## ${L.summary}`,
     c.summary,
@@ -35,15 +47,15 @@ export function characterToMd(c: CharacterAsset, L: Labels) {
     c.background,
     ``,
     `## ${L.palette}`,
-    c.palette.map(p => `- \`${p}\``).join('\n'),
+    c.palette.map((p) => `- \`${p}\``).join("\n"),
     ``,
-  ].join('\n')
+  ].join("\n");
 }
 
 export function sceneToMd(s: SceneAsset, L: Labels) {
   return [
     `# ${s.name}`,
-    `> ${L.tags}：${s.tags.join(' · ')}`,
+    `> ${L.tags}：${s.tags.join(" · ")}`,
     ``,
     `## ${L.summary}`,
     s.summary,
@@ -56,13 +68,13 @@ export function sceneToMd(s: SceneAsset, L: Labels) {
     `- ${L.sound}：${s.sound}`,
     `- ${L.reference}：${s.reference}`,
     ``,
-  ].join('\n')
+  ].join("\n");
 }
 
 export function propToMd(p: PropAsset, L: Labels) {
   return [
     `# ${p.name}`,
-    `> ${L.tags}：${p.tags.join(' · ')}`,
+    `> ${L.tags}：${p.tags.join(" · ")}`,
     ``,
     `## ${L.summary}`,
     p.summary,
@@ -77,7 +89,7 @@ export function propToMd(p: PropAsset, L: Labels) {
     ``,
     p.detail,
     ``,
-  ].join('\n')
+  ].join("\n");
 }
 
 export function assetToMarkdown(
@@ -85,19 +97,19 @@ export function assetToMarkdown(
   asset: CharacterAsset | SceneAsset | PropAsset,
   labels: Labels,
 ): string {
-  if (tab === 'character') return characterToMd(asset as CharacterAsset, labels)
-  if (tab === 'scene') return sceneToMd(asset as SceneAsset, labels)
-  return propToMd(asset as PropAsset, labels)
+  if (tab === "character") return characterToMd(asset as CharacterAsset, labels);
+  if (tab === "scene") return sceneToMd(asset as SceneAsset, labels);
+  return propToMd(asset as PropAsset, labels);
 }
 
 export function downloadMarkdown(filename: string, md: string) {
-  const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename.endsWith('.md') ? filename : `${filename}.md`
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename.endsWith(".md") ? filename : `${filename}.md`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

@@ -79,15 +79,35 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { title: "Doopoo — AI creative studio" },
-      { name: "description", content: "Doopoo: an AI-powered creative studio for prompts, scripts, characters and showcases." },
+      {
+        name: "description",
+        content:
+          "Doopoo: an AI-powered creative studio for prompts, scripts, characters and showcases.",
+      },
       { property: "og:title", content: "Doopoo — AI creative studio" },
-      { property: "og:description", content: "Doopoo: an AI-powered creative studio for prompts, scripts, characters and showcases." },
+      {
+        property: "og:description",
+        content:
+          "Doopoo: an AI-powered creative studio for prompts, scripts, characters and showcases.",
+      },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
       { name: "twitter:title", content: "Doopoo — AI creative studio" },
-      { name: "twitter:description", content: "Doopoo: an AI-powered creative studio for prompts, scripts, characters and showcases." },
-      { property: "og:image", content: "https://storage.googleapis.com/gpt-engineer-file-uploads/L58n8pP7EFQDqPdwbZhdkFqRYGs1/social-images/social-1778203983627-doopoo.webp" },
-      { name: "twitter:image", content: "https://storage.googleapis.com/gpt-engineer-file-uploads/L58n8pP7EFQDqPdwbZhdkFqRYGs1/social-images/social-1778203983627-doopoo.webp" },
+      {
+        name: "twitter:description",
+        content:
+          "Doopoo: an AI-powered creative studio for prompts, scripts, characters and showcases.",
+      },
+      {
+        property: "og:image",
+        content:
+          "https://storage.googleapis.com/gpt-engineer-file-uploads/L58n8pP7EFQDqPdwbZhdkFqRYGs1/social-images/social-1778203983627-doopoo.webp",
+      },
+      {
+        name: "twitter:image",
+        content:
+          "https://storage.googleapis.com/gpt-engineer-file-uploads/L58n8pP7EFQDqPdwbZhdkFqRYGs1/social-images/social-1778203983627-doopoo.webp",
+      },
     ],
     links: [
       {

@@ -1,18 +1,18 @@
 // ====================================================================
-//  Revora AI Gateway —— 纯 OpenAI 兼容(api: revora.vip)
+//  MeridianAI Gateway —— 纯 OpenAI 兼容(api: www.meridiangolf.xyz)
 //
-//  Base URL: https://revora.vip (env: REVORA_BASE_URL 可覆盖)
-//  Auth:     Authorization: Bearer ${REVORA_API_KEY}
+//  Base URL: https://www.meridiangolf.xyz (env: MERIDIAN_BASE_URL 可覆盖)
+//  Auth:     Authorization: Bearer ${MERIDIAN_API_KEY}
 //
-//  本模块只负责 Revora 中转上的 OpenAI 兼容图像接口:
+//  本模块只负责 MeridianAI 中转上的 OpenAI 兼容图像接口:
 //    - 无参考图(T2I): POST /v1/images/generations
 //    - 有参考图(I2I): POST /v1/images/edits  (multipart/form-data)
 //
 //  当前已验证可用模型:
 //    - gpt-image-2
 //
-//  UI 选项约定:所有走 Revora 的模型 id 都加 `revora/` 前缀,
-//  与 pixflow/ / tokenflash/ 等命名空间互不冲突;在调用时本模块
+//  UI 选项约定:所有走 MeridianAI 的模型 id 都加 `meridian/` 前缀,
+//  与 pixflow/ / revora/ / tokenflash/ 等命名空间互不冲突;在调用时本模块
 //  会自动剥离前缀再发给上游。
 // ====================================================================
 
@@ -20,27 +20,27 @@ import "./loadEnv";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
-const DEFAULT_BASE_URL = "https://revora.vip";
+const DEFAULT_BASE_URL = "https://www.meridiangolf.xyz";
 const IMAGE_REQUEST_TIMEOUT_MS = 400_000;
-const REVORA_PREFIX = "revora/";
+const MERIDIAN_PREFIX = "meridian/";
 
-export function isRevoraModel(modelId: string | null | undefined): boolean {
-  return !!modelId && modelId.toLowerCase().startsWith(REVORA_PREFIX);
+export function isMeridianModel(modelId: string | null | undefined): boolean {
+  return !!modelId && modelId.toLowerCase().startsWith(MERIDIAN_PREFIX);
 }
 
-/** 剥离 `revora/` 前缀,得到真正的 upstream model id */
-export function stripRevoraPrefix(modelId: string): string {
-  return modelId.replace(/^revora\//i, "");
+/** 剥离 `meridian/` 前缀,得到真正的 upstream model id */
+export function stripMeridianPrefix(modelId: string): string {
+  return modelId.replace(/^meridian\//i, "");
 }
 
-function getRevoraConfig() {
+function getMeridianConfig() {
   return {
-    apiKey: process.env.REVORA_API_KEY,
-    baseUrl: (process.env.REVORA_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, ""),
+    apiKey: process.env.MERIDIAN_API_KEY,
+    baseUrl: (process.env.MERIDIAN_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, ""),
   };
 }
 
-type RevoraImageInput = {
+type MeridianImageInput = {
   prompt: string;
   model: string;
   size?: string;
@@ -50,21 +50,21 @@ type RevoraImageInput = {
   referenceImages?: string[];
 };
 
-type RevoraImageResult = {
+type MeridianImageResult = {
   url: string;
   urls: string[];
   error: string | null;
   model: string;
 };
 
-/** Revora gpt-image-2 支持的尺寸白名单 */
-const REVORA_GPT_IMAGE2_SIZES = new Set(["1024x1024", "1024x1792", "1792x1024"]);
+/** gpt-image-2 支持的尺寸白名单 */
+const GPT_IMAGE2_SIZES = new Set(["1024x1024", "1024x1792", "1792x1024"]);
 
-/** 把任意 size 字符串(WxH / 2K / 1328*1328)折算成 Revora 接受的尺寸 */
-function normalizeRevoraSize(size: string | undefined, model: string): string {
+/** 把任意 size 字符串(WxH / 2K / 1328*1328)折算成 gpt-image-2 接受的尺寸 */
+function normalizeMeridianSize(size: string | undefined, model: string): string {
   const s = (size || "").trim().toLowerCase().replace(/\*/g, "x");
   if (/^gpt-image-2$/i.test(model)) {
-    if (REVORA_GPT_IMAGE2_SIZES.has(s)) return s;
+    if (GPT_IMAGE2_SIZES.has(s)) return s;
     // 按宽高比就近 fallback
     const m = s.match(/^(\d+)x(\d+)$/);
     if (m) {
@@ -80,23 +80,23 @@ function normalizeRevoraSize(size: string | undefined, model: string): string {
 }
 
 /**
- * Revora 图像生成 —— OpenAI 兼容路由。
- * 返回与 Pixflow / Tokenflash 一致的 { url, urls, error, model }。
+ * MeridianAI 图像生成 —— OpenAI 兼容路由。
+ * 返回与 Pixflow / Revora / Tokenflash 一致的 { url, urls, error, model }。
  */
-export async function callRevoraImage(input: RevoraImageInput): Promise<RevoraImageResult> {
-  const { apiKey, baseUrl } = getRevoraConfig();
-  const model = stripRevoraPrefix(input.model);
+export async function callMeridianImage(input: MeridianImageInput): Promise<MeridianImageResult> {
+  const { apiKey, baseUrl } = getMeridianConfig();
+  const model = stripMeridianPrefix(input.model);
   const hasRefs = !!input.referenceImages?.length;
   const endpoint = hasRefs ? "/v1/images/edits" : "/v1/images/generations";
-  const size = normalizeRevoraSize(input.size, model);
+  const size = normalizeMeridianSize(input.size, model);
   const t0 = Date.now();
   console.log(
-    `[revora→] model=${model} endpoint=${endpoint} refs=${input.referenceImages?.length ?? 0} size=${size} quality=${input.quality ?? "auto"}`,
+    `[meridian→] model=${model} endpoint=${endpoint} refs=${input.referenceImages?.length ?? 0} size=${size} quality=${input.quality ?? "auto"}`,
   );
 
   if (!apiKey) {
-    console.warn(`[revora×] model=${model} missing REVORA_API_KEY`);
-    return { url: "", urls: [], error: "REVORA_API_KEY not configured", model };
+    console.warn(`[meridian×] model=${model} missing MERIDIAN_API_KEY`);
+    return { url: "", urls: [], error: "MERIDIAN_API_KEY not configured", model };
   }
 
   const controller = new AbortController();
@@ -178,7 +178,7 @@ export async function callRevoraImage(input: RevoraImageInput): Promise<RevoraIm
         res.status === 502 || res.status === 503 || res.status === 504 || res.status === 524;
       if (!transient || attempt === 1) break;
       console.warn(
-        `[revora⟳] model=${model} endpoint=${endpoint} status=${res.status} retry in 1.5s`,
+        `[meridian⟳] model=${model} endpoint=${endpoint} status=${res.status} retry in 1.5s`,
       );
       await new Promise((r) => setTimeout(r, 1500));
     }
@@ -187,12 +187,12 @@ export async function callRevoraImage(input: RevoraImageInput): Promise<RevoraIm
     if (!res || !res.ok) {
       const status = res?.status ?? 0;
       console.warn(
-        `[revora×] model=${model} endpoint=${endpoint} status=${status} dur=${Date.now() - t0}ms body=${lastText.slice(0, 200)}`,
+        `[meridian×] model=${model} endpoint=${endpoint} status=${status} dur=${Date.now() - t0}ms body=${lastText.slice(0, 200)}`,
       );
       return {
         url: "",
         urls: [],
-        error: `[revora ${model}] ${status}: ${lastText.slice(0, 300)}`,
+        error: `[meridian ${model}] ${status}: ${lastText.slice(0, 300)}`,
         model,
       };
     }
@@ -227,28 +227,28 @@ export async function callRevoraImage(input: RevoraImageInput): Promise<RevoraIm
 
     if (urls.length === 0) {
       console.warn(
-        `[revora×] model=${model} endpoint=${endpoint} empty-data dur=${Date.now() - t0}ms err=${json?.error?.message ?? ""} raw=${rawText.slice(0, 400)}`,
+        `[meridian×] model=${model} endpoint=${endpoint} empty-data dur=${Date.now() - t0}ms err=${json?.error?.message ?? ""} raw=${rawText.slice(0, 400)}`,
       );
       return {
         url: "",
         urls: [],
-        error: `[revora ${model}] no image returned: ${json?.error?.message || rawText.slice(0, 200) || "empty data"}`,
+        error: `[meridian ${model}] no image returned: ${json?.error?.message || rawText.slice(0, 200) || "empty data"}`,
         model,
       };
     }
     console.log(
-      `[revora✓] model=${model} endpoint=${endpoint} images=${urls.length} dur=${Date.now() - t0}ms`,
+      `[meridian✓] model=${model} endpoint=${endpoint} images=${urls.length} dur=${Date.now() - t0}ms`,
     );
     return { url: urls[0], urls, error: null, model };
   } catch (e) {
     clearTimeout(timeout);
     console.warn(
-      `[revora×] model=${model} endpoint=${endpoint} network dur=${Date.now() - t0}ms err=${e instanceof Error ? e.message : "fetch failed"}`,
+      `[meridian×] model=${model} endpoint=${endpoint} network dur=${Date.now() - t0}ms err=${e instanceof Error ? e.message : "fetch failed"}`,
     );
     return {
       url: "",
       urls: [],
-      error: `[revora ${model}] network: ${e instanceof Error ? e.message : "fetch failed"}`,
+      error: `[meridian ${model}] network: ${e instanceof Error ? e.message : "fetch failed"}`,
       model,
     };
   }
@@ -256,7 +256,7 @@ export async function callRevoraImage(input: RevoraImageInput): Promise<RevoraIm
 
 // ---------- ServerFn 入口(供前端通过 useServerFn 调用)----------
 
-const RevoraImageFnInput = z.object({
+const MeridianImageFnInput = z.object({
   prompt: z.string().min(1).max(8000),
   model: z.string().min(1).max(200),
   size: z.string().max(50).optional(),
@@ -265,8 +265,8 @@ const RevoraImageFnInput = z.object({
   referenceImages: z.array(z.string().url()).max(16).optional(),
 });
 
-export const generateRevoraImage = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => RevoraImageFnInput.parse(d))
+export const generateMeridianImage = createServerFn({ method: "POST" })
+  .inputValidator((d: unknown) => MeridianImageFnInput.parse(d))
   .handler(async ({ data }) => {
-    return callRevoraImage(data);
+    return callMeridianImage(data);
   });

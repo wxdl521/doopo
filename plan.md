@@ -5,6 +5,7 @@
 用户要求在 workspace 的"角色流程"中增加"道具"分类，与角色、场景并列。进入角色流程（episodes → character tab）时，AI 自动从当集剧本中提取道具。道具的定义是：**在本集中会根据剧情进行移动的物体**。
 
 道具卡片需要：
+
 1. 与角色/场景卡片风格一致的网格展示
 2. 支持 AI 生成道具图
 3. 三视图按钮（不同角度展示道具）
@@ -21,15 +22,15 @@
 
 ```typescript
 export type GenProp = {
-  episodeIndex: number
-  id: string
-  name: string
-  description: string        // 道具的外观描述
-  movementDescription: string // 在本集中的移动/变化方式
-  keyMoments: string[]       // 关键剧情节点
-  palette: string[]
-  swatch: string
-}
+  episodeIndex: number;
+  id: string;
+  name: string;
+  description: string; // 道具的外观描述
+  movementDescription: string; // 在本集中的移动/变化方式
+  keyMoments: string[]; // 关键剧情节点
+  palette: string[];
+  swatch: string;
+};
 ```
 
 - `movementDescription` 是道具的核心字段，描述"本集中根据剧情移动的物体"
@@ -83,14 +84,14 @@ case 'prop-extract':
 #### 3b. 新增 state（与场景平行的 state 组）
 
 ```typescript
-const [propImages, setPropImages] = useState<Record<string, string[]>>({})
-const [selectedPropImages, setSelectedPropImages] = useState<Record<string, string | null>>({})
-const [busyProp, setBusyProp] = useState<string | null>(null)
-const [propPreview, setPropPreview] = useState<GenProp | null>(null)
-const [propModOpen, setPropModOpen] = useState<GenProp | null>(null)
-const [propModInput, setPropModInput] = useState('')
-const [propModBusy, setPropModBusy] = useState(false)
-const [propModError, setPropModError] = useState<string | null>(null)
+const [propImages, setPropImages] = useState<Record<string, string[]>>({});
+const [selectedPropImages, setSelectedPropImages] = useState<Record<string, string | null>>({});
+const [busyProp, setBusyProp] = useState<string | null>(null);
+const [propPreview, setPropPreview] = useState<GenProp | null>(null);
+const [propModOpen, setPropModOpen] = useState<GenProp | null>(null);
+const [propModInput, setPropModInput] = useState("");
+const [propModBusy, setPropModBusy] = useState(false);
+const [propModError, setPropModError] = useState<string | null>(null);
 ```
 
 完全对称于 scene 的 state 模式。
@@ -98,7 +99,7 @@ const [propModError, setPropModError] = useState<string | null>(null)
 #### 3c. charViewTab 增加 'props' 选项
 
 ```typescript
-const [charViewTab, setCharViewTab] = useState<'characters' | 'scenes' | 'props'>('characters')
+const [charViewTab, setCharViewTab] = useState<"characters" | "scenes" | "props">("characters");
 ```
 
 #### 3d. Extract 流程 — 在 `produce()` 中增加道具提取
@@ -107,21 +108,21 @@ const [charViewTab, setCharViewTab] = useState<'characters' | 'scenes' | 'props'
 
 ```typescript
 const [charResult, sceneResult, propResult] = await Promise.all([
-  tryAi('character-extract', extractPrompt, snapshot, extractEpIndex),
-  tryAi('scene', extractPrompt, snapshot, extractEpIndex),
-  tryAi('prop-extract', extractPrompt, snapshot, extractEpIndex),
-])
+  tryAi("character-extract", extractPrompt, snapshot, extractEpIndex),
+  tryAi("scene", extractPrompt, snapshot, extractEpIndex),
+  tryAi("prop-extract", extractPrompt, snapshot, extractEpIndex),
+]);
 ```
 
 然后将 propResult 合并到 aiPatch：
 
 ```typescript
-const propsWithEp = propResult?.props?.map((p) => ({ ...p, episodeIndex: extractEpIndex }))
+const propsWithEp = propResult?.props?.map((p) => ({ ...p, episodeIndex: extractEpIndex }));
 aiPatch = {
   ...(charResult ? { characters: charResult.characters } : {}),
   ...(sceneResult ? { scenes: scenesWithEp } : {}),
   ...(propResult ? { props: propsWithEp } : {}),
-}
+};
 ```
 
 #### 3e. setData 的 'character' case 中处理 props（约第 4394 行）
@@ -153,9 +154,7 @@ case 'character': {
 在 `charViewTab === 'characters'` 和 `'scenes'` 切换按钮旁，增加第三个：
 
 ```tsx
-<button onClick={() => setCharViewTab('props')}>
-  道具 {hasProps && `(${epProps.length})`}
-</button>
+<button onClick={() => setCharViewTab("props")}>道具 {hasProps && `(${epProps.length})`}</button>
 ```
 
 #### 3g. 道具卡片网格渲染（对称于场景卡片）
@@ -163,6 +162,7 @@ case 'character': {
 在 `charViewTab === 'scenes' ? ... :` 之后增加 `charViewTab === 'props' ?` 分支。
 
 卡片设计：
+
 - 与场景卡片相同的视觉风格（`aspect-video` 图区）
 - 点击 → 打开 lightbox（`setPropPreview(p)`）
 - 图区：点击生成道具图 / 显示已生成的图
@@ -184,7 +184,7 @@ async function genPropImage(p: GenProp) {
 #### 3i. 道具三视图/修改函数
 
 ```typescript
-async function doPropRegen(p: GenProp, mode: 'modify' | 'three-view', instruction: string) {
+async function doPropRegen(p: GenProp, mode: "modify" | "three-view", instruction: string) {
   // 对称于 doSceneRegen
 }
 
@@ -192,24 +192,33 @@ async function runPropPresetRegen(p: GenProp) {
   // 三视图预设
 }
 
-function openPropModPanel(p: GenProp) { /* 对称于 openSceneModPanel */ }
-function closePropModPanel() { /* ... */ }
-async function submitPropModPanel() { /* ... */ }
+function openPropModPanel(p: GenProp) {
+  /* 对称于 openSceneModPanel */
+}
+function closePropModPanel() {
+  /* ... */
+}
+async function submitPropModPanel() {
+  /* ... */
+}
 ```
 
 #### 3j. 道具 Lightbox 预览
 
 ```tsx
-{propPreview && (
-  <div className="fixed inset-0 z-50 ..." onClick={() => setPropPreview(null)}>
-    {/* 大图 + 道具详情（description, movementDescription, keyMoments） */}
-  </div>
-)}
+{
+  propPreview && (
+    <div className="fixed inset-0 z-50 ..." onClick={() => setPropPreview(null)}>
+      {/* 大图 + 道具详情（description, movementDescription, keyMoments） */}
+    </div>
+  );
+}
 ```
 
 #### 3k. 保存/加载 — 在 handleSaveWorkspace 和 load useEffect 中增加 props
 
 **handleSaveWorkspace（约第 3730 行）：**
+
 ```typescript
 const workspaceData = {
   ...
@@ -220,16 +229,18 @@ const workspaceData = {
 ```
 
 **load useEffect（约第 1051 行）：**
+
 ```typescript
 if (Array.isArray(wd.props) && wd.props.length) {
   const props: GenProp[] = (wd.props as any[]).map((p) => ({
     ...p,
-    episodeIndex: typeof p.episodeIndex === 'number' ? p.episodeIndex : 1,
-  }))
-  setData((d) => ({ ...d, props }))
+    episodeIndex: typeof p.episodeIndex === "number" ? p.episodeIndex : 1,
+  }));
+  setData((d) => ({ ...d, props }));
 }
-if (wd.propImages) setPropImages(wd.propImages as Record<string, string[]>)
-if (wd.selectedPropImages) setSelectedPropImages(wd.selectedPropImages as Record<string, string | null>)
+if (wd.propImages) setPropImages(wd.propImages as Record<string, string[]>);
+if (wd.selectedPropImages)
+  setSelectedPropImages(wd.selectedPropImages as Record<string, string | null>);
 ```
 
 ### 4. `src/components/workspace/WorkspaceTopbar.tsx` — 不需要修改
@@ -239,6 +250,7 @@ if (wd.selectedPropImages) setSelectedPropImages(wd.selectedPropImages as Record
 ### 5. `src/i18n/zh.ts` 和 `src/i18n/en.ts` — 新增 i18n keys
 
 zh:
+
 ```typescript
 ws_tab_props: '道具',
 zp_intro_props: '本集的道具将在此展示。道具是指在本集中会根据剧情进行移动的物体。',
@@ -248,6 +260,7 @@ zp_user_quick_props: '提取本集道具',
 ```
 
 en:
+
 ```typescript
 ws_tab_props: 'Props',
 zp_intro_props: 'Props from this episode will be displayed here. Props are objects that move according to the plot.',
@@ -259,6 +272,7 @@ zp_user_quick_props: 'Extract props from this episode',
 ### 6. `src/lib/assetsStorage.ts` — 可选的 saveOneProp 函数
 
 如果道具也需要保存到资产库，可以新增：
+
 ```typescript
 export async function saveOneProp(p: GenProp, userId: string, coverUrl?: string | null) {
   // upsert to props table (需要先创建 props 表，或暂存在 workspace_data 中)

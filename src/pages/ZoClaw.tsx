@@ -1,15 +1,15 @@
-import { ArrowRight, Bot, Check, Code2, Cpu, Workflow, Sparkles } from 'lucide-react'
-import { useLanguage } from '../i18n/LanguageContext'
+import { ArrowRight, Bot, Check, Code2, Cpu, Workflow, Sparkles } from "lucide-react";
+import { useLanguage } from "../i18n/LanguageContext";
 
 export default function DooClaw() {
-  const { t } = useLanguage()
+  const { t } = useLanguage();
   const features = [
     { icon: Bot, title: t.zoclaw_feature1_title, body: t.zoclaw_feature1_body },
     { icon: Workflow, title: t.zoclaw_feature2_title, body: t.zoclaw_feature2_body },
     { icon: Code2, title: t.zoclaw_feature3_title, body: t.zoclaw_feature3_body },
     { icon: Cpu, title: t.zoclaw_feature4_title, body: t.zoclaw_feature4_body },
-  ]
-  const checklist = [t.zoclaw_check1, t.zoclaw_check2, t.zoclaw_check3, t.zoclaw_check4]
+  ];
+  const checklist = [t.zoclaw_check1, t.zoclaw_check2, t.zoclaw_check3, t.zoclaw_check4];
 
   return (
     <div className="animate-fade-in">
@@ -25,7 +25,9 @@ export default function DooClaw() {
           </h1>
           <p className="mt-5 text-text-secondary text-lg leading-relaxed">{t.zoclaw_subtitle}</p>
           <div className="mt-7 flex flex-wrap items-center gap-3">
-            <button className="btn-primary"><Sparkles size={14} /> {t.zoclaw_try} <ArrowRight size={14} /></button>
+            <button className="btn-primary">
+              <Sparkles size={14} /> {t.zoclaw_try} <ArrowRight size={14} />
+            </button>
             <button className="btn-outline">{t.zoclaw_docs}</button>
           </div>
         </div>
@@ -35,9 +37,14 @@ export default function DooClaw() {
         <h2 className="font-display text-2xl md:text-3xl font-bold">{t.zoclaw_what_can_do}</h2>
         <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-5">
           {features.map(({ icon: Icon, title, body }) => (
-            <div key={title} className="panel p-6 group hover:border-accent/40 hover:shadow-glow transition">
-              <div className="w-11 h-11 rounded-xl bg-accent-dim text-accent flex items-center justify-center
-                              group-hover:bg-accent group-hover:text-bg transition">
+            <div
+              key={title}
+              className="panel p-6 group hover:border-accent/40 hover:shadow-glow transition"
+            >
+              <div
+                className="w-11 h-11 rounded-xl bg-accent-dim text-accent flex items-center justify-center
+                              group-hover:bg-accent group-hover:text-bg transition"
+              >
                 <Icon size={20} />
               </div>
               <h3 className="font-display text-xl font-bold mt-4">{title}</h3>
@@ -65,7 +72,7 @@ export default function DooClaw() {
         <div className="panel p-8 bg-gradient-to-br from-bg-soft via-bg-soft to-bg-surface">
           <h3 className="font-display text-xl font-bold mb-4">{t.zoclaw_api_taste}</h3>
           <pre className="text-xs md:text-sm bg-black/50 border border-border rounded-xl p-4 overflow-x-auto leading-relaxed">
-{`POST /v1/dooclaw/run
+            {`POST /v1/dooclaw/run
 {
   "prompt": "A hand-drawn forest spirit greets a lost child at dusk.",
   "model": "kling-03",
@@ -78,5 +85,5 @@ export default function DooClaw() {
         </div>
       </section>
     </div>
-  )
+  );
 }

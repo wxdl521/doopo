@@ -1,183 +1,286 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { useNavigate } from '@tanstack/react-router'
-import { useServerFn } from '@tanstack/react-start'
-import { Sparkles, Grid3x3, GitBranch, Zap, Video, X, Check, Flame, Upload, Clock } from 'lucide-react'
-import { Dialog, DialogContent, DialogTrigger } from './ui/dialog'
-import { useLanguage } from '../i18n/LanguageContext'
-import { IMAGE_MODELS } from '../lib/imageModels'
-import { upsertProject } from '../lib/projects.functions'
-import { loadUserPrefs, saveUserPrefs } from '../lib/userPreferences'
-import { useAuth } from '../hooks/useAuth'
-import { toast } from 'sonner'
-import style3dCg from '../assets/styles/3d-cg.jpg'
-import styleAnimeJp from '../assets/styles/anime-jp.jpg'
-import stylePixar from '../assets/styles/pixar.jpg'
-import styleRealistic from '../assets/styles/realistic.jpg'
-import styleWuxia from '../assets/styles/wuxia.jpg'
-import styleChibi from '../assets/styles/chibi.jpg'
-import styleShinkai from '../assets/styles/shinkai.jpg'
-import styleHealing from '../assets/styles/healing.jpg'
-import styleCyberpunk from '../assets/styles/cyberpunk.jpg'
-import styleComic from '../assets/styles/comic.jpg'
-import stylePixel from '../assets/styles/pixel.jpg'
-import styleClay from '../assets/styles/clay.jpg'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useNavigate } from "@tanstack/react-router";
+import { useServerFn } from "@tanstack/react-start";
+import {
+  Sparkles,
+  Grid3x3,
+  GitBranch,
+  Zap,
+  Video,
+  X,
+  Check,
+  Flame,
+  Upload,
+  Clock,
+} from "lucide-react";
+import { Dialog, DialogContent, DialogTrigger } from "./ui/dialog";
+import { useLanguage } from "../i18n/LanguageContext";
+import { IMAGE_MODELS } from "../lib/imageModels";
+import { upsertProject } from "../lib/projects.functions";
+import { loadUserPrefs, saveUserPrefs } from "../lib/userPreferences";
+import { useAuth } from "../hooks/useAuth";
+import { toast } from "sonner";
+import style3dCg from "../assets/styles/3d-cg.jpg";
+import styleAnimeJp from "../assets/styles/anime-jp.jpg";
+import stylePixar from "../assets/styles/pixar.jpg";
+import styleRealistic from "../assets/styles/realistic.jpg";
+import styleWuxia from "../assets/styles/wuxia.jpg";
+import styleChibi from "../assets/styles/chibi.jpg";
+import styleShinkai from "../assets/styles/shinkai.jpg";
+import styleHealing from "../assets/styles/healing.jpg";
+import styleCyberpunk from "../assets/styles/cyberpunk.jpg";
+import styleComic from "../assets/styles/comic.jpg";
+import stylePixel from "../assets/styles/pixel.jpg";
+import styleClay from "../assets/styles/clay.jpg";
 
 const aspects = [
-  { id: '16:9', label: '16:9 · 1k · 720p', cost: 11 },
-  { id: '9:16', label: '9:16 · 1k · 720p', cost: 11 },
-  { id: '1:1', label: '1:1 · 1k', cost: 9 },
-]
+  { id: "16:9", label: "16:9 · 1k · 720p", cost: 11 },
+  { id: "9:16", label: "9:16 · 1k · 720p", cost: 11 },
+  { id: "1:1", label: "1:1 · 1k", cost: 9 },
+];
 // Image models for storyboard / scene —— Seedream 优先,legacy 作为手动兜底层
 // 2026 重构:默认走 Doubao Seedream(火山方舟 ARK),用户可手动切到 Qwen / Wan / Gemini 等
 const imageModelOptions = [
   // ---- 主力:Seedream ----
-  { id: 'doubao-seedream-5-0-260128', label: 'Doubao Seedream 5.0', sub: '默认 · ARK · 同步' },
+  { id: "doubao-seedream-5-0-260128", label: "Doubao Seedream 5.0", sub: "默认 · ARK · 同步" },
 
   // ---- Legacy 兜底层(用户手动选;seedream 模块会委派到 openrouterImage)----
-  { id: '__sep__', label: '—— Legacy 兜底层 ——', sub: '' },
-  { id: 'qwen-image-2.0', label: 'Qwen Image 2.0', sub: '通义千问 · T2I 稳定' },
-  { id: 'qwen-image-2.0-pro', label: 'Qwen Image 2.0 Pro', sub: '通义千问 · I2I' },
-  { id: 'qwen-image-plus', label: 'Qwen Image Plus', sub: '通义千问 · 高清' },
-  { id: 'qwen-image', label: 'Qwen Image', sub: '通义千问 · 基础' },
-  { id: 'wan2.6-t2i', label: '万相 2.6 文生图', sub: 'Wan · 推荐' },
-  { id: 'wan2.5-t2i-preview', label: '万相 2.5 文生图 Preview', sub: 'Wan · 自由尺寸' },
-  { id: 'wan2.2-t2i-flash', label: '万相 2.2 极速版', sub: 'Wan · 速度优先' },
-  { id: 'wanx2.1-t2i-turbo', label: '万相 2.1 极速版', sub: 'Wanx' },
-  { id: 'wanx2.1-t2i-plus', label: '万相 2.1 专业版', sub: 'Wanx' },
-  { id: 'pixflow/gpt-image-2', label: 'GPT Image 2', sub: 'Pixflow · OpenAI · Image2' },
-  { id: 'claude360/gpt-image-2', label: 'GPT Image 2', sub: 'Claude360 · OpenAI · Image2' },
-  { id: 'pixflow/gemini-3-pro-image-preview', label: 'Gemini 3 Pro Image', sub: 'Pixflow · Google · 高质量' },
-  { id: 'pixflow/gemini-3.1-flash-image-preview', label: 'Nano Banana 2', sub: 'Pixflow · Google · 快速' },
-  { id: 'pixflow/gemini-3.1-flash-image', label: 'Gemini 3.1 Flash Image', sub: 'Pixflow · Google · 通用' },
-  { id: 'tokenflash/gpt-image-2', label: 'GPT Image 2 (Tokenflash)', sub: 'Tokenflash · OpenAI · Image2 · 推荐' },
+  { id: "__sep__", label: "—— Legacy 兜底层 ——", sub: "" },
+  { id: "qwen-image-2.0", label: "Qwen Image 2.0", sub: "通义千问 · T2I 稳定" },
+  { id: "qwen-image-2.0-pro", label: "Qwen Image 2.0 Pro", sub: "通义千问 · I2I" },
+  { id: "qwen-image-plus", label: "Qwen Image Plus", sub: "通义千问 · 高清" },
+  { id: "qwen-image", label: "Qwen Image", sub: "通义千问 · 基础" },
+  { id: "wan2.6-t2i", label: "万相 2.6 文生图", sub: "Wan · 推荐" },
+  { id: "wan2.5-t2i-preview", label: "万相 2.5 文生图 Preview", sub: "Wan · 自由尺寸" },
+  { id: "wan2.2-t2i-flash", label: "万相 2.2 极速版", sub: "Wan · 速度优先" },
+  { id: "wanx2.1-t2i-turbo", label: "万相 2.1 极速版", sub: "Wanx" },
+  { id: "wanx2.1-t2i-plus", label: "万相 2.1 专业版", sub: "Wanx" },
+  { id: "pixflow/gpt-image-2", label: "GPT Image 2", sub: "Pixflow · OpenAI · Image2" },
+  { id: "claude360/gpt-image-2", label: "GPT Image 2", sub: "Claude360 · OpenAI · Image2" },
+  {
+    id: "pixflow/gemini-3-pro-image-preview",
+    label: "Gemini 3 Pro Image",
+    sub: "Pixflow · Google · 高质量",
+  },
+  {
+    id: "pixflow/gemini-3.1-flash-image-preview",
+    label: "Nano Banana 2",
+    sub: "Pixflow · Google · 快速",
+  },
+  {
+    id: "pixflow/gemini-3.1-flash-image",
+    label: "Gemini 3.1 Flash Image",
+    sub: "Pixflow · Google · 通用",
+  },
+  {
+    id: "tokenflash/gpt-image-2",
+    label: "GPT Image 2 (Tokenflash)",
+    sub: "Tokenflash · OpenAI · Image2 · 推荐",
+  },
 
   // ---- Revora(OpenAI 兼容)----
-  { id: '__sep_revora__', label: '—— Revora(OpenAI 兼容)——', sub: '' },
-  { id: 'revora/gpt-image-2', label: 'GPT Image 2 (Revora)', sub: 'Revora · OpenAI · Image2 · T2I/I2I' },
+  { id: "__sep_revora__", label: "—— Revora(OpenAI 兼容)——", sub: "" },
+  {
+    id: "revora/gpt-image-2",
+    label: "GPT Image 2 (Revora)",
+    sub: "Revora · OpenAI · Image2 · T2I/I2I",
+  },
 
   // ---- OneToken(OpenAI 兼容)----
-  { id: '__sep_onetoken__', label: '—— OneToken(OpenAI 兼容)——', sub: '' },
-  { id: 'onetoken/gpt-image-2', label: 'GPT Image 2 (OneToken)', sub: 'OneToken · OpenAI · Image2' },
+  { id: "__sep_onetoken__", label: "—— OneToken(OpenAI 兼容)——", sub: "" },
+  {
+    id: "onetoken/gpt-image-2",
+    label: "GPT Image 2 (OneToken)",
+    sub: "OneToken · OpenAI · Image2",
+  },
 
   // ---- AIGC Family(OpenAI 兼容)----
-  { id: '__sep_aigcfamily__', label: '—— AIGC Family(OpenAI 兼容)——', sub: '' },
-  { id: 'aigcfamily/gpt-image-2', label: 'GPT Image 2 (AIGC Family)', sub: 'AIGC Family · OpenAI · Image2' },
-  { id: 'aigcfamily/imagen-3.0-generate-001', label: 'AIGC-imagen3', sub: 'AIGC Family · OpenAI · Imagen3 · T2I/I2I' },
+  { id: "__sep_aigcfamily__", label: "—— AIGC Family(OpenAI 兼容)——", sub: "" },
+  {
+    id: "aigcfamily/gpt-image-2",
+    label: "GPT Image 2 (AIGC Family)",
+    sub: "AIGC Family · OpenAI · Image2",
+  },
+  {
+    id: "aigcfamily/imagen-3.0-generate-001",
+    label: "AIGC-imagen3",
+    sub: "AIGC Family · OpenAI · Imagen3 · T2I/I2I",
+  },
 
   // ---- OTU(OpenAI 兼容)----
-  { id: '__sep_otu__', label: '—— OTU(OpenAI 兼容)——', sub: '' },
-  { id: 'otu/image2', label: 'GPT Image 2 (OTU)', sub: 'OTU · OpenAI · Image2 · T2I/I2I' },
+  { id: "__sep_otu__", label: "—— OTU(OpenAI 兼容)——", sub: "" },
+  { id: "otu/image2", label: "GPT Image 2 (OTU)", sub: "OTU · OpenAI · Image2 · T2I/I2I" },
 
   // ---- AI Tokenvibe(OpenAI 兼容)----
-  { id: '__sep_aitokenvibe__', label: '—— AI Tokenvibe(OpenAI 兼容)——', sub: '' },
-  { id: 'aitokenvibe/gpt-image-2', label: 'GPT Image 2 (AI Tokenvibe)', sub: 'AI Tokenvibe · OpenAI · Image2 · T2I/I2I' },
+  { id: "__sep_aitokenvibe__", label: "—— AI Tokenvibe(OpenAI 兼容)——", sub: "" },
+  {
+    id: "aitokenvibe/gpt-image-2",
+    label: "GPT Image 2 (AI Tokenvibe)",
+    sub: "AI Tokenvibe · OpenAI · Image2 · T2I/I2I",
+  },
 
   // ---- 天鸿智算(OpenAI 兼容)----
-  { id: '__sep_thhtcloud__', label: '—— 天鸿智算(OpenAI 兼容)——', sub: '' },
-  { id: 'thhtcloud/gpt-image-2', label: 'GPT Image 2 (天鸿智算)', sub: '天鸿智算 · OpenAI · Image2 · T2I/I2I' },
+  { id: "__sep_thhtcloud__", label: "—— 天鸿智算(OpenAI 兼容)——", sub: "" },
+  {
+    id: "thhtcloud/gpt-image-2",
+    label: "GPT Image 2 (天鸿智算)",
+    sub: "天鸿智算 · OpenAI · Image2 · T2I/I2I",
+  },
 
   // ---- ailinzi(OpenAI 兼容)----
-  { id: '__sep_ailinzi__', label: '—— ailinzi(OpenAI 兼容)——', sub: '' },
-  { id: 'ailinzi/image2', label: 'GPT Image 2 (ailinzi)', sub: 'ailinzi · OpenAI · Image2 · T2I/I2I' },
+  { id: "__sep_ailinzi__", label: "—— ailinzi(OpenAI 兼容)——", sub: "" },
+  {
+    id: "ailinzi/image2",
+    label: "GPT Image 2 (ailinzi)",
+    sub: "ailinzi · OpenAI · Image2 · T2I/I2I",
+  },
 
   // ---- TokenHub(OpenAI 兼容)----
-  { id: '__sep_tokenhub__', label: '—— TokenHub(OpenAI 兼容)——', sub: '' },
-  { id: 'tokenhub/gpt-image-2', label: 'GPT Image 2 (TokenHub)', sub: 'TokenHub · OpenAI · Image2 · T2I/I2I' },
+  { id: "__sep_tokenhub__", label: "—— TokenHub(OpenAI 兼容)——", sub: "" },
+  {
+    id: "tokenhub/gpt-image-2",
+    label: "GPT Image 2 (TokenHub)",
+    sub: "TokenHub · OpenAI · Image2 · T2I/I2I",
+  },
 
   // ---- nagora.ai(Azure 渠道 OpenAI 官方)----
-  { id: '__sep_nagora__', label: '—— nagora.ai(Azure 渠道)——', sub: '' },
-  { id: 'nagora/gpt-image-2', label: 'GPT Image 2 (nagora)', sub: 'nagora.ai · Azure 渠道 · OpenAI · Image2 · T2I/I2I' },
+  { id: "__sep_nagora__", label: "—— nagora.ai(Azure 渠道)——", sub: "" },
+  {
+    id: "nagora/gpt-image-2",
+    label: "GPT Image 2 (nagora)",
+    sub: "nagora.ai · Azure 渠道 · OpenAI · Image2 · T2I/I2I",
+  },
+
+  // ---- MeridianAI(OpenAI 兼容)----
+  { id: "__sep_meridian__", label: "—— MeridianAI(OpenAI 兼容)——", sub: "" },
+  {
+    id: "meridian/gpt-image-2",
+    label: "GPT Image 2 (MeridianAI)",
+    sub: "MeridianAI · OpenAI · Image2 · T2I/I2I",
+  },
 
   // ---- vapeur.ai(OpenAI 兼容)----
-  { id: '__sep_vapeur__', label: '—— vapeur.ai ——', sub: '' },
-  { id: 'vapeur/gpt-image-2', label: 'GPT Image 2 (vapeur)', sub: 'vapeur.ai · OpenAI · Image2 · T2I/I2I' },
+  { id: "__sep_vapeur__", label: "—— vapeur.ai ——", sub: "" },
+  {
+    id: "vapeur/gpt-image-2",
+    label: "GPT Image 2 (vapeur)",
+    sub: "vapeur.ai · OpenAI · Image2 · T2I/I2I",
+  },
 
   // ---- Azure OpenAI ----
-  { id: '__sep_azure__', label: '—— Azure · OpenAI ——', sub: '' },
-  { id: 'azure/gpt-image-2', label: 'Azure-gpt-image-2', sub: 'Azure · OpenAI · gpt-image-2 · T2I/I2I' },
-]
+  { id: "__sep_azure__", label: "—— Azure · OpenAI ——", sub: "" },
+  {
+    id: "azure/gpt-image-2",
+    label: "Azure-gpt-image-2",
+    sub: "Azure · OpenAI · gpt-image-2 · T2I/I2I",
+  },
+];
 // 过滤掉"分隔符"项(只是 UI 视觉分组,不能选)
-const realImageModelOptions = imageModelOptions.filter((m) => !m.id.startsWith('__sep'))
-void IMAGE_MODELS
-const storyboardModels = realImageModelOptions
-const sceneModels = realImageModelOptions
+const realImageModelOptions = imageModelOptions.filter((m) => !m.id.startsWith("__sep"));
+void IMAGE_MODELS;
+const storyboardModels = realImageModelOptions;
+const sceneModels = realImageModelOptions;
 // Video models —— 2026/06 接入双后端:火山方舟 Seedance(已开通,默认走 ARK) + 阿里 DashScope HappyHorse(备用)
 // 详见 docs/seedream.md (Seedance) 和 docs/qwen.md (HappyHorse)
 const videoModels = [
   // ---- 主力:Seedance(火山方舟 ARK,多模态·支持参考图/视频/音频)----
-  { id: 'doubao-seedance-2-0-260128', label: 'Doubao Seedance 2.0', sub: '默认 · ARK · 多模态' },
-  { id: 'doubao-seedance-2-0-fast-260128', label: 'Doubao Seedance 2.0 Fast', sub: 'ARK · 720p 快速版' },
-  { id: 'doubao-seedance-1-0-pro-250528', label: 'Doubao Seedance 1.0 Pro', sub: 'ARK · T2V' },
-  { id: 'doubao-seedance-1-0-lite-i2v-250428', label: 'Doubao Seedance 1.0 Lite', sub: 'ARK · I2V' },
+  { id: "doubao-seedance-2-0-260128", label: "Doubao Seedance 2.0", sub: "默认 · ARK · 多模态" },
+  {
+    id: "doubao-seedance-2-0-fast-260128",
+    label: "Doubao Seedance 2.0 Fast",
+    sub: "ARK · 720p 快速版",
+  },
+  { id: "doubao-seedance-1-0-pro-250528", label: "Doubao Seedance 1.0 Pro", sub: "ARK · T2V" },
+  {
+    id: "doubao-seedance-1-0-lite-i2v-250428",
+    label: "Doubao Seedance 1.0 Lite",
+    sub: "ARK · I2V",
+  },
 
   // ---- 即梦 3.0 Pro(火山引擎视觉服务,需 AK/SK)----
-  { id: '__video_sep_jimeng__', label: '—— 即梦 3.0 Pro(Volcengine 视觉服务)——', sub: '' },
-  { id: 'jimeng-3.0-pro', label: '即梦 3.0 Pro (文生视频)', sub: '需配置 JIMENG AK/SK' },
-  { id: 'jimeng-3.0-pro-i2v', label: '即梦 3.0 Pro (图生视频·首帧)', sub: '需配置 JIMENG AK/SK' },
+  { id: "__video_sep_jimeng__", label: "—— 即梦 3.0 Pro(Volcengine 视觉服务)——", sub: "" },
+  { id: "jimeng-3.0-pro", label: "即梦 3.0 Pro (文生视频)", sub: "需配置 JIMENG AK/SK" },
+  { id: "jimeng-3.0-pro-i2v", label: "即梦 3.0 Pro (图生视频·首帧)", sub: "需配置 JIMENG AK/SK" },
 
   // ---- 筷子科技 丽帧(中转火山方舟 Seedance,需 KUAIZI_API_KEY)----
-  { id: '__video_sep_kuaizi__', label: '—— 筷子科技 丽帧(中转 Seedance)——', sub: '' },
-  { id: 'kuaizi-lizhen-pro', label: '丽帧 Pro (1080p)', sub: '筷子科技 · 多模态 · 中转 Seedance' },
-  { id: 'kuaizi-lizhen-fast', label: '丽帧 Fast (720p)', sub: '筷子科技 · 快速版 · 中转 Seedance' },
-  { id: 'kuaizi-lizhen-mini', label: '丽帧 Mini', sub: '筷子科技 · 轻量版 · 中转 Seedance' },
+  { id: "__video_sep_kuaizi__", label: "—— 筷子科技 丽帧(中转 Seedance)——", sub: "" },
+  { id: "kuaizi-lizhen-pro", label: "丽帧 Pro (1080p)", sub: "筷子科技 · 多模态 · 中转 Seedance" },
+  { id: "kuaizi-lizhen-fast", label: "丽帧 Fast (720p)", sub: "筷子科技 · 快速版 · 中转 Seedance" },
+  { id: "kuaizi-lizhen-mini", label: "丽帧 Mini", sub: "筷子科技 · 轻量版 · 中转 Seedance" },
 
   // ---- ToAPIs(中转火山方舟 Seedance 2,需 TOAPIS_API_KEY)----
-  { id: '__video_sep_toapis__', label: '—— ToAPIs(中转 Seedance 2)——', sub: '' },
-  { id: 'toapis-seedance-2', label: 'Seedance 2 (ToAPIs)', sub: 'ToAPIs · 1080p/4k · 多模态' },
-  { id: 'toapis-seedance-2-fast', label: 'Seedance 2 Fast (ToAPIs)', sub: 'ToAPIs · 720p · 快速版' },
-  { id: 'toapis-seedance-2-mini', label: 'Seedance 2 Mini (ToAPIs)', sub: 'ToAPIs · 720p · 多模态参考' },
+  { id: "__video_sep_toapis__", label: "—— ToAPIs(中转 Seedance 2)——", sub: "" },
+  { id: "toapis-seedance-2", label: "Seedance 2 (ToAPIs)", sub: "ToAPIs · 1080p/4k · 多模态" },
+  {
+    id: "toapis-seedance-2-fast",
+    label: "Seedance 2 Fast (ToAPIs)",
+    sub: "ToAPIs · 720p · 快速版",
+  },
+  {
+    id: "toapis-seedance-2-mini",
+    label: "Seedance 2 Mini (ToAPIs)",
+    sub: "ToAPIs · 720p · 多模态参考",
+  },
 
   // ---- k99.tw(Sora 风格 API · 视频生成,需 K99_API_KEY)----
-  { id: '__video_sep_k99__', label: '—— k99.tw ——', sub: '' },
-  { id: 'k99-fast-480p', label: 'k99 快速 480p', sub: 'k99.tw · 快速 · 480p' },
-  { id: 'k99-pro-1080p', label: 'k99 高清 1080p', sub: 'k99.tw · 高清 · 1080p' },
+  { id: "__video_sep_k99__", label: "—— k99.tw ——", sub: "" },
+  { id: "k99-fast-480p", label: "k99 快速 480p", sub: "k99.tw · 快速 · 480p" },
+  { id: "k99-pro-1080p", label: "k99 高清 1080p", sub: "k99.tw · 高清 · 1080p" },
 
   // ---- vapeur.ai(OpenAI 兼容 · Seedance 2.0,需 VAPEUR_API_KEY)----
-  { id: '__video_sep_vapeur__', label: '—— vapeur.ai ——', sub: '' },
-  { id: 'vapeur-doubao-seedance-2-0-260128', label: 'Seedance 2.0 (vapeur)', sub: 'vapeur.ai · Seedance 2.0 · 1080p' },
-  { id: 'vapeur-doubao-seedance-2-0-fast-260128', label: 'Seedance 2.0 Fast (vapeur)', sub: 'vapeur.ai · Seedance 2.0 Fast · 720p' },
+  { id: "__video_sep_vapeur__", label: "—— vapeur.ai ——", sub: "" },
+  {
+    id: "vapeur-doubao-seedance-2-0-260128",
+    label: "Seedance 2.0 (vapeur)",
+    sub: "vapeur.ai · Seedance 2.0 · 1080p",
+  },
+  {
+    id: "vapeur-doubao-seedance-2-0-fast-260128",
+    label: "Seedance 2.0 Fast (vapeur)",
+    sub: "vapeur.ai · Seedance 2.0 Fast · 720p",
+  },
 
   // ---- 备用:HappyHorse(阿里 DashScope)----
-  { id: '__video_sep__', label: '—— 备用:HappyHorse(DashScope)——', sub: '' },
-  { id: 'happyhorse-1.0-r2v', label: 'HappyHorse 1.0 (参考生视频)', sub: 'DashScope · 多参考图' },
-  { id: 'happyhorse-1.0-i2v', label: 'HappyHorse 1.0 (图生视频·首帧)', sub: 'DashScope · I2V' },
-  { id: 'happyhorse-1.0-t2v', label: 'HappyHorse 1.0 (文生视频)', sub: 'DashScope · T2V' },
-]
+  { id: "__video_sep__", label: "—— 备用:HappyHorse(DashScope)——", sub: "" },
+  { id: "happyhorse-1.0-r2v", label: "HappyHorse 1.0 (参考生视频)", sub: "DashScope · 多参考图" },
+  { id: "happyhorse-1.0-i2v", label: "HappyHorse 1.0 (图生视频·首帧)", sub: "DashScope · I2V" },
+  { id: "happyhorse-1.0-t2v", label: "HappyHorse 1.0 (文生视频)", sub: "DashScope · T2V" },
+];
 // 过滤掉"分隔符"项(只是 UI 视觉分组,不能选)
-const realVideoModels = videoModels.filter((m) => !m.id.startsWith('__video_sep'))
+const realVideoModels = videoModels.filter((m) => !m.id.startsWith("__video_sep"));
 
 const workflows = [
-  { id: 'grid', icon: Grid3x3, key: 'grid' },
-  { id: 'seq', icon: GitBranch, key: 'seq' },
-  { id: 'concurrent', icon: Zap, key: 'concurrent' },
-  { id: 'legacy', icon: Video, key: 'legacy' },
-] as const
+  { id: "grid", icon: Grid3x3, key: "grid" },
+  { id: "seq", icon: GitBranch, key: "seq" },
+  { id: "concurrent", icon: Zap, key: "concurrent" },
+  { id: "legacy", icon: Video, key: "legacy" },
+] as const;
 
 const styles = [
-  { id: '3d-cg', label: '3D CG', hot: true, cover: style3dCg },
-  { id: 'anime-jp', label: '动漫-日韩', hot: true, cover: styleAnimeJp },
-  { id: 'pixar', label: '3D-皮克斯卡通', cover: stylePixar },
-  { id: 'realistic', label: '写实-真人', hot: true, cover: styleRealistic },
-  { id: 'wuxia', label: '武侠水墨', hot: true, cover: styleWuxia },
-  { id: 'chibi', label: 'Q版萌系', cover: styleChibi },
-  { id: 'shinkai', label: '新海诚风', cover: styleShinkai },
-  { id: 'healing', label: '治愈手绘', cover: styleHealing },
-  { id: 'cyberpunk', label: '赛博朋克', hot: true, cover: styleCyberpunk },
-  { id: 'comic', label: '美漫风', cover: styleComic },
-  { id: 'pixel', label: '像素艺术', cover: stylePixel },
-  { id: 'clay', label: '黏土定格', cover: styleClay },
-]
+  { id: "3d-cg", label: "3D CG", hot: true, cover: style3dCg },
+  { id: "anime-jp", label: "动漫-日韩", hot: true, cover: styleAnimeJp },
+  { id: "pixar", label: "3D-皮克斯卡通", cover: stylePixar },
+  { id: "realistic", label: "写实-真人", hot: true, cover: styleRealistic },
+  { id: "wuxia", label: "武侠水墨", hot: true, cover: styleWuxia },
+  { id: "chibi", label: "Q版萌系", cover: styleChibi },
+  { id: "shinkai", label: "新海诚风", cover: styleShinkai },
+  { id: "healing", label: "治愈手绘", cover: styleHealing },
+  { id: "cyberpunk", label: "赛博朋克", hot: true, cover: styleCyberpunk },
+  { id: "comic", label: "美漫风", cover: styleComic },
+  { id: "pixel", label: "像素艺术", cover: stylePixel },
+  { id: "clay", label: "黏土定格", cover: styleClay },
+];
 
 export type ProjectConfig = {
-  aspect: string
-  storyboardModel: string
-  sceneModel: string
-  videoModel: string
-  audio: 'on' | 'off'
-  workflow: string
-  style: string
-  customCover?: string | null
-}
+  aspect: string;
+  storyboardModel: string;
+  sceneModel: string;
+  videoModel: string;
+  audio: "on" | "off";
+  workflow: string;
+  style: string;
+  customCover?: string | null;
+};
 
 export function NewProjectDialog({
   trigger,
@@ -186,9 +289,9 @@ export function NewProjectDialog({
   initial,
   onSaved,
 }: {
-  trigger?: ReactNode
-  open?: boolean
-  onOpenChange?: (open: boolean) => void
+  trigger?: ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
   /**
    * 2026/06:从父组件传入的"当前值"。
    *   - 用于编辑现有项目(基础设置按钮打开)—— state 初值用项目当前设置
@@ -196,83 +299,77 @@ export function NewProjectDialog({
    *   - 不传 = 新建模式,初值走 userPrefs → 硬编码 fallback
    *   - 传了 initial.id = 编辑模式,confirm 时 upsert 同 id,不 navigate
    */
-  initial?: Partial<ProjectConfig> & { id?: string }
+  initial?: Partial<ProjectConfig> & { id?: string };
   /** 编辑模式保存成功后的回调(父组件可刷新 project state) */
-  onSaved?: (saved: ProjectConfig & { id: string }) => void
+  onSaved?: (saved: ProjectConfig & { id: string }) => void;
 }) {
-  const { t } = useLanguage()
-  const navigate = useNavigate()
-  const { user } = useAuth()
-  const userId = user?.id
-  const saveProject = useServerFn(upsertProject)
-  const [openInner, setOpenInner] = useState(false)
-  const isControlled = openProp !== undefined
-  const open = isControlled ? !!openProp : openInner
+  const { t } = useLanguage();
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const userId = user?.id;
+  const saveProject = useServerFn(upsertProject);
+  const [openInner, setOpenInner] = useState(false);
+  const isControlled = openProp !== undefined;
+  const open = isControlled ? !!openProp : openInner;
   const setOpen = (v: boolean) => {
-    if (!isControlled) setOpenInner(v)
-    onOpenChange?.(v)
-  }
+    if (!isControlled) setOpenInner(v);
+    onOpenChange?.(v);
+  };
 
   // 2026/06:per-user 上次选择 —— 打开弹窗瞬间从 localStorage 读出来作为默认。
   // 没登录 / 没历史 → 用硬编码默认。避免每次建项目都从 Seedream 重新选。
   // 编辑现有项目时,initial 优先级 > userPrefs,确保用户看到的是项目当前设置。
-  const initialPrefs = useMemo(() => loadUserPrefs(userId), [userId])
+  const initialPrefs = useMemo(() => loadUserPrefs(userId), [userId]);
   const pickScene = () =>
-    initial?.sceneModel
-    || initial?.storyboardModel
-    || initialPrefs.lastSceneModel
-    || initialPrefs.lastImageModel
-    || 'doubao-seedream-5-0-260128'
+    initial?.sceneModel ||
+    initial?.storyboardModel ||
+    initialPrefs.lastSceneModel ||
+    initialPrefs.lastImageModel ||
+    "doubao-seedream-5-0-260128";
   const pickVideo = () =>
-    initial?.videoModel
-    || initialPrefs.lastVideoModel
-    || 'doubao-seedance-2-0-260128'
-  const [aspect, setAspect] = useState(() => initial?.aspect ?? '16:9')
-  const [customCover, setCustomCover] = useState<string | null>(
-    () => initial?.customCover ?? null,
-  )
-  const fileInputRef = useRef<HTMLInputElement>(null)
+    initial?.videoModel || initialPrefs.lastVideoModel || "doubao-seedance-2-0-260128";
+  const [aspect, setAspect] = useState(() => initial?.aspect ?? "16:9");
+  const [customCover, setCustomCover] = useState<string | null>(() => initial?.customCover ?? null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   // 2026 重构:默认全走火山方舟 Seedream(图像) + 阿里 HappyHorse(视频,实测可用)
-  const [storyboardModel, setStoryboardModel] = useState(pickScene)
+  const [storyboardModel, setStoryboardModel] = useState(pickScene);
   // Seedream 统一支持 T2I + I2I,没有 qwen-image-2.0-pro 那样的"I2I-only"坑
-  const [sceneModel, setSceneModel] = useState(pickScene)
+  const [sceneModel, setSceneModel] = useState(pickScene);
   // 2026/06:视频默认走火山方舟 Seedance 2.0 —— ARK 账户已开通,cURL 已验证
   // generateVideo 自动按 model id 路由到 ARK,分镜流程点"生成整组视频"直接走火山引擎
-  const [videoModel, setVideoModel] = useState(pickVideo)
-  const [audio, setAudio] = useState<'on' | 'off'>(
-    () => initial?.audio ?? initialPrefs.lastAudio ?? 'on',
-  )
+  const [videoModel, setVideoModel] = useState(pickVideo);
+  const [audio, setAudio] = useState<"on" | "off">(
+    () => initial?.audio ?? initialPrefs.lastAudio ?? "on",
+  );
   const [workflow, setWorkflow] = useState(
-    () => initial?.workflow ?? initialPrefs.lastWorkflow ?? 'grid',
-  )
-  const [style, setStyle] = useState(
-    () => initial?.style ?? initialPrefs.lastStyle ?? '3d-cg',
-  )
+    () => initial?.workflow ?? initialPrefs.lastWorkflow ?? "grid",
+  );
+  const [style, setStyle] = useState(() => initial?.style ?? initialPrefs.lastStyle ?? "3d-cg");
 
   // 用户改任何一个字段 → 写回 localStorage(per-user key)。
   // 这样下次开弹窗,无论换浏览器还是换账号,都能恢复到对应用户的偏好。
   useEffect(() => {
-    if (!userId) return
-    saveUserPrefs(userId, { lastSceneModel: sceneModel })
-  }, [sceneModel, userId])
+    if (!userId) return;
+    saveUserPrefs(userId, { lastSceneModel: sceneModel });
+  }, [sceneModel, userId]);
   useEffect(() => {
-    if (!userId) return
-    saveUserPrefs(userId, { lastVideoModel: videoModel })
-  }, [videoModel, userId])
+    if (!userId) return;
+    saveUserPrefs(userId, { lastVideoModel: videoModel });
+  }, [videoModel, userId]);
   useEffect(() => {
-    if (!userId) return
-    saveUserPrefs(userId, { lastAudio: audio })
-  }, [audio, userId])
+    if (!userId) return;
+    saveUserPrefs(userId, { lastAudio: audio });
+  }, [audio, userId]);
   useEffect(() => {
-    if (!userId) return
-    saveUserPrefs(userId, { lastWorkflow: workflow })
-  }, [workflow, userId])
+    if (!userId) return;
+    saveUserPrefs(userId, { lastWorkflow: workflow });
+  }, [workflow, userId]);
   useEffect(() => {
-    if (!userId) return
-    saveUserPrefs(userId, { lastStyle: style })
-  }, [style, userId])
+    if (!userId) return;
+    saveUserPrefs(userId, { lastStyle: style });
+  }, [style, userId]);
 
-  const estimate = (aspects.find((a) => a.id === aspect)?.cost ?? 11)
+  const estimate = aspects.find((a) => a.id === aspect)?.cost ?? 11;
 
   // ====================================================================
   // 2026/06:个性化模型选择 UX
@@ -281,8 +378,14 @@ export function NewProjectDialog({
   //     b64_json 返回,浏览器无需解析外网域名,适合内网/受限网络)
   //   - 非法 id(用户 pref 里残留但当前 catalog 没了)静默忽略
   // ====================================================================
-  type ModelOption = { id: string; label: string; sub?: string; _pinned?: boolean; _recommended?: boolean }
-  const isPixflow = (id: string) => id.startsWith('pixflow/') || id.startsWith('tokenflash/')
+  type ModelOption = {
+    id: string;
+    label: string;
+    sub?: string;
+    _pinned?: boolean;
+    _recommended?: boolean;
+  };
+  const isPixflow = (id: string) => id.startsWith("pixflow/") || id.startsWith("tokenflash/");
   /**
    * 重排模型列表:
    *   1) 置顶项(lastUsed)放在第 0 位,带 _pinned 标记
@@ -296,14 +399,14 @@ export function NewProjectDialog({
     const base: ModelOption[] = catalog.map((m) => ({
       ...m,
       _recommended: isPixflow(m.id),
-    }))
-    if (!lastUsedId) return base
-    const idx = base.findIndex((m) => m.id === lastUsedId)
-    if (idx === -1) return base
-    const [picked] = base.splice(idx, 1)
-    picked._pinned = true
-    picked._recommended = picked._recommended || isPixflow(picked.id)
-    return [picked, ...base]
+    }));
+    if (!lastUsedId) return base;
+    const idx = base.findIndex((m) => m.id === lastUsedId);
+    if (idx === -1) return base;
+    const [picked] = base.splice(idx, 1);
+    picked._pinned = true;
+    picked._recommended = picked._recommended || isPixflow(picked.id);
+    return [picked, ...base];
   }
 
   // 每次 render 都按"当前 storyboardModel/sceneModel/videoModel"
@@ -314,23 +417,23 @@ export function NewProjectDialog({
     () => reorderModels(storyboardModels, storyboardModel),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [storyboardModel],
-  )
+  );
   const orderedSceneModels = useMemo(
     () => reorderModels(sceneModels, sceneModel),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [sceneModel],
-  )
+  );
   const orderedVideoModels = useMemo(
     () => reorderModels(realVideoModels, videoModel),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [videoModel],
-  )
+  );
 
   async function confirm() {
     // 2026/06:编辑现有项目(initial.id 存在)时,upsert 同 id,不 navigate;
     // 新建项目时,生成新 id 并跳转到新 workspace。
-    const isEdit = !!initial?.id
-    const id = initial?.id ?? `ws-${Date.now().toString(36)}`
+    const isEdit = !!initial?.id;
+    const id = initial?.id ?? `ws-${Date.now().toString(36)}`;
     try {
       const res = await saveProject({
         data: {
@@ -344,14 +447,14 @@ export function NewProjectDialog({
           style,
           customCover: customCover ?? null,
         },
-      })
+      });
       if (!res.ok) {
-        toast.error('保存项目配置失败: ' + res.error)
-        return
+        toast.error("保存项目配置失败: " + res.error);
+        return;
       }
     } catch (e) {
-      toast.error('保存项目配置失败，请先登录')
-      return
+      toast.error("保存项目配置失败，请先登录");
+      return;
     }
     if (isEdit) {
       // 编辑模式:仅关闭弹窗,把保存后的结果回传给父组件(刷新 project state)。
@@ -366,20 +469,26 @@ export function NewProjectDialog({
         workflow,
         style,
         customCover: customCover ?? null,
-      })
-      setOpen(false)
-      return
+      });
+      setOpen(false);
+      return;
     }
-    setOpen(false)
-    navigate({ to: '/workspace/$workspaceId', params: { workspaceId: id } })
+    setOpen(false);
+    navigate({ to: "/workspace/$workspaceId", params: { workspaceId: id } });
   }
 
   const wfLabel: Record<string, string> = {
-    grid: t.np_workflow_grid, seq: t.np_workflow_seq, concurrent: t.np_workflow_concurrent, legacy: t.np_workflow_legacy,
-  }
+    grid: t.np_workflow_grid,
+    seq: t.np_workflow_seq,
+    concurrent: t.np_workflow_concurrent,
+    legacy: t.np_workflow_legacy,
+  };
   const wfDesc: Record<string, string> = {
-    grid: t.np_workflow_grid_desc, seq: t.np_workflow_seq_desc, concurrent: t.np_workflow_concurrent_desc, legacy: t.np_workflow_legacy_desc,
-  }
+    grid: t.np_workflow_grid_desc,
+    seq: t.np_workflow_seq_desc,
+    concurrent: t.np_workflow_concurrent_desc,
+    legacy: t.np_workflow_legacy_desc,
+  };
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -388,12 +497,19 @@ export function NewProjectDialog({
         <div className="flex items-center justify-between pb-3 border-b border-border">
           <h2 className="font-display text-xl font-bold">{t.np_title}</h2>
           <div className="text-xs text-text-muted">
-            {t.np_estimate_prefix} <span className="text-accent font-semibold">✦ {estimate}</span>{t.np_estimate_suffix}
+            {t.np_estimate_prefix} <span className="text-accent font-semibold">✦ {estimate}</span>
+            {t.np_estimate_suffix}
           </div>
         </div>
 
         <div className="grid md:grid-cols-3 gap-4 pt-4">
-          <FieldSelect label={t.np_aspect} hint={t.np_aspect_hint} value={aspect} onChange={setAspect} options={aspects.map((a) => ({ id: a.id, label: a.label }))} />
+          <FieldSelect
+            label={t.np_aspect}
+            hint={t.np_aspect_hint}
+            value={aspect}
+            onChange={setAspect}
+            options={aspects.map((a) => ({ id: a.id, label: a.label }))}
+          />
           <FieldSelect
             label={t.np_storyboard_model}
             hint={t.np_storyboard_model_hint}
@@ -426,12 +542,15 @@ export function NewProjectDialog({
           <div>
             <div className="text-sm font-semibold mb-1">{t.np_audio}</div>
             <div className="bg-bg-elevated border border-border rounded-lg px-3 py-2 flex items-center justify-between">
-              <span className="text-sm">{audio === 'on' ? t.np_audio_on : t.np_audio_off}</span>
+              <span className="text-sm">{audio === "on" ? t.np_audio_on : t.np_audio_off}</span>
               <div className="flex gap-1">
-                {(['on', 'off'] as const).map((m) => (
-                  <button key={m} onClick={() => setAudio(m)}
-                    className={`px-2 py-0.5 text-xs rounded-full border ${audio === m ? 'bg-accent text-accent-foreground border-accent' : 'border-border text-text-muted hover:text-text-primary'}`}>
-                    {m === 'on' ? t.np_audio_on : t.np_audio_off}
+                {(["on", "off"] as const).map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => setAudio(m)}
+                    className={`px-2 py-0.5 text-xs rounded-full border ${audio === m ? "bg-accent text-accent-foreground border-accent" : "border-border text-text-muted hover:text-text-primary"}`}
+                  >
+                    {m === "on" ? t.np_audio_on : t.np_audio_off}
                   </button>
                 ))}
               </div>
@@ -443,20 +562,29 @@ export function NewProjectDialog({
           <div className="text-sm font-semibold mb-2">{t.np_workflow}</div>
           <div className="grid sm:grid-cols-2 gap-3">
             {workflows.map((w) => {
-              const Icon = w.icon
-              const active = workflow === w.id
+              const Icon = w.icon;
+              const active = workflow === w.id;
               return (
-                <button key={w.id} onClick={() => setWorkflow(w.id)}
-                  className={`text-left rounded-xl border p-3 flex gap-3 transition ${active ? 'border-accent bg-accent-dim/30 shadow-glow' : 'border-border bg-bg-elevated hover:border-border-glow'}`}>
-                  <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${active ? 'bg-accent text-accent-foreground' : 'bg-bg-surface text-text-muted'}`}>
+                <button
+                  key={w.id}
+                  onClick={() => setWorkflow(w.id)}
+                  className={`text-left rounded-xl border p-3 flex gap-3 transition ${active ? "border-accent bg-accent-dim/30 shadow-glow" : "border-border bg-bg-elevated hover:border-border-glow"}`}
+                >
+                  <div
+                    className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${active ? "bg-accent text-accent-foreground" : "bg-bg-surface text-text-muted"}`}
+                  >
                     <Icon size={18} />
                   </div>
                   <div>
-                    <div className={`font-semibold text-sm ${active ? 'text-accent' : ''}`}>{wfLabel[w.id]}</div>
-                    <div className="text-xs text-text-muted leading-snug mt-0.5">{wfDesc[w.id]}</div>
+                    <div className={`font-semibold text-sm ${active ? "text-accent" : ""}`}>
+                      {wfLabel[w.id]}
+                    </div>
+                    <div className="text-xs text-text-muted leading-snug mt-0.5">
+                      {wfDesc[w.id]}
+                    </div>
                   </div>
                 </button>
-              )
+              );
             })}
           </div>
         </div>
@@ -465,27 +593,46 @@ export function NewProjectDialog({
           <div className="text-sm font-semibold mb-2">{t.np_style}</div>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             {styles.map((s) => {
-              const active = style === s.id
+              const active = style === s.id;
               return (
-                <button key={s.id} onClick={() => setStyle(s.id)}
-                  className={`relative rounded-xl overflow-hidden border-2 text-left bg-bg-elevated transition group ${active ? 'border-accent shadow-glow' : 'border-transparent hover:border-border'}`}>
+                <button
+                  key={s.id}
+                  onClick={() => setStyle(s.id)}
+                  className={`relative rounded-xl overflow-hidden border-2 text-left bg-bg-elevated transition group ${active ? "border-accent shadow-glow" : "border-transparent hover:border-border"}`}
+                >
                   <div className="aspect-square overflow-hidden">
-                    <img src={s.cover} alt={s.label} loading="lazy" width={512} height={512}
-                      className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105" />
+                    <img
+                      src={s.cover}
+                      alt={s.label}
+                      loading="lazy"
+                      width={512}
+                      height={512}
+                      className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+                    />
                   </div>
                   {s.hot && (
                     <span className="absolute top-1.5 right-1.5 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-full bg-rose-500/90 text-white text-[10px]">
                       <Flame size={10} /> {t.np_style_hot}
                     </span>
                   )}
-                  <div className={`px-2 py-1.5 text-xs ${active ? 'text-accent font-semibold' : 'text-text-secondary'}`}>{s.label}</div>
-                  {active && <Check className="absolute top-1.5 left-1.5 text-accent bg-bg-surface rounded-full p-0.5" size={18} />}
+                  <div
+                    className={`px-2 py-1.5 text-xs ${active ? "text-accent font-semibold" : "text-text-secondary"}`}
+                  >
+                    {s.label}
+                  </div>
+                  {active && (
+                    <Check
+                      className="absolute top-1.5 left-1.5 text-accent bg-bg-surface rounded-full p-0.5"
+                      size={18}
+                    />
+                  )}
                 </button>
-              )
+              );
             })}
             <button
               onClick={() => fileInputRef.current?.click()}
-              className={`relative rounded-xl overflow-hidden border-2 text-left bg-bg-elevated transition ${style === 'custom' ? 'border-accent shadow-glow' : 'border-dashed border-border hover:border-accent/60'}`}>
+              className={`relative rounded-xl overflow-hidden border-2 text-left bg-bg-elevated transition ${style === "custom" ? "border-accent shadow-glow" : "border-dashed border-border hover:border-accent/60"}`}
+            >
               <div className="aspect-square flex items-center justify-center bg-gradient-to-br from-bg-elevated to-bg-surface">
                 {customCover ? (
                   <img src={customCover} alt="custom" className="w-full h-full object-cover" />
@@ -498,63 +645,92 @@ export function NewProjectDialog({
                   </div>
                 )}
               </div>
-              <div className={`px-2 py-1.5 text-xs ${style === 'custom' ? 'text-accent font-semibold' : 'text-text-secondary'}`}>
+              <div
+                className={`px-2 py-1.5 text-xs ${style === "custom" ? "text-accent font-semibold" : "text-text-secondary"}`}
+              >
                 {t.np_style_custom}
               </div>
-              {style === 'custom' && <Check className="absolute top-1.5 left-1.5 text-accent bg-bg-surface rounded-full p-0.5" size={18} />}
+              {style === "custom" && (
+                <Check
+                  className="absolute top-1.5 left-1.5 text-accent bg-bg-surface rounded-full p-0.5"
+                  size={18}
+                />
+              )}
             </button>
-            <input ref={fileInputRef} type="file" accept="image/*" className="hidden"
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
               onChange={(e) => {
-                const f = e.target.files?.[0]
-                if (!f) return
-                const url = URL.createObjectURL(f)
-                setCustomCover(url)
-                setStyle('custom')
-              }} />
+                const f = e.target.files?.[0];
+                if (!f) return;
+                const url = URL.createObjectURL(f);
+                setCustomCover(url);
+                setStyle("custom");
+              }}
+            />
           </div>
         </div>
 
         <div className="flex justify-center pt-5">
-          <button onClick={confirm} className="px-10 py-2.5 rounded-full bg-accent text-accent-foreground font-semibold hover:opacity-90 inline-flex items-center gap-2">
+          <button
+            onClick={confirm}
+            className="px-10 py-2.5 rounded-full bg-accent text-accent-foreground font-semibold hover:opacity-90 inline-flex items-center gap-2"
+          >
             <Check size={16} /> {t.np_confirm}
           </button>
-          <button onClick={() => setOpen(false)} className="ml-2 px-4 py-2.5 rounded-full text-text-muted hover:text-text-primary inline-flex items-center gap-1">
+          <button
+            onClick={() => setOpen(false)}
+            className="ml-2 px-4 py-2.5 rounded-full text-text-muted hover:text-text-primary inline-flex items-center gap-1"
+          >
             <X size={14} /> {t.np_cancel}
           </button>
         </div>
       </DialogContent>
     </Dialog>
-  )
+  );
 }
 
 function FieldSelect({
-  label, hint, value, onChange, options, pinnedLabel, recommendedLabel,
+  label,
+  hint,
+  value,
+  onChange,
+  options,
+  pinnedLabel,
+  recommendedLabel,
 }: {
-  label: string
-  hint?: string
-  value: string
-  onChange: (v: string) => void
-  options: { id: string; label: string; sub?: string; _pinned?: boolean; _recommended?: boolean }[]
-  pinnedLabel?: string
-  recommendedLabel?: string
+  label: string;
+  hint?: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: { id: string; label: string; sub?: string; _pinned?: boolean; _recommended?: boolean }[];
+  pinnedLabel?: string;
+  recommendedLabel?: string;
 }) {
   return (
     <div>
       <div className="text-sm font-semibold">{label}</div>
       {hint && <div className="text-[11px] text-text-muted mb-1">{hint}</div>}
       <div className="relative">
-        <select value={value} onChange={(e) => onChange(e.target.value)}
-          className="w-full appearance-none bg-bg-elevated border border-border rounded-lg pl-3 pr-8 py-2 text-sm focus:outline-none focus:border-accent">
+        <select
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="w-full appearance-none bg-bg-elevated border border-border rounded-lg pl-3 pr-8 py-2 text-sm focus:outline-none focus:border-accent"
+        >
           {options.map((o) => {
             // 原生 <option> 不支持复杂 markup,只能拼文本,但可以用
             // 前缀字符 (🕐 / ✨) 让用户在浏览器下拉里直观看到标记。
             // _pinned 优先于 _recommended —— 同一项是"最近使用 + 推荐"时只显示一个。
-            const prefix = o._pinned ? '🕐 ' : o._recommended ? '✨ ' : ''
+            const prefix = o._pinned ? "🕐 " : o._recommended ? "✨ " : "";
             return (
               <option key={o.id} value={o.id}>
-                {prefix}{o.label}{o.sub ? ` — ${o.sub}` : ''}
+                {prefix}
+                {o.label}
+                {o.sub ? ` — ${o.sub}` : ""}
               </option>
-            )
+            );
           })}
         </select>
         {/* select 右侧的图标:被置顶的项显示"最近使用"提示,推荐的项显示 sparkle */}
@@ -577,9 +753,12 @@ function FieldSelect({
             <span className="hidden lg:inline">{recommendedLabel}</span>
           </span>
         ) : (
-          <Sparkles size={12} className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none" />
+          <Sparkles
+            size={12}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none"
+          />
         )}
       </div>
     </div>
-  )
+  );
 }

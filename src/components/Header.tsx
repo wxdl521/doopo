@@ -1,43 +1,43 @@
-import { useState, useRef, useEffect } from 'react'
-import { Link, useNavigate } from '@tanstack/react-router'
-import { ChevronDown, MessageCircle, Sparkles, Sun, Moon, Globe, User, LogOut } from 'lucide-react'
-import Logo from './Logo'
-import { useTheme } from '../context/ThemeContext'
-import { useLanguage } from '../i18n/LanguageContext'
-import { useAuth } from '../hooks/useAuth'
+import { useState, useRef, useEffect } from "react";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { ChevronDown, MessageCircle, Sparkles, Sun, Moon, Globe, User, LogOut } from "lucide-react";
+import Logo from "./Logo";
+import { useTheme } from "../context/ThemeContext";
+import { useLanguage } from "../i18n/LanguageContext";
+import { useAuth } from "../hooks/useAuth";
 
 export default function Header() {
-  const { theme, toggleTheme } = useTheme()
-  const { lang, setLang, t } = useLanguage()
-  const { isAuthenticated, loading, user, signOut } = useAuth()
-  const navigate = useNavigate()
-  const [menuOpen, setMenuOpen] = useState(false)
-  const menuRef = useRef<HTMLDivElement>(null)
+  const { theme, toggleTheme } = useTheme();
+  const { lang, setLang, t } = useLanguage();
+  const { isAuthenticated, loading, user, signOut } = useAuth();
+  const navigate = useNavigate();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false)
+        setMenuOpen(false);
       }
     }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [])
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   const handleLogout = async () => {
-    setMenuOpen(false)
-    await signOut()
-    navigate({ to: '/home' })
-  }
+    setMenuOpen(false);
+    await signOut();
+    navigate({ to: "/home" });
+  };
 
   const topLinks = [
-    { to: '/zoclaw', label: t.nav_openclaw, accent: true },
-    { to: '/team', label: t.nav_team },
-    { to: '/admin', label: t.nav_admin },
-    { to: '/community', label: '社区' },
-    { to: '/showcase', label: t.nav_showcase },
-    { to: '/pricing', label: t.nav_pricing },
-  ]
+    { to: "/zoclaw", label: t.nav_openclaw, accent: true },
+    { to: "/team", label: t.nav_team },
+    { to: "/admin", label: t.nav_admin },
+    { to: "/community", label: "社区" },
+    { to: "/showcase", label: t.nav_showcase },
+    { to: "/pricing", label: t.nav_pricing },
+  ];
 
   return (
     <header className="sticky top-0 z-30 backdrop-blur-md bg-bg/70 border-b border-border">
@@ -51,13 +51,11 @@ export default function Header() {
                 to={l.to}
                 className={`px-3 py-1.5 rounded-full transition-all duration-200 ${
                   l.accent
-                    ? 'text-accent hover:bg-accent-dim border border-accent/30'
-                    : 'text-text-secondary hover:text-text-primary'
+                    ? "text-accent hover:bg-accent-dim border border-accent/30"
+                    : "text-text-secondary hover:text-text-primary"
                 }`}
                 activeProps={
-                  l.accent
-                    ? undefined
-                    : { className: '!text-text-primary !bg-bg-elevated' }
+                  l.accent ? undefined : { className: "!text-text-primary !bg-bg-elevated" }
                 }
               >
                 {l.accent && <Sparkles size={12} className="inline mr-1 -mt-0.5" />}
@@ -81,33 +79,103 @@ export default function Header() {
           <button
             onClick={toggleTheme}
             className="w-9 h-9 rounded-full flex items-center justify-center border border-border bg-bg-elevated hover:border-accent/50 hover:text-accent text-text-secondary transition flex-shrink-0"
-            title={theme === 'light' ? t.header_theme_to_dark : t.header_theme_to_light}
+            title={theme === "light" ? t.header_theme_to_dark : t.header_theme_to_light}
           >
-            {theme === 'light' ? <Moon size={15} /> : <Sun size={15} />}
+            {theme === "light" ? <Moon size={15} /> : <Sun size={15} />}
           </button>
 
           {/* Language Switcher */}
           <div className="relative group flex-shrink-0">
             <button className="flex items-center gap-1 md:gap-1.5 px-2.5 md:px-3 py-1.5 rounded-full text-sm font-medium border border-border bg-bg-elevated hover:border-accent/50 hover:text-accent text-text-secondary transition">
               <Globe size={14} />
-              <span>{lang === 'zh' ? '中文' : lang === 'en' ? 'EN' : lang}</span>
+              <span>{lang === "zh" ? "中文" : lang === "en" ? "EN" : lang}</span>
               <ChevronDown size={12} className="group-hover:rotate-180 transition-transform" />
             </button>
             <div className="absolute right-0 top-full mt-1.5 py-1.5 rounded-xl border border-border bg-bg-surface shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 min-w-[120px] max-h-[300px] overflow-y-auto">
-              <button onClick={() => setLang('zh')} className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === 'zh' ? 'text-accent font-semibold' : 'text-text-secondary'}`}>中文</button>
-              <button onClick={() => setLang('en')} className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === 'en' ? 'text-accent font-semibold' : 'text-text-secondary'}`}>EN</button>
-              <button onClick={() => setLang('ja')} className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === 'ja' ? 'text-accent font-semibold' : 'text-text-secondary'}`}>日本語</button>
-              <button onClick={() => setLang('ko')} className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === 'ko' ? 'text-accent font-semibold' : 'text-text-secondary'}`}>한국어</button>
-              <button onClick={() => setLang('fr')} className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === 'fr' ? 'text-accent font-semibold' : 'text-text-secondary'}`}>Français</button>
-              <button onClick={() => setLang('es')} className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === 'es' ? 'text-accent font-semibold' : 'text-text-secondary'}`}>Español</button>
-              <button onClick={() => setLang('de')} className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === 'de' ? 'text-accent font-semibold' : 'text-text-secondary'}`}>Deutsch</button>
-              <button onClick={() => setLang('pt')} className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === 'pt' ? 'text-accent font-semibold' : 'text-text-secondary'}`}>Português</button>
-              <button onClick={() => setLang('it')} className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === 'it' ? 'text-accent font-semibold' : 'text-text-secondary'}`}>Italiano</button>
-              <button onClick={() => setLang('ru')} className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === 'ru' ? 'text-accent font-semibold' : 'text-text-secondary'}`}>Русский</button>
-              <button onClick={() => setLang('ar')} className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === 'ar' ? 'text-accent font-semibold' : 'text-text-secondary'}`}>العربية</button>
-              <button onClick={() => setLang('th')} className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === 'th' ? 'text-accent font-semibold' : 'text-text-secondary'}`}>ไทย</button>
-              <button onClick={() => setLang('vi')} className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === 'vi' ? 'text-accent font-semibold' : 'text-text-secondary'}`}>Tiếng Việt</button>
-              <button onClick={() => setLang('id')} className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === 'id' ? 'text-accent font-semibold' : 'text-text-secondary'}`}>Indonesia</button>
+              <button
+                onClick={() => setLang("zh")}
+                className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === "zh" ? "text-accent font-semibold" : "text-text-secondary"}`}
+              >
+                中文
+              </button>
+              <button
+                onClick={() => setLang("en")}
+                className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === "en" ? "text-accent font-semibold" : "text-text-secondary"}`}
+              >
+                EN
+              </button>
+              <button
+                onClick={() => setLang("ja")}
+                className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === "ja" ? "text-accent font-semibold" : "text-text-secondary"}`}
+              >
+                日本語
+              </button>
+              <button
+                onClick={() => setLang("ko")}
+                className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === "ko" ? "text-accent font-semibold" : "text-text-secondary"}`}
+              >
+                한국어
+              </button>
+              <button
+                onClick={() => setLang("fr")}
+                className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === "fr" ? "text-accent font-semibold" : "text-text-secondary"}`}
+              >
+                Français
+              </button>
+              <button
+                onClick={() => setLang("es")}
+                className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === "es" ? "text-accent font-semibold" : "text-text-secondary"}`}
+              >
+                Español
+              </button>
+              <button
+                onClick={() => setLang("de")}
+                className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === "de" ? "text-accent font-semibold" : "text-text-secondary"}`}
+              >
+                Deutsch
+              </button>
+              <button
+                onClick={() => setLang("pt")}
+                className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === "pt" ? "text-accent font-semibold" : "text-text-secondary"}`}
+              >
+                Português
+              </button>
+              <button
+                onClick={() => setLang("it")}
+                className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === "it" ? "text-accent font-semibold" : "text-text-secondary"}`}
+              >
+                Italiano
+              </button>
+              <button
+                onClick={() => setLang("ru")}
+                className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === "ru" ? "text-accent font-semibold" : "text-text-secondary"}`}
+              >
+                Русский
+              </button>
+              <button
+                onClick={() => setLang("ar")}
+                className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === "ar" ? "text-accent font-semibold" : "text-text-secondary"}`}
+              >
+                العربية
+              </button>
+              <button
+                onClick={() => setLang("th")}
+                className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === "th" ? "text-accent font-semibold" : "text-text-secondary"}`}
+              >
+                ไทย
+              </button>
+              <button
+                onClick={() => setLang("vi")}
+                className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === "vi" ? "text-accent font-semibold" : "text-text-secondary"}`}
+              >
+                Tiếng Việt
+              </button>
+              <button
+                onClick={() => setLang("id")}
+                className={`w-full text-left px-4 py-2 text-sm hover:bg-bg-elevated transition-colors ${lang === "id" ? "text-accent font-semibold" : "text-text-secondary"}`}
+              >
+                Indonesia
+              </button>
             </div>
           </div>
 
@@ -116,15 +184,19 @@ export default function Header() {
             <span className="text-text-primary">70</span>
           </div>
 
-          <button className="hidden sm:inline-flex px-4 py-1.5 rounded-full text-sm font-semibold
+          <button
+            className="hidden sm:inline-flex px-4 py-1.5 rounded-full text-sm font-semibold
                              bg-gradient-to-r from-fuchsia-500 to-orange-400 text-white
-                             hover:opacity-90 transition shadow-card">
+                             hover:opacity-90 transition shadow-card"
+          >
             {t.header_upgrade}
           </button>
 
           {!loading && !isAuthenticated ? (
-            <Link to="/login"
-                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-sm font-medium border border-accent/40 text-accent bg-accent-dim hover:bg-accent/20 transition flex-shrink-0">
+            <Link
+              to="/login"
+              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-sm font-medium border border-accent/40 text-accent bg-accent-dim hover:bg-accent/20 transition flex-shrink-0"
+            >
               登录
             </Link>
           ) : (
@@ -168,5 +240,5 @@ export default function Header() {
         </div>
       </div>
     </header>
-  )
+  );
 }

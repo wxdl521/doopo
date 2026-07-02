@@ -21,30 +21,30 @@
 //  自动剥离这个前缀再发给 Pixflow。
 // ====================================================================
 
-import './loadEnv'
-import { createServerFn } from '@tanstack/react-start'
-import { z } from 'zod'
+import "./loadEnv";
+import { createServerFn } from "@tanstack/react-start";
+import { z } from "zod";
 
-const DEFAULT_BASE_URL = 'https://api.pixflow.im'
+const DEFAULT_BASE_URL = "https://api.pixflow.im";
 // Pixflow 文档建议:图片请求超时设到 ~400s,文本请求保持较短即可
-const REQUEST_TIMEOUT_MS = 120_000
-const IMAGE_REQUEST_TIMEOUT_MS = 400_000
-const PIXFLOW_PREFIX = 'pixflow/'
+const REQUEST_TIMEOUT_MS = 120_000;
+const IMAGE_REQUEST_TIMEOUT_MS = 400_000;
+const PIXFLOW_PREFIX = "pixflow/";
 
 export function isPixflowModel(modelId: string | null | undefined): boolean {
-  return !!modelId && modelId.toLowerCase().startsWith(PIXFLOW_PREFIX)
+  return !!modelId && modelId.toLowerCase().startsWith(PIXFLOW_PREFIX);
 }
 
 /** 剥离 `pixflow/` 前缀,得到真正的 upstream model id */
 export function stripPixflowPrefix(modelId: string): string {
-  return modelId.replace(/^pixflow\//i, '')
+  return modelId.replace(/^pixflow\//i, "");
 }
 
 function getPixflowConfig() {
   return {
     apiKey: process.env.PIXFLOW_API_KEY,
-    baseUrl: (process.env.GOOGLE_GEMINI_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, ''),
-  }
+    baseUrl: (process.env.GOOGLE_GEMINI_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, ""),
+  };
 }
 
 /**
@@ -53,62 +53,62 @@ function getPixflowConfig() {
  * 否则回落到通用 PIXFLOW_API_KEY。
  */
 function pickPixflowKey(model: string): string | undefined {
-  const generic = process.env.PIXFLOW_API_KEY
+  const generic = process.env.PIXFLOW_API_KEY;
   if (/^gemini-/i.test(model)) {
-    return process.env.PIXFLOW_GEMINI_API_KEY || generic
+    return process.env.PIXFLOW_GEMINI_API_KEY || generic;
   }
   if (/^gpt-/i.test(model)) {
-    return process.env.OPENAI_API_KEY || process.env.PIXFLOW_OPENAI_API_KEY || generic
+    return process.env.OPENAI_API_KEY || process.env.PIXFLOW_OPENAI_API_KEY || generic;
   }
-  return generic
+  return generic;
 }
 
 // ---------- Image generation ----------
 
 type PixflowImageInput = {
-  prompt: string
-  model: string
-  size?: string
-  n?: number
+  prompt: string;
+  model: string;
+  size?: string;
+  n?: number;
   /** OpenAI quality 字段(auto/low/high);仅 gpt-image-* 走 OpenAI 兼容时下发 */
-  quality?: 'auto' | 'low' | 'high'
+  quality?: "auto" | "low" | "high";
   /** I2I 参考图 URL 列表(Gemini Native 会下载后转 base64 注入) */
-  referenceImages?: string[]
-}
+  referenceImages?: string[];
+};
 
 type PixflowImageResult = {
-  url: string
-  urls: string[]
-  error: string | null
-  model: string
-}
+  url: string;
+  urls: string[];
+  error: string | null;
+  model: string;
+};
 
 /** 把 size 字符串(1024x1024 / 1K / 2K)折算成 Gemini imageConfig.imageSize 档位 */
-function toGeminiImageSize(size?: string): '1K' | '2K' | '4K' {
-  if (!size) return '1K'
-  const s = size.trim().toUpperCase()
-  if (s === '1K' || s === '2K' || s === '4K') return s as '1K' | '2K' | '4K'
-  const m = s.match(/^(\d+)\s*[xX*]\s*(\d+)$/)
+function toGeminiImageSize(size?: string): "1K" | "2K" | "4K" {
+  if (!size) return "1K";
+  const s = size.trim().toUpperCase();
+  if (s === "1K" || s === "2K" || s === "4K") return s as "1K" | "2K" | "4K";
+  const m = s.match(/^(\d+)\s*[xX*]\s*(\d+)$/);
   if (m) {
-    const pixels = parseInt(m[1], 10) * parseInt(m[2], 10)
-    if (pixels >= 4_000_000) return '2K'
+    const pixels = parseInt(m[1], 10) * parseInt(m[2], 10);
+    if (pixels >= 4_000_000) return "2K";
   }
-  return '1K'
+  return "1K";
 }
 
 /** 下载 URL 转 base64 + mime,失败返回 null(跳过该参考图) */
 async function urlToInlineData(url: string): Promise<{ mimeType: string; data: string } | null> {
   try {
-    const ctl = new AbortController()
-    const tm = setTimeout(() => ctl.abort(), 20_000)
-    const r = await fetch(url, { signal: ctl.signal })
-    clearTimeout(tm)
-    if (!r.ok) return null
-    const buf = Buffer.from(await r.arrayBuffer())
-    const mime = r.headers.get('content-type')?.split(';')[0]?.trim() || 'image/png'
-    return { mimeType: mime, data: buf.toString('base64') }
+    const ctl = new AbortController();
+    const tm = setTimeout(() => ctl.abort(), 20_000);
+    const r = await fetch(url, { signal: ctl.signal });
+    clearTimeout(tm);
+    if (!r.ok) return null;
+    const buf = Buffer.from(await r.arrayBuffer());
+    const mime = r.headers.get("content-type")?.split(";")[0]?.trim() || "image/png";
+    return { mimeType: mime, data: buf.toString("base64") };
   } catch {
-    return null
+    return null;
   }
 }
 
@@ -117,90 +117,115 @@ async function urlToInlineData(url: string): Promise<{ mimeType: string; data: s
  * 返回与 Seedream/Qwen 一致的 { url, urls, error, model }。
  */
 export async function callPixflowImage(input: PixflowImageInput): Promise<PixflowImageResult> {
-  const { baseUrl } = getPixflowConfig()
-  const model = stripPixflowPrefix(input.model)
-  const apiKey = pickPixflowKey(model)
-  const refCount = input.referenceImages?.length ?? 0
-  const protocol = /^gemini-/i.test(model) ? 'gemini-native' : 'openai-compat'
-  const endpointHint = protocol === 'gemini-native'
-    ? `/v1beta/models/${model}:generateContent`
-    : (refCount > 0 ? '/v1/images/edits' : '/v1/images/generations')
-  const t0 = Date.now()
-  console.log(`[pixflow→] model=${model} protocol=${protocol} endpoint=${endpointHint} refs=${refCount} size=${input.size ?? 'default'} quality=${input.quality ?? 'auto'}`)
+  const { baseUrl } = getPixflowConfig();
+  const model = stripPixflowPrefix(input.model);
+  const apiKey = pickPixflowKey(model);
+  const refCount = input.referenceImages?.length ?? 0;
+  const protocol = /^gemini-/i.test(model) ? "gemini-native" : "openai-compat";
+  const endpointHint =
+    protocol === "gemini-native"
+      ? `/v1beta/models/${model}:generateContent`
+      : refCount > 0
+        ? "/v1/images/edits"
+        : "/v1/images/generations";
+  const t0 = Date.now();
+  console.log(
+    `[pixflow→] model=${model} protocol=${protocol} endpoint=${endpointHint} refs=${refCount} size=${input.size ?? "default"} quality=${input.quality ?? "auto"}`,
+  );
   if (!apiKey) {
-    const needed = /^gemini-/i.test(model) ? 'PIXFLOW_GEMINI_API_KEY (or PIXFLOW_API_KEY)' : /^gpt-/i.test(model) ? 'PIXFLOW_OPENAI_API_KEY (or PIXFLOW_API_KEY)' : 'PIXFLOW_API_KEY'
-    console.warn(`[pixflow×] model=${model} missing ${needed}`)
-    return { url: '', urls: [], error: `${needed} not configured`, model }
+    const needed = /^gemini-/i.test(model)
+      ? "PIXFLOW_GEMINI_API_KEY (or PIXFLOW_API_KEY)"
+      : /^gpt-/i.test(model)
+        ? "PIXFLOW_OPENAI_API_KEY (or PIXFLOW_API_KEY)"
+        : "PIXFLOW_API_KEY";
+    console.warn(`[pixflow×] model=${model} missing ${needed}`);
+    return { url: "", urls: [], error: `${needed} not configured`, model };
   }
 
   // ----- Gemini 系列走 Native generateContent(图像模型返回 inlineData)-----
   if (/^gemini-/i.test(model)) {
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
       const parts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [
         { text: input.prompt },
-      ]
+      ];
       if (input.referenceImages?.length) {
         for (const url of input.referenceImages) {
-          const inline = await urlToInlineData(url)
-          if (inline) parts.push({ inlineData: inline })
+          const inline = await urlToInlineData(url);
+          if (inline) parts.push({ inlineData: inline });
         }
       }
-      const res = await fetch(`${baseUrl}/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': apiKey,
-        },
-        body: JSON.stringify({
-          contents: [{ role: 'user', parts }],
-          generationConfig: {
-            responseModalities: ['TEXT', 'IMAGE'],
-            imageConfig: { imageSize: toGeminiImageSize(input.size) },
+      const res = await fetch(
+        `${baseUrl}/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": apiKey,
           },
-        }),
-        signal: controller.signal,
-      })
-      clearTimeout(timeout)
+          body: JSON.stringify({
+            contents: [{ role: "user", parts }],
+            generationConfig: {
+              responseModalities: ["TEXT", "IMAGE"],
+              imageConfig: { imageSize: toGeminiImageSize(input.size) },
+            },
+          }),
+          signal: controller.signal,
+        },
+      );
+      clearTimeout(timeout);
       if (!res.ok) {
-        const text = await res.text().catch(() => '')
-        console.warn(`[pixflow×] model=${model} status=${res.status} dur=${Date.now() - t0}ms body=${text.slice(0, 200)}`)
-        return { url: '', urls: [], error: `[pixflow ${model}] ${res.status}: ${text.slice(0, 300)}`, model }
+        const text = await res.text().catch(() => "");
+        console.warn(
+          `[pixflow×] model=${model} status=${res.status} dur=${Date.now() - t0}ms body=${text.slice(0, 200)}`,
+        );
+        return {
+          url: "",
+          urls: [],
+          error: `[pixflow ${model}] ${res.status}: ${text.slice(0, 300)}`,
+          model,
+        };
       }
       const json = (await res.json()) as {
-        candidates?: Array<{ content?: { parts?: Array<{ inlineData?: { mimeType?: string; data?: string } }> } }>
-        error?: { message?: string }
-      }
-      const urls: string[] = []
+        candidates?: Array<{
+          content?: { parts?: Array<{ inlineData?: { mimeType?: string; data?: string } }> };
+        }>;
+        error?: { message?: string };
+      };
+      const urls: string[] = [];
       for (const cand of json.candidates ?? []) {
         for (const part of cand.content?.parts ?? []) {
           if (part.inlineData?.data) {
-            const mime = part.inlineData.mimeType || 'image/png'
-            urls.push(`data:${mime};base64,${part.inlineData.data}`)
+            const mime = part.inlineData.mimeType || "image/png";
+            urls.push(`data:${mime};base64,${part.inlineData.data}`);
           }
         }
       }
       if (urls.length === 0) {
-        console.warn(`[pixflow×] model=${model} empty-candidates dur=${Date.now() - t0}ms err=${json.error?.message ?? ''}`)
+        console.warn(
+          `[pixflow×] model=${model} empty-candidates dur=${Date.now() - t0}ms err=${json.error?.message ?? ""}`,
+        );
         return {
-          url: '',
+          url: "",
           urls: [],
-          error: `[pixflow ${model}] no image returned: ${json.error?.message || 'empty candidates'}`,
+          error: `[pixflow ${model}] no image returned: ${json.error?.message || "empty candidates"}`,
           model,
-        }
+        };
       }
-      console.log(`[pixflow✓] model=${model} images=${urls.length} dur=${Date.now() - t0}ms`)
-      return { url: urls[0], urls, error: null, model }
+      console.log(`[pixflow✓] model=${model} images=${urls.length} dur=${Date.now() - t0}ms`);
+      return { url: urls[0], urls, error: null, model };
     } catch (e) {
-      clearTimeout(timeout)
-      console.warn(`[pixflow×] model=${model} network dur=${Date.now() - t0}ms err=${e instanceof Error ? e.message : 'fetch failed'}`)
+      clearTimeout(timeout);
+      console.warn(
+        `[pixflow×] model=${model} network dur=${Date.now() - t0}ms err=${e instanceof Error ? e.message : "fetch failed"}`,
+      );
       return {
-        url: '',
+        url: "",
         urls: [],
-        error: `[pixflow ${model}] network: ${e instanceof Error ? e.message : 'fetch failed'}`,
+        error: `[pixflow ${model}] network: ${e instanceof Error ? e.message : "fetch failed"}`,
         model,
-      }
+      };
     }
   }
 
@@ -211,185 +236,211 @@ export async function callPixflowImage(input: PixflowImageInput): Promise<Pixflo
   //     会被拒为 "failed to parse multipart form")。我们从 URL 拉取参考图
   //     转 Blob 后用 FormData 上传;若所有参考图下载失败,退回到
   //     /v1/images/generations(纯 T2I)。
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), IMAGE_REQUEST_TIMEOUT_MS)
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), IMAGE_REQUEST_TIMEOUT_MS);
   try {
-    const wantRefs = !!input.referenceImages?.length
-    let endpoint: '/v1/images/edits' | '/v1/images/generations' = wantRefs
-      ? '/v1/images/edits'
-      : '/v1/images/generations'
-    let reqInit: RequestInit
+    const wantRefs = !!input.referenceImages?.length;
+    let endpoint: "/v1/images/edits" | "/v1/images/generations" = wantRefs
+      ? "/v1/images/edits"
+      : "/v1/images/generations";
+    let reqInit: RequestInit;
 
     if (wantRefs) {
       // 把参考图 URL 全部下载成 Blob
-      const blobs: Array<{ blob: Blob; filename: string }> = []
+      const blobs: Array<{ blob: Blob; filename: string }> = [];
       for (let i = 0; i < input.referenceImages!.length; i++) {
-        const url = input.referenceImages![i]
+        const url = input.referenceImages![i];
         try {
-          const ctl = new AbortController()
-          const tm = setTimeout(() => ctl.abort(), 20_000)
-          const r = await fetch(url, { signal: ctl.signal })
-          clearTimeout(tm)
+          const ctl = new AbortController();
+          const tm = setTimeout(() => ctl.abort(), 20_000);
+          const r = await fetch(url, { signal: ctl.signal });
+          clearTimeout(tm);
           if (!r.ok) {
-            console.warn(`[pixflow⚠] ref#${i} download status=${r.status} url=${url.slice(0, 80)}`)
-            continue
+            console.warn(`[pixflow⚠] ref#${i} download status=${r.status} url=${url.slice(0, 80)}`);
+            continue;
           }
-          const mime = r.headers.get('content-type')?.split(';')[0]?.trim() || 'image/png'
-          const ext = mime.includes('jpeg') ? 'jpg' : mime.includes('webp') ? 'webp' : 'png'
-          const buf = await r.arrayBuffer()
-          blobs.push({ blob: new Blob([buf], { type: mime }), filename: `ref${i}.${ext}` })
+          const mime = r.headers.get("content-type")?.split(";")[0]?.trim() || "image/png";
+          const ext = mime.includes("jpeg") ? "jpg" : mime.includes("webp") ? "webp" : "png";
+          const buf = await r.arrayBuffer();
+          blobs.push({ blob: new Blob([buf], { type: mime }), filename: `ref${i}.${ext}` });
         } catch (e) {
-          console.warn(`[pixflow⚠] ref#${i} download failed: ${e instanceof Error ? e.message : 'fetch failed'}`)
+          console.warn(
+            `[pixflow⚠] ref#${i} download failed: ${e instanceof Error ? e.message : "fetch failed"}`,
+          );
         }
       }
       if (blobs.length === 0) {
-        console.warn(`[pixflow⚠] model=${model} all refs failed to download, fallback to T2I /v1/images/generations`)
-        endpoint = '/v1/images/generations'
+        console.warn(
+          `[pixflow⚠] model=${model} all refs failed to download, fallback to T2I /v1/images/generations`,
+        );
+        endpoint = "/v1/images/generations";
       } else {
-        const form = new FormData()
-        form.append('model', model)
-        form.append('prompt', input.prompt)
-        form.append('n', String(input.n ?? 1))
-        form.append('size', input.size || '1024x1024')
-        form.append('quality', input.quality ?? 'auto')
-        form.append('response_format', 'url')
+        const form = new FormData();
+        form.append("model", model);
+        form.append("prompt", input.prompt);
+        form.append("n", String(input.n ?? 1));
+        form.append("size", input.size || "1024x1024");
+        form.append("quality", input.quality ?? "auto");
+        form.append("response_format", "url");
         for (const { blob, filename } of blobs) {
-          form.append('image[]', blob, filename)
+          form.append("image[]", blob, filename);
         }
         reqInit = {
-          method: 'POST',
+          method: "POST",
           headers: { Authorization: `Bearer ${apiKey}` }, // 让 fetch 自动写 boundary
           body: form,
           signal: controller.signal,
-        }
+        };
       }
     }
 
-    if (endpoint === '/v1/images/generations') {
+    if (endpoint === "/v1/images/generations") {
       const body: Record<string, unknown> = {
         model,
         prompt: input.prompt,
         n: input.n ?? 1,
-        size: input.size || '1024x1024',
-        quality: input.quality ?? 'auto',
-        response_format: 'url',
-      }
+        size: input.size || "1024x1024",
+        quality: input.quality ?? "auto",
+        response_format: "url",
+      };
       reqInit = {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Content-Type': 'application/json',
+          "Content-Type": "application/json",
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
         signal: controller.signal,
-      }
+      };
     }
     // 对 502/524 这种 pixflow 上游瞬时错误做一次重试(指数退避 1.5s)
-    let res: Response | null = null
-    let lastText = ''
+    let res: Response | null = null;
+    let lastText = "";
     for (let attempt = 0; attempt < 2; attempt++) {
-      res = await fetch(`${baseUrl}${endpoint}`, reqInit!)
-      if (res.ok) break
-      lastText = await res.text().catch(() => '')
-      const transient = res.status === 502 || res.status === 503 || res.status === 504 || res.status === 524
-      if (!transient || attempt === 1) break
-      console.warn(`[pixflow⟳] model=${model} endpoint=${endpoint} status=${res.status} retry in 1.5s`)
-      await new Promise((r) => setTimeout(r, 1500))
+      res = await fetch(`${baseUrl}${endpoint}`, reqInit!);
+      if (res.ok) break;
+      lastText = await res.text().catch(() => "");
+      const transient =
+        res.status === 502 || res.status === 503 || res.status === 504 || res.status === 524;
+      if (!transient || attempt === 1) break;
+      console.warn(
+        `[pixflow⟳] model=${model} endpoint=${endpoint} status=${res.status} retry in 1.5s`,
+      );
+      await new Promise((r) => setTimeout(r, 1500));
     }
-    clearTimeout(timeout)
+    clearTimeout(timeout);
 
     if (!res || !res.ok) {
-      const status = res?.status ?? 0
-      console.warn(`[pixflow×] model=${model} endpoint=${endpoint} status=${status} dur=${Date.now() - t0}ms body=${lastText.slice(0, 200)}`)
-      return { url: '', urls: [], error: `[pixflow ${model}] ${status}: ${lastText.slice(0, 300)}`, model }
+      const status = res?.status ?? 0;
+      console.warn(
+        `[pixflow×] model=${model} endpoint=${endpoint} status=${status} dur=${Date.now() - t0}ms body=${lastText.slice(0, 200)}`,
+      );
+      return {
+        url: "",
+        urls: [],
+        error: `[pixflow ${model}] ${status}: ${lastText.slice(0, 300)}`,
+        model,
+      };
     }
 
     const json = (await res.json()) as {
-      data?: Array<{ url?: string; b64_json?: string }>
-      error?: { message?: string }
-    }
+      data?: Array<{ url?: string; b64_json?: string }>;
+      error?: { message?: string };
+    };
 
-    const items = json.data ?? []
+    const items = json.data ?? [];
     const urls = items
       .map((d) => {
-        if (d.url) return d.url
-        if (d.b64_json) return `data:image/png;base64,${d.b64_json}`
-        return ''
+        if (d.url) return d.url;
+        if (d.b64_json) return `data:image/png;base64,${d.b64_json}`;
+        return "";
       })
-      .filter(Boolean)
+      .filter(Boolean);
 
     if (urls.length === 0) {
-      console.warn(`[pixflow×] model=${model} endpoint=${endpoint} empty-data dur=${Date.now() - t0}ms err=${json.error?.message ?? ''}`)
+      console.warn(
+        `[pixflow×] model=${model} endpoint=${endpoint} empty-data dur=${Date.now() - t0}ms err=${json.error?.message ?? ""}`,
+      );
       return {
-        url: '',
+        url: "",
         urls: [],
-        error: `[pixflow ${model}] no image returned: ${json.error?.message || 'empty data'}`,
+        error: `[pixflow ${model}] no image returned: ${json.error?.message || "empty data"}`,
         model,
-      }
+      };
     }
-    console.log(`[pixflow✓] model=${model} endpoint=${endpoint} images=${urls.length} dur=${Date.now() - t0}ms`)
-    return { url: urls[0], urls, error: null, model }
+    console.log(
+      `[pixflow✓] model=${model} endpoint=${endpoint} images=${urls.length} dur=${Date.now() - t0}ms`,
+    );
+    return { url: urls[0], urls, error: null, model };
   } catch (e) {
-    clearTimeout(timeout)
-    console.warn(`[pixflow×] model=${model} endpoint=${endpointHint} network dur=${Date.now() - t0}ms err=${e instanceof Error ? e.message : 'fetch failed'}`)
+    clearTimeout(timeout);
+    console.warn(
+      `[pixflow×] model=${model} endpoint=${endpointHint} network dur=${Date.now() - t0}ms err=${e instanceof Error ? e.message : "fetch failed"}`,
+    );
     return {
-      url: '',
+      url: "",
       urls: [],
-      error: `[pixflow ${model}] network: ${e instanceof Error ? e.message : 'fetch failed'}`,
+      error: `[pixflow ${model}] network: ${e instanceof Error ? e.message : "fetch failed"}`,
       model,
-    }
+    };
   }
 }
 
 // ---------- Chat completion ----------
 
-type PixflowChatMessage = { role: 'system' | 'user' | 'assistant'; content: string }
+type PixflowChatMessage = { role: "system" | "user" | "assistant"; content: string };
 
 type PixflowChatInput = {
-  messages: PixflowChatMessage[]
-  model: string
-  max_tokens?: number
-  temperature?: number
+  messages: PixflowChatMessage[];
+  model: string;
+  max_tokens?: number;
+  temperature?: number;
   /** 仅对 GPT-5 系列(Responses API)生效:minimal | low | medium | high | xhigh */
-  reasoning_effort?: 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+  reasoning_effort?: "minimal" | "low" | "medium" | "high" | "xhigh";
   /** 仅对 Responses API 生效:是否禁用对话存储(对应 Codex 的 disable_response_storage) */
-  disable_response_storage?: boolean
-}
+  disable_response_storage?: boolean;
+};
 
 export async function callPixflowChat(input: PixflowChatInput) {
-  const { apiKey, baseUrl } = getPixflowConfig()
-  const model = stripPixflowPrefix(input.model)
+  const { apiKey, baseUrl } = getPixflowConfig();
+  const model = stripPixflowPrefix(input.model);
   // gpt-* 系列优先取 OPENAI_API_KEY, 再 PIXFLOW_OPENAI_API_KEY, 最后通用 key
   // gemini-* 系列优先取 PIXFLOW_GEMINI_API_KEY, 再通用 key
   const chatKey = /^gpt-/i.test(model)
-    ? (process.env.OPENAI_API_KEY || process.env.PIXFLOW_OPENAI_API_KEY || apiKey)
+    ? process.env.OPENAI_API_KEY || process.env.PIXFLOW_OPENAI_API_KEY || apiKey
     : /^gemini-/i.test(model)
-      ? (process.env.PIXFLOW_GEMINI_API_KEY || apiKey)
-      : apiKey
+      ? process.env.PIXFLOW_GEMINI_API_KEY || apiKey
+      : apiKey;
   if (!chatKey) {
-    return { content: '', error: 'PIXFLOW_API_KEY not configured', model }
+    return { content: "", error: "PIXFLOW_API_KEY not configured", model };
   }
   // Pixflow 不支持把 gemini-* 走 OpenAI 兼容 /v1/chat/completions(实测稳定 503),
   // 必须改走 Gemini Native 的 :generateContent。
-  const useGeminiNative = /^gemini-/i.test(model)
+  const useGeminiNative = /^gemini-/i.test(model);
   // Pixflow 对 GPT-5 系列要求走 Responses API(wire_api = "responses")
-  const useResponses = /^gpt-5(\.|-|$)/i.test(model)
-  const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
+  const useResponses = /^gpt-5(\.|-|$)/i.test(model);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
     const endpoint = useGeminiNative
       ? `/v1beta/models/${encodeURIComponent(model)}:generateContent`
-      : useResponses ? '/v1/responses' : '/v1/chat/completions'
+      : useResponses
+        ? "/v1/responses"
+        : "/v1/chat/completions";
     const body: Record<string, unknown> = useGeminiNative
       ? {
           contents: input.messages
-            .filter((m) => m.role !== 'system')
+            .filter((m) => m.role !== "system")
             .map((m) => ({
-              role: m.role === 'assistant' ? 'model' : 'user',
+              role: m.role === "assistant" ? "model" : "user",
               parts: [{ text: m.content }],
             })),
-          ...(input.messages.find((m) => m.role === 'system')
-            ? { systemInstruction: { parts: [{ text: input.messages.find((m) => m.role === 'system')!.content }] } }
+          ...(input.messages.find((m) => m.role === "system")
+            ? {
+                systemInstruction: {
+                  parts: [{ text: input.messages.find((m) => m.role === "system")!.content }],
+                },
+              }
             : {}),
           generationConfig: {
             maxOutputTokens: input.max_tokens ?? 2000,
@@ -397,74 +448,87 @@ export async function callPixflowChat(input: PixflowChatInput) {
           },
         }
       : useResponses
-      ? {
-          model,
-          // Responses API 用 input[] 替代 messages[];content 是结构化 part 数组
-          input: input.messages.map((m) => ({
-            role: m.role,
-            content: [{ type: m.role === 'assistant' ? 'output_text' : 'input_text', text: m.content }],
-          })),
-          reasoning: { effort: input.reasoning_effort ?? 'xhigh' },
-          store: input.disable_response_storage === false,
-          max_output_tokens: input.max_tokens ?? 2000,
-        }
-      : {
-          model,
-          messages: input.messages,
-          max_tokens: input.max_tokens ?? 2000,
-          temperature: input.temperature ?? 0.7,
-        }
+        ? {
+            model,
+            // Responses API 用 input[] 替代 messages[];content 是结构化 part 数组
+            input: input.messages.map((m) => ({
+              role: m.role,
+              content: [
+                { type: m.role === "assistant" ? "output_text" : "input_text", text: m.content },
+              ],
+            })),
+            reasoning: { effort: input.reasoning_effort ?? "xhigh" },
+            store: input.disable_response_storage === false,
+            max_output_tokens: input.max_tokens ?? 2000,
+          }
+        : {
+            model,
+            messages: input.messages,
+            max_tokens: input.max_tokens ?? 2000,
+            temperature: input.temperature ?? 0.7,
+          };
     const res = await fetch(`${baseUrl}${endpoint}`, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/json',
+        "Content-Type": "application/json",
         ...(useGeminiNative
-          ? { 'x-goog-api-key': chatKey }
+          ? { "x-goog-api-key": chatKey }
           : { Authorization: `Bearer ${chatKey}` }),
       },
       body: JSON.stringify(body),
       signal: controller.signal,
-    })
-    clearTimeout(timeout)
+    });
+    clearTimeout(timeout);
     if (!res.ok) {
-      const text = await res.text().catch(() => '')
-      return { content: '', error: `[pixflow ${model}] ${endpoint} ${res.status}: ${text.slice(0, 300)}`, model }
+      const text = await res.text().catch(() => "");
+      return {
+        content: "",
+        error: `[pixflow ${model}] ${endpoint} ${res.status}: ${text.slice(0, 300)}`,
+        model,
+      };
     }
     const json = (await res.json()) as {
       // chat.completions
-      choices?: Array<{ message?: { content?: string } }>
+      choices?: Array<{ message?: { content?: string } }>;
       // responses API
-      output_text?: string
-      output?: Array<{ content?: Array<{ type?: string; text?: string }> }>
+      output_text?: string;
+      output?: Array<{ content?: Array<{ type?: string; text?: string }> }>;
       // gemini native
-      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>
-      error?: { message?: string }
-    }
-    let content = ''
+      candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+      error?: { message?: string };
+    };
+    let content = "";
     if (useGeminiNative) {
       content = (json.candidates ?? [])
         .flatMap((c) => c.content?.parts ?? [])
-        .map((p) => p.text || '')
-        .join('')
+        .map((p) => p.text || "")
+        .join("");
     } else if (useResponses) {
       content =
         json.output_text ||
-        json.output?.flatMap((o) => o.content ?? []).map((c) => c.text || '').join('') ||
-        ''
+        json.output
+          ?.flatMap((o) => o.content ?? [])
+          .map((c) => c.text || "")
+          .join("") ||
+        "";
     } else {
-      content = json.choices?.[0]?.message?.content || ''
+      content = json.choices?.[0]?.message?.content || "";
     }
     if (!content) {
-      return { content: '', error: `[pixflow ${model}] empty content: ${json.error?.message || ''}`, model }
+      return {
+        content: "",
+        error: `[pixflow ${model}] empty content: ${json.error?.message || ""}`,
+        model,
+      };
     }
-    return { content, error: null as string | null, model }
+    return { content, error: null as string | null, model };
   } catch (e) {
-    clearTimeout(timeout)
+    clearTimeout(timeout);
     return {
-      content: '',
-      error: `[pixflow ${model}] network: ${e instanceof Error ? e.message : 'fetch failed'}`,
+      content: "",
+      error: `[pixflow ${model}] network: ${e instanceof Error ? e.message : "fetch failed"}`,
       model,
-    }
+    };
   }
 }
 
@@ -475,28 +539,33 @@ const PixflowImageFnInput = z.object({
   model: z.string().min(1).max(200),
   size: z.string().max(50).optional(),
   n: z.number().int().min(1).max(4).optional(),
-})
+});
 
-export const generatePixflowImage = createServerFn({ method: 'POST' })
+export const generatePixflowImage = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => PixflowImageFnInput.parse(d))
   .handler(async ({ data }) => {
-    return callPixflowImage(data)
-  })
+    return callPixflowImage(data);
+  });
 
 const PixflowChatFnInput = z.object({
-  messages: z.array(z.object({
-    role: z.enum(['system', 'user', 'assistant']),
-    content: z.string().max(20000),
-  })).min(1).max(50),
+  messages: z
+    .array(
+      z.object({
+        role: z.enum(["system", "user", "assistant"]),
+        content: z.string().max(20000),
+      }),
+    )
+    .min(1)
+    .max(50),
   model: z.string().min(1).max(200),
   max_tokens: z.number().int().min(1).max(8192).optional(),
   temperature: z.number().min(0).max(2).optional(),
-  reasoning_effort: z.enum(['minimal', 'low', 'medium', 'high', 'xhigh']).optional(),
+  reasoning_effort: z.enum(["minimal", "low", "medium", "high", "xhigh"]).optional(),
   disable_response_storage: z.boolean().optional(),
-})
+});
 
-export const chatPixflow = createServerFn({ method: 'POST' })
+export const chatPixflow = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => PixflowChatFnInput.parse(d))
   .handler(async ({ data }) => {
-    return callPixflowChat(data)
-  })
+    return callPixflowChat(data);
+  });

@@ -537,7 +537,7 @@ const KNOWN_MODEL_PREFIXES = [
  * 检查 model 是否有已知前缀
  */
 function hasKnownPrefix(model: string): boolean {
-  return KNOWN_MODEL_PREFIXES.some(prefix => model.startsWith(prefix));
+  return KNOWN_MODEL_PREFIXES.some((prefix) => model.startsWith(prefix));
 }
 
 /**

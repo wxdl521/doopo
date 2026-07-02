@@ -1,7 +1,7 @@
-import { createServerFn } from '@tanstack/react-start'
-import { z } from 'zod'
-import { wrapFictionSystem, wrapFictionUser } from './promptSafety'
-import { pickModel } from './scriptAgent.functions'
+import { createServerFn } from "@tanstack/react-start";
+import { z } from "zod";
+import { wrapFictionSystem, wrapFictionUser } from "./promptSafety";
+import { pickModel } from "./scriptAgent.functions";
 
 // ============================================================
 // 导入剧本：将用户粘贴/上传的剧本文本按"集"边界拆开。
@@ -12,20 +12,20 @@ import { pickModel } from './scriptAgent.functions'
 //   避免长任务下"球状 spinner 静止 60s+ 再抛 AbortError"的死等感
 // ============================================================
 
-const Lang = z.enum(['zh', 'en'])
+const Lang = z.enum(["zh", "en"]);
 
 const ParseInput = z.object({
   lang: Lang,
   rawText: z.string().min(20).max(500_000),
   model: z.string().optional(),
-})
+});
 
 export type ImportedScriptResult = {
   /** 一句话故事简介，≤ 200 字 */
-  synopsis: string
+  synopsis: string;
   /** 按 epIndex 升序排列 */
-  episodes: { epIndex: number; text: string }[]
-}
+  episodes: { epIndex: number; text: string }[];
+};
 
 /**
  * 流式事件：
@@ -38,84 +38,84 @@ export type ImportedScriptResult = {
  * 保持同一套消费模式（useServerFn + for-await）。
  */
 export type ParseStreamEvent =
-  | { kind: 'progress'; message: string }
-  | { kind: 'done'; result: ImportedScriptResult }
-  | { kind: 'error'; message: string }
+  | { kind: "progress"; message: string }
+  | { kind: "done"; result: ImportedScriptResult }
+  | { kind: "error"; message: string };
 
 // ============= Provider fetch (non-streaming, single shot) =============
 
-type Provider = 'lovable' | 'qwen' | 'openrouter'
+type Provider = "lovable" | "qwen" | "openrouter";
 
-const QWEN_ENDPOINT = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions'
-const LOVABLE_ENDPOINT = 'https://ai.gateway.lovable.dev/v1/chat/completions'
-const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions'
+const QWEN_ENDPOINT = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
+const LOVABLE_ENDPOINT = "https://ai.gateway.lovable.dev/v1/chat/completions";
+const OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 
-const RETRYABLE_STATUSES = new Set([403, 404, 429, 500, 502, 503])
+const RETRYABLE_STATUSES = new Set([403, 404, 429, 500, 502, 503]);
 
-type ChatMsg = { role: 'system' | 'user' | 'assistant'; content: string }
+type ChatMsg = { role: "system" | "user" | "assistant"; content: string };
 
 type ToolSpec = {
-  name: string
-  description: string
-  parameters: Record<string, unknown>
-}
+  name: string;
+  description: string;
+  parameters: Record<string, unknown>;
+};
 
 async function fetchChat(opts: {
-  provider: Provider
-  model: string
-  system: string
-  user: string
-  tool: ToolSpec
-  temperature?: number
+  provider: Provider;
+  model: string;
+  system: string;
+  user: string;
+  tool: ToolSpec;
+  temperature?: number;
   // 整体超时（毫秒）。导入剧本是非流式整段返回，输入可达 500K 字符、
   // 输出 32K tokens，常见 60-90s；默认 180s 比 streamChat 用的 55s 宽松。
-  timeoutMs?: number
+  timeoutMs?: number;
 }): Promise<string> {
   const apiKey =
-    opts.provider === 'lovable'
+    opts.provider === "lovable"
       ? process.env.LOVABLE_API_KEY
-      : opts.provider === 'openrouter'
+      : opts.provider === "openrouter"
         ? process.env.OPENROUTER_API_KEY
-        : process.env.Qwen
-  if (!apiKey) throw new Error(`${opts.provider} API key missing`)
+        : process.env.Qwen;
+  if (!apiKey) throw new Error(`${opts.provider} API key missing`);
 
   const endpoint =
-    opts.provider === 'lovable'
+    opts.provider === "lovable"
       ? LOVABLE_ENDPOINT
-      : opts.provider === 'openrouter'
+      : opts.provider === "openrouter"
         ? OPENROUTER_ENDPOINT
-        : QWEN_ENDPOINT
+        : QWEN_ENDPOINT;
 
   const headers: Record<string, string> = {
     Authorization: `Bearer ${apiKey}`,
-    'Content-Type': 'application/json',
-  }
-  if (opts.provider === 'openrouter') {
-    headers['HTTP-Referer'] = 'https://doopoo.app'
-    headers['X-Title'] = 'Doopoo'
+    "Content-Type": "application/json",
+  };
+  if (opts.provider === "openrouter") {
+    headers["HTTP-Referer"] = "https://doopoo.app";
+    headers["X-Title"] = "Doopoo";
   }
 
   const messages: ChatMsg[] = [
-    { role: 'system', content: opts.system },
-    { role: 'user', content: opts.user },
-  ]
+    { role: "system", content: opts.system },
+    { role: "user", content: opts.user },
+  ];
 
-  const controller = new AbortController()
-  const timeoutMs = opts.timeoutMs ?? 180_000
-  const timeout = setTimeout(() => controller.abort(), timeoutMs)
-  let res: Response
+  const controller = new AbortController();
+  const timeoutMs = opts.timeoutMs ?? 180_000;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let res: Response;
   try {
     res = await fetch(endpoint, {
-      method: 'POST',
+      method: "POST",
       headers,
       body: JSON.stringify({
         model: opts.model,
         // Lovable AI Gateway (GPT-5 family etc.) only accepts default temperature=1.
-        ...(opts.provider === 'lovable' ? {} : { temperature: opts.temperature ?? 0.2 }),
+        ...(opts.provider === "lovable" ? {} : { temperature: opts.temperature ?? 0.2 }),
         messages,
         tools: [
           {
-            type: 'function',
+            type: "function",
             function: {
               name: opts.tool.name,
               description: opts.tool.description,
@@ -123,32 +123,32 @@ async function fetchChat(opts: {
             },
           },
         ],
-        tool_choice: { type: 'function', function: { name: opts.tool.name } },
+        tool_choice: { type: "function", function: { name: opts.tool.name } },
         max_tokens: 32_000,
       }),
       signal: controller.signal,
-    })
+    });
   } finally {
-    clearTimeout(timeout)
+    clearTimeout(timeout);
   }
 
   if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    if (res.status === 401) throw new Error(`${opts.provider} auth failed (401)`)
-    if (res.status === 402) throw new Error('no_credits')
-    if (res.status === 429) throw new Error('rate_limit')
+    const text = await res.text().catch(() => "");
+    if (res.status === 401) throw new Error(`${opts.provider} auth failed (401)`);
+    if (res.status === 402) throw new Error("no_credits");
+    if (res.status === 429) throw new Error("rate_limit");
     if (res.status === 403 && /terms of service|prohibited|policy|moderation/i.test(text)) {
-      throw new Error('content_policy')
+      throw new Error("content_policy");
     }
-    throw new Error(`${opts.provider} ${res.status}: ${text.slice(0, 200)}`)
+    throw new Error(`${opts.provider} ${res.status}: ${text.slice(0, 200)}`);
   }
 
-  const json = await res.json()
+  const json = await res.json();
   const argsStr =
     json?.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments ??
-    json?.choices?.[0]?.message?.content
-  if (!argsStr) throw new Error('Empty tool call response')
-  return typeof argsStr === 'string' ? argsStr : JSON.stringify(argsStr)
+    json?.choices?.[0]?.message?.content;
+  if (!argsStr) throw new Error("Empty tool call response");
+  return typeof argsStr === "string" ? argsStr : JSON.stringify(argsStr);
 }
 
 // ============= Prompts =============
@@ -182,7 +182,7 @@ const SYS_ZH = `你是一位资深的剧本结构化助手。你的唯一任务�
 【输出格式 — 严格 JSON】
 调用工具 emit_imported_script 一次性返回结果，禁止任何额外文字、解释、前后缀。
 epIndex 必须从 1 开始，按出现顺序递增。可以保留原始集号（如 epIndex=5 表示原文中的第 5 集），不必重排为 1,2,3。
-如果整段文本没有集数边界（fallback 5），全部内容作为 epIndex=1 一集返回。`
+如果整段文本没有集数边界（fallback 5），全部内容作为 epIndex=1 一集返回。`;
 
 const SYS_EN = `You are a senior script-structuring assistant. Your ONLY job: split a long user-supplied text (novel, script, or outline) into per-episode segments, and produce a one-sentence synopsis.
 
@@ -213,59 +213,61 @@ Use the first match by priority:
 【Output format — strict JSON】
 Call the tool emit_imported_script once. No extra prose, no preamble, no postscript.
 epIndex must start at 1 and increment in appearance order. Keep the original episode number (e.g. epIndex=5 means episode 5 in the source); do not renumber to 1,2,3.
-If no episode boundary is detected (fallback 5), return the whole text as epIndex=1.`
+If no episode boundary is detected (fallback 5), return the whole text as epIndex=1.`;
 
 // ============= Server fn =============
 
 const IMPORT_TOOL = {
-  name: 'emit_imported_script',
-  description: 'Return the parsed script: a one-sentence synopsis and a list of episodes with verbatim text.',
+  name: "emit_imported_script",
+  description:
+    "Return the parsed script: a one-sentence synopsis and a list of episodes with verbatim text.",
   parameters: {
-    type: 'object',
+    type: "object",
     properties: {
-      synopsis: { type: 'string', maxLength: 400 },
+      synopsis: { type: "string", maxLength: 400 },
       episodes: {
-        type: 'array',
+        type: "array",
         minItems: 1,
         maxItems: 500,
         items: {
-          type: 'object',
+          type: "object",
           properties: {
-            epIndex: { type: 'integer', minimum: 1, maximum: 999 },
-            text: { type: 'string', minLength: 1 },
+            epIndex: { type: "integer", minimum: 1, maximum: 999 },
+            text: { type: "string", minLength: 1 },
           },
-          required: ['epIndex', 'text'],
+          required: ["epIndex", "text"],
         },
       },
     },
-    required: ['synopsis', 'episodes'],
+    required: ["synopsis", "episodes"],
   },
-}
+};
 
-export const parseImportedScript = createServerFn({ method: 'POST' })
+export const parseImportedScript = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => ParseInput.parse(d))
   .handler(async function* ({ data }): AsyncGenerator<ParseStreamEvent> {
     // ===== Stage 1: pre-flight =====
-    yield { kind: 'progress', message: '正在分析输入文本…' }
+    yield { kind: "progress", message: "正在分析输入文本…" };
 
-    const picked = pickModel(data.model)
-    const baseSys = data.lang === 'zh' ? SYS_ZH : SYS_EN
-    const sys = wrapFictionSystem(data.lang, baseSys)
+    const picked = pickModel(data.model);
+    const baseSys = data.lang === "zh" ? SYS_ZH : SYS_EN;
+    const sys = wrapFictionSystem(data.lang, baseSys);
     const userRaw =
-      data.lang === 'zh'
+      data.lang === "zh"
         ? `【待拆分文本（长度 ${data.rawText.length} 字符）】\n${data.rawText}`
-        : `[Input text (${data.rawText.length} chars)]\n${data.rawText}`
-    const user = wrapFictionUser(data.lang, userRaw)
+        : `[Input text (${data.rawText.length} chars)]\n${data.rawText}`;
+    const user = wrapFictionUser(data.lang, userRaw);
 
     // ===== Stage 2: AI call (long-running, single shot) =====
     yield {
-      kind: 'progress',
-      message: data.lang === 'zh'
-        ? `已提交给 ${picked.provider} / ${picked.model}，正在分析并切分集数…`
-        : `Submitted to ${picked.provider} / ${picked.model}, analyzing and splitting…`,
-    }
+      kind: "progress",
+      message:
+        data.lang === "zh"
+          ? `已提交给 ${picked.provider} / ${picked.model}，正在分析并切分集数…`
+          : `Submitted to ${picked.provider} / ${picked.model}, analyzing and splitting…`,
+    };
 
-    let raw: string
+    let raw: string;
     try {
       raw = await fetchChat({
         provider: picked.provider,
@@ -274,82 +276,101 @@ export const parseImportedScript = createServerFn({ method: 'POST' })
         user,
         tool: IMPORT_TOOL,
         temperature: 0.2,
-      })
+      });
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Unknown error'
+      const msg = e instanceof Error ? e.message : "Unknown error";
       // AbortError 来自我们自己的超时定时器，转成用户友好文案
-      const isAbort = e instanceof Error && e.name === 'AbortError'
+      const isAbort = e instanceof Error && e.name === "AbortError";
       const userMsg = isAbort
-        ? (data.lang === 'zh'
-            ? 'AI 处理超时（>180s），请尝试更小的剧本或换其他模型'
-            : 'AI processing timed out (>180s). Try a smaller script or another model.')
-        : msg
+        ? data.lang === "zh"
+          ? "AI 处理超时（>180s），请尝试更小的剧本或换其他模型"
+          : "AI processing timed out (>180s). Try a smaller script or another model."
+        : msg;
       // Cross-provider fallback for ToS / moderation (mirror streamChat behaviour)
-      if (msg === 'content_policy' && picked.provider !== 'lovable' && process.env.LOVABLE_API_KEY) {
-        yield { kind: 'progress', message: data.lang === 'zh' ? '切换到备用模型…' : 'Falling back to backup model…' }
+      if (
+        msg === "content_policy" &&
+        picked.provider !== "lovable" &&
+        process.env.LOVABLE_API_KEY
+      ) {
+        yield {
+          kind: "progress",
+          message: data.lang === "zh" ? "切换到备用模型…" : "Falling back to backup model…",
+        };
         try {
           raw = await fetchChat({
-            provider: 'lovable',
-            model: 'google/gemini-3-flash-preview',
+            provider: "lovable",
+            model: "google/gemini-3-flash-preview",
             system: sys,
             user,
             tool: IMPORT_TOOL,
             temperature: 0.2,
-          })
+          });
         } catch (e2) {
-          const inner = e2 instanceof Error ? e2.message : 'content_policy'
-          yield { kind: 'error', message: inner }
-          return
+          const inner = e2 instanceof Error ? e2.message : "content_policy";
+          yield { kind: "error", message: inner };
+          return;
         }
       } else {
-        yield { kind: 'error', message: userMsg }
-        return
+        yield { kind: "error", message: userMsg };
+        return;
       }
     }
 
     // ===== Stage 3: parse + normalize =====
-    yield { kind: 'progress', message: data.lang === 'zh' ? 'AI 已返回，正在解析结果…' : 'AI responded, parsing…' }
+    yield {
+      kind: "progress",
+      message: data.lang === "zh" ? "AI 已返回，正在解析结果…" : "AI responded, parsing…",
+    };
 
-    let parsed: any
+    let parsed: any;
     try {
-      parsed = JSON.parse(raw)
+      parsed = JSON.parse(raw);
     } catch {
-      yield { kind: 'error', message: 'AI 返回的不是合法 JSON' }
-      return
+      yield { kind: "error", message: "AI 返回的不是合法 JSON" };
+      return;
     }
 
-    const rawSynopsis = typeof parsed?.synopsis === 'string' ? parsed.synopsis.trim() : ''
-    const rawEpisodes = Array.isArray(parsed?.episodes) ? parsed.episodes : []
+    const rawSynopsis = typeof parsed?.synopsis === "string" ? parsed.synopsis.trim() : "";
+    const rawEpisodes = Array.isArray(parsed?.episodes) ? parsed.episodes : [];
     if (rawEpisodes.length === 0) {
-      yield { kind: 'error', message: 'AI 未检测到任何集数，请检查文本是否包含分集标志' }
-      return
+      yield { kind: "error", message: "AI 未检测到任何集数，请检查文本是否包含分集标志" };
+      return;
     }
 
     // Normalize episodes: filter empty, floor epIndex, sort, dedupe
     const cleaned = rawEpisodes
       .map((e: any, i: number) => {
-        const idx = typeof e?.epIndex === 'number' && Number.isFinite(e.epIndex) ? Math.floor(e.epIndex) : i + 1
-        const text = typeof e?.text === 'string' ? e.text.trim() : ''
-        return { epIndex: Math.max(1, idx), text }
+        const idx =
+          typeof e?.epIndex === "number" && Number.isFinite(e.epIndex)
+            ? Math.floor(e.epIndex)
+            : i + 1;
+        const text = typeof e?.text === "string" ? e.text.trim() : "";
+        return { epIndex: Math.max(1, idx), text };
       })
-      .filter((e: { epIndex: number; text: string }) => e.text.length > 0)
+      .filter((e: { epIndex: number; text: string }) => e.text.length > 0);
 
     if (cleaned.length === 0) {
-      yield { kind: 'error', message: '解析后集数内容均为空' }
-      return
+      yield { kind: "error", message: "解析后集数内容均为空" };
+      return;
     }
 
-    cleaned.sort((a: { epIndex: number }, b: { epIndex: number }) => a.epIndex - b.epIndex)
+    cleaned.sort((a: { epIndex: number }, b: { epIndex: number }) => a.epIndex - b.epIndex);
 
-    const seen = new Set<number>()
-    const deduped: { epIndex: number; text: string }[] = []
+    const seen = new Set<number>();
+    const deduped: { epIndex: number; text: string }[] = [];
     for (const e of cleaned) {
-      if (seen.has(e.epIndex)) continue
-      seen.add(e.epIndex)
-      deduped.push(e)
+      if (seen.has(e.epIndex)) continue;
+      seen.add(e.epIndex);
+      deduped.push(e);
     }
 
-    const synopsis = (rawSynopsis || `导入剧本（${deduped.length} 集）`).slice(0, 200)
-    yield { kind: 'progress', message: data.lang === 'zh' ? `已识别 ${deduped.length} 集，正在写入…` : `Identified ${deduped.length} episodes, writing…` }
-    yield { kind: 'done', result: { synopsis, episodes: deduped } }
-  })
+    const synopsis = (rawSynopsis || `导入剧本（${deduped.length} 集）`).slice(0, 200);
+    yield {
+      kind: "progress",
+      message:
+        data.lang === "zh"
+          ? `已识别 ${deduped.length} 集，正在写入…`
+          : `Identified ${deduped.length} episodes, writing…`,
+    };
+    yield { kind: "done", result: { synopsis, episodes: deduped } };
+  });
