@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Fragment, useState, useEffect, useRef, useCallback } from "react";
+import { Fragment, useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import ReactMarkdown from "react-markdown";
 import WorkspaceTopbar, { type WorkspaceTab } from "../components/workspace/WorkspaceTopbar";
@@ -1376,9 +1376,61 @@ function WorkspacePage() {
   // 视频用整组所有 shot 的图作 first_frame + reference_image,
   // 涵盖整个分镜组的镜头序列(不再每张分镜单独出视频)。
   // 2026/07:接入 localStorage 持久化，刷新页面不丢失已生成的 URL（URL 24h 有效）。
-  const [groupVideos, setGroupVideos] = useState<
-    Record<string, { url: string; status: "running" | "succeeded" | "failed"; startedAt?: number }>
-  >({});
+  type VideoGenEntry = {
+    url: string;
+    status: "running" | "succeeded" | "failed";
+    startedAt?: number;
+    method?: "shots" | "storyboard";
+  };
+  const [groupVideos, setGroupVideos] = useState<Record<string, VideoGenEntry[]>>({});
+  const [selectedVideoIndex, setSelectedVideoIndex] = useState<Record<string, number>>({});
+  const getActiveVideoEntry = useCallback(
+    (groupId: string): VideoGenEntry | undefined => {
+      const entries = groupVideos[groupId];
+      if (!entries || entries.length === 0) return undefined;
+      const idx = selectedVideoIndex[groupId] ?? entries.length - 1;
+      return entries[Math.min(idx, entries.length - 1)];
+    },
+    [groupVideos, selectedVideoIndex],
+  );
+  const migrateGroupVideos = useCallback(
+    (raw: Record<string, unknown> | undefined | null): Record<string, VideoGenEntry[]> => {
+      if (!raw || typeof raw !== "object") return {};
+      const result: Record<string, VideoGenEntry[]> = {};
+      for (const [k, v] of Object.entries(raw)) {
+        if (Array.isArray(v)) {
+          result[k] = (v as any[]).map((item: any) => ({
+            url: item?.url ?? "",
+            status: item?.status === "running" ? ("failed" as const) : (item?.status ?? "failed"),
+            startedAt: item?.startedAt,
+            method: item?.method,
+          }));
+        } else if (v && typeof v === "object" && "url" in (v as object)) {
+          const item = v as any;
+          result[k] = [
+            {
+              url: item?.url ?? "",
+              status: item?.status === "running" ? ("failed" as const) : (item?.status ?? "failed"),
+              startedAt: item?.startedAt,
+              method: undefined,
+            },
+          ];
+        }
+      }
+      return result;
+    },
+    [],
+  );
+  const resolvedGroupVideos = useMemo(() => {
+    const result: Record<string, { url: string; status: "running" | "succeeded" | "failed" }> = {};
+    for (const [gid, entries] of Object.entries(groupVideos)) {
+      if (!entries || entries.length === 0) continue;
+      const idx = selectedVideoIndex[gid] ?? entries.length - 1;
+      const entry = entries[Math.min(idx, entries.length - 1)];
+      if (entry) result[gid] = { url: entry.url, status: entry.status };
+    }
+    return result;
+  }, [groupVideos, selectedVideoIndex]);
   // 2026 Storyboard 接入:每个分镜组可以独立生成故事板图(Storyboard),
   // key = groupId。value 包含 storyboardUrl 和 status。
   // 2026/07:接入 localStorage 持久化，刷新页面不丢失已生成的 URL（Seedream URL 24h 有效）。
@@ -1389,7 +1441,9 @@ function WorkspacePage() {
   const [tick, setTick] = useState(0);
   useEffect(() => {
     const sbRunning = Object.values(groupStoryboards).some((s) => s.status === "running");
-    const vidRunning = Object.values(groupVideos).some((v) => v.status === "running");
+    const vidRunning = Object.values(groupVideos).some((arr) =>
+      (arr ?? []).some((v) => v.status === "running"),
+    );
     if (!sbRunning && !vidRunning) return;
     const id = setInterval(() => setTick((t) => t + 1), 1000);
     return () => clearInterval(id);
@@ -1456,19 +1510,8 @@ function WorkspacePage() {
     try {
       const vRaw = localStorage.getItem(`doopoo:ws:${workspaceId}:videos`);
       if (vRaw) {
-        const parsed = JSON.parse(vRaw) as Record<
-          string,
-          { url: string; status: string; startedAt?: number }
-        >;
-        for (const k of Object.keys(parsed)) {
-          if (parsed[k]?.status === "running")
-            parsed[k] = {
-              url: parsed[k]?.url || "",
-              status: "failed",
-              startedAt: parsed[k]?.startedAt,
-            };
-        }
-        setGroupVideos(parsed as any);
+        const parsed = JSON.parse(vRaw) as Record<string, unknown>;
+        setGroupVideos(migrateGroupVideos(parsed));
       }
       const sRaw = localStorage.getItem(`doopoo:ws:${workspaceId}:storyboards`);
       if (sRaw) {
@@ -1596,18 +1639,7 @@ function WorkspacePage() {
         // 2026/06:跨 session 恢复入库后的永久视频 / 故事板图 URL。
         // 这些字段是老数据没有的(2026/06 前不持久化),所以可选读。
         if (wd.groupVideos && typeof wd.groupVideos === "object") {
-          // 2026/07 修复:DB 恢复时把 running 转 failed,对齐 localStorage 恢复逻辑。
-          const fixedGroupVideos: Record<
-            string,
-            { url: string; status: "running" | "succeeded" | "failed" }
-          > = {};
-          for (const [k, v] of Object.entries(wd.groupVideos as Record<string, any>)) {
-            fixedGroupVideos[k] =
-              v?.status === "running"
-                ? { url: v?.url || "", status: "failed" as const }
-                : (v as { url: string; status: "running" | "succeeded" | "failed" });
-          }
-          setGroupVideos(fixedGroupVideos);
+          setGroupVideos(migrateGroupVideos(wd.groupVideos as Record<string, unknown> | undefined));
         }
         if (wd.groupStoryboards && typeof wd.groupStoryboards === "object") {
           // 2026/07 修复:DB 恢复时把 running 转 failed,对齐 localStorage 恢复逻辑。
@@ -1720,38 +1752,43 @@ function WorkspacePage() {
   const autoSavingVideosRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!user || !workspaceId) return;
-    const entries = Object.entries(groupVideos);
-    for (const [gid, item] of entries) {
-      if (item.status !== "succeeded" || !item.url) continue;
-      // 已入库的跳过
-      if (
-        item.url.includes(".supabase.co") ||
-        item.url.includes(".supabase.in") ||
-        item.url.includes("/storage/v1/object/public/workspace-media/") ||
-        item.url.includes("/object/public/workspace-media/")
-      )
-        continue;
-      // 去重:同 url 不重复提交
-      if (autoSavingVideosRef.current.has(item.url)) continue;
-      autoSavingVideosRef.current.add(item.url);
-      (async () => {
-        try {
-          const r = await callSaveOneVideo({
-            data: { workspaceId, groupId: gid, url: item.url },
-          });
-          if (r.ok && r.persisted && r.url && r.url !== item.url) {
-            setGroupVideos((m) => {
-              const cur = m[gid];
-              if (!cur || cur.url !== item.url) return m;
-              return { ...m, [gid]: { ...cur, url: r.url } };
+    const groupEntries = Object.entries(groupVideos);
+    for (const [gid, videoEntries] of groupEntries) {
+      if (!videoEntries || videoEntries.length === 0) continue;
+      for (let vi = 0; vi < videoEntries.length; vi++) {
+        const item = videoEntries[vi];
+        if (item.status !== "succeeded" || !item.url) continue;
+        if (
+          item.url.includes(".supabase.co") ||
+          item.url.includes(".supabase.in") ||
+          item.url.includes("/storage/v1/object/public/workspace-media/") ||
+          item.url.includes("/object/public/workspace-media/")
+        )
+          continue;
+        if (autoSavingVideosRef.current.has(item.url)) continue;
+        autoSavingVideosRef.current.add(item.url);
+        const entryIndex = vi;
+        (async () => {
+          try {
+            const r = await callSaveOneVideo({
+              data: { workspaceId, groupId: gid, url: item.url },
             });
+            if (r.ok && r.persisted && r.url && r.url !== item.url) {
+              setGroupVideos((m) => {
+                const curEntries = m[gid];
+                if (!curEntries || curEntries[entryIndex]?.url !== item.url) return m;
+                const updated = [...curEntries];
+                updated[entryIndex] = { ...updated[entryIndex], url: r.url };
+                return { ...m, [gid]: updated };
+              });
+            }
+          } catch (e) {
+            console.warn(`[video auto-save] ${gid}[${entryIndex}] 失败:`, e);
+          } finally {
+            autoSavingVideosRef.current.delete(item.url);
           }
-        } catch (e) {
-          console.warn(`[video auto-save] ${gid} 失败:`, e);
-        } finally {
-          autoSavingVideosRef.current.delete(item.url);
-        }
-      })();
+        })();
+      }
     }
   }, [groupVideos, user, workspaceId, callSaveOneVideo]);
 
@@ -4396,8 +4433,14 @@ function WorkspacePage() {
   /** 2026/07:取消视频生成。 */
   function cancelVideoGen(groupId: string) {
     setGroupVideos((m) => {
-      const { [groupId]: _, ...rest } = m;
-      return rest;
+      const entries = m[groupId];
+      if (!entries) return m;
+      const filtered = entries.filter((e) => e.status !== "running");
+      if (filtered.length === 0) {
+        const { [groupId]: _, ...rest } = m;
+        return rest;
+      }
+      return { ...m, [groupId]: filtered };
     });
   }
 
@@ -4405,7 +4448,7 @@ function WorkspacePage() {
     const group = data.storyboardGroups.find((g) => g.id === groupId);
     if (!group) return;
 
-    if (groupVideos[groupId]?.status === "running") {
+    if ((groupVideos[groupId] ?? []).at(-1)?.status === "running") {
       toast.message("该组视频正在生成中…");
       return;
     }
@@ -4425,7 +4468,10 @@ function WorkspacePage() {
 
     setGroupVideos((m) => ({
       ...m,
-      [groupId]: { url: "", status: "running", startedAt: Date.now() },
+      [groupId]: [
+        ...(m[groupId] ?? []),
+        { url: "", status: "running", startedAt: Date.now(), method: "shots" as const },
+      ],
     }));
 
     // 2026/07:按分镜图数量分三种模式(匹配 toapis 互斥规则):
@@ -4543,10 +4589,14 @@ function WorkspacePage() {
           ratio: project?.aspect ?? "16:9",
         },
       });
-      // 清掉 running 状态
+      // 清掉 running 状态（只移除 running 条目，保留已完成版本）
       setGroupVideos((m) => {
-        const { [groupId]: _, ...rest } = m;
-        return rest;
+        const entries = m[groupId]?.filter((e) => e.status !== "running") ?? [];
+        if (entries.length === 0) {
+          const { [groupId]: _, ...rest } = m;
+          return rest;
+        }
+        return { ...m, [groupId]: entries };
       });
       return;
     }
@@ -4558,26 +4608,48 @@ function WorkspacePage() {
           imageUrl: firstFrame,
           lastFrameImageUrl: lastFrame,
           referenceImageUrls: referenceUrls.length ? referenceUrls : undefined,
-          // 多参考图模型:happyhorse-1.0-r2v (DashScope, 实测可用)
-          // 单图模型 (happyhorse-1.0-i2v / Seedance) 会自动退化成只取 first_frame
           model: project?.videoModel || "happyhorse-1.0-r2v",
           ratio: project?.aspect === "9:16" ? "9:16" : project?.aspect === "1:1" ? "1:1" : "16:9",
-          duration: 10, // 多镜头序列需要更长时间(默认 5s 不够)
+          duration: 10,
           generateAudio: project?.audio === "on",
           watermark: false,
         },
       });
       if (res.ok && res.videoUrl) {
-        setGroupVideos((m) => ({ ...m, [groupId]: { url: res.videoUrl!, status: "succeeded" } }));
+        setGroupVideos((m) => {
+          const entries = [...(m[groupId] ?? [])];
+          const lastIdx = entries.length - 1;
+          if (lastIdx >= 0 && entries[lastIdx].status === "running") {
+            entries[lastIdx] = { ...entries[lastIdx], url: res.videoUrl!, status: "succeeded" };
+          } else {
+            entries.push({ url: res.videoUrl!, status: "succeeded", method: "shots" as const });
+          }
+          setSelectedVideoIndex((s) => ({ ...s, [groupId]: entries.length - 1 }));
+          return { ...m, [groupId]: entries };
+        });
         toast.success(
           `分镜组视频已生成 (${shotImagesList.length} 个镜头,${res.videoUrl ? "已就绪" : ""})`,
         );
       } else {
-        setGroupVideos((m) => ({ ...m, [groupId]: { url: "", status: "failed" } }));
+        setGroupVideos((m) => {
+          const entries = [...(m[groupId] ?? [])];
+          const lastIdx = entries.length - 1;
+          if (lastIdx >= 0 && entries[lastIdx].status === "running") {
+            entries[lastIdx] = { ...entries[lastIdx], url: "", status: "failed" };
+          }
+          return { ...m, [groupId]: entries };
+        });
         toast.error(explainVideoError(res?.error));
       }
     } catch (e) {
-      setGroupVideos((m) => ({ ...m, [groupId]: { url: "", status: "failed" } }));
+      setGroupVideos((m) => {
+        const entries = [...(m[groupId] ?? [])];
+        const lastIdx = entries.length - 1;
+        if (lastIdx >= 0 && entries[lastIdx].status === "running") {
+          entries[lastIdx] = { ...entries[lastIdx], url: "", status: "failed" };
+        }
+        return { ...m, [groupId]: entries };
+      });
       toast.error(explainVideoError(e instanceof Error ? e.message : "视频生成失败"));
     }
   }
@@ -4599,7 +4671,7 @@ function WorkspacePage() {
     const group = data.storyboardGroups.find((g) => g.id === groupId);
     if (!group) return;
 
-    if (groupVideos[groupId]?.status === "running") {
+    if ((groupVideos[groupId] ?? []).at(-1)?.status === "running") {
       toast.message("该组视频正在生成中…");
       return;
     }
@@ -4612,7 +4684,10 @@ function WorkspacePage() {
 
     setGroupVideos((m) => ({
       ...m,
-      [groupId]: { url: "", status: "running", startedAt: Date.now() },
+      [groupId]: [
+        ...(m[groupId] ?? []),
+        { url: "", status: "running", startedAt: Date.now(), method: "storyboard" as const },
+      ],
     }));
 
     // 2026/07:故事板生成 → 多模态参考模式
@@ -4740,8 +4815,12 @@ function WorkspacePage() {
         },
       });
       setGroupVideos((m) => {
-        const { [groupId]: _, ...rest } = m;
-        return rest;
+        const entries = m[groupId]?.filter((e) => e.status !== "running") ?? [];
+        if (entries.length === 0) {
+          const { [groupId]: _, ...rest } = m;
+          return rest;
+        }
+        return { ...m, [groupId]: entries };
       });
       return;
     }
@@ -4750,8 +4829,6 @@ function WorkspacePage() {
       const res = await callGenVideo({
         data: {
           prompt,
-          // 2026/07:全部作为 reference_image(多模态参考模式)
-          // 不传 imageUrl / lastFrameImageUrl —— 避免 toapis 首帧+参考混用报错
           referenceImageUrls: referenceUrls.length ? referenceUrls : undefined,
           model: project?.videoModel || "happyhorse-1.0-r2v",
           ratio: project?.aspect === "9:16" ? "9:16" : project?.aspect === "1:1" ? "1:1" : "16:9",
@@ -4761,14 +4838,38 @@ function WorkspacePage() {
         },
       });
       if (res.ok && res.videoUrl) {
-        setGroupVideos((m) => ({ ...m, [groupId]: { url: res.videoUrl!, status: "succeeded" } }));
+        setGroupVideos((m) => {
+          const entries = [...(m[groupId] ?? [])];
+          const lastIdx = entries.length - 1;
+          if (lastIdx >= 0 && entries[lastIdx].status === "running") {
+            entries[lastIdx] = { ...entries[lastIdx], url: res.videoUrl!, status: "succeeded" };
+          } else {
+            entries.push({ url: res.videoUrl!, status: "succeeded", method: "storyboard" as const });
+          }
+          setSelectedVideoIndex((s) => ({ ...s, [groupId]: entries.length - 1 }));
+          return { ...m, [groupId]: entries };
+        });
         toast.success("按故事板的视频已生成");
       } else {
-        setGroupVideos((m) => ({ ...m, [groupId]: { url: "", status: "failed" } }));
+        setGroupVideos((m) => {
+          const entries = [...(m[groupId] ?? [])];
+          const lastIdx = entries.length - 1;
+          if (lastIdx >= 0 && entries[lastIdx].status === "running") {
+            entries[lastIdx] = { ...entries[lastIdx], url: "", status: "failed" };
+          }
+          return { ...m, [groupId]: entries };
+        });
         toast.error(explainVideoError(res?.error));
       }
     } catch (e) {
-      setGroupVideos((m) => ({ ...m, [groupId]: { url: "", status: "failed" } }));
+      setGroupVideos((m) => {
+        const entries = [...(m[groupId] ?? [])];
+        const lastIdx = entries.length - 1;
+        if (lastIdx >= 0 && entries[lastIdx].status === "running") {
+          entries[lastIdx] = { ...entries[lastIdx], url: "", status: "failed" };
+        }
+        return { ...m, [groupId]: entries };
+      });
       toast.error(explainVideoError(e instanceof Error ? e.message : "视频生成失败"));
     }
   }
@@ -5669,10 +5770,38 @@ function WorkspacePage() {
       // Supabase Storage → 返回永久 URL,替换后写回 workspace_data。
       // 已入库的会被服务端检测跳过(URL 已在自己的 bucket 里)。
       // 没有 ephemeral 项时这步基本零成本,直接返回原 map。
+      const flattenForPersist = (
+        map: Record<string, VideoGenEntry[]>,
+      ): Record<string, { url: string; status: string }> => {
+        const flat: Record<string, { url: string; status: string }> = {};
+        for (const [gid, entries] of Object.entries(map)) {
+          if (!entries) continue;
+          for (let i = 0; i < entries.length; i++) {
+            flat[`${gid}::v${i}`] = { url: entries[i].url, status: entries[i].status };
+          }
+        }
+        return flat;
+      };
+      const unflattenPersistVideos = (
+        flat: Record<string, { url: string; status: string }>,
+      ): Record<string, VideoGenEntry[]> => {
+        const result: Record<string, VideoGenEntry[]> = {};
+        for (const [compositeKey, item] of Object.entries(flat)) {
+          const match = compositeKey.match(/^(.+)::v(\d+)$/);
+          if (!match) continue;
+          const gid = match[1]!;
+          const vi = parseInt(match[2]!, 10);
+          if (!result[gid]) result[gid] = [];
+          result[gid][vi] = { url: item.url, status: item.status as VideoGenEntry["status"] };
+        }
+        return result;
+      };
       let persistGroupVideos = groupVideos;
       let persistGroupStoryboards = groupStoryboards;
       const hasEphemeralMedia =
-        Object.values(groupVideos).some((v) => v.status === "succeeded" && v.url) ||
+        Object.values(groupVideos).some((arr) =>
+          (arr ?? []).some((v) => v.status === "succeeded" && v.url),
+        ) ||
         Object.values(groupStoryboards).some((v) => v.status === "succeeded" && v.url);
       if (hasEphemeralMedia) {
         const toastId = toast.loading("正在将视频 / 故事板图入库到你的存储…");
@@ -5680,12 +5809,22 @@ function WorkspacePage() {
           const persistRes = await callPersistMedia({
             data: {
               workspaceId,
-              groupVideos,
+              groupVideos: flattenForPersist(groupVideos),
               groupStoryboards,
             },
           });
-          // 用永久 URL 替换 client state —— 后续 <video src> 用新 URL
-          persistGroupVideos = persistRes.groupVideos;
+          const persistedFlat = unflattenPersistVideos(persistRes.groupVideos);
+          const merged: Record<string, VideoGenEntry[]> = {};
+          for (const gid of Object.keys(groupVideos)) {
+            const origEntries = groupVideos[gid] ?? [];
+            const persistedEntries = persistedFlat[gid] ?? [];
+            merged[gid] = origEntries.map((orig, i) => ({
+              ...orig,
+              url: persistedEntries[i]?.url ?? orig.url,
+              status: (persistedEntries[i]?.status ?? orig.status) as VideoGenEntry["status"],
+            }));
+          }
+          persistGroupVideos = merged;
           persistGroupStoryboards = persistRes.groupStoryboards;
           setGroupVideos(persistGroupVideos);
           setGroupStoryboards(persistGroupStoryboards);
@@ -5761,9 +5900,11 @@ function WorkspacePage() {
         selectedPropImages,
         selectedEpisodeIndex,
         groupVideos: Object.fromEntries(
-          Object.entries(groupVideos).map(([k, v]) => [
+          Object.entries(persistGroupVideos).map(([k, arr]) => [
             k,
-            v.status === "running" ? { ...v, status: "failed" as const } : v,
+            (arr ?? []).map((v) =>
+              v.status === "running" ? { ...v, status: "failed" as const, url: v.url || "" } : v,
+            ),
           ]),
         ),
         groupStoryboards: Object.fromEntries(
@@ -5863,7 +6004,7 @@ function WorkspacePage() {
     propImgs: Object.keys(propImages).length,
     panelImgs: Object.keys(panelImages).length,
     groupVids: Object.entries(groupVideos)
-      .map(([k, v]) => `${k}:${v.status}`)
+      .map(([k, arr]) => `${k}:${(arr ?? []).map((v) => v.status).join(",")}`)
       .join("|"),
     groupSbs: Object.entries(groupStoryboards)
       .map(([k, v]) => `${k}:${v.status}`)
@@ -9380,19 +9521,32 @@ function WorkspacePage() {
                         </div>
                         {/* 视频换行占一整行 */}
                         <div className="md:col-span-3 rounded-lg border border-border bg-bg-base/40 p-3 space-y-2 max-h-[280px] overflow-y-auto">
+                          {(() => {
+                            const videoEntry = getActiveVideoEntry(g.id);
+                            const vidEntries = groupVideos[g.id] ?? [];
+                            const isVideoRunning =
+                              vidEntries.length > 0 &&
+                              vidEntries[vidEntries.length - 1].status === "running";
+                            const runningEntry = isVideoRunning
+                              ? vidEntries[vidEntries.length - 1]
+                              : undefined;
+                            const activeIdx =
+                              selectedVideoIndex[g.id] ?? vidEntries.length - 1;
+                            return (
+                              <>
                           <div className="flex items-center justify-between">
                             <div className="text-[10px] tracking-widest uppercase text-text-muted">
                               视频 · Video
                             </div>
-                            {groupVideos[g.id]?.status === "succeeded" ? (
+                            {videoEntry?.status === "succeeded" ? (
                               <span className="text-[9px] px-1.5 py-0.5 rounded bg-accent/15 text-accent border border-accent/30">
                                 已生成
                               </span>
-                            ) : groupVideos[g.id]?.status === "running" ? (
+                            ) : videoEntry?.status === "running" ? (
                               <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-elevated border border-border text-text-muted">
                                 生成中…
                               </span>
-                            ) : groupVideos[g.id]?.status === "failed" ? (
+                            ) : videoEntry?.status === "failed" ? (
                               <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-500 border border-rose-500/30">
                                 失败
                               </span>
@@ -9402,11 +9556,11 @@ function WorkspacePage() {
                               </span>
                             )}
                           </div>
-                          {/* 视频区:成功 → 显示播放器;运行中 → spinner;未生成 → 虚线占位 */}
-                          {groupVideos[g.id]?.status === "succeeded" && groupVideos[g.id]?.url ? (
+                          {/* 视频区 */}
+                          {videoEntry?.status === "succeeded" && videoEntry?.url ? (
                             <div className="relative group rounded border border-accent/30 overflow-hidden bg-black">
                               <video
-                                src={groupVideos[g.id]!.url}
+                                src={videoEntry.url}
                                 controls
                                 loop
                                 playsInline
@@ -9414,7 +9568,7 @@ function WorkspacePage() {
                               />
                               <div className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition flex gap-1">
                                 <a
-                                  href={groupVideos[g.id]!.url}
+                                  href={videoEntry.url}
                                   target="_blank"
                                   rel="noreferrer"
                                   className="px-1.5 py-0.5 rounded bg-black/70 text-white text-[10px] hover:bg-black/90"
@@ -9432,7 +9586,7 @@ function WorkspacePage() {
                                 </button>
                               </div>
                             </div>
-                          ) : groupVideos[g.id]?.status === "running" ? (
+                          ) : videoEntry?.status === "running" ? (
                             <div className="aspect-video rounded border border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted">
                               <Loader2 size={20} className="animate-spin text-accent" />
                               <span className="text-[10px]">视频生成中…</span>
@@ -9446,6 +9600,38 @@ function WorkspacePage() {
                                 整组合成 · {g.shots.length} 个镜头 · 约{" "}
                                 {(g.endSec - g.startSec).toFixed(0)}s
                               </span>
+                            </div>
+                          )}
+                          {/* 版本历史切换器 */}
+                          {vidEntries.length > 1 && (
+                            <div className="flex items-center gap-1 overflow-x-auto pb-0.5">
+                              {vidEntries.map((entry, vi) => (
+                                <button
+                                  key={vi}
+                                  type="button"
+                                  onClick={() =>
+                                    setSelectedVideoIndex((s) => ({ ...s, [g.id]: vi }))
+                                  }
+                                  className={`shrink-0 text-[10px] px-2 py-0.5 rounded border transition ${
+                                    vi === activeIdx
+                                      ? "border-accent bg-accent/15 text-accent"
+                                      : "border-border bg-bg-elevated text-text-muted hover:border-accent/60"
+                                  }`}
+                                  title={`视频 #${vi + 1}${
+                                    entry.method === "storyboard"
+                                      ? "（按故事板）"
+                                      : entry.method === "shots"
+                                        ? "（按分镜图）"
+                                        : ""
+                                  }`}
+                                >
+                                  视频 #{vi + 1}
+                                  {vi === vidEntries.length - 1 &&
+                                    entry.status === "succeeded" && (
+                                      <span className="ml-1 text-[8px] text-accent">NEW</span>
+                                    )}
+                                </button>
+                              ))}
                             </div>
                           )}
                           {/* 触发按钮:只有当组里至少有一张分镜图时才点亮 */}
@@ -9468,17 +9654,17 @@ function WorkspacePage() {
                               <button
                                 type="button"
                                 onClick={() => void generateVideoForGroup(g.id)}
-                                disabled={groupVideos[g.id]?.status === "running"}
+                                disabled={isVideoRunning}
                                 className="w-full text-[10px] py-1 rounded border border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent transition disabled:opacity-40 inline-flex items-center justify-center gap-1"
                               >
-                                {groupVideos[g.id]?.status === "running" ? (
+                                {isVideoRunning ? (
                                   <span className="w-full inline-flex items-center justify-between gap-1.5">
                                     <span className="inline-flex items-center gap-1.5">
                                       <Loader2 size={9} className="animate-spin" />
                                       视频生成中…{" "}
-                                      {groupVideos[g.id]?.startedAt
+                                      {runningEntry?.startedAt
                                         ? formatElapsed(
-                                            (Date.now() - groupVideos[g.id]!.startedAt!) / 1000,
+                                            (Date.now() - runningEntry.startedAt!) / 1000,
                                           )
                                         : ""}
                                       <span className="opacity-50 ml-1">· 预计 3-5 分钟</span>
@@ -9495,7 +9681,7 @@ function WorkspacePage() {
                                       <X size={10} />
                                     </button>
                                   </span>
-                                ) : groupVideos[g.id]?.status === "succeeded" ? (
+                                ) : videoEntry?.status === "succeeded" ? (
                                   <>
                                     <RefreshCw size={9} /> 按分镜图重新生成视频
                                   </>
@@ -9524,18 +9710,18 @@ function WorkspacePage() {
                               <button
                                 type="button"
                                 onClick={() => void generateVideoFromStoryboardForGroup(g.id)}
-                                disabled={groupVideos[g.id]?.status === "running"}
+                                disabled={isVideoRunning}
                                 className="w-full text-[10px] py-1 rounded border border-accent/60 bg-accent-dim/20 text-accent hover:border-accent hover:bg-accent-dim/40 transition disabled:opacity-40 inline-flex items-center justify-center gap-1"
                                 title="基于故事板图(作为视觉锚)+ 剧情文字(作叙事参考)生成视频"
                               >
-                                {groupVideos[g.id]?.status === "running" ? (
+                                {isVideoRunning ? (
                                   <span className="w-full inline-flex items-center justify-between gap-1.5">
                                     <span className="inline-flex items-center gap-1.5">
                                       <Loader2 size={9} className="animate-spin" />
                                       视频生成中…{" "}
-                                      {groupVideos[g.id]?.startedAt
+                                      {runningEntry?.startedAt
                                         ? formatElapsed(
-                                            (Date.now() - groupVideos[g.id]!.startedAt!) / 1000,
+                                            (Date.now() - runningEntry.startedAt!) / 1000,
                                           )
                                         : ""}
                                       <span className="opacity-50 ml-1">· 预计 3-5 分钟</span>
@@ -9552,7 +9738,7 @@ function WorkspacePage() {
                                       <X size={10} />
                                     </button>
                                   </span>
-                                ) : groupVideos[g.id]?.status === "succeeded" ? (
+                                ) : videoEntry?.status === "succeeded" ? (
                                   <>
                                     <RefreshCw size={9} /> 按故事板重新生成视频
                                   </>
@@ -9585,7 +9771,10 @@ function WorkspacePage() {
                                 if (res.ok && res.url) {
                                   setGroupVideos((m) => ({
                                     ...m,
-                                    [g.id]: { url: res.url!, status: "succeeded" },
+                                    [g.id]: [
+                                      ...(m[g.id] ?? []),
+                                      { url: res.url!, status: "succeeded" },
+                                    ],
                                   }));
                                   toast.success("视频已上传");
                                   void handleSaveWorkspace();
@@ -9603,6 +9792,9 @@ function WorkspacePage() {
                           >
                             <Upload size={9} /> 上传视频
                           </label>
+                              </>
+                            );
+                          })()}
                         </div>
                       </div>
                     );
@@ -9613,7 +9805,7 @@ function WorkspacePage() {
           {tab === "timeline" && (
             <StoryboardTimeline
               groups={data.storyboardGroups}
-              groupVideos={groupVideos}
+              groupVideos={resolvedGroupVideos}
               clipOrder={clipOrder}
               onClipReorder={setClipOrder}
               i18n={{
