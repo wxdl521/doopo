@@ -253,6 +253,16 @@ export const generateImage = createServerFn({ method: 'POST' })
       })
       return { url: r.url, error: r.error, model: r.model }
     }
+    // 委托给 Claude360(OpenAI 兼容,claude360.xyz)
+    if (requested.toLowerCase().startsWith('claude360/')) {
+      const { callClaude360Image } = await import('./claude360Image.functions')
+      const r = await callClaude360Image({
+        prompt: appendNegative(data.prompt, data.negativePrompt),
+        model: requested,
+        size: data.size,
+      })
+      return { url: r.url, error: r.error, model: r.model }
+    }
     // 委托给 Tokenflash(OpenAI 兼容,api.tokenflash.cn)
     if (requested.toLowerCase().startsWith('tokenflash/')) {
       const { callTokenflashImage } = await import('./tokenflash.functions')

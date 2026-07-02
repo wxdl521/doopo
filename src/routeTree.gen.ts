@@ -34,6 +34,7 @@ import { Route as CommunityIndexRouteImport } from './routes/community.index'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
 import { Route as AccountIndexRouteImport } from './routes/account.index'
 import { Route as WorkspaceWorkspaceIdRouteImport } from './routes/workspace.$workspaceId'
+import { Route as TeamCreateRouteImport } from './routes/team.create'
 import { Route as ShowcaseItemIdRouteImport } from './routes/showcase.$itemId'
 import { Route as ScriptsScriptIdRouteImport } from './routes/scripts.$scriptId'
 import { Route as ProjectsProjectIdRouteImport } from './routes/projects.$projectId'
@@ -177,6 +178,11 @@ const WorkspaceWorkspaceIdRoute = WorkspaceWorkspaceIdRouteImport.update({
   path: '/workspace/$workspaceId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const TeamCreateRoute = TeamCreateRouteImport.update({
+  id: '/create',
+  path: '/create',
+  getParentRoute: () => TeamRoute,
+} as any)
 const ShowcaseItemIdRoute = ShowcaseItemIdRouteImport.update({
   id: '/$itemId',
   path: '/$itemId',
@@ -299,6 +305,7 @@ export interface FileRoutesByFullPath {
   '/projects/$projectId': typeof ProjectsProjectIdRoute
   '/scripts/$scriptId': typeof ScriptsScriptIdRoute
   '/showcase/$itemId': typeof ShowcaseItemIdRoute
+  '/team/create': typeof TeamCreateRoute
   '/workspace/$workspaceId': typeof WorkspaceWorkspaceIdRoute
   '/account/': typeof AccountIndexRoute
   '/admin/': typeof AdminIndexRoute
@@ -338,6 +345,7 @@ export interface FileRoutesByTo {
   '/projects/$projectId': typeof ProjectsProjectIdRoute
   '/scripts/$scriptId': typeof ScriptsScriptIdRoute
   '/showcase/$itemId': typeof ShowcaseItemIdRoute
+  '/team/create': typeof TeamCreateRoute
   '/workspace/$workspaceId': typeof WorkspaceWorkspaceIdRoute
   '/account': typeof AccountIndexRoute
   '/admin': typeof AdminIndexRoute
@@ -383,6 +391,7 @@ export interface FileRoutesById {
   '/projects/$projectId': typeof ProjectsProjectIdRoute
   '/scripts/$scriptId': typeof ScriptsScriptIdRoute
   '/showcase/$itemId': typeof ShowcaseItemIdRoute
+  '/team/create': typeof TeamCreateRoute
   '/workspace/$workspaceId': typeof WorkspaceWorkspaceIdRoute
   '/account/': typeof AccountIndexRoute
   '/admin/': typeof AdminIndexRoute
@@ -429,6 +438,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId'
     | '/scripts/$scriptId'
     | '/showcase/$itemId'
+    | '/team/create'
     | '/workspace/$workspaceId'
     | '/account/'
     | '/admin/'
@@ -468,6 +478,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId'
     | '/scripts/$scriptId'
     | '/showcase/$itemId'
+    | '/team/create'
     | '/workspace/$workspaceId'
     | '/account'
     | '/admin'
@@ -512,6 +523,7 @@ export interface FileRouteTypes {
     | '/projects/$projectId'
     | '/scripts/$scriptId'
     | '/showcase/$itemId'
+    | '/team/create'
     | '/workspace/$workspaceId'
     | '/account/'
     | '/admin/'
@@ -723,6 +735,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/workspace/$workspaceId'
       preLoaderRoute: typeof WorkspaceWorkspaceIdRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/team/create': {
+      id: '/team/create'
+      path: '/create'
+      fullPath: '/team/create'
+      preLoaderRoute: typeof TeamCreateRouteImport
+      parentRoute: typeof TeamRoute
     }
     '/showcase/$itemId': {
       id: '/showcase/$itemId'
@@ -951,10 +970,12 @@ const ShowcaseRouteWithChildren = ShowcaseRoute._addFileChildren(
 )
 
 interface TeamRouteChildren {
+  TeamCreateRoute: typeof TeamCreateRoute
   TeamIndexRoute: typeof TeamIndexRoute
 }
 
 const TeamRouteChildren: TeamRouteChildren = {
+  TeamCreateRoute: TeamCreateRoute,
   TeamIndexRoute: TeamIndexRoute,
 }
 
