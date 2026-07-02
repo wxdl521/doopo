@@ -1084,14 +1084,14 @@ type SubmitInput = {
 type VideoBackend = 'ark' | 'dashscope' | 'jimeng' | 'kuaizi' | 'toapis' | 'k99' | 'vapeur'
 
 // ====================================================================
-// vapeur.ai 端实现 —— OpenAI 兼容统一网关,中转火山方舟 Seedance 2.0
+// vapeur.ai 端实现 —— 透传火山方舟 ARK Seedance 原生格式
 //
-//  2026/06 接入:接口格式推测为 newapi 风格(跟 ToAPIs 一致):
-//   - 提交:POST /v1/videos/generations → { id, status, ... }
-//   - 查询:GET  /v1/videos/generations/{task_id} → { status, result.data[0].url, ... }
-//
-//  复用 toapisSubmit / toapisPoll,只换 baseUrl + apiKey + model 映射。
-//  待用户充值后端到端验证;如返回格式不同,再改为独立实现。
+//  2026/07 修正:此前推测为 newapi 风格(ToAPIs),实测返回 500。
+//  查看 vapeur 文档后发现实际是 ARK 原生格式透传:
+//   - 提交:POST /doubao/v1/videos/generations/submit
+//   - 查询:GET  /doubao/v1/videos/generations/{taskId}
+//   - 请求体:{ model, prompt, content, duration, image_url, ratio, resolution, watermark }
+//   - 返回结构:ARK 原生 { id, status, content: { video_url } }
 // ====================================================================
 
 function getVapeurConfig() {
@@ -1104,6 +1104,90 @@ function getVapeurConfig() {
 /** 从 model id 剥离 `vapeur-` 前缀,得到上游 model 名 */
 function vapeurModelToUpstream(modelId: string): string {
   return modelId.replace(/^vapeur-/i, '')
+}
+
+async function vapeurSubmit(input: {
+  model: string
+  prompt: string
+  content: ContentItem[]
+  imageUrl?: string
+  ratio?: SeedanceRatio
+  resolution?: string
+  duration?: number
+  watermark?: boolean
+  apiKey: string
+  baseUrl: string
+}): Promise<{ ok: true; taskId: string; model: string } | { ok: false; error: string }> {
+  const upstreamModel = vapeurModelToUpstream(input.model)
+  const body: Record<string, unknown> = {
+    model: upstreamModel,
+    prompt: input.prompt,
+    content: input.content,
+  }
+  if (input.imageUrl) body.image_url = input.imageUrl
+  if (input.ratio) body.ratio = input.ratio
+  if (typeof input.duration === 'number') body.duration = input.duration
+  if (input.resolution) body.resolution = input.resolution
+  if (typeof input.watermark === 'boolean') body.watermark = input.watermark
+
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 30_000)
+  try {
+    const res = await fetch(`${input.baseUrl}/doubao/v1/videos/generations/submit`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${input.apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    })
+    clearTimeout(timeout)
+    const text = await res.text().catch(() => '')
+    if (!res.ok) return { ok: false, error: `[vapeur] submit ${res.status}: ${text.slice(0, 300)}` }
+    let json: { id?: string; error?: { code?: string; message?: string } } = {}
+    try { json = JSON.parse(text) } catch {}
+    if (!json.id) return { ok: false, error: `[vapeur] no task_id: ${json.error?.message || text.slice(0, 200)}` }
+    return { ok: true, taskId: json.id, model: input.model }
+  } catch (e) {
+    clearTimeout(timeout)
+    const msg = e instanceof Error ? (e.name === 'AbortError' ? 'submit timeout (30s)' : e.message) : 'fetch failed'
+    return { ok: false, error: `[vapeur] network: ${msg}` }
+  }
+}
+
+async function vapeurPoll(input: {
+  taskId: string
+  apiKey: string
+  baseUrl: string
+}): Promise<
+  | { ok: true; status: SeedanceProgress; videoUrl: string | null; raw: any }
+  | { ok: false; error: string; status?: SeedanceProgress; raw?: any }
+> {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 30_000)
+  try {
+    const res = await fetch(`${input.baseUrl}/doubao/v1/videos/generations/${encodeURIComponent(input.taskId)}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${input.apiKey}`,
+      },
+      signal: controller.signal,
+    })
+    clearTimeout(timeout)
+    const text = await res.text().catch(() => '')
+    if (!res.ok) return { ok: false, error: `[vapeur] poll ${res.status}: ${text.slice(0, 300)}` }
+    let json: { id?: string; status?: string; content?: { video_url?: string }; error?: { code?: string; message?: string } } = {}
+    try { json = JSON.parse(text) } catch {}
+    const status = (json.status?.toLowerCase() || '') as SeedanceProgress
+    const videoUrl = json.content?.video_url || null
+    return { ok: true, status, videoUrl, raw: json }
+  } catch (e) {
+    clearTimeout(timeout)
+    const msg = e instanceof Error ? (e.name === 'AbortError' ? 'poll timeout (30s)' : e.message) : 'fetch failed'
+    return { ok: false, error: `[vapeur] poll network: ${msg}` }
+  }
 }
 type SubmitResult = { ok: true; taskId: string; model: string; backend: VideoBackend } | { ok: false; error: string }
 
@@ -1238,20 +1322,26 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
         error: '[vapeur] 缺少 VAPEUR_API_KEY,请在 Cloudflare Secrets 或 .env.local 中配置后再试。',
       }
     }
-    // vapeur 是 OpenAI 兼容网关,接口格式跟 ToAPIs 一致,复用 toapisSubmit/toapisPoll
-    // toapisSubmit 内部会剥离 'toapis-' 前缀,所以这里用 'toapis-' + 上游模型名绕过
-    const upstreamModel = vapeurModelToUpstream(input.model)
-    const r = await toapisSubmit({
-      model: `toapis-${upstreamModel}`,
+    // vapeur 豆包视频接口是 ARK 原生格式透传,用独立的 vapeurSubmit
+    const firstFrameUrl = input.media.find((m) => m.type === 'first_frame')?.url
+    const lastFrameUrl = input.media.find((m) => m.type === 'last_frame')?.url
+    const referenceImageUrls = input.media.filter((m) => m.type === 'reference_image').map((m) => m.url)
+    const content = buildArkContent(input.prompt, {
+      firstFrameImageUrl: firstFrameUrl,
+      lastFrameImageUrl: lastFrameUrl,
+      referenceImageUrls,
+      referenceVideoUrl: input.referenceVideoUrl,
+      referenceAudioUrl: input.referenceAudioUrl,
+    })
+    const r = await vapeurSubmit({
+      model: input.model,
       prompt: input.prompt,
-      media: input.media,
+      content,
+      imageUrl: firstFrameUrl,
       ratio: input.ratio,
       resolution: input.resolution,
       duration: input.duration,
-      generateAudio: input.generateAudio,
       watermark: input.watermark,
-      referenceVideoUrl: input.referenceVideoUrl,
-      referenceAudioUrl: input.referenceAudioUrl,
       apiKey,
       baseUrl,
     })
@@ -1309,7 +1399,7 @@ async function pollVideoTask(input: PollInput): Promise<PollResult> {
   if (input.backend === 'vapeur') {
     const { apiKey, baseUrl } = getVapeurConfig()
     if (!apiKey) return { ok: false, error: '[vapeur] 缺少 VAPEUR_API_KEY' }
-    return toapisPoll({ taskId: input.taskId, apiKey, baseUrl })
+    return vapeurPoll({ taskId: input.taskId, apiKey, baseUrl })
   }
   const { apiKey } = getDashScopeConfig()
   if (!apiKey) return { ok: false, error: 'Qwen / DASHSCOPE_API_KEY not configured' }

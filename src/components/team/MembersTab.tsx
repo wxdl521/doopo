@@ -1,15 +1,5 @@
 import { useEffect, useState } from 'react'
 import { useServerFn } from '@tanstack/react-start'
-import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
-import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import {
   Table,
   TableBody,
@@ -18,6 +8,15 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Button } from '@/components/ui/button'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,17 +27,31 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { Badge } from '@/components/ui/badge'
 import {
-  Crown,
-  UserCog,
-  User,
   ArrowDownToLine,
   ArrowUpFromLine,
   Trash2,
+  UserPlus,
+  Crown,
+  UserCog,
+  User,
+  Check,
 } from 'lucide-react'
 import { getTeamMembers, updateMemberRole, removeMember } from '@/lib/teamMembers.functions'
 import { useLanguage } from '@/i18n/LanguageContext'
 import type { MemberRow } from '@/lib/teamMembers.functions'
+
+const ROLE_OPTIONS = [
+  { value: 'admin', labelKey: 'team_manage_role_admin' as const, icon: UserCog },
+  { value: 'member', labelKey: 'team_manage_role_member' as const, icon: User },
+] as const
+
+const ROLE_BADGES: Record<string, { labelKey: keyof ReturnType<typeof useLanguage>['t']; icon: typeof Crown; variant: 'default' | 'secondary' | 'outline' }> = {
+  owner: { labelKey: 'team_manage_role_owner', icon: Crown, variant: 'default' },
+  admin: { labelKey: 'team_manage_role_admin', icon: UserCog, variant: 'secondary' },
+  member: { labelKey: 'team_manage_role_member', icon: User, variant: 'outline' },
+}
 
 type MembersTabProps = {
   teamId: string
@@ -46,74 +59,71 @@ type MembersTabProps = {
   onManageCredits: (member: MemberRow, mode: 'allocate' | 'reclaim') => void
 }
 
-const ROLE_ICON: Record<string, typeof Crown> = {
-  owner: Crown,
-  admin: UserCog,
-  member: User,
-}
-
 export default function MembersTab({ teamId, myRole, onManageCredits }: MembersTabProps) {
   const { t } = useLanguage()
-  const callMembers = useServerFn(getTeamMembers)
+  const callGetMembers = useServerFn(getTeamMembers)
   const callUpdateRole = useServerFn(updateMemberRole)
   const callRemoveMember = useServerFn(removeMember)
 
   const [members, setMembers] = useState<MemberRow[]>([])
   const [loading, setLoading] = useState(true)
   const [deleteTarget, setDeleteTarget] = useState<MemberRow | null>(null)
-  const [deleting, setDeleting] = useState(false)
+  const [inviteCopied, setInviteCopied] = useState(false)
 
-  useEffect(() => {
-    callMembers({ data: { teamId } })
+  const loadMembers = () => {
+    callGetMembers({ data: { teamId } })
       .then((r: any) => {
         if (r?.members) setMembers(r.members)
       })
       .catch(() => {})
       .finally(() => setLoading(false))
-  }, [teamId, callMembers])
-
-  const handleRoleChange = async (memberId: string, newRole: string) => {
-    const r: any = await callUpdateRole({ data: { teamId, memberId, role: newRole } })
-    if (r?.ok) {
-      setMembers((prev) =>
-        prev.map((m) => (m.id === memberId ? { ...m, role: newRole } : m)),
-      )
-    }
   }
 
-  const handleDelete = async () => {
+  useEffect(() => { loadMembers() }, [teamId])
+
+  const handleRoleChange = async (userId: string, newRole: string) => {
+    const r: any = await callUpdateRole({ data: { teamId, userId, role: newRole as 'admin' | 'member' } })
+    if (r?.ok) loadMembers()
+  }
+
+  const handleRemove = async () => {
     if (!deleteTarget) return
-    setDeleting(true)
-    const r: any = await callRemoveMember({ data: { teamId, memberId: deleteTarget.id } })
-    setDeleting(false)
+    const r: any = await callRemoveMember({ data: { teamId, userId: deleteTarget.userId } })
     if (r?.ok) {
-      setMembers((prev) => prev.filter((m) => m.id !== deleteTarget.id))
+      setMembers((prev) => prev.filter((m) => m.userId !== deleteTarget.userId))
     }
     setDeleteTarget(null)
   }
 
-  const roleLabel: Record<string, string> = {
-    owner: t.team_role_owner,
-    admin: t.team_role_admin,
-    member: t.team_role_member,
+  const handleInvite = () => {
+    const url = `${window.location.origin}/team/${teamId}/join`
+    navigator.clipboard.writeText(url).then(() => {
+      setInviteCopied(true)
+      setTimeout(() => setInviteCopied(false), 2000)
+    }).catch(() => {})
   }
 
-  const canChangeRole = (targetRole: string) => {
-    if (myRole === 'owner') return targetRole !== 'owner'
-    if (myRole === 'admin') return targetRole === 'member'
+  const canChangeRole = (target: MemberRow) => {
+    if (myRole === 'owner') return target.role !== 'owner'
+    if (myRole === 'admin') return target.role === 'member'
     return false
   }
 
-  const canManageCredits = (targetRole: string) => {
+  const canManageCredits = (target: MemberRow) => {
+    if (myRole === 'owner') return target.role !== 'owner'
+    if (myRole === 'admin') return target.role === 'member'
+    return false
+  }
+
+  const canDelete = (target: MemberRow) => {
+    if (target.role === 'owner') return false
     if (myRole === 'owner') return true
-    if (myRole === 'admin') return targetRole === 'member'
+    if (myRole === 'admin') return target.role === 'member'
     return false
   }
 
-  const canDelete = (targetRole: string) => {
-    if (myRole === 'owner') return targetRole !== 'owner'
-    if (myRole === 'admin') return targetRole === 'member'
-    return false
+  const showActions = (target: MemberRow) => {
+    return canManageCredits(target) || canDelete(target)
   }
 
   if (loading) {
@@ -125,103 +135,147 @@ export default function MembersTab({ teamId, myRole, onManageCredits }: MembersT
   }
 
   return (
-    <div>
-      <h3 className="font-display text-lg font-bold mb-4">{t.team_members_list}</h3>
+    <div className="space-y-4">
+      {/* 顶部操作栏 */}
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-muted-foreground">
+          共 {members.length} 位成员
+        </p>
+        {(myRole === 'owner' || myRole === 'admin') && (
+          <Button variant="outline" size="sm" onClick={handleInvite}>
+            {inviteCopied ? (
+              <Check className="w-4 h-4 mr-2" />
+            ) : (
+              <UserPlus className="w-4 h-4 mr-2" />
+            )}
+            {inviteCopied ? t.team_manage_invite_copied : t.team_manage_invite}
+          </Button>
+        )}
+      </div>
 
-      <div className="rounded-lg border overflow-hidden">
+      {/* 成员表格 */}
+      <div className="border rounded-lg">
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>{t.team_col_avatar_name}</TableHead>
-              <TableHead>{t.common_email}</TableHead>
-              <TableHead>{t.team_col_role}</TableHead>
-              <TableHead>{t.team_col_joined}</TableHead>
-              <TableHead className="text-right">{t.common_actions}</TableHead>
+              <TableHead>{t.team_manage_col_member}</TableHead>
+              <TableHead>{t.team_manage_col_email}</TableHead>
+              <TableHead>{t.team_manage_col_role}</TableHead>
+              <TableHead className="text-right">{t.team_manage_col_credits}</TableHead>
+              <TableHead>{t.team_manage_col_joined}</TableHead>
+              <TableHead className="text-right">{t.team_manage_col_actions}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {members.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
-                  {t.team_no_members}
+                <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                  {t.team_manage_no_members}
                 </TableCell>
               </TableRow>
             ) : (
               members.map((member) => {
-                const Icon = ROLE_ICON[member.role] ?? User
-                const showActions = canDelete(member.role) || canManageCredits(member.role)
+                const roleInfo = ROLE_BADGES[member.role] ?? ROLE_BADGES.member
+                const RoleIcon = roleInfo.icon
 
                 return (
                   <TableRow key={member.id}>
+                    {/* 头像 + 昵称 */}
                     <TableCell>
                       <div className="flex items-center gap-3">
-                        <Avatar className="w-8 h-8">
-                          <AvatarImage src={member.avatarUrl ?? undefined} />
-                          <AvatarFallback>
-                            <User className="w-4 h-4" />
+                        <Avatar className="h-8 w-8">
+                          <AvatarFallback className="text-xs">
+                            {(member.displayName ?? member.email ?? '?')[0].toUpperCase()}
                           </AvatarFallback>
                         </Avatar>
-                        <span className="font-medium text-sm">{member.nickname ?? member.email}</span>
+                        <span className="font-medium text-sm">
+                          {member.displayName ?? t.team_manage_unknown_user}
+                        </span>
                       </div>
                     </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{member.email}</TableCell>
+
+                    {/* 邮箱 */}
+                    <TableCell className="text-muted-foreground text-sm">
+                      {member.email ?? '-'}
+                    </TableCell>
+
+                    {/* 角色 */}
                     <TableCell>
-                      {canChangeRole(member.role) ? (
+                      {canChangeRole(member) ? (
                         <Select
                           value={member.role}
-                          onValueChange={(value) => handleRoleChange(member.id, value)}
+                          onValueChange={(v) => handleRoleChange(member.userId, v)}
                         >
-                          <SelectTrigger className="w-24 h-8 text-xs">
+                          <SelectTrigger className="h-8 w-28">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
-                            {myRole === 'owner' && (
-                              <SelectItem value="admin">{t.team_role_admin}</SelectItem>
-                            )}
-                            <SelectItem value="member">{t.team_role_member}</SelectItem>
+                            {ROLE_OPTIONS.map((opt) => (
+                              <SelectItem key={opt.value} value={opt.value}>
+                                <span className="flex items-center gap-1.5">
+                                  <opt.icon className="w-3.5 h-3.5" />
+                                  {t[opt.labelKey]}
+                                </span>
+                              </SelectItem>
+                            ))}
                           </SelectContent>
                         </Select>
                       ) : (
-                        <Badge variant="outline" className="flex items-center gap-1.5 w-fit">
-                          <Icon className="w-3 h-3" />
-                          <span className="text-xs">{roleLabel[member.role]}</span>
+                        <Badge variant={roleInfo.variant} className="flex items-center gap-1 w-fit">
+                          <RoleIcon className="w-3 h-3" />
+                          {t[roleInfo.labelKey]}
                         </Badge>
                       )}
                     </TableCell>
-                    <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
+
+                    {/* 可用积分 */}
+                    <TableCell className="text-right">
+                      <span className="font-medium">{member.creditsBalance}</span>
+                      <span className="text-xs text-muted-foreground ml-1">
+                        (+{member.subscriptionCredits} {t.team_manage_subscription_credits})
+                      </span>
+                    </TableCell>
+
+                    {/* 加入时间 */}
+                    <TableCell className="text-muted-foreground text-sm">
                       {new Date(member.joinedAt).toLocaleDateString('zh-CN')}
                     </TableCell>
+
+                    {/* 操作 */}
                     <TableCell className="text-right">
-                      {showActions && (
+                      {showActions(member) && (
                         <div className="flex items-center justify-end gap-1">
-                          {canManageCredits(member.role) && (
+                          {canManageCredits(member) && (
                             <>
                               <Button
                                 variant="ghost"
-                                size="sm"
+                                size="icon"
+                                className="h-8 w-8"
+                                title={t.team_manage_allocate}
                                 onClick={() => onManageCredits(member, 'allocate')}
-                                title={t.team_allocate}
                               >
-                                <ArrowDownToLine className="w-4 h-4 text-green-500" />
+                                <ArrowDownToLine className="w-4 h-4" />
                               </Button>
                               <Button
                                 variant="ghost"
-                                size="sm"
+                                size="icon"
+                                className="h-8 w-8"
+                                title={t.team_manage_reclaim}
                                 onClick={() => onManageCredits(member, 'reclaim')}
-                                title={t.team_reclaim}
                               >
-                                <ArrowUpFromLine className="w-4 h-4 text-orange-500" />
+                                <ArrowUpFromLine className="w-4 h-4" />
                               </Button>
                             </>
                           )}
-                          {canDelete(member.role) && (
+                          {canDelete(member) && (
                             <Button
                               variant="ghost"
-                              size="sm"
+                              size="icon"
+                              className="h-8 w-8 text-destructive hover:text-destructive"
+                              title={t.team_manage_remove}
                               onClick={() => setDeleteTarget(member)}
-                              title={t.team_remove_member}
                             >
-                              <Trash2 className="w-4 h-4 text-destructive" />
+                              <Trash2 className="w-4 h-4" />
                             </Button>
                           )}
                         </div>
@@ -239,17 +293,22 @@ export default function MembersTab({ teamId, myRole, onManageCredits }: MembersT
       <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t.team_remove_confirm_title}</AlertDialogTitle>
-            <AlertDialogDescription>{t.team_remove_confirm_desc}</AlertDialogDescription>
+            <AlertDialogTitle>{t.team_manage_remove_confirm_title}</AlertDialogTitle>
+            <AlertDialogDescription>
+              <span>
+                {t.team_manage_remove_confirm_desc.replace('{name}', deleteTarget?.displayName ?? deleteTarget?.email ?? '')}
+              </span>
+              {deleteTarget && deleteTarget.creditsBalance > 0 && (
+                <span className="block mt-2 text-destructive">
+                  {t.team_manage_remove_credits_warning.replace('{credits}', deleteTarget.creditsBalance.toString())}
+                </span>
+              )}
+            </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t.common_cancel}</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDelete}
-              disabled={deleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {deleting ? '...' : t.common_confirm}
+            <AlertDialogAction onClick={handleRemove} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              {t.team_manage_remove_confirm_btn}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
