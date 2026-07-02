@@ -109,27 +109,23 @@ function explainVideoError(raw: string | undefined | null): string {
       || /SensitiveContentDetected/i.test(s)) {
     return '火山方舟识别到参考图可能含真实人物,已拒绝生成。建议:① 把分镜/故事板切到插画/动漫风格再生成;② 或在「基础设置」把视频模型换成 happyhorse-1.0-i2v(走阿里 DashScope,审核更宽松)。'
   }
-  // 2) 版权拦截 —— ARK Seedance 识别到输入可能涉及版权内容
-  if (/copyright/i.test(s)) {
-    return '火山方舟版权审核拦截:参考图或 prompt 可能涉及版权内容。建议:① 在「基础设置」把视频模型换成丽帧(kuaizi-lizhen-*),底层仍是 Seedance 但支持版权放行;② 或换成 happyhorse-1.0-r2v 走阿里 DashScope。'
-  }
-  // 3) 内容违规（其它类型）
+  // 2) 内容违规（其它类型）
   if (/ContentPolicyViolation|InvalidParameter\.Prompt|SensitiveWords/i.test(s)) {
     return '内容审核拦截:prompt 或图片可能含敏感信息,已拒绝生成。试试修改剧情 / 重生插画风格分镜图。'
   }
-  // 4) 配额 / 限流
+  // 3) 配额 / 限流
   if (/429|quota|rate.?limit/i.test(s)) {
     return '请求过于频繁或配额已用完,请稍后再试。'
   }
-  // 5) 余额不足
+  // 4) 余额不足
   if (/balance|insufficient.?funds|account.*not enough/i.test(s)) {
     return '账户余额不足,请充值后再试。'
   }
-  // 6) 任务超时（英文 + 中文）
+  // 5) 任务超时（英文 + 中文）
   if (/timed? ?out|超时/i.test(s)) {
     return '任务处理超时,请稍后重试或缩短分镜组时长。'
   }
-  // 7) 其它 —— 截断到 200 字避免 toast 太长
+  // 6) 其它 —— 截断到 200 字避免 toast 太长
   return s.length > 200 ? `${s.slice(0, 200)}…` : s
 }
 
