@@ -19,7 +19,6 @@ import {
   Users,
   History,
   Settings,
-  Shield,
   LogOut,
   Crown,
   UserCog,
@@ -40,12 +39,6 @@ export const Route = createFileRoute('/team/')({
   head: () => ({ meta: [{ title: 'Doopoo — 团队' }] }),
   component: TeamPage,
 })
-
-const TEAM_RULES = [
-  { icon: Users, title: '协作创作', description: '团队成员可以共享项目、角色和素材，实现高效协作。' },
-  { icon: Shield, title: '积分池管理', description: '团队积分由所有者统一管理，可按需分配给成员使用。' },
-  { icon: Settings, title: '灵活权限', description: '支持所有者、管理员和成员三种角色，精细控制操作权限。' },
-]
 
 const ROLE_CONFIG: Record<string, { label: string; icon: typeof Crown }> = {
   owner: { label: '所有者', icon: Crown },
@@ -149,26 +142,7 @@ function TeamPage() {
   // 无团队 — 空状态
   if (teams.length === 0) {
     return (
-      <div className="max-w-2xl mx-auto py-12 px-4 space-y-8">
-        <div>
-          <h2 className="text-2xl font-bold mb-6">团队规则</h2>
-          <div className="grid gap-4">
-            {TEAM_RULES.map((rule) => (
-              <Card key={rule.title}>
-                <CardContent className="flex items-start gap-4 pt-6">
-                  <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                    <rule.icon className="w-5 h-5 text-primary" />
-                  </div>
-                  <div>
-                    <h3 className="font-semibold mb-1">{rule.title}</h3>
-                    <p className="text-sm text-muted-foreground">{rule.description}</p>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
-        </div>
-
+      <div className="max-w-2xl mx-auto py-12 px-4">
         <Card className="border-dashed">
           <CardContent className="flex flex-col items-center gap-4 py-12">
             <Users className="w-12 h-12 text-muted-foreground" />
@@ -238,7 +212,7 @@ function TeamPage() {
 
           <Separator className="my-3" />
 
-          {/* 离开团队按钮 */}
+          {/* 离开团队 */}
           {!isOwner && (
             <button
               onClick={() => setLeaveTarget(teamId)}
