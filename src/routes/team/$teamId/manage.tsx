@@ -115,7 +115,7 @@ function TeamManagePage() {
         </TabsContent>
 
         <TabsContent value="history" className="mt-6">
-          <CreditsHistoryTab />
+          <CreditsHistoryTab teamId={teamId} myRole={myRole} />
         </TabsContent>
 
         <TabsContent value="settings" className="mt-6">
