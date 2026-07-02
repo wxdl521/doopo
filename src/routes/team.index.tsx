@@ -18,6 +18,8 @@ import {
   Users,
   History,
   Settings,
+  LayoutDashboard,
+  Shield,
   LogOut,
   Crown,
   UserCog,
@@ -73,7 +75,7 @@ function TeamPage() {
   const [loading, setLoading] = useState(true)
   const [team, setTeam] = useState<TeamDetail | null>(null)
   const [myRole, setMyRole] = useState<string>('member')
-  const [activeTab, setActiveTab] = useState<string>('members')
+  const [activeTab, setActiveTab] = useState<string>('overview')
   const [leaveTarget, setLeaveTarget] = useState<string | null>(null)
   const [creditTarget, setCreditTarget] = useState<{ member: MemberRow; mode: 'allocate' | 'reclaim' } | null>(null)
   const [refreshKey, setRefreshKey] = useState(0)
@@ -153,6 +155,7 @@ function TeamPage() {
   const RoleIcon = roleInfo.icon
 
   const tabs = [
+    { id: 'overview', label: t.team_tab_overview, icon: LayoutDashboard },
     { id: 'members', label: t.team_tab_members, icon: Users },
     { id: 'history', label: t.team_tab_history, icon: History },
     { id: 'settings', label: t.team_tab_settings, icon: Settings, ownerOnly: true },
@@ -214,7 +217,68 @@ function TeamPage() {
 
       {/* 右侧内容 */}
       <div className="flex-1 min-w-0">
-        {activeTab === 'members' && (
+        {activeTab === 'overview' && (
+          <div className="space-y-6">
+            {/* 团队信息卡片 */}
+            <section className="panel">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <h3 className="font-display text-lg font-bold">{team.name}</h3>
+                  {team.description && (
+                    <p className="text-sm text-text-muted mt-1">{team.description}</p>
+                  )}
+                </div>
+                <Badge variant={ROLE_BADGE_COLOR[myRole] ?? 'outline'} className="flex items-center gap-1.5">
+                  <RoleIcon className="w-3.5 h-3.5" />
+                  {roleInfo.label}
+                </Badge>
+              </div>
+
+              <div className="flex items-center gap-6 text-sm text-text-muted mb-4">
+                <span>{t.team_created_at}：{new Date(team.createdAt).toLocaleDateString('zh-CN')}</span>
+              </div>
+
+              <Separator className="my-4" />
+
+              <div className="flex items-center gap-3">
+                {(myRole === 'owner' || myRole === 'admin') && (
+                  <Button onClick={() => setActiveTab('members')}>
+                    <Users className="w-4 h-4 mr-2" />
+                    {t.team_manage_btn}
+                  </Button>
+                )}
+                {!isOwner && (
+                  <Button variant="outline" onClick={() => setLeaveTarget(teamId)}>
+                    <LogOut className="w-4 h-4 mr-2" />
+                    {t.team_leave_btn}
+                  </Button>
+                )}
+                {isOwner && (
+                  <p className="text-xs text-text-muted">{t.team_owner_cannot_leave}</p>
+                )}
+              </div>
+            </section>
+
+            {/* 团队规则 */}
+            <div className="grid sm:grid-cols-3 gap-4">
+              {[
+                { icon: Users, title: t.team_rule_collab, desc: t.team_rule_collab_desc },
+                { icon: Shield, title: t.team_rule_credits, desc: t.team_rule_credits_desc },
+                { icon: Settings, title: t.team_rule_perms, desc: t.team_rule_perms_desc },
+              ].map((rule) => (
+                <div key={rule.title} className="panel flex items-start gap-3">
+                  <div className="w-9 h-9 rounded-lg bg-accent-dim flex items-center justify-center shrink-0">
+                    <rule.icon className="w-4 h-4 text-accent" />
+                  </div>
+                  <div>
+                    <h4 className="font-semibold text-sm mb-0.5">{rule.title}</h4>
+                    <p className="text-xs text-text-muted">{rule.desc}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
           <MembersTab
             key={refreshKey}
             teamId={teamId}
