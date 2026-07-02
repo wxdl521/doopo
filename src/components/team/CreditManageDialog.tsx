@@ -208,8 +208,8 @@ export default function CreditManageDialog({
           {/* 提示 */}
           <p className="text-xs text-muted-foreground">
             {mode === 'allocate'
-              ? `从团队剩余积分中划出，加到该成员的可用积分。当前最多可分配 ${maxAllocate.toLocaleString()}。`
-              : `从该成员可用积分中收回，返回团队积分池。当前最多可回收 ${maxReclaim.toLocaleString()}。`
+              ? t.team_allocate_hint.replace('{max}', maxAllocate.toLocaleString())
+              : t.team_reclaim_hint.replace('{max}', maxReclaim.toLocaleString())
             }
           </p>
 

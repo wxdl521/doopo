@@ -139,7 +139,7 @@ export default function MembersTab({ teamId, myRole, onManageCredits }: MembersT
       {/* 顶部操作栏 */}
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted-foreground">
-          共 {members.length} 位成员
+          {t.team_manage_member_count.replace('{count}', members.length.toString())}
         </p>
         {(myRole === 'owner' || myRole === 'admin') && (
           <Button variant="outline" size="sm" onClick={handleInvite}>
