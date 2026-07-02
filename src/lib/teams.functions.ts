@@ -1,7 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
 // ====================================================================
 // Schemas
@@ -239,17 +238,16 @@ export const deleteTeam = createServerFn({ method: "POST" })
   });
 
 // ====================================================================
-// getTeamJoinInfo — 加入页预览（用 admin 客户端绕过 RLS）
+// getTeamJoinInfo — 加入页预览（公开策略，已登录用户可查）
 // ====================================================================
 
 export const getTeamJoinInfo = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator(TeamIdInput)
   .handler(async ({ data, context }) => {
-    const { userId } = context;
+    const { supabase, userId } = context;
 
-    // 用 admin 客户端绕过 RLS 查询团队
-    const { data: team, error: teamError } = await supabaseAdmin
+    const { data: team, error: teamError } = await supabase
       .from("teams")
       .select("id, name, description, owner_id, created_at")
       .eq("id", data.teamId)
@@ -261,7 +259,7 @@ export const getTeamJoinInfo = createServerFn({ method: "POST" })
     }
 
     // 检查是否已是成员
-    const { data: membership } = await supabaseAdmin
+    const { data: membership } = await supabase
       .from("team_members")
       .select("id, role")
       .eq("team_id", data.teamId)
