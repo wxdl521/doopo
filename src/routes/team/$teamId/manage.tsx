@@ -7,6 +7,7 @@ import TeamInfoBar from '@/components/team/TeamInfoBar'
 import MembersTab from '@/components/team/MembersTab'
 import CreditsHistoryTab from '@/components/team/CreditsHistoryTab'
 import SettingsTab from '@/components/team/SettingsTab'
+import CreditManageDialog from '@/components/team/CreditManageDialog'
 import { getTeamDetail } from '@/lib/teams.functions'
 import type { MemberRow } from '@/lib/teamMembers.functions'
 
@@ -36,6 +37,7 @@ function TeamManagePage() {
   const [myRole, setMyRole] = useState<string>('member')
   const [loading, setLoading] = useState(true)
   const [creditTarget, setCreditTarget] = useState<{ member: MemberRow; mode: 'allocate' | 'reclaim' } | null>(null)
+  const [refreshKey, setRefreshKey] = useState(0)
 
   useEffect(() => {
     callGetTeamDetail({ data: { teamId } })
@@ -105,6 +107,7 @@ function TeamManagePage() {
 
         <TabsContent value="members" className="mt-6">
           <MembersTab
+            key={refreshKey}
             teamId={teamId}
             myRole={myRole}
             onManageCredits={(member, mode) => setCreditTarget({ member, mode })}
@@ -119,6 +122,16 @@ function TeamManagePage() {
           <SettingsTab />
         </TabsContent>
       </Tabs>
+
+      {/* 积分管理弹窗 */}
+      <CreditManageDialog
+        open={!!creditTarget}
+        teamId={teamId}
+        member={creditTarget?.member ?? null}
+        mode={creditTarget?.mode ?? 'allocate'}
+        onClose={() => setCreditTarget(null)}
+        onSuccess={() => setRefreshKey((k) => k + 1)}
+      />
     </div>
   )
 }
