@@ -12,7 +12,7 @@ const ProjectInput = z.object({
   storyboardModel: z.string().max(100).optional(),
   sceneModel: z.string().max(100).optional(),
   videoModel: z.string().max(100).optional(),
-  audio: z.enum(['auto', 'on', 'off']).optional(),
+  audio: z.enum(['on', 'off']).optional(),
   workflow: z.string().max(50).optional(),
   style: z.string().max(50).optional(),
   customCover: z.string().max(2000).nullable().optional(),
@@ -25,7 +25,7 @@ export type ProjectConfigRow = {
   storyboardModel: string
   sceneModel: string
   videoModel: string
-  audio: 'auto' | 'on' | 'off'
+  audio: 'on' | 'off'
   workflow: string
   style: string
   customCover: string | null
@@ -73,7 +73,7 @@ export const getProject = createServerFn({ method: 'POST' })
       storyboardModel: row.storyboard_model,
       sceneModel: row.scene_model,
       videoModel: row.video_model,
-      audio: row.audio as 'auto' | 'on' | 'off',
+      audio: row.audio as 'on' | 'off',
       workflow: row.workflow,
       style: row.style,
       customCover: row.custom_cover,

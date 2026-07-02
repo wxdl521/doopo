@@ -30,7 +30,7 @@ export type UserPrefs = {
   /** 最近一次选的工作流 */
   lastWorkflow?: string
   /** 最近一次选的音频策略 */
-  lastAudio?: 'auto' | 'on' | 'off'
+  lastAudio?: 'on' | 'off'
   /** 上次更新 ISO 时间(用于审计 / 后续可能的"过期清理") */
   updatedAt?: string
 }
@@ -54,7 +54,7 @@ export function loadUserPrefs(userId: string | null | undefined): UserPrefs {
       ...(typeof parsed.lastVideoModel === 'string' ? { lastVideoModel: parsed.lastVideoModel } : {}),
       ...(typeof parsed.lastStyle === 'string' ? { lastStyle: parsed.lastStyle } : {}),
       ...(typeof parsed.lastWorkflow === 'string' ? { lastWorkflow: parsed.lastWorkflow } : {}),
-      ...(parsed.lastAudio === 'auto' || parsed.lastAudio === 'on' || parsed.lastAudio === 'off'
+      ...(parsed.lastAudio === 'on' || parsed.lastAudio === 'off'
         ? { lastAudio: parsed.lastAudio } : {}),
     }
   } catch {

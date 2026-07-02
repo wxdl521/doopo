@@ -172,7 +172,7 @@ export type ProjectConfig = {
   storyboardModel: string
   sceneModel: string
   videoModel: string
-  audio: 'auto' | 'on' | 'off'
+  audio: 'on' | 'off'
   workflow: string
   style: string
   customCover?: string | null
@@ -238,8 +238,8 @@ export function NewProjectDialog({
   // 2026/06:视频默认走火山方舟 Seedance 2.0 —— ARK 账户已开通,cURL 已验证
   // generateVideo 自动按 model id 路由到 ARK,分镜流程点"生成整组视频"直接走火山引擎
   const [videoModel, setVideoModel] = useState(pickVideo)
-  const [audio, setAudio] = useState<'auto' | 'on' | 'off'>(
-    () => initial?.audio ?? initialPrefs.lastAudio ?? 'auto',
+  const [audio, setAudio] = useState<'on' | 'off'>(
+    () => initial?.audio ?? initialPrefs.lastAudio ?? 'on',
   )
   const [workflow, setWorkflow] = useState(
     () => initial?.workflow ?? initialPrefs.lastWorkflow ?? 'grid',
@@ -425,12 +425,12 @@ export function NewProjectDialog({
           <div>
             <div className="text-sm font-semibold mb-1">{t.np_audio}</div>
             <div className="bg-bg-elevated border border-border rounded-lg px-3 py-2 flex items-center justify-between">
-              <span className="text-sm">{audio === 'auto' ? t.np_audio_auto : audio === 'on' ? t.np_audio_on : t.np_audio_off}</span>
+              <span className="text-sm">{audio === 'on' ? t.np_audio_on : t.np_audio_off}</span>
               <div className="flex gap-1">
-                {(['auto', 'on', 'off'] as const).map((m) => (
+                {(['on', 'off'] as const).map((m) => (
                   <button key={m} onClick={() => setAudio(m)}
                     className={`px-2 py-0.5 text-xs rounded-full border ${audio === m ? 'bg-accent text-accent-foreground border-accent' : 'border-border text-text-muted hover:text-text-primary'}`}>
-                    {m === 'auto' ? t.np_audio_auto : m === 'on' ? t.np_audio_on : t.np_audio_off}
+                    {m === 'on' ? t.np_audio_on : t.np_audio_off}
                   </button>
                 ))}
               </div>
