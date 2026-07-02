@@ -1,9 +1,7 @@
-import { createFileRoute, Navigate } from '@tanstack/react-router'
+import { createFileRoute, redirect } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/team/')({
-  component: TeamIndex,
+  beforeLoad: () => {
+    throw redirect({ to: '/my-team' })
+  },
 })
-
-function TeamIndex() {
-  return <Navigate to="/my-team" />
-}
