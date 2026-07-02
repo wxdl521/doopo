@@ -200,7 +200,7 @@ export const updateTeam = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
 
-    const updates: Record<string, any> = {};
+    const updates: { name?: string; description?: string | null } = {};
     if (data.name !== undefined) updates.name = data.name;
     if (data.description !== undefined) updates.description = data.description;
 

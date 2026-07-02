@@ -171,7 +171,9 @@ function TeamPage() {
   const roleInfo = roleConfig[myRole] ?? roleConfig.member;
   const RoleIcon = roleInfo.icon;
 
-  const visibleTabs = TABS.filter((tab) => !tab.ownerOnly || myRole === "owner");
+  const visibleTabs = TABS.filter(
+    (tab) => !("ownerOnly" in tab && tab.ownerOnly) || myRole === "owner",
+  );
   const teamId = team.id;
   const isOwner = myRole === "owner";
 
