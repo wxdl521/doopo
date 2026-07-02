@@ -30,6 +30,10 @@ export const IMAGE_MODELS: ImageModelOption[] = [
   { key: '', label: '—— [Pixflow · OpenAI 兼容] ——', sub: undefined, legacy: true },
   { key: 'pixflow/gpt-image-2', label: 'GPT Image 2', sub: '[Pixflow·OpenAI] Image2 · T2I/I2I' },
 
+  // ---- [Claude360 · OpenAI 兼容] claude360.xyz → /v1/images/generations ----
+  { key: '', label: '—— [Claude360 · OpenAI 兼容] ——', sub: undefined, legacy: true },
+  { key: 'claude360/gpt-image-2', label: 'GPT Image 2', sub: '[Claude360·OpenAI] Image2 · T2I/I2I' },
+
   // ---- [Revora · OpenAI 兼容] revora.vip → /v1/images/generations|edits ----
   //  2026/06 接入:OpenAI 兼容 gpt-image-2 中转
   { key: '', label: '—— [Revora · OpenAI 兼容] ——', sub: undefined, legacy: true },

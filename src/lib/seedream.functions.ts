@@ -804,6 +804,17 @@ export const regenerateCharacterLook = createServerFn({ method: 'POST' })
       if (!r.url) return { ok: false as const, error: r.error || 'Pixflow 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
+    if (requested.toLowerCase().startsWith('claude360/')) {
+      const { callClaude360Image } = await import('./claude360Image.functions')
+      const r = await callClaude360Image({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'Claude360 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
     if (requested.toLowerCase().startsWith('tokenflash/')) {
       const { callTokenflashImage } = await import('./tokenflash.functions')
       const r = await callTokenflashImage({
@@ -1090,6 +1101,17 @@ export const generateStoryboardShotImage = createServerFn({ method: 'POST' })
       if (!r.url) return { ok: false as const, error: r.error || 'Pixflow 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
+    if (requested.toLowerCase().startsWith('claude360/')) {
+      const { callClaude360Image } = await import('./claude360Image.functions')
+      const r = await callClaude360Image({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: '2K',
+        referenceImages: images,
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'Claude360 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
     // generateStoryboardShotImage: 委托给 Tokenflash(OpenAI 兼容,api.tokenflash.cn)
     if (requested.toLowerCase().startsWith('tokenflash/')) {
       const { callTokenflashImage } = await import('./tokenflash.functions')
@@ -1368,6 +1390,17 @@ export const regenerateStoryboardShot = createServerFn({ method: 'POST' })
         referenceImages: images,
       })
       if (!r.url) return { ok: false as const, error: r.error || 'Pixflow 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('claude360/')) {
+      const { callClaude360Image } = await import('./claude360Image.functions')
+      const r = await callClaude360Image({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: '2K',
+        referenceImages: images,
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'Claude360 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
     if (requested.toLowerCase().startsWith('tokenflash/')) {
@@ -1782,6 +1815,17 @@ export const generateStoryboardPitchDeck = createServerFn({ method: 'POST' })
         quality: 'high',
       })
       if (!r.url) return { ok: false as const, error: r.error || 'Pixflow 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('claude360/')) {
+      const { callClaude360Image } = await import('./claude360Image.functions')
+      const r = await callClaude360Image({
+        prompt,
+        model: requested,
+        size: '3840x2160',
+        referenceImages: data.referenceImages || [],
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'Claude360 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
     if (requested.toLowerCase().startsWith('tokenflash/')) {
@@ -2330,6 +2374,17 @@ export const regenerateSceneImage = createServerFn({ method: 'POST' })
         quality: 'high',
       })
       if (!r.url) return { ok: false as const, error: r.error || 'Pixflow 未返回图片' }
+      return { ok: true as const, url: r.url, model: r.model }
+    }
+    if (requested.toLowerCase().startsWith('claude360/')) {
+      const { callClaude360Image } = await import('./claude360Image.functions')
+      const r = await callClaude360Image({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+      })
+      if (!r.url) return { ok: false as const, error: r.error || 'Claude360 未返回图片' }
       return { ok: true as const, url: r.url, model: r.model }
     }
     if (requested.toLowerCase().startsWith('tokenflash/')) {

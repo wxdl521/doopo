@@ -16,9 +16,9 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { Separator } from '@/components/ui/separator'
 import { AlertTriangle, Save } from 'lucide-react'
 import { updateTeam, deleteTeam } from '@/lib/teams.functions'
+import { useLanguage } from '@/i18n/LanguageContext'
 
 type SettingsTabProps = {
   teamId: string
@@ -33,6 +33,7 @@ export default function SettingsTab({
   initialDescription,
   onUpdate,
 }: SettingsTabProps) {
+  const { t } = useLanguage()
   const navigate = useNavigate()
   const callUpdateTeam = useServerFn(updateTeam)
   const callDeleteTeam = useServerFn(deleteTeam)
@@ -43,7 +44,6 @@ export default function SettingsTab({
   const [saveError, setSaveError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
 
-  // 解散团队
   const [showDissolve, setShowDissolve] = useState(false)
   const [confirmName, setConfirmName] = useState('')
   const [dissolveStep, setDissolveStep] = useState<'confirm' | 'final'>('confirm')
@@ -57,11 +57,7 @@ export default function SettingsTab({
     setSaved(false)
 
     const r: any = await callUpdateTeam({
-      data: {
-        teamId,
-        name: name.trim(),
-        description: description.trim() || undefined,
-      },
+      data: { teamId, name: name.trim(), description: description.trim() || undefined },
     })
 
     setSaving(false)
@@ -70,7 +66,7 @@ export default function SettingsTab({
       onUpdate()
       setTimeout(() => setSaved(false), 3000)
     } else {
-      setSaveError(r?.error ?? '保存失败')
+      setSaveError(r?.error ?? t.team_save_error)
     }
   }
 
@@ -82,9 +78,9 @@ export default function SettingsTab({
 
     setDissolving(false)
     if (r?.ok) {
-      navigate({ to: '/my-team' })
+      navigate({ to: '/team' })
     } else {
-      setDissolveError(r?.error ?? '解散失败')
+      setDissolveError(r?.error ?? t.team_dissolve_error)
     }
   }
 
@@ -100,27 +96,27 @@ export default function SettingsTab({
       {/* 基本信息 */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">基本信息</CardTitle>
-          <CardDescription>编辑团队名称和描述</CardDescription>
+          <CardTitle className="text-base">{t.team_settings_basic}</CardTitle>
+          <CardDescription>{t.team_settings_basic_desc}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="team-name">团队名称</Label>
+            <Label htmlFor="team-name">{t.team_name}</Label>
             <Input
               id="team-name"
               value={name}
               onChange={(e) => { setName(e.target.value); setSaved(false) }}
-              placeholder="输入团队名称"
+              placeholder={t.team_name_placeholder}
               maxLength={100}
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="team-desc">团队描述</Label>
+            <Label htmlFor="team-desc">{t.team_description}</Label>
             <Textarea
               id="team-desc"
               value={description}
               onChange={(e) => { setDescription(e.target.value); setSaved(false) }}
-              placeholder="输入团队描述（选填）"
+              placeholder={t.team_desc_placeholder}
               maxLength={500}
               rows={3}
             />
@@ -129,14 +125,10 @@ export default function SettingsTab({
           <div className="flex items-center gap-3">
             <Button onClick={handleSave} disabled={saving || !name.trim()}>
               <Save className="w-4 h-4 mr-2" />
-              {saving ? '保存中...' : '保存更改'}
+              {saving ? t.team_saving : t.team_save}
             </Button>
-            {saved && (
-              <span className="text-sm text-green-500">已保存</span>
-            )}
-            {saveError && (
-              <span className="text-sm text-destructive">{saveError}</span>
-            )}
+            {saved && <span className="text-sm text-green-500">{t.team_saved}</span>}
+            {saveError && <span className="text-sm text-destructive">{saveError}</span>}
           </div>
         </CardContent>
       </Card>
@@ -146,15 +138,13 @@ export default function SettingsTab({
         <CardHeader>
           <CardTitle className="text-base text-destructive flex items-center gap-2">
             <AlertTriangle className="w-4 h-4" />
-            危险操作
+            {t.team_danger_zone}
           </CardTitle>
-          <CardDescription>
-            删除此团队。删除团队后，积分将换算成金额返还到您的个人账户。此操作不可撤销。
-          </CardDescription>
+          <CardDescription>{t.team_dissolve_warning}</CardDescription>
         </CardHeader>
         <CardContent>
           <Button variant="destructive" onClick={openDissolve}>
-            解散团队
+            {t.team_dissolve}
           </Button>
         </CardContent>
       </Card>
@@ -163,24 +153,18 @@ export default function SettingsTab({
       <AlertDialog
         open={showDissolve}
         onOpenChange={(open) => {
-          if (!open) {
-            setShowDissolve(false)
-            setDissolveStep('confirm')
-          }
+          if (!open) { setShowDissolve(false); setDissolveStep('confirm') }
         }}
       >
         <AlertDialogContent>
           {dissolveStep === 'confirm' ? (
             <>
               <AlertDialogHeader>
-                <AlertDialogTitle className="text-destructive">确认解散团队</AlertDialogTitle>
+                <AlertDialogTitle className="text-destructive">{t.team_dissolve_confirm_title}</AlertDialogTitle>
                 <AlertDialogDescription>
-                  <p className="mb-3">
-                    解散团队后，所有成员的积分将按汇率折算成金额返还到您的个人账户。
-                    此操作不可撤销。
-                  </p>
+                  <p className="mb-3">{t.team_dissolve_confirm_desc}</p>
                   <Label htmlFor="confirm-name" className="text-foreground">
-                    请输入团队名称 <strong>{initialName}</strong> 以确认：
+                    {t.team_dissolve_input_prompt(initialName)}
                   </Label>
                   <Input
                     id="confirm-name"
@@ -193,41 +177,38 @@ export default function SettingsTab({
               </AlertDialogHeader>
               <AlertDialogFooter>
                 <AlertDialogCancel onClick={() => setShowDissolve(false)}>
-                  取消
+                  {t.common_cancel}
                 </AlertDialogCancel>
                 <AlertDialogAction
                   disabled={confirmName !== initialName}
                   onClick={() => setDissolveStep('final')}
                   className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                 >
-                  继续
+                  {t.team_continue}
                 </AlertDialogAction>
               </AlertDialogFooter>
             </>
           ) : (
             <>
               <AlertDialogHeader>
-                <AlertDialogTitle className="text-destructive">最终确认</AlertDialogTitle>
+                <AlertDialogTitle className="text-destructive">{t.team_final_confirm}</AlertDialogTitle>
                 <AlertDialogDescription>
-                  您确定要解散 <strong>{initialName}</strong> 吗？
-                  所有成员的积分将退还到您的账户，此操作无法撤销。
+                  {t.team_dissolve_final_desc(initialName)}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               {dissolveError && (
-                <p className="text-sm text-destructive bg-destructive/10 p-2 rounded">
-                  {dissolveError}
-                </p>
+                <p className="text-sm text-destructive bg-destructive/10 p-2 rounded">{dissolveError}</p>
               )}
               <AlertDialogFooter>
                 <AlertDialogCancel onClick={() => setDissolveStep('confirm')}>
-                  返回
+                  {t.team_back}
                 </AlertDialogCancel>
                 <AlertDialogAction
                   onClick={handleDissolve}
                   disabled={dissolving}
                   className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
                 >
-                  {dissolving ? '解散中...' : '确认解散'}
+                  {dissolving ? t.team_dissolving : t.team_confirm_dissolve}
                 </AlertDialogAction>
               </AlertDialogFooter>
             </>

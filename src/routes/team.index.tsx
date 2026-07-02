@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { useServerFn } from '@tanstack/react-start'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
@@ -29,10 +29,10 @@ import MembersTab from '@/components/team/MembersTab'
 import CreditsHistoryTab from '@/components/team/CreditsHistoryTab'
 import SettingsTab from '@/components/team/SettingsTab'
 import CreditManageDialog from '@/components/team/CreditManageDialog'
-import { getMyTeams } from '@/lib/teams.functions'
-import { getTeamDetail } from '@/lib/teams.functions'
+import { getMyTeams, getTeamDetail } from '@/lib/teams.functions'
 import { leaveTeam } from '@/lib/teamMembers.functions'
 import { useAuth } from '@/hooks/useAuth'
+import { useLanguage } from '@/i18n/LanguageContext'
 import type { MemberRow } from '@/lib/teamMembers.functions'
 
 export const Route = createFileRoute('/team/')({
@@ -69,6 +69,7 @@ type TeamDetail = {
 }
 
 function TeamPage() {
+  const { t } = useLanguage()
   const navigate = useNavigate()
   const { isAuthenticated, loading: authLoading } = useAuth()
   const callGetMyTeams = useServerFn(getMyTeams)
@@ -95,7 +96,6 @@ function TeamPage() {
       .finally(() => setLoading(false))
   }, [isAuthenticated, authLoading, callGetMyTeams])
 
-  // 有团队后加载详情
   useEffect(() => {
     if (teams.length === 0) return
     const teamId = teams[0].id
@@ -119,7 +119,6 @@ function TeamPage() {
     setLeaveTarget(null)
   }
 
-  // 加载中
   if (loading || authLoading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -128,18 +127,16 @@ function TeamPage() {
     )
   }
 
-  // 未登录
   if (!isAuthenticated) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
         <Users className="w-16 h-16 text-muted-foreground" />
-        <h2 className="text-xl font-semibold">请先登录</h2>
-        <p className="text-muted-foreground">登录后查看您的团队</p>
+        <h2 className="text-xl font-semibold">{t.team_login_first}</h2>
+        <p className="text-muted-foreground">{t.team_login_desc}</p>
       </div>
     )
   }
 
-  // 无团队 — 空状态
   if (teams.length === 0) {
     return (
       <div className="max-w-2xl mx-auto py-12 px-4">
@@ -147,11 +144,11 @@ function TeamPage() {
           <CardContent className="flex flex-col items-center gap-4 py-12">
             <Users className="w-12 h-12 text-muted-foreground" />
             <div className="text-center">
-              <h3 className="font-semibold text-lg mb-1">尚未加入任何团队</h3>
-              <p className="text-sm text-muted-foreground">创建一个团队或接受邀请，开始协作创作。</p>
+              <h3 className="font-semibold text-lg mb-1">{t.team_no_team}</h3>
+              <p className="text-sm text-muted-foreground">{t.team_no_team_desc}</p>
             </div>
             <Button onClick={() => navigate({ to: '/team/create' })}>
-              <Plus className="w-4 h-4 mr-2" />创建团队
+              <Plus className="w-4 h-4 mr-2" />{t.team_create_btn}
             </Button>
           </CardContent>
         </Card>
@@ -159,7 +156,6 @@ function TeamPage() {
     )
   }
 
-  // 有团队 — 管理端（左侧边栏 + 3 Tab）
   if (!team) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -170,7 +166,7 @@ function TeamPage() {
 
   const roleInfo = ROLE_CONFIG[myRole] ?? ROLE_CONFIG.member
   const RoleIcon = roleInfo.icon
-  const visibleTabs = TABS.filter((t) => !t.ownerOnly || myRole === 'owner')
+  const visibleTabs = TABS.filter((tab) => !tab.ownerOnly || myRole === 'owner')
   const teamId = team.id
   const isOwner = myRole === 'owner'
 
@@ -179,7 +175,6 @@ function TeamPage() {
       {/* 左侧边栏 */}
       <aside className="md:w-56 md:shrink-0">
         <div className="panel p-3">
-          {/* 团队信息 */}
           <div className="px-3 py-2 mb-2">
             <h2 className="text-sm font-bold text-text-primary truncate">{team.name}</h2>
             <Badge variant={ROLE_BADGE_COLOR[myRole] ?? 'outline'} className="flex items-center gap-1.5 mt-1.5 w-fit">
@@ -188,7 +183,6 @@ function TeamPage() {
             </Badge>
           </div>
 
-          {/* Tab 导航 */}
           <nav className="flex md:flex-col gap-1 overflow-x-auto md:overflow-visible">
             {visibleTabs.map((tab) => {
               const Icon = tab.icon
@@ -212,14 +206,13 @@ function TeamPage() {
 
           <Separator className="my-3" />
 
-          {/* 离开团队 */}
           {!isOwner && (
             <button
               onClick={() => setLeaveTarget(teamId)}
               className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-text-muted hover:text-destructive hover:bg-destructive/10 transition w-full"
             >
               <LogOut size={15} />
-              <span>离开团队</span>
+              <span>{t.team_leave_btn}</span>
             </button>
           )}
         </div>
@@ -255,7 +248,6 @@ function TeamPage() {
         )}
       </div>
 
-      {/* 积分管理弹窗 */}
       <CreditManageDialog
         open={!!creditTarget}
         teamId={teamId}
@@ -265,19 +257,16 @@ function TeamPage() {
         onSuccess={() => setRefreshKey((k) => k + 1)}
       />
 
-      {/* 离开确认弹窗 */}
       <AlertDialog open={!!leaveTarget} onOpenChange={(open) => !open && setLeaveTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>确认离开团队</AlertDialogTitle>
-            <AlertDialogDescription>
-              离开团队后，您将失去对团队项目的访问权限。您的未消耗积分将被退回团队池。此操作不可撤销。
-            </AlertDialogDescription>
+            <AlertDialogTitle>{t.team_leave_title}</AlertDialogTitle>
+            <AlertDialogDescription>{t.team_leave_desc}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogCancel>{t.common_cancel}</AlertDialogCancel>
             <AlertDialogAction onClick={handleLeave} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              确认离开
+              {t.team_leave_confirm}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

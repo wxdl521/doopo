@@ -8,6 +8,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
 import { ArrowLeft, Plus } from 'lucide-react'
 import { createTeam } from '@/lib/teams.functions'
+import { useLanguage } from '@/i18n/LanguageContext'
 
 export const Route = createFileRoute('/team/create')({
   head: () => ({ meta: [{ title: 'Doopoo — 创建团队' }] }),
@@ -15,6 +16,7 @@ export const Route = createFileRoute('/team/create')({
 })
 
 function CreateTeamPage() {
+  const { t } = useLanguage()
   const navigate = useNavigate()
   const callCreateTeam = useServerFn(createTeam)
 
@@ -37,7 +39,7 @@ function CreateTeamPage() {
     if (r?.team) {
       navigate({ to: '/team' })
     } else {
-      setError(r?.error ?? '创建失败，请重试')
+      setError(r?.error ?? t.team_create_error)
     }
   }
 
@@ -48,33 +50,33 @@ function CreateTeamPage() {
         className="flex items-center gap-2 text-sm text-text-muted hover:text-text-primary mb-6 transition"
       >
         <ArrowLeft size={16} />
-        返回
+        {t.team_back_nav}
       </button>
 
       <Card>
         <CardHeader>
-          <CardTitle>创建团队</CardTitle>
-          <CardDescription>创建一个新团队，邀请成员一起协作创作。</CardDescription>
+          <CardTitle>{t.team_create_title}</CardTitle>
+          <CardDescription>{t.team_create_desc}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="team-name">团队名称</Label>
+            <Label htmlFor="team-name">{t.team_name}</Label>
             <Input
               id="team-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="输入团队名称"
+              placeholder={t.team_name_placeholder}
               maxLength={100}
             />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="team-desc">团队描述（选填）</Label>
+            <Label htmlFor="team-desc">{t.team_description}</Label>
             <Textarea
               id="team-desc"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="简单描述团队的目的"
+              placeholder={t.team_desc_placeholder}
               maxLength={500}
               rows={3}
             />
@@ -90,7 +92,7 @@ function CreateTeamPage() {
             className="w-full"
           >
             <Plus className="w-4 h-4 mr-2" />
-            {creating ? '创建中...' : '创建团队'}
+            {creating ? t.team_creating : t.team_create_submit}
           </Button>
         </CardContent>
       </Card>

@@ -10,8 +10,6 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { Badge } from '@/components/ui/badge'
-import { Separator } from '@/components/ui/separator'
 import {
   Coins,
   ArrowRightLeft,
@@ -24,17 +22,18 @@ import {
   ChevronRight,
 } from 'lucide-react'
 import { getCreditTransactions, getTransferRecords, getTeamBalance } from '@/lib/teamCredits.functions'
+import { useLanguage } from '@/i18n/LanguageContext'
 import type { TransactionRow, TransferRow } from '@/lib/teamCredits.functions'
 
 const PAGE_SIZE = 20
 
-const TYPE_CONFIG: Record<string, { label: string; icon: typeof ArrowDownToLine; color: string }> = {
-  allocate: { label: '分配', icon: ArrowDownToLine, color: 'text-green-500' },
-  reclaim: { label: '回收', icon: ArrowUpFromLine, color: 'text-orange-500' },
-  transfer_in: { label: '转入', icon: Download, color: 'text-green-500' },
-  transfer_out: { label: '转出', icon: Send, color: 'text-orange-500' },
-  consume: { label: '消费', icon: Coins, color: 'text-blue-500' },
-  refund: { label: '退款', icon: RotateCcw, color: 'text-purple-500' },
+const TYPE_CONFIG: Record<string, { labelKey: string; icon: typeof ArrowDownToLine; color: string }> = {
+  allocate: { labelKey: 'team_tx_allocate', icon: ArrowDownToLine, color: 'text-green-500' },
+  reclaim: { labelKey: 'team_tx_reclaim', icon: ArrowUpFromLine, color: 'text-orange-500' },
+  transfer_in: { labelKey: 'team_tx_transfer_in', icon: Download, color: 'text-green-500' },
+  transfer_out: { labelKey: 'team_tx_transfer_out', icon: Send, color: 'text-orange-500' },
+  consume: { labelKey: 'team_tx_consume', icon: Coins, color: 'text-blue-500' },
+  refund: { labelKey: 'team_tx_refund', icon: RotateCcw, color: 'text-purple-500' },
 }
 
 type CreditsHistoryTabProps = {
@@ -43,6 +42,7 @@ type CreditsHistoryTabProps = {
 }
 
 export default function CreditsHistoryTab({ teamId, myRole }: CreditsHistoryTabProps) {
+  const { t } = useLanguage()
   const callTransactions = useServerFn(getCreditTransactions)
   const callTransfers = useServerFn(getTransferRecords)
   const callBalance = useServerFn(getTeamBalance)
@@ -96,7 +96,7 @@ export default function CreditsHistoryTab({ teamId, myRole }: CreditsHistoryTabP
         <div className="flex items-center gap-3">
           <Coins className="w-6 h-6 text-amber-500" />
           <div>
-            <p className="text-sm text-muted-foreground">团队剩余积分</p>
+            <p className="text-sm text-muted-foreground">{t.team_remaining_credits}</p>
             <p className="text-2xl font-bold text-amber-500">
               {teamCredits.toLocaleString()}
             </p>
@@ -105,7 +105,7 @@ export default function CreditsHistoryTab({ teamId, myRole }: CreditsHistoryTabP
         {canTransfer && (
           <Button variant="outline" size="sm">
             <ArrowRightLeft className="w-4 h-4 mr-2" />
-            转入
+            {t.team_transfer_in}
           </Button>
         )}
       </div>
@@ -113,23 +113,23 @@ export default function CreditsHistoryTab({ teamId, myRole }: CreditsHistoryTabP
       {/* 积分记录 */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">积分记录</CardTitle>
+          <CardTitle className="text-base">{t.team_credit_records}</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>时间</TableHead>
-                <TableHead>描述</TableHead>
-                <TableHead className="text-right">积分变动</TableHead>
-                <TableHead className="text-right">剩余积分</TableHead>
+                <TableHead>{t.common_time}</TableHead>
+                <TableHead>{t.team_col_description}</TableHead>
+                <TableHead className="text-right">{t.team_credit_change}</TableHead>
+                <TableHead className="text-right">{t.team_balance_after}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {transactions.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
-                    暂无积分记录
+                    {t.team_no_transactions}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -145,7 +145,7 @@ export default function CreditsHistoryTab({ teamId, myRole }: CreditsHistoryTabP
                       <TableCell>
                         <div className="flex items-center gap-1.5">
                           <Icon className={`w-3.5 h-3.5 ${config.color}`} />
-                          <span className="text-sm">{tx.description ?? config.label}</span>
+                          <span className="text-sm">{tx.description ?? t[config.labelKey as keyof typeof t]}</span>
                         </div>
                       </TableCell>
                       <TableCell className="text-right">
@@ -173,15 +173,15 @@ export default function CreditsHistoryTab({ teamId, myRole }: CreditsHistoryTabP
                 onClick={() => setPage((p) => p - 1)}
               >
                 <ChevronLeft className="w-4 h-4 mr-1" />
-                上一页
+                {t.team_prev_page}
               </Button>
-              <span className="text-sm text-muted-foreground">第 {page + 1} 页</span>
+              <span className="text-sm text-muted-foreground">{t.team_page_n(page + 1)}</span>
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => setPage((p) => p + 1)}
               >
-                下一页
+                {t.team_next_page}
                 <ChevronRight className="w-4 h-4 ml-1" />
               </Button>
             </div>
@@ -192,23 +192,23 @@ export default function CreditsHistoryTab({ teamId, myRole }: CreditsHistoryTabP
       {/* 转账记录 */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base">转账记录</CardTitle>
+          <CardTitle className="text-base">{t.team_transfer_records}</CardTitle>
         </CardHeader>
         <CardContent className="p-0">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>时间</TableHead>
-                <TableHead>转账路径</TableHead>
-                <TableHead className="text-right">转入积分</TableHead>
-                <TableHead className="text-right">剩余积分</TableHead>
+                <TableHead>{t.common_time}</TableHead>
+                <TableHead>{t.team_transfer_path}</TableHead>
+                <TableHead className="text-right">{t.team_transfer_amount}</TableHead>
+                <TableHead className="text-right">{t.team_balance_after}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {transfers.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
-                    暂无转账记录
+                    {t.team_no_transfers}
                   </TableCell>
                 </TableRow>
               ) : (
