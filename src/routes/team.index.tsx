@@ -3,7 +3,6 @@ import { useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -18,8 +17,6 @@ import {
   Users,
   History,
   Settings,
-  LayoutDashboard,
-  Shield,
   LogOut,
   Crown,
   UserCog,
@@ -49,7 +46,6 @@ const ROLE_BADGE_COLOR: Record<string, "default" | "secondary" | "outline"> = {
 };
 
 const TABS = [
-  { id: "overview", icon: LayoutDashboard },
   { id: "members", icon: Users },
   { id: "history", icon: History },
   { id: "settings", icon: Settings, ownerOnly: true },
@@ -77,7 +73,7 @@ function TeamPage() {
   const [loading, setLoading] = useState(true);
   const [team, setTeam] = useState<TeamDetail | null>(null);
   const [myRole, setMyRole] = useState<string>("member");
-  const [activeTab, setActiveTab] = useState<string>("overview");
+  const [activeTab, setActiveTab] = useState<string>("members");
   const [leaveTarget, setLeaveTarget] = useState<string | null>(null);
   const [creditTarget, setCreditTarget] = useState<{
     member: MemberRow;
@@ -178,7 +174,6 @@ function TeamPage() {
   const isOwner = myRole === "owner";
 
   const tabLabels: Record<string, string> = {
-    overview: t.team_manage_overview,
     members: t.team_manage_members,
     history: t.team_manage_history,
     settings: t.team_manage_settings,
@@ -234,52 +229,6 @@ function TeamPage() {
         </div>
 
         {/* 内容区 */}
-        {activeTab === "overview" && (
-          <div className="space-y-6">
-            {/* 团队信息 */}
-            <section className="panel">
-              <div className="flex items-center gap-6 text-sm text-text-muted mb-4">
-                <span>
-                  {t.my_team_created_at}：{new Date(team.createdAt).toLocaleDateString("zh-CN")}
-                </span>
-              </div>
-
-              <Separator className="my-4" />
-
-              <div className="flex items-center gap-3">
-                {(myRole === "owner" || myRole === "admin") && (
-                  <Button onClick={() => setActiveTab("members")}>
-                    <Users className="w-4 h-4 mr-2" />
-                    {t.my_team_manage}
-                  </Button>
-                )}
-                {isOwner && (
-                  <p className="text-xs text-text-muted">{t.my_team_owner_cannot_leave}</p>
-                )}
-              </div>
-            </section>
-
-            {/* 团队规则 */}
-            <div className="grid sm:grid-cols-3 gap-4">
-              {[
-                { icon: Users, title: t.my_team_rule_1_title, desc: t.my_team_rule_1_desc },
-                { icon: Shield, title: t.my_team_rule_2_title, desc: t.my_team_rule_2_desc },
-                { icon: Settings, title: t.my_team_rule_3_title, desc: t.my_team_rule_3_desc },
-              ].map((rule) => (
-                <div key={rule.title} className="panel flex items-start gap-3">
-                  <div className="w-9 h-9 rounded-lg bg-accent-dim flex items-center justify-center shrink-0">
-                    <rule.icon className="w-4 h-4 text-accent" />
-                  </div>
-                  <div>
-                    <h4 className="font-semibold text-sm mb-0.5">{rule.title}</h4>
-                    <p className="text-xs text-text-muted">{rule.desc}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-
         {activeTab === "members" && (
           <MembersTab
             key={refreshKey}

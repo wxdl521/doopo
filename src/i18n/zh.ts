@@ -656,9 +656,8 @@ export const zh = {
 
   // ============ Team Join ============
   team_join_title: "加入团队",
-  team_join_desc: '您将加入 "{name}"',
+  team_join_desc: "您将通过邀请链接加入团队",
   team_join_btn: "加入团队",
-  team_join_already_member: "您已经是该团队成员",
   team_join_not_found: "团队不存在或已被解散",
   team_join_go_to_team: "前往团队页面",
 

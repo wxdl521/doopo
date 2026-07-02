@@ -678,9 +678,8 @@ export const en: Translations = {
 
   // ============ Team Join ============
   team_join_title: "Join Team",
-  team_join_desc: 'You are joining "{name}"',
+  team_join_desc: "You are about to join a team via invite link",
   team_join_btn: "Join Team",
-  team_join_already_member: "You are already a member of this team",
   team_join_not_found: "Team not found or has been dissolved",
   team_join_go_to_team: "Go to Team",
 
