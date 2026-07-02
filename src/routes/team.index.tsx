@@ -26,6 +26,7 @@ import {
   User,
   Plus,
 } from 'lucide-react'
+import PageHeader from '@/components/PageHeader'
 import MembersTab from '@/components/team/MembersTab'
 import CreditsHistoryTab from '@/components/team/CreditsHistoryTab'
 import SettingsTab from '@/components/team/SettingsTab'
@@ -217,16 +218,16 @@ function TeamPage() {
 
       {/* 右侧内容 */}
       <div className="flex-1 min-w-0">
-        {/* 顶部标题栏 */}
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold tracking-tight">{team.name}</h1>
+        <PageHeader
+          title={team.name}
+          subtitle={team.description ?? undefined}
+          actions={
             <Badge variant={ROLE_BADGE_COLOR[myRole] ?? 'outline'} className="flex items-center gap-1.5">
               <RoleIcon className="w-3.5 h-3.5" />
               {roleInfo.label}
             </Badge>
-          </div>
-        </div>
+          }
+        />
 
         {activeTab === 'overview' && (
           <div className="space-y-6">
