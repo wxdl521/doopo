@@ -49,7 +49,6 @@ import { Route as AccountRewardsRouteImport } from './routes/account.rewards'
 import { Route as AccountPostsRouteImport } from './routes/account.posts'
 import { Route as AccountNotificationsRouteImport } from './routes/account.notifications'
 import { Route as AccountAssetsRouteImport } from './routes/account.assets'
-import { Route as TeamTeamIdManageRouteImport } from './routes/team/$teamId/manage'
 import { Route as AssetsTabIdRouteImport } from './routes/assets_.$tab.$id'
 import { Route as ApiPublicTestAitokenvibeRouteImport } from './routes/api/public/test-aitokenvibe'
 
@@ -253,11 +252,6 @@ const AccountAssetsRoute = AccountAssetsRouteImport.update({
   path: '/assets',
   getParentRoute: () => AccountRoute,
 } as any)
-const TeamTeamIdManageRoute = TeamTeamIdManageRouteImport.update({
-  id: '/$teamId/manage',
-  path: '/$teamId/manage',
-  getParentRoute: () => TeamRoute,
-} as any)
 const AssetsTabIdRoute = AssetsTabIdRouteImport.update({
   id: '/assets_/$tab/$id',
   path: '/assets/$tab/$id',
@@ -313,7 +307,6 @@ export interface FileRoutesByFullPath {
   '/team/': typeof TeamIndexRoute
   '/api/public/test-aitokenvibe': typeof ApiPublicTestAitokenvibeRoute
   '/assets/$tab/$id': typeof AssetsTabIdRoute
-  '/team/$teamId/manage': typeof TeamTeamIdManageRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -353,7 +346,6 @@ export interface FileRoutesByTo {
   '/team': typeof TeamIndexRoute
   '/api/public/test-aitokenvibe': typeof ApiPublicTestAitokenvibeRoute
   '/assets/$tab/$id': typeof AssetsTabIdRoute
-  '/team/$teamId/manage': typeof TeamTeamIdManageRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -399,7 +391,6 @@ export interface FileRoutesById {
   '/team/': typeof TeamIndexRoute
   '/api/public/test-aitokenvibe': typeof ApiPublicTestAitokenvibeRoute
   '/assets_/$tab/$id': typeof AssetsTabIdRoute
-  '/team/$teamId/manage': typeof TeamTeamIdManageRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -446,7 +437,6 @@ export interface FileRouteTypes {
     | '/team/'
     | '/api/public/test-aitokenvibe'
     | '/assets/$tab/$id'
-    | '/team/$teamId/manage'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -486,7 +476,6 @@ export interface FileRouteTypes {
     | '/team'
     | '/api/public/test-aitokenvibe'
     | '/assets/$tab/$id'
-    | '/team/$teamId/manage'
   id:
     | '__root__'
     | '/'
@@ -531,7 +520,6 @@ export interface FileRouteTypes {
     | '/team/'
     | '/api/public/test-aitokenvibe'
     | '/assets_/$tab/$id'
-    | '/team/$teamId/manage'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -841,13 +829,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AccountAssetsRouteImport
       parentRoute: typeof AccountRoute
     }
-    '/team/$teamId/manage': {
-      id: '/team/$teamId/manage'
-      path: '/$teamId/manage'
-      fullPath: '/team/$teamId/manage'
-      preLoaderRoute: typeof TeamTeamIdManageRouteImport
-      parentRoute: typeof TeamRoute
-    }
     '/assets_/$tab/$id': {
       id: '/assets_/$tab/$id'
       path: '/assets/$tab/$id'
@@ -971,12 +952,10 @@ const ShowcaseRouteWithChildren = ShowcaseRoute._addFileChildren(
 
 interface TeamRouteChildren {
   TeamIndexRoute: typeof TeamIndexRoute
-  TeamTeamIdManageRoute: typeof TeamTeamIdManageRoute
 }
 
 const TeamRouteChildren: TeamRouteChildren = {
   TeamIndexRoute: TeamIndexRoute,
-  TeamTeamIdManageRoute: TeamTeamIdManageRoute,
 }
 
 const TeamRouteWithChildren = TeamRoute._addFileChildren(TeamRouteChildren)

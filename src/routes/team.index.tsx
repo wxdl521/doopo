@@ -1,7 +1,7 @@
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { useServerFn } from '@tanstack/react-start'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
@@ -15,16 +15,30 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { Users, Shield, Settings, LogOut, Crown, UserCog, User, Plus } from 'lucide-react'
+import {
+  Users,
+  History,
+  Settings,
+  Shield,
+  LogOut,
+  Crown,
+  UserCog,
+  User,
+  Plus,
+} from 'lucide-react'
+import MembersTab from '@/components/team/MembersTab'
+import CreditsHistoryTab from '@/components/team/CreditsHistoryTab'
+import SettingsTab from '@/components/team/SettingsTab'
+import CreditManageDialog from '@/components/team/CreditManageDialog'
 import { getMyTeams } from '@/lib/teams.functions'
+import { getTeamDetail } from '@/lib/teams.functions'
 import { leaveTeam } from '@/lib/teamMembers.functions'
 import { useAuth } from '@/hooks/useAuth'
+import type { MemberRow } from '@/lib/teamMembers.functions'
 
 export const Route = createFileRoute('/team/')({
-  head: () => ({
-    meta: [{ title: 'Doopoo — 我的团队' }],
-  }),
-  component: TeamIndexPage,
+  head: () => ({ meta: [{ title: 'Doopoo — 团队' }] }),
+  component: TeamPage,
 })
 
 const TEAM_RULES = [
@@ -33,39 +47,96 @@ const TEAM_RULES = [
   { icon: Settings, title: '灵活权限', description: '支持所有者、管理员和成员三种角色，精细控制操作权限。' },
 ]
 
-const ROLE_CONFIG: Record<string, { label: string; icon: typeof Crown; color: 'default' | 'secondary' | 'outline' }> = {
-  owner: { label: '所有者', icon: Crown, color: 'default' },
-  admin: { label: '管理员', icon: UserCog, color: 'secondary' },
-  member: { label: '成员', icon: User, color: 'outline' },
+const ROLE_CONFIG: Record<string, { label: string; icon: typeof Crown }> = {
+  owner: { label: '所有者', icon: Crown },
+  admin: { label: '管理员', icon: UserCog },
+  member: { label: '成员', icon: User },
 }
 
-function TeamIndexPage() {
+const ROLE_BADGE_COLOR: Record<string, 'default' | 'secondary' | 'outline'> = {
+  owner: 'default',
+  admin: 'secondary',
+  member: 'outline',
+}
+
+const TABS = [
+  { id: 'members', label: '成员管理', icon: Users },
+  { id: 'history', label: '积分记录', icon: History },
+  { id: 'settings', label: '设置', icon: Settings, ownerOnly: true },
+] as const
+
+type TeamDetail = {
+  id: string
+  name: string
+  description: string | null
+  ownerId: string
+  createdAt: string
+  updatedAt: string
+  deletedAt: string | null
+}
+
+function TeamPage() {
   const navigate = useNavigate()
   const { isAuthenticated, loading: authLoading } = useAuth()
   const callGetMyTeams = useServerFn(getMyTeams)
+  const callGetTeamDetail = useServerFn(getTeamDetail)
   const callLeaveTeam = useServerFn(leaveTeam)
 
   const [teams, setTeams] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [team, setTeam] = useState<TeamDetail | null>(null)
+  const [myRole, setMyRole] = useState<string>('member')
+  const [activeTab, setActiveTab] = useState<string>('members')
   const [leaveTarget, setLeaveTarget] = useState<string | null>(null)
+  const [creditTarget, setCreditTarget] = useState<{ member: MemberRow; mode: 'allocate' | 'reclaim' } | null>(null)
+  const [refreshKey, setRefreshKey] = useState(0)
 
   useEffect(() => {
     if (authLoading) return
     if (!isAuthenticated) { setLoading(false); return }
     callGetMyTeams({ data: {} })
-      .then((r: any) => { if (r?.teams) setTeams(r.teams) })
+      .then((r: any) => {
+        if (r?.teams) setTeams(r.teams)
+      })
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [isAuthenticated, authLoading, callGetMyTeams])
 
+  // 有团队后加载详情
+  useEffect(() => {
+    if (teams.length === 0) return
+    const teamId = teams[0].id
+    callGetTeamDetail({ data: { teamId } })
+      .then((r: any) => {
+        if (r?.team) {
+          setTeam(r.team)
+          setMyRole(r.myRole ?? 'member')
+        }
+      })
+      .catch(() => {})
+  }, [teams, callGetTeamDetail])
+
   const handleLeave = async () => {
     if (!leaveTarget) return
     const r: any = await callLeaveTeam({ data: { teamId: leaveTarget } })
-    if (r?.ok) setTeams((prev) => prev.filter((t) => t.id !== leaveTarget))
+    if (r?.ok) {
+      setTeams([])
+      setTeam(null)
+    }
     setLeaveTarget(null)
   }
 
-  if (!authLoading && !isAuthenticated) {
+  // 加载中
+  if (loading || authLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+      </div>
+    )
+  }
+
+  // 未登录
+  if (!isAuthenticated) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
         <Users className="w-16 h-16 text-muted-foreground" />
@@ -75,14 +146,7 @@ function TeamIndexPage() {
     )
   }
 
-  if (loading || authLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
-      </div>
-    )
-  }
-
+  // 无团队 — 空状态
   if (teams.length === 0) {
     return (
       <div className="max-w-2xl mx-auto py-12 px-4 space-y-8">
@@ -104,6 +168,7 @@ function TeamIndexPage() {
             ))}
           </div>
         </div>
+
         <Card className="border-dashed">
           <CardContent className="flex flex-col items-center gap-4 py-12">
             <Users className="w-12 h-12 text-muted-foreground" />
@@ -120,69 +185,113 @@ function TeamIndexPage() {
     )
   }
 
-  const team = teams[0]
-  const roleInfo = ROLE_CONFIG[team.role] ?? ROLE_CONFIG.member
+  // 有团队 — 管理端（左侧边栏 + 3 Tab）
+  if (!team) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+      </div>
+    )
+  }
+
+  const roleInfo = ROLE_CONFIG[myRole] ?? ROLE_CONFIG.member
   const RoleIcon = roleInfo.icon
-  const isOwnerOrAdmin = team.role === 'owner' || team.role === 'admin'
-  const isOwner = team.role === 'owner'
+  const visibleTabs = TABS.filter((t) => !t.ownerOnly || myRole === 'owner')
+  const teamId = team.id
+  const isOwner = myRole === 'owner'
 
   return (
-    <div className="max-w-2xl mx-auto py-12 px-4 space-y-8">
-      <div>
-        <h2 className="text-2xl font-bold mb-6">团队规则</h2>
-        <div className="grid gap-4">
-          {TEAM_RULES.map((rule) => (
-            <Card key={rule.title}>
-              <CardContent className="flex items-start gap-4 pt-6">
-                <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
-                  <rule.icon className="w-5 h-5 text-primary" />
-                </div>
-                <div>
-                  <h3 className="font-semibold mb-1">{rule.title}</h3>
-                  <p className="text-sm text-muted-foreground">{rule.description}</p>
-                </div>
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <div className="flex items-center justify-between">
-            <div>
-              <CardTitle className="text-xl">{team.name}</CardTitle>
-              {team.description && <CardDescription className="mt-1">{team.description}</CardDescription>}
-            </div>
-            <Badge variant={roleInfo.color} className="flex items-center gap-1.5">
-              <RoleIcon className="w-3.5 h-3.5" />{roleInfo.label}
+    <div className="animate-fade-in flex flex-col md:flex-row gap-6">
+      {/* 左侧边栏 */}
+      <aside className="md:w-56 md:shrink-0">
+        <div className="panel p-3">
+          {/* 团队信息 */}
+          <div className="px-3 py-2 mb-2">
+            <h2 className="text-sm font-bold text-text-primary truncate">{team.name}</h2>
+            <Badge variant={ROLE_BADGE_COLOR[myRole] ?? 'outline'} className="flex items-center gap-1.5 mt-1.5 w-fit">
+              <RoleIcon className="w-3 h-3" />
+              <span className="text-xs">{roleInfo.label}</span>
             </Badge>
           </div>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center gap-6 text-sm text-muted-foreground mb-4">
-            <span>创建时间：{new Date(team.createdAt).toLocaleDateString('zh-CN')}</span>
-            {team.creditsBalance !== undefined && <span>可用积分：{team.creditsBalance}</span>}
-          </div>
-          <Separator className="my-4" />
-          <div className="flex items-center gap-3">
-            {isOwnerOrAdmin && (
-              <Button onClick={() => navigate({ to: '/team/$teamId/manage', params: { teamId: team.id } })}>
-                <Settings className="w-4 h-4 mr-2" />管理团队
-              </Button>
-            )}
-            {!isOwner && (
-              <Button variant="outline" onClick={() => setLeaveTarget(team.id)}>
-                <LogOut className="w-4 h-4 mr-2" />离开团队
-              </Button>
-            )}
-            {isOwner && (
-              <p className="text-xs text-muted-foreground">作为所有者，您不能离开自己的团队。如需退出，请先转让所有权或解散团队。</p>
-            )}
-          </div>
-        </CardContent>
-      </Card>
 
+          {/* Tab 导航 */}
+          <nav className="flex md:flex-col gap-1 overflow-x-auto md:overflow-visible">
+            {visibleTabs.map((tab) => {
+              const Icon = tab.icon
+              const isActive = activeTab === tab.id
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm whitespace-nowrap transition ${
+                    isActive
+                      ? 'bg-accent-dim text-accent font-semibold'
+                      : 'text-text-secondary hover:text-text-primary hover:bg-bg-elevated'
+                  }`}
+                >
+                  <Icon size={15} />
+                  <span>{tab.label}</span>
+                </button>
+              )
+            })}
+          </nav>
+
+          <Separator className="my-3" />
+
+          {/* 离开团队按钮 */}
+          {!isOwner && (
+            <button
+              onClick={() => setLeaveTarget(teamId)}
+              className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-text-muted hover:text-destructive hover:bg-destructive/10 transition w-full"
+            >
+              <LogOut size={15} />
+              <span>离开团队</span>
+            </button>
+          )}
+        </div>
+      </aside>
+
+      {/* 右侧内容 */}
+      <div className="flex-1 min-w-0">
+        {activeTab === 'members' && (
+          <MembersTab
+            key={refreshKey}
+            teamId={teamId}
+            myRole={myRole}
+            onManageCredits={(member, mode) => setCreditTarget({ member, mode })}
+          />
+        )}
+        {activeTab === 'history' && (
+          <CreditsHistoryTab teamId={teamId} myRole={myRole} />
+        )}
+        {activeTab === 'settings' && (
+          <SettingsTab
+            teamId={teamId}
+            initialName={team.name}
+            initialDescription={team.description ?? ''}
+            onUpdate={() =>
+              callGetTeamDetail({ data: { teamId } }).then((r: any) => {
+                if (r?.team) {
+                  setTeam(r.team)
+                  setMyRole(r.myRole ?? 'member')
+                }
+              })
+            }
+          />
+        )}
+      </div>
+
+      {/* 积分管理弹窗 */}
+      <CreditManageDialog
+        open={!!creditTarget}
+        teamId={teamId}
+        member={creditTarget?.member ?? null}
+        mode={creditTarget?.mode ?? 'allocate'}
+        onClose={() => setCreditTarget(null)}
+        onSuccess={() => setRefreshKey((k) => k + 1)}
+      />
+
+      {/* 离开确认弹窗 */}
       <AlertDialog open={!!leaveTarget} onOpenChange={(open) => !open && setLeaveTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
