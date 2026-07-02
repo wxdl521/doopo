@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
 // ====================================================================
 // Schemas
@@ -235,4 +236,48 @@ export const deleteTeam = createServerFn({ method: "POST" })
 
     if (error) return { ok: false as const, error: error.message };
     return { ok: true as const };
+  });
+
+// ====================================================================
+// getTeamJoinInfo — 加入页预览（用 admin 客户端绕过 RLS）
+// ====================================================================
+
+export const getTeamJoinInfo = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(TeamIdInput)
+  .handler(async ({ data, context }) => {
+    const { userId } = context;
+
+    // 用 admin 客户端绕过 RLS 查询团队
+    const { data: team, error: teamError } = await supabaseAdmin
+      .from("teams")
+      .select("id, name, description, owner_id, created_at")
+      .eq("id", data.teamId)
+      .is("deleted_at", null)
+      .maybeSingle();
+
+    if (teamError || !team) {
+      return { team: null, isMember: false, error: "Team not found" };
+    }
+
+    // 检查是否已是成员
+    const { data: membership } = await supabaseAdmin
+      .from("team_members")
+      .select("id, role")
+      .eq("team_id", data.teamId)
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    return {
+      team: {
+        id: team.id,
+        name: team.name,
+        description: team.description,
+        ownerId: team.owner_id,
+        createdAt: team.created_at,
+      },
+      isMember: !!membership,
+      memberRole: (membership?.role ?? null) as string | null,
+      error: null as string | null,
+    };
   });
