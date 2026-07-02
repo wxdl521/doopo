@@ -1,4 +1,4 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { useServerFn } from '@tanstack/react-start'
 import { Button } from '@/components/ui/button'
@@ -49,9 +49,10 @@ const ROLE_BADGE_COLOR: Record<string, 'default' | 'secondary' | 'outline'> = {
 }
 
 const TABS = [
-  { id: 'members', label: '成员管理', icon: Users },
-  { id: 'history', label: '积分记录', icon: History },
-  { id: 'settings', label: '设置', icon: Settings, ownerOnly: true },
+  { id: 'overview', icon: LayoutDashboard },
+  { id: 'members', icon: Users },
+  { id: 'history', icon: History },
+  { id: 'settings', icon: Settings, ownerOnly: true },
 ] as const
 
 type TeamDetail = {
@@ -155,152 +156,129 @@ function TeamPage() {
   const roleInfo = roleConfig[myRole] ?? roleConfig.member
   const RoleIcon = roleInfo.icon
 
-  const tabs = [
-    { id: 'overview', label: t.team_tab_overview, icon: LayoutDashboard },
-    { id: 'members', label: t.team_tab_members, icon: Users },
-    { id: 'history', label: t.team_tab_history, icon: History },
-    { id: 'settings', label: t.team_tab_settings, icon: Settings, ownerOnly: true },
-  ] as const
-  const visibleTabs = tabs.filter((tab) => !tab.ownerOnly || myRole === 'owner')
+  const visibleTabs = TABS.filter((tab) => !tab.ownerOnly || myRole === 'owner')
   const teamId = team.id
   const isOwner = myRole === 'owner'
 
+  const tabLabels: Record<string, string> = {
+    overview: t.team_tab_overview,
+    members: t.team_tab_members,
+    history: t.team_tab_history,
+    settings: t.team_tab_settings,
+  }
+
   return (
-    <div className="animate-fade-in flex flex-col md:flex-row gap-6">
-      {/* 左侧边栏 — 对齐 SectionSidebar 风格 */}
-      <aside className="md:w-56 md:shrink-0">
-        <div className="panel p-3">
-          <div className="px-3 py-2 mb-2">
-            <h2 className="text-xs font-semibold tracking-wide text-text-muted uppercase">{t.team_tab_overview}</h2>
-            <div className="mt-2">
-              <p className="text-sm font-bold text-text-primary truncate">{team.name}</p>
-              <Badge variant={ROLE_BADGE_COLOR[myRole] ?? 'outline'} className="flex items-center gap-1.5 mt-1.5 w-fit">
-                <RoleIcon className="w-3 h-3" />
-                <span className="text-xs">{roleInfo.label}</span>
-              </Badge>
-            </div>
-          </div>
-
-          <nav className="flex md:flex-col gap-1 overflow-x-auto md:overflow-visible">
-            {visibleTabs.map((tab) => {
-              const Icon = tab.icon
-              const isActive = activeTab === tab.id
-              return (
-                <button
-                  key={tab.id}
-                  onClick={() => setActiveTab(tab.id)}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm whitespace-nowrap transition ${
-                    isActive
-                      ? 'bg-accent-dim text-accent font-semibold'
-                      : 'text-text-secondary hover:text-text-primary hover:bg-bg-elevated'
-                  }`}
-                >
-                  <Icon size={15} />
-                  <span>{tab.label}</span>
-                </button>
-              )
-            })}
-          </nav>
-
-          <Separator className="my-3" />
-
-          {!isOwner && (
-            <button
-              onClick={() => setLeaveTarget(teamId)}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-text-muted hover:text-destructive hover:bg-destructive/10 transition w-full"
-            >
-              <LogOut size={15} />
-              <span>{t.team_leave_btn}</span>
-            </button>
-          )}
-        </div>
-      </aside>
-
-      {/* 右侧内容 */}
-      <div className="flex-1 min-w-0">
-        <PageHeader
-          title={team.name}
-          subtitle={team.description ?? undefined}
-          actions={
+    <div className="animate-fade-in space-y-6">
+      {/* 顶部标题栏 — 对齐 home/projects */}
+      <PageHeader
+        title={team.name}
+        subtitle={team.description ?? undefined}
+        actions={
+          <div className="flex items-center gap-3">
             <Badge variant={ROLE_BADGE_COLOR[myRole] ?? 'outline'} className="flex items-center gap-1.5">
               <RoleIcon className="w-3.5 h-3.5" />
               {roleInfo.label}
             </Badge>
+            {!isOwner && (
+              <Button variant="outline" size="sm" onClick={() => setLeaveTarget(teamId)}>
+                <LogOut className="w-4 h-4 mr-2" />
+                {t.team_leave_btn}
+              </Button>
+            )}
+          </div>
+        }
+      />
+
+      {/* Tab 导航 — 顶部横向 */}
+      <div className="flex items-center gap-1 p-1 rounded-lg bg-muted/50 w-fit">
+        {visibleTabs.map((tab) => {
+          const Icon = tab.icon
+          const isActive = activeTab === tab.id
+          return (
+            <button
+              key={tab.id}
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition ${
+                isActive
+                  ? 'bg-background text-foreground shadow-sm'
+                  : 'text-text-muted hover:text-text-primary'
+              }`}
+            >
+              <Icon size={15} />
+              <span>{tabLabels[tab.id]}</span>
+            </button>
+          )
+        })}
+      </div>
+
+      {/* 内容区 */}
+      {activeTab === 'overview' && (
+        <div className="space-y-6">
+          {/* 团队信息 */}
+          <section className="panel">
+            <div className="flex items-center gap-6 text-sm text-text-muted mb-4">
+              <span>{t.team_created_at}：{new Date(team.createdAt).toLocaleDateString('zh-CN')}</span>
+            </div>
+
+            <Separator className="my-4" />
+
+            <div className="flex items-center gap-3">
+              {(myRole === 'owner' || myRole === 'admin') && (
+                <Button onClick={() => setActiveTab('members')}>
+                  <Users className="w-4 h-4 mr-2" />
+                  {t.team_manage_btn}
+                </Button>
+              )}
+              {isOwner && (
+                <p className="text-xs text-text-muted">{t.team_owner_cannot_leave}</p>
+              )}
+            </div>
+          </section>
+
+          {/* 团队规则 */}
+          <div className="grid sm:grid-cols-3 gap-4">
+            {[
+              { icon: Users, title: t.team_rule_collab, desc: t.team_rule_collab_desc },
+              { icon: Shield, title: t.team_rule_credits, desc: t.team_rule_credits_desc },
+              { icon: Settings, title: t.team_rule_perms, desc: t.team_rule_perms_desc },
+            ].map((rule) => (
+              <div key={rule.title} className="panel flex items-start gap-3">
+                <div className="w-9 h-9 rounded-lg bg-accent-dim flex items-center justify-center shrink-0">
+                  <rule.icon className="w-4 h-4 text-accent" />
+                </div>
+                <div>
+                  <h4 className="font-semibold text-sm mb-0.5">{rule.title}</h4>
+                  <p className="text-xs text-text-muted">{rule.desc}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'members' && (
+        <MembersTab
+          key={refreshKey}
+          teamId={teamId}
+          myRole={myRole}
+          onManageCredits={(member, mode) => setCreditTarget({ member, mode })}
+        />
+      )}
+      {activeTab === 'history' && (
+        <CreditsHistoryTab teamId={teamId} myRole={myRole} />
+      )}
+      {activeTab === 'settings' && (
+        <SettingsTab
+          teamId={teamId}
+          initialName={team.name}
+          initialDescription={team.description ?? ''}
+          onUpdate={() =>
+            callGetTeamDetail({ data: { teamId } }).then((r: any) => {
+              if (r?.team) { setTeam(r.team); setMyRole(r.myRole ?? 'member') }
+            })
           }
         />
-
-        {activeTab === 'overview' && (
-          <div className="space-y-6">
-            {/* 团队信息 */}
-            <section className="panel">
-              <div className="flex items-center gap-6 text-sm text-text-muted mb-4">
-                <span>{t.team_created_at}：{new Date(team.createdAt).toLocaleDateString('zh-CN')}</span>
-              </div>
-
-              <Separator className="my-4" />
-
-              <div className="flex items-center gap-3">
-                {(myRole === 'owner' || myRole === 'admin') && (
-                  <Button onClick={() => setActiveTab('members')}>
-                    <Users className="w-4 h-4 mr-2" />
-                    {t.team_manage_btn}
-                  </Button>
-                )}
-                {!isOwner && (
-                  <Button variant="outline" onClick={() => setLeaveTarget(teamId)}>
-                    <LogOut className="w-4 h-4 mr-2" />
-                    {t.team_leave_btn}
-                  </Button>
-                )}
-                {isOwner && (
-                  <p className="text-xs text-text-muted">{t.team_owner_cannot_leave}</p>
-                )}
-              </div>
-            </section>
-
-            {/* 团队规则 */}
-            <div className="grid sm:grid-cols-3 gap-4">
-              {[
-                { icon: Users, title: t.team_rule_collab, desc: t.team_rule_collab_desc },
-                { icon: Shield, title: t.team_rule_credits, desc: t.team_rule_credits_desc },
-                { icon: Settings, title: t.team_rule_perms, desc: t.team_rule_perms_desc },
-              ].map((rule) => (
-                <div key={rule.title} className="panel flex items-start gap-3">
-                  <div className="w-9 h-9 rounded-lg bg-accent-dim flex items-center justify-center shrink-0">
-                    <rule.icon className="w-4 h-4 text-accent" />
-                  </div>
-                  <div>
-                    <h4 className="font-semibold text-sm mb-0.5">{rule.title}</h4>
-                    <p className="text-xs text-text-muted">{rule.desc}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-          <MembersTab
-            key={refreshKey}
-            teamId={teamId}
-            myRole={myRole}
-            onManageCredits={(member, mode) => setCreditTarget({ member, mode })}
-          />
-        )}
-        {activeTab === 'history' && (
-          <CreditsHistoryTab teamId={teamId} myRole={myRole} />
-        )}
-        {activeTab === 'settings' && (
-          <SettingsTab
-            teamId={teamId}
-            initialName={team.name}
-            initialDescription={team.description ?? ''}
-            onUpdate={() =>
-              callGetTeamDetail({ data: { teamId } }).then((r: any) => {
-                if (r?.team) { setTeam(r.team); setMyRole(r.myRole ?? 'member') }
-              })
-            }
-          />
-        )}
-      </div>
+      )}
 
       <CreditManageDialog
         open={!!creditTarget}
