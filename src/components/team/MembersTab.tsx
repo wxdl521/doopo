@@ -154,7 +154,7 @@ export default function MembersTab({ teamId, myRole, onManageCredits }: MembersT
       </div>
 
       {/* 成员表格 */}
-      <div className="border rounded-lg">
+      <section className="panel p-0 overflow-hidden">
         <Table>
           <TableHeader>
             <TableRow>

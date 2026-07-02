@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -94,12 +93,11 @@ export default function SettingsTab({
   return (
     <div className="space-y-6">
       {/* 基本信息 */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">{t.team_settings_basic}</CardTitle>
-          <CardDescription>{t.team_settings_basic_desc}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
+      <section className="panel">
+        <h3 className="font-display text-lg font-bold mb-1">{t.team_settings_basic}</h3>
+        <p className="text-sm text-text-muted mb-4">{t.team_settings_basic_desc}</p>
+
+        <div className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="team-name">{t.team_name}</Label>
             <Input
@@ -130,24 +128,20 @@ export default function SettingsTab({
             {saved && <span className="text-sm text-green-500">{t.team_saved}</span>}
             {saveError && <span className="text-sm text-destructive">{saveError}</span>}
           </div>
-        </CardContent>
-      </Card>
+        </div>
+      </section>
 
       {/* 危险操作 */}
-      <Card className="border-destructive/30">
-        <CardHeader>
-          <CardTitle className="text-base text-destructive flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4" />
-            {t.team_danger_zone}
-          </CardTitle>
-          <CardDescription>{t.team_dissolve_warning}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Button variant="destructive" onClick={openDissolve}>
-            {t.team_dissolve}
-          </Button>
-        </CardContent>
-      </Card>
+      <section className="panel border-destructive/30">
+        <h3 className="font-display text-lg font-bold text-destructive flex items-center gap-2 mb-1">
+          <AlertTriangle className="w-5 h-5" />
+          {t.team_danger_zone}
+        </h3>
+        <p className="text-sm text-text-muted mb-4">{t.team_dissolve_warning}</p>
+        <Button variant="destructive" onClick={openDissolve}>
+          {t.team_dissolve}
+        </Button>
+      </section>
 
       {/* 解散确认弹窗 */}
       <AlertDialog
