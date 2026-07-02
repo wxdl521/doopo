@@ -217,23 +217,21 @@ function TeamPage() {
 
       {/* 右侧内容 */}
       <div className="flex-1 min-w-0">
+        {/* 顶部标题栏 */}
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-3">
+            <h1 className="text-2xl font-bold tracking-tight">{team.name}</h1>
+            <Badge variant={ROLE_BADGE_COLOR[myRole] ?? 'outline'} className="flex items-center gap-1.5">
+              <RoleIcon className="w-3.5 h-3.5" />
+              {roleInfo.label}
+            </Badge>
+          </div>
+        </div>
+
         {activeTab === 'overview' && (
           <div className="space-y-6">
-            {/* 团队信息卡片 */}
+            {/* 团队信息 */}
             <section className="panel">
-              <div className="flex items-center justify-between mb-4">
-                <div>
-                  <h3 className="font-display text-lg font-bold">{team.name}</h3>
-                  {team.description && (
-                    <p className="text-sm text-text-muted mt-1">{team.description}</p>
-                  )}
-                </div>
-                <Badge variant={ROLE_BADGE_COLOR[myRole] ?? 'outline'} className="flex items-center gap-1.5">
-                  <RoleIcon className="w-3.5 h-3.5" />
-                  {roleInfo.label}
-                </Badge>
-              </div>
-
               <div className="flex items-center gap-6 text-sm text-text-muted mb-4">
                 <span>{t.team_created_at}：{new Date(team.createdAt).toLocaleDateString('zh-CN')}</span>
               </div>
