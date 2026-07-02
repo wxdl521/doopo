@@ -122,6 +122,53 @@ export type Database = {
         }
         Relationships: []
       }
+      credit_transactions: {
+        Row: {
+          amount: number
+          balance_after: number | null
+          created_at: string
+          description: string | null
+          id: string
+          operator_id: string | null
+          source_type: string
+          team_id: string
+          type: string
+          user_id: string
+        }
+        Insert: {
+          amount: number
+          balance_after?: number | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          operator_id?: string | null
+          source_type?: string
+          team_id: string
+          type: string
+          user_id: string
+        }
+        Update: {
+          amount?: number
+          balance_after?: number | null
+          created_at?: string
+          description?: string | null
+          id?: string
+          operator_id?: string | null
+          source_type?: string
+          team_id?: string
+          type?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "credit_transactions_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       password_audit_log: {
         Row: {
           action: string
@@ -387,12 +434,130 @@ export type Database = {
         }
         Relationships: []
       }
+      team_members: {
+        Row: {
+          credits_balance: number
+          id: string
+          invited_by: string | null
+          joined_at: string
+          role: string
+          subscription_credits: number
+          team_id: string
+          user_id: string
+        }
+        Insert: {
+          credits_balance?: number
+          id?: string
+          invited_by?: string | null
+          joined_at?: string
+          role?: string
+          subscription_credits?: number
+          team_id: string
+          user_id: string
+        }
+        Update: {
+          credits_balance?: number
+          id?: string
+          invited_by?: string | null
+          joined_at?: string
+          role?: string
+          subscription_credits?: number
+          team_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "team_members_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      teams: {
+        Row: {
+          created_at: string
+          deleted_at: string | null
+          description: string | null
+          id: string
+          name: string
+          owner_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          deleted_at?: string | null
+          description?: string | null
+          id?: string
+          name: string
+          owner_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          deleted_at?: string | null
+          description?: string | null
+          id?: string
+          name?: string
+          owner_id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      transfer_records: {
+        Row: {
+          amount: number
+          created_at: string
+          from_balance_after: number | null
+          from_user_id: string
+          id: string
+          operator_id: string | null
+          team_id: string
+          to_balance_after: number | null
+          to_user_id: string
+        }
+        Insert: {
+          amount: number
+          created_at?: string
+          from_balance_after?: number | null
+          from_user_id: string
+          id?: string
+          operator_id?: string | null
+          team_id: string
+          to_balance_after?: number | null
+          to_user_id: string
+        }
+        Update: {
+          amount?: number
+          created_at?: string
+          from_balance_after?: number | null
+          from_user_id?: string
+          id?: string
+          operator_id?: string | null
+          team_id?: string
+          to_balance_after?: number | null
+          to_user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "transfer_records_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      dissolve_team_with_refund: {
+        Args: { p_team_id: string }
+        Returns: undefined
+      }
     }
     Enums: {
       [_ in never]: never
