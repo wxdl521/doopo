@@ -100,167 +100,115 @@ ALTER TABLE public.transfer_records ENABLE ROW LEVEL SECURITY;
 
 
 -- ============================================================
--- Phase 2: RLS 策略（所有表已建完，安全引用）
+-- Phase 2: 辅助函数（绕过 RLS 避免递归）
 -- ============================================================
 
--- 2.1 teams 策略
+CREATE OR REPLACE FUNCTION public.is_in_team(p_team_id uuid, p_user_id uuid DEFAULT auth.uid())
+RETURNS boolean
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.team_members
+    WHERE team_id = p_team_id AND user_id = p_user_id
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION public.has_team_role(p_team_id uuid, p_roles text[], p_user_id uuid DEFAULT auth.uid())
+RETURNS boolean
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM public.team_members
+    WHERE team_id = p_team_id AND user_id = p_user_id AND role = ANY(p_roles)
+  );
+$$;
+
+-- ============================================================
+-- Phase 3: RLS 策略（使用辅助函数，避免自引用递归）
+-- ============================================================
+
+-- 3.1 teams 策略
 -- =====================
 
--- 团队成员可读自己所在的团队
 CREATE POLICY "teams_select_member" ON public.teams
   FOR SELECT TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.team_members
-      WHERE team_members.team_id = teams.id
-        AND team_members.user_id = auth.uid()
-    )
-    OR auth.uid() = owner_id
-  );
+  USING (public.is_in_team(id) OR auth.uid() = owner_id);
 
--- 创建者即 owner
 CREATE POLICY "teams_insert_any" ON public.teams
   FOR INSERT TO authenticated
   WITH CHECK (auth.uid() = owner_id);
 
--- owner 可更新团队
 CREATE POLICY "teams_update_owner" ON public.teams
   FOR UPDATE TO authenticated
   USING (auth.uid() = owner_id)
   WITH CHECK (auth.uid() = owner_id);
 
--- owner 可删除团队
 CREATE POLICY "teams_delete_owner" ON public.teams
   FOR DELETE TO authenticated
   USING (auth.uid() = owner_id);
 
 
--- 2.2 team_members 策略
+-- 3.2 team_members 策略
 -- =====================
 
--- 团队成员可互看
 CREATE POLICY "members_select_own_or_team" ON public.team_members
   FOR SELECT TO authenticated
-  USING (
-    user_id = auth.uid()
-    OR EXISTS (
-      SELECT 1 FROM public.team_members self
-      WHERE self.team_id = team_members.team_id
-        AND self.user_id = auth.uid()
-    )
-  );
+  USING (user_id = auth.uid() OR public.is_in_team(team_id));
 
--- owner/admin 可邀请；创建者可将自己加入
 CREATE POLICY "members_insert_owner_or_admin" ON public.team_members
   FOR INSERT TO authenticated
-  WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM public.team_members self
-      WHERE self.team_id = team_members.team_id
-        AND self.user_id = auth.uid()
-        AND self.role IN ('owner', 'admin')
-    )
-    OR auth.uid() = user_id
-  );
+  WITH CHECK (public.has_team_role(team_id, ARRAY['owner','admin']) OR auth.uid() = user_id);
 
--- owner 可改所有人；admin 只可改 member
 CREATE POLICY "members_update_owner_or_admin" ON public.team_members
   FOR UPDATE TO authenticated
   USING (
-    EXISTS (
-      SELECT 1 FROM public.team_members self
-      WHERE self.team_id = team_members.team_id
-        AND self.user_id = auth.uid()
-        AND (
-          self.role = 'owner'
-          OR (self.role = 'admin' AND team_members.role = 'member')
-        )
-    )
+    public.has_team_role(team_id, ARRAY['owner'])
+    OR (public.has_team_role(team_id, ARRAY['admin']) AND role = 'member')
   )
   WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM public.team_members self
-      WHERE self.team_id = team_members.team_id
-        AND self.user_id = auth.uid()
-        AND (
-          self.role = 'owner'
-          OR (self.role = 'admin' AND team_members.role = 'member')
-        )
-    )
+    public.has_team_role(team_id, ARRAY['owner'])
+    OR (public.has_team_role(team_id, ARRAY['admin']) AND role = 'member')
   );
 
--- owner 可删任何人；admin 可删 member；成员可自己离开
 CREATE POLICY "members_delete_owner_admin_or_self" ON public.team_members
   FOR DELETE TO authenticated
   USING (
     user_id = auth.uid()
-    OR EXISTS (
-      SELECT 1 FROM public.team_members self
-      WHERE self.team_id = team_members.team_id
-        AND self.user_id = auth.uid()
-        AND (
-          self.role = 'owner'
-          OR (self.role = 'admin' AND team_members.role = 'member')
-        )
-    )
+    OR public.has_team_role(team_id, ARRAY['owner'])
+    OR (public.has_team_role(team_id, ARRAY['admin']) AND role = 'member')
   );
 
 
--- 2.3 credit_transactions 策略
+-- 3.3 credit_transactions 策略
 -- =====================
 
--- 团队成员可读本团队流水
 CREATE POLICY "transactions_select_team_member" ON public.credit_transactions
   FOR SELECT TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.team_members
-      WHERE team_members.team_id = credit_transactions.team_id
-        AND team_members.user_id = auth.uid()
-    )
-  );
+  USING (public.is_in_team(team_id));
 
--- owner/admin 可写入流水
 CREATE POLICY "transactions_insert_authenticated" ON public.credit_transactions
   FOR INSERT TO authenticated
-  WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM public.team_members
-      WHERE team_members.team_id = credit_transactions.team_id
-        AND team_members.user_id = auth.uid()
-        AND team_members.role IN ('owner', 'admin')
-    )
-  );
+  WITH CHECK (public.has_team_role(team_id, ARRAY['owner','admin']));
 
 
--- 2.4 transfer_records 策略
+-- 3.4 transfer_records 策略
 -- =====================
 
--- 团队成员可读本团队转账记录
 CREATE POLICY "transfers_select_team_member" ON public.transfer_records
   FOR SELECT TO authenticated
-  USING (
-    EXISTS (
-      SELECT 1 FROM public.team_members
-      WHERE team_members.team_id = transfer_records.team_id
-        AND team_members.user_id = auth.uid()
-    )
-  );
+  USING (public.is_in_team(team_id));
 
--- 团队成员可创建转账记录
 CREATE POLICY "transfers_insert_authenticated" ON public.transfer_records
   FOR INSERT TO authenticated
-  WITH CHECK (
-    EXISTS (
-      SELECT 1 FROM public.team_members
-      WHERE team_members.team_id = transfer_records.team_id
-        AND team_members.user_id = auth.uid()
-    )
-  );
+  WITH CHECK (public.is_in_team(team_id));
 
 
 -- ============================================================
--- Phase 3: 索引
+-- Phase 4: 索引
 -- ============================================================
 
 CREATE INDEX idx_teams_owner_id ON public.teams (owner_id);
@@ -278,7 +226,7 @@ CREATE INDEX idx_transfer_records_to_user ON public.transfer_records (to_user_id
 
 
 -- ============================================================
--- Phase 4: Supabase Function — 解散团队退款
+-- Phase 5: Supabase Function — 解散团队退款
 -- ============================================================
 CREATE OR REPLACE FUNCTION public.dissolve_team_with_refund(p_team_id uuid)
 RETURNS void
