@@ -8,6 +8,7 @@ import MembersTab from '@/components/team/MembersTab'
 import CreditsHistoryTab from '@/components/team/CreditsHistoryTab'
 import SettingsTab from '@/components/team/SettingsTab'
 import { getTeamDetail } from '@/lib/teams.functions'
+import type { MemberRow } from '@/lib/teamMembers.functions'
 
 export const Route = createFileRoute('/team/$teamId/manage')({
   head: () => ({
@@ -34,6 +35,7 @@ function TeamManagePage() {
   const [team, setTeam] = useState<TeamDetail | null>(null)
   const [myRole, setMyRole] = useState<string>('member')
   const [loading, setLoading] = useState(true)
+  const [creditTarget, setCreditTarget] = useState<{ member: MemberRow; mode: 'allocate' | 'reclaim' } | null>(null)
 
   useEffect(() => {
     callGetTeamDetail({ data: { teamId } })
@@ -102,7 +104,11 @@ function TeamManagePage() {
         </TabsList>
 
         <TabsContent value="members" className="mt-6">
-          <MembersTab />
+          <MembersTab
+            teamId={teamId}
+            myRole={myRole}
+            onManageCredits={(member, mode) => setCreditTarget({ member, mode })}
+          />
         </TabsContent>
 
         <TabsContent value="history" className="mt-6">
