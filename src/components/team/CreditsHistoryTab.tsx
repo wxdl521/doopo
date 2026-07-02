@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
-import { useServerFn } from '@tanstack/react-start'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
+import { useEffect, useState } from "react";
+import { useServerFn } from "@tanstack/react-start";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Dialog,
   DialogContent,
@@ -10,7 +10,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@/components/ui/dialog'
+} from "@/components/ui/dialog";
 import {
   Table,
   TableBody,
@@ -18,7 +18,7 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from '@/components/ui/table'
+} from "@/components/ui/table";
 import {
   Coins,
   ArrowRightLeft,
@@ -29,102 +29,108 @@ import {
   Download,
   ChevronLeft,
   ChevronRight,
-} from 'lucide-react'
-import { getCreditTransactions, getTransferRecords, getTeamBalance, depositCredits } from '@/lib/teamCredits.functions'
-import { useLanguage } from '@/i18n/LanguageContext'
-import type { TransactionRow, TransferRow } from '@/lib/teamCredits.functions'
+} from "lucide-react";
+import {
+  getCreditTransactions,
+  getTransferRecords,
+  getTeamBalance,
+  depositCredits,
+} from "@/lib/teamCredits.functions";
+import { useLanguage } from "@/i18n/LanguageContext";
+import type { TransactionRow, TransferRow } from "@/lib/teamCredits.functions";
 
-const PAGE_SIZE = 20
+const PAGE_SIZE = 20;
 
-const TYPE_CONFIG: Record<string, { labelKey: string; icon: typeof ArrowDownToLine; color: string }> = {
-  allocate: { labelKey: 'team_tx_allocate', icon: ArrowDownToLine, color: 'text-green-500' },
-  reclaim: { labelKey: 'team_tx_reclaim', icon: ArrowUpFromLine, color: 'text-orange-500' },
-  transfer_in: { labelKey: 'team_tx_transfer_in', icon: Download, color: 'text-green-500' },
-  transfer_out: { labelKey: 'team_tx_transfer_out', icon: Send, color: 'text-orange-500' },
-  consume: { labelKey: 'team_tx_consume', icon: Coins, color: 'text-blue-500' },
-  refund: { labelKey: 'team_tx_refund', icon: RotateCcw, color: 'text-purple-500' },
-}
+const TYPE_CONFIG: Record<
+  string,
+  { labelKey: string; icon: typeof ArrowDownToLine; color: string }
+> = {
+  allocate: { labelKey: "history_type_allocate", icon: ArrowDownToLine, color: "text-green-500" },
+  reclaim: { labelKey: "history_type_reclaim", icon: ArrowUpFromLine, color: "text-orange-500" },
+  transfer_in: { labelKey: "history_type_transfer_in", icon: Download, color: "text-green-500" },
+  transfer_out: { labelKey: "history_type_transfer_out", icon: Send, color: "text-orange-500" },
+  consume: { labelKey: "history_type_consume", icon: Coins, color: "text-blue-500" },
+  refund: { labelKey: "history_type_refund", icon: RotateCcw, color: "text-purple-500" },
+};
 
 type CreditsHistoryTabProps = {
-  teamId: string
-  myRole: string
-}
+  teamId: string;
+  myRole: string;
+};
 
 export default function CreditsHistoryTab({ teamId, myRole }: CreditsHistoryTabProps) {
-  const { t } = useLanguage()
-  const callTransactions = useServerFn(getCreditTransactions)
-  const callTransfers = useServerFn(getTransferRecords)
-  const callBalance = useServerFn(getTeamBalance)
-  const callDeposit = useServerFn(depositCredits)
+  const { t } = useLanguage();
+  const callTransactions = useServerFn(getCreditTransactions);
+  const callTransfers = useServerFn(getTransferRecords);
+  const callBalance = useServerFn(getTeamBalance);
+  const callDeposit = useServerFn(depositCredits);
 
-  const [transactions, setTransactions] = useState<TransactionRow[]>([])
-  const [transfers, setTransfers] = useState<TransferRow[]>([])
-  const [teamCredits, setTeamCredits] = useState(0)
-  const [loading, setLoading] = useState(true)
-  const [page, setPage] = useState(0)
-  const [showDeposit, setShowDeposit] = useState(false)
-  const [depositAmount, setDepositAmount] = useState('')
-  const [depositing, setDepositing] = useState(false)
-  const [depositError, setDepositError] = useState<string | null>(null)
-
-  const loadData = () => {
+  const [transactions, setTransactions] = useState<TransactionRow[]>([]);
+  const [transfers, setTransfers] = useState<TransferRow[]>([]);
+  const [teamCredits, setTeamCredits] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(0);
+  const [showDeposit, setShowDeposit] = useState(false);
+  const [depositAmount, setDepositAmount] = useState("");
+  const [depositing, setDepositing] = useState(false);
+  const [depositError, setDepositError] = useState<string | null>(null);
 
   const loadData = () => {
-    setLoading(true)
+    setLoading(true);
     Promise.all([
       callTransactions({ data: { teamId, limit: PAGE_SIZE, offset: page * PAGE_SIZE } }),
       callTransfers({ data: { teamId } }),
       callBalance({ data: { teamId } }),
     ])
       .then(([tR, trR, bR]: any[]) => {
-        if (tR?.transactions) setTransactions(tR.transactions)
-        if (trR?.records) setTransfers(trR.records)
-        if (bR?.balance) setTeamCredits(bR.balance.totalCredits)
+        if (tR?.transactions) setTransactions(tR.transactions);
+        if (trR?.records) setTransfers(trR.records);
+        if (bR?.balance) setTeamCredits(bR.balance.totalCredits);
       })
       .catch(() => {})
-      .finally(() => setLoading(false))
-  }
+      .finally(() => setLoading(false));
+  };
 
   useEffect(() => {
-    loadData()
-  }, [teamId, page])
+    loadData();
+  }, [teamId, page]);
 
   const handleDeposit = async () => {
-    const amount = parseInt(depositAmount, 10)
-    if (!amount || amount <= 0) return
-    setDepositing(true)
-    setDepositError(null)
+    const amount = parseInt(depositAmount, 10);
+    if (!amount || amount <= 0) return;
+    setDepositing(true);
+    setDepositError(null);
 
-    const r: any = await callDeposit({ data: { teamId, amount } })
+    const r: any = await callDeposit({ data: { teamId, amount } });
 
-    setDepositing(false)
+    setDepositing(false);
     if (r?.ok) {
-      setShowDeposit(false)
-      setDepositAmount('')
-      loadData()
+      setShowDeposit(false);
+      setDepositAmount("");
+      loadData();
     } else {
-      setDepositError(r?.error ?? t.team_save_error)
+      setDepositError(r?.error ?? t.common_save_error);
     }
-  }
+  };
 
   const formatTime = (iso: string) => {
-    const d = new Date(iso)
-    return d.toLocaleString('zh-CN', {
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-  }
+    const d = new Date(iso);
+    return d.toLocaleString("zh-CN", {
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
 
-  const canTransfer = myRole === 'owner' || myRole === 'admin'
+  const canTransfer = myRole === "owner" || myRole === "admin";
 
   if (loading) {
     return (
       <div className="flex items-center justify-center py-12">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
       </div>
-    )
+    );
   }
 
   return (
@@ -134,14 +140,22 @@ export default function CreditsHistoryTab({ teamId, myRole }: CreditsHistoryTabP
         <div className="flex items-center gap-3">
           <Coins className="w-6 h-6 text-amber-500" />
           <div>
-            <p className="text-sm text-muted-foreground">{t.team_remaining_credits}</p>
+            <p className="text-sm text-muted-foreground">{t.history_team_credits}</p>
             <p className="text-2xl font-bold text-amber-500">{teamCredits.toLocaleString()}</p>
           </div>
         </div>
         {canTransfer && (
-          <Button variant="outline" size="sm" onClick={() => { setShowDeposit(true); setDepositAmount(''); setDepositError(null) }}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setShowDeposit(true);
+              setDepositAmount("");
+              setDepositError(null);
+            }}
+          >
             <ArrowRightLeft className="w-4 h-4 mr-2" />
-            {t.team_transfer_in}
+            {t.history_transfer_in}
           </Button>
         )}
       </section>
@@ -149,29 +163,29 @@ export default function CreditsHistoryTab({ teamId, myRole }: CreditsHistoryTabP
       {/* 积分记录 */}
       <section className="panel p-0 overflow-hidden">
         <div className="px-6 pt-6 pb-3">
-          <h3 className="font-display text-lg font-bold">{t.team_credit_records}</h3>
+          <h3 className="font-display text-lg font-bold">{t.history_credit_records}</h3>
         </div>
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>{t.common_time}</TableHead>
-              <TableHead>{t.team_col_description}</TableHead>
-              <TableHead className="text-right">{t.team_credit_change}</TableHead>
-              <TableHead className="text-right">{t.team_balance_after}</TableHead>
+              <TableHead>{t.history_col_desc}</TableHead>
+              <TableHead className="text-right">{t.history_col_change}</TableHead>
+              <TableHead className="text-right">{t.history_col_balance}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {transactions.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
-                  {t.team_no_transactions}
+                  {t.history_no_records}
                 </TableCell>
               </TableRow>
             ) : (
               transactions.map((tx) => {
-                const config = TYPE_CONFIG[tx.type] ?? TYPE_CONFIG.consume
-                const Icon = config.icon
-                const isPositive = tx.amount > 0
+                const config = TYPE_CONFIG[tx.type] ?? TYPE_CONFIG.consume;
+                const Icon = config.icon;
+                const isPositive = tx.amount > 0;
                 return (
                   <TableRow key={tx.id}>
                     <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
@@ -180,19 +194,24 @@ export default function CreditsHistoryTab({ teamId, myRole }: CreditsHistoryTabP
                     <TableCell>
                       <div className="flex items-center gap-1.5">
                         <Icon className={`w-3.5 h-3.5 ${config.color}`} />
-                        <span className="text-sm">{tx.description ?? t[config.labelKey as keyof typeof t]}</span>
+                        <span className="text-sm">
+                          {tx.description ?? t[config.labelKey as keyof typeof t]}
+                        </span>
                       </div>
                     </TableCell>
                     <TableCell className="text-right">
-                      <span className={`text-sm font-medium ${isPositive ? 'text-green-500' : 'text-orange-500'}`}>
-                        {isPositive ? '+' : ''}{tx.amount.toLocaleString()}
+                      <span
+                        className={`text-sm font-medium ${isPositive ? "text-green-500" : "text-orange-500"}`}
+                      >
+                        {isPositive ? "+" : ""}
+                        {tx.amount.toLocaleString()}
                       </span>
                     </TableCell>
                     <TableCell className="text-right text-sm text-muted-foreground">
-                      {tx.balanceAfter != null ? tx.balanceAfter.toLocaleString() : '-'}
+                      {tx.balanceAfter != null ? tx.balanceAfter.toLocaleString() : "-"}
                     </TableCell>
                   </TableRow>
-                )
+                );
               })
             )}
           </TableBody>
@@ -207,11 +226,13 @@ export default function CreditsHistoryTab({ teamId, myRole }: CreditsHistoryTabP
               onClick={() => setPage((p) => p - 1)}
             >
               <ChevronLeft className="w-4 h-4 mr-1" />
-              {t.team_prev_page}
+              {t.history_prev_page}
             </Button>
-            <span className="text-sm text-muted-foreground">{t.team_page_n(page + 1)}</span>
+            <span className="text-sm text-muted-foreground">
+              {t.history_page.replace("{page}", String(page + 1))}
+            </span>
             <Button variant="outline" size="sm" onClick={() => setPage((p) => p + 1)}>
-              {t.team_next_page}
+              {t.history_next_page}
               <ChevronRight className="w-4 h-4 ml-1" />
             </Button>
           </div>
@@ -221,22 +242,22 @@ export default function CreditsHistoryTab({ teamId, myRole }: CreditsHistoryTabP
       {/* 转账记录 */}
       <section className="panel p-0 overflow-hidden">
         <div className="px-6 pt-6 pb-3">
-          <h3 className="font-display text-lg font-bold">{t.team_transfer_records}</h3>
+          <h3 className="font-display text-lg font-bold">{t.history_transfer_records}</h3>
         </div>
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>{t.common_time}</TableHead>
-              <TableHead>{t.team_transfer_path}</TableHead>
-              <TableHead className="text-right">{t.team_transfer_amount}</TableHead>
-              <TableHead className="text-right">{t.team_balance_after}</TableHead>
+              <TableHead>{t.history_col_path}</TableHead>
+              <TableHead className="text-right">{t.history_col_amount}</TableHead>
+              <TableHead className="text-right">{t.history_col_balance}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {transfers.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={4} className="text-center text-muted-foreground py-8">
-                  {t.team_no_transfers}
+                  {t.history_no_transfers}
                 </TableCell>
               </TableRow>
             ) : (
@@ -247,7 +268,7 @@ export default function CreditsHistoryTab({ teamId, myRole }: CreditsHistoryTabP
                   </TableCell>
                   <TableCell>
                     <span className="text-sm">
-                      <span className="text-muted-foreground">A</span> →{' '}
+                      <span className="text-muted-foreground">A</span> →{" "}
                       <span className="text-primary">B</span>
                     </span>
                   </TableCell>
@@ -257,7 +278,7 @@ export default function CreditsHistoryTab({ teamId, myRole }: CreditsHistoryTabP
                     </span>
                   </TableCell>
                   <TableCell className="text-right text-sm text-muted-foreground">
-                    {tr.toBalanceAfter != null ? tr.toBalanceAfter.toLocaleString() : '-'}
+                    {tr.toBalanceAfter != null ? tr.toBalanceAfter.toLocaleString() : "-"}
                   </TableCell>
                 </TableRow>
               ))
@@ -270,7 +291,7 @@ export default function CreditsHistoryTab({ teamId, myRole }: CreditsHistoryTabP
       <Dialog open={showDeposit} onOpenChange={(open) => !open && setShowDeposit(false)}>
         <DialogContent className="max-w-sm">
           <DialogHeader>
-            <DialogTitle>{t.team_transfer_in}</DialogTitle>
+            <DialogTitle>{t.history_transfer_in}</DialogTitle>
             <DialogDescription>
               从您的个人余额转入团队积分池，转入后可由您统一管理分配。
             </DialogDescription>
@@ -289,18 +310,25 @@ export default function CreditsHistoryTab({ teamId, myRole }: CreditsHistoryTabP
             </div>
 
             {depositError && (
-              <p className="text-sm text-destructive bg-destructive/10 p-2 rounded">{depositError}</p>
+              <p className="text-sm text-destructive bg-destructive/10 p-2 rounded">
+                {depositError}
+              </p>
             )}
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setShowDeposit(false)}>{t.common_cancel}</Button>
-            <Button onClick={handleDeposit} disabled={depositing || !depositAmount || parseInt(depositAmount, 10) <= 0}>
-              {depositing ? t.team_saving : t.common_confirm}
+            <Button variant="outline" onClick={() => setShowDeposit(false)}>
+              {t.common_cancel}
+            </Button>
+            <Button
+              onClick={handleDeposit}
+              disabled={depositing || !depositAmount || parseInt(depositAmount, 10) <= 0}
+            >
+              {depositing ? t.settings_saving : t.common_confirm}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
-  )
+  );
 }
