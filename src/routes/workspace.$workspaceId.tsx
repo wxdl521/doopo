@@ -1358,10 +1358,26 @@ function WorkspacePage() {
         // 2026/06:跨 session 恢复入库后的永久视频 / 故事板图 URL。
         // 这些字段是老数据没有的(2026/06 前不持久化),所以可选读。
         if (wd.groupVideos && typeof wd.groupVideos === 'object') {
-          setGroupVideos(wd.groupVideos as Record<string, { url: string; status: 'running' | 'succeeded' | 'failed' }>)
+          // 2026/07 修复:DB 恢复时把 running 转 failed,对齐 localStorage 恢复逻辑。
+          const fixedGroupVideos: Record<string, { url: string; status: 'running' | 'succeeded' | 'failed' }> = {}
+          for (const [k, v] of Object.entries(wd.groupVideos as Record<string, any>)) {
+            fixedGroupVideos[k] = v?.status === 'running'
+              ? { url: v?.url || '', status: 'failed' as const }
+              : v as { url: string; status: 'running' | 'succeeded' | 'failed' }
+          }
+          setGroupVideos(fixedGroupVideos)
         }
         if (wd.groupStoryboards && typeof wd.groupStoryboards === 'object') {
-          setGroupStoryboards(wd.groupStoryboards as Record<string, { url: string; status: 'running' | 'succeeded' | 'failed' }>)
+          // 2026/07 修复:DB 恢复时把 running 转 failed,对齐 localStorage 恢复逻辑。
+          // 否则 DB 数据（异步加载,晚于 localStorage）会覆盖 localStorage 的修复,
+          // 导致刷新后故事板图永久显示"生成中…"。
+          const fixedGroupStoryboards: Record<string, { url: string; status: 'running' | 'succeeded' | 'failed' }> = {}
+          for (const [k, v] of Object.entries(wd.groupStoryboards as Record<string, any>)) {
+            fixedGroupStoryboards[k] = v?.status === 'running'
+              ? { url: v?.url || '', status: 'failed' as const }
+              : v as { url: string; status: 'running' | 'succeeded' | 'failed' }
+          }
+          setGroupStoryboards(fixedGroupStoryboards)
         }
         // 2026/06:恢复上次选中的集数
         if (typeof wd.selectedEpisodeIndex === 'number') {
@@ -5178,9 +5194,11 @@ function WorkspacePage() {
         selectedSceneImages,
         selectedPropImages,
         selectedEpisodeIndex,
-        groupVideos,
+        groupVideos: Object.fromEntries(
+          Object.entries(groupVideos).map(([k, v]) => [k, v.status === 'running' ? { ...v, status: 'failed' as const } : v]),
+        ),
         groupStoryboards: Object.fromEntries(
-          Object.entries(persistGroupStoryboards).map(([k, v]) => [k, { ...v, url: keepNonEmpty(v.url) ?? '' }]),
+          Object.entries(persistGroupStoryboards).map(([k, v]) => [k, { ...v, url: keepNonEmpty(v.url) ?? '', status: v.status === 'running' ? 'failed' as const : v.status }]),
         ),
       }
       const res = await callSaveWorkspace({
