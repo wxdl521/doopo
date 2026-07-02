@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { Label } from '@/components/ui/label'
-import { ArrowLeft, Plus } from 'lucide-react'
+import { ArrowLeft, Plus, Coins } from 'lucide-react'
 import { createTeam } from '@/lib/teams.functions'
 import { useLanguage } from '@/i18n/LanguageContext'
 
@@ -22,6 +22,7 @@ function CreateTeamPage() {
 
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
+  const [credits, setCredits] = useState('')
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -31,7 +32,11 @@ function CreateTeamPage() {
     setError(null)
 
     const r: any = await callCreateTeam({
-      data: { name: name.trim(), description: description.trim() || undefined },
+      data: {
+        name: name.trim(),
+        description: description.trim() || undefined,
+        credits: credits ? parseInt(credits, 10) : undefined,
+      },
     })
 
     setCreating(false)
@@ -80,6 +85,23 @@ function CreateTeamPage() {
               maxLength={500}
               rows={3}
             />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="team-credits" className="flex items-center gap-1.5">
+              <Coins className="w-4 h-4 text-amber-500" />
+              {t.team_initial_credits}
+            </Label>
+            <Input
+              id="team-credits"
+              type="number"
+              min={0}
+              max={99999999}
+              value={credits}
+              onChange={(e) => setCredits(e.target.value)}
+              placeholder="0"
+            />
+            <p className="text-xs text-text-muted">{t.team_initial_credits_desc}</p>
           </div>
 
           {error && (

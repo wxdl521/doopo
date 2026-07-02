@@ -9,6 +9,7 @@ import { requireSupabaseAuth } from '@/integrations/supabase/auth-middleware'
 const CreateTeamInput = z.object({
   name: z.string().min(1).max(100),
   description: z.string().max(500).optional(),
+  credits: z.number().int().min(0).max(99999999).optional(),
 })
 
 const UpdateTeamInput = z.object({
@@ -78,6 +79,8 @@ export const createTeam = createServerFn({ method: 'POST' })
         team_id: team.id,
         user_id: userId,
         role: 'owner',
+        credits_balance: data.credits ?? 0,
+        subscription_credits: 0,
       })
 
     if (memberError) {
