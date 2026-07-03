@@ -32,7 +32,7 @@ export function stripAitokenvibePrefix(modelId: string): string {
 
 function getAitokenvibeConfig() {
   return {
-    apiKey: process.env.aitokenvibe,
+    apiKey: process.env.AITOKENVIBE,
     baseUrl: (process.env.AITOKENVIBE_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, ""),
   };
 }

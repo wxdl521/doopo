@@ -101,7 +101,8 @@ export const IMAGE_MODELS: ImageModelOption[] = [
 
   // ---- [ailinzi · OpenAI 兼容] → /v1/images/generations ----
   { key: "", label: "—— [ailinzi · OpenAI 兼容] ——", sub: undefined, legacy: true },
-  { key: "ailinzi/image2", label: "GPT Image 2", sub: "[ailinzi·OpenAI] Image2 · T2I/I2I" },
+  { key: "ailinzi/gpt-image-2", label: "GPT Image 2", sub: "[ailinzi·OpenAI] Image2 · T2I/I2I" },
+  { key: "ailinzi/gpt-image-2-all", label: "GPT Image 2 All", sub: "[ailinzi·OpenAI] Image2 All · T2I" },
 
   // ---- [TokenHub · OpenAI 兼容] → /v1/images/generations ----
   { key: "", label: "—— [TokenHub · OpenAI 兼容] ——", sub: undefined, legacy: true },

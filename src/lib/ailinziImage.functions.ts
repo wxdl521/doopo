@@ -59,7 +59,7 @@ const AILINZI_IMAGE2_SIZES = new Set(["1024x1024", "1024x1792", "1792x1024"]);
 /** 把任意 size 字符串折算成上游接受的尺寸 */
 function normalizeAilinziSize(size: string | undefined, model: string): string {
   const s = (size || "").trim().toLowerCase().replace(/\*/g, "x");
-  if (/^image2$/i.test(model)) {
+  if (/^gpt-image-2/i.test(model)) {
     if (AILINZI_IMAGE2_SIZES.has(s)) return s;
     const m = s.match(/^(\d+)x(\d+)$/);
     if (m) {

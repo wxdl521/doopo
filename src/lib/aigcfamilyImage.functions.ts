@@ -112,6 +112,9 @@ export async function callAigcfamilyImage(
       form.append("size", size);
       form.append("quality", input.quality ?? "auto");
       form.append("response_format", "url");
+      const MAX_REF_BYTES = 800_000; // AiGCfamily nginx 限制约 1MB，留余量
+      let totalRefSize = 0;
+      let skippedCount = 0;
       for (let i = 0; i < input.referenceImages!.length; i++) {
         const refUrl = input.referenceImages![i];
         let blob: Blob;
@@ -128,9 +131,17 @@ export async function callAigcfamilyImage(
           mime = r.headers.get("content-type") || "image/png";
           blob = await r.blob();
         }
+        if (blob.size > MAX_REF_BYTES) {
+          console.warn(`[aigcfamily] skipping ref ${i}: ${(blob.size/1e6).toFixed(2)}MB > 0.8MB limit`);
+          skippedCount++;
+          continue;
+        }
+        totalRefSize += blob.size;
         const ext = mime.includes("jpeg") ? "jpg" : mime.includes("webp") ? "webp" : "png";
         form.append("image[]", blob, `ref_${i}.${ext}`);
       }
+      const totalMB = (totalRefSize / 1_000_000).toFixed(2);
+      console.log(`[aigcfamily] refs=${input.referenceImages!.length - skippedCount}/${input.referenceImages!.length} totalSize=${totalMB}MB`);
       requestInit = {
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}` },
@@ -144,10 +155,8 @@ export async function callAigcfamilyImage(
         n: input.n ?? 1,
         size,
         quality: input.quality ?? "auto",
+        response_format: "url",
       };
-      if (!/^gpt-image/i.test(model)) {
-        body.response_format = "url";
-      }
       requestInit = {
         method: "POST",
         headers: {
@@ -202,7 +211,7 @@ export async function callAigcfamilyImage(
       (json?.url || json?.image_url || json?.b64_json
         ? [{ url: json.url, image_url: json.image_url, b64_json: json.b64_json }]
         : []);
-    const urls = items
+    const rawUrls = items
       .map((d) => {
         if (d.url) return d.url;
         if (d.image_url) return d.image_url;
@@ -212,7 +221,7 @@ export async function callAigcfamilyImage(
       })
       .filter(Boolean);
 
-    if (urls.length === 0) {
+    if (rawUrls.length === 0) {
       console.warn(
         `[aigcfamily×] model=${model} endpoint=${endpoint} empty-data dur=${Date.now() - t0}ms err=${json?.error?.message ?? ""} raw=${rawText.slice(0, 400)}`,
       );
@@ -223,10 +232,11 @@ export async function callAigcfamilyImage(
         model,
       };
     }
+
     console.log(
-      `[aigcfamily✓] model=${model} endpoint=${endpoint} images=${urls.length} dur=${Date.now() - t0}ms`,
+      `[aigcfamily✓] model=${model} endpoint=${endpoint} images=${rawUrls.length} dur=${Date.now() - t0}ms`,
     );
-    return { url: urls[0], urls, error: null, model };
+    return { url: rawUrls[0], urls: rawUrls, error: null, model };
   } catch (e) {
     clearTimeout(timeout);
     console.warn(
