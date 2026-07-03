@@ -161,6 +161,11 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
           if (!r.ok) throw new Error(`fetch ref ${i} failed: ${r.status}`);
           mime = r.headers.get("content-type") || "image/png";
           blob = await r.blob();
+          // 某些 CDN/存储返回 application/octet-stream,Azure edits 只认 image/jpeg, image/png, image/webp
+          if (!/^image\/(jpeg|png|webp)$/i.test(mime)) {
+            mime = "image/png";
+            blob = new Blob([await blob.arrayBuffer()], { type: mime });
+          }
         }
         const ext = mime.includes("jpeg") ? "jpg" : mime.includes("webp") ? "webp" : "png";
         form.append(fieldName, blob, `ref_${i}.${ext}`);

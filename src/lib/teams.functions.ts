@@ -255,7 +255,14 @@ export const getTeamJoinInfo = createServerFn({ method: "POST" })
       .is("deleted_at", null)
       .maybeSingle();
 
-    console.log("[getTeamJoinInfo] teamId:", data.teamId, "team:", team?.name, "teamError:", teamError);
+    console.log(
+      "[getTeamJoinInfo] teamId:",
+      data.teamId,
+      "team:",
+      team?.name,
+      "teamError:",
+      teamError,
+    );
 
     if (teamError || !team) {
       return {
@@ -285,4 +292,3 @@ export const getTeamJoinInfo = createServerFn({ method: "POST" })
       error: null as string | null,
     };
   });
-

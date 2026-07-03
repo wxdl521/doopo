@@ -1209,14 +1209,14 @@ function WorkspacePage() {
   }
   // 正在跑"对某个分镜组的某张分镜图做多图融合"的 key,格式 `${groupId}::${shotId}`
   const [busyShotImages, setBusyShotImages] = useState<Set<string>>(new Set());
-  // I2I 重生(按意见重生 / 三视图 / 多维资产)正在跑的卡片 imageKey → mode 映射。
+  // I2I 重生(按意见重生 / 四视图 / 多维资产)正在跑的卡片 imageKey → mode 映射。
   // 跟 activeImageKey(T2I 通道)是两套独立的状态,因为它们发生在不同时间窗口:
   //   T2I:首张图还没出,用户进不去 regen
   //   I2I:首张图已出,用户点三视图/多维资产/修改
   // 在 regen 期间给对应卡片加黑屏遮罩(spinner + "正在生成三视图" 等),
   // 防止用户重复点 / 让进度可感知。value 存 mode 用来显示对应的提示文字。
   const [regenBusyKeys, setRegenBusyKeys] = useState<
-    Map<string, "modify" | "three-view" | "multi-asset">
+    Map<string, "modify" | "three-view" | "multi-asset" | "directional-views">
   >(new Map());
   // 用户在角色卡片右上角点"选中"后,该 look(imageKey)被钉住指向哪张 url。
   // 用 url 而不是 index 引用,避免新增图后被偏移。
@@ -2820,7 +2820,7 @@ function WorkspacePage() {
       if (
         interceptPromptPreview(
           mode === "three-view"
-            ? `${c.name} · 三视图`
+            ? `${c.name} · 四视图`
             : mode === "multi-asset"
               ? `${c.name} · 多维资产`
               : `${c.name} · 修改 (${instruction.slice(0, 30)}…)`,
@@ -2841,7 +2841,7 @@ function WorkspacePage() {
           mode === "modify"
             ? "已按意见重生"
             : mode === "three-view"
-              ? "已生成三视图"
+              ? "已生成四视图"
               : "已生成多维资产图";
         toast.success(modeLabel);
         return true;
@@ -3293,7 +3293,7 @@ function WorkspacePage() {
     });
   }
 
-  // 卡片"三视图" / "多维资产图"按钮:无 user input,直接跑预定义指令
+  // 卡片"四视图" / "多维资产图"按钮:无 user input,直接跑预定义指令
   //
   // 注意:multi-asset 模式的具体布局/格子数/中文标注/特征保留 等硬约束**全部
   // 写在 seedream.functions.ts 的 buildCharacterPrompts() 里**(2026/06 用户重写),
@@ -3307,8 +3307,8 @@ function WorkspacePage() {
   ) {
     const instruction =
       mode === "three-view"
-        ? "根据此形象生成标准三视图:同一角色分别从前、正侧、背三个角度展示,头到脚全身,脸/身材/衣服在三个视图里完全一致。"
-        : "生成完整的【角色多维资产图】:简介(名字+个性)+ 大型主肖像 + 全身三视图(正/侧/背)+ 6-8 种表情(开心/生气/困倦/惊讶/悲伤/常态…)+ 4-6 种动作姿势(按个性挑)+ 配饰/道具图标,白底,中文标注,保留角色全部特征。";
+        ? "根据此形象生成标准四视图:同一角色分别从正面、左侧、右侧、背面四个角度展示,头到脚全身,脸/身材/衣服在四个视图里完全一致,左右两侧面中的人物形象必须完全一样。"
+        : "生成完整的【角色多维资产图】:简介(名字+个性)+ 大型主肖像 + 全身四视图(正/左/右/背)+ 6-8 种表情(开心/生气/困倦/惊讶/悲伤/常态…)+ 4-6 种动作姿势(按个性挑)+ 配饰/道具图标,白底,中文标注,保留角色全部特征。";
     await doRegen(c, lookId, mode, instruction);
   }
 
@@ -3320,7 +3320,7 @@ function WorkspacePage() {
    */
   async function doSceneRegen(
     s: GenScene,
-    mode: "modify" | "three-view",
+    mode: "modify" | "three-view" | "directional-views",
     instruction: string,
     /** 可选:用户手动上传的参考图,优先于 history 里的图片 */
     referenceOverride?: string,
@@ -3373,7 +3373,13 @@ function WorkspacePage() {
         const base64Url = await toBase64WithFallback(res.url);
         const displayUrl = base64Url ?? res.url;
         setSceneImages((m) => ({ ...m, [s.id]: [...(m[s.id] ?? []), displayUrl] }));
-        toast.success(mode === "three-view" ? "已生成场景三视图" : "已按意见重生");
+        toast.success(
+          mode === "three-view"
+            ? "已生成场景三视图"
+            : mode === "directional-views"
+              ? "已生成方向多视角"
+              : "已按意见重生",
+        );
         return true;
       }
       toast.error(classifyError(res?.error, "生成失败"));
@@ -3397,6 +3403,15 @@ function WorkspacePage() {
       s,
       "three-view",
       "基于该场景生成 3 景别参考图(wide establishing + medium + close-up detail),同一地点同一时段同一视觉风格,无人物,纯环境。",
+    );
+  }
+
+  /** 场景"方向多视角"按钮:生成正面/左视角/右视角/背面 4 面板合图 */
+  async function runSceneDirectionalViews(s: GenScene) {
+    await doSceneRegen(
+      s,
+      "directional-views",
+      "[方向多视角] 基于该场景生成前/左/右/后四方向参考图,纯环境无人物。",
     );
   }
 
@@ -4844,7 +4859,11 @@ function WorkspacePage() {
           if (lastIdx >= 0 && entries[lastIdx].status === "running") {
             entries[lastIdx] = { ...entries[lastIdx], url: res.videoUrl!, status: "succeeded" };
           } else {
-            entries.push({ url: res.videoUrl!, status: "succeeded", method: "storyboard" as const });
+            entries.push({
+              url: res.videoUrl!,
+              status: "succeeded",
+              method: "storyboard" as const,
+            });
           }
           setSelectedVideoIndex((s) => ({ ...s, [groupId]: entries.length - 1 }));
           return { ...m, [groupId]: entries };
@@ -5801,8 +5820,7 @@ function WorkspacePage() {
       const hasEphemeralMedia =
         Object.values(groupVideos).some((arr) =>
           (arr ?? []).some((v) => v.status === "succeeded" && v.url),
-        ) ||
-        Object.values(groupStoryboards).some((v) => v.status === "succeeded" && v.url);
+        ) || Object.values(groupStoryboards).some((v) => v.status === "succeeded" && v.url);
       if (hasEphemeralMedia) {
         const toastId = toast.loading("正在将视频 / 故事板图入库到你的存储…");
         try {
@@ -7752,10 +7770,10 @@ function WorkspacePage() {
                                         {s.action}
                                       </p>
                                     )}
-                                    {/* 2 个操作按钮:三视图 + 编辑。mt-auto 让按钮行贴着卡片底部,
+                                    {/* 3 个操作按钮:三视图 + 方向多视角 + 编辑。mt-auto 让按钮行贴着卡片底部,
                                     不管 brief 长度如何,位置都一致(跟角色卡行为一致)。 */}
                                     <div
-                                      className="grid grid-cols-2 gap-1.5 pt-1 mt-auto"
+                                      className="grid grid-cols-3 gap-1.5 pt-1 mt-auto"
                                       onClick={(e) => e.stopPropagation()}
                                     >
                                       <button
@@ -7767,6 +7785,16 @@ function WorkspacePage() {
                                       >
                                         <LayoutGrid size={12} />
                                         <span>三视图</span>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        title="生成前/左/右/后四方向参考图"
+                                        disabled={!hasImg || isRegening}
+                                        onClick={() => void runSceneDirectionalViews(s)}
+                                        className="px-1 py-1.5 rounded border border-border bg-bg-surface text-text-secondary text-[11px] leading-none hover:border-accent hover:text-accent disabled:opacity-40 disabled:cursor-not-allowed transition flex flex-col items-center justify-center gap-0.5"
+                                      >
+                                        <LayoutGrid size={12} />
+                                        <span>方向多视角</span>
                                       </button>
                                       <button
                                         type="button"
@@ -7802,7 +7830,9 @@ function WorkspacePage() {
                                       <div className="text-sm font-medium leading-snug">
                                         {sceneRegenMode === "three-view"
                                           ? "正在生成三视图…"
-                                          : "正在重生…"}
+                                          : sceneRegenMode === "directional-views"
+                                            ? "正在生成方向多视角…"
+                                            : "正在重生…"}
                                       </div>
                                       <div className="text-[10px] text-white/60 leading-snug">
                                         生成中请勿关闭页面
@@ -8240,7 +8270,7 @@ function WorkspacePage() {
                               const isRegening = regenMode !== undefined;
                               const regenLabel =
                                 regenMode === "three-view"
-                                  ? "正在生成三视图…"
+                                  ? "正在生成四视图…"
                                   : regenMode === "multi-asset"
                                     ? "正在生成多维资产图…"
                                     : regenMode === "modify"
@@ -8548,7 +8578,7 @@ function WorkspacePage() {
                                         {brief}
                                       </p>
                                     )}
-                                    {/* 操作按钮:修改 / 标准三视图 / 多维资产图
+                                    {/* 操作按钮:修改 / 标准四视图 / 多维资产图
                                     图标在上 / 文字在下(vertical stack),让 3 个按钮等宽,
                                     不会再因为"多维资产"4 字长度换行。mt-auto 让按钮行
                                     永远贴着卡片底部。注意 onClick 里 e.stopPropagation(),
@@ -8582,7 +8612,7 @@ function WorkspacePage() {
                                       </button>
                                       <button
                                         type="button"
-                                        title="生成标准三视图(front / side / back)"
+                                        title="生成标准四视图(front / left side / right side / back)"
                                         disabled={!hasImg || isRegening}
                                         onClick={() =>
                                           void runPresetRegen(c, card.lookId, "three-view")
@@ -8590,7 +8620,7 @@ function WorkspacePage() {
                                         className="px-1 py-1.5 rounded border border-border bg-bg-surface text-text-secondary text-[11px] leading-none hover:border-accent hover:text-accent disabled:opacity-40 disabled:cursor-not-allowed transition flex flex-col items-center justify-center gap-0.5"
                                       >
                                         <LayoutGrid size={12} />
-                                        <span>三视图</span>
+                                        <span>四视图</span>
                                       </button>
                                       <button
                                         type="button"
@@ -9530,268 +9560,271 @@ function WorkspacePage() {
                             const runningEntry = isVideoRunning
                               ? vidEntries[vidEntries.length - 1]
                               : undefined;
-                            const activeIdx =
-                              selectedVideoIndex[g.id] ?? vidEntries.length - 1;
+                            const activeIdx = selectedVideoIndex[g.id] ?? vidEntries.length - 1;
                             return (
                               <>
-                          <div className="flex items-center justify-between">
-                            <div className="text-[10px] tracking-widest uppercase text-text-muted">
-                              视频 · Video
-                            </div>
-                            {videoEntry?.status === "succeeded" ? (
-                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-accent/15 text-accent border border-accent/30">
-                                已生成
-                              </span>
-                            ) : videoEntry?.status === "running" ? (
-                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-elevated border border-border text-text-muted">
-                                生成中…
-                              </span>
-                            ) : videoEntry?.status === "failed" ? (
-                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-500 border border-rose-500/30">
-                                失败
-                              </span>
-                            ) : (
-                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-elevated border border-border text-text-muted">
-                                未生成
-                              </span>
-                            )}
-                          </div>
-                          {/* 视频区 */}
-                          {videoEntry?.status === "succeeded" && videoEntry?.url ? (
-                            <div className="relative group rounded border border-accent/30 overflow-hidden bg-black">
-                              <video
-                                src={videoEntry.url}
-                                controls
-                                loop
-                                playsInline
-                                className="w-full h-auto block"
-                              />
-                              <div className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition flex gap-1">
-                                <a
-                                  href={videoEntry.url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  className="px-1.5 py-0.5 rounded bg-black/70 text-white text-[10px] hover:bg-black/90"
-                                  title="在新标签页打开原视频"
-                                >
-                                  ↗
-                                </a>
-                                <button
-                                  type="button"
-                                  onClick={() => void generateVideoForGroup(g.id)}
-                                  className="px-1.5 py-0.5 rounded bg-black/70 text-white text-[10px] hover:bg-black/90"
-                                  title="重新生成视频"
-                                >
-                                  <RefreshCw size={9} className="inline -mt-0.5" />
-                                </button>
-                              </div>
-                            </div>
-                          ) : videoEntry?.status === "running" ? (
-                            <div className="aspect-video rounded border border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted">
-                              <Loader2 size={20} className="animate-spin text-accent" />
-                              <span className="text-[10px]">视频生成中…</span>
-                              <span className="text-[9px] opacity-70">约 1-3 分钟</span>
-                            </div>
-                          ) : (
-                            <div className="aspect-video rounded border border-dashed border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted">
-                              <Camera size={20} className="opacity-40" />
-                              <span className="text-[10px]">视频占位</span>
-                              <span className="text-[9px] opacity-70">
-                                整组合成 · {g.shots.length} 个镜头 · 约{" "}
-                                {(g.endSec - g.startSec).toFixed(0)}s
-                              </span>
-                            </div>
-                          )}
-                          {/* 版本历史切换器 */}
-                          {vidEntries.length > 1 && (
-                            <div className="flex items-center gap-1 overflow-x-auto pb-0.5">
-                              {vidEntries.map((entry, vi) => (
-                                <button
-                                  key={vi}
-                                  type="button"
-                                  onClick={() =>
-                                    setSelectedVideoIndex((s) => ({ ...s, [g.id]: vi }))
-                                  }
-                                  className={`shrink-0 text-[10px] px-2 py-0.5 rounded border transition ${
-                                    vi === activeIdx
-                                      ? "border-accent bg-accent/15 text-accent"
-                                      : "border-border bg-bg-elevated text-text-muted hover:border-accent/60"
-                                  }`}
-                                  title={`视频 #${vi + 1}${
-                                    entry.method === "storyboard"
-                                      ? "（按故事板）"
-                                      : entry.method === "shots"
-                                        ? "（按分镜图）"
-                                        : ""
-                                  }`}
-                                >
-                                  视频 #{vi + 1}
-                                  {vi === vidEntries.length - 1 &&
-                                    entry.status === "succeeded" && (
-                                      <span className="ml-1 text-[8px] text-accent">NEW</span>
-                                    )}
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                          {/* 触发按钮:只有当组里至少有一张分镜图时才点亮 */}
-                          {(() => {
-                            const hasAnyShotImage = g.shots.some((s) => {
-                              const key = `${g.id}::${s.id}`;
-                              const gens = shotImages[key] ?? [];
-                              const hasUrl = !!(gens.length ? gens[gens.length - 1] : s.imageUrl);
-                              // 同 allShotsHaveImage:url 存在但图加载失败 = 视为无图
-                              return hasUrl && !brokenShotImages.has(key);
-                            });
-                            if (!hasAnyShotImage) {
-                              return (
-                                <p className="text-[10px] text-text-muted leading-relaxed">
-                                  需先生成该组至少一张分镜图,才能按分镜图生成视频。
-                                </p>
-                              );
-                            }
-                            return (
-                              <button
-                                type="button"
-                                onClick={() => void generateVideoForGroup(g.id)}
-                                disabled={isVideoRunning}
-                                className="w-full text-[10px] py-1 rounded border border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent transition disabled:opacity-40 inline-flex items-center justify-center gap-1"
-                              >
-                                {isVideoRunning ? (
-                                  <span className="w-full inline-flex items-center justify-between gap-1.5">
-                                    <span className="inline-flex items-center gap-1.5">
-                                      <Loader2 size={9} className="animate-spin" />
-                                      视频生成中…{" "}
-                                      {runningEntry?.startedAt
-                                        ? formatElapsed(
-                                            (Date.now() - runningEntry.startedAt!) / 1000,
-                                          )
-                                        : ""}
-                                      <span className="opacity-50 ml-1">· 预计 3-5 分钟</span>
+                                <div className="flex items-center justify-between">
+                                  <div className="text-[10px] tracking-widest uppercase text-text-muted">
+                                    视频 · Video
+                                  </div>
+                                  {videoEntry?.status === "succeeded" ? (
+                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-accent/15 text-accent border border-accent/30">
+                                      已生成
                                     </span>
+                                  ) : videoEntry?.status === "running" ? (
+                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-elevated border border-border text-text-muted">
+                                      生成中…
+                                    </span>
+                                  ) : videoEntry?.status === "failed" ? (
+                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-500 border border-rose-500/30">
+                                      失败
+                                    </span>
+                                  ) : (
+                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-elevated border border-border text-text-muted">
+                                      未生成
+                                    </span>
+                                  )}
+                                </div>
+                                {/* 视频区 */}
+                                {videoEntry?.status === "succeeded" && videoEntry?.url ? (
+                                  <div className="relative group rounded border border-accent/30 overflow-hidden bg-black">
+                                    <video
+                                      src={videoEntry.url}
+                                      controls
+                                      loop
+                                      playsInline
+                                      className="w-full h-auto block"
+                                    />
+                                    <div className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition flex gap-1">
+                                      <a
+                                        href={videoEntry.url}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="px-1.5 py-0.5 rounded bg-black/70 text-white text-[10px] hover:bg-black/90"
+                                        title="在新标签页打开原视频"
+                                      >
+                                        ↗
+                                      </a>
+                                      <button
+                                        type="button"
+                                        onClick={() => void generateVideoForGroup(g.id)}
+                                        className="px-1.5 py-0.5 rounded bg-black/70 text-white text-[10px] hover:bg-black/90"
+                                        title="重新生成视频"
+                                      >
+                                        <RefreshCw size={9} className="inline -mt-0.5" />
+                                      </button>
+                                    </div>
+                                  </div>
+                                ) : videoEntry?.status === "running" ? (
+                                  <div className="aspect-video rounded border border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted">
+                                    <Loader2 size={20} className="animate-spin text-accent" />
+                                    <span className="text-[10px]">视频生成中…</span>
+                                    <span className="text-[9px] opacity-70">约 1-3 分钟</span>
+                                  </div>
+                                ) : (
+                                  <div className="aspect-video rounded border border-dashed border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted">
+                                    <Camera size={20} className="opacity-40" />
+                                    <span className="text-[10px]">视频占位</span>
+                                    <span className="text-[9px] opacity-70">
+                                      整组合成 · {g.shots.length} 个镜头 · 约{" "}
+                                      {(g.endSec - g.startSec).toFixed(0)}s
+                                    </span>
+                                  </div>
+                                )}
+                                {/* 版本历史切换器 */}
+                                {vidEntries.length > 1 && (
+                                  <div className="flex items-center gap-1 overflow-x-auto pb-0.5">
+                                    {vidEntries.map((entry, vi) => (
+                                      <button
+                                        key={vi}
+                                        type="button"
+                                        onClick={() =>
+                                          setSelectedVideoIndex((s) => ({ ...s, [g.id]: vi }))
+                                        }
+                                        className={`shrink-0 text-[10px] px-2 py-0.5 rounded border transition ${
+                                          vi === activeIdx
+                                            ? "border-accent bg-accent/15 text-accent"
+                                            : "border-border bg-bg-elevated text-text-muted hover:border-accent/60"
+                                        }`}
+                                        title={`视频 #${vi + 1}${
+                                          entry.method === "storyboard"
+                                            ? "（按故事板）"
+                                            : entry.method === "shots"
+                                              ? "（按分镜图）"
+                                              : ""
+                                        }`}
+                                      >
+                                        视频 #{vi + 1}
+                                        {vi === vidEntries.length - 1 &&
+                                          entry.status === "succeeded" && (
+                                            <span className="ml-1 text-[8px] text-accent">NEW</span>
+                                          )}
+                                      </button>
+                                    ))}
+                                  </div>
+                                )}
+                                {/* 触发按钮:只有当组里至少有一张分镜图时才点亮 */}
+                                {(() => {
+                                  const hasAnyShotImage = g.shots.some((s) => {
+                                    const key = `${g.id}::${s.id}`;
+                                    const gens = shotImages[key] ?? [];
+                                    const hasUrl = !!(gens.length
+                                      ? gens[gens.length - 1]
+                                      : s.imageUrl);
+                                    // 同 allShotsHaveImage:url 存在但图加载失败 = 视为无图
+                                    return hasUrl && !brokenShotImages.has(key);
+                                  });
+                                  if (!hasAnyShotImage) {
+                                    return (
+                                      <p className="text-[10px] text-text-muted leading-relaxed">
+                                        需先生成该组至少一张分镜图,才能按分镜图生成视频。
+                                      </p>
+                                    );
+                                  }
+                                  return (
                                     <button
                                       type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        cancelVideoGen(g.id);
-                                      }}
-                                      className="p-0.5 rounded hover:bg-accent/20 transition"
-                                      title="取消生成"
+                                      onClick={() => void generateVideoForGroup(g.id)}
+                                      disabled={isVideoRunning}
+                                      className="w-full text-[10px] py-1 rounded border border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent transition disabled:opacity-40 inline-flex items-center justify-center gap-1"
                                     >
-                                      <X size={10} />
+                                      {isVideoRunning ? (
+                                        <span className="w-full inline-flex items-center justify-between gap-1.5">
+                                          <span className="inline-flex items-center gap-1.5">
+                                            <Loader2 size={9} className="animate-spin" />
+                                            视频生成中…{" "}
+                                            {runningEntry?.startedAt
+                                              ? formatElapsed(
+                                                  (Date.now() - runningEntry.startedAt!) / 1000,
+                                                )
+                                              : ""}
+                                            <span className="opacity-50 ml-1">· 预计 3-5 分钟</span>
+                                          </span>
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              cancelVideoGen(g.id);
+                                            }}
+                                            className="p-0.5 rounded hover:bg-accent/20 transition"
+                                            title="取消生成"
+                                          >
+                                            <X size={10} />
+                                          </button>
+                                        </span>
+                                      ) : videoEntry?.status === "succeeded" ? (
+                                        <>
+                                          <RefreshCw size={9} /> 按分镜图重新生成视频
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Camera size={9} /> 按分镜图生成视频
+                                        </>
+                                      )}
                                     </button>
-                                  </span>
-                                ) : videoEntry?.status === "succeeded" ? (
-                                  <>
-                                    <RefreshCw size={9} /> 按分镜图重新生成视频
-                                  </>
-                                ) : (
-                                  <>
-                                    <Camera size={9} /> 按分镜图生成视频
-                                  </>
-                                )}
-                              </button>
-                            );
-                          })()}
-                          {/* 2026/06 新增:按故事板图生成视频(并列第二个按钮)。
+                                  );
+                                })()}
+                                {/* 2026/06 新增:按故事板图生成视频(并列第二个按钮)。
                               用 storyboard image 作 first_frame,plot text 作叙事参考。
                               前置条件:故事板已生成。 */}
-                          {(() => {
-                            const sb = groupStoryboards[g.id];
-                            const hasStoryboard = sb?.status === "succeeded" && !!sb.url;
-                            if (!hasStoryboard) {
-                              return (
-                                <p className="text-[10px] text-text-muted leading-relaxed">
-                                  需先生成该组的故事板,才能用故事板生成视频。
-                                </p>
-                              );
-                            }
-                            return (
-                              <button
-                                type="button"
-                                onClick={() => void generateVideoFromStoryboardForGroup(g.id)}
-                                disabled={isVideoRunning}
-                                className="w-full text-[10px] py-1 rounded border border-accent/60 bg-accent-dim/20 text-accent hover:border-accent hover:bg-accent-dim/40 transition disabled:opacity-40 inline-flex items-center justify-center gap-1"
-                                title="基于故事板图(作为视觉锚)+ 剧情文字(作叙事参考)生成视频"
-                              >
-                                {isVideoRunning ? (
-                                  <span className="w-full inline-flex items-center justify-between gap-1.5">
-                                    <span className="inline-flex items-center gap-1.5">
-                                      <Loader2 size={9} className="animate-spin" />
-                                      视频生成中…{" "}
-                                      {runningEntry?.startedAt
-                                        ? formatElapsed(
-                                            (Date.now() - runningEntry.startedAt!) / 1000,
-                                          )
-                                        : ""}
-                                      <span className="opacity-50 ml-1">· 预计 3-5 分钟</span>
-                                    </span>
+                                {(() => {
+                                  const sb = groupStoryboards[g.id];
+                                  const hasStoryboard = sb?.status === "succeeded" && !!sb.url;
+                                  if (!hasStoryboard) {
+                                    return (
+                                      <p className="text-[10px] text-text-muted leading-relaxed">
+                                        需先生成该组的故事板,才能用故事板生成视频。
+                                      </p>
+                                    );
+                                  }
+                                  return (
                                     <button
                                       type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        cancelVideoGen(g.id);
-                                      }}
-                                      className="p-0.5 rounded hover:bg-accent/20 transition"
-                                      title="取消生成"
+                                      onClick={() => void generateVideoFromStoryboardForGroup(g.id)}
+                                      disabled={isVideoRunning}
+                                      className="w-full text-[10px] py-1 rounded border border-accent/60 bg-accent-dim/20 text-accent hover:border-accent hover:bg-accent-dim/40 transition disabled:opacity-40 inline-flex items-center justify-center gap-1"
+                                      title="基于故事板图(作为视觉锚)+ 剧情文字(作叙事参考)生成视频"
                                     >
-                                      <X size={10} />
+                                      {isVideoRunning ? (
+                                        <span className="w-full inline-flex items-center justify-between gap-1.5">
+                                          <span className="inline-flex items-center gap-1.5">
+                                            <Loader2 size={9} className="animate-spin" />
+                                            视频生成中…{" "}
+                                            {runningEntry?.startedAt
+                                              ? formatElapsed(
+                                                  (Date.now() - runningEntry.startedAt!) / 1000,
+                                                )
+                                              : ""}
+                                            <span className="opacity-50 ml-1">· 预计 3-5 分钟</span>
+                                          </span>
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              cancelVideoGen(g.id);
+                                            }}
+                                            className="p-0.5 rounded hover:bg-accent/20 transition"
+                                            title="取消生成"
+                                          >
+                                            <X size={10} />
+                                          </button>
+                                        </span>
+                                      ) : videoEntry?.status === "succeeded" ? (
+                                        <>
+                                          <RefreshCw size={9} /> 按故事板重新生成视频
+                                        </>
+                                      ) : (
+                                        <>
+                                          <LayoutGrid size={9} /> 按故事板生成视频
+                                        </>
+                                      )}
                                     </button>
-                                  </span>
-                                ) : videoEntry?.status === "succeeded" ? (
-                                  <>
-                                    <RefreshCw size={9} /> 按故事板重新生成视频
-                                  </>
-                                ) : (
-                                  <>
-                                    <LayoutGrid size={9} /> 按故事板生成视频
-                                  </>
-                                )}
-                              </button>
-                            );
-                          })()}
-                          <input
-                            type="file"
-                            accept="video/mp4,video/webm,video/quicktime"
-                            id={"video-upload-" + g.id}
-                            className="hidden"
-                            onChange={async (e) => {
-                              const file = e.target.files?.[0];
-                              if (!file) return;
-                              try {
-                                const base64 = await new Promise<string>((resolve, reject) => {
-                                  const reader = new FileReader();
-                                  reader.onload = () => resolve(reader.result as string);
-                                  reader.onerror = reject;
-                                  reader.readAsDataURL(file);
-                                });
-                                const res = await callUploadImage({
-                                  data: { base64, id: g.id, kind: "video" },
-                                });
-                                if (res.ok && res.url) {
-                                  setGroupVideos((m) => ({
-                                    ...m,
-                                    [g.id]: [
-                                      ...(m[g.id] ?? []),
-                                      { url: res.url!, status: "succeeded" },
-                                    ],
-                                  }));
-                                  toast.success("视频已上传");
-                                  void handleSaveWorkspace();
-                                } else {
-                                  toast.error(res?.error || "上传失败");
-                                }
-                              } catch {
-                                toast.error("视频上传失败");
-                              }
-                            }}
-                          />
-                          <label
-                            htmlFor={"video-upload-" + g.id}
-                            className="w-full text-[10px] py-1 rounded border border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent transition cursor-pointer inline-flex items-center justify-center gap-1"
-                          >
-                            <Upload size={9} /> 上传视频
-                          </label>
+                                  );
+                                })()}
+                                <input
+                                  type="file"
+                                  accept="video/mp4,video/webm,video/quicktime"
+                                  id={"video-upload-" + g.id}
+                                  className="hidden"
+                                  onChange={async (e) => {
+                                    const file = e.target.files?.[0];
+                                    if (!file) return;
+                                    try {
+                                      const base64 = await new Promise<string>(
+                                        (resolve, reject) => {
+                                          const reader = new FileReader();
+                                          reader.onload = () => resolve(reader.result as string);
+                                          reader.onerror = reject;
+                                          reader.readAsDataURL(file);
+                                        },
+                                      );
+                                      const res = await callUploadImage({
+                                        data: { base64, id: g.id, kind: "video" },
+                                      });
+                                      if (res.ok && res.url) {
+                                        setGroupVideos((m) => ({
+                                          ...m,
+                                          [g.id]: [
+                                            ...(m[g.id] ?? []),
+                                            { url: res.url!, status: "succeeded" },
+                                          ],
+                                        }));
+                                        toast.success("视频已上传");
+                                        void handleSaveWorkspace();
+                                      } else {
+                                        toast.error(res?.error || "上传失败");
+                                      }
+                                    } catch {
+                                      toast.error("视频上传失败");
+                                    }
+                                  }}
+                                />
+                                <label
+                                  htmlFor={"video-upload-" + g.id}
+                                  className="w-full text-[10px] py-1 rounded border border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent transition cursor-pointer inline-flex items-center justify-center gap-1"
+                                >
+                                  <Upload size={9} /> 上传视频
+                                </label>
                               </>
                             );
                           })()}

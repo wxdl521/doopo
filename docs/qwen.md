@@ -100,7 +100,7 @@ curl -X POST https://dashscope.aliyuncs.com/api/v1/services/aigc/text-generation
 "model": "qwen-plus",
 "input":{
 "messages":[
- {
+{
 "role": "system",
 "content": "You are a helpful assistant."
 },

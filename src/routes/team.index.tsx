@@ -13,16 +13,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  Users,
-  History,
-  Settings,
-  LogOut,
-  Crown,
-  UserCog,
-  User,
-  Plus,
-} from "lucide-react";
+import { Users, History, Settings, LogOut, Crown, UserCog, User, Plus } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
 import MembersTab from "@/components/team/MembersTab";
 import CreditsHistoryTab from "@/components/team/CreditsHistoryTab";

@@ -31,9 +31,7 @@ function AccountCredits() {
 
   const customCredits = parseInt(customAmount, 10);
   const customPrice =
-    isNaN(customCredits) || customCredits <= 0
-      ? null
-      : (customCredits / 100).toFixed(2);
+    isNaN(customCredits) || customCredits <= 0 ? null : (customCredits / 100).toFixed(2);
 
   return (
     <div className="space-y-6">
@@ -41,9 +39,7 @@ function AccountCredits() {
       <div className="panel p-6 flex items-center justify-between">
         <div>
           <p className="text-sm text-text-muted">{t.account_points_balance}</p>
-          <p className="text-3xl font-bold">
-            {balance != null ? balance.toLocaleString() : "..."}
-          </p>
+          <p className="text-3xl font-bold">{balance != null ? balance.toLocaleString() : "..."}</p>
         </div>
         <div className="w-12 h-12 rounded-full bg-accent-dim flex items-center justify-center">
           <Coins className="w-6 h-6 text-accent" />

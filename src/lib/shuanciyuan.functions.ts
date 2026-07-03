@@ -58,7 +58,8 @@ function normalizeShuanciyuanSize(size: string | undefined, model: string): stri
     if (GPT_IMAGE2_SIZES.has(s)) return s;
     const m = s.match(/^(\d+)x(\d+)$/);
     if (m) {
-      const w = parseInt(m[1], 10), h = parseInt(m[2], 10);
+      const w = parseInt(m[1], 10),
+        h = parseInt(m[2], 10);
       if (w > h * 1.3) return "1792x1024";
       if (h > w * 1.3) return "1024x1792";
       return "1024x1024";
@@ -113,6 +114,10 @@ export async function callShuanciyuanImage(
           if (!r.ok) throw new Error(`fetch ref ${i} failed: ${r.status}`);
           mime = r.headers.get("content-type") || "image/png";
           blob = await r.blob();
+          if (!/^image\/(jpeg|png|webp)$/i.test(mime)) {
+            mime = "image/png";
+            blob = new Blob([await blob.arrayBuffer()], { type: mime });
+          }
         }
         const ext = mime.includes("jpeg") ? "jpg" : mime.includes("webp") ? "webp" : "png";
         form.append("image[]", blob, `ref_${i}.${ext}`);
@@ -147,15 +152,22 @@ export async function callShuanciyuanImage(
 
     let res: Response | null = null;
     let lastText = "";
-    for (let attempt = 0; attempt < 2; attempt++) {
+    for (let attempt = 0; attempt < 4; attempt++) {
       res = await fetch(`${baseUrl}${endpoint}`, requestInit);
       if (res.ok) break;
       lastText = await res.text().catch(() => "");
+      const is429 = res.status === 429;
       const transient =
-        res.status === 502 || res.status === 503 || res.status === 504 || res.status === 524;
-      if (!transient || attempt === 1) break;
-      console.warn(`[shuci⟳] model=${model} status=${res.status} retry in 1.5s`);
-      await new Promise((r) => setTimeout(r, 1500));
+        is429 ||
+        res.status === 502 ||
+        res.status === 503 ||
+        res.status === 504 ||
+        res.status === 524;
+      if (!transient || attempt === 3) break;
+      // 429 用指数退避(3s/6s/12s),其他短暂故障用 1.5s
+      const delayMs = is429 ? 3000 * 2 ** attempt : 1500;
+      console.warn(`[shuci⟳] model=${model} status=${res.status} retry ${attempt + 1}/3 in ${delayMs / 1000}s`);
+      await new Promise((r) => setTimeout(r, delayMs));
     }
     clearTimeout(timeout);
 
@@ -165,7 +177,8 @@ export async function callShuanciyuanImage(
         `[shuci×] model=${model} status=${status} dur=${Date.now() - t0}ms body=${lastText.slice(0, 200)}`,
       );
       return {
-        url: "", urls: [],
+        url: "",
+        urls: [],
         error: `[shuci ${model}] ${status}: ${lastText.slice(0, 300)}`,
         model,
       };
@@ -173,7 +186,9 @@ export async function callShuanciyuanImage(
 
     const rawText = await res.text();
     let json: any = {};
-    try { json = JSON.parse(rawText); } catch {}
+    try {
+      json = JSON.parse(rawText);
+    } catch {}
 
     const items: Array<{ url?: string; b64_json?: string; image_url?: string; b64?: string }> =
       (Array.isArray(json?.data) && json.data) ||
@@ -198,7 +213,8 @@ export async function callShuanciyuanImage(
         `[shuci×] model=${model} empty-data dur=${Date.now() - t0}ms err=${json?.error?.message ?? ""} raw=${rawText.slice(0, 400)}`,
       );
       return {
-        url: "", urls: [],
+        url: "",
+        urls: [],
         error: `[shuci ${model}] no image returned: ${json?.error?.message || rawText.slice(0, 200) || "empty data"}`,
         model,
       };
@@ -211,7 +227,8 @@ export async function callShuanciyuanImage(
       `[shuci×] model=${model} network dur=${Date.now() - t0}ms err=${e instanceof Error ? e.message : "fetch failed"}`,
     );
     return {
-      url: "", urls: [],
+      url: "",
+      urls: [],
       error: `[shuci ${model}] network: ${e instanceof Error ? e.message : "fetch failed"}`,
       model,
     };

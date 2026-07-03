@@ -243,8 +243,16 @@ const videoModels = [
   // ---- 数安词源(中转 Seedance,需 SHUANCIYUAN_VIDEO_KEY)----
   { id: "__video_sep_shuci__", label: "—— 数安词源(中转 Seedance)——", sub: "" },
   { id: "shuci-seedance-2-0", label: "Seedance 2.0 (数安词源)", sub: "数安词源 · 1080p · 多模态" },
-  { id: "shuci-seedance-2-0-fast", label: "Seedance 2.0 Fast (数安词源)", sub: "数安词源 · 720p · 快速版" },
-  { id: "shuci-seedance-2-0-mini", label: "Seedance 2.0 Mini (数安词源)", sub: "数安词源 · 720p · 轻量版" },
+  {
+    id: "shuci-seedance-2-0-fast",
+    label: "Seedance 2.0 Fast (数安词源)",
+    sub: "数安词源 · 720p · 快速版",
+  },
+  {
+    id: "shuci-seedance-2-0-mini",
+    label: "Seedance 2.0 Mini (数安词源)",
+    sub: "数安词源 · 720p · 轻量版",
+  },
 
   // ---- vapeur.ai(OpenAI 兼容 · Seedance 2.0,需 VAPEUR_API_KEY)----
   { id: "__video_sep_vapeur__", label: "—— vapeur.ai ——", sub: "" },
@@ -257,6 +265,19 @@ const videoModels = [
     id: "vapeur-doubao-seedance-2-0-fast-260128",
     label: "Seedance 2.0 Fast (vapeur)",
     sub: "vapeur.ai · Seedance 2.0 Fast · 720p",
+  },
+
+  // ---- 可灵 Kling AI(快手,需 KLING_API_KEY)----
+  { id: "__video_sep_kling__", label: "—— 可灵 Kling AI ——", sub: "" },
+  {
+    id: "kling-v2-6",
+    label: "Kling 2.6",
+    sub: "可灵 · 最高画质 · 5/10s · 原生音频",
+  },
+  {
+    id: "kling-v3",
+    label: "Kling 3.0",
+    sub: "可灵 · 旗舰 · 3-15s · 多镜头",
   },
 
   // ---- 备用:HappyHorse(阿里 DashScope)----

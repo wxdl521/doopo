@@ -31,6 +31,7 @@ import "./loadEnv"; // 2026 修复:必须最先导入,让 ARK/Qwen env 在读取
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { createHash, createHmac } from "node:crypto";
+import { KLING_VIDEO_MODELS } from "./klingVideo.functions";
 
 // ---------- ARK (Seedance) 配置 ----------
 
@@ -54,7 +55,7 @@ const DASHSCOPE_TASK_GET = "https://dashscope.aliyuncs.com/api/v1/tasks/";
  */
 export function getVideoBackend(
   modelId: string | null | undefined,
-): "ark" | "dashscope" | "jimeng" | "kuaizi" | "toapis" | "k99" | "vapeur" | "shuci" {
+): "ark" | "dashscope" | "jimeng" | "kuaizi" | "toapis" | "k99" | "vapeur" | "shuci" | "kling" {
   const m = (modelId || "").trim().toLowerCase();
   if (m.startsWith("doubao-seedance-") || m.startsWith("seedance-")) return "ark";
   if (m.startsWith("shuci-")) return "shuci";
@@ -63,6 +64,7 @@ export function getVideoBackend(
   if (m.startsWith("toapis-")) return "toapis";
   if (m.startsWith("k99-")) return "k99";
   if (m.startsWith("vapeur-")) return "vapeur";
+  if (m.startsWith("kling-")) return "kling";
   return "dashscope";
 }
 
@@ -78,6 +80,7 @@ export const SEEDANCE_MODELS = {
   "doubao-seedance-1-0-pro-250528": "Doubao Seedance 1.0 Pro (T2V)",
   "doubao-seedance-1-0-lite-i2v-250428": "Doubao Seedance 1.0 Lite (I2V)",
   ...SHUCIYUAN_VIDEO_MODELS,
+  ...KLING_VIDEO_MODELS,
 } as const;
 
 export const HAPPYHORSE_MODELS = {
@@ -145,7 +148,10 @@ const SHUCIYUAN_VIDEO_MODEL_MAP: Record<string, string> = {
 function getShuciVideoConfig() {
   return {
     apiKey: process.env.SHUANCIYUAN_VIDEO_KEY,
-    baseUrl: (process.env.SHUANCIYUAN_VIDEO_BASE_URL || SHUCIYUAN_DEFAULT_BASE_URL).replace(/\/+$/, ""),
+    baseUrl: (process.env.SHUANCIYUAN_VIDEO_BASE_URL || SHUCIYUAN_DEFAULT_BASE_URL).replace(
+      /\/+$/,
+      "",
+    ),
   };
 }
 
@@ -194,7 +200,10 @@ async function arkSubmit(input: {
   watermark?: boolean;
   apiKey: string;
   baseUrl: string;
+  /** 错误日志标签,如 "ark-seedance" / "shuci" */
+  label?: string;
 }): Promise<{ ok: true; taskId: string; model: string } | { ok: false; error: string }> {
+  const tag = input.label || "ark-seedance";
   const body: Record<string, unknown> = {
     model: input.model,
     content: input.content,
@@ -218,19 +227,23 @@ async function arkSubmit(input: {
     });
     clearTimeout(timeout);
     const text = await res.text().catch(() => "");
-    if (!res.ok)
-      return { ok: false, error: `[ark-seedance] submit ${res.status}: ${text.slice(0, 300)}` };
+    if (!res.ok) {
+      console.warn(`[${tag}] submit ${res.status} full body:`, text.slice(0, 2000));
+      return { ok: false, error: `[${tag}] submit ${res.status}: ${text.slice(0, 500)}` };
+    }
     // 2026/06 Bugfix:res.text() 已经把 body 流消费了,res.json() 必然失败。
     // 改成 JSON.parse(text) 复用同一份 text,不再二次读 body。
     let json: { id?: string; error?: { code?: string; message?: string } } = {};
     try {
       json = JSON.parse(text);
     } catch {}
-    if (!json.id)
+    if (!json.id) {
+      console.warn(`[${tag}] json parse failed / no id, full body:`, text.slice(0, 2000));
       return {
         ok: false,
-        error: `[ark-seedance] no task_id: ${json.error?.message || text.slice(0, 200)}`,
+        error: `[${tag}] no task_id: ${json.error?.message || text.slice(0, 500)}`,
       };
+    }
     return { ok: true, taskId: json.id, model: input.model };
   } catch (e) {
     clearTimeout(timeout);
@@ -240,7 +253,7 @@ async function arkSubmit(input: {
           ? "submit timeout (30s)"
           : e.message
         : "fetch failed";
-    return { ok: false, error: `[ark-seedance] network: ${msg}` };
+    return { ok: false, error: `[${tag}] network: ${msg}` };
   }
 }
 
@@ -248,10 +261,13 @@ async function arkPoll(input: {
   taskId: string;
   apiKey: string;
   baseUrl: string;
+  /** 错误日志标签,如 "ark-seedance" / "shuci" */
+  label?: string;
 }): Promise<
   | { ok: true; status: SeedanceProgress; videoUrl: string | null; raw: any }
   | { ok: false; error: string; status?: SeedanceProgress; raw?: any }
 > {
+  const tag = input.label || "ark-seedance";
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30_000);
   try {
@@ -266,7 +282,7 @@ async function arkPoll(input: {
     clearTimeout(timeout);
     const text = await res.text().catch(() => "");
     if (!res.ok)
-      return { ok: false, error: `[ark-seedance] poll ${res.status}: ${text.slice(0, 300)}` };
+      return { ok: false, error: `[${tag}] poll ${res.status}: ${text.slice(0, 300)}` };
     // 2026/06 Bugfix:见 arkSubmit —— 改用 JSON.parse(text) 而不是 res.json()
     let json: {
       id?: string;
@@ -288,7 +304,7 @@ async function arkPoll(input: {
           ? "poll timeout (30s)"
           : e.message
         : "fetch failed";
-    return { ok: false, error: `[ark-seedance] poll network: ${msg}` };
+    return { ok: false, error: `[${tag}] poll network: ${msg}` };
   }
 }
 
@@ -1269,7 +1285,16 @@ type SubmitInput = {
   referenceAudioUrl?: string;
 };
 
-type VideoBackend = "ark" | "dashscope" | "jimeng" | "kuaizi" | "toapis" | "k99" | "vapeur" | "shuci";
+type VideoBackend =
+  | "ark"
+  | "dashscope"
+  | "jimeng"
+  | "kuaizi"
+  | "toapis"
+  | "k99"
+  | "vapeur"
+  | "shuci"
+  | "kling";
 
 // ====================================================================
 // vapeur.ai 端实现 —— 透传火山方舟 ARK Seedance 原生格式
@@ -1597,9 +1622,27 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
       watermark: input.watermark,
       apiKey,
       baseUrl,
+      label: "shuci",
     });
     return r.ok
       ? { ok: true, taskId: r.taskId, model: input.model, backend: "shuci" }
+      : { ok: false, error: r.error };
+  }
+  if (backend === "kling") {
+    const { callKlingVideoSubmit } = await import("./klingVideo.functions");
+    const firstFrameImageUrl = input.media.find((m) => m.type === "first_frame")?.url;
+    const lastFrameImageUrl = input.media.find((m) => m.type === "last_frame")?.url;
+    const r = await callKlingVideoSubmit({
+      model: input.model,
+      prompt: input.prompt,
+      imageUrl: firstFrameImageUrl,
+      lastFrameImageUrl,
+      duration: input.duration,
+      ratio: input.ratio,
+      generateAudio: input.generateAudio,
+    });
+    return r.ok
+      ? { ok: true, taskId: r.taskId, model: input.model, backend: "kling" }
       : { ok: false, error: r.error };
   }
   // DashScope
@@ -1660,7 +1703,14 @@ async function pollVideoTask(input: PollInput): Promise<PollResult> {
   if (input.backend === "shuci") {
     const { apiKey, baseUrl } = getShuciVideoConfig();
     if (!apiKey) return { ok: false, error: "[shuci] 缺少 SHUANCIYUAN_VIDEO_KEY" };
-    return arkPoll({ taskId: input.taskId, apiKey, baseUrl });
+    return arkPoll({ taskId: input.taskId, apiKey, baseUrl, label: "shuci" });
+  }
+  if (input.backend === "kling") {
+    const { callKlingVideoPoll } = await import("./klingVideo.functions");
+    // Kling I2V/T2V 查询端点不同,先试 image2video,404 就 fallback text2video
+    const r = await callKlingVideoPoll({ taskId: input.taskId, endpoint: "image2video" });
+    if (r.ok) return r as PollResult;
+    return callKlingVideoPoll({ taskId: input.taskId, endpoint: "text2video" }) as Promise<PollResult>;
   }
   const { apiKey } = getDashScopeConfig();
   if (!apiKey) return { ok: false, error: "Qwen / DASHSCOPE_API_KEY not configured" };
@@ -1720,7 +1770,7 @@ export const submitVideoTaskFn = createServerFn({ method: "POST" })
 
 const PollServerInput = z.object({
   taskId: z.string().min(1).max(200),
-  backend: z.enum(["ark", "dashscope", "jimeng", "kuaizi", "toapis", "k99", "vapeur", "shuci"]),
+  backend: z.enum(["ark", "dashscope", "jimeng", "kuaizi", "toapis", "k99", "vapeur", "shuci", "kling"]),
 });
 
 export const pollVideoTaskFn = createServerFn({ method: "POST" })
@@ -1771,7 +1821,9 @@ export const generateVideo = createServerFn({ method: "POST" })
       for (const url of data.referenceImageUrls) media.push({ type: "reference_image", url });
     }
 
-    const model = data.model || (backend === "ark" || backend === "shuci" ? ARK_DEFAULT_MODEL : "happyhorse-1.0-i2v");
+    const model =
+      data.model ||
+      (backend === "ark" || backend === "shuci" ? ARK_DEFAULT_MODEL : backend === "kling" ? "kling-v2-6" : "happyhorse-1.0-i2v");
 
     // 1) 提交
     const submit = await submitVideoTask({

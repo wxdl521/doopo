@@ -132,6 +132,10 @@ export async function callTokenflashImage(
           if (!r.ok) throw new Error(`fetch ref ${i} failed: ${r.status}`);
           mime = r.headers.get("content-type") || "image/png";
           blob = await r.blob();
+          if (!/^image\/(jpeg|png|webp)$/i.test(mime)) {
+            mime = "image/png";
+            blob = new Blob([await blob.arrayBuffer()], { type: mime });
+          }
         }
         const ext = mime.includes("jpeg") ? "jpg" : mime.includes("webp") ? "webp" : "png";
         filename = `ref_${i}.${ext}`;

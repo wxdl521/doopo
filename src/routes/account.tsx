@@ -1,5 +1,14 @@
 import { createFileRoute, Outlet } from "@tanstack/react-router";
-import { User, CreditCard, FolderOpen, Award, Bell, Share2, ShieldCheck, Coins } from "lucide-react";
+import {
+  User,
+  CreditCard,
+  FolderOpen,
+  Award,
+  Bell,
+  Share2,
+  ShieldCheck,
+  Coins,
+} from "lucide-react";
 import SectionSidebar from "../components/SectionSidebar";
 import { useLanguage } from "../i18n/LanguageContext";
 

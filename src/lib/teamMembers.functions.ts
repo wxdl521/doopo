@@ -103,17 +103,15 @@ export const getTeamMembers = createServerFn({ method: "POST" })
     if (userIds.length > 0) {
       try {
         // 通过 RPC 函数查询 auth.users（SECURITY DEFINER，需先在 Supabase 创建函数）
-        const { data: users } = await supabase.rpc(
-          "get_team_member_profiles",
-          { p_user_ids: userIds },
-        );
+        const { data: users } = await supabase.rpc("get_team_member_profiles", {
+          p_user_ids: userIds,
+        });
         if (users && Array.isArray(users)) {
           for (const u of users) {
             const meta = (u.raw_user_meta_data ?? {}) as Record<string, any>;
             userProfiles.set(u.user_id, {
               email: u.email ?? null,
-              displayName:
-                meta.display_name ?? meta.full_name ?? meta.name ?? null,
+              displayName: meta.display_name ?? meta.full_name ?? meta.name ?? null,
             });
           }
         }
@@ -341,10 +339,9 @@ export const inviteToTeam = createServerFn({ method: "POST" })
     }
 
     // 生成邀请 token（使用简单的 UUID + 团队 ID）
-    const { data: token, error } = await (supabase.rpc as any)(
-      "generate_team_invite_token",
-      { p_team_id: data.teamId },
-    );
+    const { data: token, error } = await (supabase.rpc as any)("generate_team_invite_token", {
+      p_team_id: data.teamId,
+    });
 
     if (error) {
       // 如果 RPC 不存在，用简单方案：返回 teamId

@@ -177,7 +177,26 @@ export const generateStoryboardFromPlot = createServerFn({ method: "POST" })
 
 【分镜 shots 字段要求】
 - action 用中文描述该镜头"什么人做什么",1~2 句
-- camera 用中文描述机位/焦段/角度
+- camera 用中文描述机位/焦段/角度,必须准确专业,杜绝错误:
+  • camera 字段**只描述摄像机的位置/焦段/角度**,不要重复 shotType
+  • 正确:"低角度仰拍,广角24mm,机位在教室门口地面"
+  • 正确:"平视,中焦50mm,机位在讲台左侧"
+  • 错误:"特写镜头" (shotType 已经是特写了,camera 不应该重复)
+- cameraMovement 用中文描述摄像机本身的移动方式(推/拉/摇/移/跟/升/降/固定),
+  必须包含方向/幅度,不能只写一个词:
+  • 正确:"从全景缓慢推到角色面部特写(推镜,正面→正面近)"
+  • 正确:"从左向右横摇扫过教室(摇镜,80°左→右)"
+  • 正确:"固定机位,无运镜"
+  • 错误:"推" (太简略,缺方向和幅度)
+  • 错误:"运动镜头" (太模糊)
+  • 连续 shot 之间的运镜必须逻辑连贯,禁止跳轴(180° rule):
+    - 上一 shot 结束的机位 ≈ 下一 shot 开始的机位(空间连续性)
+    - 对话场景中两个角色的视线方向必须保持一致
+- characterBlocking 用中文描述本镜头中人物的走位/动线路径,
+  写清楚"谁从哪移动到哪":
+  • 正确:"林夏从门口(画面左侧)走向窗边座位(画面右侧)"
+  • 正确:"两人原地对话,无走位"
+  • 错误:"走位" (太简略,缺人物和路径)
 - startSec / endSec 必填:每个 shot 自己在当集时间轴上的区间(秒)。
   - 必须严格在 group 的 startSec~endSec 范围内
   - 连续 shot 的时间区间要无缝衔接(shot N 的 endSec == shot N+1 的 startSec)
@@ -237,7 +256,9 @@ ${data.episodeText}
         {
           "shotType": "WS" | "MS" | "CU" | "ECU" | "OTS",
           "action": "极简单段落用 1 个 shot 即可(单一动作 / 一句台词)",
-          "camera": "机位 / 焦段 / 角度(中文简短)",
+          "camera": "机位 / 焦段 / 角度(中文简短,只描述摄像机位置,不重复 shotType)",
+          "cameraMovement": "运镜方式 + 方向/幅度,如:固定机位,无运镜 / 从全景慢推到面部特写(推镜)",
+          "characterBlocking": "人物走位路径,如:人物静止,无走位 / A从门口走向窗边(画面左→右)",
           "startSec": 0,
           "endSec": 4
         }
@@ -255,6 +276,8 @@ ${data.episodeText}
           "shotType": "MS",
           "action": "A 说...",
           "camera": "...",
+          "cameraMovement": "...",
+          "characterBlocking": "...",
           "startSec": 4,
           "endSec": 7
         },
@@ -262,6 +285,8 @@ ${data.episodeText}
           "shotType": "OTS",
           "action": "B 反应...",
           "camera": "...",
+          "cameraMovement": "...",
+          "characterBlocking": "...",
           "startSec": 7,
           "endSec": 10
         }
@@ -279,6 +304,8 @@ ${data.episodeText}
           "shotType": "WS",
           "action": "环境/场面建立...",
           "camera": "...",
+          "cameraMovement": "...",
+          "characterBlocking": "...",
           "startSec": 10,
           "endSec": 13
         },
@@ -286,6 +313,8 @@ ${data.episodeText}
           "shotType": "CU",
           "action": "人物特写动作...",
           "camera": "...",
+          "cameraMovement": "...",
+          "characterBlocking": "...",
           "startSec": 13,
           "endSec": 16
         },
@@ -293,6 +322,8 @@ ${data.episodeText}
           "shotType": "ECU",
           "action": "情绪反应/收尾...",
           "camera": "...",
+          "cameraMovement": "...",
+          "characterBlocking": "...",
           "startSec": 16,
           "endSec": 19
         }
@@ -589,6 +620,8 @@ function normalizeGroup(
     shotTypeLabel: string;
     action: string;
     camera: string;
+    cameraMovement?: string;
+    characterBlocking?: string;
     startSec?: number;
     endSec?: number;
   }>;
@@ -650,6 +683,8 @@ function normalizeShot(
   shotTypeLabel: string;
   action: string;
   camera: string;
+  cameraMovement?: string;
+  characterBlocking?: string;
   startSec?: number;
   endSec?: number;
 } | null {
@@ -659,6 +694,14 @@ function normalizeShot(
     typeof s.action === "string" && s.action.trim() ? s.action.trim().slice(0, 200) : "";
   const camera =
     typeof s.camera === "string" && s.camera.trim() ? s.camera.trim().slice(0, 100) : "";
+  const cameraMovement =
+    typeof s.cameraMovement === "string" && s.cameraMovement.trim()
+      ? s.cameraMovement.trim().slice(0, 200)
+      : undefined;
+  const characterBlocking =
+    typeof s.characterBlocking === "string" && s.characterBlocking.trim()
+      ? s.characterBlocking.trim().slice(0, 300)
+      : undefined;
   if (!action) return null;
 
   // 2026/06:每个 shot 自己的时间范围(秒,绝对值,在当集时间轴上)
@@ -683,6 +726,8 @@ function normalizeShot(
     shotTypeLabel: SHOT_LABEL_CN[shotType],
     action,
     camera,
+    cameraMovement,
+    characterBlocking,
     startSec: shotStart,
     endSec: shotEnd,
   };
@@ -718,6 +763,8 @@ const ShotInput = z.object({
   shotTypeLabel: z.string().min(1).max(20),
   action: z.string().min(1).max(400),
   camera: z.string().max(200).default(""),
+  cameraMovement: z.string().max(300).optional(),
+  characterBlocking: z.string().max(400).optional(),
   // 2026/06:每 shot 自带时间范围(秒,绝对值,在当集时间轴上)
   startSec: z.number().min(0).max(3600).optional(),
   endSec: z.number().min(0).max(3600).optional(),
@@ -766,6 +813,8 @@ const RegenShotInput = z.object({
   shotTypeLabel: z.string().min(1).max(20),
   action: z.string().min(1).max(400),
   camera: z.string().max(200).default(""),
+  cameraMovement: z.string().max(300).optional(),
+  characterBlocking: z.string().max(400).optional(),
   characterImageUrls: z.array(z.string().url()).max(3).default([]),
   characterNames: z.array(z.string().max(50)).max(3).default([]),
   sceneImageUrl: z.string().url().optional(),

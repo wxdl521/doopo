@@ -83,6 +83,37 @@ type PixflowImageResult = {
   model: string;
 };
 
+/** /v1/images/edits 约束:最长边 ≤ 3840,宽高比 ≤ 3:1 */
+const EDITS_MAX_EDGE = 3840;
+const EDITS_MAX_ASPECT = 3;
+
+function clampEditSize(size: string): string {
+  const m = size.match(/^(\d+)\s*[xX*]\s*(\d+)$/);
+  if (!m) return size;
+  let w = parseInt(m[1], 10);
+  let h = parseInt(m[2], 10);
+
+  // 1) 最长边 ≤ 3840
+  const maxEdge = Math.max(w, h);
+  if (maxEdge > EDITS_MAX_EDGE) {
+    const scale = EDITS_MAX_EDGE / maxEdge;
+    w = Math.floor((w * scale) / 2) * 2;
+    h = Math.floor((h * scale) / 2) * 2;
+  }
+
+  // 2) 宽高比 ≤ 3:1 —— 压缩长边让短边拉长
+  const aspect = Math.max(w, h) / Math.min(w, h);
+  if (aspect > EDITS_MAX_ASPECT) {
+    if (w > h) {
+      w = Math.floor((h * EDITS_MAX_ASPECT) / 2) * 2;
+    } else {
+      h = Math.floor((w * EDITS_MAX_ASPECT) / 2) * 2;
+    }
+  }
+
+  return `${w}x${h}`;
+}
+
 /** 把 size 字符串(1024x1024 / 1K / 2K)折算成 Gemini imageConfig.imageSize 档位 */
 function toGeminiImageSize(size?: string): "1K" | "2K" | "4K" {
   if (!size) return "1K";
@@ -260,9 +291,10 @@ export async function callPixflowImage(input: PixflowImageInput): Promise<Pixflo
             continue;
           }
           const mime = r.headers.get("content-type")?.split(";")[0]?.trim() || "image/png";
-          const ext = mime.includes("jpeg") ? "jpg" : mime.includes("webp") ? "webp" : "png";
+          const safeMime = /^image\/(jpeg|png|webp)$/i.test(mime) ? mime : "image/png";
+          const ext = safeMime.includes("jpeg") ? "jpg" : safeMime.includes("webp") ? "webp" : "png";
           const buf = await r.arrayBuffer();
-          blobs.push({ blob: new Blob([buf], { type: mime }), filename: `ref${i}.${ext}` });
+          blobs.push({ blob: new Blob([buf], { type: safeMime }), filename: `ref${i}.${ext}` });
         } catch (e) {
           console.warn(
             `[pixflow⚠] ref#${i} download failed: ${e instanceof Error ? e.message : "fetch failed"}`,
@@ -279,7 +311,7 @@ export async function callPixflowImage(input: PixflowImageInput): Promise<Pixflo
         form.append("model", model);
         form.append("prompt", input.prompt);
         form.append("n", String(input.n ?? 1));
-        form.append("size", input.size || "1024x1024");
+        form.append("size", clampEditSize(input.size || "1024x1024"));
         form.append("quality", input.quality ?? "auto");
         form.append("response_format", "url");
         for (const { blob, filename } of blobs) {

@@ -132,7 +132,9 @@ export async function callAigcfamilyImage(
           blob = await r.blob();
         }
         if (blob.size > MAX_REF_BYTES) {
-          console.warn(`[aigcfamily] skipping ref ${i}: ${(blob.size/1e6).toFixed(2)}MB > 0.8MB limit`);
+          console.warn(
+            `[aigcfamily] skipping ref ${i}: ${(blob.size / 1e6).toFixed(2)}MB > 0.8MB limit`,
+          );
           skippedCount++;
           continue;
         }
@@ -141,7 +143,9 @@ export async function callAigcfamilyImage(
         form.append("image[]", blob, `ref_${i}.${ext}`);
       }
       const totalMB = (totalRefSize / 1_000_000).toFixed(2);
-      console.log(`[aigcfamily] refs=${input.referenceImages!.length - skippedCount}/${input.referenceImages!.length} totalSize=${totalMB}MB`);
+      console.log(
+        `[aigcfamily] refs=${input.referenceImages!.length - skippedCount}/${input.referenceImages!.length} totalSize=${totalMB}MB`,
+      );
       requestInit = {
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}` },

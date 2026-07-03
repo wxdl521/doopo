@@ -87,22 +87,13 @@ function AccountOverview() {
           value={creditBalance != null ? creditBalance : "..."}
           hint={t.account_points_rollover}
         />
-        <StatCard
-          icon={Award}
-          label={t.account_level}
-          value={"-"}
-          tone="success"
-        />
+        <StatCard icon={Award} label={t.account_level} value={"-"} tone="success" />
         <StatCard
           icon={FolderOpen}
           label={t.account_my_projects}
           value={projectCount != null ? projectCount : "..."}
         />
-        <StatCard
-          icon={Bell}
-          label={t.account_unread}
-          value={"-"}
-        />
+        <StatCard icon={Bell} label={t.account_unread} value={"-"} />
       </div>
       <div className="panel p-6">
         <h3 className="font-display text-lg font-bold mb-3">{t.account_profile}</h3>

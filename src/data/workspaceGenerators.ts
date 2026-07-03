@@ -174,6 +174,10 @@ export type StoryboardShot = {
   shotTypeLabel: string;
   action: string;
   camera: string;
+  /** 运镜方式:推/拉/摇/移/跟/升/降/固定 + 方向/幅度。AI 生成,可选。 */
+  cameraMovement?: string;
+  /** 本镜头内人物的走位/动线路径。AI 生成,可选。 */
+  characterBlocking?: string;
   /**
    * 2026/06:每个 shot 自己的时间范围(秒,绝对值,在当集时间轴上)。
    * 之前只在 group 层级有 startSec/endSec,shot 是均分的;现在 shot 也有自己的区间,

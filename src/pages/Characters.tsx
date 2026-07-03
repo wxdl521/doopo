@@ -24,10 +24,10 @@ import { generateImage } from "../lib/seedream.functions";
 import { IMAGE_MODELS } from "../lib/imageModels";
 import { logImageMeta } from "../lib/logImageMeta";
 
-type Tab = "front" | "side" | "back" | "expression" | "accessory";
+type Tab = "front" | "side-left" | "side-right" | "back" | "expression" | "accessory";
 type Step = "brief" | "profile" | "style" | "hero" | "sheet";
 
-const VIEWS = ["front", "side", "back", "expression", "accessory"] as Tab[];
+const VIEWS = ["front", "side-left", "side-right", "back", "expression", "accessory"] as Tab[];
 
 // Style-specific prompt enhancers to ensure visual consistency across views
 const STYLE_PROMPTS: Record<string, { positive: string; negative: string }> = {
@@ -103,7 +103,10 @@ const COMPOSITION_PROMPTS: Record<string, string> = {
 
 const VIEW_PROMPTS: Record<Tab, string> = {
   front: "full body front view, T-pose reference sheet style",
-  side: "full body strict side profile view, orthographic",
+  "side-left":
+    "full body strict left side profile view, orthographic, character's LEFT side facing camera",
+  "side-right":
+    "full body strict right side profile view, orthographic, character's RIGHT side facing camera",
   back: "full body back view, orthographic, showing hairstyle and costume rear details",
   expression: "facial expression sheet, close-up portrait, multiple subtle expressions implied",
   accessory: "isolated character accessories and costume parts laid out as a design sheet",
@@ -144,14 +147,16 @@ export default function Characters() {
   const [imageModel, setImageModel] = useState<string>("");
   const [generatedImages, setGeneratedImages] = useState<Record<Tab, string>>({
     front: "",
-    side: "",
+    "side-left": "",
+    "side-right": "",
     back: "",
     expression: "",
     accessory: "",
   });
   const [promptPreview, setPromptPreview] = useState<Record<Tab, string>>({
     front: "",
-    side: "",
+    "side-left": "",
+    "side-right": "",
     back: "",
     expression: "",
     accessory: "",
@@ -245,7 +250,7 @@ export default function Characters() {
     setLoading(true);
     setError("");
     setLoadingMsg(t.char_step_sheet);
-    const restViews: Tab[] = ["side", "back", "expression", "accessory"];
+    const restViews: Tab[] = ["side-left", "side-right", "back", "expression", "accessory"];
     const previews = restViews.reduce(
       (acc, v) => {
         acc[v] = buildPrompt(v, profile || brief);
@@ -288,8 +293,22 @@ export default function Characters() {
     setBrief("");
     setProfile("");
     setEditingProfile(false);
-    setGeneratedImages({ front: "", side: "", back: "", expression: "", accessory: "" });
-    setPromptPreview({ front: "", side: "", back: "", expression: "", accessory: "" });
+    setGeneratedImages({
+      front: "",
+      "side-left": "",
+      "side-right": "",
+      back: "",
+      expression: "",
+      accessory: "",
+    });
+    setPromptPreview({
+      front: "",
+      "side-left": "",
+      "side-right": "",
+      back: "",
+      expression: "",
+      accessory: "",
+    });
     setError("");
   };
 
@@ -572,7 +591,8 @@ export default function Characters() {
                   className={`chip text-xs ${activeTab === v && generatedImages[v] ? "chip-active" : ""}`}
                 >
                   {v === "front" && <Eye size={12} />}
-                  {v === "side" && <Shirt size={12} />}
+                  {v === "side-left" && <Shirt size={12} />}
+                  {v === "side-right" && <Shirt size={12} />}
                   {v === "back" && <BookOpen size={12} />}
                   {v === "expression" && <SmilePlus size={12} />}
                   {v === "accessory" && <Star size={12} />}

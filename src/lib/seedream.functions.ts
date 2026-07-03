@@ -307,7 +307,10 @@ export const generateImage = createServerFn({ method: "POST" })
       });
       return { url: r.url, error: r.error, model: r.model };
     }
-    if (requested.toLowerCase().startsWith("azure/") || requested.toLowerCase().startsWith("azure2/")) {
+    if (
+      requested.toLowerCase().startsWith("azure/") ||
+      requested.toLowerCase().startsWith("azure2/")
+    ) {
       const { callAzureImage } = await import("./azureImage.functions");
       const r = await callAzureImage({
         prompt: appendNegative(data.prompt, data.negativePrompt),
@@ -487,32 +490,35 @@ function buildCharacterPrompts(opts: {
 
   if (data.mode === "three-view") {
     const positive = [
-      `Generate ONE standard 3-view character reference sheet of "${cardTitle}" — a ${data.characterRoleLabel}, age ${data.characterAge}. The output is a SINGLE image with EXACTLY 3 panels (left = front, middle = side profile, right = back).`,
+      `Generate ONE standard 4-view character reference sheet of "${cardTitle}" — a ${data.characterRoleLabel}, age ${data.characterAge}. The output is a SINGLE image with EXACTLY 4 panels (panel 1 = front, panel 2 = LEFT side profile, panel 3 = RIGHT side profile, panel 4 = back).`,
       ``,
       `You are given TWO sources of truth and BOTH must agree:
   (A) the attached REFERENCE IMAGE — the current approved front-view of "${cardTitle}", and
   (B) the FACE / BODY / OUTFIT text descriptions below.
 If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) exactly.`,
       ``,
-      `[PHYSICAL STATE — must be respected in ALL 3 panels]`,
+      `[PHYSICAL STATE — must be respected in ALL 4 panels]`,
       `The character's body description (bodyDescription) below is the SINGLE SOURCE OF TRUTH for their physical condition.`,
-      `If the body description indicates a permanent physical trait (e.g. uses a wheelchair, missing limb, prosthetic, walking cane, blind, deaf), that trait MUST appear consistently in ALL 3 panels.`,
-      `DO NOT force the character into a "standing upright" pose if they use a wheelchair — show them in their wheelchair in all 3 panels (front/side/back views of the person IN the wheelchair).`,
-      `DO NOT add missing limbs back — if the description says they are missing an arm or leg, all 3 panels must show that limb missing.`,
-      `The camera angle changes between panels (front → side → back), but the character's physical state, assistive devices, and permanent condition stay identical across all 3 panels.`,
+      `If the body description indicates a permanent physical trait (e.g. uses a wheelchair, missing limb, prosthetic, walking cane, blind, deaf), that trait MUST appear consistently in ALL 4 panels.`,
+      `DO NOT force the character into a "standing upright" pose if they use a wheelchair — show them in their wheelchair in all 4 panels (front/left-side/right-side/back views of the person IN the wheelchair).`,
+      `DO NOT add missing limbs back — if the description says they are missing an arm or leg, all 4 panels must show that limb missing.`,
+      `The camera angle changes between panels (front → left side → right side → back), but the character's physical state, assistive devices, and permanent condition stay identical across all 4 panels.`,
       ``,
       `LAYOUT — strict, no exceptions:
-  Output ONE image with EXACTLY 3 horizontal panels, side-by-side, equal width:
-    • LEFT   = FRONT view (the reference image's angle)
-    • MIDDLE = SIDE profile (90° rotation, character's RIGHT side facing the camera)
-    • RIGHT  = BACK view (180° rotation)
-  NO 4th panel. NO diagonal panel. NO detail box. NO labels. NO captions. NO arrows. NO scale indicators. NO text inside the image.`,
+  Output ONE image with EXACTLY 4 horizontal panels, side-by-side, equal width:
+    • PANEL 1 (leftmost)  = FRONT view (the reference image's angle, character facing camera)
+    • PANEL 2             = LEFT SIDE profile (-90° rotation, character's LEFT side facing the camera)
+    • PANEL 3             = RIGHT SIDE profile (+90° rotation, character's RIGHT side facing the camera)
+    • PANEL 4 (rightmost) = BACK view (180° rotation)
+  NO 5th panel. NO diagonal panel. NO detail box. NO labels. NO captions. NO arrows. NO scale indicators. NO text inside the image.`,
       ``,
-      `PER-PANEL SHOT TYPE: Each of the 3 panels is a FULL SHOT (FS) / LONG SHOT (LS) / FULL-LENGTH PORTRAIT — the same framing used in character turnaround sheets, model sheets, and costume reference sheets. The character in EACH panel is shown from head to toe (or the full extent of their body, including wheelchair/prosthetic if applicable).`,
+      `CRITICAL — LEFT/RIGHT SIDE SYMMETRY: The LEFT side profile (panel 2) and RIGHT side profile (panel 3) MUST show the EXACT SAME PERSON — identical face shape, identical hairstyle, identical body proportions, identical outfit details, identical accessories, identical physical condition. The ONLY difference between panel 2 and panel 3 is which side of the character faces the camera. If the character has asymmetrical features (e.g. an eyepatch on the right eye, a scar on the left cheek), those features MUST appear correctly on the appropriate side in each profile view.`,
+      ``,
+      `PER-PANEL SHOT TYPE: Each of the 4 panels is a FULL SHOT (FS) / LONG SHOT (LS) / FULL-LENGTH PORTRAIT — the same framing used in character turnaround sheets, model sheets, and costume reference sheets. The character in EACH panel is shown from head to toe (or the full extent of their body, including wheelchair/prosthetic if applicable).`,
       ``,
       `PER-PANEL GEOMETRY: Each panel is portrait-orientation. In each panel, the character occupies 85-95% of the panel's vertical extent — from the top of the head to the lowest point of the body (soles of feet, wheelchair bottom, prosthetic bottom, etc.). Small white margin above the head AND below the body in EACH panel. The character does NOT touch the top or bottom edge of any panel.`,
       ``,
-      `PER-PANEL COMPOSITION (apply in each of the 3 panels):
+      `PER-PANEL COMPOSITION (apply in each of the 4 panels):
   1. Reserve a portrait-orientation panel.
   2. Place the character centered horizontally.
   3. Top of head at the top of the panel (with small margin).
@@ -520,44 +526,46 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
   5. Body fills the vertical axis of the panel — full body, no half-body.
   6. Both feet visible (if applicable and the character has feet). Hands visible at the sides (if applicable).`,
       ``,
-      `HARD CONSTRAINTS — the image is REJECTED if ANY of these is true in ANY of the 3 panels:
+      `HARD CONSTRAINTS — the image is REJECTED if ANY of these is true in ANY of the 4 panels:
   • The panel is a half-body, waist-up, hip-up, chest-up, shoulder-up, knee-up, cowboy shot, or head-and-shoulders crop.
   • The head or top of the hair is cut off at the top of the panel.
   • The body or wheelchair/prosthetic is cut off at the bottom of the panel.
   • The body extends beyond the panel edge.
   • The character occupies less than 80% of the panel's height.
-  • The side or back panel is tighter than the front panel (this is the #1 most common failure mode — both side and back must be JUST AS FULL as the front).
-  • The image contains 4+ panels, or fewer than 3 panels.
-  • The character's physical condition (wheelchair, missing limb, etc.) differs between panels — it MUST be identical in all 3.`,
+  • Any side or back panel is tighter than the front panel (this is the #1 most common failure mode — ALL side and back panels must be JUST AS FULL as the front).
+  • The image contains 5+ panels, or fewer than 4 panels.
+  • The character's physical condition (wheelchair, missing limb, etc.) differs between panels — it MUST be identical in all 4.
+  • The LEFT and RIGHT side profiles show different face/body/outfit — they MUST show the exact same person, only the camera direction differs.`,
       ``,
-      `CAMERA PER PANEL: Neutral front/side/back views. The ONLY thing that changes between panels is the camera rotation around the vertical axis. NO 3/4 view, NO diagonal, NO action pose, NO walking, NO running, NO hands-on-hips. The character stays in their natural/default state (sitting in wheelchair if applicable, standing if applicable, with their assistive devices as described).`,
+      `CAMERA PER PANEL: Neutral front/left-side/right-side/back views. The ONLY thing that changes between panels is the camera rotation around the vertical axis. NO 3/4 view, NO diagonal, NO action pose, NO walking, NO running, NO hands-on-hips. The character stays in their natural/default state (sitting in wheelchair if applicable, standing if applicable, with their assistive devices as described).`,
       ``,
-      `EXPRESSION IN ALL 3 PANELS: Neutral, expressionless, like a passport photo. No smile, no frown, no emotion, eyes open looking at the camera.`,
+      `EXPRESSION IN ALL 4 PANELS: Neutral, expressionless, like a passport photo. No smile, no frown, no emotion, eyes open looking at the camera.`,
       ``,
-      `IDENTITY LOCK ACROSS ALL 3 PANELS: Same face, same body, same physical condition, same outfit, same age, same hair, same skin tone, same accessories, same shoes, same wheelchair or prosthetic if applicable. The ONLY difference between panels is the camera angle.`,
+      `IDENTITY LOCK ACROSS ALL 4 PANELS: Same face, same body, same physical condition, same outfit, same age, same hair, same skin tone, same accessories, same shoes, same wheelchair or prosthetic if applicable. The ONLY difference between panels is the camera angle. The LEFT and RIGHT side profiles (panels 2 and 3) must show the exact same person — mirror the face/hair/body shape, just from opposite sides.`,
       ``,
-      `VISUAL STYLE (MUST match across all 3 panels — no style drift between panels):`,
+      `VISUAL STYLE (MUST match across all 4 panels — no style drift between panels):`,
       buildStyleLock(styleSpec, "reference"),
       ``,
       `CHARACTER (source of truth, alongside the attached reference image):
   Name: ${cardTitle} (${data.characterRoleLabel}, age ${data.characterAge})
-  Face (must remain identical in all 3 panels): ${data.faceDescription || "(use the face shown in the attached reference image)"}
-  Body (must remain identical in all 3 panels — includes physical condition, disabilities, assistive devices): ${data.bodyDescription || "(use the body shown in the attached reference image)"}
-  Outfit (must remain identical in all 3 panels — do NOT change the outfit between panels): ${data.clothingDescription || "(use the outfit shown in the attached reference image)"}`,
+  Face (must remain identical in all 4 panels): ${data.faceDescription || "(use the face shown in the attached reference image)"}
+  Body (must remain identical in all 4 panels — includes physical condition, disabilities, assistive devices): ${data.bodyDescription || "(use the body shown in the attached reference image)"}
+  Outfit (must remain identical in all 4 panels — do NOT change the outfit between panels): ${data.clothingDescription || "(use the outfit shown in the attached reference image)"}`,
       ``,
       `BACKGROUND: Each panel has a uniform light neutral background (off-white #F5F5F5 / light grey #EEEEEE is OK — this IS a reference sheet, not a final product, so the strict pure-white rule is relaxed). NO scenery, NO floor, NO horizon, NO props, NO environment, NO shadow on the background, NO reflection.`,
       ``,
       `FINAL CHECK — verify every item before submitting. If any is false, REGENERATE the image:
-  [ ] Output is ONE image with EXACTLY 3 panels (front / side / back) (yes)
-  [ ] All 3 panels show the FULL BODY (including wheelchair/prosthetic if applicable) (yes)
-  [ ] All 3 panels are equally full-body (side and back NOT tighter than front) (yes)
-  [ ] Same face, body, physical condition, outfit, age in all 3 panels (yes)
-  [ ] Physical disabilities/assistive devices are identical in all 3 panels (yes)
-  [ ] Style matches "${styleSpec.label}" in all 3 panels (yes)
-  [ ] Expression is neutral in all 3 panels (yes)
+  [ ] Output is ONE image with EXACTLY 4 panels (front / left side / right side / back) (yes)
+  [ ] All 4 panels show the FULL BODY (including wheelchair/prosthetic if applicable) (yes)
+  [ ] All 4 panels are equally full-body (side and back NOT tighter than front) (yes)
+  [ ] LEFT and RIGHT side profiles show identical character (face/body/outfit) (yes)
+  [ ] Same face, body, physical condition, outfit, age in all 4 panels (yes)
+  [ ] Physical disabilities/assistive devices are identical in all 4 panels (yes)
+  [ ] Style matches "${styleSpec.label}" in all 4 panels (yes)
+  [ ] Expression is neutral in all 4 panels (yes)
   [ ] No text, watermark, logo, labels, captions inside the image (yes)`,
       ``,
-      `Begin. Output the 3-view full-body reference sheet.`,
+      `Begin. Output the 4-view full-body reference sheet.`,
     ]
       .filter(Boolean)
       .join("\n");
@@ -569,19 +577,20 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
       "different art style, style drift, photorealistic when input is anime, anime when input is realistic, different medium, different line treatment, different color grading, inconsistent rendering between panels, mixing anime and realistic, mixing 3D and 2D, mixing watercolor and cel-shading",
       "smile, smirk, grin, frown, scowl, angry eyes, sad eyes, laughing, crying, pouting, raised eyebrow, looking sideways, eyes closed, eyes squinting, teeth showing, emotional expression, character personality face",
       "different face, different face shape, different eye shape, different eye color, different nose, different mouth, different eyebrows, different skin tone, different hairstyle, different hair color, different hair length, different facial proportions, age change, different body, different body proportions, different height, different weight, different gender presentation, different outfit, different clothing color, different clothing style, different accessories, different hat, different glasses, different jewelry, different bag, different weapon, different shoes, different makeup, extra clothing item, missing clothing item, outfit change between panels",
+      "asymmetric face between left and right side, different face in left vs right profile, inconsistent left vs right side views, left side and right side showing different person, different outfit in left vs right, mirrored incorrectly, face looks different in left profile vs right profile, left side profile mismatch, right side profile mismatch",
       "scenery, furniture, props, ground texture, horizon line, floor, wall, sky, busy background, complex background, detailed background, color cast, gradient background, vignette, shadow on background, floor reflection, environment, room, indoor, outdoor",
-      "watermark, logo, text, signature, label, panel number, caption, annotation, arrow, callout, extra limbs, deformed hands, extra fingers, extra people, multiple characters, bystander, blurred face, low quality, 4 panels, 5 panels, more than 3 views, fewer than 3 views, single panel",
+      "watermark, logo, text, signature, label, panel number, caption, annotation, arrow, callout, extra limbs, deformed hands, extra fingers, extra people, multiple characters, bystander, blurred face, low quality, 5 panels, 6 panels, more than 4 views, fewer than 4 views, single panel, 3 panels",
     ].join(", ");
-    // Seedream 用 'x' 分隔画幅;三视图横向 3 面板 → 长方形画布
-    // 3072x1280 = 3,932,160 像素,稳过 Seedream 3,686,400 的最小要求
-    return { positive, negative, size: "3072x1280" };
+    // Seedream 用 'x' 分隔画幅;四视图横向 4 面板 → 长方形画布
+    // 4096x1280 = 5,242,880 像素,稳过 Seedream 3,686,400 的最小要求
+    return { positive, negative, size: "4096x1280" };
   }
 
   if (data.mode === "multi-asset") {
     // ====================================================================
-    // 角色多维资产图 —— 2026/06 用户二次扩展
+    // 角色多维资产图 —— 2026/06 用户二次扩展,2026/07 三视图→四视图
     //
-    // 在原 3 区域(三视图/表情/姿势)基础上合并新需求:
+    // 在原 3 区域(四视图/表情/姿势)基础上合并新需求:
     //   ① 大型主肖像(hero portrait,放整张图最显眼位置)
     //   ② 各种面部表情(开心/生气/困倦/惊讶等,融合原有 6 表情扩成 6-8 个)
     //   ③ 动作姿势(按角色个性自适应,不限定 4 个)
@@ -591,7 +600,7 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
     // 最终布局(从上到下):
     //   Section 0  简介条        — 名字 + 个性短描述
     //   Section 1  大型主肖像    — 整张图最显眼,半身或全身 hero shot
-    //   Section 2  角色三视图    — 正/侧/背
+    //   Section 2  角色四视图    — 正/左/右/背
     //   Section 3  表情表        — 6-8 个面部特写(覆盖开心/生气/困倦/惊讶/悲伤/常态等)
     //   Section 4  动作姿势      — 4-6 个全身动作,按角色个性挑选
     //   Section 5  配饰/道具图标 — 小型物体行,展示长期携带的配饰/道具
@@ -629,16 +638,18 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
       `One LARGE hero portrait — half-body to 3/4-body framing, facing camera, in the character's most identity-defining pose (the look that best captures who they are). This is the centerpiece of the whole sheet — render it with the most attention to detail (lighting, expression, posture). White background.`,
       `Must show the character's complete identity-defining features: face, hairstyle, complete outfit visible, signature accessories. If the character has special traits (glasses, animal ears, wings, tail, horns, distinctive markings), ALL must be visible here.`,
 
-      // ========== Section 2:三视图 ==========
-      `[SECTION 2 — 角色三视图 / THREE-VIEW]`,
-      `Section title: "角色三视图 / Three-View"`,
-      `Lay out THREE FULL-BODY orthographic views side-by-side:`,
+      // ========== Section 2:四视图 ==========
+      `[SECTION 2 — 角色四视图 / FOUR-VIEW]`,
+      `Section title: "角色四视图 / Four-View"`,
+      `Lay out FOUR FULL-BODY orthographic views side-by-side:`,
       `  • 正视图 (Front view) — character facing camera, expressionless face, in their natural/default state (standing if able, in wheelchair if they use one, with prosthetic/assistive device if applicable)`,
-      `  • 侧视图 (Side view) — 90° rotation, character's RIGHT side facing camera, same state`,
+      `  • 左侧视图 (Left Side view) — -90° rotation, character's LEFT side facing camera, same state`,
+      `  • 右侧视图 (Right Side view) — +90° rotation, character's RIGHT side facing camera, same state`,
       `  • 背视图 (Back view) — 180° rotation, back facing camera, same state`,
-      `Each view is labeled in Chinese below it: "正视图" / "侧视图" / "背视图".`,
-      `CRITICAL — PRESERVE ALL CHARACTER FEATURES across all three views: any special trait (glasses, wings, animal ears, tail, horns, special hair accessory, distinctive eye color, tattoos) MUST appear consistently. Identical proportions, identical outfit, identical physical condition. NO perspective distortion, NO foreshortening, NO 3/4 angles. Standard orthographic.`,
-      `IMPORTANT — The body description (bodyDescription) below is the SINGLE SOURCE OF TRUTH for the character's physical condition. If they use a wheelchair, are missing a limb, or have any permanent physical trait, that MUST be shown identically in all three views. Do NOT force "standing A-pose" if the character uses a wheelchair.`,
+      `Each view is labeled in Chinese below it: "正视图" / "左侧视图" / "右侧视图" / "背视图".`,
+      `CRITICAL — PRESERVE ALL CHARACTER FEATURES across all four views: any special trait (glasses, wings, animal ears, tail, horns, special hair accessory, distinctive eye color, tattoos) MUST appear consistently. Identical proportions, identical outfit, identical physical condition. NO perspective distortion, NO foreshortening, NO 3/4 angles. Standard orthographic.`,
+      `CRITICAL — LEFT/RIGHT SIDE IDENTITY MATCH: The left side and right side profiles MUST show the EXACT SAME PERSON — identical face shape, hairstyle, body proportions, outfit details, and physical condition. The ONLY difference is which side faces the camera. Asymmetrical features (eyepatch, scar, etc.) must appear correctly on the appropriate side.`,
+      `IMPORTANT — The body description (bodyDescription) below is the SINGLE SOURCE OF TRUTH for the character's physical condition. If they use a wheelchair, are missing a limb, or have any permanent physical trait, that MUST be shown identically in all four views. Do NOT force "standing A-pose" if the character uses a wheelchair.`,
 
       // ========== Section 3:表情表 ==========
       `[SECTION 3 — 表情表 / EXPRESSIONS]`,
@@ -688,10 +699,10 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
       `[CRITICAL RULES — output is REJECTED if ANY of these is violated]`,
       `RULE 1 — PURE WHITE BACKGROUND (#FFFFFF) everywhere. NOT gray, NOT cream, NOT textured. No floor, no scenery.`,
       `RULE 2 — IDENTITY LOCK: every face shown across the entire image MUST be the SAME PERSON. Same face shape, eyes, nose, mouth, hairstyle, hair color, skin tone. Different person = REJECT.`,
-      `RULE 3 — FEATURE PRESERVATION: any special trait (glasses, wings, animal ears, tail, horns, special accessories, distinctive markings) MUST appear in: the main portrait, all three views, every expression close-up, every pose. Missing in any one of these = REJECT.`,
+      `RULE 3 — FEATURE PRESERVATION: any special trait (glasses, wings, animal ears, tail, horns, special accessories, distinctive markings) MUST appear in: the main portrait, all four views, every expression close-up, every pose. Missing in any one of these = REJECT.`,
       `RULE 4 — CHINESE TEXT LABELS: every section carries a Chinese title; every sub-image / icon carries a Chinese label. Text must be readable, simplified Chinese, no garbled characters, no English-only labels.`,
-      `RULE 5 — NO RIGID GRID: do not force a fixed grid. Section 1 = one big hero portrait. Sections 2-5 lay items out by content (3 views in Section 2, 6-8 expressions in Section 3, 4-6 poses in Section 4, 4-8 accessory icons in Section 5).`,
-      `RULE 6 — NO PERSPECTIVE ERRORS in Section 2 (three-view): orthographic only (0° / 90° / 180°).`,
+      `RULE 5 — NO RIGID GRID: do not force a fixed grid. Section 1 = one big hero portrait. Sections 2-5 lay items out by content (4 views in Section 2, 6-8 expressions in Section 3, 4-6 poses in Section 4, 4-8 accessory icons in Section 5).`,
+      `RULE 6 — NO PERSPECTIVE ERRORS in Section 2 (four-view): orthographic only (0° / -90° (left) / +90° (right) / 180°).`,
       `RULE 7 — EXPRESSION ONLY in Section 3: only expression changes between close-ups. Same head size, camera angle, lighting.`,
       `RULE 8 — PERSONALITY-MATCHED POSES in Section 4: pose set should reflect this character's role and temperament. A reserved scholar should NOT get aggressive combat poses; a playful child should NOT get combat-ready poses.`,
       `RULE 9 — STYLE LOCK: all sub-images + labels rendered in the project's selected visual style "${styleSpec.label}". No mixing of anime + photoreal, no mixing of 2D + 3D.`,
@@ -732,14 +743,14 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
       `[ ] Pure white background throughout`,
       `[ ] Section 0: text-only profile bar (name, role chip, 1-2 Chinese sentences of personality)`,
       `[ ] Section 1: one large hero portrait — the visual centerpiece`,
-      `[ ] Section 2: three full-body orthographic views (front/side/back) with Chinese labels`,
+      `[ ] Section 2: four full-body orthographic views (front/left-side/right-side/back) with Chinese labels`,
       `[ ] Section 3: 6-8 facial close-ups covering 开心/生气/困倦/惊讶/悲伤/常态 (at minimum) with Chinese labels`,
       `[ ] Section 4: 4-6 full-body poses matched to character personality, Chinese-labeled`,
       `[ ] Section 5: 4-8 small accessory/prop icons (isolated objects), Chinese-labeled`,
       `[ ] Same face, body, outfit, special features across the entire image`,
       `[ ] All text in simplified Chinese, readable`,
       `[ ] Style matches "${styleSpec.label}"`,
-      `[ ] No other characters, no extra limbs, no perspective errors in the three-view`,
+      `[ ] No other characters, no extra limbs, no perspective errors in the four-view`,
 
       `Begin. Output the character multi-asset sheet.`,
     ]
@@ -749,9 +760,9 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
       "different art style, style drift, photorealistic when input is anime, anime when input is realistic, inconsistent rendering between sub-images",
       "different face, different face shape, different eye shape, different eye color, different nose, different mouth, different eyebrows, different skin tone, different hairstyle, different hair color, different hair length, different facial proportions, age change, different body, different body proportions, different height, different gender presentation, different outfit, different clothing color, different clothing style, different accessories, different glasses, different jewelry, different shoes",
       "missing glasses when source has glasses, missing wings when source has wings, missing tail when source has tail, missing animal ears when source has them, missing horns when source has horns, missing distinctive feature, feature drift, lost accessory",
-      "perspective distortion in three-view, fish-eye, wide-angle distortion, foreshortening, hero shot, low angle, 3/4 view in front/side/back, diagonal angle",
+      "perspective distortion in four-view, fish-eye, wide-angle distortion, foreshortening, hero shot, low angle, 3/4 view in front/side/back, diagonal angle, left side and right side showing different face, asymmetric side profiles, inconsistent left vs right side view, different body in left vs right, mirrored incorrectly in side views",
       "cropped at knees, cropped at waist, cropped at chest, head cut off, feet cut off, body extending beyond frame, missing feet, missing hands, missing legs",
-      "inconsistent proportions across the three views, taller in one view, shorter in another, scale mismatch between sub-images",
+      "inconsistent proportions across the four views, taller in one view, shorter in another, scale mismatch between sub-images",
       "extra people, bystander, multiple characters, extra limbs, deformed hands, extra fingers, deformed face, blurred face, low quality",
       "detailed scenery, busy backgrounds, room interior, outdoor landscape, props cluttering the frame, floor, wall, sky, scenery, furniture, ground texture, horizon line, shadow on background, gradient background",
       "English-only labels, garbled Chinese, missing labels, illegible text, decorative borders, ornate frames, gold filigree",
@@ -902,7 +913,10 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
       if (!r.url) return { ok: false as const, error: r.error || "数安词源 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith("azure/") || requested.toLowerCase().startsWith("azure2/")) {
+    if (
+      requested.toLowerCase().startsWith("azure/") ||
+      requested.toLowerCase().startsWith("azure2/")
+    ) {
       const { callAzureImage } = await import("./azureImage.functions");
       const r = await callAzureImage({
         prompt,
@@ -1085,6 +1099,10 @@ function buildShotInstruction(data: ShotInputType, styleSpec: VisualStyleSpec): 
     `[剧情上下文] ${data.plotText}`,
     `[本镜头] ${data.shotType} ${data.shotTypeLabel} —— ${data.action}`,
     data.camera ? `[机位] ${data.camera}` : "",
+    data.cameraMovement
+      ? `[运镜(仅用于理解画面动态,不在画面中画箭头)] ${data.cameraMovement}`
+      : "",
+    data.characterBlocking ? `[人物走位] ${data.characterBlocking}` : "",
     ``,
     `[参考图清单(严格按下面的对应关系使用)]`,
     charRefs,
@@ -1109,6 +1127,9 @@ function buildShotInstruction(data: ShotInputType, styleSpec: VisualStyleSpec): 
             : `   - 过肩:从某人肩膀后面拍另一人,常用于对话场景,有空间纵深。`,
     `4. 画面必须是单张分镜图,不能有面板分割、文字、标号。`,
     `5. 角色动作 / 表情 / 视线方向严格按本镜头的"${data.action}"执行。`,
+    data.cameraMovement
+      ? `6. 构图体现运镜特征:推→主体大/纵深感;拉→主体小/环境强;摇/移→空间位移暗示;跟→主体清晰背景虚化;固定→稳定平衡;升/降→俯仰角度变化。`
+      : `6. 固定机位,画面构图稳定平衡。`,
     ``,
     buildStyleLock(styleSpec, "panel"),
   ]
@@ -1238,7 +1259,10 @@ export const generateStoryboardShotImage = createServerFn({ method: "POST" })
       if (!r.url) return { ok: false as const, error: r.error || "数安词源 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith("azure/") || requested.toLowerCase().startsWith("azure2/")) {
+    if (
+      requested.toLowerCase().startsWith("azure/") ||
+      requested.toLowerCase().startsWith("azure2/")
+    ) {
       const { callAzureImage } = await import("./azureImage.functions");
       const r = await callAzureImage({
         prompt: appendNegative(instruction, negative),
@@ -1440,6 +1464,10 @@ function buildRegenShotInstruction(
     `[剧情上下文] ${data.plotText}`,
     `[本镜头] ${data.shotType} ${data.shotTypeLabel} —— ${data.action}`,
     data.camera ? `[机位] ${data.camera}` : "",
+    data.cameraMovement
+      ? `[运镜(仅用于理解画面动态,不在画面中画箭头)] ${data.cameraMovement}`
+      : "",
+    data.characterBlocking ? `[人物走位] ${data.characterBlocking}` : "",
     ``,
     `[参考图清单(严格按下面的对应关系使用)]`,
     `图1 = 当前分镜镜头(要被修改的)`,
@@ -1569,7 +1597,10 @@ export const regenerateStoryboardShot = createServerFn({ method: "POST" })
       if (!r.url) return { ok: false as const, error: r.error || "数安词源 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith("azure/") || requested.toLowerCase().startsWith("azure2/")) {
+    if (
+      requested.toLowerCase().startsWith("azure/") ||
+      requested.toLowerCase().startsWith("azure2/")
+    ) {
       const { callAzureImage } = await import("./azureImage.functions");
       const r = await callAzureImage({
         prompt: appendNegative(instruction, negative),
@@ -1764,6 +1795,8 @@ const PitchDeckShotSchema = z.object({
   shotTypeLabel: z.string().min(1).max(20),
   action: z.string().min(1).max(400),
   camera: z.string().max(200).default(""),
+  cameraMovement: z.string().max(300).optional(),
+  characterBlocking: z.string().max(400).optional(),
   durationSec: z.number().optional(),
   // 2026/06 新增:用户要求每帧标注时长,把 shot 自身的时间区间也传过来
   startSec: z.number().optional(),
@@ -1847,13 +1880,15 @@ function buildPitchDeckPrompt(opts: {
   const shotLines = shots
     .map((s, i) => {
       const cam = s.camera ? ` | camera: ${s.camera}` : "";
+      const camMov = s.cameraMovement ? ` | camMovement: ${s.cameraMovement}` : "";
+      const blocking = s.characterBlocking ? ` | blocking: ${s.characterBlocking}` : "";
       const dur =
         s.startSec != null && s.endSec != null
           ? ` | ${s.startSec.toFixed(0)}-${s.endSec.toFixed(0)}s (${(s.endSec - s.startSec).toFixed(0)}s)`
           : s.durationSec
             ? ` | duration: ${s.durationSec}s`
             : "";
-      return `  Frame ${i + 1}: [${s.shotTypeLabel}] ${s.action}${cam}${dur}`;
+      return `  Frame ${i + 1}: [${s.shotTypeLabel}] ${s.action}${cam}${camMov}${blocking}${dur}`;
     })
     .join("\n");
 
@@ -1913,11 +1948,33 @@ function buildPitchDeckPrompt(opts: {
     `- Adjacent frames must have visual continuity: action flow, line of sight, spatial logic.`,
     `- No character drift between frames — they must look like the same person drawn from different angles.`,
 
-    `[TOP-DOWN DIAGRAM]`,
-    `A small overhead/schematic view of the scene in clean linework:`,
-    `  • Character positions with numbered dots`,
-    `  • Movement paths with dashed lines and arrows`,
-    `  • Camera positions with 📷 markers and shot type labels`,
+    `[TOP-DOWN DIAGRAM — mandatory, bottom-right area, at least 20% of page]`,
+    `A clean overhead/floor-plan view of the scene in pencil linework. This diagram MUST follow these EXACT rules:`,
+    ``,
+    `【CAMERA MOVEMENT — SOLID lines + ARROWHEADS + SEQUENCE NUMBERS】`,
+    `  • Each camera position is drawn as a 📷 icon`,
+    `  • Camera positions are numbered in shooting order: ①, ②, ③ ...`,
+    `  • Camera positions are connected by SOLID lines with ARROWHEADS (──▶)`,
+    `  • The arrow direction MUST match the shot sequence (① ──▶ ② ──▶ ③)`,
+    `  • Below each 📷, write the shot type label (WS/MS/CU/ECU/OTS) in small text`,
+    `  • Draw a light V-shaped FOV cone from each 📷 to show the field of view`,
+    ``,
+    `【CHARACTER MOVEMENT — DASHED lines only】`,
+    `  • Character starting position: hollow circle (○) with character name label`,
+    `  • Character ending position: filled circle (●)`,
+    `  • Movement path: DASHED line with arrowhead (- - -▶) connecting ○ → ●`,
+    `  • Different characters = different dash density (sparse vs dense) + name labels`,
+    `  • A character that does NOT move: single ● at their fixed position, NO line`,
+    ``,
+    `【LEGEND BOX (small, in corner of diagram)】`,
+    `  ──▶  = Camera Movement (机位动线)`,
+    `  - - -▶ = Character Movement (人物动线)`,
+    ``,
+    `【SELF-CHECK before output】`,
+    `  • Arrow directions match the shot sequence (1→2→3), no reversed arrows`,
+    `  • Character start/end positions match the blocking descriptions in [SHOT BREAKDOWN]`,
+    `  • Number of 📷 = number of shots in this group`,
+    `  • Solid lines = camera only, dashed lines = character only, never swapped`,
 
     referenceImageBlock,
 
@@ -1963,7 +2020,7 @@ export const generateStoryboardPitchDeck = createServerFn({ method: "POST" })
       "wrong aspect ratio, vertical 9:16, square 1:1, 4:3, portrait orientation",
       "extra characters not in [CHARACTERS], scenery not in [SCENE], invented plot, frames unrelated to [SHOT BREAKDOWN]",
       "low resolution, blurry, pixelated, JPEG artifacts, low quality, soft focus",
-      "missing top-down diagram, missing camera position numbers, missing shot type labels in diagram",
+      "missing top-down diagram, diagram without solid camera movement arrows, diagram without dashed character movement lines, camera positions without sequence numbers ①②③, character positions without start/end circles ○●, diagram without legend box, character movement drawn as solid line instead of dashed, camera movement drawn as dashed line instead of solid, movement paths without arrowheads, camera FOV cone missing, diagram too small to read labels, unlabeled camera positions, camera positions not in sequential order, character movement not shown in diagram",
       "frames without duration label, frames without shot number, frames without motion tag, frames without camera tag",
       // 画风漂移 / 不继承参考图
       "art style drift from reference images, inconsistent rendering across sections, anime when reference is realistic, realistic when reference is anime, cel-shading when reference is painterly, 3D render when reference is 2D, watercolor when reference is digital illustration, different line treatment from reference, different color saturation from reference, different shading style from reference, mixed art styles, inconsistent brush strokes between frames, mixing 2D and 3D, mixing photoreal and stylized",
@@ -2043,7 +2100,10 @@ export const generateStoryboardPitchDeck = createServerFn({ method: "POST" })
       if (!r.url) return { ok: false as const, error: r.error || "数安词源 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith("azure/") || requested.toLowerCase().startsWith("azure2/")) {
+    if (
+      requested.toLowerCase().startsWith("azure/") ||
+      requested.toLowerCase().startsWith("azure2/")
+    ) {
       const { callAzureImage } = await import("./azureImage.functions");
       const r = await callAzureImage({
         prompt,
@@ -2442,7 +2502,7 @@ const RegenerateSceneInput = z.object({
   sceneAction: z.string().max(2000).default(""),
   projectStyle: z.string().max(50).optional(),
   model: z.string().max(100).optional(),
-  mode: z.enum(["modify", "three-view"]).default("modify"),
+  mode: z.enum(["modify", "three-view", "directional-views"]).default("modify"),
   // 2026/06:查看提示词模式
   previewOnly: z.boolean().default(false),
 });
@@ -2516,6 +2576,139 @@ function buildScenePrompts(
       "low quality, blurry, low resolution, jpeg artifacts",
     ].join(", ");
     return { positive, negative, size: "3072x1280" };
+  }
+
+  if (data.mode === "directional-views") {
+    // ----------------------------------------------------------------
+    // 场景方向多视角（2×2 四宫格，2048x2048）
+    // 机位围绕场景旋转，场景内容锁定不变
+    // 2D 布局示意：
+    //   ┌────────────┬────────────┐
+    //   │  FRONT     │   LEFT     │
+    //   │  正面      │  左侧(90°) │
+    //   ├────────────┼────────────┤
+    //   │  RIGHT     │   BACK     │
+    //   │  右侧(90°) │  背面(180°)│
+    //   └────────────┴────────────┘
+    // ----------------------------------------------------------------
+    const positive = [
+      `[STYLE LOCK — 场景四宫格方向多视角，适用对象:scene]`,
+      buildStyleLock(styleSpec, "scene"),
+      ``,
+      `[关键规则：这是 I2I 任务，图1 = 基线真值]`,
+      ``,
+      `────────────────────────────────────────────────`,
+      `【第一步：建立空间蓝图 —— 先理解场景的 3D 布局】`,
+      `────────────────────────────────────────────────`,
+      `在画任何一个视角之前，你必须先在脑子里构建这个场景的俯视图：`,
+      ``,
+      `想象你从正上方往下看这个场景（鸟瞰图），它是一个矩形的空间盒子。`,
+      `图1 展示的是这个盒子的"南面"——你站在南边往北看。`,
+      ``,
+      `现在确定盒子四面分别有什么（从图1 推断）：`,
+      `- 南面（你站的位置）：你身后是"摄像机"。南面可能什么都没有，也可能有柱子/栏杆，因为摄像机就在南面。`,
+      `- 北面（图1 画面深处）：这是图1 里最远的那个面。它上面有什么？可能有后墙、远处的门、窗户、楼梯、走廊尽头。`,
+      `- 西面（图1 画面左侧）：这是图1 里画面最左边能看到的那面墙/那个面。它上面有什么？可能有左侧墙面、左侧窗户、左侧的树/柱子、靠左的家具。`,
+      `- 东面（图1 画面右侧）：这是图1 里画面最右边能看到的那面墙/那个面。它上面有什么？可能有右侧墙面、右侧的门、靠右的柜子/书架。`,
+      ``,
+      `场景中间有什么？如果有桌子、喷泉、楼梯、柜子等中心物体，它们的位置在盒子内部。`,
+      ``,
+      `这个空间蓝图是下面 4 个视角的共同基础。每个视角 = 你站到盒子的不同边上，往盒子里面看。`,
+      `4 个视角必须共享同一个盒子——墙的位置、物体的位置、门窗的位置跨视角完全一致。`,
+      ``,
+      `────────────────────────────────────────────────`,
+      `[地点] ${data.sceneSlug}`,
+      data.sceneLocation ? `[具体地点] ${data.sceneLocation}` : "",
+      data.sceneTimeOfDay ? `[时段] ${data.sceneTimeOfDay}` : "",
+      ``,
+      `[画布格式] 2048×2048 正方形，2×2 四宫格，格子间留极细空白线（~2px），无编号无标签。`,
+      ``,
+      `────────────────────────────────────────────────`,
+      `【第二步：四个视角 —— 站到盒子的四条边上】`,
+      `────────────────────────────────────────────────`,
+      ``,
+      `═══ 第一格：正面（南面 → 往北看）═══`,
+      `你站在盒子的南边，往北看。这就是图1 的视角。`,
+      `你看到的是：北面（远处）+ 西面（左边）+ 东面（右边）+ 中间物体。`,
+      `画面内容与图1 一致。这是 4 格的锚点。`,
+      ``,
+      `═══ 第二格：左视角（西面 → 往东看）═══`,
+      `你走到了盒子的西边，面朝东。`,
+      `你正对着的是：原来在图1 画面最左边的那面墙/那些物体。`,
+      `你右边远处是：原来在图1 画面深处的北面（现在变成你的右侧远景）。`,
+      `你左边远处是：原来在你身后的南面（现在变成你的左侧远景，可能很空旷）。`,
+      `中间物体（如果有）：你现在从它们的左侧看它们——它们的"左侧面"正对着你。`,
+      ``,
+      `关键：你看到的主要墙面和正面格的主要墙面是相邻但不相同的两面。`,
+      `如果正面格左边有一扇窗——左视角里这扇窗应该在画面中央或偏右，因为你现在正对着它。`,
+      ``,
+      `═══ 第三格：右视角（东面 → 往西看）═══`,
+      `你走到了盒子的东边，面朝西。`,
+      `你正对着的是：原来在图1 画面最右边的那面墙/那些物体。`,
+      `你左边远处是：北面（深处，现在变成你的左侧远景）。`,
+      `你右边远处是：南面（摄像机原本的位置，现在变成你的右侧远景）。`,
+      `中间物体（如果有）：你现在从它们的右侧看它们——它们的"右侧面"正对着你。`,
+      ``,
+      `关键：右视角正对的墙必须跟左视角正对的墙是两面不同的墙。`,
+      `验证方法：正面格画面左侧的物体 → 左视角里放大。正面格画面右侧的物体 → 右视角里放大。`,
+      ``,
+      `═══ 第四格：背面（北面 → 往南看）═══`,
+      `你走到了盒子的北边（原来在图1 画面最深处的那个面），转过身来面朝南。`,
+      `你正对着的是：原来在你身后的那个面（南面，摄像机原本站的位置）。`,
+      `你左边是：原来在图1 画面右边的东面（现在变成你的左侧）。`,
+      `你右边是：原来在图1 画面左边的西面（现在变成你的右侧）。`,
+      ``,
+      `具体来说你看到了什么：`,
+      `- 每个物体都有"正面"和"背面"。图1 画的是所有物体的正面。这一格画的是所有物体的背面。`,
+      `- 如果图1 里有一张桌子，它的正面（桌沿/抽屉面）对着图1 的摄像机。背面格里，这张桌子的背面（后侧板/背板）对着你。`,
+      `- 如果图1 里有一个柜台/吧台，正面能看到台面和服务区。背面格里，你看到的是柜台的内侧/背面——可能是储物架、操作台背面、后挡板。`,
+      `- 如果图1 里有一扇门（朝内开），背面格里这扇门应该在你的"另一侧"——它的背面（没有门把手的一面，或者门把手在另一侧）对着你。`,
+      `- 北面本身（图1 里远处的后墙）现在在你的"身后"，可能不在画面中，或者在画面边缘。`,
+      ``,
+      `简单来说：背面格 = 你走到场景的另一头，回头看。你看到的是图1 里所有物体的"后脑勺"。`,
+      `光线：因为方向翻了 180°，光从原来的左侧来 → 现在从右侧来。但光的颜色、强度、时段不变。`,
+      ``,
+      `────────────────────────────────────────────────`,
+      `【跨格一致性】`,
+      `────────────────────────────────────────────────`,
+      `- 4 格共用同一个盒子——墙和物体的位置关系跨格不矛盾。`,
+      `- 同一物体（门/窗/桌/灯/树）在 4 格里颜色、形状、材质完全相同。`,
+      `- 一套调色板、一套光照逻辑、一种艺术风格、同一个时刻。`,
+      `- 纯环境，无人物。`,
+      ``,
+      `[绝对禁止]`,
+      `- 右视角画出左视角的内容（两面墙不能相同）。`,
+      `- 背面格画成正面格的复制品或镜像。`,
+      `- 背面格只是换了个天空/背景，但建筑/物体结构跟正面一样。`,
+      `- 格子内出现文字/编号/箭头/logo。`,
+      `- 换天气、换时段、换色调。`,
+      `- 加入人物、动物、剪影。`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const negative = [
+      "people, character, figure, silhouette, human, animal, bystander",
+      "camera not moving, same angle in all 4 panels, no perspective change between panels",
+      "left panel and right panel showing the same wall, left and right views identical",
+      "right panel showing left-side content, right panel = left panel copy",
+      "left panel being a minor variation of front panel, left panel = front panel with slight shift",
+      "back panel looking like front panel, back panel = front panel mirrored or flipped",
+      "back panel missing the rear wall, back panel showing a completely unrelated space",
+      "back panel = front panel with a different sky, back panel = front panel but with objects removed",
+      "back panel showing the front of objects instead of the back of objects",
+      "different weather, different season, different time of day, different lighting between panels",
+      "different color palette between panels, different wall color between panels",
+      "changing architecture, different building, different room, different furniture layout",
+      "adding objects, inventing furniture, hallucinating windows, creating new doors",
+      "removing existing objects, deleting walls, removing windows or doors",
+      "style drift, mixing art styles, photorealistic mixing with anime, different rendering quality",
+      "panel labels, text, numbers, arrows, grid lines, visible borders, watermark, logo",
+      "low quality, blurry, pixelated, distorted, jpeg artifacts",
+      "2D flat look, no depth, isometric view, top-down, bird's-eye view",
+      "four unrelated scenes, four different rooms, four different locations",
+      "same wall painted differently, color shifted wall, texture changed wall",
+    ].join(", ");
+    return { positive, negative, size: "2048x2048" };
   }
 
   // ----------------------------------------------------------------
@@ -2647,7 +2840,10 @@ export const regenerateSceneImage = createServerFn({ method: "POST" })
       if (!r.url) return { ok: false as const, error: r.error || "数安词源 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith("azure/") || requested.toLowerCase().startsWith("azure2/")) {
+    if (
+      requested.toLowerCase().startsWith("azure/") ||
+      requested.toLowerCase().startsWith("azure2/")
+    ) {
       const { callAzureImage } = await import("./azureImage.functions");
       const r = await callAzureImage({
         prompt,
