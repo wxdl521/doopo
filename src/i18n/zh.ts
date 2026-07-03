@@ -603,7 +603,7 @@ export const zh = {
   history_col_time: "时间",
   history_col_desc: "描述",
   history_col_change: "积分变动",
-  history_col_balance: "剩余积分",
+  history_col_balance: "目标剩余积分",
   history_col_path: "转账路径",
   history_col_amount: "转入积分",
   history_no_records: "暂无积分记录",

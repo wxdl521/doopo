@@ -1,7 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { supabaseAdmin } from "@/integrations/supabase/client.server";
 
 // ====================================================================
 // Schemas
@@ -248,13 +247,15 @@ export const getTeamJoinInfo = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
 
-    // 使用 supabaseAdmin 绕过 teams 表的 RLS（非成员看不到团队）
-    const { data: team, error: teamError } = await supabaseAdmin
+    // RLS 策略 teams_select_any_authenticated 允许任何认证用户查看未删除的团队
+    const { data: team, error: teamError } = await supabase
       .from("teams")
       .select("id, name, description, owner_id, created_at")
       .eq("id", data.teamId)
       .is("deleted_at", null)
       .maybeSingle();
+
+    console.log("[getTeamJoinInfo] teamId:", data.teamId, "team:", team?.name, "teamError:", teamError);
 
     if (teamError || !team) {
       return {

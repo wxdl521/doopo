@@ -49,6 +49,7 @@ import { Route as AccountSecurityRouteImport } from './routes/account.security'
 import { Route as AccountRewardsRouteImport } from './routes/account.rewards'
 import { Route as AccountPostsRouteImport } from './routes/account.posts'
 import { Route as AccountNotificationsRouteImport } from './routes/account.notifications'
+import { Route as AccountCreditsRouteImport } from './routes/account.credits'
 import { Route as AccountAssetsRouteImport } from './routes/account.assets'
 import { Route as TeamTeamIdJoinRouteImport } from './routes/team.$teamId.join'
 import { Route as AssetsTabIdRouteImport } from './routes/assets_.$tab.$id'
@@ -254,6 +255,11 @@ const AccountNotificationsRoute = AccountNotificationsRouteImport.update({
   path: '/notifications',
   getParentRoute: () => AccountRoute,
 } as any)
+const AccountCreditsRoute = AccountCreditsRouteImport.update({
+  id: '/credits',
+  path: '/credits',
+  getParentRoute: () => AccountRoute,
+} as any)
 const AccountAssetsRoute = AccountAssetsRouteImport.update({
   id: '/assets',
   path: '/assets',
@@ -297,6 +303,7 @@ export interface FileRoutesByFullPath {
   '/team': typeof TeamRouteWithChildren
   '/zoclaw': typeof ZoclawRoute
   '/account/assets': typeof AccountAssetsRoute
+  '/account/credits': typeof AccountCreditsRoute
   '/account/notifications': typeof AccountNotificationsRoute
   '/account/posts': typeof AccountPostsRoute
   '/account/rewards': typeof AccountRewardsRoute
@@ -338,6 +345,7 @@ export interface FileRoutesByTo {
   '/showcase': typeof ShowcaseRouteWithChildren
   '/zoclaw': typeof ZoclawRoute
   '/account/assets': typeof AccountAssetsRoute
+  '/account/credits': typeof AccountCreditsRoute
   '/account/notifications': typeof AccountNotificationsRoute
   '/account/posts': typeof AccountPostsRoute
   '/account/rewards': typeof AccountRewardsRoute
@@ -385,6 +393,7 @@ export interface FileRoutesById {
   '/team': typeof TeamRouteWithChildren
   '/zoclaw': typeof ZoclawRoute
   '/account/assets': typeof AccountAssetsRoute
+  '/account/credits': typeof AccountCreditsRoute
   '/account/notifications': typeof AccountNotificationsRoute
   '/account/posts': typeof AccountPostsRoute
   '/account/rewards': typeof AccountRewardsRoute
@@ -433,6 +442,7 @@ export interface FileRouteTypes {
     | '/team'
     | '/zoclaw'
     | '/account/assets'
+    | '/account/credits'
     | '/account/notifications'
     | '/account/posts'
     | '/account/rewards'
@@ -474,6 +484,7 @@ export interface FileRouteTypes {
     | '/showcase'
     | '/zoclaw'
     | '/account/assets'
+    | '/account/credits'
     | '/account/notifications'
     | '/account/posts'
     | '/account/rewards'
@@ -520,6 +531,7 @@ export interface FileRouteTypes {
     | '/team'
     | '/zoclaw'
     | '/account/assets'
+    | '/account/credits'
     | '/account/notifications'
     | '/account/posts'
     | '/account/rewards'
@@ -853,6 +865,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AccountNotificationsRouteImport
       parentRoute: typeof AccountRoute
     }
+    '/account/credits': {
+      id: '/account/credits'
+      path: '/credits'
+      fullPath: '/account/credits'
+      preLoaderRoute: typeof AccountCreditsRouteImport
+      parentRoute: typeof AccountRoute
+    }
     '/account/assets': {
       id: '/account/assets'
       path: '/assets'
@@ -886,6 +905,7 @@ declare module '@tanstack/react-router' {
 
 interface AccountRouteChildren {
   AccountAssetsRoute: typeof AccountAssetsRoute
+  AccountCreditsRoute: typeof AccountCreditsRoute
   AccountNotificationsRoute: typeof AccountNotificationsRoute
   AccountPostsRoute: typeof AccountPostsRoute
   AccountRewardsRoute: typeof AccountRewardsRoute
@@ -896,6 +916,7 @@ interface AccountRouteChildren {
 
 const AccountRouteChildren: AccountRouteChildren = {
   AccountAssetsRoute: AccountAssetsRoute,
+  AccountCreditsRoute: AccountCreditsRoute,
   AccountNotificationsRoute: AccountNotificationsRoute,
   AccountPostsRoute: AccountPostsRoute,
   AccountRewardsRoute: AccountRewardsRoute,

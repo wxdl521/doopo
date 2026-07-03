@@ -1,5 +1,5 @@
 import { createFileRoute, Outlet } from "@tanstack/react-router";
-import { User, CreditCard, FolderOpen, Award, Bell, Share2, ShieldCheck } from "lucide-react";
+import { User, CreditCard, FolderOpen, Award, Bell, Share2, ShieldCheck, Coins } from "lucide-react";
 import SectionSidebar from "../components/SectionSidebar";
 import { useLanguage } from "../i18n/LanguageContext";
 
@@ -13,6 +13,7 @@ function AccountLayout() {
   const items = [
     { to: "/account", label: t.account_overview, icon: User },
     { to: "/account/subscription", label: t.account_subscription, icon: CreditCard },
+    { to: "/account/credits", label: "充值", icon: Coins },
     { to: "/account/assets", label: t.account_assets, icon: FolderOpen },
     { to: "/account/posts", label: "我的发布", icon: Share2 },
     { to: "/account/rewards", label: t.account_rewards, icon: Award },

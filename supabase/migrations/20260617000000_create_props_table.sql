@@ -2,7 +2,7 @@
 DROP TABLE IF EXISTS public.props;
 CREATE TABLE public.props (
   id text PRIMARY KEY,
-  user_id text REFERENCES auth.users ON DELETE CASCADE NOT NULL,
+  user_id uuid REFERENCES auth.users ON DELETE CASCADE NOT NULL,
   name text NOT NULL,
   description text,
   movement_description text,

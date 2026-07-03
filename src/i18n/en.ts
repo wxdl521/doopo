@@ -625,7 +625,7 @@ export const en: Translations = {
   history_col_time: "Time",
   history_col_desc: "Description",
   history_col_change: "Change",
-  history_col_balance: "Balance",
+  history_col_balance: "Target Balance",
   history_col_path: "Path",
   history_col_amount: "Amount",
   history_no_records: "No credit records",

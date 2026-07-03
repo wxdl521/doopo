@@ -130,13 +130,13 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 });
 
 function RootShell({ children }: { children: React.ReactNode }) {
-  // 阻止主题闪烁：在 CSS 加载前同步读取 localStorage 并设置 data-theme。
-  // 默认深色 — 只有显式存了 "light" 才用浅色。
+  // 阻止主题闪烁：默认深色 data-theme="dark" 由服务端直出。
+  // 内联脚本仅在用户显式选了浅色时才切掉，避免水合不匹配。
   const themeScript = `!function(){
-  try{var t=localStorage.getItem("doopoo-theme")||"dark";document.documentElement.setAttribute("data-theme",t==="light"?"":t)}catch(e){}
+  try{var t=localStorage.getItem("doopoo-theme");if(t==="light")document.documentElement.setAttribute("data-theme","")}catch(e){}
 }()`;
   return (
-    <html lang="en">
+    <html lang="en" data-theme="dark">
       <head>
         <HeadContent />
         <script dangerouslySetInnerHTML={{ __html: themeScript }} />

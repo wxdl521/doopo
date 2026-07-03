@@ -2,7 +2,7 @@
 DROP TABLE IF EXISTS public.characters;
 CREATE TABLE public.characters (
   id text PRIMARY KEY,
-  user_id text REFERENCES auth.users ON DELETE CASCADE NOT NULL,
+  user_id uuid REFERENCES auth.users ON DELETE CASCADE NOT NULL,
   name text NOT NULL,
   role text NOT NULL DEFAULT 'supporting',
   role_label text,
@@ -28,7 +28,7 @@ CREATE POLICY characters_all_own ON public.characters
 DROP TABLE IF EXISTS public.scenes;
 CREATE TABLE public.scenes (
   id text PRIMARY KEY,
-  user_id text REFERENCES auth.users ON DELETE CASCADE NOT NULL,
+  user_id uuid REFERENCES auth.users ON DELETE CASCADE NOT NULL,
   name text NOT NULL,
   location text,
   time_of_day text,

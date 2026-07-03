@@ -1,10 +1,12 @@
 import { useState, useRef, useEffect } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
+import { useServerFn } from "@tanstack/react-start";
 import { ChevronDown, MessageCircle, Sparkles, Sun, Moon, Globe, User, LogOut } from "lucide-react";
 import Logo from "./Logo";
 import { useTheme } from "../context/ThemeContext";
 import { useLanguage } from "../i18n/LanguageContext";
 import { useAuth } from "../hooks/useAuth";
+import { getUserBalance } from "../lib/userCredits.functions";
 
 export default function Header() {
   const { theme, toggleTheme } = useTheme();
@@ -12,7 +14,16 @@ export default function Header() {
   const { isAuthenticated, loading, user, signOut } = useAuth();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [creditBalance, setCreditBalance] = useState<number | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const callGetBalance = useServerFn(getUserBalance);
+
+  useEffect(() => {
+    if (!isAuthenticated || loading) return;
+    callGetBalance({ data: undefined })
+      .then((r: any) => setCreditBalance(r?.balance ?? 0))
+      .catch(() => setCreditBalance(0));
+  }, [isAuthenticated, loading]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -181,7 +192,7 @@ export default function Header() {
 
           <div className="badge-points hidden sm:flex">
             <Sparkles size={14} className="text-accent" />
-            <span className="text-text-primary">70</span>
+            <span className="text-text-primary">{creditBalance ?? 0}</span>
           </div>
 
           <button

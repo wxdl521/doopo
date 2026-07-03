@@ -1,3 +1,4 @@
+DROP TABLE IF EXISTS public.props CASCADE;
 CREATE TABLE public.props (
   id UUID NOT NULL PRIMARY KEY,
   user_id UUID NOT NULL,
