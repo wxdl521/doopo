@@ -54,9 +54,10 @@ const DASHSCOPE_TASK_GET = "https://dashscope.aliyuncs.com/api/v1/tasks/";
  */
 export function getVideoBackend(
   modelId: string | null | undefined,
-): "ark" | "dashscope" | "jimeng" | "kuaizi" | "toapis" | "k99" | "vapeur" {
+): "ark" | "dashscope" | "jimeng" | "kuaizi" | "toapis" | "k99" | "vapeur" | "shuci" {
   const m = (modelId || "").trim().toLowerCase();
   if (m.startsWith("doubao-seedance-") || m.startsWith("seedance-")) return "ark";
+  if (m.startsWith("shuci-")) return "shuci";
   if (m.startsWith("jimeng-")) return "jimeng";
   if (m.startsWith("kuaizi-")) return "kuaizi";
   if (m.startsWith("toapis-")) return "toapis";
@@ -65,11 +66,18 @@ export function getVideoBackend(
   return "dashscope";
 }
 
+export const SHUCIYUAN_VIDEO_MODELS = {
+  "shuci-seedance-2-0": "Seedance 2.0 (数安词源)",
+  "shuci-seedance-2-0-fast": "Seedance 2.0 Fast (数安词源)",
+  "shuci-seedance-2-0-mini": "Seedance 2.0 Mini (数安词源)",
+} as const;
+
 export const SEEDANCE_MODELS = {
   "doubao-seedance-2-0-260128": "Doubao Seedance 2.0",
   "doubao-seedance-2-0-fast-260128": "Doubao Seedance 2.0 Fast (720p)",
   "doubao-seedance-1-0-pro-250528": "Doubao Seedance 1.0 Pro (T2V)",
   "doubao-seedance-1-0-lite-i2v-250428": "Doubao Seedance 1.0 Lite (I2V)",
+  ...SHUCIYUAN_VIDEO_MODELS,
 } as const;
 
 export const HAPPYHORSE_MODELS = {
@@ -123,6 +131,23 @@ export const VAPEUR_MODELS = {
 const VAPEUR_DEFAULT_BASE_URL = "https://api.vapeur.ai";
 const VAPEUR_CREATE_PATH = "/v1/videos/generations"; // POST 提交(newapi 风格)
 const VAPEUR_STATUS_PATH = "/v1/videos/generations"; // GET /v1/videos/generations/{id} 查询
+
+// 数安词源 配置 —— ARK 兼容,中转 Doubao Seedance 2.0
+const SHUCIYUAN_DEFAULT_BASE_URL = "http://token.ds.cyberpeace.cn";
+const SHUCIYUAN_VIDEO_CREATE_PATH = "/contents/generations/tasks";
+const SHUCIYUAN_VIDEO_STATUS_PATH = "/contents/generations/tasks";
+const SHUCIYUAN_VIDEO_MODEL_MAP: Record<string, string> = {
+  "shuci-seedance-2-0": "doubao-seedance-2-0-260128",
+  "shuci-seedance-2-0-fast": "doubao-seedance-2-0-fast-260128",
+  "shuci-seedance-2-0-mini": "doubao-seedance-2-0-mini-260615",
+};
+
+function getShuciVideoConfig() {
+  return {
+    apiKey: process.env.SHUANCIYUAN_VIDEO_KEY,
+    baseUrl: (process.env.SHUANCIYUAN_VIDEO_BASE_URL || SHUCIYUAN_DEFAULT_BASE_URL).replace(/\/+$/, ""),
+  };
+}
 
 // 即梦 3.0 Pro 文生/图生视频统一用同一个 req_key
 const JIMENG_REQ_KEY = "jimeng_ti2v_v30_pro";
@@ -1244,7 +1269,7 @@ type SubmitInput = {
   referenceAudioUrl?: string;
 };
 
-type VideoBackend = "ark" | "dashscope" | "jimeng" | "kuaizi" | "toapis" | "k99" | "vapeur";
+type VideoBackend = "ark" | "dashscope" | "jimeng" | "kuaizi" | "toapis" | "k99" | "vapeur" | "shuci";
 
 // ====================================================================
 // vapeur.ai 端实现 —— 透传火山方舟 ARK Seedance 原生格式
@@ -1549,6 +1574,34 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
       ? { ok: true, taskId: r.taskId, model: input.model, backend: "vapeur" }
       : { ok: false, error: r.error };
   }
+  if (backend === "shuci") {
+    const { apiKey, baseUrl } = getShuciVideoConfig();
+    if (!apiKey) return { ok: false, error: "SHUANCIYUAN_VIDEO_KEY not configured" };
+    const upstreamModel = SHUCIYUAN_VIDEO_MODEL_MAP[input.model] || "doubao-seedance-2-0-260128";
+    const firstFrameImageUrl = input.media.find((m) => m.type === "first_frame")?.url;
+    const lastFrameImageUrl = input.media.find((m) => m.type === "last_frame")?.url;
+    const referenceImageUrls = input.media
+      .filter((m) => m.type === "reference_image")
+      .map((m) => m.url);
+    const content = buildArkContent(input.prompt, {
+      firstFrameImageUrl,
+      lastFrameImageUrl,
+      referenceImageUrls,
+    });
+    const r = await arkSubmit({
+      model: upstreamModel,
+      content,
+      ratio: input.ratio,
+      duration: input.duration,
+      generateAudio: input.generateAudio,
+      watermark: input.watermark,
+      apiKey,
+      baseUrl,
+    });
+    return r.ok
+      ? { ok: true, taskId: r.taskId, model: input.model, backend: "shuci" }
+      : { ok: false, error: r.error };
+  }
   // DashScope
   const { apiKey } = getDashScopeConfig();
   if (!apiKey) return { ok: false, error: "Qwen / DASHSCOPE_API_KEY not configured" };
@@ -1603,6 +1656,11 @@ async function pollVideoTask(input: PollInput): Promise<PollResult> {
     const { apiKey, baseUrl } = getVapeurConfig();
     if (!apiKey) return { ok: false, error: "[vapeur] 缺少 VAPEUR_API_KEY" };
     return vapeurPoll({ taskId: input.taskId, apiKey, baseUrl });
+  }
+  if (input.backend === "shuci") {
+    const { apiKey, baseUrl } = getShuciVideoConfig();
+    if (!apiKey) return { ok: false, error: "[shuci] 缺少 SHUANCIYUAN_VIDEO_KEY" };
+    return arkPoll({ taskId: input.taskId, apiKey, baseUrl });
   }
   const { apiKey } = getDashScopeConfig();
   if (!apiKey) return { ok: false, error: "Qwen / DASHSCOPE_API_KEY not configured" };
@@ -1662,7 +1720,7 @@ export const submitVideoTaskFn = createServerFn({ method: "POST" })
 
 const PollServerInput = z.object({
   taskId: z.string().min(1).max(200),
-  backend: z.enum(["ark", "dashscope", "jimeng", "kuaizi", "toapis", "k99", "vapeur"]),
+  backend: z.enum(["ark", "dashscope", "jimeng", "kuaizi", "toapis", "k99", "vapeur", "shuci"]),
 });
 
 export const pollVideoTaskFn = createServerFn({ method: "POST" })
@@ -1713,7 +1771,7 @@ export const generateVideo = createServerFn({ method: "POST" })
       for (const url of data.referenceImageUrls) media.push({ type: "reference_image", url });
     }
 
-    const model = data.model || (backend === "ark" ? ARK_DEFAULT_MODEL : "happyhorse-1.0-i2v");
+    const model = data.model || (backend === "ark" || backend === "shuci" ? ARK_DEFAULT_MODEL : "happyhorse-1.0-i2v");
 
     // 1) 提交
     const submit = await submitVideoTask({

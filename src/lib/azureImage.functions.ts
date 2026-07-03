@@ -22,16 +22,29 @@ const T2I_API_VERSION = "2025-04-01-preview";
 const I2I_API_VERSION = "2025-04-01-preview";
 const IMAGE_REQUEST_TIMEOUT_MS = 400_000;
 const AZURE_PREFIX = "azure/";
+const AZURE2_PREFIX = "azure2/";
 
 export function isAzureModel(modelId: string | null | undefined): boolean {
-  return !!modelId && modelId.toLowerCase().startsWith(AZURE_PREFIX);
+  if (!modelId) return false;
+  const lower = modelId.toLowerCase();
+  return lower.startsWith(AZURE_PREFIX) || lower.startsWith(AZURE2_PREFIX);
 }
 
 export function stripAzurePrefix(modelId: string): string {
-  return modelId.replace(/^azure\//i, "");
+  return modelId.replace(/^(azure|azure2)\//i, "");
 }
 
-function getAzureConfig() {
+function isAzure2Model(modelId: string): boolean {
+  return modelId.toLowerCase().startsWith(AZURE2_PREFIX);
+}
+
+function getAzureConfig(modelId?: string) {
+  if (modelId && isAzure2Model(modelId)) {
+    return {
+      apiKey: process.env.AZURE2_API_KEY,
+      baseUrl: (process.env.AZURE2_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, ""),
+    };
+  }
   return {
     apiKey: process.env.AZURE_API_KEY,
     baseUrl: (process.env.AZURE_OPENAI_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, ""),
@@ -91,7 +104,7 @@ function normalizeAzureQuality(q: string | undefined): "low" | "medium" | "high"
 }
 
 export async function callAzureImage(input: AzureImageInput): Promise<AzureImageResult> {
-  const { apiKey, baseUrl } = getAzureConfig();
+  const { apiKey, baseUrl } = getAzureConfig(input.model);
   const deployment = stripAzurePrefix(input.model) || "gpt-image-2";
   const hasRefs = !!input.referenceImages?.length;
   const apiVersion = hasRefs ? I2I_API_VERSION : T2I_API_VERSION;

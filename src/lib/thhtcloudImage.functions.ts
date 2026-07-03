@@ -104,11 +104,7 @@ export async function callThhtcloudImage(
       size,
     };
 
-    // I2I: 有参考图时传入 image 字段(OpenAI 兼容格式)
-    if (input.referenceImages && input.referenceImages.length > 0) {
-      body.image =
-        input.referenceImages.length === 1 ? input.referenceImages[0] : input.referenceImages;
-    }
+    // 天鸿智算 gpt-image-2 不支持 I2I（无 image 参数），仅 T2I
 
     const requestInit: RequestInit = {
       method: "POST",

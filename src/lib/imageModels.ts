@@ -87,6 +87,15 @@ export const IMAGE_MODELS: ImageModelOption[] = [
     sub: "[AIGCFamily·OpenAI] Imagen3 · T2I/I2I",
   },
 
+  // ---- [数安词源 · OpenAI 兼容] token.ds.cyberpeace.cn → /v1/images/generations|edits ----
+  //  2026/07 接入:gpt-image-2
+  { key: "", label: "—— [数安词源 · OpenAI 兼容] ——", sub: undefined, legacy: true },
+  {
+    key: "shuci/gpt-image-2",
+    label: "数安词源-image2",
+    sub: "[数安词源·OpenAI] Image2 · T2I/I2I",
+  },
+
   // ---- [AI Tokenvibe · OpenAI 兼容] → /v1/images/generations ----
   { key: "", label: "—— [AI Tokenvibe · OpenAI 兼容] ——", sub: undefined, legacy: true },
   {
@@ -131,6 +140,14 @@ export const IMAGE_MODELS: ImageModelOption[] = [
     key: "azure/gpt-image-2",
     label: "Azure-gpt-image-2",
     sub: "[Azure·OpenAI] gpt-image-2 · T2I/I2I",
+  },
+
+  // ---- [Azure OpenAI 终结点] 4-0528-aoai-eu2-bfe.openai.azure.com ----
+  { key: "", label: "—— [Azure OpenAI 终结点] ——", sub: undefined, legacy: true },
+  {
+    key: "azure2/gpt-image-2",
+    label: "Azure-gpt-image-2",
+    sub: "[Azure OpenAI 终结点] gpt-image-2 · T2I/I2I",
   },
 
   // ---- [DashScope] 阿里百炼 · 通义千问 / 万相 ----

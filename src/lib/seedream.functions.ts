@@ -298,7 +298,16 @@ export const generateImage = createServerFn({ method: "POST" })
       });
       return { url: r.url, error: r.error, model: r.model };
     }
-    if (requested.toLowerCase().startsWith("azure/")) {
+    if (requested.toLowerCase().startsWith("shuci/")) {
+      const { callShuanciyuanImage } = await import("./shuanciyuan.functions");
+      const r = await callShuanciyuanImage({
+        prompt: appendNegative(data.prompt, data.negativePrompt),
+        model: requested,
+        size: data.size,
+      });
+      return { url: r.url, error: r.error, model: r.model };
+    }
+    if (requested.toLowerCase().startsWith("azure/") || requested.toLowerCase().startsWith("azure2/")) {
       const { callAzureImage } = await import("./azureImage.functions");
       const r = await callAzureImage({
         prompt: appendNegative(data.prompt, data.negativePrompt),
@@ -880,7 +889,20 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
       if (!r.url) return { ok: false as const, error: r.error || "AIGCFamily 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith("azure/")) {
+
+    if (requested.toLowerCase().startsWith("shuci/")) {
+      const { callShuanciyuanImage } = await import("./shuanciyuan.functions");
+      const r = await callShuanciyuanImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+        quality: "high",
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "数安词源 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
+    }
+    if (requested.toLowerCase().startsWith("azure/") || requested.toLowerCase().startsWith("azure2/")) {
       const { callAzureImage } = await import("./azureImage.functions");
       const r = await callAzureImage({
         prompt,
@@ -1203,7 +1225,20 @@ export const generateStoryboardShotImage = createServerFn({ method: "POST" })
       if (!r.url) return { ok: false as const, error: r.error || "AIGCFamily 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith("azure/")) {
+
+    if (requested.toLowerCase().startsWith("shuci/")) {
+      const { callShuanciyuanImage } = await import("./shuanciyuan.functions");
+      const r = await callShuanciyuanImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+        quality: "high",
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "数安词源 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
+    }
+    if (requested.toLowerCase().startsWith("azure/") || requested.toLowerCase().startsWith("azure2/")) {
       const { callAzureImage } = await import("./azureImage.functions");
       const r = await callAzureImage({
         prompt: appendNegative(instruction, negative),
@@ -1521,7 +1556,20 @@ export const regenerateStoryboardShot = createServerFn({ method: "POST" })
       if (!r.url) return { ok: false as const, error: r.error || "AIGCFamily 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith("azure/")) {
+
+    if (requested.toLowerCase().startsWith("shuci/")) {
+      const { callShuanciyuanImage } = await import("./shuanciyuan.functions");
+      const r = await callShuanciyuanImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+        quality: "high",
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "数安词源 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
+    }
+    if (requested.toLowerCase().startsWith("azure/") || requested.toLowerCase().startsWith("azure2/")) {
       const { callAzureImage } = await import("./azureImage.functions");
       const r = await callAzureImage({
         prompt: appendNegative(instruction, negative),
@@ -1982,7 +2030,20 @@ export const generateStoryboardPitchDeck = createServerFn({ method: "POST" })
       if (!r.url) return { ok: false as const, error: r.error || "AIGCFamily 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith("azure/")) {
+
+    if (requested.toLowerCase().startsWith("shuci/")) {
+      const { callShuanciyuanImage } = await import("./shuanciyuan.functions");
+      const r = await callShuanciyuanImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+        quality: "high",
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "数安词源 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
+    }
+    if (requested.toLowerCase().startsWith("azure/") || requested.toLowerCase().startsWith("azure2/")) {
       const { callAzureImage } = await import("./azureImage.functions");
       const r = await callAzureImage({
         prompt,
@@ -2573,7 +2634,20 @@ export const regenerateSceneImage = createServerFn({ method: "POST" })
       if (!r.url) return { ok: false as const, error: r.error || "AIGCFamily 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
     }
-    if (requested.toLowerCase().startsWith("azure/")) {
+
+    if (requested.toLowerCase().startsWith("shuci/")) {
+      const { callShuanciyuanImage } = await import("./shuanciyuan.functions");
+      const r = await callShuanciyuanImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+        quality: "high",
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "数安词源 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
+    }
+    if (requested.toLowerCase().startsWith("azure/") || requested.toLowerCase().startsWith("azure2/")) {
       const { callAzureImage } = await import("./azureImage.functions");
       const r = await callAzureImage({
         prompt,

@@ -446,6 +446,7 @@ const VALID_T2I_MODELS = new Set<string>([
   "aigcfamily/gpt-image-2",
   // Azure OpenAI 直连
   "azure/gpt-image-2",
+  "azure2/gpt-image-2",
   // OneToken gateway
   "onetoken/gpt-image-2",
   // OTU gateway
@@ -456,7 +457,6 @@ const VALID_T2I_MODELS = new Set<string>([
   "thhtcloud/gpt-image-2",
   // ailinzi gateway
   "ailinzi/gpt-image-2",
-  "ailinzi/image2",
   // TokenHub gateway
   "tokenhub/gpt-image-2",
   // Nagora gateway (Azure渠道)
@@ -491,17 +491,19 @@ const VALID_I2I_MODELS = new Set<string>([
   "revora/gpt-image-2",
   "aigcfamily/gpt-image-2",
   "azure/gpt-image-2",
+  "azure2/gpt-image-2",
   "onetoken/gpt-image-2",
   "otu/gpt-image-2",
   "aitokenvibe/gpt-image-2",
   "thhtcloud/gpt-image-2",
   "ailinzi/gpt-image-2",
-  "ailinzi/image2",
   "tokenhub/gpt-image-2",
   "nagora/gpt-image-2",
   "lovable/google/gemini-3-flash-preview",
   "lovable/google/gemini-3.1-flash-preview",
   "lovable/openai/gpt-image-2",
+  "claude360/gpt-image-2",
+  "shuci/gpt-image-2",
 ]);
 
 /** 已知的模型前缀列表 */
@@ -510,7 +512,10 @@ const KNOWN_MODEL_PREFIXES = [
   "tokenflash/",
   "revora/",
   "aigcfamily/",
+  "claude360/",
+  "shuci/",
   "azure/",
+  "azure2/",
   "onetoken/",
   "otu/",
   "aitokenvibe/",

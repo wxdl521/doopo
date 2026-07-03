@@ -127,10 +127,18 @@ const imageModelOptions = [
     sub: "天鸿智算 · OpenAI · Image2 · T2I/I2I",
   },
 
+  // ---- 数安词源(OpenAI 兼容)----
+  { id: "__sep_shuci__", label: "—— 数安词源(OpenAI 兼容)——", sub: "" },
+  {
+    id: "shuci/gpt-image-2",
+    label: "GPT Image 2 (数安词源)",
+    sub: "数安词源 · OpenAI · Image2 · T2I/I2I",
+  },
+
   // ---- ailinzi(OpenAI 兼容)----
   { id: "__sep_ailinzi__", label: "—— ailinzi(OpenAI 兼容)——", sub: "" },
   {
-    id: "ailinzi/image2",
+    id: "ailinzi/gpt-image-2",
     label: "GPT Image 2 (ailinzi)",
     sub: "ailinzi · OpenAI · Image2 · T2I/I2I",
   },
@@ -173,6 +181,11 @@ const imageModelOptions = [
     id: "azure/gpt-image-2",
     label: "Azure-gpt-image-2",
     sub: "Azure · OpenAI · gpt-image-2 · T2I/I2I",
+  },
+  {
+    id: "azure2/gpt-image-2",
+    label: "Azure-gpt-image-2 (终结点)",
+    sub: "Azure OpenAI 终结点 · gpt-image-2 · T2I/I2I",
   },
 ];
 // 过滤掉"分隔符"项(只是 UI 视觉分组,不能选)
@@ -226,6 +239,12 @@ const videoModels = [
   { id: "__video_sep_k99__", label: "—— k99.tw ——", sub: "" },
   { id: "k99-fast-480p", label: "k99 快速 480p", sub: "k99.tw · 快速 · 480p" },
   { id: "k99-pro-1080p", label: "k99 高清 1080p", sub: "k99.tw · 高清 · 1080p" },
+
+  // ---- 数安词源(中转 Seedance,需 SHUANCIYUAN_VIDEO_KEY)----
+  { id: "__video_sep_shuci__", label: "—— 数安词源(中转 Seedance)——", sub: "" },
+  { id: "shuci-seedance-2-0", label: "Seedance 2.0 (数安词源)", sub: "数安词源 · 1080p · 多模态" },
+  { id: "shuci-seedance-2-0-fast", label: "Seedance 2.0 Fast (数安词源)", sub: "数安词源 · 720p · 快速版" },
+  { id: "shuci-seedance-2-0-mini", label: "Seedance 2.0 Mini (数安词源)", sub: "数安词源 · 720p · 轻量版" },
 
   // ---- vapeur.ai(OpenAI 兼容 · Seedance 2.0,需 VAPEUR_API_KEY)----
   { id: "__video_sep_vapeur__", label: "—— vapeur.ai ——", sub: "" },
