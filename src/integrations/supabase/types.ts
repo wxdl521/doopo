@@ -591,6 +591,16 @@ export type Database = {
           user_id: string
         }[]
       }
+      get_team_public_info: {
+        Args: { p_team_id: string }
+        Returns: {
+          created_at: string
+          description: string
+          id: string
+          name: string
+          owner_id: string
+        }[]
+      }
       has_team_role: {
         Args: { p_roles: string[]; p_team_id: string; p_user_id?: string }
         Returns: boolean
@@ -599,6 +609,7 @@ export type Database = {
         Args: { p_team_id: string; p_user_id?: string }
         Returns: boolean
       }
+      join_team_as_self: { Args: { p_team_id: string }; Returns: undefined }
     }
     Enums: {
       [_ in never]: never
