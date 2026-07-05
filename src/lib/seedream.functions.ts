@@ -1099,10 +1099,6 @@ function buildShotInstruction(data: ShotInputType, styleSpec: VisualStyleSpec): 
     `[剧情上下文] ${data.plotText}`,
     `[本镜头] ${data.shotType} ${data.shotTypeLabel} —— ${data.action}`,
     data.camera ? `[机位] ${data.camera}` : "",
-    data.cameraMovement
-      ? `[运镜(仅用于理解画面动态,不在画面中画箭头)] ${data.cameraMovement}`
-      : "",
-    data.characterBlocking ? `[人物走位] ${data.characterBlocking}` : "",
     ``,
     `[参考图清单(严格按下面的对应关系使用)]`,
     charRefs,
@@ -1127,9 +1123,7 @@ function buildShotInstruction(data: ShotInputType, styleSpec: VisualStyleSpec): 
             : `   - 过肩:从某人肩膀后面拍另一人,常用于对话场景,有空间纵深。`,
     `4. 画面必须是单张分镜图,不能有面板分割、文字、标号。`,
     `5. 角色动作 / 表情 / 视线方向严格按本镜头的"${data.action}"执行。`,
-    data.cameraMovement
-      ? `6. 构图体现运镜特征:推→主体大/纵深感;拉→主体小/环境强;摇/移→空间位移暗示;跟→主体清晰背景虚化;固定→稳定平衡;升/降→俯仰角度变化。`
-      : `6. 固定机位,画面构图稳定平衡。`,
+    `6. 固定机位,画面构图稳定平衡。`,
     ``,
     buildStyleLock(styleSpec, "panel"),
   ]
@@ -1250,10 +1244,10 @@ export const generateStoryboardShotImage = createServerFn({ method: "POST" })
     if (requested.toLowerCase().startsWith("shuci/")) {
       const { callShuanciyuanImage } = await import("./shuanciyuan.functions");
       const r = await callShuanciyuanImage({
-        prompt,
+        prompt: appendNegative(instruction, negative),
         model: requested,
-        size: normalizeSeedreamSize(size),
-        referenceImages: [data.referenceImageUrl],
+        size: "2K",
+        referenceImages: images,
         quality: "high",
       });
       if (!r.url) return { ok: false as const, error: r.error || "数安词源 未返回图片" };
@@ -1464,10 +1458,6 @@ function buildRegenShotInstruction(
     `[剧情上下文] ${data.plotText}`,
     `[本镜头] ${data.shotType} ${data.shotTypeLabel} —— ${data.action}`,
     data.camera ? `[机位] ${data.camera}` : "",
-    data.cameraMovement
-      ? `[运镜(仅用于理解画面动态,不在画面中画箭头)] ${data.cameraMovement}`
-      : "",
-    data.characterBlocking ? `[人物走位] ${data.characterBlocking}` : "",
     ``,
     `[参考图清单(严格按下面的对应关系使用)]`,
     `图1 = 当前分镜镜头(要被修改的)`,
@@ -1588,10 +1578,10 @@ export const regenerateStoryboardShot = createServerFn({ method: "POST" })
     if (requested.toLowerCase().startsWith("shuci/")) {
       const { callShuanciyuanImage } = await import("./shuanciyuan.functions");
       const r = await callShuanciyuanImage({
-        prompt,
+        prompt: appendNegative(instruction, negative),
         model: requested,
-        size: normalizeSeedreamSize(size),
-        referenceImages: [data.referenceImageUrl],
+        size: "2K",
+        referenceImages: images,
         quality: "high",
       });
       if (!r.url) return { ok: false as const, error: r.error || "数安词源 未返回图片" };
@@ -2093,8 +2083,8 @@ export const generateStoryboardPitchDeck = createServerFn({ method: "POST" })
       const r = await callShuanciyuanImage({
         prompt,
         model: requested,
-        size: normalizeSeedreamSize(size),
-        referenceImages: [data.referenceImageUrl],
+        size: "3840x2160",
+        referenceImages: data.referenceImages || [],
         quality: "high",
       });
       if (!r.url) return { ok: false as const, error: r.error || "数安词源 未返回图片" };
