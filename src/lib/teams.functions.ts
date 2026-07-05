@@ -247,23 +247,13 @@ export const getTeamJoinInfo = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
 
-    // RLS 策略 teams_select_any_authenticated 允许任何认证用户查看未删除的团队
-    const { data: team, error: teamError } = await supabase
-      .from("teams")
-      .select("id, name, description, owner_id, created_at")
-      .eq("id", data.teamId)
-      .is("deleted_at", null)
-      .maybeSingle();
-
-    console.log(
-      "[getTeamJoinInfo] teamId:",
-      data.teamId,
-      "team:",
-      team?.name,
-      "teamError:",
-      teamError,
+    // Use SECURITY DEFINER RPC so non-members can still see basic team info
+    // (name/description) on the join page without opening SELECT on teams.
+    const { data: rows, error: teamError } = await (supabase.rpc as any)(
+      "get_team_public_info",
+      { p_team_id: data.teamId },
     );
-
+    const team = Array.isArray(rows) ? rows[0] : rows;
     if (teamError || !team) {
       return {
         team: null,
