@@ -1244,10 +1244,10 @@ export const generateStoryboardShotImage = createServerFn({ method: "POST" })
     if (requested.toLowerCase().startsWith("shuci/")) {
       const { callShuanciyuanImage } = await import("./shuanciyuan.functions");
       const r = await callShuanciyuanImage({
-        prompt,
+        prompt: appendNegative(instruction, negative),
         model: requested,
-        size: normalizeSeedreamSize(size),
-        referenceImages: [data.referenceImageUrl],
+        size: "2K",
+        referenceImages: images,
         quality: "high",
       });
       if (!r.url) return { ok: false as const, error: r.error || "数安词源 未返回图片" };
@@ -1578,10 +1578,10 @@ export const regenerateStoryboardShot = createServerFn({ method: "POST" })
     if (requested.toLowerCase().startsWith("shuci/")) {
       const { callShuanciyuanImage } = await import("./shuanciyuan.functions");
       const r = await callShuanciyuanImage({
-        prompt,
+        prompt: appendNegative(instruction, negative),
         model: requested,
-        size: normalizeSeedreamSize(size),
-        referenceImages: [data.referenceImageUrl],
+        size: "2K",
+        referenceImages: images,
         quality: "high",
       });
       if (!r.url) return { ok: false as const, error: r.error || "数安词源 未返回图片" };
@@ -2083,8 +2083,8 @@ export const generateStoryboardPitchDeck = createServerFn({ method: "POST" })
       const r = await callShuanciyuanImage({
         prompt,
         model: requested,
-        size: normalizeSeedreamSize(size),
-        referenceImages: [data.referenceImageUrl],
+        size: "3840x2160",
+        referenceImages: data.referenceImages || [],
         quality: "high",
       });
       if (!r.url) return { ok: false as const, error: r.error || "数安词源 未返回图片" };
