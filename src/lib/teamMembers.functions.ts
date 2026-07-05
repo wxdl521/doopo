@@ -375,21 +375,14 @@ export const joinTeam = createServerFn({ method: "POST" })
       return { ok: false as const, error: "You are already a member of this team" };
     }
 
-    // 尝试加入团队（FK 约束会自动校验团队是否存在，无需单独查询 teams 表）
-    const { error } = await supabase.from("team_members").insert({
-      team_id: data.teamId,
-      user_id: userId,
-      role: "member",
+    // RLS blocks self-insert; go through SECURITY DEFINER RPC that verifies the
+    // team exists and inserts the caller as a 'member'.
+    const { error } = await (supabase.rpc as any)("join_team_as_self", {
+      p_team_id: data.teamId,
     });
-
     if (error) {
-      // 外键约束违反 → 团队不存在或已删除
-      if (error.code === "23503" || error.message?.includes("foreign key")) {
+      if (error.message?.includes("team not found")) {
         return { ok: false as const, error: "Team not found" };
-      }
-      // 唯一约束违反 → 已是成员（并发场景）
-      if (error.code === "23505") {
-        return { ok: false as const, error: "You are already a member of this team" };
       }
       return { ok: false as const, error: error.message };
     }
