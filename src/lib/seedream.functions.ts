@@ -1458,10 +1458,6 @@ function buildRegenShotInstruction(
     `[剧情上下文] ${data.plotText}`,
     `[本镜头] ${data.shotType} ${data.shotTypeLabel} —— ${data.action}`,
     data.camera ? `[机位] ${data.camera}` : "",
-    data.cameraMovement
-      ? `[运镜(仅用于理解画面动态,不在画面中画箭头)] ${data.cameraMovement}`
-      : "",
-    data.characterBlocking ? `[人物走位] ${data.characterBlocking}` : "",
     ``,
     `[参考图清单(严格按下面的对应关系使用)]`,
     `图1 = 当前分镜镜头(要被修改的)`,
