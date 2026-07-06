@@ -20,6 +20,7 @@ import {
   Loader2,
   AlertTriangle,
   Video,
+  AtSign,
 } from "lucide-react";
 import { useLanguage } from "../../i18n/LanguageContext";
 import type { WorkspaceTab } from "./WorkspaceTopbar";
@@ -325,7 +326,11 @@ const ZopiaChatPanel = forwardRef<
      * true=生成成功(卡片变 done),false=失败(卡片变 failed,可重试)。
      * 父组件内部重新 build payload 并调 callGenVideo。
      */
-    onConfirmVideoGen?: (groupId: string, method: "shots" | "storyboard") => Promise<boolean>;
+    onConfirmVideoGen?: (
+      groupId: string,
+      method: "shots" | "storyboard",
+      editedPreviewPrompt: string,
+    ) => Promise<boolean>;
   }
 >(function ZopiaChatPanel(
   {
@@ -413,6 +418,10 @@ const ZopiaChatPanel = forwardRef<
   const importFileInputRef = useRef<HTMLInputElement>(null);
   // 2026/07:参考图 lightbox —— 点确认卡片缩略图放大查看
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  // 2026/07:编辑 prompt 时 @ 参考图 —— mentionPickerFor 是当前展开选择条的卡片 msgId
+  const [mentionPickerFor, setMentionPickerFor] = useState<string | null>(null);
+  // contentEditable div 的 ref(每条卡片一个),用于 @ 参考图插入光标管理
+  const promptDivRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: 999999, behavior: "smooth" });
@@ -1258,6 +1267,49 @@ const ZopiaChatPanel = forwardRef<
   }
 
   /**
+   * 2026/07:在 contentEditable div 当前光标位置插入高亮 @ 参考图标签(如 @首帧),
+   * 标签是 contentEditable=false 的 span(不可编辑,整体)。插入后光标移到标签后。
+   * previewPrompt 同步为 div.innerText(纯文本,含 @label),发给 AI 用。
+   */
+  function insertRefAtCursor(msgId: string, label: string) {
+    const div = promptDivRefs.current.get(msgId);
+    if (!div) return;
+    div.focus();
+    const sel = window.getSelection();
+    let range: Range;
+    if (sel && sel.rangeCount > 0 && div.contains(sel.anchorNode)) {
+      range = sel.getRangeAt(0);
+    } else {
+      // 光标不在 div 内 → 移到末尾
+      range = document.createRange();
+      range.selectNodeContents(div);
+      range.collapse(false);
+    }
+    range.deleteContents();
+    // 高亮 @标签 span(不可编辑,整体)
+    const tag = document.createElement("span");
+    tag.contentEditable = "false";
+    tag.className =
+      "bg-accent-dim/70 text-accent rounded px-1 py-0.5 text-[11px] font-semibold mx-0.5 align-middle";
+    tag.textContent = `@${label}`;
+    // 后接空格,方便光标移到标签后继续输入
+    const space = document.createTextNode(" ");
+    range.insertNode(space);
+    range.insertNode(tag);
+    range.setStartAfter(space);
+    range.collapse(true);
+    sel?.removeAllRanges();
+    sel?.addRange(range);
+    // 同步纯文本到 state(发给 AI 用)
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === msgId && m.kind === "video_confirm" ? { ...m, previewPrompt: div.innerText } : m,
+      ),
+    );
+    setMentionPickerFor(null);
+  }
+
+  /**
    * 2026/07:视频确认卡片点"确认生成"的处理。
    * 先把卡片状态置 generating,await onConfirmVideoGen(父组件真正生成),
    * 成功→done,失败/异常→failed(可重试)。状态全部写回 messages。
@@ -1266,6 +1318,7 @@ const ZopiaChatPanel = forwardRef<
     msgId: string,
     groupId: string,
     method: "shots" | "storyboard",
+    previewPrompt: string,
   ) {
     setMessages((prev) =>
       prev.map((m) =>
@@ -1273,7 +1326,7 @@ const ZopiaChatPanel = forwardRef<
       ),
     );
     try {
-      const ok = (await onConfirmVideoGen?.(groupId, method)) ?? false;
+      const ok = (await onConfirmVideoGen?.(groupId, method, previewPrompt)) ?? false;
       setMessages((prev) =>
         prev.map((m) =>
           m.id === msgId && m.kind === "video_confirm"
@@ -1671,15 +1724,76 @@ const ZopiaChatPanel = forwardRef<
                       />
                       {t.zp_video_confirm_show_prompt}
                     </summary>
-                    <pre className="mt-1 max-h-[200px] overflow-y-auto whitespace-pre-wrap break-words text-xs text-text-secondary bg-bg-surface border border-border rounded-md p-2 font-mono leading-relaxed">
-                      {m.previewPrompt}
-                    </pre>
+                    {m.images.length > 0 && m.status !== "generating" && (
+                      <div className="mt-1 space-y-1">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setMentionPickerFor(mentionPickerFor === m.id ? null : m.id)
+                          }
+                          className="text-[11px] text-text-secondary hover:text-accent inline-flex items-center gap-1 border border-border rounded-md px-2 py-0.5 hover:border-accent transition"
+                          title="在光标位置插入参考图引用"
+                        >
+                          <AtSign size={11} /> 插入参考图
+                        </button>
+                        {mentionPickerFor === m.id && (
+                          <div className="flex flex-wrap gap-1.5 p-2 rounded-md border border-accent/40 bg-bg-elevated">
+                            {m.images.map((img, i) => (
+                              <button
+                                key={i}
+                                type="button"
+                                onClick={() => insertRefAtCursor(m.id, img.label)}
+                                className="relative w-12 h-12 rounded-md overflow-hidden border border-border hover:border-accent transition shrink-0"
+                                title={`插入 [${img.label}]`}
+                              >
+                                <img
+                                  src={img.url}
+                                  alt={img.label}
+                                  className="w-full h-full object-cover"
+                                />
+                                <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[8px] px-0.5 truncate">
+                                  {img.label}
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    <div
+                      ref={(el) => {
+                        if (el) {
+                          promptDivRefs.current.set(m.id, el);
+                          // 非受控:首次挂载时初始化内容(dataset 防重复)
+                          if (!el.dataset.initialized) {
+                            el.innerText = m.previewPrompt;
+                            el.dataset.initialized = "true";
+                          }
+                        } else {
+                          promptDivRefs.current.delete(m.id);
+                        }
+                      }}
+                      contentEditable={m.status !== "generating"}
+                      suppressContentEditableWarning
+                      onInput={(e) =>
+                        setMessages((prev) =>
+                          prev.map((x) =>
+                            x.id === m.id && x.kind === "video_confirm"
+                              ? { ...x, previewPrompt: e.currentTarget.innerText }
+                              : x,
+                          ),
+                        )
+                      }
+                      className="mt-1 w-full max-h-[240px] min-h-[120px] overflow-y-auto whitespace-pre-wrap break-words text-xs text-text-secondary bg-bg-surface border border-border rounded-md p-2 font-mono leading-relaxed focus:border-accent focus:outline-none cursor-text"
+                    />
                   </details>
                   <div className="flex items-center gap-2 pt-1 flex-wrap">
                     {(m.status === "pending" || m.status === "failed") && (
                       <>
                         <button
-                          onClick={() => handleConfirmVideo(m.id, m.groupId, m.method)}
+                          onClick={() =>
+                            handleConfirmVideo(m.id, m.groupId, m.method, m.previewPrompt)
+                          }
                           className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold hover:opacity-90 inline-flex items-center gap-1"
                         >
                           <Sparkles size={12} /> {t.zp_video_confirm_gen}

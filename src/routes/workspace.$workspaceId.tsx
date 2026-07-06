@@ -4469,6 +4469,8 @@ function WorkspacePage() {
     prompt: string;
     /** 卡片预览用(精简版,隐藏技术指令块:风格锁/约束等);实际生成用 prompt */
     previewPrompt: string;
+    /** 技术指令块(预览隐藏的部分);用户编辑 previewPrompt 后生成时拼回 */
+    techPrompt: string;
     firstFrame?: string;
     lastFrame?: string;
     referenceUrls: string[];
@@ -4619,10 +4621,16 @@ function WorkspacePage() {
       .map((p) => p.text)
       .filter(Boolean)
       .join("\n");
+    const techPrompt = parts
+      .filter((p) => p.tech)
+      .map((p) => p.text)
+      .filter(Boolean)
+      .join("\n");
 
     return {
       prompt,
       previewPrompt,
+      techPrompt,
       firstFrame,
       lastFrame,
       referenceUrls,
@@ -4788,10 +4796,16 @@ function WorkspacePage() {
       .map((p) => p.text)
       .filter(Boolean)
       .join("\n");
+    const techPrompt = parts
+      .filter((p) => p.tech)
+      .map((p) => p.text)
+      .filter(Boolean)
+      .join("\n");
 
     return {
       prompt,
       previewPrompt,
+      techPrompt,
       referenceUrls,
       images,
       extra: {
@@ -4814,6 +4828,8 @@ function WorkspacePage() {
   async function executeVideoGen(
     groupId: string,
     method: "shots" | "storyboard",
+    /** 用户编辑后的 previewPrompt;未编辑(=== 原始)时用原始完整 prompt */
+    editedPreviewPrompt?: string,
   ): Promise<boolean> {
     const group = data.storyboardGroups.find((g) => g.id === groupId);
     if (!group) return false;
@@ -4829,6 +4845,13 @@ function WorkspacePage() {
         : buildVideoGenPayloadForStoryboard(groupId);
     if (!payload) return false;
 
+    // 用户编辑了 previewPrompt(和原始不同)→ 用"编辑后核心 + 技术块"组合;
+    // 否则用原始完整 prompt(技术块在原位,行为不变)。
+    const finalPrompt =
+      editedPreviewPrompt != null && editedPreviewPrompt !== payload.previewPrompt
+        ? `${editedPreviewPrompt.trim()}\n\n${payload.techPrompt}`
+        : payload.prompt;
+
     setGroupVideos((m) => ({
       ...m,
       [groupId]: [
@@ -4839,7 +4862,7 @@ function WorkspacePage() {
 
     try {
       const commonData = {
-        prompt: payload.prompt,
+        prompt: finalPrompt,
         referenceImageUrls: payload.referenceUrls.length ? payload.referenceUrls : undefined,
         model: project?.videoModel || "happyhorse-1.0-r2v",
         ratio: project?.aspect === "9:16" ? "9:16" : project?.aspect === "1:1" ? "1:1" : "16:9",
@@ -6997,8 +7020,14 @@ function WorkspacePage() {
     //   避免 'character' stage 的 minItems:3 在单集 1-2 角色时 tool call 失败。
     // 'scene' stage: 专门的场景提取(在 aiGenerate.functions.ts 新加)。
     if (isExtractFromEpisode && extractEpIndex > 0) {
-      const epText = data.episodeTexts.find((e) => e.epIndex === extractEpIndex)?.text ?? "";
-      if (epText) {
+      const epTextRaw = data.episodeTexts.find((e) => e.epIndex === extractEpIndex)?.text ?? "";
+      if (epTextRaw) {
+        // 安全截断:server schema 限制 userPrompt ≤ 30000 字符,留余量给 prompt 模板与上下文。
+        const EP_TEXT_LIMIT = 28000;
+        const epText =
+          epTextRaw.length > EP_TEXT_LIMIT
+            ? epTextRaw.slice(0, EP_TEXT_LIMIT) + "\n\n…（剧本过长，已截断，仅提取前半部分）"
+            : epTextRaw;
         const extractPrompt = `以下是第 ${extractEpIndex} 集的剧本内容，请只提取本集中出现的角色、主要场景和道具：\n\n${epText}`;
         const [charResult, sceneResult, propResult] = await Promise.all([
           // 2026/06:传 extractEpIndex 让 tryAi 给每条 character 打 episodes:[extractEpIndex]
@@ -9259,7 +9288,11 @@ function WorkspacePage() {
                                       const s = data.scenes.find((x) => x.id === sid);
                                       if (!s) return null;
                                       const label = s.location || s.slug || s.id;
-                                      const img = sceneImages[sid]?.at(-1);
+                                      // 2026/07:跟场景卡片网格 / 分镜生成 / 按意见重生对齐 ——
+                                      // pinned(reference)图优先,fallback 最新一张。原先直接
+                                      // .at(-1) 会导致用户在角色阶段 pin 为 reference 的场景图
+                                      // 在这里显示不到。
+                                      const img = pickSceneImageUrl(sid);
                                       return (
                                         <div key={sid} className="flex items-center gap-0.5">
                                           <div className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-border bg-bg-elevated/50 max-w-[90px]">
@@ -9977,8 +10010,8 @@ function WorkspacePage() {
               if (p) void doPropRegen(p, "modify", instruction);
             }
           }}
-          onConfirmVideoGen={async (groupId, method) => {
-            return await executeVideoGen(groupId, method);
+          onConfirmVideoGen={async (groupId, method, editedPreviewPrompt) => {
+            return await executeVideoGen(groupId, method, editedPreviewPrompt);
           }}
         />
       </div>
@@ -11272,7 +11305,7 @@ function WorkspacePage() {
           );
         })()}
 
-      {/* ============= 新增集数 对话框 =============
+      {/* ============= 新增集数 对话框 ============= */}
       {addEpisodeOpen && (
         <>
           <div
