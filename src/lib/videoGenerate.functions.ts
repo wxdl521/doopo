@@ -32,6 +32,8 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { createHash, createHmac } from "node:crypto";
 import { KLING_VIDEO_MODELS } from "./klingVideo.functions";
+import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { fetchMedia } from "./workspaceMedia.functions";
 
 // ---------- ARK (Seedance) 配置 ----------
 
@@ -862,7 +864,19 @@ async function kuaiziSubmit(input: {
       return { ok: false, error: `[kuaizi] 余额不足 (429): ${text.slice(0, 200)}` };
     }
     if (!res.ok) {
-      return { ok: false, error: `[kuaizi] submit ${res.status}: ${text.slice(0, 300)}` };
+      // 诊断:把请求体各字段大小同时打到服务端日志和返回给前端的 error,定位 22001 元凶字段
+      const bodyStr = JSON.stringify(body);
+      const imgs = Array.isArray(body.images) ? (body.images as Array<{ url: string }>) : [];
+      const imagesUrlLen = imgs.reduce((s, img) => s + (img.url?.length || 0), 0);
+      const diag =
+        `bodySize=${bodyStr.length} prompt=${(body.prompt as string).length} ` +
+        `images=${imgs.length} imagesUrlLen=${imagesUrlLen} ` +
+        `videos=${body.videos ? 1 : 0} audios=${body.audios ? 1 : 0}`;
+      console.warn(`[kuaizi] submit ${res.status} ${diag}`);
+      return {
+        ok: false,
+        error: `[kuaizi] submit ${res.status} ${diag}: ${text.slice(0, 200)}`,
+      };
     }
     let json: { code?: number; message?: string; data?: { task_id?: string } } = {};
     try {
@@ -1980,6 +1994,52 @@ export const pollVideoTaskFn = createServerFn({ method: "POST" })
 //     { ok, videoUrl?, error?, taskId?, backend? }
 // ====================================================================
 
+/**
+ * 把单个 data: URI 上传到 Supabase Storage `workspace-media`,返回 10 年签名 URL。
+ *
+ * 背景:生图函数(azure/lovable/openrouter/pixflow 等)常返回
+ *   data:image/png;base64,... 形式的 URL,单条可达数 MB。前端把这些 data URI
+ *   当参考图传给视频生成,会导致请求体过大(kuaizi 落库触发 22001)或被后端拒绝。
+ *   在 generateVideo 入口统一转换,所有后端收到干净 https URL。
+ *
+ *   - data: URI → 上传 Storage → 签名 URL
+ *   - http(s) URL / 已入库的 supabase URL → 原样返回(各后端本就支持)
+ *   - 上传失败 → ok:false,由调用方中止流程(避免继续发大请求体)
+ */
+async function persistDataUriUrl(
+  url: string,
+  supabase: any,
+  userId: string,
+): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+  if (!url || !url.startsWith("data:")) return { ok: true, url };
+  try {
+    const { buf, contentType } = await fetchMedia(url);
+    const ct = (contentType || "image/png").toLowerCase();
+    let ext = "png";
+    if (ct.includes("jpeg") || ct.includes("jpg")) ext = "jpg";
+    else if (ct.includes("webp")) ext = "webp";
+    else if (ct.includes("gif")) ext = "gif";
+    else if (ct.includes("mp4")) ext = "mp4";
+    else if (ct.includes("webm")) ext = "webm";
+    else if (ct.includes("audio/mpeg")) ext = "mp3";
+    else if (ct.includes("audio/wav")) ext = "wav";
+    const mime = contentType || "image/png";
+    const path = `${userId}/video-gen/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const blob = new Blob([buf], { type: mime });
+    const { error: uploadErr } = await supabase.storage
+      .from("workspace-media")
+      .upload(path, blob, { contentType: mime, upsert: true });
+    if (uploadErr) return { ok: false, error: `参考图上传失败: ${uploadErr.message}` };
+    const { data: signed } = await supabase.storage
+      .from("workspace-media")
+      .createSignedUrl(path, 315360000); // 10 年
+    if (!signed?.signedUrl) return { ok: false, error: "参考图上传失败: 未取到签名 URL" };
+    return { ok: true, url: signed.signedUrl };
+  } catch (e: any) {
+    return { ok: false, error: `参考图上传失败: ${e?.message ?? String(e)}` };
+  }
+}
+
 const GenerateVideoInput = z.object({
   prompt: z.string().min(1).max(10000),
   // 单张图生视频(图作为首帧 / 参考图)
@@ -2003,14 +2063,39 @@ const GenerateVideoInput = z.object({
 export type GenerateVideoInputType = z.infer<typeof GenerateVideoInput>;
 
 export const generateVideo = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => GenerateVideoInput.parse(d))
-  .handler(async ({ data }) => {
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context as { supabase: any; userId: string };
     const backend = getVideoBackend(data.model);
     const media: DashScopeMediaItem[] = [];
     if (data.imageUrl) media.push({ type: "first_frame", url: data.imageUrl });
     if (data.lastFrameImageUrl) media.push({ type: "last_frame", url: data.lastFrameImageUrl });
     if (data.referenceImageUrls?.length) {
       for (const url of data.referenceImageUrls) media.push({ type: "reference_image", url });
+    }
+
+    // data: URI → 签名 URL:生图函数常返回 base64 data URI(单条数 MB),直接发给后端
+    // 会撑爆请求体(kuaizi 落库 22001)或被后端拒绝。并行上传后替换成 https URL。
+    const persistResults = await Promise.all(
+      media.map((m) => persistDataUriUrl(m.url, supabase, userId).then((r) => ({ m, r }))),
+    );
+    const persistedMedia: DashScopeMediaItem[] = [];
+    for (const { m, r } of persistResults) {
+      if (!r.ok) return { ok: false as const, error: r.error, taskId: undefined, backend };
+      persistedMedia.push({ type: m.type, url: r.url });
+    }
+    let referenceVideoUrl = data.referenceVideoUrl;
+    if (referenceVideoUrl) {
+      const r = await persistDataUriUrl(referenceVideoUrl, supabase, userId);
+      if (!r.ok) return { ok: false as const, error: r.error, taskId: undefined, backend };
+      referenceVideoUrl = r.url;
+    }
+    let referenceAudioUrl = data.referenceAudioUrl;
+    if (referenceAudioUrl) {
+      const r = await persistDataUriUrl(referenceAudioUrl, supabase, userId);
+      if (!r.ok) return { ok: false as const, error: r.error, taskId: undefined, backend };
+      referenceAudioUrl = r.url;
     }
 
     const model =
@@ -2027,14 +2112,14 @@ export const generateVideo = createServerFn({ method: "POST" })
     const submit = await submitVideoTask({
       model,
       prompt: data.prompt,
-      media,
+      media: persistedMedia,
       ratio: data.ratio,
       resolution: data.resolution,
       duration: data.duration,
       generateAudio: data.generateAudio,
       watermark: data.watermark,
-      referenceVideoUrl: data.referenceVideoUrl,
-      referenceAudioUrl: data.referenceAudioUrl,
+      referenceVideoUrl,
+      referenceAudioUrl,
     });
     if (!submit.ok) {
       return { ok: false as const, error: submit.error, taskId: undefined, backend };

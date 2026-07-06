@@ -331,6 +331,12 @@ const ZopiaChatPanel = forwardRef<
       method: "shots" | "storyboard",
       editedPreviewPrompt: string,
     ) => Promise<boolean>;
+    /**
+     * 2026/07:视频确认卡片 generating 时点"中止生成"调用。
+     * 父组件清 groupVideos 的 running + 设取消标记(防止事后 callGenVideo
+     * resolve 又写状态)。卡片自身把 status 改回 pending(可重试)。
+     */
+    onCancelVideoGen?: (groupId: string) => void;
   }
 >(function ZopiaChatPanel(
   {
@@ -351,6 +357,7 @@ const ZopiaChatPanel = forwardRef<
     onEnterTimeline,
     onModifyReference,
     onConfirmVideoGen,
+    onCancelVideoGen,
   },
   ref: React.Ref<ZopiaChatPanelHandle>,
 ) {
@@ -1775,15 +1782,20 @@ const ZopiaChatPanel = forwardRef<
                       }}
                       contentEditable={m.status !== "generating"}
                       suppressContentEditableWarning
-                      onInput={(e) =>
+                      onInput={(e) => {
+                        // 必须同步取值:React 的 state updater 在并发渲染下会
+                        // 延迟执行,届时合成事件的 currentTarget 已被重置为
+                        // null,在 updater 里读 e.currentTarget.innerText 会抛
+                        // "Cannot read properties of null" 导致整个面板崩溃。
+                        const text = e.currentTarget.innerText;
                         setMessages((prev) =>
                           prev.map((x) =>
                             x.id === m.id && x.kind === "video_confirm"
-                              ? { ...x, previewPrompt: e.currentTarget.innerText }
+                              ? { ...x, previewPrompt: text }
                               : x,
                           ),
-                        )
-                      }
+                        );
+                      }}
                       className="mt-1 w-full max-h-[240px] min-h-[120px] overflow-y-auto whitespace-pre-wrap break-words text-xs text-text-secondary bg-bg-surface border border-border rounded-md p-2 font-mono leading-relaxed focus:border-accent focus:outline-none cursor-text"
                     />
                   </details>
@@ -1814,12 +1826,51 @@ const ZopiaChatPanel = forwardRef<
                             {t.zp_video_confirm_cancel}
                           </button>
                         )}
+                        {m.status === "failed" && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              // 卡在 running(callGenVideo hang)时点"确认生成"会被拦截,
+                              // 这里先清掉 running + 自增轮次,卡片回 pending,可重新生成
+                              setMessages((prev) =>
+                                prev.map((x) =>
+                                  x.id === m.id && x.kind === "video_confirm"
+                                    ? { ...x, status: "pending" as const }
+                                    : x,
+                                ),
+                              );
+                              onCancelVideoGen?.(m.groupId);
+                            }}
+                            className="px-3 py-1.5 rounded-md border border-border text-xs text-text-secondary hover:border-rose-400 hover:text-rose-400 transition"
+                            title="清除卡住的生成状态,回到可重新生成的待确认状态"
+                          >
+                            {t.zp_video_confirm_reset}
+                          </button>
+                        )}
                       </>
                     )}
                     {m.status === "generating" && (
-                      <span className="text-xs text-text-secondary inline-flex items-center gap-1">
-                        <Loader2 size={12} className="animate-spin" />{" "}
-                        {t.zp_video_confirm_generating}
+                      <span className="text-xs text-text-secondary inline-flex items-center gap-2">
+                        <span className="inline-flex items-center gap-1">
+                          <Loader2 size={12} className="animate-spin" />
+                          {t.zp_video_confirm_generating}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMessages((prev) =>
+                              prev.map((x) =>
+                                x.id === m.id && x.kind === "video_confirm"
+                                  ? { ...x, status: "pending" as const }
+                                  : x,
+                              ),
+                            );
+                            onCancelVideoGen?.(m.groupId);
+                          }}
+                          className="px-2 py-1 rounded-md border border-border text-xs text-text-secondary hover:border-rose-400 hover:text-rose-400 transition inline-flex items-center gap-1"
+                        >
+                          <X size={11} /> {t.zp_video_confirm_abort}
+                        </button>
                       </span>
                     )}
                     {m.status === "done" && (

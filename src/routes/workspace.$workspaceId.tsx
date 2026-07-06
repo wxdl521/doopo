@@ -1383,6 +1383,10 @@ function WorkspacePage() {
     method?: "shots" | "storyboard";
   };
   const [groupVideos, setGroupVideos] = useState<Record<string, VideoGenEntry[]>>({});
+  // 2026/07:视频生成轮次标记。cancelVideoGen / executeVideoGen 每轮自增;
+  // callGenVideo 完成后若轮次不匹配(被中止或已被新一轮覆盖)则丢弃结果不写状态,
+  // 避免旧的 hang 请求 resolve 后覆盖用户已重置的 groupVideos。
+  const videoGenRoundRef = useRef<Record<string, number>>({});
   const [selectedVideoIndex, setSelectedVideoIndex] = useState<Record<string, number>>({});
   const getActiveVideoEntry = useCallback(
     (groupId: string): VideoGenEntry | undefined => {
@@ -4483,6 +4487,8 @@ function WorkspacePage() {
   }
   /** 2026/07:取消视频生成。 */
   function cancelVideoGen(groupId: string) {
+    // 自增轮次:正在 await 的旧 callGenVideo 完成后会因轮次不匹配而丢弃结果,不回写状态
+    videoGenRoundRef.current[groupId] = (videoGenRoundRef.current[groupId] ?? 0) + 1;
     setGroupVideos((m) => {
       const entries = m[groupId];
       if (!entries) return m;
@@ -4870,15 +4876,38 @@ function WorkspacePage() {
     const group = data.storyboardGroups.find((g) => g.id === groupId);
     if (!group) return false;
 
-    if ((groupVideos[groupId] ?? []).at(-1)?.status === "running") {
-      toast.message("该组视频正在生成中…");
-      return false;
+    const lastEntry = (groupVideos[groupId] ?? []).at(-1);
+    if (lastEntry?.status === "running") {
+      // 超过 server deadline(5min)+缓冲 → 判定 hang(callGenVideo 被 CF 杀但客户端
+      // fetch 未干净返回),自动重置为 failed 放行重试;否则正常生成中,拦截并发。
+      const elapsed = lastEntry.startedAt ? Date.now() - lastEntry.startedAt : 0;
+      if (elapsed > 330_000) {
+        setGroupVideos((m) => {
+          const entries = [...(m[groupId] ?? [])];
+          const li = entries.length - 1;
+          if (li >= 0 && entries[li].status === "running") {
+            entries[li] = { ...entries[li], url: "", status: "failed" };
+          }
+          return { ...m, [groupId]: entries };
+        });
+      } else {
+        toast.message("该组视频正在生成中…");
+        return false;
+      }
     }
 
-    const payload =
-      method === "shots"
-        ? buildVideoGenPayloadForShots(groupId)
-        : buildVideoGenPayloadForStoryboard(groupId);
+    let payload: VideoGenPayload | null;
+    try {
+      payload =
+        method === "shots"
+          ? buildVideoGenPayloadForShots(groupId)
+          : buildVideoGenPayloadForStoryboard(groupId);
+    } catch (e) {
+      // build 抛异常时不能让 onConfirmVideoGen 也抛(会让卡片变 failed 但 groupVideos
+      // 状态未清理,出现"failed + running"死锁)。这里吞掉并 toast,return false。
+      toast.error(explainVideoError(e instanceof Error ? e.message : "构建生成参数失败"));
+      return false;
+    }
     if (!payload) return false;
 
     // 用户编辑了 previewPrompt(和原始不同)→ 用"编辑后核心 + 技术块"组合;
@@ -4888,6 +4917,8 @@ function WorkspacePage() {
         ? `${editedPreviewPrompt.trim()}\n\n${payload.techPrompt}`
         : payload.prompt;
 
+    const myRound = (videoGenRoundRef.current[groupId] ?? 0) + 1;
+    videoGenRoundRef.current[groupId] = myRound; // 本轮重新生成,使任何旧轮次的 callGenVideo 结果失效
     setGroupVideos((m) => ({
       ...m,
       [groupId]: [
@@ -4921,6 +4952,7 @@ function WorkspacePage() {
                 duration: Math.min(10, Math.max(5, Math.round(group.endSec - group.startSec))),
               },
             });
+      if (videoGenRoundRef.current[groupId] !== myRound) return false; // 已被中止或新一轮覆盖,丢弃
       if (res.ok && res.videoUrl) {
         setGroupVideos((m) => {
           const entries = [...(m[groupId] ?? [])];
@@ -4952,6 +4984,7 @@ function WorkspacePage() {
         return false;
       }
     } catch (e) {
+      if (videoGenRoundRef.current[groupId] !== myRound) return false; // 已被中止或新一轮覆盖,丢弃
       setGroupVideos((m) => {
         const entries = [...(m[groupId] ?? [])];
         const lastIdx = entries.length - 1;
@@ -9979,14 +10012,14 @@ function WorkspacePage() {
                                     );
                                   }
                                   return (
-                                    <button
-                                      type="button"
-                                      onClick={() => void generateVideoForGroup(g.id)}
-                                      disabled={isVideoRunning}
-                                      className="w-full text-[10px] py-1 rounded border border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent transition disabled:opacity-40 inline-flex items-center justify-center gap-1"
-                                    >
-                                      {isVideoRunning ? (
-                                        <span className="w-full inline-flex items-center justify-between gap-1.5">
+                                    <div className="w-full inline-flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => void generateVideoForGroup(g.id)}
+                                        disabled={isVideoRunning}
+                                        className="flex-1 text-[10px] py-1 rounded border border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent transition disabled:opacity-40 inline-flex items-center justify-center gap-1"
+                                      >
+                                        {isVideoRunning ? (
                                           <span className="inline-flex items-center gap-1.5">
                                             <Loader2 size={9} className="animate-spin" />
                                             视频生成中…{" "}
@@ -9997,28 +10030,30 @@ function WorkspacePage() {
                                               : ""}
                                             <span className="opacity-50 ml-1">· 预计 3-5 分钟</span>
                                           </span>
-                                          <button
-                                            type="button"
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              cancelVideoGen(g.id);
-                                            }}
-                                            className="p-0.5 rounded hover:bg-accent/20 transition"
-                                            title="取消生成"
-                                          >
-                                            <X size={10} />
-                                          </button>
-                                        </span>
-                                      ) : videoEntry?.status === "succeeded" ? (
-                                        <>
-                                          <RefreshCw size={9} /> 按分镜图重新生成视频
-                                        </>
-                                      ) : (
-                                        <>
-                                          <Camera size={9} /> 按分镜图生成视频
-                                        </>
+                                        ) : videoEntry?.status === "succeeded" ? (
+                                          <>
+                                            <RefreshCw size={9} /> 按分镜图重新生成视频
+                                          </>
+                                        ) : (
+                                          <>
+                                            <Camera size={9} /> 按分镜图生成视频
+                                          </>
+                                        )}
+                                      </button>
+                                      {isVideoRunning && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            cancelVideoGen(g.id);
+                                          }}
+                                          className="shrink-0 text-[10px] py-1 px-1.5 rounded border border-border text-text-secondary hover:border-rose-400 hover:text-rose-400 transition inline-flex items-center"
+                                          title="取消生成"
+                                        >
+                                          <X size={10} />
+                                        </button>
                                       )}
-                                    </button>
+                                    </div>
                                   );
                                 })()}
                                 {/* 2026/06 新增:按故事板图生成视频(并列第二个按钮)。
@@ -10035,15 +10070,15 @@ function WorkspacePage() {
                                     );
                                   }
                                   return (
-                                    <button
-                                      type="button"
-                                      onClick={() => void generateVideoFromStoryboardForGroup(g.id)}
-                                      disabled={isVideoRunning}
-                                      className="w-full text-[10px] py-1 rounded border border-accent/60 bg-accent-dim/20 text-accent hover:border-accent hover:bg-accent-dim/40 transition disabled:opacity-40 inline-flex items-center justify-center gap-1"
-                                      title="基于故事板图(作为视觉锚)+ 剧情文字(作叙事参考)生成视频"
-                                    >
-                                      {isVideoRunning ? (
-                                        <span className="w-full inline-flex items-center justify-between gap-1.5">
+                                    <div className="w-full inline-flex items-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => void generateVideoFromStoryboardForGroup(g.id)}
+                                        disabled={isVideoRunning}
+                                        className="flex-1 text-[10px] py-1 rounded border border-accent/60 bg-accent-dim/20 text-accent hover:border-accent hover:bg-accent-dim/40 transition disabled:opacity-40 inline-flex items-center justify-center gap-1"
+                                        title="基于故事板图(作为视觉锚)+ 剧情文字(作叙事参考)生成视频"
+                                      >
+                                        {isVideoRunning ? (
                                           <span className="inline-flex items-center gap-1.5">
                                             <Loader2 size={9} className="animate-spin" />
                                             视频生成中…{" "}
@@ -10054,28 +10089,30 @@ function WorkspacePage() {
                                               : ""}
                                             <span className="opacity-50 ml-1">· 预计 3-5 分钟</span>
                                           </span>
-                                          <button
-                                            type="button"
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              cancelVideoGen(g.id);
-                                            }}
-                                            className="p-0.5 rounded hover:bg-accent/20 transition"
-                                            title="取消生成"
-                                          >
-                                            <X size={10} />
-                                          </button>
-                                        </span>
-                                      ) : videoEntry?.status === "succeeded" ? (
-                                        <>
-                                          <RefreshCw size={9} /> 按故事板重新生成视频
-                                        </>
-                                      ) : (
-                                        <>
-                                          <LayoutGrid size={9} /> 按故事板生成视频
-                                        </>
+                                        ) : videoEntry?.status === "succeeded" ? (
+                                          <>
+                                            <RefreshCw size={9} /> 按故事板重新生成视频
+                                          </>
+                                        ) : (
+                                          <>
+                                            <LayoutGrid size={9} /> 按故事板生成视频
+                                          </>
+                                        )}
+                                      </button>
+                                      {isVideoRunning && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            cancelVideoGen(g.id);
+                                          }}
+                                          className="shrink-0 text-[10px] py-1 px-1.5 rounded border border-border text-text-secondary hover:border-rose-400 hover:text-rose-400 transition inline-flex items-center"
+                                          title="取消生成"
+                                        >
+                                          <X size={10} />
+                                        </button>
                                       )}
-                                    </button>
+                                    </div>
                                   );
                                 })()}
                                 <input
@@ -10185,6 +10222,7 @@ function WorkspacePage() {
           onConfirmVideoGen={async (groupId, method, editedPreviewPrompt) => {
             return await executeVideoGen(groupId, method, editedPreviewPrompt);
           }}
+          onCancelVideoGen={(groupId) => cancelVideoGen(groupId)}
         />
       </div>
       {previewTarget &&

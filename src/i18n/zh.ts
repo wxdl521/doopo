@@ -986,6 +986,8 @@ export const zh = {
   zp_video_confirm_done: "已生成",
   zp_video_confirm_failed: "生成失败,点击重试",
   zp_video_confirm_cancelled: "已取消",
+  zp_video_confirm_abort: "中止生成",
+  zp_video_confirm_reset: "重置状态",
   zp_video_confirm_refs: "参考图",
   zp_video_confirm_show_prompt: "展开提示词",
   zp_param_preset_default: "保持默认",

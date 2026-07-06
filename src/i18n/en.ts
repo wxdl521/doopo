@@ -1006,6 +1006,8 @@ export const en: Translations = {
   zp_video_confirm_done: "Generated",
   zp_video_confirm_failed: "Failed — retry?",
   zp_video_confirm_cancelled: "Cancelled",
+  zp_video_confirm_abort: "Abort",
+  zp_video_confirm_reset: "Reset",
   zp_video_confirm_refs: "Reference Images",
   zp_video_confirm_show_prompt: "Show prompt",
   zp_param_preset_default: "Use defaults",
