@@ -977,6 +977,16 @@ export const zh = {
   zp_preview_desc: "请确认以下内容，确认后会立即发送给 AI。",
   zp_preview_back: "返回修改",
   zp_preview_send: "确认并发送",
+  // 2026/07:视频生成确认卡片(分镜阶段点"生成视频"→ 推卡片到对话框,确认后才生成)
+  zp_video_confirm_title: "视频生成确认",
+  zp_video_confirm_gen: "确认生成",
+  zp_video_confirm_cancel: "取消",
+  zp_video_confirm_generating: "生成中…",
+  zp_video_confirm_done: "已生成",
+  zp_video_confirm_failed: "生成失败,点击重试",
+  zp_video_confirm_cancelled: "已取消",
+  zp_video_confirm_refs: "参考图",
+  zp_video_confirm_show_prompt: "展开提示词",
   zp_param_preset_default: "保持默认",
   // 阶段标签（用于拼接提示词时的前缀）
   zp_tag_canvas: "剧本大纲",

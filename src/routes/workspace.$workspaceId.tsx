@@ -4459,14 +4459,34 @@ function WorkspacePage() {
     });
   }
 
-  async function generateVideoForGroup(groupId: string) {
-    const group = data.storyboardGroups.find((g) => g.id === groupId);
-    if (!group) return;
+  // ===== 2026/07:视频生成确认卡片 —— 提取的 build / execute 函数 =====
+  // 把"收集参考图 + 拼 prompt"从两个 generateVideo* 函数提取出来,让
+  // "推确认卡片展示"和"确认后真正生成"复用同一份 payload。
+  // 行为:点"生成视频"不再直接生成,而是推确认卡片到右侧对话框(prompt +
+  // 参考图 + 确认按钮),用户点"确认生成"才调 executeVideoGen。
+  // 例外:开启"查看提示词"模式时仍弹原 promptPreview modal(保留旧行为)。
+  type VideoGenPayload = {
+    prompt: string;
+    firstFrame?: string;
+    lastFrame?: string;
+    referenceUrls: string[];
+    /** 卡片展示用(带 label:首帧/尾帧/分镜图N/故事板/人物·名/场景·名/道具·名) */
+    images: { url: string; label: string }[];
+    extra: Record<string, string>;
+    shotCount?: number;
+  };
 
-    if ((groupVideos[groupId] ?? []).at(-1)?.status === "running") {
-      toast.message("该组视频正在生成中…");
-      return;
-    }
+  const charNameOf = (cid: string) => data.characters.find((x) => x.id === cid)?.name ?? cid;
+  const sceneNameOf = (sid: string) => {
+    const s = data.scenes.find((x) => x.id === sid);
+    return s ? s.location || s.slug || s.id : sid;
+  };
+  const propNameOf = (pid: string) => data.props.find((x) => x.id === pid)?.name ?? pid;
+
+  /** 按分镜图生成视频 —— 收集参考图 + 拼 prompt。无分镜图时 toast 并返回 null。 */
+  function buildVideoGenPayloadForShots(groupId: string): VideoGenPayload | null {
+    const group = data.storyboardGroups.find((g) => g.id === groupId);
+    if (!group) return null;
 
     // 收集本组所有 shot 的最新图片(按 shot 顺序)
     const shotImagesList: { shot: (typeof group.shots)[number]; url: string }[] = [];
@@ -4478,27 +4498,14 @@ function WorkspacePage() {
     }
     if (shotImagesList.length === 0) {
       toast.error("需要先生成该组的分镜图,才能生成视频");
-      return;
+      return null;
     }
 
-    setGroupVideos((m) => ({
-      ...m,
-      [groupId]: [
-        ...(m[groupId] ?? []),
-        { url: "", status: "running", startedAt: Date.now(), method: "shots" as const },
-      ],
-    }));
-
-    // 2026/07:按分镜图数量分三种模式(匹配 toapis 互斥规则):
-    //   1 张 → 首帧模式 (imageUrl = shot[0])
-    //   2 张 → 首尾帧模式 (imageUrl = shot[0], lastFrameImageUrl = shot[1])
-    //   3+ 张 → 多模态参考模式 (全部分镜图 + 选中的人物/场景/道具图 → referenceImageUrls)
-    //           超 9 张时按 道具 > 场景 > 人物 优先级丢弃
     const shotUrls = shotImagesList.map((x) => x.url);
 
     // 收集补充参考图(仅 3+ 张模式使用):人物 > 场景 > 道具
-    const collectSupplementaryRefs = (): string[] => {
-      const refs: string[] = [];
+    const collectSupplementaryRefs = (): { url: string; label: string }[] => {
+      const refs: { url: string; label: string }[] = [];
       const seen = new Set(shotUrls); // 跟分镜图去重
       // 人物:本组各 shot 有效角色并集
       const unionCharIds = (() => {
@@ -4512,7 +4519,7 @@ function WorkspacePage() {
         const refShot = group.shots[0];
         const url = pickShotCharImageUrl(refShot, cid);
         if (url && !seen.has(url)) {
-          refs.push(url);
+          refs.push({ url, label: `人物·${charNameOf(cid)}` });
           seen.add(url);
         }
       }
@@ -4524,7 +4531,7 @@ function WorkspacePage() {
       for (const sid of groupSceneIds) {
         const url = pickSceneImageUrl(sid);
         if (url && !seen.has(url)) {
-          refs.push(url);
+          refs.push({ url, label: `场景·${sceneNameOf(sid)}` });
           seen.add(url);
         }
       }
@@ -4533,7 +4540,7 @@ function WorkspacePage() {
         const arr = propImages[pid] ?? [];
         const url = arr.at(-1);
         if (url && !seen.has(url)) {
-          refs.push(url);
+          refs.push({ url, label: `道具·${propNameOf(pid)}` });
           seen.add(url);
         }
       }
@@ -4544,21 +4551,31 @@ function WorkspacePage() {
     let firstFrame: string | undefined;
     let lastFrame: string | undefined;
     let referenceUrls: string[] = [];
+    let images: { url: string; label: string }[] = [];
     let modeLabel = "";
 
     if (shotUrls.length === 1) {
       firstFrame = shotUrls[0];
+      images = [{ url: shotUrls[0], label: "首帧" }];
       modeLabel = "首帧模式 (1 张分镜图)";
     } else if (shotUrls.length === 2) {
       firstFrame = shotUrls[0];
       lastFrame = shotUrls[1];
+      images = [
+        { url: shotUrls[0], label: "首帧" },
+        { url: shotUrls[1], label: "尾帧" },
+      ];
       modeLabel = "首尾帧模式 (2 张分镜图)";
     } else {
       // 3+ 张:全部分镜图 + 补充参考图,按优先级拼合并截断到 9 张
       // 优先级(保留): 分镜 > 人物 > 场景 > 道具(丢弃)
       const supRefs = collectSupplementaryRefs();
-      const allRefs = [...shotUrls, ...supRefs];
+      const allRefs = [...shotUrls, ...supRefs.map((r) => r.url)];
       referenceUrls = allRefs.slice(0, 9);
+      images = [...shotUrls.map((u, i) => ({ url: u, label: `分镜图${i + 1}` })), ...supRefs].slice(
+        0,
+        9,
+      );
       modeLabel = `多模态参考模式 (${shotUrls.length} 张分镜图 + ${Math.min(supRefs.length, 9 - shotUrls.length)} 张补充参考,共 ${referenceUrls.length} 张)`;
     }
 
@@ -4589,143 +4606,61 @@ function WorkspacePage() {
       .filter(Boolean)
       .join("\n");
 
-    // 2026/06:查看提示词模式 —— 视频 prompt 完全 client 端拼,这里直接弹 modal
-    if (viewPromptsModeRef.current) {
-      setPromptPreview({
-        title: `第 ${group.index} 组 · 按分镜图生成视频`,
-        prompt,
-        extra: {
-          model: project?.videoModel || "happyhorse-1.0-r2v",
-          route: `视频(按分镜图) · ${modeLabel}`,
-          first_frame: firstFrame || "(none)",
-          last_frame: lastFrame || "(none)",
-          referenceImages: referenceUrls.length ? referenceUrls.join(" / ") : "(none)",
-          duration: "10s (fixed)",
-          ratio: project?.aspect ?? "16:9",
-        },
-      });
-      // 清掉 running 状态（只移除 running 条目，保留已完成版本）
-      setGroupVideos((m) => {
-        const entries = m[groupId]?.filter((e) => e.status !== "running") ?? [];
-        if (entries.length === 0) {
-          const { [groupId]: _, ...rest } = m;
-          return rest;
-        }
-        return { ...m, [groupId]: entries };
-      });
-      return;
-    }
-
-    try {
-      const res = await callGenVideo({
-        data: {
-          prompt,
-          imageUrl: firstFrame,
-          lastFrameImageUrl: lastFrame,
-          referenceImageUrls: referenceUrls.length ? referenceUrls : undefined,
-          model: project?.videoModel || "happyhorse-1.0-r2v",
-          ratio: project?.aspect === "9:16" ? "9:16" : project?.aspect === "1:1" ? "1:1" : "16:9",
-          duration: 10,
-          generateAudio: project?.audio === "on",
-          watermark: false,
-        },
-      });
-      if (res.ok && res.videoUrl) {
-        setGroupVideos((m) => {
-          const entries = [...(m[groupId] ?? [])];
-          const lastIdx = entries.length - 1;
-          if (lastIdx >= 0 && entries[lastIdx].status === "running") {
-            entries[lastIdx] = { ...entries[lastIdx], url: res.videoUrl!, status: "succeeded" };
-          } else {
-            entries.push({ url: res.videoUrl!, status: "succeeded", method: "shots" as const });
-          }
-          setSelectedVideoIndex((s) => ({ ...s, [groupId]: entries.length - 1 }));
-          return { ...m, [groupId]: entries };
-        });
-        toast.success(
-          `分镜组视频已生成 (${shotImagesList.length} 个镜头,${res.videoUrl ? "已就绪" : ""})`,
-        );
-      } else {
-        setGroupVideos((m) => {
-          const entries = [...(m[groupId] ?? [])];
-          const lastIdx = entries.length - 1;
-          if (lastIdx >= 0 && entries[lastIdx].status === "running") {
-            entries[lastIdx] = { ...entries[lastIdx], url: "", status: "failed" };
-          }
-          return { ...m, [groupId]: entries };
-        });
-        toast.error(explainVideoError(res?.error));
-      }
-    } catch (e) {
-      setGroupVideos((m) => {
-        const entries = [...(m[groupId] ?? [])];
-        const lastIdx = entries.length - 1;
-        if (lastIdx >= 0 && entries[lastIdx].status === "running") {
-          entries[lastIdx] = { ...entries[lastIdx], url: "", status: "failed" };
-        }
-        return { ...m, [groupId]: entries };
-      });
-      toast.error(explainVideoError(e instanceof Error ? e.message : "视频生成失败"));
-    }
+    return {
+      prompt,
+      firstFrame,
+      lastFrame,
+      referenceUrls,
+      images,
+      shotCount: shotImagesList.length,
+      extra: {
+        model: project?.videoModel || "happyhorse-1.0-r2v",
+        route: `视频(按分镜图) · ${modeLabel}`,
+        first_frame: firstFrame || "(none)",
+        last_frame: lastFrame || "(none)",
+        referenceImages: referenceUrls.length ? `${referenceUrls.length} 张` : "(none)",
+        duration: "10s (fixed)",
+        ratio: project?.aspect ?? "16:9",
+      },
+    };
   }
 
-  /**
-   * 2026/06 新增:基于"故事板图"生成整组视频(跟 generateVideoForGroup 并列)。
-   *
-   * 跟传统 generateVideoForGroup 的差别:
-   *   - 那个按分镜数量分首帧/首尾帧/多模态参考三种模式
-   *   - 这个把**故事板图 + 分镜图(如有) + 选中的人物/场景/道具图**全部作为
-   *     reference_image(多模态参考模式),剧情文字 plotText 作为叙事参考写进 prompt
-   *   - 适合"还没逐张生成分镜图、但故事板已就绪"的场景,或想让 AI 按故事板
-   *     的画面分布/节奏直接出片
-   *
-   * 前置条件:groupStoryboards[groupId] 已 succeeded 且有 url。
-   * 复用 groupVideos 同一槽位,后生成覆盖前生成(用户在两种模式间切换)。
-   */
-  async function generateVideoFromStoryboardForGroup(groupId: string) {
+  /** 按故事板生成视频 —— 收集参考图 + 拼 prompt。故事板未就绪时 toast 并返回 null。 */
+  function buildVideoGenPayloadForStoryboard(groupId: string): VideoGenPayload | null {
     const group = data.storyboardGroups.find((g) => g.id === groupId);
-    if (!group) return;
-
-    if ((groupVideos[groupId] ?? []).at(-1)?.status === "running") {
-      toast.message("该组视频正在生成中…");
-      return;
-    }
+    if (!group) return null;
 
     const storyboard = groupStoryboards[groupId];
     if (storyboard?.status !== "succeeded" || !storyboard.url) {
       toast.error("请先生成该组的故事板,才能用故事板生成视频");
-      return;
+      return null;
     }
-
-    setGroupVideos((m) => ({
-      ...m,
-      [groupId]: [
-        ...(m[groupId] ?? []),
-        { url: "", status: "running", startedAt: Date.now(), method: "storyboard" as const },
-      ],
-    }));
 
     // 2026/07:故事板生成 → 多模态参考模式
     //   全部作为 reference_image:故事板图 + 分镜图(如有) + 人物 + 场景 + 道具
     //   优先级(保留): 故事板 > 分镜 > 人物 > 场景 > 道具(丢弃)
     //   上限 9 张,超出的按 道具 > 场景 > 人物 优先丢弃
     const referenceUrls: string[] = [];
+    const images: { url: string; label: string }[] = [];
     const seen = new Set<string>();
 
     // 1) 故事板图(最高优先级)
     if (storyboard.url && !seen.has(storyboard.url)) {
       referenceUrls.push(storyboard.url);
+      images.push({ url: storyboard.url, label: "故事板" });
       seen.add(storyboard.url);
     }
 
     // 2) 分镜图(按 shot 顺序)
-    for (const s of group.shots) {
+    for (let i = 0; i < group.shots.length; i++) {
       if (referenceUrls.length >= 9) break;
+      const s = group.shots[i];
       const key = `${groupId}::${s.id}`;
       const gens = shotImages[key] ?? [];
       const url = gens.length ? gens[gens.length - 1] : s.imageUrl;
       if (url && !seen.has(url)) {
         referenceUrls.push(url);
+        images.push({ url, label: `分镜图${i + 1}` });
         seen.add(url);
       }
     }
@@ -4744,6 +4679,7 @@ function WorkspacePage() {
       const url = pickShotCharImageUrl(refShot, cid);
       if (url && !seen.has(url)) {
         referenceUrls.push(url);
+        images.push({ url, label: `人物·${charNameOf(cid)}` });
         seen.add(url);
       }
     }
@@ -4758,6 +4694,7 @@ function WorkspacePage() {
       const url = pickSceneImageUrl(sid);
       if (url && !seen.has(url)) {
         referenceUrls.push(url);
+        images.push({ url, label: `场景·${sceneNameOf(sid)}` });
         seen.add(url);
       }
     }
@@ -4769,6 +4706,7 @@ function WorkspacePage() {
       const url = arr.at(-1);
       if (url && !seen.has(url)) {
         referenceUrls.push(url);
+        images.push({ url, label: `道具·${propNameOf(pid)}` });
         seen.add(url);
       }
     }
@@ -4814,44 +4752,78 @@ function WorkspacePage() {
       .filter(Boolean)
       .join("\n");
 
-    // 2026/06:查看提示词模式 —— 直接弹 modal
-    if (viewPromptsModeRef.current) {
-      setPromptPreview({
-        title: `第 ${group.index} 组 · 按故事板生成视频`,
-        prompt,
-        extra: {
-          model: project?.videoModel || "happyhorse-1.0-r2v",
-          route: `视频(按故事板) · ${modeLabel}`,
-          first_frame: "(none)",
-          last_frame: "(none)",
-          referenceImages: referenceUrls.length ? referenceUrls.join(" / ") : "(none)",
-          duration: `${Math.min(10, Math.max(5, Math.round(group.endSec - group.startSec)))}s`,
-          ratio: project?.aspect ?? "16:9",
-        },
-      });
-      setGroupVideos((m) => {
-        const entries = m[groupId]?.filter((e) => e.status !== "running") ?? [];
-        if (entries.length === 0) {
-          const { [groupId]: _, ...rest } = m;
-          return rest;
-        }
-        return { ...m, [groupId]: entries };
-      });
-      return;
+    return {
+      prompt,
+      referenceUrls,
+      images,
+      extra: {
+        model: project?.videoModel || "happyhorse-1.0-r2v",
+        route: `视频(按故事板) · ${modeLabel}`,
+        first_frame: "(none)",
+        last_frame: "(none)",
+        referenceImages: `${referenceUrls.length} 张`,
+        duration: `${Math.min(10, Math.max(5, Math.round(group.endSec - group.startSec)))}s`,
+        ratio: project?.aspect ?? "16:9",
+      },
+    };
+  }
+
+  /**
+   * 2026/07:确认卡片点"确认生成"后真正执行视频生成。
+   * 重新 build payload(只读卡片不存 payload),setGroupVideos running → callGenVideo → 更新状态。
+   * 返回 true=成功 / false=失败(卡片据此变 done/failed)。
+   */
+  async function executeVideoGen(
+    groupId: string,
+    method: "shots" | "storyboard",
+  ): Promise<boolean> {
+    const group = data.storyboardGroups.find((g) => g.id === groupId);
+    if (!group) return false;
+
+    if ((groupVideos[groupId] ?? []).at(-1)?.status === "running") {
+      toast.message("该组视频正在生成中…");
+      return false;
     }
 
+    const payload =
+      method === "shots"
+        ? buildVideoGenPayloadForShots(groupId)
+        : buildVideoGenPayloadForStoryboard(groupId);
+    if (!payload) return false;
+
+    setGroupVideos((m) => ({
+      ...m,
+      [groupId]: [
+        ...(m[groupId] ?? []),
+        { url: "", status: "running", startedAt: Date.now(), method },
+      ],
+    }));
+
     try {
-      const res = await callGenVideo({
-        data: {
-          prompt,
-          referenceImageUrls: referenceUrls.length ? referenceUrls : undefined,
-          model: project?.videoModel || "happyhorse-1.0-r2v",
-          ratio: project?.aspect === "9:16" ? "9:16" : project?.aspect === "1:1" ? "1:1" : "16:9",
-          duration: Math.min(10, Math.max(5, Math.round(group.endSec - group.startSec))),
-          generateAudio: project?.audio === "on",
-          watermark: false,
-        },
-      });
+      const commonData = {
+        prompt: payload.prompt,
+        referenceImageUrls: payload.referenceUrls.length ? payload.referenceUrls : undefined,
+        model: project?.videoModel || "happyhorse-1.0-r2v",
+        ratio: project?.aspect === "9:16" ? "9:16" : project?.aspect === "1:1" ? "1:1" : "16:9",
+        generateAudio: project?.audio === "on",
+        watermark: false,
+      };
+      const res =
+        method === "shots"
+          ? await callGenVideo({
+              data: {
+                ...commonData,
+                imageUrl: payload.firstFrame,
+                lastFrameImageUrl: payload.lastFrame,
+                duration: 10,
+              },
+            })
+          : await callGenVideo({
+              data: {
+                ...commonData,
+                duration: Math.min(10, Math.max(5, Math.round(group.endSec - group.startSec))),
+              },
+            });
       if (res.ok && res.videoUrl) {
         setGroupVideos((m) => {
           const entries = [...(m[groupId] ?? [])];
@@ -4859,16 +4831,17 @@ function WorkspacePage() {
           if (lastIdx >= 0 && entries[lastIdx].status === "running") {
             entries[lastIdx] = { ...entries[lastIdx], url: res.videoUrl!, status: "succeeded" };
           } else {
-            entries.push({
-              url: res.videoUrl!,
-              status: "succeeded",
-              method: "storyboard" as const,
-            });
+            entries.push({ url: res.videoUrl!, status: "succeeded", method });
           }
           setSelectedVideoIndex((s) => ({ ...s, [groupId]: entries.length - 1 }));
           return { ...m, [groupId]: entries };
         });
-        toast.success("按故事板的视频已生成");
+        toast.success(
+          method === "shots"
+            ? `分镜组视频已生成 (${payload.shotCount} 个镜头)`
+            : "按故事板的视频已生成",
+        );
+        return true;
       } else {
         setGroupVideos((m) => {
           const entries = [...(m[groupId] ?? [])];
@@ -4879,6 +4852,7 @@ function WorkspacePage() {
           return { ...m, [groupId]: entries };
         });
         toast.error(explainVideoError(res?.error));
+        return false;
       }
     } catch (e) {
       setGroupVideos((m) => {
@@ -4890,7 +4864,87 @@ function WorkspacePage() {
         return { ...m, [groupId]: entries };
       });
       toast.error(explainVideoError(e instanceof Error ? e.message : "视频生成失败"));
+      return false;
     }
+  }
+
+  async function generateVideoForGroup(groupId: string) {
+    const group = data.storyboardGroups.find((g) => g.id === groupId);
+    if (!group) return;
+
+    if ((groupVideos[groupId] ?? []).at(-1)?.status === "running") {
+      toast.message("该组视频正在生成中…");
+      return;
+    }
+
+    const payload = buildVideoGenPayloadForShots(groupId);
+    if (!payload) return;
+
+    // 1) 查看提示词模式 → 弹 modal(保留原行为)
+    if (viewPromptsModeRef.current) {
+      setPromptPreview({
+        title: `第 ${group.index} 组 · 按分镜图生成视频`,
+        prompt: payload.prompt,
+        extra: payload.extra,
+      });
+      return;
+    }
+
+    // 2) 正常模式 → 推确认卡片到对话框,等用户点"确认生成"才真正生成
+    chatPanelRef.current?.pushVideoConfirmCard({
+      groupId,
+      method: "shots",
+      title: `第 ${group.index} 组 · 按分镜图生成视频`,
+      prompt: payload.prompt,
+      images: payload.images,
+      extra: payload.extra,
+    });
+  }
+
+  /**
+   * 2026/06 新增:基于"故事板图"生成整组视频(跟 generateVideoForGroup 并列)。
+   *
+   * 跟传统 generateVideoForGroup 的差别:
+   *   - 那个按分镜数量分首帧/首尾帧/多模态参考三种模式
+   *   - 这个把**故事板图 + 分镜图(如有) + 选中的人物/场景/道具图**全部作为
+   *     reference_image(多模态参考模式),剧情文字 plotText 作为叙事参考写进 prompt
+   *   - 适合"还没逐张生成分镜图、但故事板已就绪"的场景,或想让 AI 按故事板
+   *     的画面分布/节奏直接出片
+   *
+   * 前置条件:groupStoryboards[groupId] 已 succeeded 且有 url。
+   * 复用 groupVideos 同一槽位,后生成覆盖前生成(用户在两种模式间切换)。
+   */
+  async function generateVideoFromStoryboardForGroup(groupId: string) {
+    const group = data.storyboardGroups.find((g) => g.id === groupId);
+    if (!group) return;
+
+    if ((groupVideos[groupId] ?? []).at(-1)?.status === "running") {
+      toast.message("该组视频正在生成中…");
+      return;
+    }
+
+    const payload = buildVideoGenPayloadForStoryboard(groupId);
+    if (!payload) return;
+
+    // 1) 查看提示词模式 → 弹 modal(保留原行为)
+    if (viewPromptsModeRef.current) {
+      setPromptPreview({
+        title: `第 ${group.index} 组 · 按故事板生成视频`,
+        prompt: payload.prompt,
+        extra: payload.extra,
+      });
+      return;
+    }
+
+    // 2) 正常模式 → 推确认卡片到对话框,等用户点"确认生成"才真正生成
+    chatPanelRef.current?.pushVideoConfirmCard({
+      groupId,
+      method: "storyboard",
+      title: `第 ${group.index} 组 · 按故事板生成视频`,
+      prompt: payload.prompt,
+      images: payload.images,
+      extra: payload.extra,
+    });
   }
 
   /**
@@ -9884,6 +9938,9 @@ function WorkspacePage() {
               const p = data.props.find((x) => x.id === refId);
               if (p) void doPropRegen(p, "modify", instruction);
             }
+          }}
+          onConfirmVideoGen={async (groupId, method) => {
+            return await executeVideoGen(groupId, method);
           }}
         />
       </div>

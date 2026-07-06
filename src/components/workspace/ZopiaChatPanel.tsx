@@ -18,6 +18,8 @@ import {
   Sparkles,
   Upload,
   Loader2,
+  AlertTriangle,
+  Video,
 } from "lucide-react";
 import { useLanguage } from "../../i18n/LanguageContext";
 import type { WorkspaceTab } from "./WorkspaceTopbar";
@@ -72,12 +74,17 @@ function saveStoredMessages(workspaceId: string, messages: Message[]) {
   try {
     // 剥掉 attachment.url:由 URL.createObjectURL 创建,新会话就 404,
     // 落盘会污染历史图片。
+    // 2026/07:video_confirm 的 pending/generating 状态刷新后不可恢复
+    // (父组件上下文可能已变),重置为 cancelled,保留 prompt+图片供回看。
     const sanitized = messages.map((m) => {
       if (m.kind === "user" && m.attachments) {
         return {
           ...m,
           attachments: m.attachments.map(({ url: _url, ...rest }) => rest),
         };
+      }
+      if (m.kind === "video_confirm" && (m.status === "pending" || m.status === "generating")) {
+        return { ...m, status: "cancelled" as const };
       }
       return m;
     });
@@ -107,6 +114,19 @@ type Message =
       stage?: WorkspaceTab;
       summary?: { title: string; detail: string; next: string };
       ctas?: { key: CtaKey; label: string; target: WorkspaceTab }[];
+    }
+  | {
+      id: string;
+      kind: "video_confirm";
+      groupId: string;
+      method: "shots" | "storyboard";
+      title: string;
+      prompt: string;
+      /** 卡片展示的参考图(带 label:首帧/尾帧/分镜图N/故事板/人物·名/场景·名/道具·名) */
+      images: { url: string; label: string }[];
+      extra?: Record<string, string>;
+      /** pending=待确认 / generating=生成中 / done=已生成 / failed=失败可重试 / cancelled=已取消 */
+      status: "pending" | "generating" | "done" | "failed" | "cancelled";
     };
 type WorkflowDef = {
   steps: string[];
@@ -260,6 +280,20 @@ export type ZopiaChatPanelHandle = {
     imageUrl: string,
     lookId?: string | null,
   ) => void;
+  /**
+   * 2026/07:推一条"视频生成确认卡片"到对话框。
+   * 分镜阶段点"生成视频"不再直接生成,而是把 prompt + 参考图 + 确认按钮
+   * 以卡片形式展示在对话框里,用户点"确认生成"后才真正调用 onConfirmVideoGen。
+   * 卡片只读(prompt/参考图不可编辑),确认时父组件重新 build payload 生成。
+   */
+  pushVideoConfirmCard: (payload: {
+    groupId: string;
+    method: "shots" | "storyboard";
+    title: string;
+    prompt: string;
+    images: { url: string; label: string }[];
+    extra?: Record<string, string>;
+  }) => void;
 };
 
 const ZopiaChatPanel = forwardRef<
@@ -286,6 +320,12 @@ const ZopiaChatPanel = forwardRef<
       instruction: string,
       lookId?: string | null,
     ) => void;
+    /**
+     * 2026/07:视频确认卡片点"确认生成"时调用,返回 Promise<boolean>。
+     * true=生成成功(卡片变 done),false=失败(卡片变 failed,可重试)。
+     * 父组件内部重新 build payload 并调 callGenVideo。
+     */
+    onConfirmVideoGen?: (groupId: string, method: "shots" | "storyboard") => Promise<boolean>;
   }
 >(function ZopiaChatPanel(
   {
@@ -305,6 +345,7 @@ const ZopiaChatPanel = forwardRef<
     enterTimelineSignal,
     onEnterTimeline,
     onModifyReference,
+    onConfirmVideoGen,
   },
   ref: React.Ref<ZopiaChatPanelHandle>,
 ) {
@@ -370,6 +411,8 @@ const ZopiaChatPanel = forwardRef<
   >(null);
   const [importDragging, setImportDragging] = useState(false);
   const importFileInputRef = useRef<HTMLInputElement>(null);
+  // 2026/07:参考图 lightbox —— 点确认卡片缩略图放大查看
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: 999999, behavior: "smooth" });
@@ -813,6 +856,21 @@ const ZopiaChatPanel = forwardRef<
         setTimeout(() => textareaRef.current?.focus(), 50);
         setTimeout(() => scrollRef.current?.scrollTo({ top: 999999, behavior: "smooth" }), 50);
       },
+      pushVideoConfirmCard: (payload) => {
+        const msg: Message = {
+          id: `vc-${Date.now()}`,
+          kind: "video_confirm",
+          groupId: payload.groupId,
+          method: payload.method,
+          title: payload.title,
+          prompt: payload.prompt,
+          images: payload.images,
+          extra: payload.extra,
+          status: "pending",
+        };
+        setMessages((m) => [...m, msg]);
+        setTimeout(() => scrollRef.current?.scrollTo({ top: 999999, behavior: "smooth" }), 50);
+      },
     }),
     [runWorkflowAnimation],
   );
@@ -1199,6 +1257,39 @@ const ZopiaChatPanel = forwardRef<
     }
   }
 
+  /**
+   * 2026/07:视频确认卡片点"确认生成"的处理。
+   * 先把卡片状态置 generating,await onConfirmVideoGen(父组件真正生成),
+   * 成功→done,失败/异常→failed(可重试)。状态全部写回 messages。
+   */
+  async function handleConfirmVideo(
+    msgId: string,
+    groupId: string,
+    method: "shots" | "storyboard",
+  ) {
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === msgId && m.kind === "video_confirm" ? { ...m, status: "generating" } : m,
+      ),
+    );
+    try {
+      const ok = (await onConfirmVideoGen?.(groupId, method)) ?? false;
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === msgId && m.kind === "video_confirm"
+            ? { ...m, status: ok ? "done" : "failed" }
+            : m,
+        ),
+      );
+    } catch {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === msgId && m.kind === "video_confirm" ? { ...m, status: "failed" } : m,
+        ),
+      );
+    }
+  }
+
   function handleCta(c: { key: CtaKey; label: string; target: WorkspaceTab }) {
     if (c.key === "preview") {
       onJumpStage(c.target);
@@ -1524,6 +1615,113 @@ const ZopiaChatPanel = forwardRef<
                       <div className="px-3 py-2 rounded-2xl bg-bg-elevated text-sm whitespace-pre-wrap break-words">
                         {m.text}
                       </div>
+                    )}
+                  </div>
+                </div>
+              );
+            }
+            if (m.kind === "video_confirm") {
+              return (
+                <div key={m.id} className="space-y-2">
+                  <div className="text-sm font-semibold text-text-primary inline-flex items-center gap-1">
+                    <Video size={12} className="text-accent shrink-0" /> {m.title}
+                  </div>
+                  {m.extra && Object.entries(m.extra).length > 0 && (
+                    <div className="text-xs space-y-0.5 bg-bg-elevated/50 rounded-md p-2 border border-border">
+                      {Object.entries(m.extra).map(([k, v]) => (
+                        <div key={k}>
+                          <span className="text-text-muted">{k}: </span>
+                          <span className="font-mono text-text-secondary">{v}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {m.images.length > 0 && (
+                    <div className="space-y-1">
+                      <div className="text-xs text-text-secondary">
+                        {t.zp_video_confirm_refs}（{m.images.length}）
+                      </div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {m.images.map((img, i) => (
+                          <button
+                            key={i}
+                            type="button"
+                            onClick={() => setLightboxUrl(img.url)}
+                            className="relative w-14 h-14 rounded-md overflow-hidden border border-border shrink-0 hover:border-accent transition cursor-zoom-in"
+                            title={img.label}
+                          >
+                            <img
+                              src={img.url}
+                              alt={img.label}
+                              className="w-full h-full object-cover"
+                            />
+                            <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-[9px] px-1 py-0.5 truncate">
+                              {img.label}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <details className="group">
+                    <summary className="text-xs text-accent cursor-pointer select-none inline-flex items-center gap-1">
+                      <ChevronDown
+                        size={10}
+                        className="group-open:rotate-180 transition shrink-0"
+                      />
+                      {t.zp_video_confirm_show_prompt}
+                    </summary>
+                    <pre className="mt-1 max-h-[200px] overflow-y-auto whitespace-pre-wrap break-words text-xs text-text-secondary bg-bg-surface border border-border rounded-md p-2 font-mono leading-relaxed">
+                      {m.prompt}
+                    </pre>
+                  </details>
+                  <div className="flex items-center gap-2 pt-1 flex-wrap">
+                    {(m.status === "pending" || m.status === "failed") && (
+                      <>
+                        <button
+                          onClick={() => handleConfirmVideo(m.id, m.groupId, m.method)}
+                          className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold hover:opacity-90 inline-flex items-center gap-1"
+                        >
+                          <Sparkles size={12} /> {t.zp_video_confirm_gen}
+                        </button>
+                        {m.status === "pending" && (
+                          <button
+                            onClick={() =>
+                              setMessages((prev) =>
+                                prev.map((x) =>
+                                  x.id === m.id && x.kind === "video_confirm"
+                                    ? { ...x, status: "cancelled" as const }
+                                    : x,
+                                ),
+                              )
+                            }
+                            className="px-3 py-1.5 rounded-md border border-border text-xs text-text-secondary hover:border-accent"
+                          >
+                            {t.zp_video_confirm_cancel}
+                          </button>
+                        )}
+                      </>
+                    )}
+                    {m.status === "generating" && (
+                      <span className="text-xs text-text-secondary inline-flex items-center gap-1">
+                        <Loader2 size={12} className="animate-spin" />{" "}
+                        {t.zp_video_confirm_generating}
+                      </span>
+                    )}
+                    {m.status === "done" && (
+                      <span className="text-xs text-emerald-400 inline-flex items-center gap-1">
+                        <Check size={12} /> {t.zp_video_confirm_done}
+                      </span>
+                    )}
+                    {m.status === "failed" && (
+                      <span className="text-xs text-rose-400 inline-flex items-center gap-1">
+                        <AlertTriangle size={12} /> {t.zp_video_confirm_failed}
+                      </span>
+                    )}
+                    {m.status === "cancelled" && (
+                      <span className="text-xs text-text-muted">
+                        {t.zp_video_confirm_cancelled}
+                      </span>
                     )}
                   </div>
                 </div>
@@ -1922,6 +2120,32 @@ const ZopiaChatPanel = forwardRef<
               我知道了
             </button>
           </div>
+        </div>
+      )}
+
+      {/* 2026/07:参考图 lightbox —— 点确认卡片缩略图放大,点遮罩 / X 关闭,点图片不关闭 */}
+      {lightboxUrl && (
+        <div
+          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setLightboxUrl(null)}
+          role="dialog"
+          aria-modal="true"
+          aria-label="图片预览"
+        >
+          <button
+            type="button"
+            onClick={() => setLightboxUrl(null)}
+            className="absolute top-4 right-4 p-2 rounded-md bg-bg-surface/80 border border-border text-text-secondary hover:text-text-primary"
+            title="关闭"
+          >
+            <X size={20} />
+          </button>
+          <img
+            src={lightboxUrl}
+            alt="预览"
+            className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          />
         </div>
       )}
 

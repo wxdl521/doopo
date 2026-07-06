@@ -997,6 +997,16 @@ export const en: Translations = {
   zp_preview_desc: "Review the prompt below. Confirming will send it to the AI immediately.",
   zp_preview_back: "Back to edit",
   zp_preview_send: "Confirm & send",
+  // 2026/07: video generation confirm card (storyboard "generate video" → push card to chat, generate only after confirm)
+  zp_video_confirm_title: "Video Generation",
+  zp_video_confirm_gen: "Confirm Generate",
+  zp_video_confirm_cancel: "Cancel",
+  zp_video_confirm_generating: "Generating…",
+  zp_video_confirm_done: "Generated",
+  zp_video_confirm_failed: "Failed — retry?",
+  zp_video_confirm_cancelled: "Cancelled",
+  zp_video_confirm_refs: "Reference Images",
+  zp_video_confirm_show_prompt: "Show prompt",
   zp_param_preset_default: "Use defaults",
   // Stage tags (prepended when stitching the prompt)
   zp_tag_canvas: "Outline",
