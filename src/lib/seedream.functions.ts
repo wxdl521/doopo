@@ -1935,11 +1935,11 @@ function buildPitchDeckPrompt(opts: {
     `- Same character across ALL frames: identical face, hairstyle, body, clothing. No drift.`,
 
     `[TOP-DOWN DIAGRAM — bottom-right, ~25% of page, labels LARGE and FEW]`,
-    `Overhead floor-plan in pencil linework. Keep it simple — too many tiny labels cause garbled text.`,
-    `- Room: draw a clear rectangular outline first; ALL furniture (desk/chair/computer) and characters stay INSIDE it. Layout logical (computer on desk, chair in front).`,
-    `- Cameras: one solid triangle (▲) + short label "CAM1/CAM2/..." per camera, all the same size. Connect in order with THICK SOLID line + large arrowhead (CAM1 → CAM2 → CAM3). CAM1 = 镜头1. Don't write shot type here (it's in the caption).`,
-    `- Characters: hollow square (start) → filled square (end), THICK DASHED line + large arrowhead. Add a small facing arrow (▷) — facing must be logical (computer user faces computer, dialogue faces each other). Label start with the name. Different characters = different dash spacing.`,
-    `- Legend (2 lines): solid arrow = camera path (机位动线), dashed arrow = character path (人物动线).`,
+    `Overhead floor-plan in pencil linework. Keep it simple — too many tiny labels cause garbled text. The diagram MUST cover the FULL spatial scope of ALL shots in [SHOT BREAKDOWN] — every shot's location and movement must appear, none skipped.`,
+    `- Scene area: draw ALL locations the story spans, not just one room. If shots happen across multiple areas (e.g. street outside → doorway → shop interior), draw each as a labeled zone side by side. Do NOT cram everything into a single room outline. Place furniture/objects logically within each zone.`,
+    `- 镜头运动路线 (camera path): ONE single DASHED line with a large arrowhead, tracing the camera's movement through the whole scene — start at 镜头1's shooting position, pass each shot's position in story order, end at the last shot's position. The path MUST span all areas the shots cover (e.g. from street outside into the shop). Do NOT draw separate camera markers or labels (no ▲, no CAM1/CAM2).`,
+    `- 人物动线 (character path): SOLID line + large arrowhead, from each character's start position (hollow square) to end position (filled square). The path MUST strictly follow the blocking in [SHOT BREAKDOWN] — where each character starts, moves to, and faces, across all areas. Add a small facing arrow (▷) at the end position; facing must be logical. Label start with the name.`,
+    `- Legend (2 lines): dashed arrow = 镜头运动路线 (camera path), solid arrow = 人物动线 (character path).`,
 
     referenceImageBlock,
 
@@ -1960,8 +1960,8 @@ function buildPitchDeckPrompt(opts: {
     `2. 16:9 landscape, ${SUGGESTED_PANELS} frames.`,
     `3. Character lock — same face/body/clothes across frames.`,
     `4. Story faithful — follow [STORY PLOT] and [SHOT BREAKDOWN], no invented content.`,
-    `5. Text crisp & legible — Chinese shot types (远景/中景/近景/特写/过肩), no WS/MS/CU; no emoji (📷) or circled numbers (①②③); use plain labels (镜头1, CAM1) + Arabic numerals.`,
-    `6. Sequence — frame/camera numbers continuous 1..N, no skips/dupes; diagram arrows follow shot order; character positions match blocking.`,
+    `5. Text crisp & legible — Chinese shot types (远景/中景/近景/特写/过肩), no WS/MS/CU; no emoji (📷) or circled numbers (①②③); use plain labels (镜头1, 镜头2) + Arabic numerals.`,
+    `6. Diagram logic — the diagram covers ALL shots' locations (not just one room); camera path (dashed) follows the shooting sequence across all areas; character paths (solid) strictly follow the blocking in [SHOT BREAKDOWN].`,
 
     `Begin. Output a 16:9 pencil line-art storyboard with ${SUGGESTED_PANELS} frames.`,
   ]
@@ -1978,13 +1978,13 @@ function buildPitchDeckNegative(): string {
   return [
     "garbled text, fake characters, pseudo Chinese, jumbled glyphs, broken strokes, illegible labels, blurry text, smeared text, distorted text, unreadable captions, mismatched font widths, comic font, decorative font, handwritten scribble",
     "emoji icons, camera emoji 📷, circled numbers ①②③, unicode symbols as labels, emoji in diagram, emoji in captions",
-    "skipped frame numbers, duplicated numbers, out-of-order sequence labels, missing frame numbers, missing camera labels",
+    "skipped frame numbers, duplicated numbers, out-of-order sequence labels, missing frame numbers",
     "color, colored rendering, full color, cel-shading, watercolor, oil painting, airbrush, gradient, photorealistic, 3D render, CGI, anime style, digital painting, thick paint, impasto, gouache, pastel, marker rendering, digital art",
     "cluttered layout, overlapping sections, missing dividers, off-grid placement, no white space, busy decorative borders, ornate frames, gold filigree",
     "wrong aspect ratio, vertical 9:16, square 1:1, 4:3, portrait orientation",
     "extra characters not in [CHARACTERS], scenery not in [SCENE], invented plot, frames unrelated to [SHOT BREAKDOWN]",
     "low resolution, blurry, pixelated, JPEG artifacts, low quality, soft focus",
-    "missing top-down diagram, diagram without solid camera movement arrows, diagram without dashed character movement lines, camera positions without CAM1/CAM2 text labels, character positions without start/end squares, diagram without legend box, character movement drawn as solid line instead of dashed, camera movement drawn as dashed line instead of solid, movement paths without arrowheads, camera FOV cone missing, diagram too small to read labels, unlabeled camera positions, camera positions not in sequential order, character movement not shown in diagram",
+    "missing top-down diagram, diagram without a dashed camera movement path, diagram without solid character movement lines, camera path drawn as solid instead of dashed, character path drawn as dashed instead of solid, camera path without arrowhead, character paths without arrowheads, separate camera markers or CAM1/CAM2 labels on the diagram, diagram without legend, character positions without start/end squares, character movement not matching the blocking in [SHOT BREAKDOWN], camera path not matching the shooting sequence, diagram too small to read labels, diagram covering only one room when the story spans multiple locations, missing shots' locations in the diagram",
     "frames without 镜头N label, frames without duration label, frames without shot type tag, frames without action description, long paragraph captions, English shot type abbreviations WS MS CU ECU OTS on frames",
     "art style drift from reference images, inconsistent rendering across sections, anime when reference is realistic, realistic when reference is anime, cel-shading when reference is painterly, 3D render when reference is 2D, watercolor when reference is digital illustration, different line treatment from reference, different color saturation from reference, different shading style from reference, mixed art styles, inconsistent brush strokes between frames, mixing 2D and 3D, mixing photoreal and stylized",
   ].join(", ");
@@ -2327,7 +2327,7 @@ function buildRegenPitchDeckPrompt(opts: {
     `Shot count: ${shots.length} (keep same count and order unless feedback mentions it)`,
 
     `[PRESERVE from 图1]`,
-    `- Layout: grid of storyboard frames (left-to-right, top-to-bottom), each with caption "镜头N · Ns · 景别(中文) · 动作" (动作短句); bottom-right top-down diagram (room outline + ▲/CAM cameras + square/dashed characters + facing arrows + legend). Do NOT revert to any 6-section pitch-deck layout.`,
+    `- Layout: grid of storyboard frames (left-to-right, top-to-bottom), each with caption "镜头N · Ns · 景别(中文) · 动作" (动作短句); bottom-right top-down diagram (scene zones covering all shots' locations + dashed camera path + solid character paths with facing arrows + legend). Do NOT revert to any 6-section pitch-deck layout.`,
     `- Style: pencil line-art, 16:9, clean printed font, Chinese shot types (远景/中景/近景/特写/过肩), no emoji/①②③, plain labels + Arabic numerals.`,
     `- Same frame/camera numbers continuous 1..N, diagram arrows follow shot order.`,
 
