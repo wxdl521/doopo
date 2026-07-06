@@ -438,10 +438,11 @@ export function NewProjectDialog({
   const estimate = aspects.find((a) => a.id === aspect)?.cost ?? 11;
 
   // ====================================================================
-  // 2026/06:个性化模型选择 UX
-  //   - 把"用户上次选的"置顶到选项列表最上方(per-user,跟 userId 走)
-  //   - 把 pixflow/* 系列标记为"推荐"(Pixflow 直连 OpenAI Images + Gemini,
-  //     b64_json 返回,浏览器无需解析外网域名,适合内网/受限网络)
+  // 个性化模型选择 UX
+  //   - 推荐项(命中下方 IMAGE/VIDEO_RECOMMENDED_PREFIXES)排最前,带 ✨ _recommended
+  //     · 图片推荐:tokenflash / revora / Azure终结点 / tokenhub
+  //     · 视频推荐:丽帧(kuaizi)/ doubao-seedance
+  //   - "用户上次选的"(lastUsed)带 _pinned 标记(🕐);若不在推荐区,排到推荐区之后
   //   - 非法 id(用户 pref 里残留但当前 catalog 没了)静默忽略
   // ====================================================================
   type ModelOption = {
@@ -451,46 +452,68 @@ export function NewProjectDialog({
     _pinned?: boolean;
     _recommended?: boolean;
   };
-  const isPixflow = (id: string) => id.startsWith("pixflow/") || id.startsWith("tokenflash/");
+  // 推荐名单:匹配这些前缀的模型排最前 + 带 ✨
+  const IMAGE_RECOMMENDED_PREFIXES = ["tokenflash/", "revora/", "azure2/", "tokenhub/"];
+  const VIDEO_RECOMMENDED_PREFIXES = ["kuaizi-", "doubao-seedance-"];
+  const isRecommendedModel = (id: string, prefixes: string[]): boolean =>
+    prefixes.some((p) => id.startsWith(p));
   /**
    * 重排模型列表:
-   *   1) 置顶项(lastUsed)放在第 0 位,带 _pinned 标记
-   *   2) 其他项保持原顺序;带 _recommended 标记的 pixflow 选项
-   *   3) 不在合法 catalog 里的 lastUsed 静默丢弃
+   *   1) 推荐项(命中 recommendedPrefixes)排最前,按 prefixes 顺序,带 _recommended
+   *   2) 非推荐项保持原顺序在后
+   *   3) lastUsed(最近使用)带 _pinned 标记;若它不在推荐区,排到推荐区之后(非推荐区最前)
+   *   4) 不在合法 catalog 里的 lastUsed 静默忽略
    */
   function reorderModels<T extends { id: string; label: string; sub?: string }>(
     catalog: T[],
     lastUsedId: string | undefined,
+    recommendedPrefixes: string[],
   ): ModelOption[] {
     const base: ModelOption[] = catalog.map((m) => ({
       ...m,
-      _recommended: isPixflow(m.id),
+      _recommended: isRecommendedModel(m.id, recommendedPrefixes),
     }));
-    if (!lastUsedId) return base;
-    const idx = base.findIndex((m) => m.id === lastUsedId);
-    if (idx === -1) return base;
-    const [picked] = base.splice(idx, 1);
-    picked._pinned = true;
-    picked._recommended = picked._recommended || isPixflow(picked.id);
-    return [picked, ...base];
+    // 推荐区:按 recommendedPrefixes 顺序收集(去重)
+    const recommended: ModelOption[] = [];
+    const seen = new Set<string>();
+    for (const prefix of recommendedPrefixes) {
+      for (const m of base) {
+        if (m.id.startsWith(prefix) && !seen.has(m.id)) {
+          recommended.push(m);
+          seen.add(m.id);
+        }
+      }
+    }
+    const nonRecommended = base.filter((m) => !m._recommended);
+    // lastUsed(_pinned):标记最近使用;非推荐项提到推荐区之后,推荐项保持位置
+    if (lastUsedId) {
+      const pinned = [...recommended, ...nonRecommended].find((m) => m.id === lastUsedId);
+      if (pinned) {
+        pinned._pinned = true;
+        if (!pinned._recommended) {
+          const i = nonRecommended.indexOf(pinned);
+          if (i !== -1) nonRecommended.splice(i, 1);
+          return [...recommended, pinned, ...nonRecommended];
+        }
+      }
+    }
+    return [...recommended, ...nonRecommended];
   }
 
   // 每次 render 都按"当前 storyboardModel/sceneModel/videoModel"
-  // 倒推出"上次用的"用于置顶 —— 也就是用户当前正在看 / 改的值就视为置顶项。
-  // 这样 (a) 用户没历史 → 当前默认值置顶;(b) 用户改完 select → 新值立即置顶;
-  // (c) 即便 prefs 被清了,本会话仍能看到自己当前的选项在顶上。
+  // 倒推出"上次用的"用于 _pinned 标记 —— 也就是用户当前正在看 / 改的值就视为最近使用。
   const orderedStoryboardModels = useMemo(
-    () => reorderModels(storyboardModels, storyboardModel),
+    () => reorderModels(storyboardModels, storyboardModel, IMAGE_RECOMMENDED_PREFIXES),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [storyboardModel],
   );
   const orderedSceneModels = useMemo(
-    () => reorderModels(sceneModels, sceneModel),
+    () => reorderModels(sceneModels, sceneModel, IMAGE_RECOMMENDED_PREFIXES),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [sceneModel],
   );
   const orderedVideoModels = useMemo(
-    () => reorderModels(realVideoModels, videoModel),
+    () => reorderModels(realVideoModels, videoModel, VIDEO_RECOMMENDED_PREFIXES),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [videoModel],
   );

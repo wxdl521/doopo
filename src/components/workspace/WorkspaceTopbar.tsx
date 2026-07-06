@@ -244,7 +244,7 @@ export default function WorkspaceTopbar({
           onClick={toggleLang}
           className="px-2 py-1 text-xs rounded-md border border-border text-text-secondary hover:text-text-primary inline-flex items-center gap-1"
         >
-          {lang === "zh" ? "中文" : "EN"} <ChevronDown size={12} />
+          Language <ChevronDown size={12} />
         </button>
         {/* 2026/06:查看提示词 toggle —— 开启后所有生成按钮变成"展示 prompt"而不是真正生成 */}
         {onToggleViewPromptsMode && (
