@@ -60,9 +60,15 @@ export const uploadScriptCover = createServerFn({ method: "POST" })
         return { url: "", error: `storage upload failed: ${uploadErr.message}` };
       }
 
-      // 4) 取 public URL。
-      const { data: pub } = supabase.storage.from("script-covers").getPublicUrl(path);
-      return { url: pub?.publicUrl || "", model: generated.model };
+      // 4) 取签名 URL(bucket 已改为私有,仅所有者可读)。
+      //    有效期取 1 年 (~31,536,000s),够长以便前端缓存展示。
+      const { data: signed, error: signErr } = await supabase.storage
+        .from("script-covers")
+        .createSignedUrl(path, 60 * 60 * 24 * 365);
+      if (signErr || !signed?.signedUrl) {
+        return { url: "", error: `signed url failed: ${signErr?.message ?? "unknown"}` };
+      }
+      return { url: signed.signedUrl, model: generated.model };
     } catch (e: any) {
       console.error("[uploadScriptCover] unhandled:", e);
       return { url: "", error: `unhandled: ${e?.message ?? String(e)}` };
