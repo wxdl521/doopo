@@ -121,7 +121,7 @@ type Message =
       groupId: string;
       method: "shots" | "storyboard";
       title: string;
-      prompt: string;
+      previewPrompt: string;
       /** 卡片展示的参考图(带 label:首帧/尾帧/分镜图N/故事板/人物·名/场景·名/道具·名) */
       images: { url: string; label: string }[];
       extra?: Record<string, string>;
@@ -290,7 +290,7 @@ export type ZopiaChatPanelHandle = {
     groupId: string;
     method: "shots" | "storyboard";
     title: string;
-    prompt: string;
+    previewPrompt: string;
     images: { url: string; label: string }[];
     extra?: Record<string, string>;
   }) => void;
@@ -863,7 +863,7 @@ const ZopiaChatPanel = forwardRef<
           groupId: payload.groupId,
           method: payload.method,
           title: payload.title,
-          prompt: payload.prompt,
+          previewPrompt: payload.previewPrompt,
           images: payload.images,
           extra: payload.extra,
           status: "pending",
@@ -1672,7 +1672,7 @@ const ZopiaChatPanel = forwardRef<
                       {t.zp_video_confirm_show_prompt}
                     </summary>
                     <pre className="mt-1 max-h-[200px] overflow-y-auto whitespace-pre-wrap break-words text-xs text-text-secondary bg-bg-surface border border-border rounded-md p-2 font-mono leading-relaxed">
-                      {m.prompt}
+                      {m.previewPrompt}
                     </pre>
                   </details>
                   <div className="flex items-center gap-2 pt-1 flex-wrap">

@@ -4467,6 +4467,8 @@ function WorkspacePage() {
   // 例外:开启"查看提示词"模式时仍弹原 promptPreview modal(保留旧行为)。
   type VideoGenPayload = {
     prompt: string;
+    /** 卡片预览用(精简版,隐藏技术指令块:风格锁/约束等);实际生成用 prompt */
+    previewPrompt: string;
     firstFrame?: string;
     lastFrame?: string;
     referenceUrls: string[];
@@ -4588,26 +4590,39 @@ function WorkspacePage() {
       .join(" → ");
     // 注入项目视觉风格
     const videoStyleSpec = resolveProjectStyle(project?.style);
-    const prompt = [
-      `[Storyboard sequence: ${group.plotText || ""}]`,
-      ``,
-      `Shot breakdown: ${shotDescriptions}`,
-      ``,
-      `Render as a single continuous video clip that flows through all ${shotImagesList.length} shots in order.`,
-      `Camera transitions, lighting continuity, and character appearance MUST stay consistent across all shots.`,
-      `Cinematic motion, smooth camera movement, 24fps.`,
-      ``,
-      buildStyleLock(videoStyleSpec, "scene"),
-      ``,
-      referenceUrls.length > 0
-        ? `[IMPORTANT] The reference images provided are storyboard thumbnails (sketch/line-art), but your output MUST be rendered in the project's visual style described above — NOT in sketch/line-art style. Full color, full rendering, matching the style fingerprint exactly.`
-        : `[IMPORTANT] The ${firstFrame && lastFrame ? "first and last frame" : "first frame"} image provided is a storyboard thumbnail (sketch/line-art), but your output MUST be rendered in the project's visual style described above — NOT in sketch/line-art style. Full color, full rendering, matching the style fingerprint exactly.`,
-    ]
+    // 2026/07:parts 标记 tech 的项是给 AI 的技术指令(风格锁),预览时隐藏
+    // (previewPrompt 只含核心可更改部分),实际生成用完整 prompt。
+    const parts: { text: string; tech?: boolean }[] = [
+      { text: `[Storyboard sequence: ${group.plotText || ""}]` },
+      { text: `Shot breakdown: ${shotDescriptions}` },
+      {
+        text: `Render as a single continuous video clip that flows through all ${shotImagesList.length} shots in order.`,
+      },
+      {
+        text: `Camera transitions, lighting continuity, and character appearance MUST stay consistent across all shots.`,
+      },
+      { text: `Cinematic motion, smooth camera movement, 24fps.` },
+      { text: buildStyleLock(videoStyleSpec, "scene"), tech: true },
+      {
+        text:
+          referenceUrls.length > 0
+            ? `[IMPORTANT] The reference images provided are storyboard thumbnails (sketch/line-art), but your output MUST be rendered in the project's visual style described above — NOT in sketch/line-art style. Full color, full rendering, matching the style fingerprint exactly.`
+            : `[IMPORTANT] The ${firstFrame && lastFrame ? "first and last frame" : "first frame"} image provided is a storyboard thumbnail (sketch/line-art), but your output MUST be rendered in the project's visual style described above — NOT in sketch/line-art style. Full color, full rendering, matching the style fingerprint exactly.`,
+      },
+    ];
+    const prompt = parts
+      .map((p) => p.text)
+      .filter(Boolean)
+      .join("\n");
+    const previewPrompt = parts
+      .filter((p) => !p.tech)
+      .map((p) => p.text)
       .filter(Boolean)
       .join("\n");
 
     return {
       prompt,
+      previewPrompt,
       firstFrame,
       lastFrame,
       referenceUrls,
@@ -4727,33 +4742,56 @@ function WorkspacePage() {
 
     // 注入项目视觉风格
     const videoStyleSpec2 = resolveProjectStyle(project?.style);
-    const prompt = [
-      `[STORYBOARD-DRIVEN VIDEO GENERATION]`,
-      `The attached reference images include: (1) a complete director's storyboard / pitch deck for this scene containing shared creative direction, character & style reference, environment + top-down camera diagram, multiple numbered storyboard frames showing the shot sequence, lighting/mood notes; (2) individual shot thumbnails if available; (3) character / scene / prop reference images for identity and style consistency.`,
-      ``,
-      `Your task: produce a single continuous video clip that **brings the storyboard to life** — following the shot sequence, camera positions, lighting transitions, and overall mood as laid out in the storyboard. Use the storyboard's frame breakdown as the structural guide for what happens when. Use the additional reference images to maintain character identity, environment consistency, and prop accuracy.`,
-      ``,
-      `[NARRATIVE REFERENCE — plot context, secondary]`,
-      group.plotText || "(无剧情摘要)",
-      ``,
-      shotDescriptions
-        ? `[SHOT BREAKDOWN — for additional sequence hints]\n${shotDescriptions}`
-        : "",
-      ``,
-      buildStyleLock(videoStyleSpec2, "scene"),
-      ``,
-      `[CONSTRAINTS]`,
-      `- Render as ONE continuous video that flows through the storyboard's shot sequence in order`,
-      `- Character appearance, lighting continuity, and environment must stay consistent across the clip (follow the storyboard's reference panels and additional reference images)`,
-      `- Cinematic motion, smooth camera movement, ${(group.endSec - group.startSec).toFixed(0)}s duration target`,
-      `- The attached storyboard image is a sketch/line-art reference for composition ONLY. Your output MUST be rendered in the project's visual style described above — full color, full rendering, NOT line-art, NOT sketch.`,
-      `- 24fps, polished post-processing matching the style's mood notes`,
-    ]
+    // 2026/07:parts 标记 tech 的项是给 AI 的技术指令(模式标记/风格锁/约束),
+    // 预览时隐藏(previewPrompt 只含核心可更改部分),实际生成用完整 prompt。
+    const parts: { text: string; tech?: boolean }[] = [
+      { text: `[STORYBOARD-DRIVEN VIDEO GENERATION]`, tech: true },
+      {
+        text: `The attached reference images include: (1) a complete director's storyboard / pitch deck for this scene containing shared creative direction, character & style reference, environment + top-down camera diagram, multiple numbered storyboard frames showing the shot sequence, lighting/mood notes; (2) individual shot thumbnails if available; (3) character / scene / prop reference images for identity and style consistency.`,
+      },
+      {
+        text: `Your task: produce a single continuous video clip that **brings the storyboard to life** — following the shot sequence, camera positions, lighting transitions, and overall mood as laid out in the storyboard. Use the storyboard's frame breakdown as the structural guide for what happens when. Use the additional reference images to maintain character identity, environment consistency, and prop accuracy.`,
+      },
+      { text: `[NARRATIVE REFERENCE — plot context, secondary]` },
+      { text: group.plotText || "(无剧情摘要)" },
+      {
+        text: shotDescriptions
+          ? `[SHOT BREAKDOWN — for additional sequence hints]\n${shotDescriptions}`
+          : "",
+      },
+      { text: buildStyleLock(videoStyleSpec2, "scene"), tech: true },
+      { text: `[CONSTRAINTS]`, tech: true },
+      {
+        text: `- Render as ONE continuous video that flows through the storyboard's shot sequence in order`,
+        tech: true,
+      },
+      {
+        text: `- Character appearance, lighting continuity, and environment must stay consistent across the clip (follow the storyboard's reference panels and additional reference images)`,
+        tech: true,
+      },
+      {
+        text: `- Cinematic motion, smooth camera movement, ${(group.endSec - group.startSec).toFixed(0)}s duration target`,
+        tech: true,
+      },
+      {
+        text: `- The attached storyboard image is a sketch/line-art reference for composition ONLY. Your output MUST be rendered in the project's visual style described above — full color, full rendering, NOT line-art, NOT sketch.`,
+        tech: true,
+      },
+      { text: `- 24fps, polished post-processing matching the style's mood notes`, tech: true },
+    ];
+    const prompt = parts
+      .map((p) => p.text)
+      .filter(Boolean)
+      .join("\n");
+    const previewPrompt = parts
+      .filter((p) => !p.tech)
+      .map((p) => p.text)
       .filter(Boolean)
       .join("\n");
 
     return {
       prompt,
+      previewPrompt,
       referenceUrls,
       images,
       extra: {
@@ -4895,7 +4933,7 @@ function WorkspacePage() {
       groupId,
       method: "shots",
       title: `第 ${group.index} 组 · 按分镜图生成视频`,
-      prompt: payload.prompt,
+      previewPrompt: payload.previewPrompt,
       images: payload.images,
       extra: payload.extra,
     });
@@ -4941,7 +4979,7 @@ function WorkspacePage() {
       groupId,
       method: "storyboard",
       title: `第 ${group.index} 组 · 按故事板生成视频`,
-      prompt: payload.prompt,
+      previewPrompt: payload.previewPrompt,
       images: payload.images,
       extra: payload.extra,
     });
