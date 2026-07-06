@@ -14,7 +14,9 @@ const StageEnum = z.enum([
 
 const InputSchema = z.object({
   stage: StageEnum,
-  userPrompt: z.string().min(1).max(4000),
+  // 承载整集剧本文本(character-extract / scene / prop-extract 阶段),
+  // 一集剧本常上万字,4000 会直接校验失败。qwen-plus 上下文充足,放宽到 30000。
+  userPrompt: z.string().min(1).max(30000),
   // Lightweight context from the workspace so later stages can build on earlier ones.
   context: z
     .object({
