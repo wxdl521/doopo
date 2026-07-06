@@ -134,6 +134,11 @@ export const IMAGE_MODELS: ImageModelOption[] = [
     sub: "[MeridianAI·OpenAI] Image2 · T2I/I2I",
   },
 
+  // ---- [汇流 Confluo · OpenAI 兼容] models.iystd.com → /v1/images/generations|edits ----
+  //  2026/07 接入:OpenAI 兼容 gpt-image-2 中转
+  { key: "", label: "—— [汇流 Confluo · OpenAI 兼容] ——", sub: undefined, legacy: true },
+  { key: "confluo/gpt-image-2", label: "GPT Image 2", sub: "[汇流·OpenAI] Image2 · T2I/I2I" },
+
   // ---- [vapeur.ai · OpenAI 兼容] → /v1/images/generations ----
   { key: "", label: "—— [vapeur.ai · OpenAI 兼容] ——", sub: undefined, legacy: true },
   { key: "vapeur/gpt-image-2", label: "GPT Image 2", sub: "[vapeur·OpenAI] Image2 · T2I/I2I" },

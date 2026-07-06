@@ -167,6 +167,14 @@ const imageModelOptions = [
     sub: "MeridianAI · OpenAI · Image2 · T2I/I2I",
   },
 
+  // ---- 汇流 Confluo(OpenAI 兼容)----
+  { id: "__sep_confluo__", label: "—— 汇流 Confluo(OpenAI 兼容)——", sub: "" },
+  {
+    id: "confluo/gpt-image-2",
+    label: "GPT Image 2 (汇流)",
+    sub: "汇流 · OpenAI · Image2 · T2I/I2I",
+  },
+
   // ---- vapeur.ai(OpenAI 兼容)----
   { id: "__sep_vapeur__", label: "—— vapeur.ai ——", sub: "" },
   {
@@ -265,6 +273,24 @@ const videoModels = [
     id: "vapeur-doubao-seedance-2-0-fast-260128",
     label: "Seedance 2.0 Fast (vapeur)",
     sub: "vapeur.ai · Seedance 2.0 Fast · 720p",
+  },
+
+  // ---- 汇流 Confluo(OpenAI 兼容 · Seedance,需 CONFLUO_API_KEY)----
+  { id: "__video_sep_confluo__", label: "—— 汇流 Confluo(中转 Seedance)——", sub: "" },
+  {
+    id: "confluo-doubao-seedance-2-0-260128",
+    label: "Seedance 2.0 (汇流)",
+    sub: "汇流 · 1080p · 多模态",
+  },
+  {
+    id: "confluo-doubao-seedance-2-0-fast-260128",
+    label: "Seedance 2.0 Fast (汇流)",
+    sub: "汇流 · 720p · 快速版",
+  },
+  {
+    id: "confluo-doubao-seedance-2-0-mini-260615",
+    label: "Seedance 2.0 Mini (汇流)",
+    sub: "汇流 · 720p · 轻量版",
   },
 
   // ---- 可灵 Kling AI(快手,需 KLING_API_KEY)----

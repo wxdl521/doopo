@@ -55,7 +55,7 @@ const DASHSCOPE_TASK_GET = "https://dashscope.aliyuncs.com/api/v1/tasks/";
  */
 export function getVideoBackend(
   modelId: string | null | undefined,
-): "ark" | "dashscope" | "jimeng" | "kuaizi" | "toapis" | "k99" | "vapeur" | "shuci" | "kling" {
+): "ark" | "dashscope" | "jimeng" | "kuaizi" | "toapis" | "k99" | "vapeur" | "shuci" | "kling" | "confluo" {
   const m = (modelId || "").trim().toLowerCase();
   if (m.startsWith("doubao-seedance-") || m.startsWith("seedance-")) return "ark";
   if (m.startsWith("shuci-")) return "shuci";
@@ -65,6 +65,7 @@ export function getVideoBackend(
   if (m.startsWith("k99-")) return "k99";
   if (m.startsWith("vapeur-")) return "vapeur";
   if (m.startsWith("kling-")) return "kling";
+  if (m.startsWith("confluo-")) return "confluo";
   return "dashscope";
 }
 
@@ -74,12 +75,20 @@ export const SHUCIYUAN_VIDEO_MODELS = {
   "shuci-seedance-2-0-mini": "Seedance 2.0 Mini (数安词源)",
 } as const;
 
+// 汇流 Confluo(OpenAI 兼容聚合网关 models.iystd.com,中转 doubao-seedance)
+export const CONFLUO_VIDEO_MODELS = {
+  "confluo-doubao-seedance-2-0-260128": "Seedance 2.0 (汇流)",
+  "confluo-doubao-seedance-2-0-fast-260128": "Seedance 2.0 Fast (汇流)",
+  "confluo-doubao-seedance-2-0-mini-260615": "Seedance 2.0 Mini (汇流)",
+} as const;
+
 export const SEEDANCE_MODELS = {
   "doubao-seedance-2-0-260128": "Doubao Seedance 2.0",
   "doubao-seedance-2-0-fast-260128": "Doubao Seedance 2.0 Fast (720p)",
   "doubao-seedance-1-0-pro-250528": "Doubao Seedance 1.0 Pro (T2V)",
   "doubao-seedance-1-0-lite-i2v-250428": "Doubao Seedance 1.0 Lite (I2V)",
   ...SHUCIYUAN_VIDEO_MODELS,
+  ...CONFLUO_VIDEO_MODELS,
   ...KLING_VIDEO_MODELS,
 } as const;
 
@@ -1271,6 +1280,162 @@ async function k99Poll(input: {
   }
 }
 
+// ====================================================================
+// 汇流 Confluo 端实现 —— OpenAI 兼容聚合网关,中转 doubao-seedance
+//
+//  统一调用地址 https://models.iystd.com/v1,所有模型共用同一密钥,
+//  靠请求里的 model 字段区分。视频端点(实测 2026/07):
+//   - 提交:POST /v1/videos        → 返回 { id | task_id | data:{id} }
+//   - 查询:GET  /v1/videos/{id}   → 返回 { status, url | video_url | ... }
+//  错误格式:{ code, message, data }
+//
+//  Model id 约定:`confluo-doubao-seedance-*`,剥离 `confluo-` 前缀后
+//  upstream model = doubao-seedance-2-0-*(汇流模型名)。
+// ====================================================================
+
+const CONFLUO_DEFAULT_BASE_URL = "https://models.iystd.com";
+
+function getConfluoVideoConfig() {
+  return {
+    apiKey: process.env.CONFLUO_API_KEY,
+    baseUrl: (process.env.CONFLUO_BASE_URL || CONFLUO_DEFAULT_BASE_URL).replace(/\/+$/, ""),
+  };
+}
+
+/** 从 model id 剥离 `confluo-` 前缀,得到上游 model 名 */
+function confluoModelToUpstream(modelId: string): string {
+  return modelId.replace(/^confluo-/i, "");
+}
+
+/** 汇流 status 字符串 → 项目内 SeedanceProgress */
+function confluoStatusToProgress(s: string | undefined): SeedanceProgress {
+  const v = (s || "").toLowerCase();
+  if (v === "completed" || v === "succeeded" || v === "success") return "succeeded";
+  if (v === "failed" || v === "error") return "failed";
+  if (v === "cancelled" || v === "canceled") return "cancelled";
+  if (v === "processing" || v === "in_progress" || v === "running") return "running";
+  return "queued"; // 未知 / queued / pending
+}
+
+async function confluoSubmit(input: {
+  model: string;
+  prompt: string;
+  media: DashScopeMediaItem[];
+  ratio?: SeedanceRatio;
+  duration?: number;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<{ ok: true; taskId: string; model: string } | { ok: false; error: string }> {
+  const upstreamModel = confluoModelToUpstream(input.model);
+  const body: Record<string, unknown> = {
+    model: upstreamModel,
+    prompt: input.prompt,
+  };
+  // 首帧图(Sora 风格用 image 字段)
+  const firstFrame = input.media.find((m) => m.type === "first_frame")?.url;
+  if (firstFrame) body.image = firstFrame;
+  if (input.ratio) body.size = input.ratio;
+  if (typeof input.duration === "number") body.duration = input.duration;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const res = await fetch(`${input.baseUrl}/v1/videos`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${input.apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    const text = await res.text().catch(() => "");
+    if (!res.ok)
+      return { ok: false, error: `[confluo] submit ${res.status}: ${text.slice(0, 300)}` };
+    let json: {
+      id?: string;
+      task_id?: string;
+      data?: { id?: string; task_id?: string };
+      error?: { message?: string };
+      message?: string;
+    } = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    // 汇流可能用多种字段返回 task id:id / task_id / data.id / data.task_id
+    const taskId = json.id || json.task_id || json.data?.id || json.data?.task_id;
+    if (!taskId) {
+      const errMsg = json.error?.message || json.message || text.slice(0, 200);
+      return { ok: false, error: `[confluo] no task id: ${errMsg}` };
+    }
+    return { ok: true, taskId, model: input.model };
+  } catch (e) {
+    clearTimeout(timeout);
+    const msg =
+      e instanceof Error
+        ? e.name === "AbortError"
+          ? "submit timeout (30s)"
+          : e.message
+        : "fetch failed";
+    return { ok: false, error: `[confluo] network: ${msg}` };
+  }
+}
+
+async function confluoPoll(input: {
+  taskId: string;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<
+  | { ok: true; status: SeedanceProgress; videoUrl: string | null; raw: any }
+  | { ok: false; error: string; status?: SeedanceProgress; raw?: any }
+> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const res = await fetch(`${input.baseUrl}/v1/videos/${encodeURIComponent(input.taskId)}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${input.apiKey}` },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    const text = await res.text().catch(() => "");
+    if (!res.ok) return { ok: false, error: `[confluo] poll ${res.status}: ${text.slice(0, 300)}` };
+    let json: any = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    const status = confluoStatusToProgress(json.status || json.data?.status);
+    // 视频 URL 多字段 fallback(Sora 风格主字段 url;汇流也可能用 video_url /
+    // content.video_url / result.data[0].url / data.url)
+    const videoUrl =
+      json.url ||
+      json.video_url ||
+      json.video?.url ||
+      json.output?.url ||
+      json.content?.video_url ||
+      json.result?.data?.[0]?.url ||
+      json.data?.url ||
+      json.data?.video_url ||
+      null;
+    return {
+      ok: true,
+      status,
+      videoUrl,
+      raw: { error: { message: json.error?.message || json.message || "" }, ...json },
+    };
+  } catch (e) {
+    clearTimeout(timeout);
+    const msg =
+      e instanceof Error
+        ? e.name === "AbortError"
+          ? "poll timeout (30s)"
+          : e.message
+        : "fetch failed";
+    return { ok: false, error: `[confluo] poll network: ${msg}` };
+  }
+}
+
 type SubmitInput = {
   model: string;
   prompt: string;
@@ -1294,7 +1459,8 @@ type VideoBackend =
   | "k99"
   | "vapeur"
   | "shuci"
-  | "kling";
+  | "kling"
+  | "confluo";
 
 // ====================================================================
 // vapeur.ai 端实现 —— 透传火山方舟 ARK Seedance 原生格式
@@ -1645,6 +1811,27 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
       ? { ok: true, taskId: r.taskId, model: input.model, backend: "kling" }
       : { ok: false, error: r.error };
   }
+  if (backend === "confluo") {
+    const { apiKey, baseUrl } = getConfluoVideoConfig();
+    if (!apiKey) {
+      return {
+        ok: false,
+        error: "[confluo] 缺少 CONFLUO_API_KEY,请在 Cloudflare Secrets 或 .env.local 中配置后再试。",
+      };
+    }
+    const r = await confluoSubmit({
+      model: input.model,
+      prompt: input.prompt,
+      media: input.media,
+      ratio: input.ratio,
+      duration: input.duration,
+      apiKey,
+      baseUrl,
+    });
+    return r.ok
+      ? { ok: true, taskId: r.taskId, model: input.model, backend: "confluo" }
+      : { ok: false, error: r.error };
+  }
   // DashScope
   const { apiKey } = getDashScopeConfig();
   if (!apiKey) return { ok: false, error: "Qwen / DASHSCOPE_API_KEY not configured" };
@@ -1712,6 +1899,11 @@ async function pollVideoTask(input: PollInput): Promise<PollResult> {
     if (r.ok) return r as PollResult;
     return callKlingVideoPoll({ taskId: input.taskId, endpoint: "text2video" }) as Promise<PollResult>;
   }
+  if (input.backend === "confluo") {
+    const { apiKey, baseUrl } = getConfluoVideoConfig();
+    if (!apiKey) return { ok: false, error: "[confluo] 缺少 CONFLUO_API_KEY" };
+    return confluoPoll({ taskId: input.taskId, apiKey, baseUrl });
+  }
   const { apiKey } = getDashScopeConfig();
   if (!apiKey) return { ok: false, error: "Qwen / DASHSCOPE_API_KEY not configured" };
   return dashscopePoll({ taskId: input.taskId, apiKey });
@@ -1770,7 +1962,7 @@ export const submitVideoTaskFn = createServerFn({ method: "POST" })
 
 const PollServerInput = z.object({
   taskId: z.string().min(1).max(200),
-  backend: z.enum(["ark", "dashscope", "jimeng", "kuaizi", "toapis", "k99", "vapeur", "shuci", "kling"]),
+  backend: z.enum(["ark", "dashscope", "jimeng", "kuaizi", "toapis", "k99", "vapeur", "shuci", "kling", "confluo"]),
 });
 
 export const pollVideoTaskFn = createServerFn({ method: "POST" })
@@ -1823,7 +2015,13 @@ export const generateVideo = createServerFn({ method: "POST" })
 
     const model =
       data.model ||
-      (backend === "ark" || backend === "shuci" ? ARK_DEFAULT_MODEL : backend === "kling" ? "kling-v2-6" : "happyhorse-1.0-i2v");
+      (backend === "ark" || backend === "shuci"
+        ? ARK_DEFAULT_MODEL
+        : backend === "kling"
+          ? "kling-v2-6"
+          : backend === "confluo"
+            ? "confluo-doubao-seedance-2-0-mini-260615"
+            : "happyhorse-1.0-i2v");
 
     // 1) 提交
     const submit = await submitVideoTask({
