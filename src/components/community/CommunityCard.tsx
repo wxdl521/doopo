@@ -1,17 +1,14 @@
 import { Link } from "@tanstack/react-router";
 import { Heart, Eye, FileText, User, MapPin, Package, Film } from "lucide-react";
 import type { PostKind } from "@/lib/community.functions";
+import { useLanguage } from "@/i18n/LanguageContext";
 
-const KIND_META: Record<PostKind, { label: string; icon: typeof FileText; gradient: string }> = {
-  script: {
-    label: "剧本",
-    icon: FileText,
-    gradient: "from-indigo-600 via-violet-700 to-slate-950",
-  },
-  character: { label: "角色", icon: User, gradient: "from-rose-500 via-pink-700 to-zinc-950" },
-  scene: { label: "场景", icon: MapPin, gradient: "from-cyan-500 via-teal-700 to-slate-950" },
-  prop: { label: "道具", icon: Package, gradient: "from-amber-500 via-orange-700 to-zinc-950" },
-  comic: { label: "漫剧", icon: Film, gradient: "from-fuchsia-500 via-purple-700 to-indigo-950" },
+const KIND_META: Record<PostKind, { icon: typeof FileText; gradient: string }> = {
+  script: { icon: FileText, gradient: "from-indigo-600 via-violet-700 to-slate-950" },
+  character: { icon: User, gradient: "from-rose-500 via-pink-700 to-zinc-950" },
+  scene: { icon: MapPin, gradient: "from-cyan-500 via-teal-700 to-slate-950" },
+  prop: { icon: Package, gradient: "from-amber-500 via-orange-700 to-zinc-950" },
+  comic: { icon: Film, gradient: "from-fuchsia-500 via-purple-700 to-indigo-950" },
 };
 
 export type CommunityCardItem = {
@@ -25,8 +22,16 @@ export type CommunityCardItem = {
 };
 
 export default function CommunityCard({ item }: { item: CommunityCardItem }) {
+  const { t } = useLanguage();
   const meta = KIND_META[item.kind];
   const Icon = meta.icon;
+  const kindLabels: Record<PostKind, string> = {
+    script: t.community_kind_script,
+    character: t.community_kind_character,
+    scene: t.community_kind_scene,
+    prop: t.community_kind_prop,
+    comic: t.community_kind_comic,
+  };
   const gradient = item.cover_gradient || `bg-gradient-to-br ${meta.gradient}`;
   const isClass = gradient.startsWith("bg-");
   return (
@@ -50,7 +55,7 @@ export default function CommunityCard({ item }: { item: CommunityCardItem }) {
         <div className="absolute inset-0 bg-gradient-to-t from-black/70 via-black/20 to-transparent" />
         <div className="absolute inset-0 flex flex-col justify-between p-4">
           <span className="self-start inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-black/50 text-white backdrop-blur">
-            <Icon size={10} /> {meta.label}
+            <Icon size={10} /> {kindLabels[item.kind]}
           </span>
           <div>
             <h3 className="font-display text-lg md:text-xl font-bold text-white drop-shadow line-clamp-2">
@@ -71,7 +76,7 @@ export default function CommunityCard({ item }: { item: CommunityCardItem }) {
             <Eye size={12} /> {item.views_count}
           </span>
         </span>
-        <span className="uppercase tracking-wider">社区</span>
+        <span className="uppercase tracking-wider">{t.community_badge}</span>
       </div>
     </Link>
   );

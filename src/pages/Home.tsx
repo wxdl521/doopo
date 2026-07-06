@@ -110,18 +110,18 @@ export default function Home() {
       {/* Showcase */}
       <section>
         <div className="flex items-center justify-between mb-5">
-          <h2 className="font-display text-2xl font-bold">社区精选</h2>
+          <h2 className="font-display text-2xl font-bold">{t.community_title}</h2>
           <Link to="/community" className="text-sm text-accent hover:underline">
-            查看全部
+            {t.home_community_view_all}
           </Link>
         </div>
         {community.length === 0 ? (
           <div className="panel p-8 text-center text-text-muted text-sm">
-            还没有社区作品。前往
+            {t.home_community_empty_pre}
             <Link to="/scripts" className="text-accent mx-1">
-              剧本库
+              {t.scripts_library}
             </Link>
-            分享你的第一个作品。
+            {t.home_community_empty_post}
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5 mb-12">

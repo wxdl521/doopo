@@ -45,7 +45,7 @@ export default function Header() {
     { to: "/zoclaw", label: t.nav_openclaw, accent: true },
     { to: "/team", label: t.nav_team },
     { to: "/admin", label: t.nav_admin },
-    { to: "/community", label: "社区" },
+    { to: "/community", label: t.nav_community },
     { to: "/showcase", label: t.nav_showcase },
     { to: "/pricing", label: t.nav_pricing },
   ];
@@ -99,7 +99,7 @@ export default function Header() {
           <div className="relative group flex-shrink-0">
             <button className="flex items-center gap-1 md:gap-1.5 px-2.5 md:px-3 py-1.5 rounded-full text-sm font-medium border border-border bg-bg-elevated hover:border-accent/50 hover:text-accent text-text-secondary transition">
               <Globe size={14} />
-              <span>{lang === "zh" ? "中文" : lang === "en" ? "EN" : lang}</span>
+              <span>Language</span>
               <ChevronDown size={12} className="group-hover:rotate-180 transition-transform" />
             </button>
             <div className="absolute right-0 top-full mt-1.5 py-1.5 rounded-xl border border-border bg-bg-surface shadow-lg opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all duration-200 min-w-[120px] max-h-[300px] overflow-y-auto">

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { X, Globe, Link2, Lock, Loader2, Check, Copy } from "lucide-react";
 import { useServerFn } from "@tanstack/react-start";
 import { publishPost, type PostKind, type PostVisibility } from "@/lib/community.functions";
+import { useLanguage } from "@/i18n/LanguageContext";
 
 type Props = {
   open: boolean;
@@ -14,13 +15,14 @@ type Props = {
   payload: unknown;
 };
 
-const VIS: { value: PostVisibility; label: string; desc: string; icon: typeof Globe }[] = [
-  { value: "public", label: "公开", desc: "出现在社区精选与列表", icon: Globe },
-  { value: "unlisted", label: "仅链接可见", desc: "不进入列表，知道链接者可看", icon: Link2 },
-  { value: "private", label: "私有", desc: "仅自己可见，可稍后改公开", icon: Lock },
+const VIS: { value: PostVisibility; icon: typeof Globe }[] = [
+  { value: "public", icon: Globe },
+  { value: "unlisted", icon: Link2 },
+  { value: "private", icon: Lock },
 ];
 
 export default function ShareDialog(p: Props) {
+  const { t } = useLanguage();
   const [title, setTitle] = useState(p.defaultTitle);
   const [summary, setSummary] = useState(p.defaultSummary ?? "");
   const [visibility, setVisibility] = useState<PostVisibility>("public");
@@ -33,6 +35,12 @@ export default function ShareDialog(p: Props) {
   if (!p.open) return null;
 
   const link = done ? `${window.location.origin}/community/${done.id}` : "";
+
+  const visMeta: Record<PostVisibility, { label: string; desc: string }> = {
+    public: { label: t.share_vis_public, desc: t.share_vis_public_desc },
+    unlisted: { label: t.share_vis_unlisted, desc: t.share_vis_unlisted_desc },
+    private: { label: t.share_vis_private, desc: t.share_vis_private_desc },
+  };
 
   const submit = async () => {
     setSubmitting(true);
@@ -51,7 +59,7 @@ export default function ShareDialog(p: Props) {
       });
       setDone({ id: post.id, visibility: post.visibility });
     } catch (e) {
-      setError((e as Error).message || "发布失败，请重试");
+      setError((e as Error).message || t.share_publish_failed);
     } finally {
       setSubmitting(false);
     }
@@ -72,12 +80,10 @@ export default function ShareDialog(p: Props) {
 
         {!done ? (
           <>
-            <h3 className="font-display text-xl font-bold mb-1">分享到社区</h3>
-            <p className="text-xs text-text-muted mb-4">
-              发布后将作为社区作品展示，其他用户可以查看并点赞。
-            </p>
+            <h3 className="font-display text-xl font-bold mb-1">{t.share_title}</h3>
+            <p className="text-xs text-text-muted mb-4">{t.share_desc}</p>
 
-            <label className="block text-xs text-text-muted mb-1">标题</label>
+            <label className="block text-xs text-text-muted mb-1">{t.share_field_title}</label>
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
@@ -85,14 +91,14 @@ export default function ShareDialog(p: Props) {
               maxLength={200}
             />
 
-            <label className="block text-xs text-text-muted mb-1">简介（可选）</label>
+            <label className="block text-xs text-text-muted mb-1">{t.share_field_summary}</label>
             <textarea
               value={summary}
               onChange={(e) => setSummary(e.target.value)}
               rows={3}
               maxLength={2000}
               className="input w-full mb-4 resize-none"
-              placeholder="一句话介绍这部作品的亮点…"
+              placeholder={t.share_summary_ph}
             />
 
             <div className="space-y-2 mb-4">
@@ -114,8 +120,8 @@ export default function ShareDialog(p: Props) {
                       className={active ? "text-accent mt-0.5" : "text-text-muted mt-0.5"}
                     />
                     <div>
-                      <div className="text-sm font-semibold">{v.label}</div>
-                      <div className="text-xs text-text-muted">{v.desc}</div>
+                      <div className="text-sm font-semibold">{visMeta[v.value].label}</div>
+                      <div className="text-xs text-text-muted">{visMeta[v.value].desc}</div>
                     </div>
                   </button>
                 );
@@ -126,7 +132,7 @@ export default function ShareDialog(p: Props) {
 
             <div className="flex justify-end gap-2">
               <button onClick={p.onClose} className="btn-ghost text-sm">
-                取消
+                {t.share_cancel}
               </button>
               <button
                 onClick={submit}
@@ -134,7 +140,7 @@ export default function ShareDialog(p: Props) {
                 className="btn-primary text-sm inline-flex items-center gap-1.5 disabled:opacity-60"
               >
                 {submitting && <Loader2 size={14} className="animate-spin" />}
-                发布
+                {t.share_publish}
               </button>
             </div>
           </>
@@ -142,13 +148,12 @@ export default function ShareDialog(p: Props) {
           <>
             <div className="flex items-center gap-2 mb-3">
               <Check size={18} className="text-emerald-400" />
-              <h3 className="font-display text-xl font-bold">发布成功</h3>
+              <h3 className="font-display text-xl font-bold">{t.share_success_title}</h3>
             </div>
             <p className="text-sm text-text-secondary mb-4">
-              {done.visibility === "public" && "作品已公开到社区精选。"}
-              {done.visibility === "unlisted" && "作品仅通过链接可见。"}
-              {done.visibility === "private" &&
-                "作品已保存为私有，可稍后在「我的发布」中改为公开。"}
+              {done.visibility === "public" && t.share_success_public}
+              {done.visibility === "unlisted" && t.share_success_unlisted}
+              {done.visibility === "private" && t.share_success_private}
             </p>
             <div className="flex items-center gap-2 panel p-2 mb-4">
               <input
@@ -167,15 +172,15 @@ export default function ShareDialog(p: Props) {
                 className="btn-ghost text-xs inline-flex items-center gap-1"
               >
                 {copied ? <Check size={12} /> : <Copy size={12} />}
-                {copied ? "已复制" : "复制"}
+                {copied ? t.share_copied : t.share_copy}
               </button>
             </div>
             <div className="flex justify-end gap-2">
               <a href={link} target="_blank" rel="noreferrer" className="btn-ghost text-sm">
-                打开作品
+                {t.share_open}
               </a>
               <button onClick={p.onClose} className="btn-primary text-sm">
-                完成
+                {t.share_done}
               </button>
             </div>
           </>

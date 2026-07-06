@@ -3,32 +3,44 @@ import { useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { listCommunityPosts, type PostKind } from "@/lib/community.functions";
 import CommunityCard, { type CommunityCardItem } from "@/components/community/CommunityCard";
+import { useLanguage } from "@/i18n/LanguageContext";
 
 export const Route = createFileRoute("/community/")({
   component: CommunityIndex,
 });
 
 type Sort = "recent" | "hot" | "likes";
-const SORTS: { value: Sort; label: string }[] = [
-  { value: "hot", label: "最热" },
-  { value: "recent", label: "最新" },
-  { value: "likes", label: "点赞最多" },
-];
-const KINDS: { value: PostKind | "all"; label: string }[] = [
-  { value: "all", label: "全部" },
-  { value: "script", label: "剧本" },
-  { value: "character", label: "角色" },
-  { value: "scene", label: "场景" },
-  { value: "prop", label: "道具" },
-  { value: "comic", label: "漫剧" },
+const SORTS: { value: Sort }[] = [{ value: "hot" }, { value: "recent" }, { value: "likes" }];
+const KINDS: { value: PostKind | "all" }[] = [
+  { value: "all" },
+  { value: "script" },
+  { value: "character" },
+  { value: "scene" },
+  { value: "prop" },
+  { value: "comic" },
 ];
 
 function CommunityIndex() {
+  const { t } = useLanguage();
   const [sort, setSort] = useState<Sort>("hot");
   const [kind, setKind] = useState<PostKind | "all">("all");
   const [items, setItems] = useState<CommunityCardItem[]>([]);
   const [loading, setLoading] = useState(true);
   const list = useServerFn(listCommunityPosts);
+
+  const sortLabels: Record<Sort, string> = {
+    hot: t.community_sort_hot,
+    recent: t.community_sort_recent,
+    likes: t.community_sort_likes,
+  };
+  const kindLabels: Record<PostKind | "all", string> = {
+    all: t.community_kind_all,
+    script: t.community_kind_script,
+    character: t.community_kind_character,
+    scene: t.community_kind_scene,
+    prop: t.community_kind_prop,
+    comic: t.community_kind_comic,
+  };
 
   useEffect(() => {
     setLoading(true);
@@ -40,8 +52,8 @@ function CommunityIndex() {
   return (
     <div className="animate-fade-in space-y-6">
       <div>
-        <h1 className="font-display text-3xl md:text-4xl font-bold">社区精选</h1>
-        <p className="text-text-secondary mt-1">来自创作者们的剧本、角色、场景、道具与漫剧作品。</p>
+        <h1 className="font-display text-3xl md:text-4xl font-bold">{t.community_title}</h1>
+        <p className="text-text-secondary mt-1">{t.community_subtitle}</p>
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
@@ -51,7 +63,7 @@ function CommunityIndex() {
             onClick={() => setSort(s.value)}
             className={`chip !py-2 !px-3.5 text-sm ${sort === s.value ? "chip-active" : ""}`}
           >
-            {s.label}
+            {sortLabels[s.value]}
           </button>
         ))}
         <span className="mx-2 text-text-muted text-xs">·</span>
@@ -61,17 +73,15 @@ function CommunityIndex() {
             onClick={() => setKind(k.value)}
             className={`chip !py-2 !px-3.5 text-sm ${kind === k.value ? "chip-active" : ""}`}
           >
-            {k.label}
+            {kindLabels[k.value]}
           </button>
         ))}
       </div>
 
       {loading ? (
-        <div className="panel p-10 text-center text-text-muted text-sm">加载中…</div>
+        <div className="panel p-10 text-center text-text-muted text-sm">{t.community_loading}</div>
       ) : items.length === 0 ? (
-        <div className="panel p-10 text-center text-text-muted text-sm">
-          还没有作品，做第一个分享者吧。
-        </div>
+        <div className="panel p-10 text-center text-text-muted text-sm">{t.community_empty}</div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-5">
           {items.map((it) => (

@@ -10,6 +10,7 @@ import {
   type CommunityPost,
 } from "@/lib/community.functions";
 import { useAuth } from "@/hooks/useAuth";
+import { useLanguage } from "@/i18n/LanguageContext";
 
 export const Route = createFileRoute("/community/$postId")({
   head: ({ params }) => ({
@@ -33,6 +34,7 @@ function viewerKey(): string {
 }
 
 function PostPage() {
+  const { t } = useLanguage();
   const { postId } = Route.useParams();
   const { isAuthenticated } = useAuth();
   const fetchPost = useServerFn(getPost);
@@ -63,14 +65,14 @@ function PostPage() {
   }, [isAuthenticated, post, postId, checkLiked]);
 
   if (post === "loading") {
-    return <div className="p-10 text-center text-text-muted text-sm">加载中…</div>;
+    return <div className="p-10 text-center text-text-muted text-sm">{t.community_loading}</div>;
   }
   if (!post) {
     return (
       <div className="p-10 text-center text-text-muted">
-        作品不存在或未公开。
+        {t.post_not_found}
         <Link to="/community" className="ml-2 text-accent">
-          返回社区
+          {t.post_back}
         </Link>
       </div>
     );
@@ -79,7 +81,7 @@ function PostPage() {
   const cover = post.cover_gradient;
   const onLike = async () => {
     if (!isAuthenticated) {
-      alert("请先登录后再点赞");
+      alert(t.post_like_login);
       return;
     }
     setLiked((l) => !l);
@@ -108,7 +110,7 @@ function PostPage() {
         to="/community"
         className="inline-flex items-center gap-1 text-sm text-text-muted hover:text-accent mb-4"
       >
-        <ArrowLeft size={14} /> 返回社区
+        <ArrowLeft size={14} /> {t.post_back}
       </Link>
       <div
         className={`rounded-2xl overflow-hidden aspect-video mb-6 ${cover?.startsWith("bg-") ? cover : "bg-gradient-to-br from-indigo-700 via-violet-800 to-slate-950"}`}
@@ -137,7 +139,8 @@ function PostPage() {
             <Heart size={14} fill={likedState ? "currentColor" : "none"} /> {likes}
           </button>
           <button onClick={copyLink} className="btn-ghost inline-flex items-center gap-1">
-            {copied ? <Check size={14} /> : <Share2 size={14} />} {copied ? "已复制链接" : "分享"}
+            {copied ? <Check size={14} /> : <Share2 size={14} />}{" "}
+            {copied ? t.post_link_copied : t.post_share}
           </button>
         </div>
       </div>
@@ -155,6 +158,7 @@ function PostBody({ post }: { post: CommunityPost }) {
 }
 
 function ScriptBody({ payload }: { payload: unknown }) {
+  const { t } = useLanguage();
   const s = (payload ?? {}) as {
     logline?: string;
     premise?: string;
@@ -180,7 +184,9 @@ function ScriptBody({ payload }: { payload: unknown }) {
         <div className="space-y-3">
           {s.episodesText.map((ep) => (
             <div key={ep.epIndex} className="panel p-4">
-              <div className="text-xs text-text-muted mb-2">第 {ep.epIndex} 集</div>
+              <div className="text-xs text-text-muted mb-2">
+                {t.community_episode_n.replace("{n}", String(ep.epIndex))}
+              </div>
               <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed">{ep.text}</pre>
             </div>
           ))}
@@ -203,7 +209,7 @@ function ScriptBody({ payload }: { payload: unknown }) {
       ) : s.content ? (
         <pre className="panel p-4 whitespace-pre-wrap text-sm font-mono">{s.content}</pre>
       ) : (
-        <div className="text-sm text-text-muted">作者未提供详细内容。</div>
+        <div className="text-sm text-text-muted">{t.post_no_content}</div>
       )}
     </div>
   );
