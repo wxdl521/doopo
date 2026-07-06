@@ -136,7 +136,7 @@ export default function WorkspaceTopbar({
                   ))}
                 </>
               ) : (
-                <div className="px-3 py-2 text-xs text-text-muted">暂无集数</div>
+                <div className="px-3 py-2 text-xs text-text-muted">{t.ws_no_episodes}</div>
               )}
               {/* 在下拉最底加"+ 新增集数"——延续已有集数索引,避免新一集重置为 1。
                   哪怕当前 episodeCount=0,这个入口依然可用(用户的第一个集就靠它)。 */}
@@ -151,7 +151,7 @@ export default function WorkspaceTopbar({
                     }}
                     className="w-full text-left px-3 py-1.5 text-sm hover:bg-bg-elevated inline-flex items-center gap-1.5 text-accent font-semibold"
                   >
-                    <Plus size={13} /> 新增集数
+                    <Plus size={13} /> {t.ws_episode_new}
                   </button>
                 </>
               )}
