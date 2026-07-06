@@ -30,8 +30,13 @@ const GENRES = [
   { value: "Horror", key: "script_genre_horror" as const },
   { value: "Fantasy", key: "script_genre_fantasy" as const },
   { value: "Historical", key: "script_genre_historical" as const },
-  { value: "Violence", key: "script_genre_scifi" as const, locked: true, label: "暴力" },
-  { value: "Erotic", key: "script_genre_scifi" as const, locked: true, label: "情色" },
+  {
+    value: "Violence",
+    key: "script_genre_scifi" as const,
+    locked: true,
+    label: "sl_genre_violence",
+  },
+  { value: "Erotic", key: "script_genre_scifi" as const, locked: true, label: "sl_genre_erotic" },
 ];
 const TONES = [
   { value: "Serious", key: "script_tone_serious" as const },
@@ -40,44 +45,44 @@ const TONES = [
   { value: "Romance", key: "script_tone_romance" as const },
   { value: "Horror", key: "script_tone_horror" as const },
 ];
-const MODELS = [
-  // 直连 Google Gemini（使用 Default_Gemini_API_Key）
-  { id: "gemini:gemini-3.5-flash", label: "✨ Gemini 3.5 Flash (默认)" },
-  { id: "gemini:gemini-2.5-flash", label: "✨ Gemini 2.5 Flash" },
-  { id: "gemini:gemini-2.5-pro", label: "✨ Gemini 2.5 Pro" },
-  // OpenRouter 收费模型（使用 OPENROUTER_API_KEY，按量计费）
-  { id: "openrouter:anthropic/claude-sonnet-4.5", label: "💎 OpenRouter · Claude Sonnet 4.5" },
-  { id: "openrouter:anthropic/claude-opus-4.1", label: "💎 OpenRouter · Claude Opus 4.1" },
-  { id: "openrouter:anthropic/claude-3.7-sonnet", label: "💎 OpenRouter · Claude 3.7 Sonnet" },
-  { id: "openrouter:anthropic/claude-3.5-haiku", label: "💎 OpenRouter · Claude 3.5 Haiku" },
-  { id: "openrouter:openai/gpt-5", label: "💎 OpenRouter · GPT-5" },
-  { id: "openrouter:openai/gpt-5-mini", label: "💎 OpenRouter · GPT-5 Mini" },
-  { id: "openrouter:openai/gpt-4o", label: "💎 OpenRouter · GPT-4o" },
-  { id: "openrouter:openai/gpt-4o-mini", label: "💎 OpenRouter · GPT-4o Mini" },
-  { id: "openrouter:openai/o1", label: "💎 OpenRouter · OpenAI o1" },
-  { id: "openrouter:openai/o3-mini", label: "💎 OpenRouter · OpenAI o3-mini" },
-  { id: "openrouter:google/gemini-2.5-pro", label: "💎 OpenRouter · Gemini 2.5 Pro" },
-  { id: "openrouter:google/gemini-2.5-flash", label: "💎 OpenRouter · Gemini 2.5 Flash" },
-  { id: "openrouter:x-ai/grok-4", label: "💎 OpenRouter · Grok 4" },
-  { id: "openrouter:x-ai/grok-3", label: "💎 OpenRouter · Grok 3" },
-  { id: "openrouter:deepseek/deepseek-chat-v3.1", label: "💎 OpenRouter · DeepSeek V3.1" },
-  { id: "openrouter:deepseek/deepseek-r1", label: "💎 OpenRouter · DeepSeek R1" },
-  { id: "openrouter:meta-llama/llama-3.3-70b-instruct", label: "💎 OpenRouter · Llama 3.3 70B" },
-  { id: "openrouter:mistralai/mistral-large-2411", label: "💎 OpenRouter · Mistral Large" },
-  { id: "openrouter:qwen/qwen3-max", label: "💎 OpenRouter · Qwen3 Max" },
-  // MiniMax（使用 MINIMAX_API_KEY）
-  { id: "minimax:MiniMax-M2.7", label: "🔵 MiniMax M2.7（备选）" },
-  // 阿里通义千问（使用 Qwen 密钥，DashScope OpenAI 兼容接口）
-  { id: "qwen:qwen3-max", label: "🟣 Qwen3 Max（旗舰）" },
-  { id: "qwen:qwen3-plus", label: "🟣 Qwen3 Plus（均衡）" },
-  { id: "qwen:qwen3-turbo", label: "🟣 Qwen3 Turbo（高速）" },
-  { id: "qwen:qwen3-coder-plus", label: "🟣 Qwen3 Coder Plus（代码/结构化）" },
-  { id: "qwen:qwen-plus", label: "🟣 Qwen Plus（稳定）" },
-  { id: "qwen:qwen-turbo", label: "🟣 Qwen Turbo（轻量）" },
-];
+
+function getModels(t: ReturnType<typeof useLanguage>["t"]) {
+  return [
+    { id: "gemini:gemini-3.5-flash", label: `✨ Gemini 3.5 Flash ${t.sl_model_default}` },
+    { id: "gemini:gemini-2.5-flash", label: "✨ Gemini 2.5 Flash" },
+    { id: "gemini:gemini-2.5-pro", label: "✨ Gemini 2.5 Pro" },
+    { id: "openrouter:anthropic/claude-sonnet-4.5", label: "💎 OpenRouter · Claude Sonnet 4.5" },
+    { id: "openrouter:anthropic/claude-opus-4.1", label: "💎 OpenRouter · Claude Opus 4.1" },
+    { id: "openrouter:anthropic/claude-3.7-sonnet", label: "💎 OpenRouter · Claude 3.7 Sonnet" },
+    { id: "openrouter:anthropic/claude-3.5-haiku", label: "💎 OpenRouter · Claude 3.5 Haiku" },
+    { id: "openrouter:openai/gpt-5", label: "💎 OpenRouter · GPT-5" },
+    { id: "openrouter:openai/gpt-5-mini", label: "💎 OpenRouter · GPT-5 Mini" },
+    { id: "openrouter:openai/gpt-4o", label: "💎 OpenRouter · GPT-4o" },
+    { id: "openrouter:openai/gpt-4o-mini", label: "💎 OpenRouter · GPT-4o Mini" },
+    { id: "openrouter:openai/o1", label: "💎 OpenRouter · OpenAI o1" },
+    { id: "openrouter:openai/o3-mini", label: "💎 OpenRouter · OpenAI o3-mini" },
+    { id: "openrouter:google/gemini-2.5-pro", label: "💎 OpenRouter · Gemini 2.5 Pro" },
+    { id: "openrouter:google/gemini-2.5-flash", label: "💎 OpenRouter · Gemini 2.5 Flash" },
+    { id: "openrouter:x-ai/grok-4", label: "💎 OpenRouter · Grok 4" },
+    { id: "openrouter:x-ai/grok-3", label: "💎 OpenRouter · Grok 3" },
+    { id: "openrouter:deepseek/deepseek-chat-v3.1", label: "💎 OpenRouter · DeepSeek V3.1" },
+    { id: "openrouter:deepseek/deepseek-r1", label: "💎 OpenRouter · DeepSeek R1" },
+    { id: "openrouter:meta-llama/llama-3.3-70b-instruct", label: "💎 OpenRouter · Llama 3.3 70B" },
+    { id: "openrouter:mistralai/mistral-large-2411", label: "💎 OpenRouter · Mistral Large" },
+    { id: "openrouter:qwen/qwen3-max", label: "💎 OpenRouter · Qwen3 Max" },
+    { id: "minimax:MiniMax-M2.7", label: `🔵 MiniMax M2.7 ${t.sl_model_backup}` },
+    { id: "qwen:qwen3-max", label: `🟣 Qwen3 Max ${t.sl_model_flagship}` },
+    { id: "qwen:qwen3-plus", label: `🟣 Qwen3 Plus ${t.sl_model_balanced}` },
+    { id: "qwen:qwen3-turbo", label: `🟣 Qwen3 Turbo ${t.sl_model_high_speed}` },
+    { id: "qwen:qwen3-coder-plus", label: `🟣 Qwen3 Coder Plus ${t.sl_model_code}` },
+    { id: "qwen:qwen-plus", label: `🟣 Qwen Plus ${t.sl_model_stable}` },
+    { id: "qwen:qwen-turbo", label: `🟣 Qwen Turbo ${t.sl_model_light}` },
+  ];
+}
 
 export default function Scripts() {
   const { t } = useLanguage();
+  const models = getModels(t);
   const [scripts, setScripts] = useState<SavedScript[]>([]);
   const { isAuthenticated, loading: authLoading, user, signOut } = useAuth();
   const [shareScript, setShareScript] = useState<SavedScript | null>(null);
@@ -113,10 +118,7 @@ export default function Scripts() {
     <div className="animate-fade-in space-y-6">
       <div className="text-center">
         <h1 className="font-display text-4xl font-bold">{t.scripts_title}</h1>
-        <p className="text-text-secondary mt-1">
-          剧本智能体 · 5 步对话式创作：灵感 → 故事梗概 → 分镜脚本 → 多剧集（逐集生成 · 可中途保存）→
-          完成
-        </p>
+        <p className="text-text-secondary mt-1">{t.sl_subtitle}</p>
       </div>
 
       {!authLoading && !isAuthenticated && (
@@ -124,18 +126,16 @@ export default function Scripts() {
           <div className="flex items-center gap-3 text-sm">
             <Cloud size={18} className="text-accent shrink-0" />
             <div>
-              <div className="font-semibold text-text-primary">请先登录以启用云同步</div>
-              <div className="text-text-secondary text-xs mt-0.5">
-                未登录时剧本仅保存在当前浏览器，登录后可在多设备间同步并防止数据丢失。
-              </div>
+              <div className="font-semibold text-text-primary">{t.sl_login_to_sync}</div>
+              <div className="text-text-secondary text-xs mt-0.5">{t.sl_login_sync_desc}</div>
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <Link to="/login" className="btn-primary inline-flex items-center gap-1.5 text-sm">
-              <LogIn size={14} /> 登录
+              <LogIn size={14} /> {t.sl_login}
             </Link>
             <Link to="/register" className="text-sm text-accent hover:underline">
-              注册
+              {t.sl_register}
             </Link>
           </div>
         </div>
@@ -144,9 +144,9 @@ export default function Scripts() {
       {!authLoading && isAuthenticated && (
         <div className="flex items-center justify-end gap-3 text-xs text-text-muted">
           <Cloud size={12} className="text-accent" />
-          <span>已登录 {user?.email} · 云同步已启用</span>
+          <span>{t.sl_logged_in.replace("{email}", user?.email ?? "")}</span>
           <button onClick={() => void signOut()} className="text-accent hover:underline">
-            退出
+            {t.sl_logout}
           </button>
         </div>
       )}
@@ -155,7 +155,7 @@ export default function Scripts() {
         types={TYPES}
         genres={GENRES}
         tones={TONES}
-        models={MODELS}
+        models={models}
         onSaved={refresh}
       />
 
@@ -214,7 +214,9 @@ export default function Scripts() {
                         {s.type}
                       </span>
                       <span className="absolute top-2 right-2 text-[10px] text-white/90 px-1.5 py-0.5 rounded bg-black/40 backdrop-blur-sm">
-                        {epCount > 0 ? `${epCount} 集` : `${sceneCount} 场`}
+                        {epCount > 0
+                          ? t.sl_ep_count.replace("{count}", String(epCount))
+                          : t.sl_scene_count.replace("{count}", String(sceneCount))}
                       </span>
                     </div>
                     <div className="p-3 space-y-1.5">
@@ -234,7 +236,7 @@ export default function Scripts() {
                         </div>
                       ) : (
                         <div className="text-[10px] text-text-muted pt-1">
-                          更新于 {new Date(s.updatedAt).toLocaleString()}
+                          {t.sl_updated.replace("{time}", new Date(s.updatedAt).toLocaleString())}
                         </div>
                       )}
                     </div>
@@ -251,12 +253,12 @@ export default function Scripts() {
                       <button
                         onClick={() => {
                           if (!isAuthenticated) {
-                            alert("请先登录后再分享到社区");
+                            alert(t.sl_share_login);
                             return;
                           }
                           setShareScript(s);
                         }}
-                        title="分享到社区"
+                        title={t.share_title}
                         className="p-1.5 rounded hover:bg-bg-elevated text-text-muted hover:text-accent"
                       >
                         <Share2 size={13} />

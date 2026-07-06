@@ -39,11 +39,11 @@ import { uploadScriptCover } from "../../lib/scripts.covers.functions";
 type Stage = "setup" | "synopsis" | "episode" | "episodes" | "done";
 const STAGES: Stage[] = ["setup", "synopsis", "episode", "episodes", "done"];
 const STAGE_LABELS: Record<Stage, string> = {
-  setup: "① 灵感",
-  synopsis: "② 故事梗概",
-  episode: "③ 分镜脚本",
-  episodes: "④ 多剧集",
-  done: "⑤ 完成",
+  setup: "sc_stage_setup",
+  synopsis: "sc_stage_synopsis",
+  episode: "sc_stage_episode",
+  episodes: "sc_stage_episodes",
+  done: "sc_stage_done",
 };
 
 type Bubble = {
@@ -149,7 +149,7 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
     {
       id: "welcome",
       role: "agent",
-      text: "你好，我是剧本智能体 🎬\n先告诉我你的灵感：题材、主题、剧情概要，我会一步步陪你打磨成完整剧本。",
+      text: t.sc_welcome,
     },
   ]);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -270,7 +270,7 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
       finishBubble(bubbleId);
       return { ok: true, text: acc };
     } catch (e) {
-      setError(e instanceof Error ? e.message : "流读取失败");
+      setError(e instanceof Error ? e.message : t.sc_stream_failed);
       finishBubble(bubbleId);
       return { ok: false, text: acc };
     }
@@ -288,7 +288,14 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
     const toneList = selectedTags.filter((t) => tones.some((g) => g.value === t));
     pushBubble({
       role: "user",
-      text: `🎯 灵感\n类型：${type} · 题材：${genreList.join("、")} · 风格：${toneList.join("、")}\n总时长：约 ${totalMinutes} 分钟\n主题：${theme}\n剧情：${plot}\n预计集数：${expectedEpisodes}`,
+      text: t.sc_inspiration_bubble
+        .replace("{type}", type)
+        .replace("{genres}", genreList.join("、"))
+        .replace("{tones}", toneList.join("、"))
+        .replace("{minutes}", String(totalMinutes))
+        .replace("{theme}", theme)
+        .replace("{plot}", plot)
+        .replace("{eps}", String(expectedEpisodes)),
     });
     const id = pushBubble({ role: "agent", text: "", streaming: true, stage: "synopsis" });
     const stream = (await callSynopsis({
@@ -330,7 +337,10 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
     setError(null);
     setRefineStreaming(true);
     setRefineCandidate("");
-    const userBubbleId = pushBubble({ role: "user", text: `✏️ 精修指令：${instr}` });
+    const userBubbleId = pushBubble({
+      role: "user",
+      text: t.sc_refine_instruction_bubble.replace("{instruction}", instr),
+    });
     const id = pushBubble({ role: "agent", text: "", streaming: true, stage: "synopsis" });
     setRefineHistory((h) => [...h, { role: "user", text: instr }]);
     const stream = (await callRefine({
@@ -345,7 +355,7 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
     const res = await consume(stream, id, (text) => setRefineCandidate(text));
     setRefineStreaming(false);
     if (res.ok) {
-      setRefineHistory((h) => [...h, { role: "agent", text: "（已生成候选版本，等待采纳）" }]);
+      setRefineHistory((h) => [...h, { role: "agent", text: t.sc_candidate_pending }]);
       setRefineInstruction("");
     } else {
       // 失败时移除占位
@@ -368,12 +378,12 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
     setSynopsisDraft(refineCandidate);
     setSynopsisText(refineCandidate);
     setRefineCandidate("");
-    pushBubble({ role: "system", text: "✅ 已采纳 AI 改写版本" });
+    pushBubble({ role: "system", text: t.sc_refine_accepted });
   };
 
   const discardRefine = () => {
     setRefineCandidate("");
-    pushBubble({ role: "system", text: "↩︎ 已丢弃 AI 改写版本" });
+    pushBubble({ role: "system", text: t.sc_refine_discarded });
   };
 
   const rollbackVersion = (vid: string) => {
@@ -383,7 +393,7 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
     setSynopsisText(v.text);
     pushBubble({
       role: "system",
-      text: `↩︎ 已回滚到历史版本（${new Date(v.createdAt).toLocaleString()}）`,
+      text: t.sc_rollback_version.replace("{time}", new Date(v.createdAt).toLocaleString()),
     });
   };
 
@@ -394,7 +404,10 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
     if (finalSynopsis !== synopsisText) setSynopsisText(finalSynopsis);
     setError(null);
     setLoading(true);
-    pushBubble({ role: "user", text: `✅ 确认梗概，第 1 集分镜数：${sceneCount}` });
+    pushBubble({
+      role: "user",
+      text: t.sc_confirm_synopsis_bubble.replace("{count}", String(sceneCount)),
+    });
     const id = pushBubble({ role: "agent", text: "", streaming: true, stage: "episode" });
     const stream = (await callEpisode({
       data: { lang, epIndex: 1, sceneCount, synopsisText: finalSynopsis, model },
@@ -419,11 +432,13 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
   }): Promise<{ ok: boolean; text: string }> {
     pushBubble({
       role: "user",
-      text: `▶︎ 生成第 ${opts.epIndex} 集（分镜数：${opts.sceneCount}）`,
+      text: t.sc_generate_episode_bubble
+        .replace("{n}", String(opts.epIndex))
+        .replace("{count}", String(opts.sceneCount)),
     });
     const id = pushBubble({ role: "agent", text: "", streaming: true, stage: "episodes" });
     const contextSynopsis = opts.prevText
-      ? `${synopsisText}\n\n【上一集（第 ${opts.prevEpIndex} 集）摘要参考】\n${opts.prevText.slice(-2000)}`
+      ? `${synopsisText}\n\n${t.sc_prev_ep_ref.replace("{n}", String(opts.prevEpIndex))}\n${opts.prevText.slice(-2000)}`
       : synopsisText;
     const stream = (await callEpisode({
       data: {
@@ -469,7 +484,10 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
     stopAutoRef.current = false;
     pushBubble({
       role: "system",
-      text: `🚀 开始自动连续生成第 ${nextEpIndex} ~ ${target} 集（共 ${target - nextEpIndex + 1} 集）`,
+      text: t.sc_auto_start
+        .replace("{from}", String(nextEpIndex))
+        .replace("{to}", String(target))
+        .replace("{count}", String(target - nextEpIndex + 1)),
     });
     let cur = nextEpIndex;
     let prevText = episodes[episodes.length - 1]?.text ?? "";
@@ -478,7 +496,7 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
     try {
       while (cur <= target) {
         if (stopAutoRef.current) {
-          pushBubble({ role: "system", text: `⏸ 已停止，已完成至第 ${cur - 1} 集。` });
+          pushBubble({ role: "system", text: t.sc_auto_stopped.replace("{n}", String(cur - 1)) });
           break;
         }
         const res = await generateEpisode({
@@ -488,7 +506,7 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
           prevEpIndex: prevIdx,
         });
         if (!res.ok) {
-          pushBubble({ role: "system", text: `❌ 第 ${cur} 集生成失败，已中断自动连跑。` });
+          pushBubble({ role: "system", text: t.sc_auto_failed.replace("{n}", String(cur)) });
           break;
         }
         generatedEpisodes = [
@@ -502,7 +520,7 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
         if ((cur - 1) % 3 === 0) void persist(false, generatedEpisodes);
       }
       if (cur > target && !stopAutoRef.current) {
-        pushBubble({ role: "system", text: `🎉 已完成自动连续生成至第 ${target} 集。` });
+        pushBubble({ role: "system", text: t.sc_auto_done.replace("{n}", String(target)) });
         void persist(false, generatedEpisodes);
       }
     } finally {
@@ -522,7 +540,7 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
     const finalId = savedIdRef.current ?? id;
     savedIdRef.current = finalId;
     const titleMatch = synopsisText.match(/《([^》]+)》/);
-    const title = titleMatch?.[1] ?? theme ?? "未命名剧本";
+    const title = titleMatch?.[1] ?? theme ?? t.sc_untitled;
     const existing = findScript(finalId);
     const item: SavedScript = {
       id: finalId,
@@ -555,8 +573,10 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
     pushBubble({
       role: "system",
       text: markDone
-        ? `✅ 已完成并保存到剧本库：《${title}》（共 ${episodes.length} 集）`
-        : `💾 已保存进度到剧本库：《${title}》（当前 ${episodes.length} 集）`,
+        ? t.sc_save_done.replace("{title}", title).replace("{count}", String(episodes.length))
+        : t.sc_save_progress_bubble
+            .replace("{title}", title)
+            .replace("{count}", String(episodes.length)),
     });
     return finalId;
   };
@@ -571,7 +591,7 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
       {
         id: "welcome",
         role: "agent",
-        text: "新一轮创作开始 🎬\n请输入你的新灵感。",
+        text: t.sc_welcome_reset,
       },
     ]);
     setError(null);
@@ -587,9 +607,9 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
       <div className="flex flex-wrap items-center gap-3">
         <h2 className="font-semibold text-text-primary flex items-center gap-2">
           <Sparkles size={16} className="text-accent" />
-          剧本智能体
+          {t.sc_agent_title}
         </h2>
-        <span className="text-xs text-text-muted">对话式 5 步流程 · 流式输出</span>
+        <span className="text-xs text-text-muted">{t.sc_agent_subtitle}</span>
         <div className="ml-auto flex flex-wrap items-center gap-1">
           {STAGES.map((s, i) => {
             const done = i < stageIdx;
@@ -605,7 +625,8 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
                         : "bg-bg-elevated text-text-muted"
                   }`}
                 >
-                  {done ? <Check size={10} className="inline -mt-0.5" /> : null} {STAGE_LABELS[s]}
+                  {done ? <Check size={10} className="inline -mt-0.5" /> : null}{" "}
+                  {(t as Record<string, string>)[STAGE_LABELS[s]]}
                 </span>
                 {i < STAGES.length - 1 && <ArrowRight size={10} className="text-text-muted" />}
               </div>
@@ -631,7 +652,7 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
         {loading && (
           <div className="flex items-center gap-2 text-xs text-text-muted">
             <Loader2 size={12} className="animate-spin" />
-            智能体思考中…
+            {t.sc_thinking}
           </div>
         )}
       </div>
@@ -691,7 +712,7 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
             disabled={loading}
             className="btn-ghost text-xs disabled:opacity-40"
           >
-            <RefreshCw size={12} /> 重写本集分镜
+            <RefreshCw size={12} /> {t.sc_rewrite_episode}
           </button>
           <button
             onClick={() => {
@@ -699,14 +720,14 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
               setNextEpIndex(2);
               pushBubble({
                 role: "system",
-                text: '已进入"多剧集"阶段：可指定下一集分镜数并逐集生成，随时保存进度。',
+                text: t.sc_enter_episodes_stage,
               });
             }}
             disabled={loading || !synopsisText}
             className="btn-primary text-xs ml-auto disabled:opacity-40"
           >
             {loading ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
-            进入多剧集阶段
+            {t.sc_enter_episodes_btn}
           </button>
         </ActionBar>
       )}
@@ -714,9 +735,11 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
       {stage === "episodes" && (
         <ActionBar>
           <span className="text-xs text-text-muted">
-            已生成 {episodes.length} 集 · 下一集：第 {nextEpIndex} 集
+            {t.sc_episodes_progress
+              .replace("{count}", String(episodes.length))
+              .replace("{n}", String(nextEpIndex))}
           </span>
-          <label className="text-xs text-text-muted ml-2">分镜数</label>
+          <label className="text-xs text-text-muted ml-2">{t.sc_scene_count_label}</label>
           <NumberField
             value={nextSceneCount}
             min={5}
@@ -731,9 +754,9 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
             className="btn-primary text-xs disabled:opacity-40"
           >
             {loading ? <Loader2 size={12} className="animate-spin" /> : <Send size={12} />}
-            生成第 {nextEpIndex} 集
+            {t.sc_generate_ep_n.replace("{n}", String(nextEpIndex))}
           </button>
-          <label className="text-xs text-text-muted ml-2">连跑至第</label>
+          <label className="text-xs text-text-muted ml-2">{t.sc_run_until}</label>
           <NumberField
             value={targetEpisode}
             min={1}
@@ -742,10 +765,12 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
             onCommit={setTargetEpisode}
             className="w-16 rounded-lg bg-bg-elevated border border-border text-sm text-text-primary px-2 py-1.5 focus:outline-none focus:border-accent/50"
           />
-          <span className="text-xs text-text-muted">集（共 {expectedEpisodes}）</span>
+          <span className="text-xs text-text-muted">
+            {t.sc_total_eps_suffix.replace("{count}", String(expectedEpisodes))}
+          </span>
           {autoRunning ? (
             <button onClick={stopAuto} className="btn-ghost text-xs text-red-300">
-              <StopCircle size={12} /> 停止
+              <StopCircle size={12} /> {t.sc_stop}
             </button>
           ) : (
             <button
@@ -753,7 +778,7 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
               disabled={loading || targetEpisode < nextEpIndex}
               className="btn-primary text-xs disabled:opacity-40"
             >
-              <Sparkles size={12} /> 自动连续生成
+              <Sparkles size={12} /> {t.sc_auto_run}
             </button>
           )}
           <button
@@ -761,7 +786,7 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
             disabled={loading || autoRunning || episodes.length === 0}
             className="btn-ghost text-xs ml-auto disabled:opacity-40"
           >
-            <Save size={12} /> 保存进度
+            <Save size={12} /> {t.sc_save_progress}
           </button>
           <button
             onClick={async () => {
@@ -771,7 +796,7 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
             disabled={loading || autoRunning || episodes.length === 0}
             className="btn-primary text-xs disabled:opacity-40"
           >
-            <Check size={13} /> 完成并查看
+            <Check size={13} /> {t.sc_finish_view}
           </button>
         </ActionBar>
       )}
@@ -787,7 +812,7 @@ export default function ScriptComposer({ types, genres, tones, models, onSaved }
       {stage === "done" && (
         <div className="flex justify-center pt-2">
           <button onClick={reset} className="btn-ghost text-xs">
-            <Sparkles size={12} /> 开始新的创作
+            <Sparkles size={12} /> {t.sc_start_new}
           </button>
         </div>
       )}
@@ -848,12 +873,12 @@ function ActionBar({ children }: { children: React.ReactNode }) {
 // ============ 梗概精修面板（手动编辑 + AI 对话改写 + 版本回滚）============
 
 const QUICK_REFINE_CHIPS = [
-  "更紧凑、节奏更快",
-  "加强第二幕反转",
-  "主角改成女性",
-  "减少到 30 集",
-  "增加爽点与钩子",
-  "人物性格更鲜明",
+  "sc_chip_compact",
+  "sc_chip_twist",
+  "sc_chip_female",
+  "sc_chip_reduce_30",
+  "sc_chip_hooks",
+  "sc_chip_personality",
 ];
 
 function SynopsisRefinePanel(props: {
@@ -879,6 +904,7 @@ function SynopsisRefinePanel(props: {
   }[];
   onRollback: (id: string) => void;
 }) {
+  const { t } = useLanguage();
   const [showHistory, setShowHistory] = useState(false);
   const wordCount = props.draft.length;
   const canConfirm = !props.loading && !props.streaming && wordCount >= 200;
@@ -886,25 +912,25 @@ function SynopsisRefinePanel(props: {
     <div className="pt-3 border-t border-border space-y-3">
       <div className="flex items-center gap-2">
         <Pencil size={14} className="text-accent" />
-        <h3 className="font-semibold text-text-primary text-sm">
-          梗概精修 · 手动改写或 AI 对话改写
-        </h3>
+        <h3 className="font-semibold text-text-primary text-sm">{t.sc_refine_panel_title}</h3>
         <span className="text-xs text-text-muted">
-          {wordCount} 字 · {props.versions.length} 个历史版本
+          {t.sc_chars_versions
+            .replace("{count}", String(wordCount))
+            .replace("{versions}", String(props.versions.length))}
         </span>
         <button
           onClick={() => setShowHistory((v) => !v)}
           disabled={props.versions.length === 0}
           className="ml-auto btn-ghost text-xs disabled:opacity-40"
         >
-          <History size={12} /> 历史
+          <History size={12} /> {t.sc_history}
         </button>
         <button
           onClick={props.onRegenerate}
           disabled={props.loading || props.streaming}
           className="btn-ghost text-xs disabled:opacity-40"
         >
-          <RefreshCw size={12} /> 重新生成
+          <RefreshCw size={12} /> {t.sc_regenerate}
         </button>
       </div>
 
@@ -912,29 +938,30 @@ function SynopsisRefinePanel(props: {
         {/* 左：可编辑梗概 */}
         <div className="rounded-xl border border-border bg-bg-base/40 p-3 space-y-2">
           <div className="flex items-center justify-between">
-            <span className="text-xs text-text-muted">📝 梗概草稿（可直接编辑）</span>
-            <span className="text-[11px] text-text-muted">字数 ≥ 200 才能确认</span>
+            <span className="text-xs text-text-muted">{t.sc_draft_label}</span>
+            <span className="text-[11px] text-text-muted">{t.sc_min_chars_hint}</span>
           </div>
           <textarea
             value={props.draft}
             onChange={(e) => props.setDraft(e.target.value)}
             rows={18}
             className="w-full rounded-lg bg-bg-elevated border border-border text-sm text-text-primary p-3 leading-7 font-mono focus:outline-none focus:border-accent/50 resize-y min-h-[360px]"
-            placeholder="AI 生成的梗概会出现在这里，你可以任意修改……"
+            placeholder={t.sc_draft_placeholder}
           />
         </div>
 
         {/* 右：AI 精修对话 */}
         <div className="rounded-xl border border-border bg-bg-base/40 p-3 space-y-2 flex flex-col">
           <div className="text-xs text-text-muted flex items-center gap-2">
-            <Bot size={12} /> AI 精修助手 · 用自然语言描述你要的修改
+            <Bot size={12} /> {t.sc_refine_assistant}
           </div>
 
           {/* 候选区 */}
           {(props.candidate || props.streaming) && (
             <div className="rounded-lg border border-accent/40 bg-accent/5 p-2 space-y-2">
               <div className="text-[11px] text-accent flex items-center gap-1">
-                <Sparkles size={11} /> AI 候选版本{props.streaming ? "（生成中…）" : "（待你采纳）"}
+                <Sparkles size={11} />{" "}
+                {props.streaming ? t.sc_candidate_streaming : t.sc_candidate_pending_adopt}
               </div>
               <div className="max-h-[200px] overflow-y-auto rounded bg-bg-base/60 p-2 text-xs text-text-primary whitespace-pre-wrap leading-6">
                 {props.candidate || "…"}
@@ -945,10 +972,10 @@ function SynopsisRefinePanel(props: {
               {!props.streaming && props.candidate && (
                 <div className="flex gap-2 justify-end">
                   <button onClick={props.onDiscard} className="btn-ghost text-xs">
-                    丢弃
+                    {t.sc_discard}
                   </button>
                   <button onClick={props.onAccept} className="btn-primary text-xs">
-                    <Check size={12} /> 采纳此版本
+                    <Check size={12} /> {t.sc_adopt}
                   </button>
                 </div>
               )}
@@ -961,11 +988,11 @@ function SynopsisRefinePanel(props: {
               <button
                 key={c}
                 type="button"
-                onClick={() => props.setInstruction(c)}
+                onClick={() => props.setInstruction((t as Record<string, string>)[c])}
                 disabled={props.streaming}
                 className="text-[11px] px-2 py-0.5 rounded-full bg-bg-elevated border border-border text-text-muted hover:border-accent/40 hover:text-text-primary disabled:opacity-40"
               >
-                {c}
+                {(t as Record<string, string>)[c]}
               </button>
             ))}
           </div>
@@ -975,7 +1002,7 @@ function SynopsisRefinePanel(props: {
             onChange={(e) => props.setInstruction(e.target.value)}
             rows={3}
             disabled={props.streaming}
-            placeholder="例如：把主角改成女医生 / 第 5 集加一次身份揭穿 / 整体节奏更紧凑"
+            placeholder={t.sc_refine_instruction_placeholder}
             className="w-full rounded-lg bg-bg-elevated border border-border text-sm text-text-primary p-2 focus:outline-none focus:border-accent/50 placeholder:text-text-muted disabled:opacity-60 resize-none"
           />
           <div className="flex justify-end">
@@ -989,7 +1016,7 @@ function SynopsisRefinePanel(props: {
               ) : (
                 <Send size={12} />
               )}
-              {props.streaming ? "生成中…" : "AI 修改"}
+              {props.streaming ? t.sc_generating : t.sc_ai_modify}
             </button>
           </div>
         </div>
@@ -998,7 +1025,7 @@ function SynopsisRefinePanel(props: {
       {/* 历史版本 */}
       {showHistory && props.versions.length > 0 && (
         <div className="rounded-xl border border-border bg-bg-base/40 p-3">
-          <div className="text-xs text-text-muted mb-2">历史版本（最新在下）</div>
+          <div className="text-xs text-text-muted mb-2">{t.sc_history_versions}</div>
           <ul className="space-y-1">
             {props.versions.map((v) => (
               <li
@@ -1007,18 +1034,20 @@ function SynopsisRefinePanel(props: {
               >
                 <span className="text-text-primary font-medium">
                   {v.source === "ai-init"
-                    ? "🪄 首版"
+                    ? t.sc_source_first
                     : v.source === "ai-refine"
-                      ? "✨ AI 改写"
-                      : "✍️ 手动"}
+                      ? t.sc_source_refine
+                      : t.sc_source_manual}
                 </span>
                 <span className="text-text-muted">{new Date(v.createdAt).toLocaleString()}</span>
-                <span className="text-text-muted/70">{v.text.length} 字</span>
+                <span className="text-text-muted/70">
+                  {t.sc_chars_n.replace("{count}", String(v.text.length))}
+                </span>
                 <button
                   onClick={() => props.onRollback(v.id)}
                   className="ml-auto inline-flex items-center gap-1 text-accent hover:underline"
                 >
-                  <RotateCcw size={11} /> 回滚
+                  <RotateCcw size={11} /> {t.sc_rollback}
                 </button>
               </li>
             ))}
@@ -1028,7 +1057,7 @@ function SynopsisRefinePanel(props: {
 
       {/* 确认栏 */}
       <ActionBar>
-        <label className="text-xs text-text-muted">第 1 集分镜数</label>
+        <label className="text-xs text-text-muted">{t.sc_ep1_scene_count}</label>
         <NumberField
           value={props.sceneCount}
           min={5}
@@ -1039,8 +1068,8 @@ function SynopsisRefinePanel(props: {
         />
         <span className="text-xs text-text-muted ml-auto">
           {wordCount < 200
-            ? `还需 ${200 - wordCount} 字才能确认`
-            : "梗概已就绪，可发送到剧本生成 agent"}
+            ? t.sc_need_more_chars.replace("{count}", String(200 - wordCount))
+            : t.sc_synopsis_ready}
         </span>
         <button
           onClick={props.onConfirm}
@@ -1048,7 +1077,7 @@ function SynopsisRefinePanel(props: {
           className="btn-primary text-xs disabled:opacity-40"
         >
           {props.loading ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}✅
-          确认梗概，生成第 1 集分镜
+          {t.sc_confirm_synopsis}
         </button>
       </ActionBar>
     </div>
@@ -1069,6 +1098,7 @@ function EpisodeEditor({
   setEpisodes: React.Dispatch<React.SetStateAction<EpisodeItem[]>>;
   onSaveSnapshot: () => void;
 }) {
+  const { t } = useLanguage();
   const [focusedEp, setFocusedEp] = useState<number>(episodes[0]?.epIndex ?? 1);
   const [collapsedList, setCollapsedList] = useState<Set<number>>(new Set());
 
@@ -1084,15 +1114,13 @@ function EpisodeEditor({
     <div className="space-y-3 pt-3 border-t border-border">
       <div className="flex items-center gap-2">
         <Pencil size={14} className="text-accent" />
-        <h3 className="font-semibold text-text-primary text-sm">
-          分集编辑 · 直接修改台词与画面描述
-        </h3>
+        <h3 className="font-semibold text-text-primary text-sm">{t.sc_episode_editor_title}</h3>
         <span className="text-xs text-text-muted">
-          共 {episodes.length} 集 · 每次保存生成一个版本
+          {t.sc_episodes_count_versions.replace("{count}", String(episodes.length))}
         </span>
         {/* 快速跳转下拉框 */}
         <label className="ml-auto flex items-center gap-1.5 text-xs text-text-muted">
-          <span>跳转至</span>
+          <span>{t.sc_jump_to}</span>
           <select
             value={focusedEp}
             onChange={(e) => setFocusedEp(Number(e.target.value))}
@@ -1100,7 +1128,7 @@ function EpisodeEditor({
           >
             {episodes.map((ep) => (
               <option key={ep.epIndex} value={ep.epIndex}>
-                第 {ep.epIndex} 集
+                {t.sc_episode_n.replace("{n}", String(ep.epIndex))}
               </option>
             ))}
           </select>
@@ -1117,26 +1145,28 @@ function EpisodeEditor({
                 <div
                   className="rounded-xl border border-border bg-bg-base/40 px-3 py-2 flex items-center gap-3 cursor-pointer hover:border-accent/50 transition-colors"
                   onClick={() => setFocusedEp(ep.epIndex)}
-                  title="点击跳转至本集"
+                  title={t.sc_click_jump_episode}
                 >
                   <span className="text-sm font-semibold text-text-primary">
-                    第 {ep.epIndex} 集
+                    {t.sc_episode_n.replace("{n}", String(ep.epIndex))}
                   </span>
                   <span className="text-xs text-text-muted truncate flex-1 min-w-0">
                     {ep.text
                       .slice(0, 60)
                       .replace(/[#*`>_\-]/g, "")
                       .replace(/\s+/g, " ")
-                      .trim() || "（空）"}
+                      .trim() || t.sc_empty}
                   </span>
-                  <span className="text-[11px] text-text-muted shrink-0">{ep.text.length} 字</span>
+                  <span className="text-[11px] text-text-muted shrink-0">
+                    {t.sc_chars_n.replace("{count}", String(ep.text.length))}
+                  </span>
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       toggleCollapsed(ep.epIndex);
                     }}
                     className="text-text-muted hover:text-text-primary shrink-0"
-                    title={isCollapsed ? "展开" : "收起"}
+                    title={isCollapsed ? t.sc_expand : t.sc_collapse}
                   >
                     {isCollapsed ? <ChevronDown size={12} /> : <ChevronUp size={12} />}
                   </button>
@@ -1200,25 +1230,30 @@ function EpisodeCard({
   onRevert: (versionIndex: number) => void;
   onCollapse?: () => void;
 }) {
+  const { t } = useLanguage();
   const [showHistory, setShowHistory] = useState(false);
   const [versionLabel, setVersionLabel] = useState("");
   return (
     <div className="rounded-xl border border-border bg-bg-base/40 p-3 space-y-2">
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm font-semibold text-text-primary">第 {ep.epIndex} 集</span>
+        <span className="text-sm font-semibold text-text-primary">
+          {t.sc_episode_n.replace("{n}", String(ep.epIndex))}
+        </span>
         <span className="text-[11px] text-text-muted">
-          {ep.text.length} 字 · {ep.versions?.length ?? 0} 个历史版本
+          {t.sc_chars_versions
+            .replace("{count}", String(ep.text.length))
+            .replace("{versions}", String(ep.versions?.length ?? 0))}
         </span>
         <div className="ml-auto flex items-center gap-1">
           {onCollapse && (
-            <button onClick={onCollapse} className="btn-ghost text-xs" title="收起">
-              <ChevronUp size={12} /> 收起
+            <button onClick={onCollapse} className="btn-ghost text-xs" title={t.sc_collapse}>
+              <ChevronUp size={12} /> {t.sc_collapse}
             </button>
           )}
           <input
             value={versionLabel}
             onChange={(e) => setVersionLabel(e.target.value)}
-            placeholder="版本备注（可选）"
+            placeholder={t.sc_version_label_placeholder}
             className="w-36 rounded-md bg-bg-elevated border border-border text-xs text-text-primary px-2 py-1 focus:outline-none focus:border-accent/50 placeholder:text-text-muted"
           />
           <button
@@ -1228,14 +1263,14 @@ function EpisodeCard({
             }}
             className="btn-primary text-xs"
           >
-            <Save size={12} /> 保存版本
+            <Save size={12} /> {t.sc_save_version}
           </button>
           <button
             onClick={() => setShowHistory((v) => !v)}
             disabled={!ep.versions?.length}
             className="btn-ghost text-xs disabled:opacity-40"
           >
-            <History size={12} /> 历史
+            <History size={12} /> {t.sc_history}
           </button>
         </div>
       </div>
@@ -1256,12 +1291,14 @@ function EpisodeCard({
                 {v.label ?? `v${ep.versions!.length - i}`}
               </span>
               <span>{new Date(v.savedAt).toLocaleString()}</span>
-              <span className="text-text-muted/70">{v.text.length} 字</span>
+              <span className="text-text-muted/70">
+                {t.sc_chars_n.replace("{count}", String(v.text.length))}
+              </span>
               <button
                 onClick={() => onRevert(i)}
                 className="ml-auto inline-flex items-center gap-1 text-accent hover:underline"
               >
-                <RotateCcw size={11} /> 回滚到此版本
+                <RotateCcw size={11} /> {t.sc_rollback_to_version}
               </button>
             </li>
           ))}
@@ -1299,7 +1336,7 @@ function SetupBar(props: {
   const allTags: TagOption[] = [
     ...props.genres.map((g) => ({
       value: g.value,
-      label: g.locked && g.label ? g.label : (t[g.key] as string),
+      label: g.locked && g.label ? (t as Record<string, string>)[g.label] : (t[g.key] as string),
       group: "genre" as const,
       locked: g.locked,
     })),
@@ -1327,7 +1364,7 @@ function SetupBar(props: {
         />
         {/* 合并后的题材+风格多选 */}
         <div className="col-span-2">
-          <label className="text-xs text-text-muted mb-1 block">题材 / 风格（可多选）</label>
+          <label className="text-xs text-text-muted mb-1 block">{t.sc_genre_tone_multi}</label>
           <div className="flex flex-wrap gap-1.5 p-2 rounded-lg bg-bg-elevated border border-border min-h-[42px]">
             {allTags.map((tag) => {
               const selected = props.selectedTags.includes(tag.value);
@@ -1356,7 +1393,7 @@ function SetupBar(props: {
                 >
                   {selected && (
                     <span className="text-[10px] opacity-60">
-                      {tag.group === "genre" ? "题材" : "风格"}
+                      {tag.group === "genre" ? t.sc_genre_label : t.sc_tone_label}
                     </span>
                   )}
                   {tag.label}
@@ -1366,7 +1403,7 @@ function SetupBar(props: {
           </div>
         </div>
         <div>
-          <label className="text-xs text-text-muted mb-1 block">预计集数</label>
+          <label className="text-xs text-text-muted mb-1 block">{t.sc_expected_episodes}</label>
           <NumberField
             value={props.expectedEpisodes}
             min={1}
@@ -1380,7 +1417,7 @@ function SetupBar(props: {
       {/* 总时长 */}
       <div className="grid grid-cols-2 gap-2">
         <div>
-          <label className="text-xs text-text-muted mb-1 block">总时长限制（分钟）</label>
+          <label className="text-xs text-text-muted mb-1 block">{t.sc_total_minutes}</label>
           <NumberField
             value={props.totalMinutes}
             min={5}
@@ -1402,7 +1439,7 @@ function SetupBar(props: {
         <input
           value={props.theme}
           onChange={(e) => props.setTheme(e.target.value)}
-          placeholder="例如：天雷圣子 / 重生甜妻 / 都市最强医仙"
+          placeholder={t.sc_theme_placeholder}
           className="w-full rounded-lg bg-bg-elevated border border-border text-sm text-text-primary px-3 py-2 focus:outline-none focus:border-accent/50 placeholder:text-text-muted"
         />
       </div>
@@ -1412,7 +1449,7 @@ function SetupBar(props: {
           value={props.plot}
           onChange={(e) => props.setPlot(e.target.value)}
           rows={3}
-          placeholder="一句话或几句话说清主角处境、爽点钩子……"
+          placeholder={t.sc_plot_placeholder}
           className="w-full rounded-lg bg-bg-elevated border border-border text-sm text-text-primary p-3 resize-none focus:outline-none focus:border-accent/50 placeholder:text-text-muted"
         />
       </div>
@@ -1422,7 +1459,7 @@ function SetupBar(props: {
         className="w-full btn-primary justify-center disabled:opacity-40"
       >
         {props.loading ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
-        生成故事梗概（流式输出）
+        {t.sc_generate_synopsis}
       </button>
 
       {/* Locked genre modal */}
@@ -1446,17 +1483,18 @@ function SetupBar(props: {
             </button>
             <div className="text-center space-y-2">
               <div className="text-4xl">🔒</div>
-              <h3 className="font-display text-lg font-bold text-text-primary">题材解锁申请</h3>
+              <h3 className="font-display text-lg font-bold text-text-primary">
+                {t.sc_genre_unlock_title}
+              </h3>
               <p className="text-sm text-text-secondary leading-relaxed">
-                「{lockModal}
-                」为用户定制题材，请您在遵守所在地区法律法规的前提下，向管理员申请解锁该题材。
+                {t.sc_genre_unlock_desc.replace("{name}", lockModal)}
               </p>
             </div>
             <button
               onClick={() => setLockModal(null)}
               className="w-full py-2.5 rounded-lg bg-accent text-accent-foreground text-sm font-semibold hover:opacity-90 transition"
             >
-              我知道了
+              {t.sc_got_it}
             </button>
           </div>
         </div>

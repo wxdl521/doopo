@@ -170,8 +170,12 @@ function SavedScriptView({ s, t }: { s: SavedScript; t: ReturnType<typeof useLan
         <Stat label={t.scd_genre} value={Array.isArray(s.genre) ? s.genre.join("、") : s.genre} />
         <Stat label={t.script_tone} value={Array.isArray(s.tone) ? s.tone.join("、") : s.tone} />
         <Stat
-          label={episodeCount > 0 ? "已生成集数" : t.scd_scenes}
-          value={episodeCount > 0 ? `${episodeCount} 集` : String(s.scenes?.length ?? 0)}
+          label={episodeCount > 0 ? t.sd_episodes_generated : t.scd_scenes}
+          value={
+            episodeCount > 0
+              ? t.sd_ep_count_short.replace("{count}", String(episodeCount))
+              : String(s.scenes?.length ?? 0)
+          }
         />
       </div>
 
@@ -212,29 +216,29 @@ function SavedScriptView({ s, t }: { s: SavedScript; t: ReturnType<typeof useLan
         {hasAgentText && (
           <section className={`panel p-5 space-y-5 ${showSideBlocks ? "lg:col-span-3" : ""}`}>
             {!s.synopsisText && plainContent && (
-              <AgentTextBlock title="📄 已保存剧本内容" text={plainContent} />
+              <AgentTextBlock title={t.sd_saved_content} text={plainContent} />
             )}
-            {s.synopsisText && (
-              <AgentTextBlock title="📖 故事梗概 / 一句话剧情" text={s.synopsisText} />
-            )}
+            {s.synopsisText && <AgentTextBlock title={t.sd_synopsis_title} text={s.synopsisText} />}
 
             {/* 剧本集数跳转区 */}
             {episodeCount > 0 && (
               <div>
                 <div className="flex items-center gap-2 mb-3 flex-wrap">
-                  <span className="font-display font-bold text-sm">🎬 分镜脚本</span>
-                  <span className="text-xs text-text-muted">共 {episodeCount} 集</span>
+                  <span className="font-display font-bold text-sm">{t.sd_storyboard}</span>
+                  <span className="text-xs text-text-muted">
+                    {t.sd_episode_total.replace("{count}", String(episodeCount))}
+                  </span>
                   <label className="ml-auto flex items-center gap-1.5 text-xs text-text-muted">
-                    <span>跳转至</span>
+                    <span>{t.sd_jump_to}</span>
                     <select
                       value={focusedEpIdx}
                       onChange={(e) => setFocusedEpIdx(Number(e.target.value))}
                       className="rounded-md bg-bg-elevated border border-border text-text-primary text-xs px-2 py-1 focus:outline-none focus:border-accent/50"
                     >
-                      <option value={-1}>— 选择集数 —</option>
+                      <option value={-1}>{t.sd_select_episode}</option>
                       {s.episodesText!.map((ep) => (
                         <option key={ep.epIndex} value={ep.epIndex}>
-                          第 {ep.epIndex} 集
+                          {t.sd_episode_n.replace("{n}", String(ep.epIndex))}
                         </option>
                       ))}
                     </select>
@@ -250,20 +254,20 @@ function SavedScriptView({ s, t }: { s: SavedScript; t: ReturnType<typeof useLan
                           key={ep.epIndex}
                           className="rounded-xl border border-border bg-bg-base/40 px-3 py-2 flex items-center gap-3 cursor-pointer hover:border-accent/50 transition-colors"
                           onClick={() => setFocusedEpIdx(ep.epIndex)}
-                          title="点击跳转至本集"
+                          title={t.sd_click_jump}
                         >
                           <span className="text-sm font-semibold text-text-primary">
-                            第 {ep.epIndex} 集
+                            {t.sd_episode_n.replace("{n}", String(ep.epIndex))}
                           </span>
                           <span className="text-xs text-text-muted truncate flex-1 min-w-0">
                             {ep.text
                               .slice(0, 60)
                               .replace(/[#*`>_\-]/g, "")
                               .replace(/\s+/g, " ")
-                              .trim() || "（空）"}
+                              .trim() || t.sd_empty}
                           </span>
                           <span className="text-[11px] text-text-muted shrink-0">
-                            {ep.text.length} 字
+                            {t.sd_chars_n.replace("{count}", String(ep.text.length))}
                           </span>
                         </div>
                       );
@@ -275,14 +279,16 @@ function SavedScriptView({ s, t }: { s: SavedScript; t: ReturnType<typeof useLan
                       >
                         <div className="flex items-center gap-2 px-3 py-2 bg-bg-elevated/40">
                           <span className="text-sm font-semibold text-text-primary">
-                            第 {ep.epIndex} 集
+                            {t.sd_episode_n.replace("{n}", String(ep.epIndex))}
                           </span>
-                          <span className="text-[11px] text-text-muted">{ep.text.length} 字</span>
+                          <span className="text-[11px] text-text-muted">
+                            {t.sd_chars_n.replace("{count}", String(ep.text.length))}
+                          </span>
                           <div className="ml-auto flex items-center gap-1">
                             <button
                               onClick={() => toggleEpCollapse(ep.epIndex)}
                               className="text-text-muted hover:text-text-primary"
-                              title="收起"
+                              title={t.sd_collapse}
                             >
                               <ChevronUp size={12} />
                             </button>
@@ -296,7 +302,9 @@ function SavedScriptView({ s, t }: { s: SavedScript; t: ReturnType<typeof useLan
               </div>
             )}
 
-            {s.charactersText && <AgentTextBlock title="👥 角色卡" text={s.charactersText} />}
+            {s.charactersText && (
+              <AgentTextBlock title={t.sd_characters_card} text={s.charactersText} />
+            )}
           </section>
         )}
 
