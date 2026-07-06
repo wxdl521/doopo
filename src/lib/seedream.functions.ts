@@ -1853,7 +1853,7 @@ function buildPitchDeckPrompt(opts: {
   const chars = data.characters || [];
   const shots = data.shots || [];
   const shotCount = shots.length;
-  const SUGGESTED_PANELS = Math.min(10, Math.max(4, shotCount || 6));
+  const SUGGESTED_PANELS = Math.min(12, Math.max(4, shotCount || 6));
 
   const refImgs = data.referenceImages || [];
   const refLabels = data.referenceImageLabels || [];
@@ -1867,6 +1867,15 @@ function buildPitchDeckPrompt(opts: {
       ].join("\n")
     : "";
 
+  // 景别统一用中文展示(用户要求不用 WS/MS/CU 等英文缩写)
+  const SHOT_TYPE_CN: Record<string, string> = {
+    WS: "远景", MS: "中景", CU: "近景", ECU: "特写", OTS: "过肩",
+  };
+  const cnShotType = (s: { shotType: string; shotTypeLabel?: string }) => {
+    const label = s.shotTypeLabel?.trim();
+    if (label && /[一-龥]/.test(label)) return label;
+    return SHOT_TYPE_CN[s.shotType] || label || s.shotType;
+  };
   const shotLines = shots
     .map((s, i) => {
       const cam = s.camera ? ` | camera: ${s.camera}` : "";
@@ -1878,7 +1887,7 @@ function buildPitchDeckPrompt(opts: {
           : s.durationSec
             ? ` | duration: ${s.durationSec}s`
             : "";
-      return `  Frame ${i + 1}: [${s.shotTypeLabel}] ${s.action}${cam}${camMov}${blocking}${dur}`;
+      return `  Frame ${i + 1}: [${cnShotType(s)}] ${s.action}${cam}${camMov}${blocking}${dur}`;
     })
     .join("\n");
 
@@ -1909,62 +1918,28 @@ function buildPitchDeckPrompt(opts: {
     : "  (no specific scene)";
 
   return [
-    `[MISSION] Create a professional FILM STORYBOARD in pure PENCIL LINE-ART / SKETCH style. ONE single 16:9 landscape image. The entire board must look like a hand-drawn storyboard by a professional film pre-production artist — pencil on paper, clean lines, no color, no cel-shading, no 3D render, no watercolor.`,
-    `[ASPECT RATIO] Strictly 16:9 LANDSCAPE.`,
+    `[MISSION] Create a professional FILM STORYBOARD in pure PENCIL LINE-ART / SKETCH style. ONE single 16:9 landscape image — hand-drawn by a film pre-production artist, pencil on paper, clean lines, no color, no cel-shading, no 3D render, no watercolor.`,
 
-    `[LINE ART STYLE — strict, no exceptions]`,
-    `- Pure pencil sketch / line-art style throughout. NO color rendering, NO photo-realism, NO watercolor, NO cel-shading, NO 3D rendering, NO oil painting, NO anime style.`,
-    `- Lines must be clean, confident, with varying thickness (thicker contour lines, thinner detail lines).`,
-    `- Shadows rendered with hatching / cross-hatching (parallel lines), NO smudging, NO gradients, NO airbrush.`,
-    `- Characters drawn in realistic proportions (NOT chibi, NOT cartoon exaggerated).`,
-    `- Backgrounds use simple lines to convey spatial relationships — no excessive detail.`,
-    `- The overall feel: a professional storyboard artist's hand-drawn pencil board for film/TV pre-production.`,
+    `[STYLE]`,
+    `- Pure pencil line-art: clean confident lines, varying thickness (thick contour, thin detail).`,
+    `- Shadows via hatching only — no smudging, no gradients, no airbrush.`,
+    `- Realistic character proportions (not chibi/cartoon). Simple line backgrounds.`,
 
-    `[OVERALL LAYOUT — all on ONE page, 16:9 landscape]`,
-    `Top area: title bar showing episode/group info and shot count (${SUGGESTED_PANELS} frames).`,
-    `Main area: a grid of storyboard frames arranged left-to-right, top-to-bottom. Each frame is a pencil-sketch thumbnail of the corresponding shot.`,
-    `Below each frame: a small caption strip with shot number, duration, and brief action note in clean handwritten-style text.`,
-    `Bottom-right or side area: a small top-down scene layout diagram in simple linework showing character positions, movement arrows, and camera positions.`,
+    `[LAYOUT — 16:9, one page]`,
+    `- Top: short title bar (episode/group label + frame count ${SUGGESTED_PANELS}).`,
+    `- Main: grid of ${SUGGESTED_PANELS} frames, left-to-right, top-to-bottom. Each frame = a pencil-sketch thumbnail of the shot.`,
+    `- Below each frame: ONE caption line — "镜头N · Ns · 景别 · 动作" (e.g. 镜头1 · 4s · 中景 · 陆深推门入场坐下). 景别用中文(远景/中景/近景/特写/过肩), 动作写明白但用短句非长段. Clean printed font, NOT handwritten.`,
+    `- Bottom-right: top-down diagram (see [TOP-DOWN DIAGRAM]).`,
 
-    `[STORYBOARD FRAMES — main content, most prominent]`,
-    `A grid of ${SUGGESTED_PANELS} frames (adjust to fit layout). Each frame:`,
-    `  • A pencil line-art thumbnail of the shot scene — characters, background, composition all in sketch style`,
-    `  • Shot number clearly labeled (镜头 1, 镜头 2, ...)`,
-    `  • Below the thumbnail: brief tags — duration, shot type, action — in small readable text`,
-    `  • Frames are separated by thin clean borders / gutters`,
+    `[CHARACTER CONSISTENCY]`,
+    `- Same character across ALL frames: identical face, hairstyle, body, clothing. No drift.`,
 
-    `[CHARACTER CONSISTENCY — critical]`,
-    `- Same character across ALL frames must have identical face features, hairstyle, body proportion, and clothing details.`,
-    `- Adjacent frames must have visual continuity: action flow, line of sight, spatial logic.`,
-    `- No character drift between frames — they must look like the same person drawn from different angles.`,
-
-    `[TOP-DOWN DIAGRAM — mandatory, bottom-right area, at least 20% of page]`,
-    `A clean overhead/floor-plan view of the scene in pencil linework. This diagram MUST follow these EXACT rules:`,
-    ``,
-    `【CAMERA MOVEMENT — SOLID lines + ARROWHEADS + SEQUENCE NUMBERS】`,
-    `  • Each camera position is drawn as a 📷 icon`,
-    `  • Camera positions are numbered in shooting order: ①, ②, ③ ...`,
-    `  • Camera positions are connected by SOLID lines with ARROWHEADS (──▶)`,
-    `  • The arrow direction MUST match the shot sequence (① ──▶ ② ──▶ ③)`,
-    `  • Below each 📷, write the shot type label (WS/MS/CU/ECU/OTS) in small text`,
-    `  • Draw a light V-shaped FOV cone from each 📷 to show the field of view`,
-    ``,
-    `【CHARACTER MOVEMENT — DASHED lines only】`,
-    `  • Character starting position: hollow circle (○) with character name label`,
-    `  • Character ending position: filled circle (●)`,
-    `  • Movement path: DASHED line with arrowhead (- - -▶) connecting ○ → ●`,
-    `  • Different characters = different dash density (sparse vs dense) + name labels`,
-    `  • A character that does NOT move: single ● at their fixed position, NO line`,
-    ``,
-    `【LEGEND BOX (small, in corner of diagram)】`,
-    `  ──▶  = Camera Movement (机位动线)`,
-    `  - - -▶ = Character Movement (人物动线)`,
-    ``,
-    `【SELF-CHECK before output】`,
-    `  • Arrow directions match the shot sequence (1→2→3), no reversed arrows`,
-    `  • Character start/end positions match the blocking descriptions in [SHOT BREAKDOWN]`,
-    `  • Number of 📷 = number of shots in this group`,
-    `  • Solid lines = camera only, dashed lines = character only, never swapped`,
+    `[TOP-DOWN DIAGRAM — bottom-right, ~25% of page, labels LARGE and FEW]`,
+    `Overhead floor-plan in pencil linework. Keep it simple — too many tiny labels cause garbled text.`,
+    `- Room: draw a clear rectangular outline first; ALL furniture (desk/chair/computer) and characters stay INSIDE it. Layout logical (computer on desk, chair in front).`,
+    `- Cameras: one solid triangle (▲) + short label "CAM1/CAM2/..." per camera, all the same size. Connect in order with THICK SOLID line + large arrowhead (CAM1 → CAM2 → CAM3). CAM1 = 镜头1. Don't write shot type here (it's in the caption).`,
+    `- Characters: hollow square (start) → filled square (end), THICK DASHED line + large arrowhead. Add a small facing arrow (▷) — facing must be logical (computer user faces computer, dialogue faces each other). Label start with the name. Different characters = different dash spacing.`,
+    `- Legend (2 lines): solid arrow = camera path (机位动线), dashed arrow = character path (人物动线).`,
 
     referenceImageBlock,
 
@@ -1980,19 +1955,39 @@ function buildPitchDeckPrompt(opts: {
     `[SHOT BREAKDOWN]`,
     shotLines || `  (derive from plot)`,
 
-    `[QUALITY RULES]`,
-    `RULE 1 — PENCIL LINE-ART ONLY: No color, no rendering beyond hatching/cross-hatching. Pure sketch style.`,
-    `RULE 2 — 16:9 LANDSCAPE: Strictly horizontal. No 9:16, no 1:1.`,
-    `RULE 3 — CHARACTER LOCK: Same character = same face/body/clothes across all frames. No identity drift.`,
-    `RULE 4 — STORY FAITHFULNESS: Frames strictly follow [STORY PLOT] and [SHOT BREAKDOWN]. No invented plots or characters.`,
-    `RULE 5 — FRAME COUNT: ${SUGGESTED_PANELS} frames, one per shot.`,
-    `RULE 6 — CLEAN SKETCH LINES: Confident strokes, varying line weight, hatching for shadows. No messy scribbles.`,
-    `RULE 7 — READABLE TEXT: Captions must be legible. Short tags only (shot number, duration, action).`,
+    `[OUTPUT RULES]`,
+    `1. Pencil line-art only — no color, no rendering beyond hatching.`,
+    `2. 16:9 landscape, ${SUGGESTED_PANELS} frames.`,
+    `3. Character lock — same face/body/clothes across frames.`,
+    `4. Story faithful — follow [STORY PLOT] and [SHOT BREAKDOWN], no invented content.`,
+    `5. Text crisp & legible — Chinese shot types (远景/中景/近景/特写/过肩), no WS/MS/CU; no emoji (📷) or circled numbers (①②③); use plain labels (镜头1, CAM1) + Arabic numerals.`,
+    `6. Sequence — frame/camera numbers continuous 1..N, no skips/dupes; diagram arrows follow shot order; character positions match blocking.`,
 
-    `Begin. Output a 16:9 pencil line-art storyboard with ${SUGGESTED_PANELS} frames. Pure sketch style, no color.`,
+    `Begin. Output a 16:9 pencil line-art storyboard with ${SUGGESTED_PANELS} frames.`,
   ]
     .filter(Boolean)
     .join("\n\n");
+}
+
+/**
+ * 故事板 negative prompt —— 首生成和重生共用。
+ * 2026/07:对齐"去 emoji/带圈符号 + 纯文字标注"的新 prompt,
+ * 去掉与"不用 ①②③/○●"约束矛盾的旧否定项,补 emoji/序号错误否定。
+ */
+function buildPitchDeckNegative(): string {
+  return [
+    "garbled text, fake characters, pseudo Chinese, jumbled glyphs, broken strokes, illegible labels, blurry text, smeared text, distorted text, unreadable captions, mismatched font widths, comic font, decorative font, handwritten scribble",
+    "emoji icons, camera emoji 📷, circled numbers ①②③, unicode symbols as labels, emoji in diagram, emoji in captions",
+    "skipped frame numbers, duplicated numbers, out-of-order sequence labels, missing frame numbers, missing camera labels",
+    "color, colored rendering, full color, cel-shading, watercolor, oil painting, airbrush, gradient, photorealistic, 3D render, CGI, anime style, digital painting, thick paint, impasto, gouache, pastel, marker rendering, digital art",
+    "cluttered layout, overlapping sections, missing dividers, off-grid placement, no white space, busy decorative borders, ornate frames, gold filigree",
+    "wrong aspect ratio, vertical 9:16, square 1:1, 4:3, portrait orientation",
+    "extra characters not in [CHARACTERS], scenery not in [SCENE], invented plot, frames unrelated to [SHOT BREAKDOWN]",
+    "low resolution, blurry, pixelated, JPEG artifacts, low quality, soft focus",
+    "missing top-down diagram, diagram without solid camera movement arrows, diagram without dashed character movement lines, camera positions without CAM1/CAM2 text labels, character positions without start/end squares, diagram without legend box, character movement drawn as solid line instead of dashed, camera movement drawn as dashed line instead of solid, movement paths without arrowheads, camera FOV cone missing, diagram too small to read labels, unlabeled camera positions, camera positions not in sequential order, character movement not shown in diagram",
+    "frames without 镜头N label, frames without duration label, frames without shot type tag, frames without action description, long paragraph captions, English shot type abbreviations WS MS CU ECU OTS on frames",
+    "art style drift from reference images, inconsistent rendering across sections, anime when reference is realistic, realistic when reference is anime, cel-shading when reference is painterly, 3D render when reference is 2D, watercolor when reference is digital illustration, different line treatment from reference, different color saturation from reference, different shading style from reference, mixed art styles, inconsistent brush strokes between frames, mixing 2D and 3D, mixing photoreal and stylized",
+  ].join(", ");
 }
 
 export const generateStoryboardPitchDeck = createServerFn({ method: "POST" })
@@ -2003,18 +1998,7 @@ export const generateStoryboardPitchDeck = createServerFn({ method: "POST" })
     // 2026/06:加 negative prompt 主攻 "文字乱码 / 文字模糊 / 伪手写"等
     // 文字渲染常见问题,呼应 prompt 里 RULE 3(文字最高优先级)。
     // **2026/06 二次强化**:加画风漂移 negative,防故事板插画跟参考图画风不一致
-    const negative = [
-      "garbled text, fake characters, pseudo Chinese, jumbled glyphs, broken strokes, illegible labels, blurry text, smeared text, distorted text, unreadable captions, mismatched font widths, comic font, decorative font, handwritten scribble",
-      "color, colored rendering, full color, cel-shading, watercolor, oil painting, airbrush, gradient, photorealistic, 3D render, CGI, anime style, digital painting, thick paint, impasto, gouache, pastel, marker rendering, digital art",
-      "cluttered layout, overlapping sections, missing dividers, off-grid placement, no white space, busy decorative borders, ornate frames, gold filigree",
-      "wrong aspect ratio, vertical 9:16, square 1:1, 4:3, portrait orientation",
-      "extra characters not in [CHARACTERS], scenery not in [SCENE], invented plot, frames unrelated to [SHOT BREAKDOWN]",
-      "low resolution, blurry, pixelated, JPEG artifacts, low quality, soft focus",
-      "missing top-down diagram, diagram without solid camera movement arrows, diagram without dashed character movement lines, camera positions without sequence numbers ①②③, character positions without start/end circles ○●, diagram without legend box, character movement drawn as solid line instead of dashed, camera movement drawn as dashed line instead of solid, movement paths without arrowheads, camera FOV cone missing, diagram too small to read labels, unlabeled camera positions, camera positions not in sequential order, character movement not shown in diagram",
-      "frames without duration label, frames without shot number, frames without motion tag, frames without camera tag",
-      // 画风漂移 / 不继承参考图
-      "art style drift from reference images, inconsistent rendering across sections, anime when reference is realistic, realistic when reference is anime, cel-shading when reference is painterly, 3D render when reference is 2D, watercolor when reference is digital illustration, different line treatment from reference, different color saturation from reference, different shading style from reference, mixed art styles, inconsistent brush strokes between frames, mixing 2D and 3D, mixing photoreal and stylized",
-    ].join(", ");
+    const negative = buildPitchDeckNegative();
     const prompt = appendNegative(buildPitchDeckPrompt({ data, styleSpec }), negative);
 
     const requested = normalizeImageModelForRouting(data.model);
@@ -2328,62 +2312,40 @@ function buildRegenPitchDeckPrompt(opts: {
     : "  (no specific scene)";
 
   return [
-    // ========== 任务:在图 1 基础上按意见修改 ==========
-    `[MISSION] You are MODIFYING an existing 16:9 director's pre-production guide (图1).`,
-    `The user has feedback — apply ONLY the changes they describe. Preserve everything else from 图1: 6-section layout, section proportions, title hierarchy, character identities, scene environment, visual style.`,
-    ``,
+    `[MISSION] You are MODIFYING an existing 16:9 pencil line-art FILM STORYBOARD (图1). Apply ONLY the user's feedback; preserve everything else from 图1 — manga multi-frame grid, top-down diagram, character identities, scene, pencil sketch style.`,
+
     `[USER FEEDBACK — the ONLY things to change]`,
     data.userInstruction,
-    ``,
-    `[CONTEXT — preserved unchanged from 图1]`,
+
+    `[CONTEXT — preserved from 图1 unless feedback says otherwise]`,
     `Style: ${styleSpec.label} (${styleSpec.positive.slice(0, 80)}...)`,
     `Plot: ${data.plotText || "(no plot text)"}`,
     `Scene:`,
     sceneLine,
-    `Characters (face/body must stay identical to 图1 unless user feedback says otherwise):`,
+    `Characters (face/body identical to 图1 unless feedback says otherwise):`,
     charLines,
-    `Shot count: ${shots.length} (do NOT change panel layout unless user feedback mentions it)`,
-    ``,
-    // ========== 6-SECTION 布局硬约束(防走样)==========
-    `[LAYOUT — MUST PRESERVE]`,
-    `1) Top strip · SHARED CREATIVE DIRECTION (~10% height)`,
-    `2) Middle-left · CHARACTER & STYLE REFERENCE (~30% width)`,
-    `3) Middle-center · ENVIRONMENT & SCENE DESIGN (~35% width)`,
-    `4) Middle-right · LIGHTING/MOOD + MOOD KEYWORDS (~35% width)`,
-    `5) Bottom · STORYBOARD FRAMES (full-width grid, ${shots.length} panels)`,
-    `6) Bottom strip · AUDIO + CINEMATOGRAPHY NOTES (~12% height)`,
-    `Each section has a LARGE Chinese title (with small English subtitle). Thin neutral dividers (#E8E8E8).`,
-    ``,
-    // ========== 文字可读性 ==========
-    `[TEXT READABILITY — TOP PRIORITY]`,
-    `- ALL Chinese text CRISP / SHARP / ACCURATE / READABLE. No garbled glyphs.`,
-    `- Section titles, shot numbers, character angle labels MUST be visibly LARGE and BOLD.`,
-    `- Each frame caption ≤ 1-2 short Chinese tags (e.g. "35mm 广角 · 跟拍 · 4s").`,
-    `- High contrast: dark text on clean white / very light grey background.`,
-    `- Clean printed font (思源宋体 / 思源黑体 / Noto Sans). NO decorative / pseudo-handwritten fonts.`,
-    ``,
-    // ========== 修改规则 ==========
+    `Shot count: ${shots.length} (keep same count and order unless feedback mentions it)`,
+
+    `[PRESERVE from 图1]`,
+    `- Layout: grid of storyboard frames (left-to-right, top-to-bottom), each with caption "镜头N · Ns · 景别(中文) · 动作" (动作短句); bottom-right top-down diagram (room outline + ▲/CAM cameras + square/dashed characters + facing arrows + legend). Do NOT revert to any 6-section pitch-deck layout.`,
+    `- Style: pencil line-art, 16:9, clean printed font, Chinese shot types (远景/中景/近景/特写/过肩), no emoji/①②③, plain labels + Arabic numerals.`,
+    `- Same frame/camera numbers continuous 1..N, diagram arrows follow shot order.`,
+
     `[MODIFICATION RULES]`,
-    `1. Treat 图1 as the structural source of truth — preserve its layout, proportions, fonts, color usage.`,
-    `2. Apply ONLY what the user described in [USER FEEDBACK]. Everything else: identical to 图1.`,
-    `3. If user feedback is vague ("好看点", "改改"), interpret MINIMALLY — small refinements only.`,
-    `4. If user feedback contradicts 图1 layout (e.g. user says "改成 4 格"), DO follow user feedback but keep all other style consistency.`,
-    `5. Do NOT change character faces / outfits / scene unless user feedback explicitly mentions them.`,
-    `6. Do NOT introduce new characters, scenes, or styles that aren't in 图1 or in [CONTEXT].`,
-    `7. Maintain the same aspect ratio (16:9) and section grid.`,
-    `8. Same Shot count as listed in [CONTEXT], in same order.`,
-    ``,
-    // ========== 参考图风格转化说明(图1 是铅笔素描,图2..N 是彩色)==========
+    `1. 图1 is the structural source of truth — preserve its layout, proportions, fonts, line-art style.`,
+    `2. Apply ONLY [USER FEEDBACK]; everything else identical to 图1.`,
+    `3. Vague feedback ("好看点") → minimal refinement only.`,
+    `4. If feedback contradicts 图1 layout (e.g. "改 4 格"), follow feedback but keep other style consistency.`,
+    `5. Don't change faces/outfits/scene unless feedback explicitly says so. Don't introduce new characters/scenes.`,
+    `6. Keep 16:9, same shot count and order, frame/camera numbers continuous.`,
+
     `[REFERENCE IMAGES — 图 2..N are identity anchors only]`,
-    `图 1 = 当前故事板(画风/布局/文字的真值,严格遵循)。`,
-    `图 2..N = 角色/场景参考图(彩色),仅用于锁定人物身份——脸型、五官、发型、身材、服装款式。`,
-    `【关键】图 2..N 的色彩和渲染风格不影响输出。输出必须保持图 1 的铅笔线稿风格。将图 2..N 的人物转化为与图 1 一致的铅笔素描表达——提取轮廓/结构/服装褶皱线,忽略参考图的色彩、光影、材质。`,
-    ``,
-    // ========== 风格指纹 ==========
-    `[PROJECT VISUAL STYLE — must match 图1's rendered style]`,
+    `图 1 = 当前故事板(画风/布局/文字的真值). 图 2..N = 角色/场景参考(彩色), 仅用于锁定人物身份——脸型/五官/发型/身材/服装款式. 输出必须保持图 1 的铅笔线稿风格, 将图 2..N 人物转化为铅笔素描, 忽略其色彩/光影/材质.`,
+
+    `[PROJECT VISUAL STYLE — match 图1]`,
     buildStyleLock(styleSpec, "deck"),
-    ``,
-    `[OUTPUT] Regenerate the entire 16:9 pre-production guide with the user's changes applied. One image, landscape.`,
+
+    `[OUTPUT] Regenerate the 16:9 pencil line-art storyboard with the user's changes applied. One image, landscape.`,
   ]
     .filter(Boolean)
     .join("\n");
@@ -2395,7 +2357,7 @@ export const regenerateStoryboardPitchDeck = createServerFn({ method: "POST" })
     const { resolveProjectStyle } = await import("./visualStyles");
     const styleSpec = resolveProjectStyle(data.projectStyle);
 
-    const prompt = buildRegenPitchDeckPrompt({ data, styleSpec });
+    const prompt = appendNegative(buildRegenPitchDeckPrompt({ data, styleSpec }), buildPitchDeckNegative());
 
     // 图 1 = 当前故事板(图布局 / 风格 / 文字位置的真值),后面跟原 referenceImages
     // 里的角色/场景参考图 —— 跟原 generate 共享同样 10 张上限
