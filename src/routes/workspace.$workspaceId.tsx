@@ -1434,13 +1434,58 @@ function WorkspacePage() {
   // 2026 Storyboard 接入:每个分镜组可以独立生成故事板图(Storyboard),
   // key = groupId。value 包含 storyboardUrl 和 status。
   // 2026/07:接入 localStorage 持久化，刷新页面不丢失已生成的 URL（Seedream URL 24h 有效）。
+  type StoryboardGenEntry = {
+    url: string;
+    status: "running" | "succeeded" | "failed";
+    startedAt?: number;
+  };
+  // 2026/07:故事板接入多代历史(跟视频对称) —— 每个 group 可有多张故事板图,
+  // selectedStoryboardIndex 记当前看第几代,默认最新。getActiveStoryboard 取当前。
   const [groupStoryboards, setGroupStoryboards] = useState<
-    Record<string, { url: string; status: "running" | "succeeded" | "failed"; startedAt?: number }>
+    Record<string, StoryboardGenEntry[]>
   >({});
+  const [selectedStoryboardIndex, setSelectedStoryboardIndex] = useState<Record<string, number>>({});
+  const getActiveStoryboard = useCallback(
+    (gid: string): StoryboardGenEntry | undefined => {
+      const entries = groupStoryboards[gid];
+      if (!entries || entries.length === 0) return undefined;
+      const idx = selectedStoryboardIndex[gid] ?? entries.length - 1;
+      return entries[Math.min(idx, entries.length - 1)];
+    },
+    [groupStoryboards, selectedStoryboardIndex],
+  );
+  const migrateGroupStoryboards = useCallback(
+    (raw: Record<string, unknown> | undefined | null): Record<string, StoryboardGenEntry[]> => {
+      if (!raw || typeof raw !== "object") return {};
+      const result: Record<string, StoryboardGenEntry[]> = {};
+      for (const [k, v] of Object.entries(raw)) {
+        if (Array.isArray(v)) {
+          result[k] = (v as any[]).map((item: any) => ({
+            url: item?.url ?? "",
+            status: item?.status === "running" ? ("failed" as const) : (item?.status ?? "failed"),
+            startedAt: item?.startedAt,
+          }));
+        } else if (v && typeof v === "object" && "url" in (v as object)) {
+          const item = v as any;
+          result[k] = [
+            {
+              url: item?.url ?? "",
+              status: item?.status === "running" ? ("failed" as const) : (item?.status ?? "failed"),
+              startedAt: item?.startedAt,
+            },
+          ];
+        }
+      }
+      return result;
+    },
+    [],
+  );
   // 2026/07:每秒 tick,驱动生成中计时器刷新。只要有任一 storyboard/video 在 running 就跑 interval。
   const [tick, setTick] = useState(0);
   useEffect(() => {
-    const sbRunning = Object.values(groupStoryboards).some((s) => s.status === "running");
+    const sbRunning = Object.values(groupStoryboards).some((arr) =>
+      (arr ?? []).some((s) => s.status === "running"),
+    );
     const vidRunning = Object.values(groupVideos).some((arr) =>
       (arr ?? []).some((v) => v.status === "running"),
     );
@@ -1515,19 +1560,8 @@ function WorkspacePage() {
       }
       const sRaw = localStorage.getItem(`doopoo:ws:${workspaceId}:storyboards`);
       if (sRaw) {
-        const parsed = JSON.parse(sRaw) as Record<
-          string,
-          { url: string; status: string; startedAt?: number }
-        >;
-        for (const k of Object.keys(parsed)) {
-          if (parsed[k]?.status === "running")
-            parsed[k] = {
-              url: parsed[k]?.url || "",
-              status: "failed",
-              startedAt: parsed[k]?.startedAt,
-            };
-        }
-        setGroupStoryboards(parsed as any);
+        const parsed = JSON.parse(sRaw) as Record<string, unknown>;
+        setGroupStoryboards(migrateGroupStoryboards(parsed));
       }
     } catch {
       /* localStorage 不可用或数据损坏，静默跳过 */
@@ -1642,20 +1676,10 @@ function WorkspacePage() {
           setGroupVideos(migrateGroupVideos(wd.groupVideos as Record<string, unknown> | undefined));
         }
         if (wd.groupStoryboards && typeof wd.groupStoryboards === "object") {
-          // 2026/07 修复:DB 恢复时把 running 转 failed,对齐 localStorage 恢复逻辑。
-          // 否则 DB 数据（异步加载,晚于 localStorage）会覆盖 localStorage 的修复,
-          // 导致刷新后故事板图永久显示"生成中…"。
-          const fixedGroupStoryboards: Record<
-            string,
-            { url: string; status: "running" | "succeeded" | "failed" }
-          > = {};
-          for (const [k, v] of Object.entries(wd.groupStoryboards as Record<string, any>)) {
-            fixedGroupStoryboards[k] =
-              v?.status === "running"
-                ? { url: v?.url || "", status: "failed" as const }
-                : (v as { url: string; status: "running" | "succeeded" | "failed" });
-          }
-          setGroupStoryboards(fixedGroupStoryboards);
+          // 2026/07:故事板多代历史,DB 恢复走 migrate(老单对象/新数组都兼容,running→failed)
+          setGroupStoryboards(
+            migrateGroupStoryboards(wd.groupStoryboards as Record<string, unknown>),
+          );
         }
         // 2026/06:恢复上次选中的集数
         if (typeof wd.selectedEpisodeIndex === "number") {
@@ -1709,40 +1733,47 @@ function WorkspacePage() {
   const autoSavingStoryboardsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (!user || !workspaceId) return;
-    const entries = Object.entries(groupStoryboards);
-    for (const [gid, item] of entries) {
-      if (item.status !== "succeeded" || !item.url) continue;
-      // 已入库的跳过(URL 是 supabase.co / 自己的 storage 域名)
-      if (
-        item.url.startsWith("data:") ||
-        item.url.includes(".supabase.co") ||
-        item.url.includes(".supabase.in") ||
-        item.url.includes("/storage/v1/object/public/workspace-media/") ||
-        item.url.includes("/object/public/workspace-media/")
-      )
-        continue;
-      // 同 url 已发起的请求跳过(防重)
-      if (autoSavingStoryboardsRef.current.has(item.url)) continue;
-      autoSavingStoryboardsRef.current.add(item.url);
-      void (async () => {
-        try {
-          const r = await callSaveOneStoryboard({
-            data: { workspaceId, groupId: gid, url: item.url },
-          });
-          if (r.ok && r.persisted && r.url && r.url !== item.url) {
-            // 替换为永久 URL
-            setGroupStoryboards((m) => {
-              const cur = m[gid];
-              if (!cur || cur.url !== item.url) return m; // 用户已经又生成了
-              return { ...m, [gid]: { ...cur, url: r.url } };
+    for (const [gid, arr] of Object.entries(groupStoryboards)) {
+      if (!arr) continue;
+      arr.forEach((item, idx) => {
+        if (item.status !== "succeeded" || !item.url) return;
+        void idx; // entryIndex 由 saveOneStoryboard 内部 timestamp 路径处理
+        // 已入库的跳过(URL 是 supabase.co / 自己的 storage 域名)
+        if (
+          item.url.startsWith("data:") ||
+          item.url.includes(".supabase.co") ||
+          item.url.includes(".supabase.in") ||
+          item.url.includes("/storage/v1/object/public/workspace-media/") ||
+          item.url.includes("/object/public/workspace-media/")
+        )
+          return;
+        // 同 url 已发起的请求跳过(防重)
+        if (autoSavingStoryboardsRef.current.has(item.url)) return;
+        autoSavingStoryboardsRef.current.add(item.url);
+        void (async () => {
+          try {
+            const r = await callSaveOneStoryboard({
+              data: { workspaceId, groupId: gid, url: item.url },
             });
+            if (r.ok && r.persisted && r.url && r.url !== item.url) {
+              // 替换为永久 URL(找到该 url 的 entry 替换)
+              setGroupStoryboards((m) => {
+                const entries = m[gid];
+                if (!entries) return m;
+                const eIdx = entries.findIndex((e) => e.url === item.url);
+                if (eIdx < 0) return m;
+                const next = [...entries];
+                next[eIdx] = { ...next[eIdx], url: r.url };
+                return { ...m, [gid]: next };
+              });
+            }
+          } catch (e) {
+            console.warn(`[storyboard auto-save] ${gid} 失败:`, e);
+          } finally {
+            autoSavingStoryboardsRef.current.delete(item.url);
           }
-        } catch (e) {
-          console.warn(`[storyboard auto-save] ${gid} 失败:`, e);
-        } finally {
-          autoSavingStoryboardsRef.current.delete(item.url);
-        }
-      })();
+        })();
+      });
     }
   }, [groupStoryboards, user, workspaceId, callSaveOneStoryboard]);
 
@@ -1971,7 +2002,12 @@ function WorkspacePage() {
           } else if (kind === "shot") {
             setShotImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), res.url!] }));
           } else if (kind === "storyboard") {
-            setGroupStoryboards((m) => ({ ...m, [id]: { url: res.url!, status: "succeeded" } }));
+            setGroupStoryboards((m) => {
+              const entries = [...(m[id] ?? [])];
+              entries.push({ url: res.url!, status: "succeeded" });
+              setSelectedStoryboardIndex((s) => ({ ...s, [id]: entries.length - 1 }));
+              return { ...m, [id]: entries };
+            });
           }
           toast.success("图片已上传");
           void handleSaveWorkspace();
@@ -4653,7 +4689,7 @@ function WorkspacePage() {
     const group = data.storyboardGroups.find((g) => g.id === groupId);
     if (!group) return null;
 
-    const storyboard = groupStoryboards[groupId];
+    const storyboard = getActiveStoryboard(groupId);
     if (storyboard?.status !== "succeeded" || !storyboard.url) {
       toast.error("请先生成该组的故事板,才能用故事板生成视频");
       return null;
@@ -5022,15 +5058,21 @@ function WorkspacePage() {
   async function generateMangaStoryboardForGroup(groupId: string) {
     const group = data.storyboardGroups.find((g) => g.id === groupId);
     if (!group) return;
-    if (groupStoryboards[groupId]?.status === "running") {
+    if (groupStoryboards[groupId]?.at(-1)?.status === "running") {
       toast.message("该故事板正在生成中…");
       return;
     }
 
-    setGroupStoryboards((m) => ({
-      ...m,
-      [groupId]: { url: "", status: "running", startedAt: Date.now() },
-    }));
+    setGroupStoryboards((m) => {
+      const entries = [...(m[groupId] ?? [])];
+      const lastIdx = entries.length - 1;
+      if (lastIdx >= 0 && entries[lastIdx].status === "running") {
+        entries[lastIdx] = { ...entries[lastIdx], startedAt: Date.now() };
+      } else {
+        entries.push({ url: "", status: "running", startedAt: Date.now() });
+      }
+      return { ...m, [groupId]: entries };
+    });
 
     // 2026/06:故事板 pitch deck 是"组级"产物,代表整组的视觉摘要。
     //   - 角色:用各 shot 有效角色列表的并集(任一 shot 显式加的角色都会进 pitch deck)
@@ -5157,8 +5199,18 @@ function WorkspacePage() {
       // 2026/06:查看提示词模式拦截 —— 把 running 状态清掉(也别标 failed)
       if (interceptPromptPreview(`第 ${group.index} 组 · 故事板`, res)) {
         setGroupStoryboards((m) => {
-          const { [groupId]: _, ...rest } = m;
-          return rest;
+          const entries = m[groupId];
+          if (!entries) return m;
+          const lastIdx = entries.length - 1;
+          if (lastIdx >= 0 && entries[lastIdx].status === "running") {
+            const next = entries.slice(0, -1);
+            if (next.length === 0) {
+              const { [groupId]: _, ...rest } = m;
+              return rest;
+            }
+            return { ...m, [groupId]: next };
+          }
+          return m;
         });
         return;
       }
@@ -5174,9 +5226,13 @@ function WorkspacePage() {
               .then((r) => {
                 if (r.ok && r.persisted && r.url) {
                   setGroupStoryboards((m) => {
-                    const cur = m[groupId];
-                    if (!cur || cur.url !== finalUrl) return m;
-                    return { ...m, [groupId]: { ...cur, url: r.url } };
+                    const entries = m[groupId];
+                    if (!entries) return m;
+                    const idx = entries.findIndex((e) => e.url === finalUrl);
+                    if (idx < 0) return m;
+                    const next = [...entries];
+                    next[idx] = { ...next[idx], url: r.url };
+                    return { ...m, [groupId]: next };
                   });
                 }
               })
@@ -5202,13 +5258,41 @@ function WorkspacePage() {
             toast.warning("故事板图片保存失败，临时链接 24h 内有效");
           }
         }
-        setGroupStoryboards((m) => ({ ...m, [groupId]: { url: finalUrl, status: "succeeded" } }));
+        setGroupStoryboards((m) => {
+          const entries = [...(m[groupId] ?? [])];
+          const lastIdx = entries.length - 1;
+          if (lastIdx >= 0 && entries[lastIdx].status === "running") {
+            entries[lastIdx] = { ...entries[lastIdx], url: finalUrl, status: "succeeded" };
+          } else {
+            entries.push({ url: finalUrl, status: "succeeded" });
+          }
+          setSelectedStoryboardIndex((s) => ({ ...s, [groupId]: entries.length - 1 }));
+          return { ...m, [groupId]: entries };
+        });
       } else {
-        setGroupStoryboards((m) => ({ ...m, [groupId]: { url: "", status: "failed" } }));
+        setGroupStoryboards((m) => {
+          const entries = [...(m[groupId] ?? [])];
+          const lastIdx = entries.length - 1;
+          if (lastIdx >= 0 && entries[lastIdx].status === "running") {
+            entries[lastIdx] = { ...entries[lastIdx], url: "", status: "failed" };
+          } else {
+            entries.push({ url: "", status: "failed" });
+          }
+          return { ...m, [groupId]: entries };
+        });
         toast.error(classifyError(res?.error, "故事板生成失败"));
       }
     } catch (e) {
-      setGroupStoryboards((m) => ({ ...m, [groupId]: { url: "", status: "failed" } }));
+      setGroupStoryboards((m) => {
+        const entries = [...(m[groupId] ?? [])];
+        const lastIdx = entries.length - 1;
+        if (lastIdx >= 0 && entries[lastIdx].status === "running") {
+          entries[lastIdx] = { ...entries[lastIdx], url: "", status: "failed" };
+        } else {
+          entries.push({ url: "", status: "failed" });
+        }
+        return { ...m, [groupId]: entries };
+      });
       toast.error(
         e instanceof Error ? classifyError(e.message, "故事板生成失败") : "故事板生成失败",
       );
@@ -5226,7 +5310,7 @@ function WorkspacePage() {
     const { groupId } = storyboardPreview;
     const group = data.storyboardGroups.find((g) => g.id === groupId);
     if (!group) return;
-    const current = groupStoryboards[groupId];
+    const current = getActiveStoryboard(groupId);
     if (!current?.url) return;
     const instruction = storyboardModInput.trim();
     if (!instruction) return;
@@ -5350,9 +5434,13 @@ function WorkspacePage() {
               .then((r) => {
                 if (r.ok && r.persisted && r.url) {
                   setGroupStoryboards((m) => {
-                    const cur = m[groupId];
-                    if (!cur || cur.url !== finalUrl) return m;
-                    return { ...m, [groupId]: { ...cur, url: r.url } };
+                    const entries = m[groupId];
+                    if (!entries) return m;
+                    const idx = entries.findIndex((e) => e.url === finalUrl);
+                    if (idx < 0) return m;
+                    const next = [...entries];
+                    next[idx] = { ...next[idx], url: r.url };
+                    return { ...m, [groupId]: next };
                   });
                 }
               })
@@ -5378,7 +5466,17 @@ function WorkspacePage() {
             toast.warning("故事板图片保存失败，临时链接 24h 内有效");
           }
         }
-        setGroupStoryboards((m) => ({ ...m, [groupId]: { url: finalUrl, status: "succeeded" } }));
+        setGroupStoryboards((m) => {
+          const entries = [...(m[groupId] ?? [])];
+          const lastIdx = entries.length - 1;
+          if (lastIdx >= 0 && entries[lastIdx].status === "running") {
+            entries[lastIdx] = { ...entries[lastIdx], url: finalUrl, status: "succeeded" };
+          } else {
+            entries.push({ url: finalUrl, status: "succeeded" });
+          }
+          setSelectedStoryboardIndex((s) => ({ ...s, [groupId]: entries.length - 1 }));
+          return { ...m, [groupId]: entries };
+        });
         setStoryboardModInput("");
       } else {
         toast.error(res?.error || "故事板重生失败");
@@ -5930,12 +6028,41 @@ function WorkspacePage() {
         }
         return result;
       };
+      const flattenForPersistStoryboards = (
+        map: Record<string, StoryboardGenEntry[]>,
+      ): Record<string, { url: string; status: string }> => {
+        const flat: Record<string, { url: string; status: string }> = {};
+        for (const [gid, entries] of Object.entries(map)) {
+          if (!entries) continue;
+          for (let i = 0; i < entries.length; i++) {
+            flat[`${gid}::v${i}`] = { url: entries[i].url, status: entries[i].status };
+          }
+        }
+        return flat;
+      };
+      const unflattenPersistStoryboards = (
+        flat: Record<string, { url: string; status: string }>,
+      ): Record<string, StoryboardGenEntry[]> => {
+        const result: Record<string, StoryboardGenEntry[]> = {};
+        for (const [compositeKey, item] of Object.entries(flat)) {
+          const match = compositeKey.match(/^(.+)::v(\d+)$/);
+          if (!match) continue;
+          const gid = match[1]!;
+          const vi = parseInt(match[2]!, 10);
+          if (!result[gid]) result[gid] = [];
+          result[gid][vi] = { url: item.url, status: item.status as StoryboardGenEntry["status"] };
+        }
+        return result;
+      };
       let persistGroupVideos = groupVideos;
       let persistGroupStoryboards = groupStoryboards;
       const hasEphemeralMedia =
         Object.values(groupVideos).some((arr) =>
           (arr ?? []).some((v) => v.status === "succeeded" && v.url),
-        ) || Object.values(groupStoryboards).some((v) => v.status === "succeeded" && v.url);
+        ) ||
+        Object.values(groupStoryboards).some((arr) =>
+          (arr ?? []).some((v) => v.status === "succeeded" && v.url),
+        );
       if (hasEphemeralMedia) {
         const toastId = toast.loading("正在将视频 / 故事板图入库到你的存储…");
         try {
@@ -5943,7 +6070,7 @@ function WorkspacePage() {
             data: {
               workspaceId,
               groupVideos: flattenForPersist(groupVideos),
-              groupStoryboards,
+              groupStoryboards: flattenForPersistStoryboards(groupStoryboards),
             },
           });
           const persistedFlat = unflattenPersistVideos(persistRes.groupVideos);
@@ -5958,7 +6085,18 @@ function WorkspacePage() {
             }));
           }
           persistGroupVideos = merged;
-          persistGroupStoryboards = persistRes.groupStoryboards;
+          const persistedSbMap = unflattenPersistStoryboards(persistRes.groupStoryboards ?? {});
+          const mergedSb: Record<string, StoryboardGenEntry[]> = {};
+          for (const gid of Object.keys(groupStoryboards)) {
+            const origEntries = groupStoryboards[gid] ?? [];
+            const persistedEntries = persistedSbMap[gid] ?? [];
+            mergedSb[gid] = origEntries.map((orig, i) => ({
+              ...orig,
+              url: persistedEntries[i]?.url ?? orig.url,
+              status: (persistedEntries[i]?.status ?? orig.status) as StoryboardGenEntry["status"],
+            }));
+          }
+          persistGroupStoryboards = mergedSb;
           setGroupVideos(persistGroupVideos);
           setGroupStoryboards(persistGroupStoryboards);
           toast.dismiss(toastId);
@@ -6041,13 +6179,13 @@ function WorkspacePage() {
           ]),
         ),
         groupStoryboards: Object.fromEntries(
-          Object.entries(persistGroupStoryboards).map(([k, v]) => [
+          Object.entries(persistGroupStoryboards).map(([k, arr]) => [
             k,
-            {
-              ...v,
+            (arr ?? []).map((v) => ({
               url: keepNonEmpty(v.url) ?? "",
               status: v.status === "running" ? ("failed" as const) : v.status,
-            },
+              startedAt: v.startedAt,
+            })),
           ]),
         ),
       };
@@ -6077,8 +6215,11 @@ function WorkspacePage() {
               if (Array.isArray(arr) && arr.length && arr[0]) return arr[0];
             }
             for (const k of Object.keys(persistGroupStoryboards)) {
-              const v = persistGroupStoryboards[k];
-              if (v?.url && v.status === "succeeded") return v.url;
+              const arr = persistGroupStoryboards[k];
+              if (!arr) continue;
+              for (const v of arr) {
+                if (v?.url && v.status === "succeeded") return v.url;
+              }
             }
             return null;
           };
@@ -6140,7 +6281,7 @@ function WorkspacePage() {
       .map(([k, arr]) => `${k}:${(arr ?? []).map((v) => v.status).join(",")}`)
       .join("|"),
     groupSbs: Object.entries(groupStoryboards)
-      .map(([k, v]) => `${k}:${v.status}`)
+      .map(([k, arr]) => `${k}:${(arr ?? []).map((v) => v.status).join(",")}`)
       .join("|"),
   });
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -9562,7 +9703,7 @@ function WorkspacePage() {
                               <div className="text-[10px] tracking-widest uppercase text-text-muted">
                                 故事板 · Storyboard
                               </div>
-                              {groupStoryboards[g.id]?.status === "succeeded" ? (
+                              {getActiveStoryboard(g.id)?.status === "succeeded" ? (
                                 brokenStoryboards.has(g.id) ? (
                                   <span
                                     className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 border border-amber-500/30"
@@ -9575,11 +9716,11 @@ function WorkspacePage() {
                                     已生成
                                   </span>
                                 )
-                              ) : groupStoryboards[g.id]?.status === "running" ? (
+                              ) : getActiveStoryboard(g.id)?.status === "running" ? (
                                 <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-elevated border border-border text-text-muted">
                                   生成中…
                                 </span>
-                              ) : groupStoryboards[g.id]?.status === "failed" ? (
+                              ) : getActiveStoryboard(g.id)?.status === "failed" ? (
                                 <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-500 border border-rose-500/30">
                                   失败
                                 </span>
@@ -9589,12 +9730,12 @@ function WorkspacePage() {
                                 </span>
                               )}
                             </div>
-                            {groupStoryboards[g.id]?.status === "succeeded" &&
-                            groupStoryboards[g.id]?.url ? (
+                            {getActiveStoryboard(g.id)?.status === "succeeded" &&
+                            getActiveStoryboard(g.id)?.url ? (
                               <div className="relative group rounded border border-accent/30 overflow-hidden bg-bg-base max-h-28 flex items-center justify-center">
                                 {/* eslint-disable-next-line @next/next/no-img-element */}
                                 <img
-                                  src={groupStoryboards[g.id]!.url}
+                                  src={getActiveStoryboard(g.id)!.url}
                                   alt="故事板"
                                   onLoad={() => clearStoryboardBroken(g.id)}
                                   onError={() => markStoryboardBroken(g.id)}
@@ -9618,7 +9759,7 @@ function WorkspacePage() {
                                   <Upload size={12} />
                                 </button>
                               </div>
-                            ) : groupStoryboards[g.id]?.status === "running" ? (
+                            ) : getActiveStoryboard(g.id)?.status === "running" ? (
                               <div className="max-h-28 h-20 rounded border border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted">
                                 <Loader2 size={20} className="animate-spin text-accent" />
                                 <span className="text-[10px]">融合中…</span>
@@ -9630,32 +9771,63 @@ function WorkspacePage() {
                                 <span className="text-[9px] opacity-70">含剧情/角色/场景/分镜</span>
                               </div>
                             )}
-                            {groupStoryboards[g.id]?.status === "running" &&
-                            groupStoryboards[g.id]?.startedAt ? (
+                            {(() => {
+                              const sbEntries = groupStoryboards[g.id] ?? [];
+                              if (sbEntries.length <= 1) return null;
+                              const activeSbIdx =
+                                selectedStoryboardIndex[g.id] ?? sbEntries.length - 1;
+                              return (
+                                <div className="flex items-center gap-1 overflow-x-auto pb-0.5">
+                                  {sbEntries.map((entry, vi) => (
+                                    <button
+                                      key={vi}
+                                      type="button"
+                                      onClick={() =>
+                                        setSelectedStoryboardIndex((s) => ({ ...s, [g.id]: vi }))
+                                      }
+                                      className={`shrink-0 text-[10px] px-2 py-0.5 rounded border transition ${
+                                        vi === activeSbIdx
+                                          ? "border-accent bg-accent/15 text-accent"
+                                          : "border-border bg-bg-elevated text-text-muted hover:border-accent/60"
+                                      }`}
+                                      title={`故事板 #${vi + 1}`}
+                                    >
+                                      故事板 #{vi + 1}
+                                      {vi === sbEntries.length - 1 &&
+                                        entry.status === "succeeded" && (
+                                          <span className="ml-1 text-[8px] text-accent">NEW</span>
+                                        )}
+                                    </button>
+                                  ))}
+                                </div>
+                              );
+                            })()}
+                            {getActiveStoryboard(g.id)?.status === "running" &&
+                            getActiveStoryboard(g.id)?.startedAt ? (
                               <div className="w-full text-[10px] py-1 rounded border border-accent/40 bg-accent-dim/10 text-accent inline-flex items-center justify-center gap-1.5">
                                 <Loader2 size={9} className="animate-spin" />
                                 <span>
                                   生成中…{" "}
                                   {formatElapsed(
-                                    (Date.now() - groupStoryboards[g.id]!.startedAt!) / 1000,
+                                    (Date.now() - getActiveStoryboard(g.id)!.startedAt!) / 1000,
                                   )}
                                   <span className="text-text-muted ml-1">· 预计 1-3 分钟</span>
                                 </span>
                               </div>
                             ) : (
-                              (!groupStoryboards[g.id] ||
-                                groupStoryboards[g.id]?.status === "failed" ||
-                                groupStoryboards[g.id]?.status === "succeeded") && (
+                              (!getActiveStoryboard(g.id) ||
+                                getActiveStoryboard(g.id)?.status === "failed" ||
+                                getActiveStoryboard(g.id)?.status === "succeeded") && (
                                 <button
                                   type="button"
                                   onClick={() => void generateMangaStoryboardForGroup(g.id)}
                                   className="w-full text-[10px] py-1 rounded border border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent transition inline-flex items-center justify-center gap-1"
                                 >
-                                  {groupStoryboards[g.id]?.status === "succeeded" ? (
+                                  {getActiveStoryboard(g.id)?.status === "succeeded" ? (
                                     <>
                                       <RefreshCw size={9} /> 重新生成
                                     </>
-                                  ) : groupStoryboards[g.id]?.status === "failed" ? (
+                                  ) : getActiveStoryboard(g.id)?.status === "failed" ? (
                                     <>
                                       <Sparkles size={9} /> 重试生成
                                     </>
@@ -9853,7 +10025,7 @@ function WorkspacePage() {
                               用 storyboard image 作 first_frame,plot text 作叙事参考。
                               前置条件:故事板已生成。 */}
                                 {(() => {
-                                  const sb = groupStoryboards[g.id];
+                                  const sb = getActiveStoryboard(g.id);
                                   const hasStoryboard = sb?.status === "succeeded" && !!sb.url;
                                   if (!hasStoryboard) {
                                     return (
@@ -11637,11 +11809,15 @@ function WorkspacePage() {
           背景点击只关闭(不重置 storyboardModInput,以防误触)。 */}
       {storyboardPreview &&
         (() => {
-          const url = groupStoryboards[storyboardPreview.groupId]?.url;
+          const sbEntries = groupStoryboards[storyboardPreview.groupId] ?? [];
+          const activeSbIdx =
+            selectedStoryboardIndex[storyboardPreview.groupId] ?? sbEntries.length - 1;
+          const activeEntry = sbEntries[Math.min(activeSbIdx, sbEntries.length - 1)];
+          const url = activeEntry?.url;
           if (!url) return null;
           const group = data.storyboardGroups.find((gg) => gg.id === storyboardPreview.groupId);
           const title = group ? `第 ${group.index} 组 · 故事板` : "故事板";
-          const isRunning = groupStoryboards[storyboardPreview.groupId]?.status === "running";
+          const isRunning = activeEntry?.status === "running";
           return (
             <div
               className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4"
@@ -11669,8 +11845,44 @@ function WorkspacePage() {
                   </button>
                 </div>
 
-                <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[1fr_360px] gap-3">
-                  {/* 左:故事板图(16:9,占左半) */}
+                <div
+                  className={`flex-1 min-h-0 grid grid-cols-1 gap-3 ${
+                    sbEntries.length > 1
+                      ? "md:grid-cols-[80px_1fr_360px]"
+                      : "md:grid-cols-[1fr_360px]"
+                  }`}
+                >
+                  {/* 左:历史缩略图列(多代时显示) */}
+                  {sbEntries.length > 1 && (
+                    <div className="hidden md:flex flex-col gap-1 overflow-y-auto max-h-full pr-1">
+                      {sbEntries.map((entry, vi) => (
+                        <button
+                          key={vi}
+                          type="button"
+                          onClick={() =>
+                            setSelectedStoryboardIndex((s) => ({
+                              ...s,
+                              [storyboardPreview.groupId]: vi,
+                            }))
+                          }
+                          className={`shrink-0 rounded border overflow-hidden transition ${
+                            vi === activeSbIdx
+                              ? "border-accent ring-1 ring-accent"
+                              : "border-border opacity-60 hover:opacity-100"
+                          }`}
+                          title={`故事板 #${vi + 1}`}
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={entry.url}
+                            alt={`故事板 #${vi + 1}`}
+                            className="w-full aspect-video object-cover"
+                          />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {/* 中:故事板图(16:9) */}
                   <div className="relative bg-bg-base rounded-lg overflow-hidden flex items-center justify-center min-h-0">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img

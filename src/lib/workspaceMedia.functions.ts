@@ -70,7 +70,14 @@ export const saveOneStoryboard = createServerFn({ method: "POST" })
 
     try {
       const { buf, contentType } = await fetchMedia(url);
-      const path = makePath(userId, workspaceId, "storyboard", groupId, contentType);
+      // 2026/07:故事板多代历史 —— 路径加 timestamp,每代独立文件不覆盖(跟 persistWorkspaceMedia 的 ::v{idx} 同样独立)。
+      const path = makePath(
+        userId,
+        workspaceId,
+        "storyboard",
+        `${groupId}-${Date.now()}`,
+        contentType,
+      );
       const mime = MIME_BY_KIND.storyboard;
       const blob = new Blob([buf], { type: mime });
       const { error: uploadErr } = await supabase.storage
