@@ -409,6 +409,16 @@ export const generateImage = createServerFn({ method: "POST" })
       });
       return { url: r.url, error: r.error, model: r.model };
     }
+    // 委托给汇流 Confluo(OpenAI 兼容,models.iystd.com)
+    if (requested.toLowerCase().startsWith("confluo/")) {
+      const { callConfluoImage } = await import("./confluoImage.functions");
+      const r = await callConfluoImage({
+        prompt: appendNegative(data.prompt, data.negativePrompt),
+        model: requested,
+        size: data.size,
+      });
+      return { url: r.url, error: r.error, model: r.model };
+    }
     // 委托给 legacy(老 Qwen / OpenRouter 路径)
     if (requested && !isSeedreamModel(requested)) {
       // 动态 import 避免循环引用
@@ -1026,6 +1036,17 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
       if (!r.url) return { ok: false as const, error: r.error || "meridian 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
     }
+    if (requested.toLowerCase().startsWith("confluo/")) {
+      const { callConfluoImage } = await import("./confluoImage.functions");
+      const r = await callConfluoImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "汇流未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
+    }
 
     const { apiKey, baseUrl, model: defaultModel } = getArkConfig();
     if (!apiKey) return { ok: false as const, error: "ARK_API_KEY not configured" };
@@ -1367,6 +1388,17 @@ export const generateStoryboardShotImage = createServerFn({ method: "POST" })
       if (!r.url) return { ok: false as const, error: r.error || "meridian 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
     }
+    if (requested.toLowerCase().startsWith("confluo/")) {
+      const { callConfluoImage } = await import("./confluoImage.functions");
+      const r = await callConfluoImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: "2K",
+        referenceImages: images,
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "汇流未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
+    }
     // generateStoryboardShotImage: 委托给 legacy(Qwen / Wan / OpenRouter 等)
     if (
       requested &&
@@ -1699,6 +1731,17 @@ export const regenerateStoryboardShot = createServerFn({ method: "POST" })
       if (!r.url) return { ok: false as const, error: r.error || "meridian 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
     }
+    if (requested.toLowerCase().startsWith("confluo/")) {
+      const { callConfluoImage } = await import("./confluoImage.functions");
+      const r = await callConfluoImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: "2K",
+        referenceImages: images,
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "汇流未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
+    }
     if (requested && !isSeedreamModel(requested)) {
       const { generateImage: legacy } = await import("./openrouterImage.functions");
       const r: any = await legacy({
@@ -1937,7 +1980,7 @@ function buildPitchDeckPrompt(opts: {
     `[TOP-DOWN DIAGRAM — bottom-right, ~25% of page, labels LARGE and FEW]`,
     `Overhead floor-plan in pencil linework. Keep it simple — too many tiny labels cause garbled text. The diagram MUST cover the FULL spatial scope of ALL shots in [SHOT BREAKDOWN] — every shot's location and movement must appear, none skipped.`,
     `- Scene area: draw ALL locations the story spans, not just one room. If shots happen across multiple areas (e.g. street outside → doorway → shop interior), draw each as a labeled zone side by side. Do NOT cram everything into a single room outline. Place furniture/objects logically within each zone.`,
-    `- 镜头运动路线 (camera path): ONE single DASHED line with a large arrowhead, tracing the camera's movement through the whole scene — start at 镜头1's shooting position, pass each shot's position in story order, end at the last shot's position. The path MUST span all areas the shots cover (e.g. from street outside into the shop). Do NOT draw separate camera markers or labels (no ▲, no CAM1/CAM2).`,
+    `- 镜头运动路线 (camera paths): DASHED lines with arrowheads, tracing each shot's camera movement based on its camera / camMovement description in [SHOT BREAKDOWN] and the plot in [STORY PLOT]. Draw as many paths as the shots describe — a shot may have more than one movement (e.g. "镜头环绕林缺身体并拉远带出店铺外观" = a circular arc around the character + a pull-back line toward the shop exterior). Paths MUST be spatially correct: 环绕=circular arc, 推/拉=line in/out, 摇=arc sweep, 跟=follow path. Paths span all areas the shots cover. Do NOT draw separate camera markers or labels (no ▲, no CAM1/CAM2).`,
     `- 人物动线 (character path): SOLID line + large arrowhead, from each character's start position (hollow square) to end position (filled square). The path MUST strictly follow the blocking in [SHOT BREAKDOWN] — where each character starts, moves to, and faces, across all areas. Add a small facing arrow (▷) at the end position; facing must be logical. Label start with the name.`,
     `- Legend (2 lines): dashed arrow = 镜头运动路线 (camera path), solid arrow = 人物动线 (character path).`,
 
@@ -1961,7 +2004,7 @@ function buildPitchDeckPrompt(opts: {
     `3. Character lock — same face/body/clothes across frames.`,
     `4. Story faithful — follow [STORY PLOT] and [SHOT BREAKDOWN], no invented content.`,
     `5. Text crisp & legible — Chinese shot types (远景/中景/近景/特写/过肩), no WS/MS/CU; no emoji (📷) or circled numbers (①②③); use plain labels (镜头1, 镜头2) + Arabic numerals.`,
-    `6. Diagram logic — the diagram covers ALL shots' locations (not just one room); camera path (dashed) follows the shooting sequence across all areas; character paths (solid) strictly follow the blocking in [SHOT BREAKDOWN].`,
+    `6. Diagram logic — the diagram covers ALL shots' locations (not just one room); camera paths (dashed) reflect each shot's camera movement described in [SHOT BREAKDOWN] (环绕/推/拉/摇/跟 → corresponding arcs/lines, may be multiple paths); character paths (solid) strictly follow the blocking in [SHOT BREAKDOWN].`,
 
     `Begin. Output a 16:9 pencil line-art storyboard with ${SUGGESTED_PANELS} frames.`,
   ]
@@ -1984,7 +2027,7 @@ function buildPitchDeckNegative(): string {
     "wrong aspect ratio, vertical 9:16, square 1:1, 4:3, portrait orientation",
     "extra characters not in [CHARACTERS], scenery not in [SCENE], invented plot, frames unrelated to [SHOT BREAKDOWN]",
     "low resolution, blurry, pixelated, JPEG artifacts, low quality, soft focus",
-    "missing top-down diagram, diagram without a dashed camera movement path, diagram without solid character movement lines, camera path drawn as solid instead of dashed, character path drawn as dashed instead of solid, camera path without arrowhead, character paths without arrowheads, separate camera markers or CAM1/CAM2 labels on the diagram, diagram without legend, character positions without start/end squares, character movement not matching the blocking in [SHOT BREAKDOWN], camera path not matching the shooting sequence, diagram too small to read labels, diagram covering only one room when the story spans multiple locations, missing shots' locations in the diagram",
+    "missing top-down diagram, diagram without dashed camera movement paths, diagram without solid character movement lines, camera paths drawn as solid instead of dashed, character path drawn as dashed instead of solid, camera paths without arrowhead, character paths without arrowheads, separate camera markers or CAM1/CAM2 labels on the diagram, diagram without legend, character positions without start/end squares, character movement not matching the blocking in [SHOT BREAKDOWN], camera paths not matching the camera/camMovement descriptions in [SHOT BREAKDOWN], camera paths collapsed into one line when shots describe multiple movements, diagram too small to read labels, diagram covering only one room when the story spans multiple locations, missing shots' locations in the diagram",
     "frames without 镜头N label, frames without duration label, frames without shot type tag, frames without action description, long paragraph captions, English shot type abbreviations WS MS CU ECU OTS on frames",
     "art style drift from reference images, inconsistent rendering across sections, anime when reference is realistic, realistic when reference is anime, cel-shading when reference is painterly, 3D render when reference is 2D, watercolor when reference is digital illustration, different line treatment from reference, different color saturation from reference, different shading style from reference, mixed art styles, inconsistent brush strokes between frames, mixing 2D and 3D, mixing photoreal and stylized",
   ].join(", ");
@@ -2185,6 +2228,17 @@ export const generateStoryboardPitchDeck = createServerFn({ method: "POST" })
         referenceImages: data.referenceImages || [],
       });
       if (!r.url) return { ok: false as const, error: r.error || "meridian 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
+    }
+    if (requested.toLowerCase().startsWith("confluo/")) {
+      const { callConfluoImage } = await import("./confluoImage.functions");
+      const r = await callConfluoImage({
+        prompt,
+        model: requested,
+        size: "3840x2160",
+        referenceImages: data.referenceImages || [],
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "汇流未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
     }
 
@@ -2903,6 +2957,17 @@ export const regenerateSceneImage = createServerFn({ method: "POST" })
         referenceImages: [data.referenceImageUrl],
       });
       if (!r.url) return { ok: false as const, error: r.error || "meridian 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
+    }
+    if (requested.toLowerCase().startsWith("confluo/")) {
+      const { callConfluoImage } = await import("./confluoImage.functions");
+      const r = await callConfluoImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "汇流未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
     }
 
