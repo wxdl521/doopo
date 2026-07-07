@@ -998,6 +998,7 @@ export const zh = {
   char_audio_delete: "删除",
   char_audio_hint: "上传一段音频作为该角色的声音参考,视频生成时可在确认卡片上选用。",
   char_audio_too_large: "音频不能超过 25MB",
+  char_audio_preset: "预设风格",
   zp_param_preset_default: "保持默认",
   // 阶段标签（用于拼接提示词时的前缀）
   zp_tag_canvas: "剧本大纲",

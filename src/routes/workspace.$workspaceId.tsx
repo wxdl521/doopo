@@ -26,6 +26,7 @@ import {
   type StoryboardShot,
   type ShotType,
 } from "../data/workspaceGenerators";
+import { VOICE_STYLES } from "../data/voiceStyles";
 import { generateStageAi } from "../lib/aiGenerate.functions";
 import { generateImage, regenerateSceneImage } from "../lib/seedream.functions";
 import { logImageMeta } from "../lib/logImageMeta";
@@ -4733,14 +4734,18 @@ function WorkspacePage() {
     for (const s of group.shots) {
       for (const cid of pickShotCharacterIds(s, group)) {
         const ch = data.characters.find((x) => x.id === cid);
-        if (ch?.referenceAudioUrl && !audioSeen.has(ch.referenceAudioUrl)) {
-          audioCandidates.push({
-            characterId: ch.id,
-            characterName: ch.name,
-            audioUrl: ch.referenceAudioUrl,
-          });
-          audioSeen.add(ch.referenceAudioUrl);
-        }
+        if (!ch?.referenceAudioUrl) continue;
+        // 相对路径(预设风格来自 public/)拼成绝对 URL,Seedance 云端才能访问
+        const abs = ch.referenceAudioUrl.startsWith("/")
+          ? `${window.location.origin}${ch.referenceAudioUrl}`
+          : ch.referenceAudioUrl;
+        if (audioSeen.has(abs)) continue;
+        audioCandidates.push({
+          characterId: ch.id,
+          characterName: ch.name,
+          audioUrl: abs,
+        });
+        audioSeen.add(abs);
       }
     }
 
@@ -4925,14 +4930,18 @@ function WorkspacePage() {
     const audioSeen = new Set<string>();
     for (const cid of unionCharIds) {
       const ch = data.characters.find((x) => x.id === cid);
-      if (ch?.referenceAudioUrl && !audioSeen.has(ch.referenceAudioUrl)) {
-        audioCandidates.push({
-          characterId: ch.id,
-          characterName: ch.name,
-          audioUrl: ch.referenceAudioUrl,
-        });
-        audioSeen.add(ch.referenceAudioUrl);
-      }
+      if (!ch?.referenceAudioUrl) continue;
+      // 相对路径(预设风格来自 public/)拼成绝对 URL,Seedance 云端才能访问
+      const abs = ch.referenceAudioUrl.startsWith("/")
+        ? `${window.location.origin}${ch.referenceAudioUrl}`
+        : ch.referenceAudioUrl;
+      if (audioSeen.has(abs)) continue;
+      audioCandidates.push({
+        characterId: ch.id,
+        characterName: ch.name,
+        audioUrl: abs,
+      });
+      audioSeen.add(abs);
     }
 
     return {
@@ -9084,6 +9093,54 @@ function WorkspacePage() {
                                                 + {t.char_audio_add}
                                               </button>
                                             )}
+                                            {/* 预设风格库 */}
+                                            <div className="border-t border-border pt-2 mt-1">
+                                              <div className="text-[10px] text-text-muted mb-1">
+                                                {t.char_audio_preset}
+                                              </div>
+                                              <div className="flex flex-col gap-1">
+                                                {VOICE_STYLES.map((style) => (
+                                                  <div
+                                                    key={style.id}
+                                                    className={`flex items-center gap-1.5 px-1.5 py-1 rounded border text-xs ${
+                                                      c.referenceAudioUrl === style.audioUrl
+                                                        ? "border-accent bg-accent/5"
+                                                        : "border-border hover:border-accent"
+                                                    }`}
+                                                  >
+                                                    <button
+                                                      type="button"
+                                                      onClick={() => {
+                                                        setData((d) => ({
+                                                          ...d,
+                                                          characters: d.characters.map((ch) =>
+                                                            ch.id === c.id
+                                                              ? {
+                                                                  ...ch,
+                                                                  referenceAudioUrl: style.audioUrl,
+                                                                }
+                                                              : ch,
+                                                          ),
+                                                        }));
+                                                        void handleSaveWorkspace();
+                                                      }}
+                                                      className={`shrink-0 ${
+                                                        c.referenceAudioUrl === style.audioUrl
+                                                          ? "text-accent font-medium"
+                                                          : "text-text-secondary"
+                                                      }`}
+                                                    >
+                                                      {style.name}
+                                                    </button>
+                                                    <audio
+                                                      controls
+                                                      src={style.audioUrl}
+                                                      className="h-6 flex-1 min-w-0"
+                                                    />
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            </div>
                                             <p className="text-[10px] text-text-muted leading-relaxed">
                                               {t.char_audio_hint}
                                             </p>
