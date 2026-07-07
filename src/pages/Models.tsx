@@ -306,6 +306,16 @@ const IMAGE_MODELS: ImageModel[] = [
     status: "available",
   },
   {
+    id: "azure3/gpt-image-2",
+    name: "Azure（测试）",
+    nameEn: "Azure (Test)",
+    vendor: "Azure AI Foundry",
+    tagline: "gpt-image-2 · T2I/I2I · 测试",
+    taglineEn: "gpt-image-2 · T2I/I2I · Test",
+    gradient: "from-cyan-500 to-teal-600",
+    status: "available",
+  },
+  {
     id: "qwen-image-2.0",
     name: "Qwen Image 2.0",
     nameEn: "Qwen Image 2.0",

@@ -447,6 +447,7 @@ const VALID_T2I_MODELS = new Set<string>([
   // Azure OpenAI 直连
   "azure/gpt-image-2",
   "azure2/gpt-image-2",
+  "azure3/gpt-image-2",
   // OneToken gateway
   "onetoken/gpt-image-2",
   // OTU gateway
@@ -492,6 +493,7 @@ const VALID_I2I_MODELS = new Set<string>([
   "aigcfamily/gpt-image-2",
   "azure/gpt-image-2",
   "azure2/gpt-image-2",
+  "azure3/gpt-image-2",
   "onetoken/gpt-image-2",
   "otu/gpt-image-2",
   "aitokenvibe/gpt-image-2",
@@ -516,6 +518,7 @@ const KNOWN_MODEL_PREFIXES = [
   "shuci/",
   "azure/",
   "azure2/",
+  "azure3/",
   "onetoken/",
   "otu/",
   "aitokenvibe/",

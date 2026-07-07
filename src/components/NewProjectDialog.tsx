@@ -195,6 +195,11 @@ const imageModelOptions = [
     label: "Azure-gpt-image-2 (终结点)",
     sub: "Azure OpenAI 终结点 · gpt-image-2 · T2I/I2I",
   },
+  {
+    id: "azure3/gpt-image-2",
+    label: "Azure（测试）",
+    sub: "Azure AI Foundry · gpt-image-2 · T2I/I2I",
+  },
 ];
 // 过滤掉"分隔符"项(只是 UI 视觉分组,不能选)
 const realImageModelOptions = imageModelOptions.filter((m) => !m.id.startsWith("__sep"));

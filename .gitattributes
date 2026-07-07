@@ -1,0 +1,12 @@
+# 统一换行符:所有文本文件使用 LF(跨平台一致)
+# .gitattributes 的 text/eol 属性优先于本地 core.autocrlf,
+# 无论协作者的 autocrlf 设成什么,checkout 出来的文本文件都是 LF。
+* text=auto eol=lf
+
+# 二进制文件 —— 不做换行符转换
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.ico  binary
+*.gif  binary
+*.webp binary

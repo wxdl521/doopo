@@ -159,6 +159,15 @@ export const IMAGE_MODELS: ImageModelOption[] = [
     sub: "[Azure OpenAI 终结点] gpt-image-2 · T2I/I2I",
   },
 
+  // ---- [Azure AI Foundry · 测试] 0528-aoai-sc-87d.services.ai.azure.com ----
+  //  2026/07 接入:AI Foundry 新格式(/openai/v1/...),与 azure/azure2 路径不同
+  { key: "", label: "—— [Azure AI Foundry · 测试] ——", sub: undefined, legacy: true },
+  {
+    key: "azure3/gpt-image-2",
+    label: "Azure（测试）",
+    sub: "[Azure AI Foundry] gpt-image-2 · T2I/I2I",
+  },
+
   // ---- [DashScope] 阿里百炼 · 通义千问 / 万相 ----
   { key: "", label: "—— [DashScope · 阿里百炼] ——", sub: undefined, legacy: true },
   { key: "qwen-image-2.0", label: "Qwen Image 2.0", sub: "[DashScope] 通义千问 · T2I 稳定" },

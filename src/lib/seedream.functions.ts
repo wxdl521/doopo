@@ -309,7 +309,8 @@ export const generateImage = createServerFn({ method: "POST" })
     }
     if (
       requested.toLowerCase().startsWith("azure/") ||
-      requested.toLowerCase().startsWith("azure2/")
+      requested.toLowerCase().startsWith("azure2/") ||
+      requested.toLowerCase().startsWith("azure3/")
     ) {
       const { callAzureImage } = await import("./azureImage.functions");
       const r = await callAzureImage({
@@ -925,7 +926,8 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
     }
     if (
       requested.toLowerCase().startsWith("azure/") ||
-      requested.toLowerCase().startsWith("azure2/")
+      requested.toLowerCase().startsWith("azure2/") ||
+      requested.toLowerCase().startsWith("azure3/")
     ) {
       const { callAzureImage } = await import("./azureImage.functions");
       const r = await callAzureImage({
@@ -1276,7 +1278,8 @@ export const generateStoryboardShotImage = createServerFn({ method: "POST" })
     }
     if (
       requested.toLowerCase().startsWith("azure/") ||
-      requested.toLowerCase().startsWith("azure2/")
+      requested.toLowerCase().startsWith("azure2/") ||
+      requested.toLowerCase().startsWith("azure3/")
     ) {
       const { callAzureImage } = await import("./azureImage.functions");
       const r = await callAzureImage({
@@ -1621,7 +1624,8 @@ export const regenerateStoryboardShot = createServerFn({ method: "POST" })
     }
     if (
       requested.toLowerCase().startsWith("azure/") ||
-      requested.toLowerCase().startsWith("azure2/")
+      requested.toLowerCase().startsWith("azure2/") ||
+      requested.toLowerCase().startsWith("azure3/")
     ) {
       const { callAzureImage } = await import("./azureImage.functions");
       const r = await callAzureImage({
@@ -2119,7 +2123,8 @@ export const generateStoryboardPitchDeck = createServerFn({ method: "POST" })
     }
     if (
       requested.toLowerCase().startsWith("azure/") ||
-      requested.toLowerCase().startsWith("azure2/")
+      requested.toLowerCase().startsWith("azure2/") ||
+      requested.toLowerCase().startsWith("azure3/")
     ) {
       const { callAzureImage } = await import("./azureImage.functions");
       const r = await callAzureImage({
@@ -2848,7 +2853,8 @@ export const regenerateSceneImage = createServerFn({ method: "POST" })
     }
     if (
       requested.toLowerCase().startsWith("azure/") ||
-      requested.toLowerCase().startsWith("azure2/")
+      requested.toLowerCase().startsWith("azure2/") ||
+      requested.toLowerCase().startsWith("azure3/")
     ) {
       const { callAzureImage } = await import("./azureImage.functions");
       const r = await callAzureImage({

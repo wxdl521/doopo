@@ -11,6 +11,11 @@
 //         ?api-version=2025-04-01-preview   (multipart/form-data)
 //
 //  UI 选项约定:模型 id 以 `azure/` 前缀,seedream.functions.ts 据此分发。
+//
+//  azure3 = Azure AI Foundry 新格式(services.ai.azure.com):
+//    - T2I: POST /openai/v1/images/generations  (无 api-version,model 在 body)
+//    - I2I: POST /openai/v1/images/edits        (multipart,model 在 form)
+//    - env: AZURE3_API_KEY / AZURE3_BASE_URL
 // ====================================================================
 
 import "./loadEnv";
@@ -23,22 +28,37 @@ const I2I_API_VERSION = "2025-04-01-preview";
 const IMAGE_REQUEST_TIMEOUT_MS = 400_000;
 const AZURE_PREFIX = "azure/";
 const AZURE2_PREFIX = "azure2/";
+const AZURE3_PREFIX = "azure3/";
 
 export function isAzureModel(modelId: string | null | undefined): boolean {
   if (!modelId) return false;
   const lower = modelId.toLowerCase();
-  return lower.startsWith(AZURE_PREFIX) || lower.startsWith(AZURE2_PREFIX);
+  return (
+    lower.startsWith(AZURE_PREFIX) ||
+    lower.startsWith(AZURE2_PREFIX) ||
+    lower.startsWith(AZURE3_PREFIX)
+  );
 }
 
 export function stripAzurePrefix(modelId: string): string {
-  return modelId.replace(/^(azure|azure2)\//i, "");
+  return modelId.replace(/^(azure|azure2|azure3)\//i, "");
 }
 
 function isAzure2Model(modelId: string): boolean {
   return modelId.toLowerCase().startsWith(AZURE2_PREFIX);
 }
 
+function isAzure3Model(modelId: string): boolean {
+  return modelId.toLowerCase().startsWith(AZURE3_PREFIX);
+}
+
 function getAzureConfig(modelId?: string) {
+  if (modelId && isAzure3Model(modelId)) {
+    return {
+      apiKey: process.env.AZURE3_API_KEY,
+      baseUrl: (process.env.AZURE3_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, ""),
+    };
+  }
   if (modelId && isAzure2Model(modelId)) {
     return {
       apiKey: process.env.AZURE2_API_KEY,
@@ -107,11 +127,17 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
   const { apiKey, baseUrl } = getAzureConfig(input.model);
   const deployment = stripAzurePrefix(input.model) || "gpt-image-2";
   const hasRefs = !!input.referenceImages?.length;
-  const apiVersion = hasRefs ? I2I_API_VERSION : T2I_API_VERSION;
-  const path = hasRefs
-    ? `/openai/deployments/${deployment}/images/edits`
-    : `/openai/deployments/${deployment}/images/generations`;
-  const url = `${baseUrl}${path}?api-version=${apiVersion}`;
+  // azure3 走 Azure AI Foundry 新格式(/openai/v1/...):无需 api-version,model 在 body/form
+  const isFoundryV1 = isAzure3Model(input.model);
+  const apiVersion = isFoundryV1 ? "v1" : hasRefs ? I2I_API_VERSION : T2I_API_VERSION;
+  const path = isFoundryV1
+    ? hasRefs
+      ? "/openai/v1/images/edits"
+      : "/openai/v1/images/generations"
+    : hasRefs
+      ? `/openai/deployments/${deployment}/images/edits`
+      : `/openai/deployments/${deployment}/images/generations`;
+  const url = isFoundryV1 ? `${baseUrl}${path}` : `${baseUrl}${path}?api-version=${apiVersion}`;
   const size = normalizeAzureSize(input.size);
   const quality = normalizeAzureQuality(input.quality);
   const t0 = Date.now();
@@ -143,6 +169,7 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
       form.append("n", String(input.n ?? 1));
       form.append("size", size);
       form.append("quality", quality);
+      if (isFoundryV1) form.append("model", deployment);
       const refs = input.referenceImages!;
       // Azure gpt-image-2 edits: 单图用 `image`，多图必须用 `image[]`（重复 `image` 会 400 Duplicate parameter）
       const fieldName = refs.length > 1 ? "image[]" : "image";
@@ -183,6 +210,7 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
         size,
         quality,
       };
+      if (isFoundryV1) body.model = deployment;
       requestInit = {
         method: "POST",
         headers: {
