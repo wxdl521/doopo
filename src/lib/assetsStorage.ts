@@ -87,6 +87,7 @@ function charToRecord(
     gradient: c.swatch,
     cover_url: coverUrl ?? null,
     images: (images ?? null) as Json | null,
+    reference_audio_url: c.referenceAudioUrl ?? null,
   };
 }
 

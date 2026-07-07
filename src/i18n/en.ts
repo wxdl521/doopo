@@ -1010,6 +1010,15 @@ export const en: Translations = {
   zp_video_confirm_reset: "Reset",
   zp_video_confirm_refs: "Reference Images",
   zp_video_confirm_show_prompt: "Show prompt",
+  zp_video_confirm_audio: "Reference Audio",
+  zp_video_confirm_audio_none: "No reference audio",
+  char_audio: "Reference Audio",
+  char_audio_add: "Upload Audio",
+  char_audio_replace: "Replace Audio",
+  char_audio_delete: "Delete",
+  char_audio_hint:
+    "Upload an audio clip as this character's voice reference; pick it on the video confirm card when generating.",
+  char_audio_too_large: "Audio must be under 25MB",
   zp_param_preset_default: "Use defaults",
   // Stage tags (prepended when stitching the prompt)
   zp_tag_canvas: "Outline",

@@ -5,7 +5,16 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 const UploadInput = z.object({
   base64: z.string().min(100),
   id: z.string().min(1).max(128),
-  kind: z.enum(["character", "scene", "prop", "panel", "shot", "storyboard", "video"]),
+  kind: z.enum([
+    "character",
+    "scene",
+    "prop",
+    "panel",
+    "shot",
+    "storyboard",
+    "video",
+    "character-audio",
+  ]),
 });
 
 export const uploadLocalImage = createServerFn({ method: "POST" })
@@ -15,11 +24,16 @@ export const uploadLocalImage = createServerFn({ method: "POST" })
     const { supabase, userId } = context as { supabase: any; userId: string };
     const { base64, id, kind } = data;
 
-    // 1) 解析 base64 → buffer（支持 image/* 和 video/*）
-    const match = base64.match(/^data:(image\/\w+|video\/\w+);base64,(.+)$/);
+    // 1) 解析 base64 → buffer（支持 image/* / video/* / audio/*）
+    const match = base64.match(/^data:(image\/\w+|video\/\w+|audio\/\w+);base64,(.+)$/);
     if (!match) return { ok: false as const, error: "invalid base64" };
     const mime = match[1];
-    const ext = (mime.split("/")[1] || "png").replace("jpeg", "jpg").replace("quicktime", "mov");
+    const ext = (mime.split("/")[1] || "bin")
+      .replace("jpeg", "jpg")
+      .replace("quicktime", "mov")
+      .replace("mpeg", "mp3") // audio/mpeg → mp3
+      .replace("x-wav", "wav")
+      .replace("x-m4a", "m4a");
     const buf = Buffer.from(match[2], "base64");
 
     // 2) 上传到 workspace-media bucket

@@ -1792,6 +1792,7 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
       firstFrameImageUrl,
       lastFrameImageUrl,
       referenceImageUrls,
+      referenceAudioUrl: input.referenceAudioUrl,
     });
     const r = await arkSubmit({
       model: upstreamModel,

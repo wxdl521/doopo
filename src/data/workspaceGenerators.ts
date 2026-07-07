@@ -89,6 +89,12 @@ export type GenCharacter = {
       roleLabel?: string;
     }
   >;
+  /**
+   * 2026/07:角色参考音频签名 URL(供视频生成 reference_audio 用)。
+   * 角色级 —— 同一角色的所有造型/look 共用同一段声音(声音与形象无关)。
+   * 上传后随 workspace_data 持久化;点「保存到资产」时同步进 characters.reference_audio_url。
+   */
+  referenceAudioUrl?: string;
 };
 
 export type GenScene = {

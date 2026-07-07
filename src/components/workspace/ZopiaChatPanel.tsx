@@ -126,6 +126,10 @@ type Message =
       /** 卡片展示的参考图(带 label:首帧/尾帧/分镜图N/故事板/人物·名/场景·名/道具·名) */
       images: { url: string; label: string }[];
       extra?: Record<string, string>;
+      /** 2026/07:本组角色的参考音频候选,供用户在卡片上手选一段传给 Seedance */
+      audioCandidates?: { characterId: string; characterName: string; audioUrl: string }[];
+      /** 2026/07:用户选中的参考音频 URL;"" 或 undefined = 不使用 */
+      selectedAudioUrl?: string;
       /** pending=待确认 / generating=生成中 / done=已生成 / failed=失败可重试 / cancelled=已取消 */
       status: "pending" | "generating" | "done" | "failed" | "cancelled";
     };
@@ -294,6 +298,7 @@ export type ZopiaChatPanelHandle = {
     previewPrompt: string;
     images: { url: string; label: string }[];
     extra?: Record<string, string>;
+    audioCandidates?: { characterId: string; characterName: string; audioUrl: string }[];
   }) => void;
 };
 
@@ -330,6 +335,7 @@ const ZopiaChatPanel = forwardRef<
       groupId: string,
       method: "shots" | "storyboard",
       editedPreviewPrompt: string,
+      selectedAudioUrl?: string,
     ) => Promise<boolean>;
     /**
      * 2026/07:视频确认卡片 generating 时点"中止生成"调用。
@@ -882,6 +888,7 @@ const ZopiaChatPanel = forwardRef<
           previewPrompt: payload.previewPrompt,
           images: payload.images,
           extra: payload.extra,
+          audioCandidates: payload.audioCandidates,
           status: "pending",
         };
         setMessages((m) => [...m, msg]);
@@ -1326,6 +1333,7 @@ const ZopiaChatPanel = forwardRef<
     groupId: string,
     method: "shots" | "storyboard",
     previewPrompt: string,
+    selectedAudioUrl?: string,
   ) {
     setMessages((prev) =>
       prev.map((m) =>
@@ -1333,7 +1341,8 @@ const ZopiaChatPanel = forwardRef<
       ),
     );
     try {
-      const ok = (await onConfirmVideoGen?.(groupId, method, previewPrompt)) ?? false;
+      const ok =
+        (await onConfirmVideoGen?.(groupId, method, previewPrompt, selectedAudioUrl)) ?? false;
       setMessages((prev) =>
         prev.map((m) =>
           m.id === msgId && m.kind === "video_confirm"
@@ -1723,6 +1732,63 @@ const ZopiaChatPanel = forwardRef<
                       </div>
                     </div>
                   )}
+                  {m.audioCandidates && m.audioCandidates.length > 0 && (
+                    <div className="space-y-1">
+                      <div className="text-xs text-text-secondary">{t.zp_video_confirm_audio}</div>
+                      <div className="flex flex-col gap-1">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setMessages((prev) =>
+                              prev.map((x) =>
+                                x.id === m.id && x.kind === "video_confirm"
+                                  ? { ...x, selectedAudioUrl: "" }
+                                  : x,
+                              ),
+                            )
+                          }
+                          className={`text-left text-xs px-2 py-1 rounded border transition ${
+                            !m.selectedAudioUrl
+                              ? "border-accent text-accent bg-accent/5"
+                              : "border-border text-text-muted hover:border-accent"
+                          }`}
+                        >
+                          {t.zp_video_confirm_audio_none}
+                        </button>
+                        {m.audioCandidates.map((ac) => (
+                          <div
+                            key={ac.characterId}
+                            className={`flex items-center gap-2 px-2 py-1 rounded border transition ${
+                              m.selectedAudioUrl === ac.audioUrl
+                                ? "border-accent bg-accent/5"
+                                : "border-border"
+                            }`}
+                          >
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setMessages((prev) =>
+                                  prev.map((x) =>
+                                    x.id === m.id && x.kind === "video_confirm"
+                                      ? { ...x, selectedAudioUrl: ac.audioUrl }
+                                      : x,
+                                  ),
+                                )
+                              }
+                              className={`text-xs shrink-0 ${
+                                m.selectedAudioUrl === ac.audioUrl
+                                  ? "text-accent font-medium"
+                                  : "text-text-secondary"
+                              }`}
+                            >
+                              {ac.characterName}
+                            </button>
+                            <audio controls src={ac.audioUrl} className="h-6 flex-1 min-w-0" />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   <details className="group">
                     <summary className="text-xs text-accent cursor-pointer select-none inline-flex items-center gap-1">
                       <ChevronDown
@@ -1804,7 +1870,13 @@ const ZopiaChatPanel = forwardRef<
                       <>
                         <button
                           onClick={() =>
-                            handleConfirmVideo(m.id, m.groupId, m.method, m.previewPrompt)
+                            handleConfirmVideo(
+                              m.id,
+                              m.groupId,
+                              m.method,
+                              m.previewPrompt,
+                              m.selectedAudioUrl,
+                            )
                           }
                           className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold hover:opacity-90 inline-flex items-center gap-1"
                         >

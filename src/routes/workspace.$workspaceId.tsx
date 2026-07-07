@@ -96,7 +96,9 @@ import {
   BookmarkPlus,
   Plus,
   Upload,
+  AudioWaveform,
 } from "lucide-react";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import CharacterPortrait from "../components/workspace/CharacterPortrait";
 import StoryboardTimeline from "../components/workspace/StoryboardTimeline";
 import { toast } from "sonner";
@@ -1445,10 +1447,12 @@ function WorkspacePage() {
   };
   // 2026/07:故事板接入多代历史(跟视频对称) —— 每个 group 可有多张故事板图,
   // selectedStoryboardIndex 记当前看第几代,默认最新。getActiveStoryboard 取当前。
-  const [groupStoryboards, setGroupStoryboards] = useState<
-    Record<string, StoryboardGenEntry[]>
-  >({});
-  const [selectedStoryboardIndex, setSelectedStoryboardIndex] = useState<Record<string, number>>({});
+  const [groupStoryboards, setGroupStoryboards] = useState<Record<string, StoryboardGenEntry[]>>(
+    {},
+  );
+  const [selectedStoryboardIndex, setSelectedStoryboardIndex] = useState<Record<string, number>>(
+    {},
+  );
   const getActiveStoryboard = useCallback(
     (gid: string): StoryboardGenEntry | undefined => {
       const entries = groupStoryboards[gid];
@@ -2023,6 +2027,58 @@ function WorkspacePage() {
       }
     };
     input.click();
+  }
+
+  // ============= 角色参考音频上传/删除(2026/07 新增) =============
+  async function handleUploadAudio(characterId: string) {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "audio/*";
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      if (!file) return;
+      if (file.size > 25 * 1024 * 1024) {
+        toast.error(t.char_audio_too_large);
+        return;
+      }
+      try {
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = reject;
+          reader.readAsDataURL(file);
+        });
+        const res = await callUploadImage({
+          data: { base64, id: characterId, kind: "character-audio" },
+        });
+        if (res.ok && res.url) {
+          setData((d) => ({
+            ...d,
+            characters: d.characters.map((c) =>
+              c.id === characterId ? { ...c, referenceAudioUrl: res.url! } : c,
+            ),
+          }));
+          toast.success("参考音频已上传");
+          void handleSaveWorkspace();
+        } else {
+          toast.error(res?.error || "上传失败");
+        }
+      } catch {
+        toast.error("上传失败");
+      }
+    };
+    input.click();
+  }
+
+  function handleDeleteAudio(characterId: string) {
+    setData((d) => ({
+      ...d,
+      characters: d.characters.map((c) =>
+        c.id === characterId ? { ...c, referenceAudioUrl: undefined } : c,
+      ),
+    }));
+    toast.success("已删除参考音频");
+    void handleSaveWorkspace();
   }
 
   /**
@@ -4520,6 +4576,8 @@ function WorkspacePage() {
     images: { url: string; label: string }[];
     extra: Record<string, string>;
     shotCount?: number;
+    /** 2026/07:本组涉及角色的参考音频候选(供确认卡片手选一段传给 Seedance) */
+    audioCandidates: { characterId: string; characterName: string; audioUrl: string }[];
   };
 
   const charNameOf = (cid: string) => data.characters.find((x) => x.id === cid)?.name ?? cid;
@@ -4669,6 +4727,23 @@ function WorkspacePage() {
       .filter(Boolean)
       .join("\n");
 
+    // 2026/07:收集本组角色的参考音频候选(供确认卡片手选一段传给 Seedance)
+    const audioCandidates: VideoGenPayload["audioCandidates"] = [];
+    const audioSeen = new Set<string>();
+    for (const s of group.shots) {
+      for (const cid of pickShotCharacterIds(s, group)) {
+        const ch = data.characters.find((x) => x.id === cid);
+        if (ch?.referenceAudioUrl && !audioSeen.has(ch.referenceAudioUrl)) {
+          audioCandidates.push({
+            characterId: ch.id,
+            characterName: ch.name,
+            audioUrl: ch.referenceAudioUrl,
+          });
+          audioSeen.add(ch.referenceAudioUrl);
+        }
+      }
+    }
+
     return {
       prompt,
       previewPrompt,
@@ -4677,6 +4752,7 @@ function WorkspacePage() {
       lastFrame,
       referenceUrls,
       images,
+      audioCandidates,
       shotCount: shotImagesList.length,
       extra: {
         model: project?.videoModel || "happyhorse-1.0-r2v",
@@ -4844,12 +4920,28 @@ function WorkspacePage() {
       .filter(Boolean)
       .join("\n");
 
+    // 2026/07:收集本组角色的参考音频候选(供确认卡片手选一段传给 Seedance)
+    const audioCandidates: VideoGenPayload["audioCandidates"] = [];
+    const audioSeen = new Set<string>();
+    for (const cid of unionCharIds) {
+      const ch = data.characters.find((x) => x.id === cid);
+      if (ch?.referenceAudioUrl && !audioSeen.has(ch.referenceAudioUrl)) {
+        audioCandidates.push({
+          characterId: ch.id,
+          characterName: ch.name,
+          audioUrl: ch.referenceAudioUrl,
+        });
+        audioSeen.add(ch.referenceAudioUrl);
+      }
+    }
+
     return {
       prompt,
       previewPrompt,
       techPrompt,
       referenceUrls,
       images,
+      audioCandidates,
       extra: {
         model: project?.videoModel || "happyhorse-1.0-r2v",
         route: `视频(按故事板) · ${modeLabel}`,
@@ -4872,6 +4964,8 @@ function WorkspacePage() {
     method: "shots" | "storyboard",
     /** 用户编辑后的 previewPrompt;未编辑(=== 原始)时用原始完整 prompt */
     editedPreviewPrompt?: string,
+    /** 2026/07:确认卡片上用户手选的角色参考音频 URL;空串/undefined = 不使用 */
+    selectedAudioUrl?: string,
   ): Promise<boolean> {
     const group = data.storyboardGroups.find((g) => g.id === groupId);
     if (!group) return false;
@@ -4931,6 +5025,7 @@ function WorkspacePage() {
       const commonData = {
         prompt: finalPrompt,
         referenceImageUrls: payload.referenceUrls.length ? payload.referenceUrls : undefined,
+        referenceAudioUrl: selectedAudioUrl || undefined,
         model: project?.videoModel || "happyhorse-1.0-r2v",
         ratio: project?.aspect === "9:16" ? "9:16" : project?.aspect === "1:1" ? "1:1" : "16:9",
         generateAudio: project?.audio === "on",
@@ -5028,6 +5123,7 @@ function WorkspacePage() {
       previewPrompt: payload.previewPrompt,
       images: payload.images,
       extra: payload.extra,
+      audioCandidates: payload.audioCandidates,
     });
   }
 
@@ -5074,6 +5170,7 @@ function WorkspacePage() {
       previewPrompt: payload.previewPrompt,
       images: payload.images,
       extra: payload.extra,
+      audioCandidates: payload.audioCandidates,
     });
   }
 
@@ -8879,7 +8976,7 @@ function WorkspacePage() {
                                     永远贴着卡片底部。注意 onClick 里 e.stopPropagation(),
                                     否则点按钮也会触发卡片整体的预览打开。 */}
                                     <div
-                                      className="grid grid-cols-3 gap-1.5 pt-1 mt-auto"
+                                      className="grid grid-cols-4 gap-1.5 pt-1 mt-auto"
                                       onClick={(e) => e.stopPropagation()}
                                     >
                                       <button
@@ -8929,6 +9026,70 @@ function WorkspacePage() {
                                         <Sparkles size={12} />
                                         <span>多维资产</span>
                                       </button>
+                                      {/* 2026/07:参考音频按钮 —— Popover 管理面板(上传/试听/替换/删除) */}
+                                      <Popover>
+                                        <PopoverTrigger asChild>
+                                          <button
+                                            type="button"
+                                            title={t.char_audio}
+                                            className={`px-1 py-1.5 rounded border text-[11px] leading-none transition flex flex-col items-center justify-center gap-0.5 ${
+                                              c.referenceAudioUrl
+                                                ? "border-accent text-accent bg-accent/5"
+                                                : "border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent"
+                                            }`}
+                                          >
+                                            <AudioWaveform size={12} />
+                                            <span>音频</span>
+                                          </button>
+                                        </PopoverTrigger>
+                                        <PopoverContent
+                                          className="w-72 p-3"
+                                          align="start"
+                                          side="top"
+                                        >
+                                          <div className="flex flex-col gap-2">
+                                            <div className="text-xs font-semibold text-text-primary">
+                                              {t.char_audio}
+                                            </div>
+                                            {c.referenceAudioUrl ? (
+                                              <>
+                                                <audio
+                                                  controls
+                                                  src={c.referenceAudioUrl}
+                                                  className="w-full h-8"
+                                                />
+                                                <div className="flex gap-1.5">
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => handleUploadAudio(c.id)}
+                                                    className="flex-1 px-2 py-1 rounded text-[11px] border border-border bg-bg-surface hover:border-accent hover:text-accent"
+                                                  >
+                                                    {t.char_audio_replace}
+                                                  </button>
+                                                  <button
+                                                    type="button"
+                                                    onClick={() => handleDeleteAudio(c.id)}
+                                                    className="px-2 py-1 rounded text-[11px] border border-border text-red-500 hover:bg-red-500/10"
+                                                  >
+                                                    {t.char_audio_delete}
+                                                  </button>
+                                                </div>
+                                              </>
+                                            ) : (
+                                              <button
+                                                type="button"
+                                                onClick={() => handleUploadAudio(c.id)}
+                                                className="px-2 py-1.5 rounded text-[11px] border border-dashed border-border hover:border-accent hover:text-accent"
+                                              >
+                                                + {t.char_audio_add}
+                                              </button>
+                                            )}
+                                            <p className="text-[10px] text-text-muted leading-relaxed">
+                                              {t.char_audio_hint}
+                                            </p>
+                                          </div>
+                                        </PopoverContent>
+                                      </Popover>
                                     </div>
                                   </div>
                                   {/* I2I 重生遮罩:点了三视图/多维资产/按意见重生后,
@@ -10073,7 +10234,9 @@ function WorkspacePage() {
                                     <div className="w-full inline-flex items-center gap-1">
                                       <button
                                         type="button"
-                                        onClick={() => void generateVideoFromStoryboardForGroup(g.id)}
+                                        onClick={() =>
+                                          void generateVideoFromStoryboardForGroup(g.id)
+                                        }
                                         disabled={isVideoRunning}
                                         className="flex-1 text-[10px] py-1 rounded border border-accent/60 bg-accent-dim/20 text-accent hover:border-accent hover:bg-accent-dim/40 transition disabled:opacity-40 inline-flex items-center justify-center gap-1"
                                         title="基于故事板图(作为视觉锚)+ 剧情文字(作叙事参考)生成视频"
@@ -10219,8 +10382,8 @@ function WorkspacePage() {
               if (p) void doPropRegen(p, "modify", instruction);
             }
           }}
-          onConfirmVideoGen={async (groupId, method, editedPreviewPrompt) => {
-            return await executeVideoGen(groupId, method, editedPreviewPrompt);
+          onConfirmVideoGen={async (groupId, method, editedPreviewPrompt, selectedAudioUrl) => {
+            return await executeVideoGen(groupId, method, editedPreviewPrompt, selectedAudioUrl);
           }}
           onCancelVideoGen={(groupId) => cancelVideoGen(groupId)}
         />
@@ -10510,6 +10673,16 @@ function WorkspacePage() {
                         );
                       })()}
                     </div>
+
+                    {/* 2026/07:角色参考音频试听(只读展示,上传/替换/删除走角色卡 Popover) */}
+                    {c.referenceAudioUrl && (
+                      <div className="shrink-0 rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-1.5">
+                        <div className="text-xs text-text-secondary font-semibold inline-flex items-center gap-1">
+                          <AudioWaveform size={12} className="text-accent" /> {t.char_audio}
+                        </div>
+                        <audio controls src={c.referenceAudioUrl} className="w-full h-8" />
+                      </div>
+                    )}
 
                     {/* Right BOTTOM: 修改意见输入区(2026/06 改造)
                       - 直接嵌入预览,不再弹独立 slide-in
