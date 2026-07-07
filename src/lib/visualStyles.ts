@@ -490,7 +490,7 @@ const VALID_I2I_MODELS = new Set<string>([
   "pixflow/gemini-3.5-flash",
   "tokenflash/gpt-image-2",
   "revora/gpt-image-2",
-  "aigcfamily/gpt-image-2",
+  // AIGC Family 网关仅支持 T2I(无 /v1/images/edits),不列入 I2I
   "azure/gpt-image-2",
   "azure2/gpt-image-2",
   "azure3/gpt-image-2",

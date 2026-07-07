@@ -106,7 +106,10 @@ export async function callTokenhubImage(input: TokenhubImageInput): Promise<Toke
       form.append("n", String(input.n ?? 1));
       form.append("size", size);
       form.append("quality", input.quality ?? "auto");
-      form.append("response_format", "url");
+      // gpt-image-* 不支持 response_format(T2I 同款守卫,否则 400 unknown_parameter)
+      if (!/^gpt-image/i.test(model)) {
+        form.append("response_format", "url");
+      }
       for (let i = 0; i < input.referenceImages!.length; i++) {
         const refUrl = input.referenceImages![i];
         let blob: Blob;

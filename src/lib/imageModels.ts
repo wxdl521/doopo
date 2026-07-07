@@ -72,19 +72,20 @@ export const IMAGE_MODELS: ImageModelOption[] = [
     sub: "[Tokenflash·OpenAI] Image2 · T2I/I2I · 推荐",
   },
 
-  // ---- [AIGCFamily · OpenAI 兼容] api1.aigcfamily.top → /v1/images/generations|edits ----
-  //  2026/06 接入:实测 gpt-image-2 单次 ≈ 50s,作为 image2 的额外中转选项
+  // ---- [AIGCFamily · OpenAI 兼容] api1.aigcfamily.top → /v1/images/generations ----
+  //  ⚠ 网关仅提供 T2I 端点(无 /v1/images/edits,不接受参考图)→ 仅文生图
+  //  2026/06 接入:实测 gpt-image-2 单次 ≈ 50s
   //  2026/07 接入:imagen-3.0-generate-001,独立 API Key(AIGCFAMILY_IMAGEN3_API_KEY)
   { key: "", label: "—— [AIGCFamily · OpenAI 兼容] ——", sub: undefined, legacy: true },
   {
     key: "aigcfamily/gpt-image-2",
     label: "aigcfamily-image2",
-    sub: "[AIGCFamily·OpenAI] Image2 · T2I/I2I",
+    sub: "[AIGCFamily·OpenAI] Image2 · 仅 T2I",
   },
   {
     key: "aigcfamily/imagen-3.0-generate-001",
     label: "AIGC-imagen3",
-    sub: "[AIGCFamily·OpenAI] Imagen3 · T2I/I2I",
+    sub: "[AIGCFamily·OpenAI] Imagen3 · 仅 T2I",
   },
 
   // ---- [数安词源 · OpenAI 兼容] token.ds.cyberpeace.cn → /v1/images/generations|edits ----
@@ -160,7 +161,7 @@ export const IMAGE_MODELS: ImageModelOption[] = [
   },
 
   // ---- [Azure AI Foundry · 测试] 0528-aoai-sc-87d.services.ai.azure.com ----
-  //  2026/07 接入:AI Foundry 新格式(/openai/v1/...),与 azure/azure2 路径不同
+  //  2026/07 接入:AI Foundry 资源,走 deployment 路径(与 azure/azure2 一致,便于 Portal 对账)
   { key: "", label: "—— [Azure AI Foundry · 测试] ——", sub: undefined, legacy: true },
   {
     key: "azure3/gpt-image-2",

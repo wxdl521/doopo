@@ -12,10 +12,9 @@
 //
 //  UI 选项约定:模型 id 以 `azure/` 前缀,seedream.functions.ts 据此分发。
 //
-//  azure3 = Azure AI Foundry 新格式(services.ai.azure.com):
-//    - T2I: POST /openai/v1/images/generations  (无 api-version,model 在 body)
-//    - I2I: POST /openai/v1/images/edits        (multipart,model 在 form)
-//    - env: AZURE3_API_KEY / AZURE3_BASE_URL
+//  azure3 = services.ai.azure.com 资源,走 deployment 路径(与 azure/azure2 一致,非 /openai/v1/ 新路径):
+//    仅 env 不同(AZURE3_API_KEY / AZURE3_BASE_URL)。services.ai.azure.com 虽也支持 /openai/v1/... 新路径,
+//    但只有 deployment 路径的调用进 Azure Portal「Azure OpenAI Requests」指标,对方按该指标对账才看得到。
 // ====================================================================
 
 import "./loadEnv";
@@ -54,15 +53,18 @@ function isAzure3Model(modelId: string): boolean {
 
 function getAzureConfig(modelId?: string) {
   if (modelId && isAzure3Model(modelId)) {
+    // azure3 是 services.ai.azure.com 资源,endpoint 与 azure/azure2 不同;
+    // 缺 AZURE3_BASE_URL 不能 fallback 到 DEFAULT_BASE_URL(会打到错的资源),留空让调用方报错
     return {
       apiKey: process.env.AZURE3_API_KEY,
-      baseUrl: (process.env.AZURE3_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, ""),
+      baseUrl: (process.env.AZURE3_BASE_URL || "").replace(/\/+$/, ""),
     };
   }
   if (modelId && isAzure2Model(modelId)) {
+    // 同理,azure2 endpoint 与 azure/ 不同,缺配置留空报错
     return {
       apiKey: process.env.AZURE2_API_KEY,
-      baseUrl: (process.env.AZURE2_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, ""),
+      baseUrl: (process.env.AZURE2_BASE_URL || "").replace(/\/+$/, ""),
     };
   }
   return {
@@ -91,6 +93,7 @@ type AzureImageResult = {
 export type AzureImageMeta = {
   requestId: string;
   azureRequestId?: string;
+  apimRequestId?: string;
   region?: string;
   processingMs?: number;
   durationMs: number;
@@ -127,17 +130,14 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
   const { apiKey, baseUrl } = getAzureConfig(input.model);
   const deployment = stripAzurePrefix(input.model) || "gpt-image-2";
   const hasRefs = !!input.referenceImages?.length;
-  // azure3 走 Azure AI Foundry 新格式(/openai/v1/...):无需 api-version,model 在 body/form
-  const isFoundryV1 = isAzure3Model(input.model);
-  const apiVersion = isFoundryV1 ? "v1" : hasRefs ? I2I_API_VERSION : T2I_API_VERSION;
-  const path = isFoundryV1
-    ? hasRefs
-      ? "/openai/v1/images/edits"
-      : "/openai/v1/images/generations"
-    : hasRefs
-      ? `/openai/deployments/${deployment}/images/edits`
-      : `/openai/deployments/${deployment}/images/generations`;
-  const url = isFoundryV1 ? `${baseUrl}${path}` : `${baseUrl}${path}?api-version=${apiVersion}`;
+  // azure3 与 azure/azure2 一致,走 deployment 路径(/openai/deployments/{dep}/images/...?api-version=)。
+  // services.ai.azure.com 虽也支持 /openai/v1/... 新路径,但只有 deployment 路径的调用进 Portal
+  // 「Azure OpenAI Requests」指标——对方按该指标对账,v1 路径计量归属另一维度,对方查不到会误以为没调用。
+  const apiVersion = hasRefs ? I2I_API_VERSION : T2I_API_VERSION;
+  const path = hasRefs
+    ? `/openai/deployments/${deployment}/images/edits`
+    : `/openai/deployments/${deployment}/images/generations`;
+  const url = `${baseUrl}${path}?api-version=${apiVersion}`;
   const size = normalizeAzureSize(input.size);
   const quality = normalizeAzureQuality(input.quality);
   const t0 = Date.now();
@@ -158,6 +158,16 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
       meta: { ...baseMeta, durationMs: 0, status: 0, retries: 0 },
     };
   }
+  if (!baseUrl) {
+    console.warn(`[azure×] rid=${requestId} model=${input.model} missing AZURE_BASE_URL`);
+    return {
+      url: "",
+      urls: [],
+      error: `AZURE base url not configured for ${input.model}`,
+      model: deployment,
+      meta: { ...baseMeta, durationMs: 0, status: 0, retries: 0 },
+    };
+  }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), IMAGE_REQUEST_TIMEOUT_MS);
@@ -169,7 +179,6 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
       form.append("n", String(input.n ?? 1));
       form.append("size", size);
       form.append("quality", quality);
-      if (isFoundryV1) form.append("model", deployment);
       const refs = input.referenceImages!;
       // Azure gpt-image-2 edits: 单图用 `image`，多图必须用 `image[]`（重复 `image` 会 400 Duplicate parameter）
       const fieldName = refs.length > 1 ? "image[]" : "image";
@@ -210,7 +219,6 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
         size,
         quality,
       };
-      if (isFoundryV1) body.model = deployment;
       requestInit = {
         method: "POST",
         headers: {
@@ -241,8 +249,11 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
     }
     clearTimeout(timeout);
 
+    // 对账用:x-request-id 是后端 Azure OpenAI/AI Foundry 服务侧 id,对方后台/诊断日志按它检索;
+    // apim-request-id 是 APIM 网关侧 id,与后端 id 不同,单独留作网关侧备查。
     const azureRequestId =
-      res?.headers.get("apim-request-id") || res?.headers.get("x-request-id") || undefined;
+      res?.headers.get("x-request-id") || res?.headers.get("apim-request-id") || undefined;
+    const apimRequestId = res?.headers.get("apim-request-id") || undefined;
     const region = res?.headers.get("x-ms-region") || undefined;
     const processingMsHeader =
       res?.headers.get("openai-processing-ms") || res?.headers.get("x-ms-processing-time");
@@ -265,6 +276,7 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
           status,
           retries,
           azureRequestId,
+          apimRequestId,
           region,
           processingMs,
         },
@@ -303,6 +315,7 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
           status: res.status,
           retries,
           azureRequestId,
+          apimRequestId,
           region,
           processingMs,
         },
@@ -310,7 +323,7 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
     }
     const dur = Date.now() - t0;
     console.log(
-      `[azure✓] rid=${requestId} azureRid=${azureRequestId ?? "-"} region=${region ?? "-"} deployment=${deployment} images=${urls.length} dur=${dur}ms procMs=${processingMs ?? "-"} retries=${retries}`,
+      `[azure✓] rid=${requestId} azureRid=${azureRequestId ?? "-"} apimRid=${apimRequestId ?? "-"} region=${region ?? "-"} deployment=${deployment} images=${urls.length} dur=${dur}ms procMs=${processingMs ?? "-"} retries=${retries}`,
     );
     return {
       url: urls[0],
@@ -323,6 +336,7 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
         status: res.status,
         retries,
         azureRequestId,
+        apimRequestId,
         region,
         processingMs,
       },

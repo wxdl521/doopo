@@ -4256,7 +4256,7 @@ function WorkspacePage() {
     const charImageUrls: string[] = [];
     const charNames: string[] = [];
     const hasScene = !!(shotSceneId && sceneImages[shotSceneId]?.length);
-    const maxChars = hasScene ? 2 : 3;
+    const maxChars = hasScene ? 7 : 8;
     for (const cid of shotCharIds) {
       if (charImageUrls.length >= maxChars) break;
       // 用 pickShotCharImageUrl 取该 shot 选定的该角色图 —— 优先按 shot.characterRefs + 选中 url
@@ -4417,7 +4417,7 @@ function WorkspacePage() {
     const charImageUrls: string[] = [];
     const charNames: string[] = [];
     const hasScene = !!(shotSceneId && sceneImages[shotSceneId]?.length);
-    const maxChars = hasScene ? 2 : 3;
+    const maxChars = hasScene ? 7 : 8;
     for (const cid of shotCharIds) {
       if (charImageUrls.length >= maxChars) break;
       const url = pickShotCharImageUrl(shot, cid);
@@ -5272,12 +5272,12 @@ function WorkspacePage() {
     }>;
 
     // 2026/06:故事板 I2I 参考图收集
-    //   - Seedream image 字段最多 4 张
-    //   - 优先级:场景必占 1 张(用户诉求) → 剩余 ≤3 给角色
-    //   - 无场景图时:全部 4 张给角色
+    //   - Seedream image 字段:2026/07 按用户要求从 4 拉到 8(经验 ≤4 稳定,超过易掉质量/超时)
+    //   - 优先级:场景必占 1 张(用户诉求) → 剩余 ≤7 给角色
+    //   - 无场景图时:全部 8 张给角色
     //   - 角色取图:selectedCharImages 优先(用户钉住的"已选中"图),否则 charImages 最新
     //   - 每张图配 label,在 prompt 里说明"图 N 是 X"
-    const REF_MAX = 4;
+    const REF_MAX = 8;
     const referenceImages: string[] = [];
     const referenceImageLabels: string[] = [];
     // 场景图(2026/06:用用户选中的那张,fallback 最新一张)
@@ -5517,8 +5517,8 @@ function WorkspacePage() {
       endSec: s.endSec,
     }));
 
-    // 收集参考图:场景 1 张 + 角色 ≤3 张,Seedream 上限 4 张
-    const REF_MAX = 4;
+    // 收集参考图:场景 1 张 + 角色 ≤7 张,Seedream 上限 8 张(2026/07 按用户要求放开)
+    const REF_MAX = 8;
     const referenceImages: string[] = [];
     const referenceImageLabels: string[] = [];
     const sceneImgUrl = deckSceneId ? pickSceneImageUrl(deckSceneId) : undefined;

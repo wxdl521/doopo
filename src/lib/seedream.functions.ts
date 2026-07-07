@@ -269,7 +269,7 @@ export const generateImage = createServerFn({ method: "POST" })
       });
       return { url: r.url, error: r.error, model: r.model };
     }
-    // 委托给 Tokenflash(OpenAI 兼容,api.tokenflash.cn)
+    // 委托给 Tokenflash(OpenAI 兼容,tokenflash.cn)
     if (requested.toLowerCase().startsWith("tokenflash/")) {
       const { callTokenflashImage } = await import("./tokenflash.functions");
       const r = await callTokenflashImage({
@@ -279,7 +279,7 @@ export const generateImage = createServerFn({ method: "POST" })
       });
       return { url: r.url, error: r.error, model: r.model };
     }
-    // 委托给 Revora(OpenAI 兼容,api.revora.vip)
+    // 委托给 Revora(OpenAI 兼容,revora.vip)
     if (requested.toLowerCase().startsWith("revora/")) {
       const { callRevoraImage } = await import("./revoraImage.functions");
       const r = await callRevoraImage({
@@ -859,7 +859,6 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-        quality: "high",
       });
       if (!r.url) return { ok: false as const, error: r.error || "Pixflow 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -882,7 +881,6 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-        quality: "high",
       });
       if (!r.url) return { ok: false as const, error: r.error || "Tokenflash 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -894,7 +892,6 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-        quality: "high",
       });
       if (!r.url) return { ok: false as const, error: r.error || "Revora 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -906,7 +903,6 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-        quality: "high",
       });
       if (!r.url) return { ok: false as const, error: r.error || "AIGCFamily 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -919,7 +915,6 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-        quality: "high",
       });
       if (!r.url) return { ok: false as const, error: r.error || "数安词源 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -935,7 +930,6 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-        quality: "high",
       });
       if (!r.url) return { ok: false as const, error: r.error || "Azure 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model, meta: r.meta };
@@ -1092,9 +1086,10 @@ const ShotInput = z.object({
   shotTypeLabel: z.string().min(1).max(20),
   action: z.string().min(1).max(400),
   camera: z.string().max(200).default(""),
-  // Seedream 实际接受更多张(经验上 ≤4 稳定),这里跟老代码一样守住 ≤3 防意外
-  characterImageUrls: z.array(z.string().url()).max(3).default([]),
-  characterNames: z.array(z.string().max(50)).max(3).default([]),
+  // 2026/07:按用户要求从 ≤3 拉到 ≤8。Seedream 经验上 ≤4 张稳定,
+  // 超过易掉融合质量 / 触发 120s 超时,此处放开但风险自负。
+  characterImageUrls: z.array(z.string().url()).max(8).default([]),
+  characterNames: z.array(z.string().max(50)).max(8).default([]),
   sceneImageUrl: z.string().url().optional(),
   sceneLocation: z.string().max(200).default(""),
   sceneTimeOfDay: z.string().max(50).default(""),
@@ -1229,7 +1224,7 @@ export const generateStoryboardShotImage = createServerFn({ method: "POST" })
       if (!r.url) return { ok: false as const, error: r.error || "Claude360 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
     }
-    // generateStoryboardShotImage: 委托给 Tokenflash(OpenAI 兼容,api.tokenflash.cn)
+    // generateStoryboardShotImage: 委托给 Tokenflash(OpenAI 兼容,tokenflash.cn)
     if (requested.toLowerCase().startsWith("tokenflash/")) {
       const { callTokenflashImage } = await import("./tokenflash.functions");
       const r = await callTokenflashImage({
@@ -2786,7 +2781,6 @@ export const regenerateSceneImage = createServerFn({ method: "POST" })
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-        quality: "high",
       });
       if (!r.url) return { ok: false as const, error: r.error || "Pixflow 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -2809,7 +2803,6 @@ export const regenerateSceneImage = createServerFn({ method: "POST" })
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-        quality: "high",
       });
       if (!r.url) return { ok: false as const, error: r.error || "Tokenflash 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -2821,7 +2814,6 @@ export const regenerateSceneImage = createServerFn({ method: "POST" })
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-        quality: "high",
       });
       if (!r.url) return { ok: false as const, error: r.error || "Revora 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -2833,7 +2825,6 @@ export const regenerateSceneImage = createServerFn({ method: "POST" })
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-        quality: "high",
       });
       if (!r.url) return { ok: false as const, error: r.error || "AIGCFamily 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -2846,7 +2837,6 @@ export const regenerateSceneImage = createServerFn({ method: "POST" })
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-        quality: "high",
       });
       if (!r.url) return { ok: false as const, error: r.error || "数安词源 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -2862,7 +2852,6 @@ export const regenerateSceneImage = createServerFn({ method: "POST" })
         model: requested,
         size: normalizeSeedreamSize(size),
         referenceImages: [data.referenceImageUrl],
-        quality: "high",
       });
       if (!r.url) return { ok: false as const, error: r.error || "Azure 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model, meta: r.meta };

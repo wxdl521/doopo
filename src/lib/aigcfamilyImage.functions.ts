@@ -4,15 +4,18 @@
 //  Base URL: https://api1.aigcfamily.top (env: AIGCFAMILY_BASE_URL 可覆盖)
 //  Auth:     Authorization: Bearer ${AIGCFAMILY_API_KEY}
 //
-//  本模块只负责 AIGCFamily 中转上的 OpenAI 兼容图像接口:
-//    - 无参考图 (T2I): POST /v1/images/generations
-//    - 有参考图 (I2I): POST /v1/images/edits  (multipart/form-data)
+//  ⚠ 仅支持文生图(T2I):POST /v1/images/generations
+//     网关不提供 /v1/images/edits,也不接受参考图/image 参数 → 不支持图生图(I2I)。
+//     传入参考图时本模块直接返回错误,调用方应改用支持 I2I 的模型
+//     (Seedream / tokenflash/gpt-image-2 / pixflow/gpt-image-2 等)。
 //
-//  当前已验证可用模型:
-//    - gpt-image-2   (T2I 单次 ≈ 50s,返回 data[0].url)
+//  文档明确参数:model / prompt / size(默认 1024x1024) / n
+//  已接入模型:
+//    - gpt-image-2                 (走 AIGCFAMILY_API_KEY)
+//    - imagen-3.0-generate-001     (走 AIGCFAMILY_IMAGEN3_API_KEY,Vertex AI 后端)
 //
 //  UI 选项约定:所有走 AIGCFamily 的模型 id 都加 `aigcfamily/` 前缀,
-//  与其它命名空间互不冲突;在调用时本模块会自动剥离前缀再发给上游。
+//  调用时本模块会自动剥离前缀再发给上游。
 // ====================================================================
 
 import "./loadEnv";
@@ -61,6 +64,12 @@ type AigcfamilyImageResult = {
 /** AIGCFamily gpt-image-2 实测可用尺寸 */
 const AIGCFAMILY_GPT_IMAGE2_SIZES = new Set(["1024x1024", "1024x1792", "1792x1024"]);
 
+/**
+ * 尺寸归一化。
+ * - gpt-image-2:仅 1024x1024 / 1024x1792 / 1792x1024(OpenAI Images 协议固定档位)
+ * - imagen-3.0-generate-001:网关文档仅明确 1024x1024,统一收敛到该尺寸,
+ *   其他档位待上游确认后再放开(避免 3840x2160 等 4K 尺寸被拒)。
+ */
 function normalizeAigcfamilySize(size: string | undefined, model: string): string {
   const s = (size || "").trim().toLowerCase().replace(/\*/g, "x");
   if (/^gpt-image-2$/i.test(model)) {
@@ -75,11 +84,15 @@ function normalizeAigcfamilySize(size: string | undefined, model: string): strin
     }
     return "1024x1024";
   }
+  if (/imagen-?3/i.test(model)) {
+    return "1024x1024";
+  }
   return s || "1024x1024";
 }
 
 /**
- * AIGCFamily 图像生成 —— OpenAI 兼容路由。
+ * AIGCFamily 图像生成 —— 仅文生图(T2I)。
+ * 网关不提供 /v1/images/edits,传入参考图将直接返回错误。
  * 返回与 Tokenflash / Pixflow / Seedream 一致的 { url, urls, error, model }。
  */
 export async function callAigcfamilyImage(
@@ -87,12 +100,24 @@ export async function callAigcfamilyImage(
 ): Promise<AigcfamilyImageResult> {
   const model = stripAigcfamilyPrefix(input.model);
   const { apiKey, baseUrl } = getAigcfamilyConfig(model);
-  const hasRefs = !!input.referenceImages?.length;
-  const endpoint = hasRefs ? "/v1/images/edits" : "/v1/images/generations";
   const size = normalizeAigcfamilySize(input.size, model);
   const t0 = Date.now();
+
+  // 网关不支持图生图:有参考图直接拒绝,避免无意义的 404 / 空请求
+  if (input.referenceImages && input.referenceImages.length > 0) {
+    console.warn(
+      `[aigcfamily×] model=${model} I2I not supported (refs=${input.referenceImages.length})`,
+    );
+    return {
+      url: "",
+      urls: [],
+      error: "AIGC Family 暂不支持参考图",
+      model,
+    };
+  }
+
   console.log(
-    `[aigcfamily→] model=${model} endpoint=${endpoint} refs=${input.referenceImages?.length ?? 0} size=${size} quality=${input.quality ?? "auto"}`,
+    `[aigcfamily→] model=${model} endpoint=/v1/images/generations size=${size} n=${input.n ?? 1}`,
   );
 
   if (!apiKey) {
@@ -103,87 +128,33 @@ export async function callAigcfamilyImage(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), IMAGE_REQUEST_TIMEOUT_MS);
   try {
-    let requestInit: RequestInit;
-    if (hasRefs) {
-      const form = new FormData();
-      form.append("model", model);
-      form.append("prompt", input.prompt);
-      form.append("n", String(input.n ?? 1));
-      form.append("size", size);
-      form.append("quality", input.quality ?? "auto");
-      form.append("response_format", "url");
-      const MAX_REF_BYTES = 800_000; // AiGCfamily nginx 限制约 1MB，留余量
-      let totalRefSize = 0;
-      let skippedCount = 0;
-      for (let i = 0; i < input.referenceImages!.length; i++) {
-        const refUrl = input.referenceImages![i];
-        let blob: Blob;
-        let mime = "image/png";
-        if (refUrl.startsWith("data:")) {
-          const m = refUrl.match(/^data:([^;]+);base64,(.+)$/);
-          if (!m) throw new Error(`invalid data url for ref ${i}`);
-          mime = m[1] || "image/png";
-          const bin = Buffer.from(m[2], "base64");
-          blob = new Blob([bin], { type: mime });
-        } else {
-          const r = await fetch(refUrl);
-          if (!r.ok) throw new Error(`fetch ref ${i} failed: ${r.status}`);
-          mime = r.headers.get("content-type") || "image/png";
-          blob = await r.blob();
-        }
-        if (blob.size > MAX_REF_BYTES) {
-          console.warn(
-            `[aigcfamily] skipping ref ${i}: ${(blob.size / 1e6).toFixed(2)}MB > 0.8MB limit`,
-          );
-          skippedCount++;
-          continue;
-        }
-        totalRefSize += blob.size;
-        const ext = mime.includes("jpeg") ? "jpg" : mime.includes("webp") ? "webp" : "png";
-        form.append("image[]", blob, `ref_${i}.${ext}`);
-      }
-      const totalMB = (totalRefSize / 1_000_000).toFixed(2);
-      console.log(
-        `[aigcfamily] refs=${input.referenceImages!.length - skippedCount}/${input.referenceImages!.length} totalSize=${totalMB}MB`,
-      );
-      requestInit = {
-        method: "POST",
-        headers: { Authorization: `Bearer ${apiKey}` },
-        body: form,
-        signal: controller.signal,
-      };
-    } else {
-      const body: Record<string, unknown> = {
-        model,
-        prompt: input.prompt,
-        n: input.n ?? 1,
-        size,
-        quality: input.quality ?? "auto",
-        response_format: "url",
-      };
-      requestInit = {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      };
-    }
+    // 严格按网关文档:model / prompt / size / n
+    const body: Record<string, unknown> = {
+      model,
+      prompt: input.prompt,
+      n: input.n ?? 1,
+      size,
+    };
+    const requestInit: RequestInit = {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    };
 
     let res: Response | null = null;
     let lastText = "";
     for (let attempt = 0; attempt < 2; attempt++) {
-      res = await fetch(`${baseUrl}${endpoint}`, requestInit);
+      res = await fetch(`${baseUrl}/v1/images/generations`, requestInit);
       if (res.ok) break;
       lastText = await res.text().catch(() => "");
       const transient =
         res.status === 502 || res.status === 503 || res.status === 504 || res.status === 524;
       if (!transient || attempt === 1) break;
-      console.warn(
-        `[aigcfamily⟳] model=${model} endpoint=${endpoint} status=${res.status} retry in 1.5s`,
-      );
+      console.warn(`[aigcfamily⟳] model=${model} status=${res.status} retry in 1.5s`);
       await new Promise((r) => setTimeout(r, 1500));
     }
     clearTimeout(timeout);
@@ -191,7 +162,7 @@ export async function callAigcfamilyImage(
     if (!res || !res.ok) {
       const status = res?.status ?? 0;
       console.warn(
-        `[aigcfamily×] model=${model} endpoint=${endpoint} status=${status} dur=${Date.now() - t0}ms body=${lastText.slice(0, 200)}`,
+        `[aigcfamily×] model=${model} status=${status} dur=${Date.now() - t0}ms body=${lastText.slice(0, 200)}`,
       );
       return {
         url: "",
@@ -227,7 +198,7 @@ export async function callAigcfamilyImage(
 
     if (rawUrls.length === 0) {
       console.warn(
-        `[aigcfamily×] model=${model} endpoint=${endpoint} empty-data dur=${Date.now() - t0}ms err=${json?.error?.message ?? ""} raw=${rawText.slice(0, 400)}`,
+        `[aigcfamily×] model=${model} empty-data dur=${Date.now() - t0}ms err=${json?.error?.message ?? ""} raw=${rawText.slice(0, 400)}`,
       );
       return {
         url: "",
@@ -237,14 +208,12 @@ export async function callAigcfamilyImage(
       };
     }
 
-    console.log(
-      `[aigcfamily✓] model=${model} endpoint=${endpoint} images=${rawUrls.length} dur=${Date.now() - t0}ms`,
-    );
+    console.log(`[aigcfamily✓] model=${model} images=${rawUrls.length} dur=${Date.now() - t0}ms`);
     return { url: rawUrls[0], urls: rawUrls, error: null, model };
   } catch (e) {
     clearTimeout(timeout);
     console.warn(
-      `[aigcfamily×] model=${model} endpoint=${endpoint} network dur=${Date.now() - t0}ms err=${e instanceof Error ? e.message : "fetch failed"}`,
+      `[aigcfamily×] model=${model} network dur=${Date.now() - t0}ms err=${e instanceof Error ? e.message : "fetch failed"}`,
     );
     return {
       url: "",

@@ -37,7 +37,7 @@ import { z } from "zod";
 // --------------------------------------------------------------------
 
 const PlotInput = z.object({
-  episodeText: z.string().min(50).max(20000),
+  episodeText: z.string().min(50), // 2026/07:去掉 max 上限,超长剧情交给模型 context window(超长易超时/截断,风险自负)
   episodeIndex: z.number().int().min(1).max(999),
   // 角色 / 场景摘要(从 workspace 现有 GenCharacter / GenScene 简化而来,
   // 不传整个对象,减少 token 消耗)
@@ -68,7 +68,7 @@ const PlotInput = z.object({
   // 期望生成多少组分镜(客户端可调,默认 6,设为 0 表示不设上限让 AI 自己决定)
   groupCount: z.number().int().min(0).max(30).default(6),
   // 上一集剧情(可选),给 AI 提供上下文
-  previousEpisodesText: z.string().max(8000).optional(),
+  previousEpisodesText: z.string().optional(), // 2026/07:去掉 max 上限(同 episodeText)
   // 项目风格
   projectStyle: z.string().max(50).optional(),
   // 文本生成模型
@@ -769,10 +769,11 @@ const ShotInput = z.object({
   startSec: z.number().min(0).max(3600).optional(),
   endSec: z.number().min(0).max(3600).optional(),
   durationSec: z.number().min(1).max(10).optional(),
-  // 参考图 —— 客户端会先限好:有场景图时 ≤ 2 角色图,无场景图时 ≤ 3 角色图,
-  // 总数 (角色 + 场景) ≤ 3。schema 这里再守一道 .max(3),防止意外传超。
-  characterImageUrls: z.array(z.string().url()).max(3).default([]),
-  characterNames: z.array(z.string().max(50)).max(3).default([]),
+  // 参考图 —— 客户端会先限好:有场景图时 ≤ 7 角色图,无场景图时 ≤ 8 角色图,
+  // 总数 (角色 + 场景) ≤ 8。schema 这里再守一道 .max(8),防止意外传超。
+  // 2026/07:按用户要求从 3 拉到 8(Seedream 经验 ≤4 稳定,超过易掉质量/超时,风险自负)。
+  characterImageUrls: z.array(z.string().url()).max(8).default([]),
+  characterNames: z.array(z.string().max(50)).max(8).default([]),
   sceneImageUrl: z.string().url().optional(),
   sceneLocation: z.string().max(200).default(""),
   sceneTimeOfDay: z.string().max(50).default(""),
@@ -815,8 +816,8 @@ const RegenShotInput = z.object({
   camera: z.string().max(200).default(""),
   cameraMovement: z.string().max(300).optional(),
   characterBlocking: z.string().max(400).optional(),
-  characterImageUrls: z.array(z.string().url()).max(3).default([]),
-  characterNames: z.array(z.string().max(50)).max(3).default([]),
+  characterImageUrls: z.array(z.string().url()).max(8).default([]),
+  characterNames: z.array(z.string().max(50)).max(8).default([]),
   sceneImageUrl: z.string().url().optional(),
   sceneLocation: z.string().max(200).default(""),
   sceneTimeOfDay: z.string().max(50).default(""),

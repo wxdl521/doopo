@@ -114,7 +114,10 @@ export async function callTokenflashImage(
       form.append("n", String(input.n ?? 1));
       form.append("size", size);
       form.append("quality", input.quality ?? "auto");
-      form.append("response_format", "url");
+      // gpt-image-* 不支持 response_format(T2I 同款守卫,否则 400 unknown_parameter)
+      if (!/^gpt-image/i.test(model)) {
+        form.append("response_format", "url");
+      }
       // 下载每张参考图为 Blob 后以 image[] 文件字段上传
       for (let i = 0; i < input.referenceImages!.length; i++) {
         const refUrl = input.referenceImages![i];
