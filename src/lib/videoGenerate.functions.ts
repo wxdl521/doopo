@@ -268,6 +268,21 @@ async function arkSubmit(input: {
   }
 }
 
+/** 把 Seedance status 字符串映射到项目内 SeedanceProgress
+ *  适用于 ARK 官方 + vapeur 中转(都走 Seedance status 协议)。
+ *  官方文档只示例了 succeeded,实际可能返回 queued/running/failed/cancelled
+ *  以及 pending/processing/canceled(美式)等,统一映射避免非标准值静默卡死轮询 */
+function seedanceStatusToProgress(s: string | undefined): SeedanceProgress {
+  const v = (s || "").toLowerCase();
+  if (v === "succeeded") return "succeeded";
+  if (v === "failed") return "failed";
+  if (v === "cancelled" || v === "canceled") return "cancelled";
+  if (v === "running" || v === "processing") return "running";
+  if (v === "queued" || v === "pending") return "queued";
+  // 未知状态默认 running(继续轮询,不命中终态,避免空转 deadline)
+  return "running";
+}
+
 async function arkPoll(input: {
   taskId: string;
   apiKey: string;
@@ -304,7 +319,7 @@ async function arkPoll(input: {
     try {
       json = JSON.parse(text);
     } catch {}
-    const status = (json.status?.toLowerCase() || "") as SeedanceProgress;
+    const status = seedanceStatusToProgress(json.status);
     const videoUrl = json.content?.video_url || null;
     return { ok: true, status, videoUrl, raw: json };
   } catch (e) {
@@ -472,6 +487,19 @@ async function dashscopeSubmit(input: {
   }
 }
 
+/** 把 DashScope task_status 字符串映射到项目内 SeedanceProgress
+ *  DashScope 视频任务状态:PENDING/RUNNING/SUCCEEDED/FAILED(大写),可能还有 UNKNOWN。
+ *  映射避免 pending 等值塞给前端 onProgress,未知状态兜底 running 继续轮询 */
+function dashscopeStatusToProgress(s: string | undefined): SeedanceProgress {
+  const v = (s || "").toLowerCase();
+  if (v === "succeeded") return "succeeded";
+  if (v === "failed") return "failed";
+  if (v === "cancelled" || v === "canceled") return "cancelled";
+  if (v === "running") return "running";
+  if (v === "pending" || v === "queued") return "queued";
+  return "running";
+}
+
 async function dashscopePoll(input: {
   taskId: string;
   apiKey: string;
@@ -502,8 +530,7 @@ async function dashscopePoll(input: {
     try {
       json = JSON.parse(text);
     } catch {}
-    const rawStatus = (json.output?.task_status || "").toUpperCase();
-    const status = rawStatus.toLowerCase() as SeedanceProgress;
+    const status = dashscopeStatusToProgress(json.output?.task_status);
     // 成功时 video_url 在 output.video_url(DashScope 视频任务的字段);
     // 但有少数版本也用 output.results[0].video_url / .url,做一下兜底
     const videoUrl =
@@ -937,8 +964,11 @@ async function kuaiziPoll(input: {
       json = JSON.parse(text);
     } catch {}
     if (json.code !== 0) {
+      // code!==0 是业务错误(task_id 缺失/不存在等,不可恢复),带 status:failed
+      // 让 generateVideo 直接终止,不当网络抖动重试到 deadline
       return {
         ok: false,
+        status: "failed",
         error: `[kuaizi] poll code=${json.code}: ${json.message || text.slice(0, 200)}`,
       };
     }
@@ -1595,7 +1625,7 @@ async function vapeurPoll(input: {
     try {
       json = JSON.parse(text);
     } catch {}
-    const status = (json.status?.toLowerCase() || "") as SeedanceProgress;
+    const status = seedanceStatusToProgress(json.status);
     const videoUrl = json.content?.video_url || null;
     return { ok: true, status, videoUrl, raw: json };
   } catch (e) {
@@ -2136,7 +2166,17 @@ export const generateVideo = createServerFn({ method: "POST" })
       await sleep(pollInterval);
       const poll = await pollVideoTask({ taskId: submit.taskId, backend: submit.backend });
       if (!poll.ok) {
-        // 网络抖动,继续轮询
+        // 业务错误(poll 带 status: failed/cancelled,如丽帧 code!==0)不可恢复,直接终止;
+        // 否则按网络抖动继续轮询
+        if (poll.status === "failed" || poll.status === "cancelled") {
+          return {
+            ok: false as const,
+            error: poll.error || `[${submit.backend}] ${poll.status}`,
+            taskId: submit.taskId,
+            backend: submit.backend,
+            lastStatus: poll.status,
+          };
+        }
         continue;
       }
       lastStatus = poll.status;
