@@ -46,6 +46,8 @@ export type MemberRow = {
   subscriptionCredits: number;
   joinedAt: string;
   invitedBy: string | null;
+  groupId: string | null;
+  groupName: string | null;
   // 以下字段通过 join users 表获取
   email?: string | null;
   displayName?: string | null;
@@ -86,7 +88,11 @@ export const getTeamMembers = createServerFn({ method: "POST" })
         credits_balance,
         subscription_credits,
         joined_at,
-        invited_by
+        invited_by,
+        group_id,
+        group:team_groups (
+          name
+        )
       `,
       )
       .eq("team_id", data.teamId)
@@ -120,19 +126,24 @@ export const getTeamMembers = createServerFn({ method: "POST" })
       }
     }
 
-    const result: MemberRow[] = (members ?? []).map((m: any) => ({
-      id: m.id,
-      teamId: m.team_id,
-      userId: m.user_id,
-      role: m.role,
-      creditsBalance: m.credits_balance,
-      subscriptionCredits: m.subscription_credits,
-      joinedAt: m.joined_at,
-      invitedBy: m.invited_by,
-      email: userProfiles.get(m.user_id)?.email ?? null,
-      displayName: userProfiles.get(m.user_id)?.displayName ?? null,
-      avatarUrl: userProfiles.get(m.user_id)?.avatarUrl ?? null,
-    }));
+    const result: MemberRow[] = (members ?? []).map((m: any) => {
+      const grp = Array.isArray(m.group) ? m.group[0] : m.group;
+      return {
+        id: m.id,
+        teamId: m.team_id,
+        userId: m.user_id,
+        role: m.role,
+        creditsBalance: m.credits_balance,
+        subscriptionCredits: m.subscription_credits,
+        joinedAt: m.joined_at,
+        invitedBy: m.invited_by,
+        groupId: m.group_id ?? null,
+        groupName: grp?.name ?? null,
+        email: userProfiles.get(m.user_id)?.email ?? null,
+        displayName: userProfiles.get(m.user_id)?.displayName ?? null,
+        avatarUrl: userProfiles.get(m.user_id)?.avatarUrl ?? null,
+      };
+    });
 
     return { members: result, error: null as string | null };
   });

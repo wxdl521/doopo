@@ -191,6 +191,7 @@ export default function MembersTab({ teamId, myRole, onManageCredits }: MembersT
               <TableHead>{t.team_manage_col_member}</TableHead>
               <TableHead>{t.team_manage_col_email}</TableHead>
               <TableHead>{t.team_manage_col_role}</TableHead>
+              <TableHead>{t.team_manage_col_group}</TableHead>
               <TableHead className="text-right">{t.team_manage_col_credits}</TableHead>
               <TableHead>{t.team_manage_col_joined}</TableHead>
               <TableHead className="text-right">{t.team_manage_col_actions}</TableHead>
@@ -199,7 +200,7 @@ export default function MembersTab({ teamId, myRole, onManageCredits }: MembersT
           <TableBody>
             {members.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
                   {t.team_manage_no_members}
                 </TableCell>
               </TableRow>
@@ -262,6 +263,13 @@ export default function MembersTab({ teamId, myRole, onManageCredits }: MembersT
                           {t[roleInfo.labelKey]}
                         </Badge>
                       )}
+                    </TableCell>
+
+                    {/* 分组 */}
+                    <TableCell>
+                      <Badge variant="outline" className="text-xs">
+                        {member.groupName ?? t.team_manage_ungrouped}
+                      </Badge>
                     </TableCell>
 
                     {/* 可用积分 */}

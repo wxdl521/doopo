@@ -575,6 +575,8 @@ export const zh = {
   team_manage_col_credits: "可用积分",
   team_manage_col_joined: "加入时间",
   team_manage_col_actions: "操作",
+  team_manage_col_group: "分组",
+  team_manage_ungrouped: "未分组",
   team_manage_unknown_user: "未知用户",
   team_manage_role_owner: "所有者",
   team_manage_role_admin: "管理员",

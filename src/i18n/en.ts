@@ -594,6 +594,8 @@ export const en: Translations = {
   team_manage_col_credits: "Credits",
   team_manage_col_joined: "Joined",
   team_manage_col_actions: "Actions",
+  team_manage_col_group: "Group",
+  team_manage_ungrouped: "Ungrouped",
   team_manage_unknown_user: "Unknown User",
   team_manage_role_owner: "Owner",
   team_manage_role_admin: "Admin",
