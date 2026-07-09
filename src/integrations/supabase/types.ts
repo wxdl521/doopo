@@ -30,6 +30,7 @@ export type Database = {
           name: string
           palette: string[] | null
           personality: string | null
+          reference_audio_url: string | null
           role: string
           role_label: string | null
           user_id: string
@@ -49,6 +50,7 @@ export type Database = {
           name: string
           palette?: string[] | null
           personality?: string | null
+          reference_audio_url?: string | null
           role?: string
           role_label?: string | null
           user_id: string
@@ -68,6 +70,7 @@ export type Database = {
           name?: string
           palette?: string[] | null
           personality?: string | null
+          reference_audio_url?: string | null
           role?: string
           role_label?: string | null
           user_id?: string
@@ -264,11 +267,13 @@ export type Database = {
           completed_stages: string[]
           created_at: string
           custom_cover: string | null
+          group_id: string | null
           id: string
           name: string
           scene_model: string
           storyboard_model: string
           style: string
+          team_id: string | null
           updated_at: string
           user_id: string
           video_model: string
@@ -281,11 +286,13 @@ export type Database = {
           completed_stages?: string[]
           created_at?: string
           custom_cover?: string | null
+          group_id?: string | null
           id: string
           name?: string
           scene_model?: string
           storyboard_model?: string
           style?: string
+          team_id?: string | null
           updated_at?: string
           user_id: string
           video_model?: string
@@ -298,18 +305,35 @@ export type Database = {
           completed_stages?: string[]
           created_at?: string
           custom_cover?: string | null
+          group_id?: string | null
           id?: string
           name?: string
           scene_model?: string
           storyboard_model?: string
           style?: string
+          team_id?: string | null
           updated_at?: string
           user_id?: string
           video_model?: string
           workflow?: string
           workspace_data?: Json
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "projects_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "team_groups"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "projects_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       props: {
         Row: {
@@ -434,9 +458,42 @@ export type Database = {
         }
         Relationships: []
       }
+      team_groups: {
+        Row: {
+          admin_id: string | null
+          created_at: string
+          id: string
+          name: string
+          team_id: string
+        }
+        Insert: {
+          admin_id?: string | null
+          created_at?: string
+          id?: string
+          name: string
+          team_id: string
+        }
+        Update: {
+          admin_id?: string | null
+          created_at?: string
+          id?: string
+          name?: string
+          team_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "team_groups_team_id_fkey"
+            columns: ["team_id"]
+            isOneToOne: false
+            referencedRelation: "teams"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       team_members: {
         Row: {
           credits_balance: number
+          group_id: string | null
           id: string
           invited_by: string | null
           joined_at: string
@@ -447,6 +504,7 @@ export type Database = {
         }
         Insert: {
           credits_balance?: number
+          group_id?: string | null
           id?: string
           invited_by?: string | null
           joined_at?: string
@@ -457,6 +515,7 @@ export type Database = {
         }
         Update: {
           credits_balance?: number
+          group_id?: string | null
           id?: string
           invited_by?: string | null
           joined_at?: string
@@ -466,6 +525,13 @@ export type Database = {
           user_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "team_members_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "team_groups"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "team_members_team_id_fkey"
             columns: ["team_id"]
@@ -603,6 +669,10 @@ export type Database = {
       }
       has_team_role: {
         Args: { p_roles: string[]; p_team_id: string; p_user_id?: string }
+        Returns: boolean
+      }
+      is_in_same_group: {
+        Args: { p_group_id: string; p_user_id?: string }
         Returns: boolean
       }
       is_in_team: {
