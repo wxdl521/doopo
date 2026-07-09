@@ -959,7 +959,7 @@ function WorkspacePage() {
     charImagesRef.current = charImages;
   }, [charImages]);
   // 角色/场景/道具修改面板的 I2I 参考图上传(用户上传本地图片作为图生图参考,不上传到服务端)
-  const [charModUploadedRef, setCharModUploadedRef] = useState<string | null>(null);
+  const [charModUploadedRefs, setCharModUploadedRefs] = useState<string[]>([]);
   const [sceneModUploadedRef, setSceneModUploadedRef] = useState<string | null>(null);
   const [propModUploadedRef, setPropModUploadedRef] = useState<string | null>(null);
 
@@ -988,6 +988,50 @@ function WorkspacePage() {
         toast.error("读取图片失败");
       };
       reader.readAsDataURL(file);
+    };
+    input.click();
+  }
+
+  /**
+   * 2026/07:多选版 pickLocalImageAsDataUrl -- 支持一次选多张,逐张校验大小/类型,
+   * 全部读成 dataUrl 后回调。用于角色重生多图参考(场景2 上传额外参考图)。
+   */
+  function pickLocalImagesAsDataUrl(onResults: (dataUrls: string[]) => void, maxSizeMb = 10): void {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.multiple = true;
+    input.onchange = () => {
+      const files = Array.from(input.files ?? []);
+      if (files.length === 0) return;
+      const valid: File[] = [];
+      for (const f of files) {
+        if (!f.type.startsWith("image/")) {
+          toast.error(`已跳过非图片文件:${f.name}`);
+          continue;
+        }
+        if (f.size > maxSizeMb * 1024 * 1024) {
+          toast.error(`已跳过超过 ${maxSizeMb}MB 的图片:${f.name}`);
+          continue;
+        }
+        valid.push(f);
+      }
+      if (valid.length === 0) return;
+      Promise.all(
+        valid.map(
+          (f) =>
+            new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result as string);
+              reader.onerror = () => reject(reader.error);
+              reader.readAsDataURL(f);
+            }),
+        ),
+      )
+        .then((urls) => onResults(urls))
+        .catch(() => {
+          toast.error("读取图片失败");
+        });
     };
     input.click();
   }
@@ -2840,6 +2884,7 @@ function WorkspacePage() {
     setSelectedGenIdx(0);
     setModInput("");
     setModError(null);
+    setCharModUploadedRefs([]);
   }
 
   function closeModPanel() {
@@ -2848,6 +2893,7 @@ function WorkspacePage() {
     setPreviewTarget(null);
     setModInput("");
     setModError(null);
+    setCharModUploadedRefs([]);
   }
 
   /**
@@ -2860,10 +2906,18 @@ function WorkspacePage() {
     mode: "modify" | "three-view" | "multi-asset",
     instruction: string,
     /**
-     * 可选:直接指定 referenceImageUrl,绕过"从 history 取最新一张"的默认行为。
-     * 用于 processCharacter 自动给后续 look 传默认 look 的图当参考,确保脸一致。
+     * 2026/07:主视图(图1,要改的那张)URL。
+     * - 场景1(对话修改):pendingRef.imageUrl(selectedCharImages || 最新)
+     * - 场景2(角色页修改):generations[currentIdx](用户在预览里选中的那张)
+     * - processCharacter:siblingAnchor.url / 默认 look 图
+     * 缺省则回退 selectedCharImages ?? 最新(兼容 runPresetRegen 旧调用)。
      */
-    referenceOverride?: string,
+    mainViewUrl?: string,
+    /**
+     * 2026/07:额外参考图(图2..N),追加在主视图之后做多图融合。仅 modify 模式有意义;
+     * 场景2 用户上传的多张本地图。默认 []。主视图强制在图1,额外图不得替换身份。
+     */
+    extraReferenceUrls: string[] = [],
     /**
      * 2026/06:可选。true 时 setCharImages 直接覆盖为 [res.url](只留 1 张,
      * 不堆历史),用于 processCharacter autoGen 跑后续 look —— "新生成替代
@@ -2876,25 +2930,27 @@ function WorkspacePage() {
     const imageKey = lk ? `${c.id}::${lk.id}` : c.id;
     const generations = charImagesRef.current[imageKey] ?? [];
     // 2026/06 改:reference 优先级
-    //   1) referenceOverride(processCharacter autoGen 显式传)
+    //   1) mainViewUrl(processCharacter autoGen 显式传)
     //   2) selectedCharImages[imageKey] —— 用户在卡片上"选中"的那张
     //      (前提是这张 url 还在 generations 里;否则忽略)
     //   3) 最新一张 generations[length-1]
     // 这样点"三视图"/"多维资产" 按用户选中的形象去 I2I,而不是机械地用最新。
     const pinned = selectedCharImagesRef.current[imageKey];
     const fallback = generations[generations.length - 1];
-    const referenceUrl =
-      referenceOverride ?? (pinned && generations.includes(pinned) ? pinned : fallback);
-    if (!referenceUrl) {
+    const resolvedMainView =
+      mainViewUrl ?? (pinned && generations.includes(pinned) ? pinned : fallback);
+    if (!resolvedMainView) {
       toast.error("该形象还没生成,无法重生");
       return;
     }
     // 把这张卡标记为 regen 中,UI 那边会显示黑屏遮罩。结束时(成功/失败)一定清掉。
+    const extraRefs = extraReferenceUrls.filter((u) => u && u !== resolvedMainView);
     setRegenBusyKeys((m) => new Map(m).set(imageKey, mode));
     try {
       const res = await callRegenCharacter({
         data: {
-          referenceImageUrl: referenceUrl,
+          referenceImageUrl: resolvedMainView,
+          extraReferenceImageUrls: extraRefs.length ? extraRefs : undefined,
           userInstruction: instruction,
           faceDescription: lk?.faceDescription || c.faceDescription || "",
           bodyDescription: lk?.bodyDescription || c.bodyDescription || "",
@@ -3128,7 +3184,15 @@ function WorkspacePage() {
       return;
     }
 
-    const ok = await doRegen(c, lookId, "modify", instruction, charModUploadedRef ?? undefined);
+    // 2026/07:主视图(图1)= 用户在预览里选中的那张(要改的那张);额外参考图 = 上传的多张本地图
+    const generations = existingImages;
+    const currentIdx = Math.min(selectedGenIdx, Math.max(0, generations.length - 1));
+    const currentUrl = generations[currentIdx];
+    if (!currentUrl) {
+      setModError("未选中要修改的图片,请先在左侧历史里点一张");
+      return;
+    }
+    const ok = await doRegen(c, lookId, "modify", instruction, currentUrl, charModUploadedRefs);
     if (ok) {
       // 2026/06:保留 AI 描述 + 追加用户意见。先调 describeCharacterImage 生成详细描述,
       // 然后把用户的修改意见作为补充说明追加到对应字段末尾,这样既有详细描述又体现用户意图。
@@ -3228,14 +3292,21 @@ function WorkspacePage() {
    * 2026/06:从右侧对话框引用消息提交角色修改(不打开 modal)。
    * 逻辑同 submitModPanel 但不需要 modPanel state。
    */
-  async function submitModPanelRef(c: GenCharacter, lookId: string | null, instruction: string) {
+  async function submitModPanelRef(
+    c: GenCharacter,
+    lookId: string | null,
+    instruction: string,
+    /** 2026/07:主视图(图1,要改的那张)。场景1 = pendingRef.imageUrl(selectedCharImages || 最新) */
+    mainViewUrl?: string,
+  ) {
     const imageKey = lookId == null ? c.id : `${c.id}::${lookId}`;
-    const coverUrl = charImages[imageKey]?.at(-1);
+    // 主视图优先用调用方传入的"要改的那张",否则回退最新一张
+    const coverUrl = mainViewUrl ?? charImages[imageKey]?.at(-1);
     if (!coverUrl) {
       toast.error("该角色还没有图片");
       return;
     }
-    const ok = await doRegen(c, lookId, "modify", instruction);
+    const ok = await doRegen(c, lookId, "modify", instruction, coverUrl);
     if (ok) {
       // 同 submitModPanel:AI 看图描述 + 追加用户意见
       const newUrl = charImagesRef.current[imageKey]?.at(-1);
@@ -10438,10 +10509,10 @@ function WorkspacePage() {
           onEnterStoryboard={() => void runEnterStoryboard()}
           enterTimelineSignal={enterTimelineSignal}
           onEnterTimeline={() => setTab("timeline")}
-          onModifyReference={(refType, refId, instruction, lookId) => {
+          onModifyReference={(refType, refId, instruction, lookId, mainViewUrl) => {
             if (refType === "character") {
               const c = data.characters.find((x) => x.id === refId);
-              if (c) void submitModPanelRef(c, lookId ?? null, instruction);
+              if (c) void submitModPanelRef(c, lookId ?? null, instruction, mainViewUrl);
             } else if (refType === "scene") {
               const s = data.scenes.find((x) => x.id === refId);
               if (s) void submitSceneModPanelRef(s, instruction);
@@ -10774,34 +10845,52 @@ function WorkspacePage() {
                             输入你想要修改的内容，AI 会自动识别并归类到面部、身材、服装等属性。
                             未提及的部分保持不变。
                           </p>
-                          <div className="flex items-center gap-2 mb-2">
+                          <div className="flex items-center gap-2 mb-2 flex-wrap">
                             <button
                               type="button"
                               onClick={() =>
-                                pickLocalImageAsDataUrl((url) => setCharModUploadedRef(url))
+                                pickLocalImagesAsDataUrl((urls) =>
+                                  setCharModUploadedRefs((prev) => [...prev, ...urls].slice(0, 4)),
+                                )
                               }
-                              className="btn-ghost text-xs flex items-center gap-1"
-                              title="上传本地图片作为 I2I 参考"
+                              disabled={charModUploadedRefs.length >= 4}
+                              className="btn-ghost text-xs flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
+                              title="上传本地图片作为额外参考图(最多 4 张,主视图始终在图1)"
                             >
                               <ImageUp size={12} />
-                              <span>上传参考图</span>
+                              <span>
+                                上传参考图
+                                {charModUploadedRefs.length > 0
+                                  ? `(${charModUploadedRefs.length}/4)`
+                                  : ""}
+                              </span>
                             </button>
-                            {charModUploadedRef && (
-                              <div className="relative shrink-0 w-10 h-10 rounded border border-accent overflow-hidden">
+                            {charModUploadedRefs.map((url, idx) => (
+                              <div
+                                key={url}
+                                className="relative shrink-0 w-10 h-10 rounded border border-accent overflow-hidden"
+                              >
                                 <img
-                                  src={charModUploadedRef}
-                                  alt="参考图"
+                                  src={url}
+                                  alt={`参考图${idx + 1}`}
                                   className="w-full h-full object-cover"
                                 />
+                                <span className="absolute bottom-0 left-0 bg-black/60 text-white text-[8px] px-0.5">
+                                  图{idx + 2}
+                                </span>
                                 <button
                                   type="button"
-                                  onClick={() => setCharModUploadedRef(null)}
+                                  onClick={() =>
+                                    setCharModUploadedRefs((prev) =>
+                                      prev.filter((_, i) => i !== idx),
+                                    )
+                                  }
                                   className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"
                                 >
                                   <X size={10} />
                                 </button>
                               </div>
-                            )}
+                            ))}
                           </div>
                           <textarea
                             value={modInput}
@@ -10827,7 +10916,7 @@ function WorkspacePage() {
                             <span className="text-[10px] text-text-muted">
                               {thisBusy
                                 ? "生成中…"
-                                : `参考图:第 ${currentIdx + 1} / ${generations.length} 张`}
+                                : `主视图:第 ${currentIdx + 1} / ${generations.length} 张${charModUploadedRefs.length ? ` + 额外 ${charModUploadedRefs.length} 张` : ""}`}
                             </span>
                             <button
                               type="button"

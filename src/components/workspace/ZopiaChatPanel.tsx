@@ -325,6 +325,8 @@ const ZopiaChatPanel = forwardRef<
       refId: string,
       instruction: string,
       lookId?: string | null,
+      /** 2026/07:主视图(要改的那张)URL,角色重生多图参考的图1。仅 character 用。 */
+      mainViewUrl?: string,
     ) => void;
     /**
      * 2026/07:视频确认卡片点"确认生成"时调用,返回 Promise<boolean>。
@@ -750,7 +752,7 @@ const ZopiaChatPanel = forwardRef<
       setAttachments([]);
       const pr = pendingRef;
       setPendingRef(null);
-      onModifyReference?.(pr.refType, pr.refId, trimmed, pr.lookId);
+      onModifyReference?.(pr.refType, pr.refId, trimmed, pr.lookId, pr.imageUrl);
       return;
     }
 

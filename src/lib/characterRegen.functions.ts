@@ -17,7 +17,13 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 const Input = z.object({
-  referenceImageUrl: z.string().url(), // 必填,重生必须看原图
+  referenceImageUrl: z.string().url(), // 必填,主视图(图1,要改的那张),重生必须看原图
+  /**
+   * 2026/07:额外参考图(图2..N),追加在主视图之后做多图融合。
+   * 主视图(要改的那张)强制在图1,额外图仅作风格/细节参考,不得改主视图的身份特征。
+   * 上限 4 张,加主视图总 5 张(Seedream 上限 10)。
+   */
+  extraReferenceImageUrls: z.array(z.string().url()).max(4).optional(),
   userInstruction: z.string().min(1).max(2000),
   faceDescription: z.string().max(4000),
   bodyDescription: z.string().max(4000),

@@ -473,6 +473,8 @@ export const generateImage = createServerFn({ method: "POST" })
 
 const RegenerateInput = z.object({
   referenceImageUrl: z.string().url(),
+  // 2026/07:额外参考图(图2..N),主视图(要改的那张)强制在图1,额外图仅作风格/细节参考。
+  extraReferenceImageUrls: z.array(z.string().url()).max(4).optional(),
   userInstruction: z.string().min(1).max(2000),
   faceDescription: z.string().max(4000),
   bodyDescription: z.string().max(4000),
@@ -791,6 +793,12 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
     `[EDIT REQUEST — what to change in the attached image]`,
     data.userInstruction,
     ``,
+    `[REFERENCE IMAGES - 严格按对应关系使用]`,
+    `图1 = 角色主视图(要被修改的那张),脸/身材/构图/风格/背景以此为准,是修改的基础`,
+    (data.extraReferenceImageUrls?.length ?? 0) > 0
+      ? `图2..${1 + (data.extraReferenceImageUrls?.length ?? 0)} = 额外参考图(风格/细节/配饰参考),仅当 EDIT REQUEST 涉及时参考,严禁用来替换图1 的角色身份(脸/身材/发型)`
+      : `（无额外参考图,仅以图1 为基础修改）`,
+    ``,
     `[LOCK — neutral structure MUST stay 100% identical to the source image]`,
     `• 脸型、脸轮廓、五官比例、肤色、骨骼结构 100% 继承图1`,
     `• 体型、身高、胖瘦、体态 100% 继承图1`,
@@ -835,6 +843,8 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
 
     const { positive, negative, size } = buildCharacterPrompts({ data, styleSpec, cardTitle });
     const requested = normalizeImageModelForRouting(data.model);
+    // 2026/07:多图参考 -- 图1=主视图(要改的那张,referenceImageUrl),图2..N=额外参考
+    const allImages = [data.referenceImageUrl, ...(data.extraReferenceImageUrls ?? [])];
     const prompt = appendNegative(positive, negative);
 
     // 2026/06:查看提示词模式 —— 不调 Seedream,直接把 prompt 返回
@@ -848,6 +858,7 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
           model: requested || DEFAULT_MODEL,
           mode: data.mode,
           referenceImage: data.referenceImageUrl,
+          extraReferenceImages: data.extraReferenceImageUrls ?? [],
         },
       };
     }
@@ -858,7 +869,7 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
-        referenceImages: [data.referenceImageUrl],
+        referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "Pixflow 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -869,7 +880,7 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
-        referenceImages: [data.referenceImageUrl],
+        referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "Claude360 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -880,7 +891,7 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
-        referenceImages: [data.referenceImageUrl],
+        referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "Tokenflash 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -891,7 +902,7 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
-        referenceImages: [data.referenceImageUrl],
+        referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "Revora 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -902,7 +913,7 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
-        referenceImages: [data.referenceImageUrl],
+        referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "AIGCFamily 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -914,7 +925,7 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
-        referenceImages: [data.referenceImageUrl],
+        referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "数安词源 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -929,7 +940,7 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
-        referenceImages: [data.referenceImageUrl],
+        referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "Azure 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model, meta: r.meta };
@@ -950,7 +961,7 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
-        referenceImages: [data.referenceImageUrl],
+        referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "OTU 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -961,7 +972,7 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
-        referenceImages: [data.referenceImageUrl],
+        referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "AI Tokenvibe 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -972,7 +983,7 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
-        referenceImages: [data.referenceImageUrl],
+        referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "天鸿智算 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -983,7 +994,7 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
-        referenceImages: [data.referenceImageUrl],
+        referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "ailinzi 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -994,7 +1005,7 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
-        referenceImages: [data.referenceImageUrl],
+        referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "vapeur 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -1005,7 +1016,7 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
-        referenceImages: [data.referenceImageUrl],
+        referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "tokenhub 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -1016,7 +1027,7 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
-        referenceImages: [data.referenceImageUrl],
+        referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "nagora 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -1027,7 +1038,7 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
-        referenceImages: [data.referenceImageUrl],
+        referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "meridian 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -1038,7 +1049,7 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
         prompt,
         model: requested,
         size: normalizeSeedreamSize(size),
-        referenceImages: [data.referenceImageUrl],
+        referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "汇流未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -1052,7 +1063,7 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
       {
         model,
         prompt,
-        image: data.referenceImageUrl,
+        image: allImages.length === 1 ? allImages[0] : allImages,
         size: normalizeSeedreamSize(size),
         output_format: "png",
         watermark: false,
@@ -1911,7 +1922,11 @@ function buildPitchDeckPrompt(opts: {
 
   // 景别统一用中文展示(用户要求不用 WS/MS/CU 等英文缩写)
   const SHOT_TYPE_CN: Record<string, string> = {
-    WS: "远景", MS: "中景", CU: "近景", ECU: "特写", OTS: "过肩",
+    WS: "远景",
+    MS: "中景",
+    CU: "近景",
+    ECU: "特写",
+    OTS: "过肩",
   };
   const cnShotType = (s: { shotType: string; shotTypeLabel?: string }) => {
     const label = s.shotTypeLabel?.trim();
@@ -2411,7 +2426,10 @@ export const regenerateStoryboardPitchDeck = createServerFn({ method: "POST" })
     const { resolveProjectStyle } = await import("./visualStyles");
     const styleSpec = resolveProjectStyle(data.projectStyle);
 
-    const prompt = appendNegative(buildRegenPitchDeckPrompt({ data, styleSpec }), buildPitchDeckNegative());
+    const prompt = appendNegative(
+      buildRegenPitchDeckPrompt({ data, styleSpec }),
+      buildPitchDeckNegative(),
+    );
 
     // 图 1 = 当前故事板(图布局 / 风格 / 文字位置的真值),后面跟原 referenceImages
     // 里的角色/场景参考图 —— 跟原 generate 共享同样 10 张上限
