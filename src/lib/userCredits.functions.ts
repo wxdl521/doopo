@@ -74,3 +74,99 @@ export const rechargeCredits = createServerFn({ method: "POST" })
 
     return { ok: true as const, balance: wallet?.credits_balance ?? 0 };
   });
+
+// ====================================================================
+// chargeCredits - 扣减积分(模型调用成功后调用)
+//
+//   调 deduct_user_credits RPC(SECURITY DEFINER,原子 UPSERT 扣减 + 写流水)。
+//   amount > 0,RPC 内部转负。余额不足扣到负数(欠款,下次充值抵扣)。
+//   扣失败(RPC 错误/异常)不抛 -- 返回 {ok:false},调用方不阻断主流程
+//   (图片/视频已生成,不收回)。
+//
+//   supabase 参数:用户 token 的 client(中间件注入或 getOptionalAuthCtx)。
+//   RPC 内 auth.uid() 从该 token 取,确保只扣自己的。
+// ====================================================================
+
+export async function chargeCredits(
+  supabase: any,
+  userId: string,
+  params: {
+    amount: number;
+    model?: string;
+    resolution?: string;
+    duration?: number;
+    description: string;
+  },
+): Promise<{ ok: boolean; balanceAfter: number | null }> {
+  try {
+    const { data, error } = await supabase.rpc("deduct_user_credits", {
+      p_amount: params.amount,
+      p_description: params.description,
+      p_model: params.model ?? null,
+      p_resolution: params.resolution ?? null,
+      p_duration: params.duration ?? null,
+    });
+    if (error) {
+      console.error(`[chargeCredits] userId=${userId} RPC failed:`, error);
+      return { ok: false, balanceAfter: null };
+    }
+    // RPC RETURNS TABLE(ok, balance_after) -> supabase 返回数组
+    const row = Array.isArray(data) ? data[0] : data;
+    return { ok: row?.ok === true, balanceAfter: row?.balance_after ?? null };
+  } catch (e) {
+    console.error(`[chargeCredits] userId=${userId} exception:`, e);
+    return { ok: false, balanceAfter: null };
+  }
+}
+
+// ====================================================================
+// getUserCreditTransactions - 查询当前用户的积分消耗记录(分页)
+//   用于 account.credits 页面展示。RLS 保证只能查自己。
+// ====================================================================
+
+export type UserCreditTransactionRow = {
+  id: string;
+  type: string;
+  amount: number;
+  balanceAfter: number | null;
+  model: string | null;
+  resolution: string | null;
+  duration: number | null;
+  description: string | null;
+  createdAt: string;
+};
+
+export const getUserCreditTransactions = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((input: unknown) => {
+    const parsed = z
+      .object({
+        limit: z.number().int().min(1).max(100).optional().default(20),
+        offset: z.number().int().min(0).optional().default(0),
+      })
+      .safeParse(input);
+    if (!parsed.success) throw new Error("Invalid input");
+    return parsed.data;
+  })
+  .handler(async ({ data, context }) => {
+    const { supabase, userId } = context;
+    const { data: rows, error } = await supabase
+      .from("user_credit_transactions")
+      .select("id,type,amount,balance_after,model,resolution,duration,description,created_at")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: false })
+      .range(data.offset, data.offset + data.limit - 1);
+    if (error) return { transactions: [] as UserCreditTransactionRow[], error: error.message };
+    const transactions: UserCreditTransactionRow[] = (rows ?? []).map((r: any) => ({
+      id: r.id,
+      type: r.type,
+      amount: Number(r.amount),
+      balanceAfter: r.balance_after == null ? null : Number(r.balance_after),
+      model: r.model,
+      resolution: r.resolution,
+      duration: r.duration,
+      description: r.description,
+      createdAt: r.created_at,
+    }));
+    return { transactions, error: null as string | null };
+  });

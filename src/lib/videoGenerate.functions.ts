@@ -34,6 +34,8 @@ import { createHash, createHmac } from "node:crypto";
 import { KLING_VIDEO_MODELS } from "./klingVideo.functions";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { fetchMedia } from "./workspaceMedia.functions";
+import { chargeCredits } from "./userCredits.functions";
+import { videoCost } from "./creditsCost";
 
 // ---------- ARK (Seedance) 配置 ----------
 
@@ -2225,6 +2227,17 @@ export const generateVideo = createServerFn({ method: "POST" })
           videoUrl: poll.videoUrl,
           backend: submit.backend,
         });
+        // 成功才扣分(视频积分,按 duration 比例)。不在价目表 -> 不扣;扣失败不阻断
+        const __vCost = videoCost(submit.model, data.resolution, data.duration);
+        if (__vCost != null) {
+          await chargeCredits(supabase, userId, {
+            amount: __vCost,
+            model: submit.model,
+            resolution: data.resolution,
+            duration: data.duration,
+            description: "视频生成",
+          });
+        }
         return {
           ok: true as const,
           taskId: submit.taskId,

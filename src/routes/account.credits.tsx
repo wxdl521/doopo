@@ -1,9 +1,18 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useState, useEffect } from "react";
-import { Coins } from "lucide-react";
-import { getUserBalance } from "../lib/userCredits.functions";
+import { Coins, ChevronLeft, ChevronRight } from "lucide-react";
+import { getUserBalance, getUserCreditTransactions } from "../lib/userCredits.functions";
 import { useLanguage } from "../i18n/LanguageContext";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
 
 export const Route = createFileRoute("/account/credits")({
   component: AccountCredits,
@@ -16,18 +25,29 @@ const PACKAGES = [
   { amount: 15000, price: 128, popular: false },
 ];
 
+const PAGE_SIZE = 20;
+
 function AccountCredits() {
   const { t } = useLanguage();
   const callGetBalance = useServerFn(getUserBalance);
+  const callTransactions = useServerFn(getUserCreditTransactions);
 
   const [balance, setBalance] = useState<number | null>(null);
   const [customAmount, setCustomAmount] = useState("");
+  const [transactions, setTransactions] = useState<any[]>([]);
+  const [page, setPage] = useState(0);
 
   useEffect(() => {
     callGetBalance({ data: undefined })
       .then((r: any) => setBalance(r?.balance ?? 0))
       .catch(() => setBalance(0));
   }, []);
+
+  useEffect(() => {
+    callTransactions({ data: { limit: PAGE_SIZE, offset: page * PAGE_SIZE } })
+      .then((r: any) => setTransactions(r?.transactions ?? []))
+      .catch(() => setTransactions([]));
+  }, [page]);
 
   const customCredits = parseInt(customAmount, 10);
   const customPrice =
@@ -96,6 +116,79 @@ function AccountCredits() {
           </button>
         </div>
       </div>
+
+      {/* 消耗记录 */}
+      <section className="panel p-0 overflow-hidden">
+        <div className="px-6 pt-6 pb-3">
+          <h3 className="font-display text-lg font-bold">{t.acc_credits_history}</h3>
+        </div>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>{t.acc_credits_col_time}</TableHead>
+              <TableHead>{t.acc_credits_col_desc}</TableHead>
+              <TableHead className="text-right">{t.acc_credits_col_amount}</TableHead>
+              <TableHead className="text-right">{t.acc_credits_col_balance}</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {transactions.length === 0 ? (
+              <TableRow>
+                <TableCell colSpan={4} className="text-center text-text-muted py-8">
+                  {t.acc_credits_no_records}
+                </TableCell>
+              </TableRow>
+            ) : (
+              transactions.map((tx) => {
+                const isPositive = tx.amount > 0;
+                const fmtTime = new Date(tx.createdAt).toLocaleString("zh-CN", {
+                  month: "2-digit",
+                  day: "2-digit",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                });
+                return (
+                  <TableRow key={tx.id}>
+                    <TableCell className="text-sm text-text-muted whitespace-nowrap">
+                      {fmtTime}
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      {tx.description ?? tx.model ?? "-"}
+                      {tx.resolution ? ` · ${tx.resolution}` : ""}
+                      {tx.duration ? ` · ${tx.duration}s` : ""}
+                    </TableCell>
+                    <TableCell
+                      className={`text-right text-sm font-medium ${isPositive ? "text-green-500" : "text-orange-500"}`}
+                    >
+                      {isPositive ? "+" : ""}
+                      {Number(tx.amount).toLocaleString()}
+                    </TableCell>
+                    <TableCell className="text-right text-sm text-text-muted">
+                      {tx.balanceAfter != null ? Number(tx.balanceAfter).toLocaleString() : "-"}
+                    </TableCell>
+                  </TableRow>
+                );
+              })
+            )}
+          </TableBody>
+        </Table>
+        {transactions.length >= PAGE_SIZE && (
+          <div className="flex items-center justify-between px-6 py-3 border-t border-border">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page === 0}
+              onClick={() => setPage((p) => p - 1)}
+            >
+              <ChevronLeft className="w-4 h-4 mr-1" /> {t.acc_credits_prev}
+            </Button>
+            <span className="text-sm text-text-muted">{page + 1}</span>
+            <Button variant="outline" size="sm" onClick={() => setPage((p) => p + 1)}>
+              {t.acc_credits_next} <ChevronRight className="w-4 h-4 ml-1" />
+            </Button>
+          </div>
+        )}
+      </section>
     </div>
   );
 }

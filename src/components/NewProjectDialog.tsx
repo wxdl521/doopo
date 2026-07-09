@@ -42,7 +42,7 @@ const aspects = [
 // 2026 重构:默认走 Doubao Seedream(火山方舟 ARK),用户可手动切到 Qwen / Wan / Gemini 等
 const imageModelOptions = [
   // ---- 主力:Seedream ----
-  { id: "doubao-seedream-5-0-260128", label: "Doubao Seedream 5.0", sub: "默认 · ARK · 同步" },
+  { id: "doubao-seedream-5-0-260128", label: "Doubao Seedream 5.0", sub: "默认 · 同步" },
 
   // ---- Legacy 兜底层(用户手动选;seedream 模块会委派到 openrouterImage)----
   { id: "__sep__", label: "—— Legacy 兜底层 ——", sub: "" },
@@ -75,7 +75,7 @@ const imageModelOptions = [
   {
     id: "tokenflash/gpt-image-2",
     label: "GPT Image 2 (Tokenflash)",
-    sub: "Tokenflash · OpenAI · Image2 · 推荐",
+    sub: "5积分/张",
   },
 
   // ---- Revora(OpenAI 兼容)----
@@ -83,7 +83,7 @@ const imageModelOptions = [
   {
     id: "revora/gpt-image-2",
     label: "GPT Image 2 (Revora)",
-    sub: "Revora · OpenAI · Image2 · T2I/I2I",
+    sub: "4积分/张",
   },
 
   // ---- OneToken(OpenAI 兼容)----
@@ -99,12 +99,12 @@ const imageModelOptions = [
   {
     id: "aigcfamily/gpt-image-2",
     label: "GPT Image 2 (AIGC Family)",
-    sub: "AIGC Family · OpenAI · Image2 · 仅 T2I",
+    sub: "仅 T2I",
   },
   {
     id: "aigcfamily/imagen-3.0-generate-001",
     label: "AIGC-imagen3",
-    sub: "AIGC Family · OpenAI · Imagen3 · 仅 T2I",
+    sub: "仅 T2I",
   },
 
   // ---- OTU(OpenAI 兼容)----
@@ -148,7 +148,7 @@ const imageModelOptions = [
   {
     id: "tokenhub/gpt-image-2",
     label: "GPT Image 2 (TokenHub)",
-    sub: "TokenHub · OpenAI · Image2 · T2I/I2I",
+    sub: "",
   },
 
   // ---- nagora.ai(Azure 渠道 OpenAI 官方)----
@@ -172,7 +172,7 @@ const imageModelOptions = [
   {
     id: "confluo/gpt-image-2",
     label: "GPT Image 2 (汇流)",
-    sub: "汇流 · OpenAI · Image2 · T2I/I2I",
+    sub: "",
   },
 
   // ---- vapeur.ai(OpenAI 兼容)----
@@ -188,21 +188,38 @@ const imageModelOptions = [
   {
     id: "azure/gpt-image-2",
     label: "Azure-gpt-image-2",
-    sub: "Azure · OpenAI · gpt-image-2 · T2I/I2I",
+    sub: "9积分/张",
   },
   {
     id: "azure2/gpt-image-2",
     label: "Azure-gpt-image-2 (终结点)",
-    sub: "Azure OpenAI 终结点 · gpt-image-2 · T2I/I2I",
+    sub: "9积分/张",
   },
   {
     id: "azure3/gpt-image-2",
     label: "Azure（测试）",
-    sub: "Azure AI Foundry · gpt-image-2 · T2I/I2I",
+    sub: "9积分/张",
   },
 ];
-// 过滤掉"分隔符"项(只是 UI 视觉分组,不能选)
-const realImageModelOptions = imageModelOptions.filter((m) => !m.id.startsWith("__sep"));
+// 2026/07:图下拉只保留指定供应商(星标 + AIGC Family + 汇流 + Azure),
+// 其余(qwen/wan/pixflow/claude360/onetoken/otu 等)不显示。
+const VISIBLE_IMAGE_PREFIXES = [
+  "doubao-seedream/", // 默认主力 Seedream
+  "tokenflash/",
+  "revora/",
+  "azure2/",
+  "tokenhub/", // 星标
+  "aigcfamily/",
+  "confluo/", // AIGC Family + 汇流
+  "azure/",
+  "azure3/", // Azure(azure2 已在星标)
+];
+const isVisibleImage = (id: string) =>
+  VISIBLE_IMAGE_PREFIXES.some((p) => id.toLowerCase().startsWith(p));
+// 过滤掉"分隔符"项 + 非可见模型
+const realImageModelOptions = imageModelOptions.filter(
+  (m) => !m.id.startsWith("__sep") && isVisibleImage(m.id),
+);
 void IMAGE_MODELS;
 const storyboardModels = realImageModelOptions;
 const sceneModels = realImageModelOptions;
@@ -210,17 +227,21 @@ const sceneModels = realImageModelOptions;
 // 详见 docs/seedream.md (Seedance) 和 docs/qwen.md (HappyHorse)
 const videoModels = [
   // ---- 主力:Seedance(火山方舟 ARK,多模态·支持参考图/视频/音频)----
-  { id: "doubao-seedance-2-0-260128", label: "Doubao Seedance 2.0", sub: "默认 · ARK · 多模态" },
+  {
+    id: "doubao-seedance-2-0-260128",
+    label: "Doubao Seedance 2.0",
+    sub: "多模态 · 69-146积分/10s",
+  },
   {
     id: "doubao-seedance-2-0-fast-260128",
     label: "Doubao Seedance 2.0 Fast",
-    sub: "ARK · 720p 快速版",
+    sub: "快速版 · 52-114积分/10s",
   },
-  { id: "doubao-seedance-1-0-pro-250528", label: "Doubao Seedance 1.0 Pro", sub: "ARK · T2V" },
+  { id: "doubao-seedance-1-0-pro-250528", label: "Doubao Seedance 1.0 Pro", sub: "T2V" },
   {
     id: "doubao-seedance-1-0-lite-i2v-250428",
     label: "Doubao Seedance 1.0 Lite",
-    sub: "ARK · I2V",
+    sub: "I2V",
   },
 
   // ---- 即梦 3.0 Pro(火山引擎视觉服务,需 AK/SK)----
@@ -230,22 +251,34 @@ const videoModels = [
 
   // ---- 筷子科技 丽帧(中转火山方舟 Seedance,需 KUAIZI_API_KEY)----
   { id: "__video_sep_kuaizi__", label: "—— 筷子科技 丽帧(中转 Seedance)——", sub: "" },
-  { id: "kuaizi-lizhen-pro", label: "丽帧 Pro (1080p)", sub: "筷子科技 · 多模态 · 中转 Seedance" },
-  { id: "kuaizi-lizhen-fast", label: "丽帧 Fast (720p)", sub: "筷子科技 · 快速版 · 中转 Seedance" },
-  { id: "kuaizi-lizhen-mini", label: "丽帧 Mini", sub: "筷子科技 · 轻量版 · 中转 Seedance" },
+  {
+    id: "kuaizi-lizhen-pro",
+    label: "丽帧 Pro (1080p)",
+    sub: "多模态 · 110.4-593积分/10s",
+  },
+  {
+    id: "kuaizi-lizhen-fast",
+    label: "丽帧 Fast (720p)",
+    sub: "快速版 · 89-192积分/10s",
+  },
+  {
+    id: "kuaizi-lizhen-mini",
+    label: "丽帧 Mini",
+    sub: "轻量版 · 56-120积分/10s",
+  },
 
   // ---- ToAPIs(中转火山方舟 Seedance 2,需 TOAPIS_API_KEY)----
   { id: "__video_sep_toapis__", label: "—— ToAPIs(中转 Seedance 2)——", sub: "" },
-  { id: "toapis-seedance-2", label: "Seedance 2 (ToAPIs)", sub: "ToAPIs · 1080p/4k · 多模态" },
+  { id: "toapis-seedance-2", label: "Seedance 2 (ToAPIs)", sub: "多模态" },
   {
     id: "toapis-seedance-2-fast",
     label: "Seedance 2 Fast (ToAPIs)",
-    sub: "ToAPIs · 720p · 快速版",
+    sub: "快速版",
   },
   {
     id: "toapis-seedance-2-mini",
     label: "Seedance 2 Mini (ToAPIs)",
-    sub: "ToAPIs · 720p · 多模态参考",
+    sub: "多模态参考",
   },
 
   // ---- k99.tw(Sora 风格 API · 视频生成,需 K99_API_KEY)----
@@ -285,17 +318,17 @@ const videoModels = [
   {
     id: "confluo-doubao-seedance-2-0-260128",
     label: "Seedance 2.0 (汇流)",
-    sub: "汇流 · 1080p · 多模态",
+    sub: "多模态",
   },
   {
     id: "confluo-doubao-seedance-2-0-fast-260128",
     label: "Seedance 2.0 Fast (汇流)",
-    sub: "汇流 · 720p · 快速版",
+    sub: "快速版",
   },
   {
     id: "confluo-doubao-seedance-2-0-mini-260615",
     label: "Seedance 2.0 Mini (汇流)",
-    sub: "汇流 · 720p · 轻量版",
+    sub: "轻量版",
   },
 
   // ---- 可灵 Kling AI(快手,需 KLING_API_KEY)----
@@ -303,12 +336,12 @@ const videoModels = [
   {
     id: "kling-v2-6",
     label: "Kling 2.6",
-    sub: "可灵 · 最高画质 · 5/10s · 原生音频",
+    sub: "最高画质 · 5/10s · 原生音频",
   },
   {
     id: "kling-v3",
     label: "Kling 3.0",
-    sub: "可灵 · 旗舰 · 3-15s · 多镜头",
+    sub: "旗舰 · 3-15s · 多镜头",
   },
 
   // ---- 备用:HappyHorse(阿里 DashScope)----
@@ -317,8 +350,21 @@ const videoModels = [
   { id: "happyhorse-1.0-i2v", label: "HappyHorse 1.0 (图生视频·首帧)", sub: "DashScope · I2V" },
   { id: "happyhorse-1.0-t2v", label: "HappyHorse 1.0 (文生视频)", sub: "DashScope · T2V" },
 ];
-// 过滤掉"分隔符"项(只是 UI 视觉分组,不能选)
-const realVideoModels = videoModels.filter((m) => !m.id.startsWith("__video_sep"));
+// 2026/07:视频下拉只保留指定供应商(星标 + 汇流 + ToAPIS + 可灵),
+// 其余(即梦/k99/数安词源/vapeur/HappyHorse)不显示。
+const VISIBLE_VIDEO_PREFIXES = [
+  "kuaizi-",
+  "doubao-seedance-", // 星标
+  "confluo-",
+  "toapis-",
+  "kling-", // 汇流 + ToAPIS + 可灵
+];
+const isVisibleVideo = (id: string) =>
+  VISIBLE_VIDEO_PREFIXES.some((p) => id.toLowerCase().startsWith(p));
+// 过滤掉"分隔符"项 + 非可见模型
+const realVideoModels = videoModels.filter(
+  (m) => !m.id.startsWith("__video_sep") && isVisibleVideo(m.id),
+);
 
 // 视频分辨率档位 -- 仅丽帧 / Doubao Seedance 2.0 系列支持,按模型动态可选。
 // ARK Seedance 标准版/Fast:480p、720p;丽帧 pro:480p、720p、1080p;丽帧 fast/mini:480p、720p。
@@ -410,14 +456,30 @@ export function NewProjectDialog({
   // 没登录 / 没历史 → 用硬编码默认。避免每次建项目都从 Seedream 重新选。
   // 编辑现有项目时,initial 优先级 > userPrefs,确保用户看到的是项目当前设置。
   const initialPrefs = useMemo(() => loadUserPrefs(userId), [userId]);
-  const pickScene = () =>
-    initial?.sceneModel ||
-    initial?.storyboardModel ||
-    initialPrefs.lastSceneModel ||
-    initialPrefs.lastImageModel ||
-    "doubao-seedream-5-0-260128";
-  const pickVideo = () =>
-    initial?.videoModel || initialPrefs.lastVideoModel || "doubao-seedance-2-0-260128";
+  const pickScene = () => {
+    const candidates = [
+      initial?.sceneModel,
+      initial?.storyboardModel,
+      initialPrefs.lastSceneModel,
+      initialPrefs.lastImageModel,
+      "doubao-seedream-5-0-260128",
+    ];
+    for (const c of candidates) {
+      if (c && isVisibleImage(c)) return c;
+    }
+    return realImageModelOptions[0]?.id ?? "doubao-seedream-5-0-260128";
+  };
+  const pickVideo = () => {
+    const candidates = [
+      initial?.videoModel,
+      initialPrefs.lastVideoModel,
+      "doubao-seedance-2-0-260128",
+    ];
+    for (const c of candidates) {
+      if (c && isVisibleVideo(c)) return c;
+    }
+    return realVideoModels[0]?.id ?? "doubao-seedance-2-0-260128";
+  };
   const [aspect, setAspect] = useState(() => initial?.aspect ?? "16:9");
   const [customCover, setCustomCover] = useState<string | null>(() => initial?.customCover ?? null);
   const fileInputRef = useRef<HTMLInputElement>(null);

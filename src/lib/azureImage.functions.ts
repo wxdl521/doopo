@@ -20,6 +20,9 @@
 import "./loadEnv";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { getOptionalAuthCtx } from "./authContext";
+import { chargeCredits } from "./userCredits.functions";
+import { imageCost } from "./creditsCost";
 
 const DEFAULT_BASE_URL = "https://ywkjpolandcentral.cognitiveservices.azure.com";
 const T2I_API_VERSION = "2025-04-01-preview";
@@ -325,6 +328,16 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
     console.log(
       `[azure✓] rid=${requestId} azureRid=${azureRequestId ?? "-"} apimRid=${apimRequestId ?? "-"} region=${region ?? "-"} deployment=${deployment} images=${urls.length} dur=${dur}ms procMs=${processingMs ?? "-"} retries=${retries}`,
     );
+    // 成功才扣分(生图积分,按张)。未登录/不在价目表 -> 跳过;扣失败不阻断
+    const __ctx = await getOptionalAuthCtx();
+    const __cost = imageCost(input.model);
+    if (__ctx && __cost != null) {
+      await chargeCredits(__ctx.supabase, __ctx.userId, {
+        amount: __cost,
+        model: input.model,
+        description: "生图 · azure",
+      });
+    }
     return {
       url: urls[0],
       urls,
