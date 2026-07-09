@@ -6113,13 +6113,19 @@ function WorkspacePage() {
   }
 
   const pendingSaveRef = useRef(false);
+  // 2026/07 修复:延迟调用点(beforeunload / auto-save / 排队重试)若直接用闭包里的
+  // handleSaveWorkspace,会捕获注册时的旧 state 快照,刷新时用旧 data 整体覆盖
+  // workspace_data,抹掉本次会话新生成的场景/道具。改走 ref 永远拿最新实例。
+  const handleSaveWorkspaceRef = useRef<(opts?: { silent?: boolean }) => Promise<void>>(
+    async () => {},
+  );
   const scheduleSave = useCallback(
     (opts?: { silent?: boolean }) => {
       if (savingWorkspace) {
         pendingSaveRef.current = true;
         return;
       }
-      void handleSaveWorkspace(opts);
+      void handleSaveWorkspaceRef.current(opts);
     },
     [savingWorkspace],
   );
@@ -6380,10 +6386,15 @@ function WorkspacePage() {
       // 如果保存期间有新的保存请求排队,立即再跑一次
       if (pendingSaveRef.current) {
         pendingSaveRef.current = false;
-        void handleSaveWorkspace({ silent: true });
+        void handleSaveWorkspaceRef.current({ silent: true });
       }
     }
   }
+
+  // 2026/07 修复:每次 render 同步把最新的 handleSaveWorkspace 实例写入 ref。
+  // 该实例闭包捕获当前 render 的全部 state(data / shotImages / panelImages /
+  // groupVideos …),延迟调用点走 ref 即可始终用最新快照保存,杜绝"旧覆盖新"。
+  handleSaveWorkspaceRef.current = handleSaveWorkspace;
 
   // 阶段性内容自动持久化:剧本/角色/分镜/时间轴等任意改变,1.5s 防抖后静默保存到服务端,
   // 让用户刷新页面也能看到已生成内容。
@@ -6430,11 +6441,9 @@ function WorkspacePage() {
     if (!user) return;
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     autoSaveTimerRef.current = setTimeout(() => {
-      if (savingWorkspace) {
-        pendingSaveRef.current = true;
-        return;
-      }
-      void handleSaveWorkspace({ silent: true });
+      // 2026/07:走 ref 拿最新 handleSaveWorkspace(含最新 data/state);savingWorkspace
+      // 排队由 handleSaveWorkspace 内部统一处理,避免此处闭包陈旧误判。
+      void handleSaveWorkspaceRef.current({ silent: true });
     }, 600);
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
@@ -6451,12 +6460,13 @@ function WorkspacePage() {
         clearTimeout(autoSaveTimerRef.current);
         autoSaveTimerRef.current = null;
       }
-      // sync 触发(无 await);浏览器一般会让该 fetch 在 unload 时完成
-      void handleSaveWorkspace({ silent: true });
+      // sync 触发(无 await);浏览器一般会让该 fetch 在 unload 时完成。
+      // 2026/07:走 ref 拿最新 handleSaveWorkspace,避免用页面加载时的旧 state
+      // 快照整体覆盖 workspace_data(会抹掉本次会话新生成的场景/道具)。
+      void handleSaveWorkspaceRef.current({ silent: true });
     };
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataLoaded, user]);
 
   // Auto-save when all stages are complete (only trigger once)
@@ -6466,9 +6476,8 @@ function WorkspacePage() {
     if (!dataLoaded) return;
     if (completedKey === "11111") {
       autoSavedRef.current = true;
-      void handleSaveWorkspace();
+      void handleSaveWorkspaceRef.current();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [completedKey, dataLoaded]);
 
   // 2026/06 二次改造:之前 shots 字段一变就调 composePlotText 重写 plotText,
