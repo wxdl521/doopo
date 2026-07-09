@@ -1126,11 +1126,6 @@ function WorkspacePage() {
   // 同一角色并发跑 processCharacter。state 的 busyChars 已经做了同样防御,
   // 但 ref 更可靠(不会因 React batching 漏掉)。
   const processCharacterInFlightRef = useRef<Set<string>>(new Set());
-  // 2026/06:autoGen 已处理过的角色 id 集合(无视 charImages 状态)。
-  // 目的:老图已持久化在 supabase 时,useEffect 触发仍能跑 processCharacter
-  // 重新覆盖默认 look(用户期望"第一次进入要自动生成");同时防止 enrich
-  // 内部 setData 引起的 useEffect 重跑老角色。
-  const autogenRanRef = useRef<Set<string>>(new Set());
   const [panelImages, setPanelImages] = useState<Record<string, string>>({});
   const [sceneImages, setSceneImages] = useState<Record<string, string[]>>({});
   const sceneImagesRef = useRef<Record<string, string[]>>({});
@@ -1204,9 +1199,9 @@ function WorkspacePage() {
   //                   加入 Set;处理完所有 looks 后移出 Set。
   //   卡片判定:
   //     activeImageKey === imageKey        → spinner(此刻正在画这张)
-  //     busyChars.has(c.id) && !active     → "排队中..."(同角色下一张,或别人正在画)
+  //     busyChars.has(c.id) && !active     -> "同角色排队中..."(同角色下一张在排队)
   //     hasImg                              → 显示图片
-  //     其他                                → "点击生成形象" 或 "排队生成中..."
+  //     其他                                -> "点击生成形象"(按需生成,用户主动点击触发)
   const [activeImageKey, setActiveImageKey] = useState<string | null>(null);
   const [busyChars, setBusyChars] = useState<Set<string>>(new Set());
   const [busyPanel, setBusyPanel] = useState<string | null>(null);
@@ -5699,63 +5694,12 @@ function WorkspacePage() {
     }
   }
 
-  // Auto-generate real images for newly produced characters / storyboard panels.
+  // 角色 / 场景 / 道具图片改为按需生成(2026/07):从剧本提取出角色、场景、道具后,
+  // 不再自动批量生图,各卡片只显示"点击生成"占位,由用户主动点击触发
+  // (genCharImage / genSceneImage / genPropImage)。
   //
-  // ⚠️ 串行生成(并发上限 = 1,跨角色也排队)。
-  //
-  // 历史经验:
-  //   - 完全无并发 = 2 的时候,Qwen 同时给 N 个 429,代码 fallback 到不同 model,
-  //     产生风格/构图/背景不一致的图。
-  //   - 改并发 = 2 后:撞 429 概率仍偏高,DashScope 高峰排队时返回的图在
-  //     "正视图 / 全身" 这种构图约束上很容易跑偏(仰视、半身、切头切脚),
-  //     而且失败次数上去后整批失败率上升(因为 noFallback 锁了主 model)。
-  //   - 串行 = 1 是最稳的选择:每一张图独占 DashScope 的请求槽,model 在
-  //     单一上下文里能更稳定地服从 prompt 约束。代价是耗时 = N 角色 × N look
-  //     × ~30s/张,但对"角色一致性"是质量优先,值得。
-  //
-  // 同一角色的多个 look 在 processCharacter 里已经是串行(for 循环),
-  // 这里只需要把"跨角色"也排队,实现端到端的"一张接一张"。
-  useEffect(() => {
-    console.log(
-      `[CHAR-AUTOGEN] useEffect 触发: dataLoaded=${dataLoaded} autoGen=${autoGen} chars=${data.characters.length} charImagesKeys=${Object.keys(charImages).length} ranSet=${[...autogenRanRef.current].join(",")}`,
-    );
-    if (!dataLoaded) return;
-    if (!imagesRestored) return;
-    if (!autoGen) return;
-    // 找出"还没跑过 autoGen 默认 look"的角色(无视 charImages 是否有图)。
-    // 用 ref 而非 charImages 长度,避免老图持久化时 useEffect 不跑 + 状态机乱。
-    // 2026/06 修法:用 autogenRanRef 记录已处理角色 id,处理过的跳。
-    const charactersToStart: GenCharacter[] = [];
-    for (const c of data.characters) {
-      if (busyChars.has(c.id)) continue;
-      if (autogenRanRef.current.has(c.id)) continue;
-      // 2026/06 修复:已有图片(从 workspace_data 恢复的)跳过,不重新生成
-      if (charImages[c.id]?.length) continue;
-      // 跳过手动添加的空角色(face/body/clothing 全空 → 用户还没填内容)
-      if (!c.faceDescription?.trim() && !c.clothingDescription?.trim()) continue;
-      charactersToStart.push(c);
-    }
-    console.log(
-      `[CHAR-AUTOGEN] useEffect: charactersToStart=${charactersToStart.length} ids=${charactersToStart.map((c) => c.id).join(",")}`,
-    );
-    if (!charactersToStart.length) return;
-    // 标记为已处理(进 ref 集合),后续 useEffect 重跑就跳过
-    charactersToStart.forEach((c) => autogenRanRef.current.add(c.id));
-    // 串行:一个角色跑完才跑下一个。即便用户觉得慢,也不要在角色之间开并发 —
-    // 撞 429 / 构图跑偏 / 整批失败率上升 这三个问题都跟并发直接相关。
-    void (async () => {
-      for (const c of charactersToStart) {
-        await processCharacter(c);
-      }
-    })();
-    // deps:[autoGen, dataLoaded, imagesRestored, data.characters.length]
-    //   - dataLoaded 翻 0→1 → 跑 1 次(workspace 首次 mount)
-    //   - imagesRestored 翻 0→1 → 图片恢复后才检查(避免 charImages 尚未填充)
-    //   - autoGen 翻 0→1(用户切开关)→ 跑
-    //   - data.characters.length 变化(用户提取新角色)→ 跑(ref 过滤老角色)
-    // enrich 内部 setData 引起的引用变化 length 没变 → useEffect 不重跑
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoGen, dataLoaded, imagesRestored, data.characters.length]);
+  // 下面这个 useEffect 只保留给【分镜(Storyboard)面板图】的自动生成 ——
+  // 分镜属于更靠后的阶段,不在"剧本 -> 角色"提取流程内,沿用原有自动生成逻辑。
 
   useEffect(() => {
     if (!autoGen) return;
@@ -5771,39 +5715,8 @@ function WorkspacePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.storyboard, autoGen, dataLoaded, imagesRestored]);
 
-  // Auto-generate scene images for newly produced scenes
-  useEffect(() => {
-    if (!autoGen) return;
-    if (!dataLoaded) return;
-    if (!imagesRestored) return;
-    const pending = data.scenes.filter(
-      (s) => !sceneImages[s.id]?.length && (s.slug?.trim() || s.location?.trim()),
-    );
-    if (!pending.length || busyScene) return;
-    void (async () => {
-      for (const s of pending) {
-        await genSceneImage(s);
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.scenes, autoGen, dataLoaded, imagesRestored]);
-
-  // Auto-generate prop images for newly produced props
-  useEffect(() => {
-    if (!autoGen) return;
-    if (!dataLoaded) return;
-    if (!imagesRestored) return;
-    const pending = data.props.filter(
-      (p) => !propImages[p.id]?.length && p.name?.trim() !== "新道具" && p.description?.trim(),
-    );
-    if (!pending.length || busyProp) return;
-    void (async () => {
-      for (const p of pending) {
-        await genPropImage(p);
-      }
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data.props, autoGen, dataLoaded, imagesRestored]);
+  // 场景 / 道具图片同样按需生成 —— 提取后由用户在各卡片点击"点击生成场景图" /
+  // "点击生成道具图"触发(genSceneImage / genPropImage),不再自动批量生成。
 
   const [initialChatInput, setInitialChatInput] = useState<string>("");
   useEffect(() => {
@@ -7941,7 +7854,7 @@ function WorkspacePage() {
                     </p>
                     <p className="text-xs text-text-muted leading-relaxed">
                       {hasAnyEp
-                        ? "点击下方按钮,AI 会从当集剧本里提取本集出现的角色、场景和道具,自动给角色生成形象参考图。"
+                        ? "点击下方按钮,AI 会从当集剧本里提取本集出现的角色、场景和道具。提取完成后,可在各卡片点击生成形象图。"
                         : "请先在「分集」标签生成当集剧本,然后回到这里提取角色。"}
                     </p>
                     {hasAnyEp && (
@@ -8876,12 +8789,6 @@ function WorkspacePage() {
                                       <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 text-text-muted">
                                         <Loader2 size={14} className="opacity-50 animate-spin" />
                                         <span className="text-[10px]">同角色排队中…</span>
-                                      </div>
-                                    ) : autoGen && busyChars.size > 0 ? (
-                                      // 其他角色在画,这张在等
-                                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 text-text-muted">
-                                        <ImageIcon size={22} className="opacity-50" />
-                                        <span className="text-[10px]">排队生成中…</span>
                                       </div>
                                     ) : (
                                       // 没图:可点击生成(2026/06)
