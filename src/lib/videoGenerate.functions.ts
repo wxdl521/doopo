@@ -69,7 +69,8 @@ export function getVideoBackend(
   | "vapeur"
   | "shuci"
   | "kling"
-  | "confluo" {
+  | "confluo"
+  | "topenrouter" {
   const m = (modelId || "").trim().toLowerCase();
   if (m.startsWith("doubao-seedance-") || m.startsWith("seedance-")) return "ark";
   if (m.startsWith("shuci-")) return "shuci";
@@ -80,6 +81,7 @@ export function getVideoBackend(
   if (m.startsWith("vapeur-")) return "vapeur";
   if (m.startsWith("kling-")) return "kling";
   if (m.startsWith("confluo-")) return "confluo";
+  if (m.startsWith("topenrouter-")) return "topenrouter";
   return "dashscope";
 }
 
@@ -96,6 +98,13 @@ export const CONFLUO_VIDEO_MODELS = {
   "confluo-doubao-seedance-2-0-mini-260615": "Seedance 2.0 Mini (汇流)",
 } as const;
 
+// TopenRouter(tp-api.chinadatapay.com,中转火山方舟 doubao-seedance)
+export const TOPENROUTER_VIDEO_MODELS = {
+  "topenrouter-doubao-seedance-2-0-260128": "Seedance 2.0 (TopenRouter)",
+  "topenrouter-doubao-seedance-2-0-fast-260128": "Seedance 2.0 Fast (TopenRouter)",
+  "topenrouter-doubao-seedance-2-0-mini-260128": "Seedance 2.0 Mini (TopenRouter)",
+} as const;
+
 export const SEEDANCE_MODELS = {
   "doubao-seedance-2-0-260128": "Doubao Seedance 2.0",
   "doubao-seedance-2-0-fast-260128": "Doubao Seedance 2.0 Fast (720p)",
@@ -103,6 +112,7 @@ export const SEEDANCE_MODELS = {
   "doubao-seedance-1-0-lite-i2v-250428": "Doubao Seedance 1.0 Lite (I2V)",
   ...SHUCIYUAN_VIDEO_MODELS,
   ...CONFLUO_VIDEO_MODELS,
+  ...TOPENROUTER_VIDEO_MODELS,
   ...KLING_VIDEO_MODELS,
 } as const;
 
@@ -299,7 +309,8 @@ async function arkSubmit(input: {
 function seedanceStatusToProgress(s: string | undefined): SeedanceProgress {
   const v = (s || "").toLowerCase();
   if (v === "succeeded") return "succeeded";
-  if (v === "failed") return "failed";
+  // expired:任务超时过期(TopenRouter / ARK 均可能返回),按失败终态处理,避免空转 deadline
+  if (v === "failed" || v === "expired") return "failed";
   if (v === "cancelled" || v === "canceled") return "cancelled";
   if (v === "running" || v === "processing") return "running";
   if (v === "queued" || v === "pending") return "queued";
@@ -1503,6 +1514,151 @@ async function confluoPoll(input: {
   }
 }
 
+// ====================================================================
+// TopenRouter 端实现 -- 中转火山方舟 doubao-seedance
+//
+//  统一调用地址 https://tp-api.chinadatapay.com:8000,OpenAI 兼容网关。
+//  视频端点(文档 2026/07):
+//   - 提交:POST /v1/video/tasks           -> 返回 { id }
+//   - 查询:GET  /v1/video/tasks/{id}      -> 返回 { id, status, content:{video_url}, error }
+//  content 结构与 ARK 原生一致(text/image_url/video_url/audio_url + role),
+//  resolution 小写,状态比 ARK 多一个 expired(已映射 failed)。
+//
+//  Model id 约定:`topenrouter-doubao-seedance-*`,剥离 `topenrouter-` 前缀后
+//  upstream model = doubao-seedance-2-0-*(用户指定带版本后缀的模型名)。
+// ====================================================================
+
+const TOPENROUTER_DEFAULT_BASE_URL = "https://tp-api.chinadatapay.com:8000";
+
+function getTopenrouterConfig() {
+  return {
+    apiKey: process.env.TOPENROUTER_API_KEY,
+    baseUrl: (process.env.TOPENROUTER_BASE_URL || TOPENROUTER_DEFAULT_BASE_URL).replace(/\/+$/, ""),
+  };
+}
+
+/** 从 model id 剥离 `topenrouter-` 前缀,得到上游 model 名 */
+function topenrouterModelToUpstream(modelId: string): string {
+  return modelId.replace(/^topenrouter-/i, "");
+}
+
+async function topenrouterSubmit(input: {
+  model: string;
+  content: ContentItem[];
+  ratio?: SeedanceRatio;
+  resolution?: string;
+  duration?: number;
+  generateAudio?: boolean;
+  watermark?: boolean;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<{ ok: true; taskId: string; model: string } | { ok: false; error: string }> {
+  const upstreamModel = topenrouterModelToUpstream(input.model);
+  const body: Record<string, unknown> = {
+    model: upstreamModel,
+    content: input.content,
+  };
+  if (input.ratio) body.ratio = input.ratio;
+  if (input.resolution) body.resolution = toArkResolution(input.resolution);
+  if (typeof input.duration === "number") body.duration = input.duration;
+  if (typeof input.generateAudio === "boolean") body.generate_audio = input.generateAudio;
+  if (typeof input.watermark === "boolean") body.watermark = input.watermark;
+  // 任务过期时间(秒),文档示例用 3600;视频生成通常数分钟,留足余量
+  body.execution_expires_after = 3600;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const res = await fetch(`${input.baseUrl}/v1/video/tasks`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${input.apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    const text = await res.text().catch(() => "");
+    if (!res.ok)
+      return { ok: false, error: `[topenrouter] submit ${res.status}: ${text.slice(0, 300)}` };
+    // 复用 arkSubmit 同款 bugfix:JSON.parse(text) 而非 res.json()(body 流已消费)
+    let json: { id?: string; error?: { code?: string; message?: string }; message?: string } = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    if (!json.id) {
+      return {
+        ok: false,
+        error: `[topenrouter] no task id: ${json.error?.message || json.message || text.slice(0, 200)}`,
+      };
+    }
+    return { ok: true, taskId: json.id, model: input.model };
+  } catch (e) {
+    clearTimeout(timeout);
+    const msg =
+      e instanceof Error
+        ? e.name === "AbortError"
+          ? "submit timeout (30s)"
+          : e.message
+        : "fetch failed";
+    return { ok: false, error: `[topenrouter] network: ${msg}` };
+  }
+}
+
+async function topenrouterPoll(input: {
+  taskId: string;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<
+  | { ok: true; status: SeedanceProgress; videoUrl: string | null; raw: any }
+  | { ok: false; error: string; status?: SeedanceProgress; raw?: any }
+> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const res = await fetch(`${input.baseUrl}/v1/video/tasks/${encodeURIComponent(input.taskId)}`, {
+      method: "GET",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${input.apiKey}`,
+      },
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    const text = await res.text().catch(() => "");
+    if (!res.ok)
+      return { ok: false, error: `[topenrouter] poll ${res.status}: ${text.slice(0, 300)}` };
+    let json: {
+      id?: string;
+      status?: string;
+      content?: { video_url?: string };
+      error?: { code?: string; message?: string };
+    } = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    const status = seedanceStatusToProgress(json.status);
+    const videoUrl = json.content?.video_url || null;
+    // 失败时把 error.message 塞进 raw,让上层 generateVideo 能取出错误文案
+    return {
+      ok: true,
+      status,
+      videoUrl,
+      raw: { error: { message: json.error?.message || "" }, ...json },
+    };
+  } catch (e) {
+    clearTimeout(timeout);
+    const msg =
+      e instanceof Error
+        ? e.name === "AbortError"
+          ? "poll timeout (30s)"
+          : e.message
+        : "fetch failed";
+    return { ok: false, error: `[topenrouter] poll network: ${msg}` };
+  }
+}
+
 type SubmitInput = {
   model: string;
   prompt: string;
@@ -1527,7 +1683,8 @@ type VideoBackend =
   | "vapeur"
   | "shuci"
   | "kling"
-  | "confluo";
+  | "confluo"
+  | "topenrouter";
 
 // ====================================================================
 // vapeur.ai 端实现 —— 透传火山方舟 ARK Seedance 原生格式
@@ -1902,6 +2059,43 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
       ? { ok: true, taskId: r.taskId, model: input.model, backend: "confluo" }
       : { ok: false, error: r.error };
   }
+  if (backend === "topenrouter") {
+    const { apiKey, baseUrl } = getTopenrouterConfig();
+    if (!apiKey) {
+      return {
+        ok: false,
+        error:
+          "[topenrouter] 缺少 TOPENROUTER_API_KEY,请在 Cloudflare Secrets 或 .env.local 中配置后再试。",
+      };
+    }
+    // TopenRouter content 结构与 ARK 原生一致,复用 buildArkContent 拼装
+    const firstFrameImageUrl = input.media.find((m) => m.type === "first_frame")?.url;
+    const lastFrameImageUrl = input.media.find((m) => m.type === "last_frame")?.url;
+    const referenceImageUrls = input.media
+      .filter((m) => m.type === "reference_image")
+      .map((m) => m.url);
+    const content = buildArkContent(input.prompt, {
+      firstFrameImageUrl,
+      lastFrameImageUrl,
+      referenceImageUrls,
+      referenceVideoUrl: input.referenceVideoUrl,
+      referenceAudioUrl: input.referenceAudioUrl,
+    });
+    const r = await topenrouterSubmit({
+      model: input.model,
+      content,
+      ratio: input.ratio,
+      resolution: input.resolution,
+      duration: input.duration,
+      generateAudio: input.generateAudio,
+      watermark: input.watermark,
+      apiKey,
+      baseUrl,
+    });
+    return r.ok
+      ? { ok: true, taskId: r.taskId, model: input.model, backend: "topenrouter" }
+      : { ok: false, error: r.error };
+  }
   // DashScope
   const { apiKey } = getDashScopeConfig();
   if (!apiKey) return { ok: false, error: "Qwen / DASHSCOPE_API_KEY not configured" };
@@ -1977,6 +2171,11 @@ async function pollVideoTask(input: PollInput): Promise<PollResult> {
     if (!apiKey) return { ok: false, error: "[confluo] 缺少 CONFLUO_API_KEY" };
     return confluoPoll({ taskId: input.taskId, apiKey, baseUrl });
   }
+  if (input.backend === "topenrouter") {
+    const { apiKey, baseUrl } = getTopenrouterConfig();
+    if (!apiKey) return { ok: false, error: "[topenrouter] 缺少 TOPENROUTER_API_KEY" };
+    return topenrouterPoll({ taskId: input.taskId, apiKey, baseUrl });
+  }
   const { apiKey } = getDashScopeConfig();
   if (!apiKey) return { ok: false, error: "Qwen / DASHSCOPE_API_KEY not configured" };
   return dashscopePoll({ taskId: input.taskId, apiKey });
@@ -2048,6 +2247,7 @@ const PollServerInput = z.object({
     "shuci",
     "kling",
     "confluo",
+    "topenrouter",
   ]),
 });
 
@@ -2178,7 +2378,9 @@ export const generateVideo = createServerFn({ method: "POST" })
           ? "kling-v2-6"
           : backend === "confluo"
             ? "confluo-doubao-seedance-2-0-mini-260615"
-            : "happyhorse-1.0-i2v");
+            : backend === "topenrouter"
+              ? "topenrouter-doubao-seedance-2-0-260128"
+              : "happyhorse-1.0-i2v");
 
     // 1) 提交
     const submit = await submitVideoTask({
