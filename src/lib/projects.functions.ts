@@ -12,10 +12,13 @@ const ProjectInput = z.object({
   storyboardModel: z.string().max(100).optional(),
   sceneModel: z.string().max(100).optional(),
   videoModel: z.string().max(100).optional(),
+  resolution: z.string().max(10).optional(),
   audio: z.enum(["on", "off"]).optional(),
   workflow: z.string().max(50).optional(),
   style: z.string().max(50).optional(),
   customCover: z.string().max(2000).nullable().optional(),
+  teamId: z.string().uuid().nullable().optional(),
+  groupId: z.string().uuid().nullable().optional(),
 });
 
 export type ProjectConfigRow = {
@@ -25,6 +28,7 @@ export type ProjectConfigRow = {
   storyboardModel: string;
   sceneModel: string;
   videoModel: string;
+  resolution: string | null;
   audio: "on" | "off";
   workflow: string;
   style: string;
@@ -44,10 +48,13 @@ export const upsertProject = createServerFn({ method: "POST" })
       ...(data.storyboardModel !== undefined && { storyboard_model: data.storyboardModel }),
       ...(data.sceneModel !== undefined && { scene_model: data.sceneModel }),
       ...(data.videoModel !== undefined && { video_model: data.videoModel }),
+      ...(data.resolution !== undefined && { resolution: data.resolution }),
       ...(data.audio !== undefined && { audio: data.audio }),
       ...(data.workflow !== undefined && { workflow: data.workflow }),
       ...(data.style !== undefined && { style: data.style }),
       ...(data.customCover !== undefined && { custom_cover: data.customCover }),
+      ...(data.teamId !== undefined && { team_id: data.teamId }),
+      ...(data.groupId !== undefined && { group_id: data.groupId }),
     };
     const { error } = await supabase.from("projects").upsert(row, { onConflict: "id" });
     if (error) return { ok: false as const, error: error.message };
@@ -62,7 +69,7 @@ export const getProject = createServerFn({ method: "POST" })
     const { data: row, error } = await supabase
       .from("projects")
       .select(
-        "id,name,aspect,storyboard_model,scene_model,video_model,audio,workflow,style,custom_cover",
+        "id,name,aspect,storyboard_model,scene_model,video_model,audio,workflow,style,custom_cover,resolution",
       )
       .eq("id", data.id)
       .maybeSingle();
@@ -75,6 +82,7 @@ export const getProject = createServerFn({ method: "POST" })
       storyboardModel: row.storyboard_model,
       sceneModel: row.scene_model,
       videoModel: row.video_model,
+      resolution: row.resolution ?? null,
       audio: row.audio as "on" | "off",
       workflow: row.workflow,
       style: row.style,
@@ -213,7 +221,8 @@ export const listMyProjects = createServerFn({ method: "POST" })
       // on accounts with many / heavy projects. Thumbnails fall back to
       // customCover → gradient on the client.
       .select("id,name,custom_cover,created_at,updated_at,completed_stages")
-      .eq("user_id", authData.user.id)
+      // 不按 user_id 过滤:RLS 现在编码了可见性(个人项目 + 团队/组共享项目),
+      // 团队/组成员能看到共享给自己的项目。
       .order("updated_at", { ascending: false });
     if (error) return { projects: [] as ProjectListItem[], error: error.message };
     const projects: ProjectListItem[] = (data ?? []).map((row) => ({
@@ -244,16 +253,15 @@ export const renameProject = createServerFn({ method: "POST" })
       .parse(input),
   )
   .handler(async ({ data, context }) => {
-    const { supabase, userId } = context;
+    const { supabase } = context;
     const { data: row, error } = await supabase
       .from("projects")
       .update({ name: data.name, updated_at: new Date().toISOString() })
-      .eq("id", data.id)
-      .eq("user_id", userId) // 二次保险,虽然 RLS 已经能挡住
+      .eq("id", data.id) // RLS 编码可见性:组内项目同组成员可改
       .select("id")
       .maybeSingle();
     if (error) return { ok: false as const, error: error.message };
-    if (!row) return { ok: false as const, error: "project not found or not owned by you" };
+    if (!row) return { ok: false as const, error: "project not found or no permission" };
     return { ok: true as const, error: null as string | null };
   });
 
@@ -267,14 +275,13 @@ export const deleteProject = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((input: unknown) => z.object({ id: z.string().min(1).max(64) }).parse(input))
   .handler(async ({ data, context }) => {
-    const { supabase, userId } = context;
+    const { supabase } = context;
     const { error, count } = await supabase
       .from("projects")
       .delete({ count: "exact" })
-      .eq("id", data.id)
-      .eq("user_id", userId);
+      .eq("id", data.id); // RLS 编码可见性:组内项目同组成员可删
     if (error) return { ok: false as const, error: error.message };
-    if (count === 0) return { ok: false as const, error: "project not found or not owned by you" };
+    if (count === 0) return { ok: false as const, error: "project not found or no permission" };
     return { ok: true as const, error: null as string | null };
   });
 

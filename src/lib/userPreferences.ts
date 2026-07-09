@@ -25,6 +25,8 @@ export type UserPrefs = {
   lastImageModel?: string;
   /** 最近一次选的视频模型 */
   lastVideoModel?: string;
+  /** 最近一次选的视频分辨率(480P/720P/1080P) */
+  lastResolution?: string;
   /** 最近一次选的视觉风格 */
   lastStyle?: string;
   /** 最近一次选的工作流 */
@@ -57,6 +59,9 @@ export function loadUserPrefs(userId: string | null | undefined): UserPrefs {
         : {}),
       ...(typeof parsed.lastVideoModel === "string"
         ? { lastVideoModel: parsed.lastVideoModel }
+        : {}),
+      ...(typeof parsed.lastResolution === "string"
+        ? { lastResolution: parsed.lastResolution }
         : {}),
       ...(typeof parsed.lastStyle === "string" ? { lastStyle: parsed.lastStyle } : {}),
       ...(typeof parsed.lastWorkflow === "string" ? { lastWorkflow: parsed.lastWorkflow } : {}),

@@ -34,9 +34,9 @@ import stylePixel from "../assets/styles/pixel.jpg";
 import styleClay from "../assets/styles/clay.jpg";
 
 const aspects = [
-  { id: "16:9", label: "16:9 · 1k · 720p", cost: 11 },
-  { id: "9:16", label: "9:16 · 1k · 720p", cost: 11 },
-  { id: "1:1", label: "1:1 · 1k", cost: 9 },
+  { id: "16:9", label: "16:9", cost: 11 },
+  { id: "9:16", label: "9:16", cost: 11 },
+  { id: "1:1", label: "1:1", cost: 9 },
 ];
 // Image models for storyboard / scene —— Seedream 优先,legacy 作为手动兜底层
 // 2026 重构:默认走 Doubao Seedream(火山方舟 ARK),用户可手动切到 Qwen / Wan / Gemini 等
@@ -320,6 +320,21 @@ const videoModels = [
 // 过滤掉"分隔符"项(只是 UI 视觉分组,不能选)
 const realVideoModels = videoModels.filter((m) => !m.id.startsWith("__video_sep"));
 
+// 视频分辨率档位 -- 仅丽帧 / Doubao Seedance 2.0 系列支持,按模型动态可选。
+// ARK Seedance 标准版/Fast:480p、720p;丽帧 pro:480p、720p、1080p;丽帧 fast/mini:480p、720p。
+// 其他视频模型不在此列 -> 选择器禁用,resolution 不传走各后端默认。
+const VIDEO_RESOLUTIONS: Record<string, string[]> = {
+  "doubao-seedance-2-0-260128": ["480P", "720P"],
+  "doubao-seedance-2-0-fast-260128": ["480P", "720P"],
+  "kuaizi-lizhen-pro": ["480P", "720P", "1080P"],
+  "kuaizi-lizhen-fast": ["480P", "720P"],
+  "kuaizi-lizhen-mini": ["480P", "720P"],
+};
+function videoResolutionOptions(videoModel: string | undefined): string[] {
+  if (!videoModel) return [];
+  return VIDEO_RESOLUTIONS[videoModel] || [];
+}
+
 const workflows = [
   { id: "grid", icon: Grid3x3, key: "grid" },
   { id: "seq", icon: GitBranch, key: "seq" },
@@ -347,6 +362,7 @@ export type ProjectConfig = {
   storyboardModel: string;
   sceneModel: string;
   videoModel: string;
+  resolution?: string;
   audio: "on" | "off";
   workflow: string;
   style: string;
@@ -359,6 +375,7 @@ export function NewProjectDialog({
   onOpenChange,
   initial,
   onSaved,
+  groupContext,
 }: {
   trigger?: ReactNode;
   open?: boolean;
@@ -373,6 +390,8 @@ export function NewProjectDialog({
   initial?: Partial<ProjectConfig> & { id?: string };
   /** 编辑模式保存成功后的回调(父组件可刷新 project state) */
   onSaved?: (saved: ProjectConfig & { id: string }) => void;
+  /** 团队分组上下文:传入时新建项目归属该组(team_id + group_id),标题显示组名 */
+  groupContext?: { teamId: string; groupId: string; groupName: string };
 }) {
   const { t } = useLanguage();
   const navigate = useNavigate();
@@ -409,6 +428,10 @@ export function NewProjectDialog({
   // 2026/06:视频默认走火山方舟 Seedance 2.0 —— ARK 账户已开通,cURL 已验证
   // generateVideo 自动按 model id 路由到 ARK,分镜流程点"生成整组视频"直接走火山引擎
   const [videoModel, setVideoModel] = useState(pickVideo);
+  // 视频输出分辨率(480P/720P/1080P) -- 仅丽帧 / Seedance 2.0 系列可选,默认 720P
+  const [resolution, setResolution] = useState(
+    () => initial?.resolution ?? initialPrefs.lastResolution ?? "720P",
+  );
   const [audio, setAudio] = useState<"on" | "off">(
     () => initial?.audio ?? initialPrefs.lastAudio ?? "on",
   );
@@ -427,6 +450,18 @@ export function NewProjectDialog({
     if (!userId) return;
     saveUserPrefs(userId, { lastVideoModel: videoModel });
   }, [videoModel, userId]);
+  // 切换视频模型时,若当前 resolution 不在新模型支持的档位内,回落到 720P。
+  // 避免存了 1080P 后切到 fast/mini 触发后端"不支持该分辨率"报错。
+  useEffect(() => {
+    const allowed = videoResolutionOptions(videoModel);
+    if (allowed.length > 0 && !allowed.includes(resolution)) {
+      setResolution("720P");
+    }
+  }, [videoModel, resolution]);
+  useEffect(() => {
+    if (!userId) return;
+    saveUserPrefs(userId, { lastResolution: resolution });
+  }, [resolution, userId]);
   useEffect(() => {
     if (!userId) return;
     saveUserPrefs(userId, { lastAudio: audio });
@@ -441,6 +476,14 @@ export function NewProjectDialog({
   }, [style, userId]);
 
   const estimate = aspects.find((a) => a.id === aspect)?.cost ?? 11;
+  // 分辨率档位标签(480P/720P/1080P -> i18n) + 当前模型可选档位
+  const resolutionLabel = (r: string) =>
+    r === "480P"
+      ? t.np_resolution_480p
+      : r === "1080P"
+        ? t.np_resolution_1080p
+        : t.np_resolution_720p;
+  const resolutionOptions = videoResolutionOptions(videoModel);
 
   // ====================================================================
   // 个性化模型选择 UX
@@ -536,10 +579,15 @@ export function NewProjectDialog({
           storyboardModel,
           sceneModel,
           videoModel,
+          resolution,
           audio,
           workflow,
           style,
           customCover: customCover ?? null,
+          ...(groupContext && {
+            teamId: groupContext.teamId,
+            groupId: groupContext.groupId,
+          }),
         },
       });
       if (!res.ok) {
@@ -559,6 +607,7 @@ export function NewProjectDialog({
         storyboardModel,
         sceneModel,
         videoModel,
+        resolution,
         audio,
         workflow,
         style,
@@ -589,20 +638,40 @@ export function NewProjectDialog({
       {trigger && <DialogTrigger asChild>{trigger}</DialogTrigger>}
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto bg-bg-surface border-border">
         <div className="flex items-center justify-between pb-3 border-b border-border">
-          <h2 className="font-display text-xl font-bold">{t.np_title}</h2>
+          <h2 className="font-display text-xl font-bold">
+            {groupContext ? `${t.team_groups_new_project} · ${groupContext.groupName}` : t.np_title}
+          </h2>
           <div className="text-xs text-text-muted">
             {t.np_estimate_prefix} <span className="text-accent font-semibold">✦ {estimate}</span>
             {t.np_estimate_suffix}
           </div>
         </div>
 
-        <div className="grid md:grid-cols-3 gap-4 pt-4">
+        <div className="grid md:grid-cols-4 gap-4 pt-4">
           <FieldSelect
             label={t.np_aspect}
             hint={t.np_aspect_hint}
             value={aspect}
             onChange={setAspect}
             options={aspects.map((a) => ({ id: a.id, label: a.label }))}
+          />
+          <FieldSelect
+            label={t.np_resolution}
+            hint={resolutionOptions.length > 0 ? t.np_resolution_hint : t.np_resolution_unsupported}
+            value={
+              resolutionOptions.length > 0
+                ? resolutionOptions.includes(resolution)
+                  ? resolution
+                  : "720P"
+                : "default"
+            }
+            onChange={setResolution}
+            options={
+              resolutionOptions.length > 0
+                ? resolutionOptions.map((r) => ({ id: r, label: resolutionLabel(r) }))
+                : [{ id: "default", label: "720p" }]
+            }
+            disabled={resolutionOptions.length === 0}
           />
           <FieldSelect
             label={t.np_storyboard_model}
@@ -794,6 +863,7 @@ function FieldSelect({
   options,
   pinnedLabel,
   recommendedLabel,
+  disabled,
 }: {
   label: string;
   hint?: string;
@@ -802,6 +872,7 @@ function FieldSelect({
   options: { id: string; label: string; sub?: string; _pinned?: boolean; _recommended?: boolean }[];
   pinnedLabel?: string;
   recommendedLabel?: string;
+  disabled?: boolean;
 }) {
   return (
     <div>
@@ -811,7 +882,8 @@ function FieldSelect({
         <select
           value={value}
           onChange={(e) => onChange(e.target.value)}
-          className="w-full appearance-none bg-bg-elevated border border-border rounded-lg pl-3 pr-8 py-2 text-sm focus:outline-none focus:border-accent"
+          disabled={disabled}
+          className={`w-full appearance-none bg-bg-elevated border border-border rounded-lg pl-3 pr-8 py-2 text-sm focus:outline-none focus:border-accent ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
         >
           {options.map((o) => {
             // 原生 <option> 不支持复杂 markup,只能拼文本,但可以用

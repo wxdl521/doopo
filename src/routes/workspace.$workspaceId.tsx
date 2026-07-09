@@ -5037,6 +5037,7 @@ function WorkspacePage() {
         referenceAudioUrl: selectedAudioUrl || undefined,
         model: project?.videoModel || "happyhorse-1.0-r2v",
         ratio: project?.aspect === "9:16" ? "9:16" : project?.aspect === "1:1" ? "1:1" : "16:9",
+        resolution: project?.resolution || "720P",
         generateAudio: project?.audio === "on",
         watermark: false,
       };
@@ -7470,6 +7471,7 @@ function WorkspacePage() {
                 storyboardModel: project.storyboardModel,
                 sceneModel: project.sceneModel,
                 videoModel: project.videoModel,
+                resolution: project.resolution ?? undefined,
                 audio: project.audio,
                 workflow: project.workflow,
                 style: project.style,

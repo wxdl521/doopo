@@ -13,9 +13,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { Users, History, Settings, LogOut, Crown, UserCog, User, Plus } from "lucide-react";
+import { Users, History, Settings, LogOut, Crown, UserCog, User, Plus, Group } from "lucide-react";
 import PageHeader from "@/components/PageHeader";
 import MembersTab from "@/components/team/MembersTab";
+import GroupsTab from "@/components/team/GroupsTab";
 import CreditsHistoryTab from "@/components/team/CreditsHistoryTab";
 import SettingsTab from "@/components/team/SettingsTab";
 import CreditManageDialog from "@/components/team/CreditManageDialog";
@@ -38,6 +39,7 @@ const ROLE_BADGE_COLOR: Record<string, "default" | "secondary" | "outline"> = {
 
 const TABS = [
   { id: "members", icon: Users },
+  { id: "groups", icon: Group },
   { id: "history", icon: History },
   { id: "settings", icon: Settings, ownerOnly: true },
 ] as const;
@@ -166,6 +168,7 @@ function TeamPage() {
 
   const tabLabels: Record<string, string> = {
     members: t.team_manage_members,
+    groups: t.team_groups_tab,
     history: t.team_manage_history,
     settings: t.team_manage_settings,
   };
@@ -228,6 +231,7 @@ function TeamPage() {
             onManageCredits={(member, mode) => setCreditTarget({ member, mode })}
           />
         )}
+        {activeTab === "groups" && <GroupsTab teamId={teamId} myRole={myRole} />}
         {activeTab === "history" && <CreditsHistoryTab teamId={teamId} myRole={myRole} />}
         {activeTab === "settings" && (
           <SettingsTab

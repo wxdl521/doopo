@@ -57,7 +57,17 @@ const DASHSCOPE_TASK_GET = "https://dashscope.aliyuncs.com/api/v1/tasks/";
  */
 export function getVideoBackend(
   modelId: string | null | undefined,
-): "ark" | "dashscope" | "jimeng" | "kuaizi" | "toapis" | "k99" | "vapeur" | "shuci" | "kling" | "confluo" {
+):
+  | "ark"
+  | "dashscope"
+  | "jimeng"
+  | "kuaizi"
+  | "toapis"
+  | "k99"
+  | "vapeur"
+  | "shuci"
+  | "kling"
+  | "confluo" {
   const m = (modelId || "").trim().toLowerCase();
   if (m.startsWith("doubao-seedance-") || m.startsWith("seedance-")) return "ark";
   if (m.startsWith("shuci-")) return "shuci";
@@ -202,10 +212,21 @@ function getArkConfig() {
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+/** 项目内部 resolution('480P'/'720P'/'1080P' 大写)-> ARK Seedance 小写格式。
+ *  ARK 协议 resolution 为顶层字段(与 ratio/duration 平级),取值小写。
+ *  按需求不支持 4k,仅映射 480p/720p/1080p,其余兜底 720p。 */
+function toArkResolution(r: string | undefined): "480p" | "720p" | "1080p" {
+  const s = (r || "720P").trim().toLowerCase();
+  if (s === "480p") return "480p";
+  if (s === "1080p") return "1080p";
+  return "720p";
+}
+
 async function arkSubmit(input: {
   model: string;
   content: ContentItem[];
   ratio?: SeedanceRatio;
+  resolution?: string;
   duration?: number;
   generateAudio?: boolean;
   watermark?: boolean;
@@ -220,6 +241,7 @@ async function arkSubmit(input: {
     content: input.content,
   };
   if (input.ratio) body.ratio = input.ratio;
+  if (input.resolution) body.resolution = toArkResolution(input.resolution);
   if (typeof input.duration === "number") body.duration = input.duration;
   if (typeof input.generateAudio === "boolean") body.generate_audio = input.generateAudio;
   if (typeof input.watermark === "boolean") body.watermark = input.watermark;
@@ -307,8 +329,7 @@ async function arkPoll(input: {
     });
     clearTimeout(timeout);
     const text = await res.text().catch(() => "");
-    if (!res.ok)
-      return { ok: false, error: `[${tag}] poll ${res.status}: ${text.slice(0, 300)}` };
+    if (!res.ok) return { ok: false, error: `[${tag}] poll ${res.status}: ${text.slice(0, 300)}` };
     // 2026/06 Bugfix:见 arkSubmit —— 改用 JSON.parse(text) 而不是 res.json()
     let json: {
       id?: string;
@@ -1665,6 +1686,7 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
       model: input.model,
       content,
       ratio: input.ratio,
+      resolution: input.resolution,
       duration: input.duration,
       generateAudio: input.generateAudio,
       watermark: input.watermark,
@@ -1861,7 +1883,8 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
     if (!apiKey) {
       return {
         ok: false,
-        error: "[confluo] 缺少 CONFLUO_API_KEY,请在 Cloudflare Secrets 或 .env.local 中配置后再试。",
+        error:
+          "[confluo] 缺少 CONFLUO_API_KEY,请在 Cloudflare Secrets 或 .env.local 中配置后再试。",
       };
     }
     const r = await confluoSubmit({
@@ -1942,7 +1965,10 @@ async function pollVideoTask(input: PollInput): Promise<PollResult> {
     // Kling I2V/T2V 查询端点不同,先试 image2video,404 就 fallback text2video
     const r = await callKlingVideoPoll({ taskId: input.taskId, endpoint: "image2video" });
     if (r.ok) return r as PollResult;
-    return callKlingVideoPoll({ taskId: input.taskId, endpoint: "text2video" }) as Promise<PollResult>;
+    return callKlingVideoPoll({
+      taskId: input.taskId,
+      endpoint: "text2video",
+    }) as Promise<PollResult>;
   }
   if (input.backend === "confluo") {
     const { apiKey, baseUrl } = getConfluoVideoConfig();
@@ -1964,6 +1990,7 @@ const SubmitServerInput = z.object({
   model: z.string().max(200).optional(),
   content: z.array(z.any()).min(1).max(20),
   ratio: z.enum(SUPPORTED_RATIOS).optional(),
+  resolution: z.enum(["480P", "720P", "1080P"]).optional(),
   duration: z.number().int().min(1).max(60).optional(),
   generateAudio: z.boolean().optional(),
   watermark: z.boolean().optional(),
@@ -1993,6 +2020,7 @@ export const submitVideoTaskFn = createServerFn({ method: "POST" })
       prompt,
       media,
       ratio: data.ratio,
+      resolution: data.resolution,
       duration: data.duration,
       generateAudio: data.generateAudio,
       watermark: data.watermark,
@@ -2007,7 +2035,18 @@ export const submitVideoTaskFn = createServerFn({ method: "POST" })
 
 const PollServerInput = z.object({
   taskId: z.string().min(1).max(200),
-  backend: z.enum(["ark", "dashscope", "jimeng", "kuaizi", "toapis", "k99", "vapeur", "shuci", "kling", "confluo"]),
+  backend: z.enum([
+    "ark",
+    "dashscope",
+    "jimeng",
+    "kuaizi",
+    "toapis",
+    "k99",
+    "vapeur",
+    "shuci",
+    "kling",
+    "confluo",
+  ]),
 });
 
 export const pollVideoTaskFn = createServerFn({ method: "POST" })

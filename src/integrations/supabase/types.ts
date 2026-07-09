@@ -270,6 +270,7 @@ export type Database = {
           group_id: string | null
           id: string
           name: string
+          resolution: string | null
           scene_model: string
           storyboard_model: string
           style: string
@@ -289,6 +290,7 @@ export type Database = {
           group_id?: string | null
           id: string
           name?: string
+          resolution?: string | null
           scene_model?: string
           storyboard_model?: string
           style?: string
@@ -308,6 +310,7 @@ export type Database = {
           group_id?: string | null
           id?: string
           name?: string
+          resolution?: string | null
           scene_model?: string
           storyboard_model?: string
           style?: string
@@ -481,6 +484,13 @@ export type Database = {
           team_id?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "team_groups_admin_id_fkey"
+            columns: ["admin_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "team_groups_team_id_fkey"
             columns: ["team_id"]
@@ -677,6 +687,10 @@ export type Database = {
       }
       is_in_team: {
         Args: { p_team_id: string; p_user_id?: string }
+        Returns: boolean
+      }
+      is_in_same_group: {
+        Args: { p_group_id: string; p_user_id?: string }
         Returns: boolean
       }
       join_team_as_self: { Args: { p_team_id: string }; Returns: undefined }
