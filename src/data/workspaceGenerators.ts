@@ -236,6 +236,13 @@ export type StoryboardGroup = {
   sceneIds?: string[];
   /** 2026/06:本组道具 id 列表,与 GroupPropEditor 配合 */
   propIds?: string[];
+  /**
+   * 2026/07:分镜描述(镜头分解 + 台词/剧情),覆盖视频生成提示词里的
+   * [SHOT BREAKDOWN - for additional sequence hints] 段。
+   *   - undefined = 未编辑,展示/生成时用自动算的默认值(镜头分解 + plotText)
+   *   - 显式设值 = 用户编辑后的版本,视频生成直接用这段
+   */
+  shotBreakdownText?: string;
   shots: StoryboardShot[];
 };
 
