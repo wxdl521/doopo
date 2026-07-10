@@ -31,6 +31,7 @@ import { generateStageAi } from "../lib/aiGenerate.functions";
 import { generateImage, regenerateSceneImage } from "../lib/seedream.functions";
 import { logImageMeta } from "../lib/logImageMeta";
 import { uploadLocalImage, serverUrlToBase64 } from "../lib/uploadImage.functions";
+import { audioFileToWavDataUrl } from "../lib/audioWav";
 import { regenerateCharacterLook } from "../lib/characterRegen.functions";
 import { describeCharacterImage } from "../lib/describeCharacterImage.functions";
 import {
@@ -2086,12 +2087,22 @@ function WorkspacePage() {
         return;
       }
       try {
-        const base64 = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result as string);
-          reader.onerror = reject;
-          reader.readAsDataURL(file);
-        });
+        // 2026/07:优先归一化为 WAV 再上传。Web Audio API 按真实字节解码(不看文件名),
+        // 避免用户改后缀名(如 m4a->mp3)导致声明格式与实际字节不符,被 ARK 判为
+        // "audio format not valid"。统一存成 wav,ARK(ffmpeg 后端)必定支持。
+        // 解码失败(浏览器解不出该格式)则退回原文件直传 -- 服务端已放宽 MIME 校验,
+        // audio/x-m4a 等也能传,保证 m4a 至少能上传成功。
+        let base64: string;
+        try {
+          base64 = await audioFileToWavDataUrl(file);
+        } catch {
+          base64 = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          });
+        }
         const res = await callUploadImage({
           data: { base64, id: characterId, kind: "character-audio" },
         });
@@ -2108,7 +2119,7 @@ function WorkspacePage() {
           toast.error(res?.error || "上传失败");
         }
       } catch {
-        toast.error("上传失败");
+        toast.error(t.char_audio_decode_failed);
       }
     };
     input.click();
