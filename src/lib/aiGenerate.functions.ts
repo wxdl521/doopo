@@ -1,5 +1,12 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import {
+  ARK_TEXT_MODEL,
+  ARK_TEXT_THINKING_DISABLED,
+  arkTextApiKey,
+  arkTextEndpoint,
+  qwenApiKey,
+} from "./arkText";
 
 const StageEnum = z.enum([
   "canvas",
@@ -509,8 +516,15 @@ export const generateStageAi = createServerFn({ method: "POST" })
       .filter(Boolean)
       .join("\n\n");
 
-    // Use Qwen API
-    const qwenKey = process.env.Qwen;
+    // 2026/07:文本模型优先 DeepSeek V4 Pro(火山方舟),失败回退 Qwen
+    const arkKey = arkTextApiKey();
+    if (arkKey) {
+      const arkResult = await tryArkDeepSeek(arkKey, spec, userContent, data.stage);
+      if (arkResult.ok) return arkResult;
+    }
+
+    // Qwen API (fallback)
+    const qwenKey = qwenApiKey();
     if (qwenKey) {
       const qwenResult = await tryQwen(qwenKey, spec, userContent, data.stage);
       if (qwenResult.ok) return qwenResult;
@@ -532,6 +546,77 @@ export const generateStageAi = createServerFn({ method: "POST" })
 
     return { ok: false as const, error: "no API key available" };
   });
+
+// 2026/07:DeepSeek V4 Pro(火山方舟) -- 文本结构化生成首选。
+// 跟 tryQwen 同构(tool calling),额外带 thinking:disabled 走通用对话快模式。
+async function tryArkDeepSeek(
+  apiKey: string,
+  spec: ReturnType<typeof stageSpec>,
+  userContent: string,
+  stage: string,
+) {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 55_000);
+    const res = await fetch(arkTextEndpoint(), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: ARK_TEXT_MODEL,
+        thinking: ARK_TEXT_THINKING_DISABLED,
+        messages: [
+          { role: "system", content: spec.system },
+          { role: "user", content: userContent },
+        ],
+        tools: [
+          {
+            type: "function",
+            function: {
+              name: spec.toolName,
+              description: `Return structured ${stage} data.`,
+              parameters: spec.schema,
+            },
+          },
+        ],
+        tool_choice: { type: "function", function: { name: spec.toolName } },
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      if (res.status === 429) return { ok: false as const, error: "rate_limit" };
+      if (res.status === 402) return { ok: false as const, error: "no_credits" };
+      return { ok: false as const, error: `ark ${res.status}: ${text.slice(0, 200)}` };
+    }
+    const json = await res.json();
+    const argsStr =
+      json?.choices?.[0]?.message?.tool_calls?.[0]?.function?.arguments ??
+      json?.choices?.[0]?.message?.content;
+    if (!argsStr) return { ok: false as const, error: "empty tool call" };
+    let parsed: any;
+    try {
+      parsed = JSON.parse(argsStr);
+    } catch {
+      return { ok: false as const, error: "parse error" };
+    }
+    return { ok: true as const, stage, payload: parsed };
+  } catch (e) {
+    return {
+      ok: false as const,
+      error:
+        e instanceof Error && e.name === "AbortError"
+          ? "timeout"
+          : e instanceof Error
+            ? e.message
+            : "unknown",
+    };
+  }
+}
 
 async function tryQwen(
   apiKey: string,

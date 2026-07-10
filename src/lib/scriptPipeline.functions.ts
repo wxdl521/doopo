@@ -1,6 +1,13 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { wrapFictionSystem, wrapFictionUser } from "./promptSafety";
+import {
+  ARK_TEXT_MODEL,
+  ARK_TEXT_THINKING_DISABLED,
+  arkTextApiKey,
+  arkTextEndpoint,
+  qwenApiKey,
+} from "./arkText";
 
 // ============= Shared types =============
 
@@ -46,7 +53,7 @@ export type PipelineCharacter = z.infer<typeof CharacterSchema>;
 
 // ============= Provider dispatcher (OpenRouter + Lovable AI Gateway) =============
 
-type Provider = "qwen" | "lovable" | "openrouter";
+type Provider = "qwen" | "lovable" | "openrouter" | "ark";
 
 // const OPENROUTER_FALLBACKS = [
 //   'google/gemini-2.5-flash',
@@ -80,8 +87,6 @@ const OPENROUTER_FALLBACKS = [
   "meta-llama/llama-3.3-70b-instruct",
 ] as const;
 
-const RETRYABLE = new Set([403, 404, 429, 500, 502, 503]);
-
 type ToolSpec = {
   name: string;
   description: string;
@@ -107,9 +112,11 @@ function parseModel(raw: string | undefined): { provider: Provider; model: strin
     const m = v.slice(v.indexOf(":") + 1);
     return { provider: "openrouter", model: m.includes("/") ? m : `anthropic/${m}` };
   }
+  if (v.startsWith("ark:")) return { provider: "ark", model: v.slice(4) || ARK_TEXT_MODEL };
   if (v.startsWith("deepseek:")) {
+    // 历史前缀:以前 deepseek: 走 openrouter。2026/07 起改走 ARK(DeepSeek V4 Pro)。
     const m = v.slice(9);
-    return { provider: "openrouter", model: m.includes("/") ? m : `deepseek/${m}` };
+    return { provider: "ark", model: m || ARK_TEXT_MODEL };
   }
   if (v.startsWith("meta:") || v.startsWith("llama:")) {
     const m = v.slice(v.indexOf(":") + 1);
@@ -134,57 +141,63 @@ async function callToolCall<T>(opts: {
   tool: ToolSpec;
   temperature: number;
 }): Promise<{ ok: true; data: T } | { ok: false; error: string }> {
-  const { provider, model } = parseModel(opts.model);
-  // const fallbacks =
-  //   provider === 'lovable'
-  //     ? LOVABLE_FALLBACKS
-  //     : provider === 'gemini'
-  //       ? GEMINI_FALLBACKS
-  //       : OPENROUTER_FALLBACKS
-  const fallbacks =
-    provider === "lovable"
-      ? LOVABLE_FALLBACKS
-      : provider === "openrouter"
-        ? OPENROUTER_FALLBACKS
-        : QWEN_FALLBACKS;
-  const apiKey =
-    provider === "lovable"
-      ? process.env.LOVABLE_API_KEY
-      : provider === "openrouter"
-        ? process.env.OPENROUTER_API_KEY
-        : process.env.Qwen;
-  if (!apiKey) {
-    return {
-      ok: false,
-      error:
-        provider === "lovable"
-          ? "LOVABLE_API_KEY missing"
-          : provider === "openrouter"
-            ? "OPENROUTER_API_KEY missing"
-            : "Qwen API key missing",
-    };
-  }
+  const { provider: pickedProvider, model: pickedModel } = parseModel(opts.model);
 
-  const endpoint =
-    provider === "lovable"
-      ? "https://ai.gateway.lovable.dev/v1/chat/completions"
-      : provider === "openrouter"
-        ? "https://openrouter.ai/api/v1/chat/completions"
-        : "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
-
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${apiKey}`,
-    "Content-Type": "application/json",
+  // 2026/07:构建跨 provider 尝试序列。系统默认(无 model)走 ARK DeepSeek V4 Pro 为主、
+  // Qwen 兜底;显式 provider 则只在该 provider 内 [model, ...fallbacks] 尝试。
+  type Attempt = { provider: Provider; model: string };
+  const attempts: Attempt[] = [];
+  const pushSeq = (p: Provider, m: string | undefined, fb: readonly string[]) => {
+    const seq = [...new Set([m, ...fb].filter(Boolean))] as string[];
+    for (const mm of seq) attempts.push({ provider: p, model: mm });
   };
-  if (provider === "openrouter") {
-    headers["HTTP-Referer"] = "https://doopoo.app";
-    headers["X-Title"] = "Doopoo";
+  const isDefault = pickedProvider === "qwen" && !pickedModel;
+  if (isDefault) {
+    if (arkTextApiKey()) attempts.push({ provider: "ark", model: ARK_TEXT_MODEL });
+    pushSeq("qwen", pickedModel, QWEN_FALLBACKS);
+  } else if (pickedProvider === "ark") {
+    attempts.push({ provider: "ark", model: pickedModel || ARK_TEXT_MODEL });
+  } else if (pickedProvider === "lovable") {
+    pushSeq("lovable", pickedModel, LOVABLE_FALLBACKS);
+  } else if (pickedProvider === "openrouter") {
+    pushSeq("openrouter", pickedModel, OPENROUTER_FALLBACKS);
+  } else {
+    pushSeq("qwen", pickedModel, QWEN_FALLBACKS);
   }
 
-  const attempts = [...new Set([model, ...fallbacks].filter(Boolean))] as string[];
   let lastError = "Generation failed";
 
-  for (const m of attempts) {
+  for (const attempt of attempts) {
+    const p = attempt.provider;
+    const m = attempt.model;
+    const apiKey =
+      p === "lovable"
+        ? process.env.LOVABLE_API_KEY
+        : p === "openrouter"
+          ? process.env.OPENROUTER_API_KEY
+          : p === "ark"
+            ? arkTextApiKey()
+            : qwenApiKey();
+    if (!apiKey) {
+      lastError = `${p} API key missing`;
+      continue;
+    }
+    const endpoint =
+      p === "lovable"
+        ? "https://ai.gateway.lovable.dev/v1/chat/completions"
+        : p === "openrouter"
+          ? "https://openrouter.ai/api/v1/chat/completions"
+          : p === "ark"
+            ? arkTextEndpoint()
+            : "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    };
+    if (p === "openrouter") {
+      headers["HTTP-Referer"] = "https://doopoo.app";
+      headers["X-Title"] = "Doopoo";
+    }
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 55_000);
@@ -194,7 +207,9 @@ async function callToolCall<T>(opts: {
         body: JSON.stringify({
           model: m,
           // Lovable AI Gateway (GPT-5 family etc.) only accepts default temperature=1.
-          ...(provider === "lovable" ? {} : { temperature: opts.temperature }),
+          ...(p === "lovable" ? {} : { temperature: opts.temperature }),
+          // ark(DeepSeek V4 Pro):关闭深度思考,走通用对话快模式
+          ...(p === "ark" ? { thinking: ARK_TEXT_THINKING_DISABLED } : {}),
           messages: [
             { role: "system", content: opts.system },
             { role: "user", content: opts.user },
@@ -217,20 +232,17 @@ async function callToolCall<T>(opts: {
 
       if (!res.ok) {
         const txt = await res.text().catch(() => "");
-        if (res.status === 401) return { ok: false, error: `${provider} auth failed (401)` };
-        if (res.status === 402) return { ok: false, error: "no_credits" };
-        if (res.status === 429) {
-          lastError = "rate_limit";
-          if (RETRYABLE.has(res.status)) continue;
-          return { ok: false, error: lastError };
-        }
         if (res.status === 403 && /terms of service|prohibited|policy/i.test(txt)) {
           lastError = "content_policy";
+        } else if (res.status === 429) {
+          lastError = "rate_limit";
+        } else if (res.status === 402) {
+          lastError = "no_credits";
         } else {
-          lastError = `${provider} ${res.status}: ${txt.slice(0, 200)}`;
+          lastError = `${p} ${res.status}: ${txt.slice(0, 200)}`;
         }
-        if (RETRYABLE.has(res.status)) continue;
-        return { ok: false, error: lastError };
+        // 跨 provider 兜底:任何失败都继续下一个 attempt(可能换 key/换 provider 成功)
+        continue;
       }
 
       const json = await res.json();
@@ -259,7 +271,11 @@ async function callToolCall<T>(opts: {
 
   // Cross-provider fallback: if blocked by ToS / content policy on the chosen provider,
   // retry with Lovable Gateway Gemini which is more permissive for creative writing.
-  if (lastError === "content_policy" && provider !== "lovable" && process.env.LOVABLE_API_KEY) {
+  if (
+    lastError === "content_policy" &&
+    pickedProvider !== "lovable" &&
+    process.env.LOVABLE_API_KEY
+  ) {
     const fallbackRes = await callToolCall<T>({
       ...opts,
       model: "lovable:google/gemini-3-flash-preview",

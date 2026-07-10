@@ -1,6 +1,13 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { wrapFictionSystem, wrapFictionUser } from "./promptSafety";
+import {
+  ARK_TEXT_MODEL,
+  ARK_TEXT_THINKING_DISABLED,
+  arkTextApiKey,
+  arkTextEndpoint,
+  qwenApiKey,
+} from "./arkText";
 
 // ============================================================
 // 剧本智能体 — 流式生成（Qwen API，async generator）
@@ -19,7 +26,7 @@ const QWEN_ENDPOINT = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/co
 const LOVABLE_ENDPOINT = "https://ai.gateway.lovable.dev/v1/chat/completions";
 const OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 
-type Provider = "lovable" | "qwen" | "openrouter";
+type Provider = "lovable" | "qwen" | "openrouter" | "ark";
 
 // 解析模型 id 并归一化为目标 provider：
 //   "lovable:xxx"     → Lovable AI Gateway，model = xxx（前端已传完整路径）
@@ -29,6 +36,8 @@ type Provider = "lovable" | "qwen" | "openrouter";
 //   "qwen:xxx"        → 阿里 DashScope
 //   裸 id             → Qwen 默认
 export function pickModel(raw?: string): { provider: Provider; model: string } {
+  // 2026/07:默认走 Qwen(流式梗概/分集/导入等大输出任务,DeepSeek V4 Pro ~50tok/s 太慢);
+  // ark: / deepseek: 前缀可显式走 DeepSeek V4 Pro。分镜切分单独走 DeepSeek(storyboard.functions.ts)。
   const v = (raw ?? "").trim() || "qwen-plus";
   if (v.startsWith("lovable:")) return { provider: "lovable", model: v.slice(8) };
   if (v.startsWith("openrouter:")) return { provider: "openrouter", model: v.slice(11) };
@@ -44,9 +53,11 @@ export function pickModel(raw?: string): { provider: Provider; model: string } {
     const m = v.slice(v.indexOf(":") + 1);
     return { provider: "openrouter", model: m.includes("/") ? m : `anthropic/${m}` };
   }
+  if (v.startsWith("ark:")) return { provider: "ark", model: v.slice(4) || ARK_TEXT_MODEL };
   if (v.startsWith("deepseek:")) {
+    // 历史前缀:以前 deepseek: 走 openrouter。2026/07 起改走 ARK(DeepSeek V4 Pro)。
     const m = v.slice(9);
-    return { provider: "openrouter", model: m.includes("/") ? m : `deepseek/${m}` };
+    return { provider: "ark", model: m || ARK_TEXT_MODEL };
   }
   if (v.startsWith("meta:") || v.startsWith("llama:")) {
     const m = v.slice(v.indexOf(":") + 1);
@@ -78,22 +89,31 @@ async function* streamChat(opts: {
   //     : picked.provider === 'minimax'
   //       ? process.env.MINIMAX_API_KEY
   //       : picked.provider === 'qwen'
-  //         ? process.env.Qwen
+  //         ? qwenApiKey()
   //         : process.env.LOVABLE_API_KEY
   const apiKey =
     picked.provider === "lovable"
       ? process.env.LOVABLE_API_KEY
       : picked.provider === "openrouter"
         ? process.env.OPENROUTER_API_KEY
-        : process.env.Qwen;
+        : picked.provider === "ark"
+          ? arkTextApiKey()
+          : qwenApiKey();
   if (!apiKey) {
+    // 2026/07:ark(DeepSeek)为主但 key 缺失时,降级到 Qwen 而非直接报错
+    if (picked.provider === "ark" && qwenApiKey()) {
+      yield* streamChat({ ...opts, model: { provider: "qwen", model: "qwen-plus" } });
+      return;
+    }
     yield {
       error:
         picked.provider === "lovable"
           ? "LOVABLE_API_KEY 未配置"
           : picked.provider === "openrouter"
             ? "OPENROUTER_API_KEY 未配置"
-            : "Qwen 密钥未配置",
+            : picked.provider === "ark"
+              ? "ARK_API_KEY 未配置"
+              : "Qwen 密钥未配置",
     };
     return;
   }
@@ -161,7 +181,9 @@ async function* streamChat(opts: {
       ? LOVABLE_ENDPOINT
       : picked.provider === "openrouter"
         ? OPENROUTER_ENDPOINT
-        : QWEN_ENDPOINT;
+        : picked.provider === "ark"
+          ? arkTextEndpoint()
+          : QWEN_ENDPOINT;
   try {
     upstream = await fetch(endpoint, {
       method: "POST",
@@ -175,6 +197,8 @@ async function* streamChat(opts: {
       body: JSON.stringify({
         model: picked.model,
         stream: true,
+        // ark(DeepSeek V4 Pro):关闭深度思考,走通用对话快模式
+        ...(picked.provider === "ark" ? { thinking: ARK_TEXT_THINKING_DISABLED } : {}),
         messages: [
           { role: "system", content: opts.system },
           { role: "user", content: opts.user },
@@ -183,19 +207,16 @@ async function* streamChat(opts: {
       signal: controller.signal,
     });
   } catch (e) {
+    // ark 请求抛错(网络等)且未开始流 -> 回退 Qwen
+    if (picked.provider === "ark" && qwenApiKey()) {
+      yield* streamChat({ ...opts, model: { provider: "qwen", model: "qwen-plus" } });
+      return;
+    }
     yield { error: e instanceof Error ? e.message : "网络错误" };
     return;
   }
 
   if (!upstream.ok) {
-    if (upstream.status === 429) {
-      yield { error: "rate_limit" };
-      return;
-    }
-    if (upstream.status === 402) {
-      yield { error: "no_credits" };
-      return;
-    }
     const txt = await upstream.text().catch(() => "");
     // 403 ToS / 内容审核：跨服务商回退到 Lovable Gateway Gemini（对创作更宽松）
     if (
@@ -208,6 +229,19 @@ async function* streamChat(opts: {
         ...opts,
         model: { provider: "lovable", model: "google/gemini-3-flash-preview" },
       });
+      return;
+    }
+    // 2026/07:ark(DeepSeek)为主,其余失败(限流/欠费/5xx/403 非审核等)回退 Qwen
+    if (picked.provider === "ark" && qwenApiKey()) {
+      yield* streamChat({ ...opts, model: { provider: "qwen", model: "qwen-plus" } });
+      return;
+    }
+    if (upstream.status === 429) {
+      yield { error: "rate_limit" };
+      return;
+    }
+    if (upstream.status === 402) {
+      yield { error: "no_credits" };
       return;
     }
     if (upstream.status === 403) {
