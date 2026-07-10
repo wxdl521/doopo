@@ -10507,19 +10507,43 @@ function WorkspacePage() {
                           key={`${u}-${i}`}
                           role="button"
                           tabIndex={0}
-                          onClick={() => setSelectedGenIdx(i)}
+                          onClick={() => {
+                            // 2026/07:对齐场景/道具 -- 点缩略图直接选为推荐(reference),
+                            // 同时切换大图到这张;再次点击已推荐的图则取消推荐。
+                            setSelectedGenIdx(i);
+                            setSelectedCharImages((m) => {
+                              if (m[imageKey] === u) {
+                                const { [imageKey]: _, ...rest } = m;
+                                return rest;
+                              }
+                              return { ...m, [imageKey]: u };
+                            });
+                          }}
                           onKeyDown={(e) => {
                             if (e.key === "Enter" || e.key === " ") {
                               e.preventDefault();
                               setSelectedGenIdx(i);
+                              setSelectedCharImages((m) => {
+                                if (m[imageKey] === u) {
+                                  const { [imageKey]: _, ...rest } = m;
+                                  return rest;
+                                }
+                                return { ...m, [imageKey]: u };
+                              });
                             }
                           }}
                           className={`block w-full rounded border-2 overflow-hidden transition cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 ${
                             i === currentIdx
                               ? "border-accent"
-                              : "border-border hover:border-accent/60"
+                              : selectedCharImages[imageKey] === u
+                                ? "border-emerald-400/70"
+                                : "border-border hover:border-accent/60"
                           }`}
-                          title={`第 ${i + 1} 张`}
+                          title={
+                            selectedCharImages[imageKey] === u
+                              ? "已是推荐(reference) - 再点取消"
+                              : "把这张设为推荐(分镜 reference)"
+                          }
                         >
                           <div className="relative w-full aspect-[3/4] bg-bg-base">
                             <img
@@ -10539,35 +10563,13 @@ function WorkspacePage() {
                             <span className="absolute bottom-1 right-1 px-1 py-0.5 rounded bg-black/60 text-white text-[9px] tabular-nums">
                               #{i + 1}
                             </span>
-                            {/* 2026/06:每张历史缩略图可独立"设为推荐"。点星标把
-                              这张 url 钉到 selectedCharImages[imageKey],作为分镜
-                              流程的 reference。互斥:同 imageKey 只能选 1 张,
-                              这里选了一张会自动覆盖前一次。 */}
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedCharImages((m) => {
-                                  if (m[imageKey] === u) {
-                                    const { [imageKey]: _, ...rest } = m;
-                                    return rest;
-                                  }
-                                  return { ...m, [imageKey]: u };
-                                });
-                              }}
-                              className={`absolute top-1 right-1 inline-flex items-center justify-center w-5 h-5 rounded-full transition ${
-                                selectedCharImages[imageKey] === u
-                                  ? "bg-accent text-accent-foreground shadow-md"
-                                  : "bg-black/60 text-white hover:bg-black/90"
-                              }`}
-                              title={
-                                selectedCharImages[imageKey] === u
-                                  ? "已是推荐 — 再点取消"
-                                  : "把这张设为推荐(分镜 reference)"
-                              }
-                            >
-                              <Target size={10} />
-                            </button>
+                            {/* 2026/07:已选为推荐角标(跟场景/道具的"选中"角标一致)。
+                              点缩略图即选为推荐,无需再点单独按钮。 */}
+                            {selectedCharImages[imageKey] === u && (
+                              <span className="absolute top-1 right-1 px-1 py-0.5 rounded bg-emerald-500 text-white text-[9px] font-bold inline-flex items-center gap-0.5 shadow-md">
+                                <Target size={9} /> 推荐
+                              </span>
+                            )}
                           </div>
                         </div>
                       ))
@@ -10677,47 +10679,8 @@ function WorkspacePage() {
                           />
                         ))}
                       </div>
-                      {/* 选中按钮(2026/06) — 跟卡片本体右上角的"选中"对称。
-                        在预览模态里也能直接钉住当前选中的图,不用回卡片本体点。
-                        镜像逻辑完全一致:imageKey → setSelectedCharImages。
-                        2026/06 Bugfix:`cur` 必须跟随左栏缩略图选中的 currentUrl
-                        (即 generations[currentIdx]),不能写 .at(-1) 否则永远钉最新。 */}
-                      {(() => {
-                        const imageKey =
-                          previewTarget.lookId == null ? c.id : `${c.id}::${previewTarget.lookId}`;
-                        const cur = currentUrl; // 跟随左栏选中的图,不是最新
-                        if (!cur) return null;
-                        const isPinned = selectedCharImages[imageKey] === cur;
-                        return (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedCharImages((m) => {
-                                if (m[imageKey] === cur) {
-                                  const { [imageKey]: _, ...rest } = m;
-                                  return rest;
-                                }
-                                return { ...m, [imageKey]: cur };
-                              });
-                            }}
-                            className={`mt-1 w-full text-[10px] py-1 rounded border inline-flex items-center justify-center gap-1 transition ${
-                              isPinned
-                                ? "bg-accent border-accent text-accent-foreground"
-                                : "border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent"
-                            }`}
-                          >
-                            {isPinned ? (
-                              <>
-                                <Check size={10} /> 已选中此图作为 reference
-                              </>
-                            ) : (
-                              <>
-                                <Target size={10} /> 选中此图作为 reference
-                              </>
-                            )}
-                          </button>
-                        );
-                      })()}
+                      {/* 2026/07:选为推荐改为点左栏缩略图直接生效(对齐场景/道具),
+                        此处原"选中此图作为 reference"按钮已移除。 */}
                     </div>
 
                     {/* 2026/07:角色参考音频试听(只读展示,上传/替换/删除走角色卡 Popover) */}
