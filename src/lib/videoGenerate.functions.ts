@@ -1560,9 +1560,9 @@ function topenrouterModelToUpstream(modelId: string): string {
 //   - status: queued / running / succeeded / failed / cancelled(与 ARK 一致,
 //     复用 arkSubmit / arkPoll + seedanceStatusToProgress,参照 shuci 接法)
 //   - model: seedance2-fast / seedance2-mini / seedance2-pro(剥离 hongmeng- 前缀)
-// 文档 BASE_URL 为 https://ai.kunagent.com(用户给的 api.kunagent.com 是控制台地址);
-// 端点路径含 /api/v3 前缀,故 baseUrl 取到 /api/v3,后续拼 /contents/generations/tasks。
-const HONGMENG_DEFAULT_BASE_URL = "https://ai.kunagent.com/api/v3";
+// 实测:文档写的 BASE_URL https://ai.kunagent.com 返回 404 "Cannot POST ..."(那是文档站);
+// 真实 API 主机是 https://api.kunagent.com(用户给的网址),路径不变,仍带 /api/v3 前缀。
+const HONGMENG_DEFAULT_BASE_URL = "https://api.kunagent.com/api/v3";
 
 function getHongmengConfig() {
   return {
