@@ -344,9 +344,27 @@ const videoModels = [
     sub: "快速版",
   },
   {
-    id: "topenrouter-doubao-seedance-2-0-mini-260128",
+    id: "topenrouter-doubao-seedance-2-0-mini-260615",
     label: "Seedance 2.0 Mini (TopenRouter)",
     sub: "轻量版",
+  },
+
+  // ---- 弘梦(中转 Seedance 2,需 HONGMENG_API_KEY)----
+  { id: "__video_sep_hongmeng__", label: "-- 弘梦(中转 Seedance 2)--", sub: "" },
+  {
+    id: "hongmeng-seedance2-fast",
+    label: "Seedance 2 Fast (弘梦)",
+    sub: "快速版",
+  },
+  {
+    id: "hongmeng-seedance2-mini",
+    label: "Seedance 2 Mini (弘梦)",
+    sub: "轻量版",
+  },
+  {
+    id: "hongmeng-seedance2-pro",
+    label: "Seedance 2 Pro (弘梦)",
+    sub: "多模态",
   },
 
   // ---- 可灵 Kling AI(快手,需 KLING_API_KEY)----
@@ -377,6 +395,7 @@ const VISIBLE_VIDEO_PREFIXES = [
   "toapis-",
   "kling-", // 汇流 + ToAPIS + 可灵
   "topenrouter-", // TopenRouter 中转 Seedance
+  "hongmeng-", // 弘梦 中转 Seedance 2
 ];
 const isVisibleVideo = (id: string) =>
   VISIBLE_VIDEO_PREFIXES.some((p) => id.toLowerCase().startsWith(p));
@@ -396,6 +415,9 @@ const VIDEO_RESOLUTIONS: Record<string, string[]> = {
   "kuaizi-lizhen-mini": ["480P", "720P"],
   "topenrouter-doubao-seedance-2-0-260128": ["480P", "720P"],
   "topenrouter-doubao-seedance-2-0-fast-260128": ["480P", "720P"],
+  "hongmeng-seedance2-fast": ["480P", "720P"],
+  "hongmeng-seedance2-mini": ["480P", "720P"],
+  "hongmeng-seedance2-pro": ["480P", "720P", "1080P"],
 };
 function videoResolutionOptions(videoModel: string | undefined): string[] {
   if (!videoModel) return [];

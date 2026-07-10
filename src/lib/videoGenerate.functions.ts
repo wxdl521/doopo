@@ -70,7 +70,8 @@ export function getVideoBackend(
   | "shuci"
   | "kling"
   | "confluo"
-  | "topenrouter" {
+  | "topenrouter"
+  | "hongmeng" {
   const m = (modelId || "").trim().toLowerCase();
   if (m.startsWith("doubao-seedance-") || m.startsWith("seedance-")) return "ark";
   if (m.startsWith("shuci-")) return "shuci";
@@ -82,6 +83,7 @@ export function getVideoBackend(
   if (m.startsWith("kling-")) return "kling";
   if (m.startsWith("confluo-")) return "confluo";
   if (m.startsWith("topenrouter-")) return "topenrouter";
+  if (m.startsWith("hongmeng-")) return "hongmeng";
   return "dashscope";
 }
 
@@ -102,7 +104,14 @@ export const CONFLUO_VIDEO_MODELS = {
 export const TOPENROUTER_VIDEO_MODELS = {
   "topenrouter-doubao-seedance-2-0-260128": "Seedance 2.0 (TopenRouter)",
   "topenrouter-doubao-seedance-2-0-fast-260128": "Seedance 2.0 Fast (TopenRouter)",
-  "topenrouter-doubao-seedance-2-0-mini-260128": "Seedance 2.0 Mini (TopenRouter)",
+  "topenrouter-doubao-seedance-2-0-mini-260615": "Seedance 2.0 Mini (TopenRouter)",
+} as const;
+
+// 弘梦(ai.kunagent.com,中转 Seedance 2 系列:fast/mini/pro)
+export const HONGMENG_VIDEO_MODELS = {
+  "hongmeng-seedance2-fast": "Seedance 2 Fast (弘梦)",
+  "hongmeng-seedance2-mini": "Seedance 2 Mini (弘梦)",
+  "hongmeng-seedance2-pro": "Seedance 2 Pro (弘梦)",
 } as const;
 
 export const SEEDANCE_MODELS = {
@@ -113,6 +122,7 @@ export const SEEDANCE_MODELS = {
   ...SHUCIYUAN_VIDEO_MODELS,
   ...CONFLUO_VIDEO_MODELS,
   ...TOPENROUTER_VIDEO_MODELS,
+  ...HONGMENG_VIDEO_MODELS,
   ...KLING_VIDEO_MODELS,
 } as const;
 
@@ -1542,6 +1552,30 @@ function topenrouterModelToUpstream(modelId: string): string {
   return modelId.replace(/^topenrouter-/i, "");
 }
 
+// ---------- 弘梦 (Hongmeng) 配置 ----------
+// 弘梦中转 Seedance 2 系列(fast/mini/pro),接口为火山方舟 ARK 原生格式透传:
+//   - 提交:POST {BASE}/contents/generations/tasks  -> { id }
+//   - 查询:GET  {BASE}/contents/generations/tasks/{id}
+//        -> { id, model, status, content:{video_url}, usage, created_at, updated_at }
+//   - status: queued / running / succeeded / failed / cancelled(与 ARK 一致,
+//     复用 arkSubmit / arkPoll + seedanceStatusToProgress,参照 shuci 接法)
+//   - model: seedance2-fast / seedance2-mini / seedance2-pro(剥离 hongmeng- 前缀)
+// 文档 BASE_URL 为 https://ai.kunagent.com(用户给的 api.kunagent.com 是控制台地址);
+// 端点路径含 /api/v3 前缀,故 baseUrl 取到 /api/v3,后续拼 /contents/generations/tasks。
+const HONGMENG_DEFAULT_BASE_URL = "https://ai.kunagent.com/api/v3";
+
+function getHongmengConfig() {
+  return {
+    apiKey: process.env.HONGMENG_API_KEY,
+    baseUrl: (process.env.HONGMENG_BASE_URL || HONGMENG_DEFAULT_BASE_URL).replace(/\/+$/, ""),
+  };
+}
+
+/** 从 model id 剥离 `hongmeng-` 前缀,得到上游 model 名(seedance2-fast 等) */
+function hongmengModelToUpstream(modelId: string): string {
+  return modelId.replace(/^hongmeng-/i, "");
+}
+
 async function topenrouterSubmit(input: {
   model: string;
   content: ContentItem[];
@@ -1684,7 +1718,8 @@ type VideoBackend =
   | "shuci"
   | "kling"
   | "confluo"
-  | "topenrouter";
+  | "topenrouter"
+  | "hongmeng";
 
 // ====================================================================
 // vapeur.ai 端实现 —— 透传火山方舟 ARK Seedance 原生格式
@@ -2096,6 +2131,44 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
       ? { ok: true, taskId: r.taskId, model: input.model, backend: "topenrouter" }
       : { ok: false, error: r.error };
   }
+  if (backend === "hongmeng") {
+    const { apiKey, baseUrl } = getHongmengConfig();
+    if (!apiKey) {
+      return {
+        ok: false,
+        error:
+          "[hongmeng] 缺少 HONGMENG_API_KEY,请在 Cloudflare Secrets 或 .env.local 中配置后再试。",
+      };
+    }
+    // 弘梦为 ARK 原生格式透传,复用 buildArkContent 拼装 content + arkSubmit 提交
+    const firstFrameImageUrl = input.media.find((m) => m.type === "first_frame")?.url;
+    const lastFrameImageUrl = input.media.find((m) => m.type === "last_frame")?.url;
+    const referenceImageUrls = input.media
+      .filter((m) => m.type === "reference_image")
+      .map((m) => m.url);
+    const content = buildArkContent(input.prompt, {
+      firstFrameImageUrl,
+      lastFrameImageUrl,
+      referenceImageUrls,
+      referenceVideoUrl: input.referenceVideoUrl,
+      referenceAudioUrl: input.referenceAudioUrl,
+    });
+    const r = await arkSubmit({
+      model: hongmengModelToUpstream(input.model),
+      content,
+      ratio: input.ratio,
+      resolution: input.resolution,
+      duration: input.duration,
+      generateAudio: input.generateAudio,
+      watermark: input.watermark,
+      apiKey,
+      baseUrl,
+      label: "hongmeng",
+    });
+    return r.ok
+      ? { ok: true, taskId: r.taskId, model: input.model, backend: "hongmeng" }
+      : { ok: false, error: r.error };
+  }
   // DashScope
   const { apiKey } = getDashScopeConfig();
   if (!apiKey) return { ok: false, error: "Qwen / DASHSCOPE_API_KEY not configured" };
@@ -2176,6 +2249,11 @@ async function pollVideoTask(input: PollInput): Promise<PollResult> {
     if (!apiKey) return { ok: false, error: "[topenrouter] 缺少 TOPENROUTER_API_KEY" };
     return topenrouterPoll({ taskId: input.taskId, apiKey, baseUrl });
   }
+  if (input.backend === "hongmeng") {
+    const { apiKey, baseUrl } = getHongmengConfig();
+    if (!apiKey) return { ok: false, error: "[hongmeng] 缺少 HONGMENG_API_KEY" };
+    return arkPoll({ taskId: input.taskId, apiKey, baseUrl, label: "hongmeng" });
+  }
   const { apiKey } = getDashScopeConfig();
   if (!apiKey) return { ok: false, error: "Qwen / DASHSCOPE_API_KEY not configured" };
   return dashscopePoll({ taskId: input.taskId, apiKey });
@@ -2248,6 +2326,7 @@ const PollServerInput = z.object({
     "kling",
     "confluo",
     "topenrouter",
+    "hongmeng",
   ]),
 });
 
@@ -2380,7 +2459,9 @@ export const generateVideo = createServerFn({ method: "POST" })
             ? "confluo-doubao-seedance-2-0-mini-260615"
             : backend === "topenrouter"
               ? "topenrouter-doubao-seedance-2-0-260128"
-              : "happyhorse-1.0-i2v");
+              : backend === "hongmeng"
+                ? "hongmeng-seedance2-pro"
+                : "happyhorse-1.0-i2v");
 
     // 1) 提交
     const submit = await submitVideoTask({
