@@ -1081,6 +1081,7 @@ export const en: Translations = {
   char_audio_hint:
     "Upload an audio clip as this character's voice reference; pick it on the video confirm card when generating.",
   char_audio_too_large: "Audio must be under 25MB",
+  char_audio_decode_failed: "Could not parse audio. Use a common format (mp3/wav/m4a).",
   char_audio_preset: "Preset styles",
   zp_param_preset_default: "Use defaults",
   // Stage tags (prepended when stitching the prompt)

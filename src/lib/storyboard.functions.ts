@@ -31,6 +31,13 @@
 
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import {
+  ARK_TEXT_MODEL,
+  ARK_TEXT_THINKING_DISABLED,
+  arkTextApiKey,
+  arkTextEndpoint,
+  qwenApiKey,
+} from "./arkText";
 
 // --------------------------------------------------------------------
 // 1) generateStoryboardFromPlot —— 文本任务
@@ -166,6 +173,8 @@ export const generateStoryboardFromPlot = createServerFn({ method: "POST" })
   4) 台词:**必须完整引用该镜头中出现的所有台词,一句都不能省略、不能缩写**。
      带角色名,例如 陆深:“我没事。” 语气/表情/动作配合写在台词前后
   5) 承接:该镜头结束后接下来发生了什么(原剧本的逻辑承接,不要剧透到下一个镜头之外)
+- **空镜例外**:若该镜头是空镜(见下方【空镜 / 环境镜头】规则;原剧本该段无人物无台词),
+  跳过 1)3)4) 人物要素,只写 2)环境 与 5)承接;plotText 不得出现任何人物。
 - 字数要求:**≥ 100 字**,中等镜头 200~300 字,信息量大的镜头可 500 字
 - 输出格式:连贯的中文散文段落,允许用 
  分自然段(不超过 2~3 段);
@@ -203,6 +212,16 @@ export const generateStoryboardFromPlot = createServerFn({ method: "POST" })
   - 连续分镜的时间区间要无缝衔接(分镜 N 的 endSec == 分镜 N+1 的 startSec)
   - 单镜头时长通常 1~5 秒,但你可以按剧情节奏自由调整,不必死守这个范围
 - shotType 必填,5 个里选
+
+【空镜 / 环境镜头(重要,务必遵守)】
+当原剧本某段是**纯环境 / 风景 / 氛围描写**,没有人物活动、没有台词时
+(例如"晨光穿透浓密的树冠,在铺满落叶与青苔的湿地上投下斑驳光影"),
+这是一个**空镜(establishing shot / 环境镜头)**,必须按以下处理:
+- characterIds 必须为空数组 [] -- **严禁凭空分配角色**(这是最常见错误!即便角色列表里有角色,原剧本该段没让该角色出现,就不能塞进 characterIds)
+- plotText 只扩写环境、光线、氛围、可见道具,**不得编造任何人物、动作、台词、心理**
+- shotType 优先 WS 远景(环境镜头常用远景展示空间感)
+- action 字段描述环境/氛围(如"晨光透过树冠洒在湿地,光斑落在青苔上"),不写人物
+- 禁止把空镜改成"主角走进森林""角色站在树下"之类有人物的镜头
 
 【其他】
 1. **剧情覆盖完整性(最重要)**：严格按剧本顺序切分,**必须覆盖整集全部剧情**,不得遗漏任何段落。
@@ -324,78 +343,98 @@ ${data.episodeText}
 - 严格按照剧本的剧情顺序排分镜(不要乱序)
 - 所有分镜的 plotText 按顺序拼接起来,必须完整覆盖原剧本全部内容
 - sceneId 必须在传入的场景列表里;不确定时给最接近的
-- characterIds 必须在传入的角色列表里;没有明确角色时给空数组 []
+- characterIds 必须在传入的角色列表里;没有明确角色时给空数组 [](纯环境/风景描写 = 空镜,必须给 [],严禁分配角色)
 - 连续分镜的 endSec 必须等于下一个分镜的 startSec(无缝衔接)
 - 镜头组合要有变化,不要所有分镜都是 MS 中景 —— 按剧情需要混合使用 WS/CU/ECU/OTS
 - 整集时长应合理。分镜数由剧情内容量决定,不设上限。`;
 
-    // ---- 调 DashScope Qwen 文本模型 (SSE 流式) ----
-    // 跟图片生成共用同一个 Qwen API key。优先 flash(快),失败再试 plus(更强)。
-    const apiKey = process.env.Qwen || process.env.DASHSCOPE_API_KEY;
-    if (!apiKey) {
-      yield { kind: "error", message: "Qwen API key 未配置(请设置 Qwen 或 DASHSCOPE_API_KEY)" };
-      return;
-    }
+    // ---- 调文本模型 (SSE 流式) ----
+    // 2026/07:ARK DeepSeek V4 Pro 为主,Qwen 兜底;key 复用 ARK_API_KEY / Qwen。
+    const arkKey = arkTextApiKey();
+    const qwenKey = qwenApiKey();
 
     const DASHSCOPE_CHAT = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
-    // 2026/06 修法:[qwen3.7-max] timed out (>60s) 经常超时。
-    // 1) 模型顺序:小 → 大(flash 60s 内必出;plus 90s;max 给 180s)
-    // 2) 显式 prompt 是大 prompt(长 context + 结构化 JSON 4000 token),
-    //    max 模型 60s 根本不够
-    // 3) flash 失败时,**优先再试一次 flash** 再跳 plus(网络抖动的概率)
-    const MODEL_TIMEOUTS: Record<string, number> = {
-      "qwen3.6-flash": 60_000,
-      "qwen3.6-plus": 90_000,
-      "qwen3.7-max": 180_000,
-    };
-    const modelAttempts = [
-      data.model || "qwen3.6-flash",
-      "qwen3.6-flash", // flash 再试一次(网络抖动 fallback)
-      "qwen3.6-plus",
-      "qwen3.7-max",
-    ].filter(Boolean);
+    // 2026/07:由 DashScope Qwen 改为「ARK DeepSeek V4 Pro 为主、Qwen 兜底」。
+    // 尝试序列:系统默认 ARK DeepSeek -> Qwen flash -> plus -> max(小->大,超时递增)。
+    // data.model 显式指定时覆盖首项(粗判 provider)。
+    type SbAttempt = { provider: "ark" | "qwen"; model: string; timeoutMs: number };
+    const attempts: SbAttempt[] = [];
+    if (data.model) {
+      const isArk =
+        data.model === ARK_TEXT_MODEL ||
+        data.model.startsWith("ark:") ||
+        data.model.startsWith("deepseek:");
+      attempts.push({
+        provider: isArk ? "ark" : "qwen",
+        model: data.model.replace(/^(ark:|deepseek:)/, ""),
+        timeoutMs: isArk ? 300_000 : 90_000,
+      });
+    } else if (arkKey) {
+      attempts.push({ provider: "ark", model: ARK_TEXT_MODEL, timeoutMs: 300_000 });
+    }
+    if (qwenKey) {
+      attempts.push({ provider: "qwen", model: "qwen3.6-flash", timeoutMs: 60_000 });
+      attempts.push({ provider: "qwen", model: "qwen3.6-plus", timeoutMs: 90_000 });
+      attempts.push({ provider: "qwen", model: "qwen3.7-max", timeoutMs: 180_000 });
+    }
+    if (attempts.length === 0) {
+      yield {
+        kind: "error",
+        message: "文本模型 API key 未配置(请设置 ARK_API_KEY 或 Qwen/DASHSCOPE_API_KEY)",
+      };
+      return;
+    }
     const FALLBACK_RETRYABLE = new Set([403, 404, 429, 500, 502, 503]);
 
     yield { kind: "progress", message: "正在加载分镜工作流…" };
 
     let lastError = "";
-    for (const model of modelAttempts) {
-      const timeoutMs = MODEL_TIMEOUTS[model] ?? 90_000;
+    for (const attempt of attempts) {
+      const timeoutMs = attempt.timeoutMs;
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), timeoutMs);
       // 单模型尝试期间是否已成功 yield 过 group。已经 yield 出去的 group
       // 是不可撤回的(客户端已经展示了),后续即便流出错也不能切换模型重头来。
       let yieldedAny = false;
       let modelSucceeded = false;
+      const isArk = attempt.provider === "ark";
+      const attemptKey = isArk ? arkKey : qwenKey;
+      if (!attemptKey) {
+        lastError = `[${attempt.model}] API key missing`;
+        clearTimeout(timeout);
+        continue;
+      }
+      const endpoint = isArk ? arkTextEndpoint() : DASHSCOPE_CHAT;
       try {
-        yield { kind: "progress", message: `已提交 ${model},等待 AI 输出第一组…` };
-        const res = await fetch(DASHSCOPE_CHAT, {
+        yield { kind: "progress", message: `已提交 ${attempt.model},等待 AI 输出第一组…` };
+        const res = await fetch(endpoint, {
           method: "POST",
           headers: {
-            Authorization: `Bearer ${apiKey}`,
+            Authorization: `Bearer ${attemptKey}`,
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model,
+            model: attempt.model,
             stream: true,
             messages: [
               { role: "system", content: systemPrompt },
               { role: "user", content: userPrompt },
             ],
-            // Qwen 支持 response_format 强制 JSON;streaming 下 delta 也都是 JSON 片段
-            response_format: { type: "json_object" },
+            // Qwen 支持 response_format 强制 JSON;ARK DeepSeek 不传(靠 prompt + extractor 兜底,避免 400)
+            ...(!isArk ? { response_format: { type: "json_object" } } : {}),
+            // ARK DeepSeek V4 Pro:关闭深度思考,走通用对话快模式
+            ...(isArk ? { thinking: ARK_TEXT_THINKING_DISABLED } : {}),
             temperature: 0.6,
-            // plotText 改成详细扩写(每 group 200~800 字)+ 强制覆盖完整性,
-            // 8000 不够多组用(长剧本 8-10 组会被截断,丢结尾剧情)。
-            // 提到 12000 给 prose + shots + 完整覆盖留足空间。
+            // plotText 详细扩写 + 强制覆盖完整性,12000 给 prose + shots + 完整覆盖留足空间。
             max_tokens: 12000,
           }),
           signal: controller.signal,
         });
         if (!res.ok) {
           const text = await res.text().catch(() => "");
-          lastError = `[${model}] ${res.status}: ${text.slice(0, 200)}`;
-          if (FALLBACK_RETRYABLE.has(res.status)) {
+          lastError = `[${attempt.model}] ${res.status}: ${text.slice(0, 200)}`;
+          // ark(主)任何失败都回退下一个 attempt(qwen);qwen 仅可重试状态继续
+          if (isArk || FALLBACK_RETRYABLE.has(res.status)) {
             clearTimeout(timeout);
             continue;
           }
@@ -404,7 +443,7 @@ ${data.episodeText}
           return;
         }
         if (!res.body) {
-          lastError = `[${model}] 上游无响应体`;
+          lastError = `[${attempt.model}] 上游无响应体`;
           clearTimeout(timeout);
           continue;
         }
@@ -466,7 +505,7 @@ ${data.episodeText}
         }
         clearTimeout(timeout);
         if (groupCount > 0) {
-          yield { kind: "done", model, count: groupCount };
+          yield { kind: "done", model: attempt.model, count: groupCount };
           modelSucceeded = true;
           return;
         }
@@ -485,7 +524,7 @@ ${data.episodeText}
                 groupCount++;
               }
               if (groupCount > 0) {
-                yield { kind: "done", model, count: groupCount };
+                yield { kind: "done", model: attempt.model, count: groupCount };
                 modelSucceeded = true;
                 return;
               }
@@ -494,19 +533,19 @@ ${data.episodeText}
             // fall through to model fallback
           }
         }
-        lastError = `[${model}] 流结束但未解析到任何分镜组 (raw: ${fullText.slice(0, 200)})`;
+        lastError = `[${attempt.model}] 流结束但未解析到任何分镜组 (raw: ${fullText.slice(0, 200)})`;
       } catch (e) {
         lastError =
           e instanceof Error && e.name === "AbortError"
-            ? `[${model}] timed out (>${Math.round(timeoutMs / 1000)}s)`
-            : `[${model}] ${e instanceof Error ? e.message : "network error"}`;
+            ? `[${attempt.model}] timed out (>${Math.round(timeoutMs / 1000)}s)`
+            : `[${attempt.model}] ${e instanceof Error ? e.message : "network error"}`;
         clearTimeout(timeout);
       }
       // 关键:已经 yield 过 group 的模型不能 fallback 重试 —— 客户端那边
       // 已经展示了部分组,换模型重新来一遍会重复。
       if (yieldedAny && !modelSucceeded) {
         // 部分组成功 + 流中断:按"已达本次能拿到的"结束,客户端拿到 done 也好告知用户。
-        yield { kind: "done", model, count: 0 /* 客户端用累计计数 */ };
+        yield { kind: "done", model: attempt.model, count: 0 /* 客户端用累计计数 */ };
         return;
       }
     }

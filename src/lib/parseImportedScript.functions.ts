@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { wrapFictionSystem, wrapFictionUser } from "./promptSafety";
 import { pickModel } from "./scriptAgent.functions";
+import { ARK_TEXT_THINKING_DISABLED, arkTextApiKey, arkTextEndpoint, qwenApiKey } from "./arkText";
 
 // ============================================================
 // 导入剧本：将用户粘贴/上传的剧本文本按"集"边界拆开。
@@ -44,7 +45,7 @@ export type ParseStreamEvent =
 
 // ============= Provider fetch (non-streaming, single shot) =============
 
-type Provider = "lovable" | "qwen" | "openrouter";
+type Provider = "lovable" | "qwen" | "openrouter" | "ark";
 
 const QWEN_ENDPOINT = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
 const LOVABLE_ENDPOINT = "https://ai.gateway.lovable.dev/v1/chat/completions";
@@ -76,7 +77,9 @@ async function fetchChat(opts: {
       ? process.env.LOVABLE_API_KEY
       : opts.provider === "openrouter"
         ? process.env.OPENROUTER_API_KEY
-        : process.env.Qwen;
+        : opts.provider === "ark"
+          ? arkTextApiKey()
+          : qwenApiKey();
   if (!apiKey) throw new Error(`${opts.provider} API key missing`);
 
   const endpoint =
@@ -84,7 +87,9 @@ async function fetchChat(opts: {
       ? LOVABLE_ENDPOINT
       : opts.provider === "openrouter"
         ? OPENROUTER_ENDPOINT
-        : QWEN_ENDPOINT;
+        : opts.provider === "ark"
+          ? arkTextEndpoint()
+          : QWEN_ENDPOINT;
 
   const headers: Record<string, string> = {
     Authorization: `Bearer ${apiKey}`,
@@ -112,6 +117,8 @@ async function fetchChat(opts: {
         model: opts.model,
         // Lovable AI Gateway (GPT-5 family etc.) only accepts default temperature=1.
         ...(opts.provider === "lovable" ? {} : { temperature: opts.temperature ?? 0.2 }),
+        // ark(DeepSeek V4 Pro):关闭深度思考,走通用对话快模式
+        ...(opts.provider === "ark" ? { thinking: ARK_TEXT_THINKING_DISABLED } : {}),
         messages,
         tools: [
           {
@@ -286,8 +293,30 @@ export const parseImportedScript = createServerFn({ method: "POST" })
           ? "AI 处理超时（>180s），请尝试更小的剧本或换其他模型"
           : "AI processing timed out (>180s). Try a smaller script or another model."
         : msg;
-      // Cross-provider fallback for ToS / moderation (mirror streamChat behaviour)
-      if (
+      // 2026/07:ark(DeepSeek)为主,失败(网络/超时/限流/欠费/key 缺失等,非内容审核)回退 Qwen
+      if (picked.provider === "ark" && msg !== "content_policy" && qwenApiKey()) {
+        yield {
+          kind: "progress",
+          message:
+            data.lang === "zh"
+              ? "主模型异常，切换到 Qwen 重试…"
+              : "Primary model failed, retrying with Qwen…",
+        };
+        try {
+          raw = await fetchChat({
+            provider: "qwen",
+            model: "qwen-plus",
+            system: sys,
+            user,
+            tool: IMPORT_TOOL,
+            temperature: 0.2,
+          });
+        } catch (e2) {
+          const inner = e2 instanceof Error ? e2.message : "qwen fallback failed";
+          yield { kind: "error", message: inner };
+          return;
+        }
+      } else if (
         msg === "content_policy" &&
         picked.provider !== "lovable" &&
         process.env.LOVABLE_API_KEY

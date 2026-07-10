@@ -25,7 +25,9 @@ export const uploadLocalImage = createServerFn({ method: "POST" })
     const { base64, id, kind } = data;
 
     // 1) 解析 base64 → buffer（支持 image/* / video/* / audio/*）
-    const match = base64.match(/^data:(image\/\w+|video\/\w+|audio\/\w+);base64,(.+)$/);
+    const match = base64.match(
+      /^data:(image\/[\w.+-]+|video\/[\w.+-]+|audio\/[\w.+-]+);base64,(.+)$/,
+    );
     if (!match) return { ok: false as const, error: "invalid base64" };
     const mime = match[1];
     const ext = (mime.split("/")[1] || "bin")

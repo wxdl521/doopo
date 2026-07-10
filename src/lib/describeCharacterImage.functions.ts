@@ -18,6 +18,7 @@
 
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import { qwenApiKey } from "./arkText";
 
 const Input = z.object({
   imageUrl: z.string().url(),
@@ -43,7 +44,7 @@ export type DescribeCharacterImageResult =
 export const describeCharacterImage = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => Input.parse(d))
   .handler(async ({ data }): Promise<DescribeCharacterImageResult> => {
-    const apiKey = process.env.Qwen || process.env.DASHSCOPE_API_KEY;
+    const apiKey = qwenApiKey();
     if (!apiKey) {
       return { ok: false, error: "Qwen API key 未配置(请设置 Qwen 或 DASHSCOPE_API_KEY)" };
     }

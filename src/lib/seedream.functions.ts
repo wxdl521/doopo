@@ -793,7 +793,7 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
     `[EDIT REQUEST — what to change in the attached image]`,
     data.userInstruction,
     ``,
-    `[REFERENCE IMAGES - 严格按对应关系使用]`,
+    `[REFERENCE IMAGES - ${1 + (data.extraReferenceImageUrls?.length ?? 0)} 张视觉锚点,用于人物/场景身份锁定]`,
     `图1 = 角色主视图(要被修改的那张),脸/身材/构图/风格/背景以此为准,是修改的基础`,
     (data.extraReferenceImageUrls?.length ?? 0) > 0
       ? `图2..${1 + (data.extraReferenceImageUrls?.length ?? 0)} = 额外参考图(风格/细节/配饰参考),仅当 EDIT REQUEST 涉及时参考,严禁用来替换图1 的角色身份(脸/身材/发型)`
@@ -1113,7 +1113,8 @@ const ShotInput = z.object({
 export type ShotInputType = z.infer<typeof ShotInput>;
 
 function buildShotInstruction(data: ShotInputType, styleSpec: VisualStyleSpec): string {
-  const charRefs = data.characterImageUrls.length
+  const hasCharacters = data.characterImageUrls.length > 0;
+  const charRefs = hasCharacters
     ? data.characterImageUrls
         .map((_, i) => `图${i + 1} = 「${data.characterNames[i] || `角色${i + 1}`}」`)
         .join(", ")
@@ -1122,8 +1123,32 @@ function buildShotInstruction(data: ShotInputType, styleSpec: VisualStyleSpec): 
     ? `图${data.characterImageUrls.length + 1} = 场景(${data.sceneLocation || "当前场景"}${data.sceneTimeOfDay ? " / " + data.sceneTimeOfDay : ""})`
     : "";
 
+  // 景别描述:有角色时讲人物构图;无角色(空镜)时改用环境导向文案,
+  // 避免"人物从膝盖以上"这类描述诱导模型在纯场景镜头里凭空画人。
+  const shotTypeDesc = hasCharacters
+    ? data.shotType === "WS"
+      ? `   - 远景:人物在画面中占比较小,环境占据画面主体;展示空间感、地理关系、整体氛围。`
+      : data.shotType === "MS"
+        ? `   - 中景:人物从膝盖以上,展示肢体语言和主要动作;既能看到人物也能看到周围环境。`
+        : data.shotType === "CU"
+          ? `   - 近景:人物胸部以上,重点是表情、眼神、情绪;环境退到背景。`
+          : data.shotType === "ECU"
+            ? `   - 特写:画面聚焦在某个细节(眼睛、嘴唇、手、道具),情绪张力最强。`
+            : `   - 过肩:从某人肩膀后面拍另一人,常用于对话场景,有空间纵深。`
+    : data.shotType === "WS"
+      ? `   - 远景:展现整体空间、地理关系与环境氛围,环境占据画面主体。`
+      : data.shotType === "MS"
+        ? `   - 中景:呈现环境的中景空间关系与关键道具/植被/建筑结构。`
+        : data.shotType === "CU"
+          ? `   - 近景:聚焦环境中的某个局部(树干、落叶、光斑),环境细节为主。`
+          : data.shotType === "ECU"
+            ? `   - 特写:聚焦环境微观细节(叶脉、苔藓纹理、水滴),质感与光影为主。`
+            : `   - 过肩镜头需要人物,本镜头无人物,按近景环境处理。`;
+
   return [
-    `[任务] 生成一张「${data.shotTypeLabel}」分镜图,严格按下面的融合规则。`,
+    hasCharacters
+      ? `[任务] 生成一张「${data.shotTypeLabel}」分镜图,严格按下面的融合规则。`
+      : `[任务] 生成一张「${data.shotTypeLabel}」空镜分镜图(纯场景,NO PEOPLE / landscape only)。**画面中严禁出现任何人物、人影、人体轮廓、手脚、面部——只呈现环境、光影、植被与道具。** 严格按下面的融合规则。`,
     ``,
     `[剧情上下文] ${data.plotText}`,
     `[本镜头] ${data.shotType} ${data.shotTypeLabel} —— ${data.action}`,
@@ -1134,24 +1159,18 @@ function buildShotInstruction(data: ShotInputType, styleSpec: VisualStyleSpec): 
     sceneRef,
     ``,
     `[融合规则]`,
-    data.characterImageUrls.length
+    hasCharacters
       ? `1. 图1..N 是角色形象参考,这些角色的脸/身材/衣服必须与参考图保持一致,不得替换、不得"换脸"。`
-      : `1. 本镜头没有角色,纯场景。`,
+      : `1. 本镜头是空镜/纯场景镜头,画面中不得出现任何人物、人影、人体轮廓、手脚、面部,只呈现环境、光影、植被与道具。`,
     data.sceneImageUrl
       ? `2. 场景构图、空间布局、光照氛围请以场景参考图为准,本镜头发生在这个场景内。`
       : `2. 没有场景参考,根据剧情推断合理的环境。`,
     `3. 这是 ${data.shotTypeLabel} 镜头:`,
-    data.shotType === "WS"
-      ? `   - 远景:人物在画面中占比较小,环境占据画面主体;展示空间感、地理关系、整体氛围。`
-      : data.shotType === "MS"
-        ? `   - 中景:人物从膝盖以上,展示肢体语言和主要动作;既能看到人物也能看到周围环境。`
-        : data.shotType === "CU"
-          ? `   - 近景:人物胸部以上,重点是表情、眼神、情绪;环境退到背景。`
-          : data.shotType === "ECU"
-            ? `   - 特写:画面聚焦在某个细节(眼睛、嘴唇、手、道具),情绪张力最强。`
-            : `   - 过肩:从某人肩膀后面拍另一人,常用于对话场景,有空间纵深。`,
+    shotTypeDesc,
     `4. 画面必须是单张分镜图,不能有面板分割、文字、标号。`,
-    `5. 角色动作 / 表情 / 视线方向严格按本镜头的"${data.action}"执行。`,
+    hasCharacters
+      ? `5. 角色动作 / 表情 / 视线方向严格按本镜头的"${data.action}"执行。`
+      : `5. 严格按剧情上下文呈现环境氛围、光线与可见道具,不得添加任何人物。`,
     `6. 固定机位,画面构图稳定平衡。`,
     ``,
     buildStyleLock(styleSpec, "panel"),
@@ -1160,15 +1179,24 @@ function buildShotInstruction(data: ShotInputType, styleSpec: VisualStyleSpec): 
     .join("\n");
 }
 
-function buildShotNegative(): string {
-  return [
+function buildShotNegative(hasCharacters: boolean): string {
+  const base = [
     "different art style, style drift, photorealistic when input is anime, anime when input is realistic, different medium, different line treatment, different color grading",
     "multiple panels, panel, grid, storyboard template, before/after, comparison, text, watermark, logo, signature, label, caption, annotation, arrow, callout",
     "different face, different face shape, different eye shape, different eye color, different nose, different mouth, different eyebrows, different skin tone, different hairstyle, different hair color, different hair length, different outfit, different clothing color, different accessories, different age",
     "medium shot when shot type is full body, close-up when shot type is mid, headshot, bust, half body, cropped at feet, missing feet, missing legs",
     "extreme low angle, worm's eye view, hero shot, extreme dutch angle, fisheye, wide-angle distortion",
     "extra people, bystander, crowd, extra limbs, deformed hands, extra fingers, blurred face, low quality",
-  ].join(", ");
+  ];
+  // 空镜(无角色)镜头:模型在只有场景参考图 + 风景剧情时仍倾向于补一个"主角"。
+  // 现有 extra people/bystander 拦不住"主角"(模型不把它当多余的人),
+  // 所以显式把 person/human/figure 等人物词加进禁词。
+  if (!hasCharacters) {
+    base.push(
+      "person, human, people, figure, character, silhouette, human body, face, hand, protagonist, character in scene, man, woman, boy, girl",
+    );
+  }
+  return base.join(", ");
 }
 
 export const generateStoryboardShotImage = createServerFn({ method: "POST" })
@@ -1194,9 +1222,25 @@ export const generateStoryboardShotImage = createServerFn({ method: "POST" })
     }
 
     const instruction = buildShotInstruction(data, styleSpec);
-    const negative = buildShotNegative();
+    const negative = buildShotNegative(data.characterImageUrls.length > 0);
 
     const requested = normalizeImageModelForRouting(data.model);
+    // 2026/07:查看提示词模式必须在路由分发前拦截 -- 否则非 ARK 路由
+    // (pixflow/lovable/claude360/tokenflash/revora/aigcfamily 等)会直接生成图,
+    // previewOnly 被忽略,查看提示词按钮失效。
+    if (data.previewOnly) {
+      return {
+        ok: true as const,
+        previewPrompt: appendNegative(instruction, negative),
+        negativePrompt: negative,
+        promptSize: "2K",
+        promptExtra: {
+          model: requested,
+          route: "I2I 分镜图",
+          refImages: images.join(" / "),
+        },
+      } as any;
+    }
     // 委托给 Pixflow(gpt-image-2 / gemini 图像模型)。gpt-image-* 有参考图时
     // 在 pixflow.functions.ts 内部切到 /v1/images/edits,避免误走 ARK/Seedream。
     {
@@ -1432,17 +1476,6 @@ export const generateStoryboardShotImage = createServerFn({ method: "POST" })
     const model = requested || defaultModel;
     const prompt = appendNegative(instruction, negative);
 
-    // 2026/06:查看提示词模式
-    if (data.previewOnly) {
-      return {
-        ok: true as const,
-        previewPrompt: prompt,
-        negativePrompt: negative,
-        promptSize: "2K",
-        promptExtra: { model, route: "I2I 分镜图", refImages: images.join(" / ") },
-      } as any;
-    }
-
     const result = await callSeedreamImages(
       { model, prompt, image: images, size: "2K", output_format: "png", watermark: false },
       apiKey,
@@ -1543,9 +1576,24 @@ export const regenerateStoryboardShot = createServerFn({ method: "POST" })
     }
 
     const instruction = buildRegenShotInstruction(data, styleSpec, usedCharCount, hasScene);
-    const negative = buildShotNegative();
+    const negative = buildShotNegative(data.characterImageUrls.length > 0);
 
     const requested = normalizeImageModelForRouting(data.model);
+    // 2026/07:查看提示词模式必须在路由分发前拦截(同 generateStoryboardShotImage)。
+    if (data.previewOnly) {
+      return {
+        ok: true as const,
+        previewPrompt: appendNegative(instruction, negative),
+        negativePrompt: negative,
+        promptSize: "2K",
+        promptExtra: {
+          model: requested,
+          route: "I2I 分镜重生",
+          userInstruction: data.userInstruction,
+          refImages: images.join(" / "),
+        },
+      } as any;
+    }
     {
       const { isLovableGatewayImageModel, callLovableGatewayImage } =
         await import("./lovableImage.functions");
@@ -1771,22 +1819,6 @@ export const regenerateStoryboardShot = createServerFn({ method: "POST" })
     const model = requested || defaultModel;
     const prompt = appendNegative(instruction, negative);
 
-    // 2026/06:查看提示词模式
-    if (data.previewOnly) {
-      return {
-        ok: true as const,
-        previewPrompt: prompt,
-        negativePrompt: negative,
-        promptSize: "2K",
-        promptExtra: {
-          model,
-          route: "I2I 分镜重生",
-          userInstruction: data.userInstruction,
-          refImages: images.join(" / "),
-        },
-      } as any;
-    }
-
     const result = await callSeedreamImages(
       { model, prompt, image: images, size: "2K", output_format: "png", watermark: false },
       apiKey,
@@ -1904,6 +1936,7 @@ function buildPitchDeckPrompt(opts: {
 }): string {
   const { data, styleSpec } = opts;
   const chars = data.characters || [];
+  const hasChars = chars.length > 0;
   const shots = data.shots || [];
   const shotCount = shots.length;
   const SUGGESTED_PANELS = Math.min(12, Math.max(4, shotCount || 6));
@@ -1912,11 +1945,15 @@ function buildPitchDeckPrompt(opts: {
   const refLabels = data.referenceImageLabels || [];
   const referenceImageBlock = refImgs.length
     ? [
-        `[REFERENCE IMAGES — ${refImgs.length} 张视觉锚点,用于人物/场景身份锁定]`,
+        `[REFERENCE IMAGES - ${refImgs.length} 张视觉锚点,${hasChars ? "用于人物/场景身份锁定" : "用于场景环境锁定"}]`,
         ...refImgs.map((_, i) => `  Image ${i + 1}: ${refLabels[i] ?? "(no label)"}`),
         ``,
-        `【身份锁定】同一角色在所有镜头中必须保持完全一致的面部特征、发型、体型、服装款式细节。参考图用于锁定"是谁"——脸型、五官比例、发型轮廓、身材比例、服装款式。`,
-        `【风格转化】参考图是彩色/渲染图,但本故事板要求纯铅笔线稿。请将参考图人物转化为铅笔素描表达:提取轮廓线、结构线、服装褶皱线,忽略参考图的色彩、光影、材质渲染。不要因为参考图是彩色就在素描里加灰阶阴影渲染。`,
+        hasChars
+          ? `【身份锁定】同一角色在所有镜头中必须保持完全一致的面部特征、发型、体型、服装款式细节。参考图用于锁定"是谁"--脸型、五官比例、发型轮廓、身材比例、服装款式。`
+          : `【场景锁定】参考图是场景环境图,所有帧的环境构图、空间布局、植被/地形/光照氛围必须与参考图一致。本故事板无角色,画面中不得出现任何人物。`,
+        hasChars
+          ? `【风格转化】参考图是彩色/渲染图,但本故事板要求纯铅笔线稿。请将参考图人物转化为铅笔素描表达:提取轮廓线、结构线、服装褶皱线,忽略参考图的色彩、光影、材质渲染。不要因为参考图是彩色就在素描里加灰阶阴影渲染。`
+          : `【风格转化】参考图是彩色/渲染图,但本故事板要求纯铅笔线稿。请将参考图场景转化为铅笔素描表达:提取轮廓线、结构线、纹理线,忽略参考图的色彩、光影、材质渲染。`,
       ].join("\n")
     : "";
 
@@ -1980,23 +2017,33 @@ function buildPitchDeckPrompt(opts: {
     `[STYLE]`,
     `- Pure pencil line-art: clean confident lines, varying thickness (thick contour, thin detail).`,
     `- Shadows via hatching only — no smudging, no gradients, no airbrush.`,
-    `- Realistic character proportions (not chibi/cartoon). Simple line backgrounds.`,
+    hasChars
+      ? `- Realistic character proportions (not chibi/cartoon). Simple line backgrounds.`
+      : `- Pure environment/landscape sketches. Simple line backgrounds. NO people, NO characters, NO human figures in any frame.`,
 
     `[LAYOUT — 16:9, one page]`,
     `- Top: short title bar (episode/group label + frame count ${SUGGESTED_PANELS}).`,
     `- Main: grid of ${SUGGESTED_PANELS} frames, left-to-right, top-to-bottom. Each frame = a pencil-sketch thumbnail of the shot.`,
-    `- Below each frame: ONE caption line — "镜头N · Ns · 景别 · 动作" (e.g. 镜头1 · 4s · 中景 · 陆深推门入场坐下). 景别用中文(远景/中景/近景/特写/过肩), 动作写明白但用短句非长段. Clean printed font, NOT handwritten.`,
+    hasChars
+      ? `- Below each frame: ONE caption line - "镜头N · Ns · 景别 · 动作" (e.g. 镜头1 · 4s · 中景 · 陆深推门入场坐下). 景别用中文(远景/中景/近景/特写/过肩), 动作写明白但用短句非长段. Clean printed font, NOT handwritten.`
+      : `- Below each frame: ONE caption line - "镜头N · Ns · 景别 · 环境" (e.g. 镜头1 · 4s · 远景 · 晨光穿透树冠洒落斑驳光影). 景别用中文(远景/中景/近景/特写/过肩), 环境写明白但用短句非长段. Clean printed font, NOT handwritten. **本故事板是纯环境/空镜, 画面中不得出现任何人物.**`,
     `- Bottom-right: top-down diagram (see [TOP-DOWN DIAGRAM]).`,
 
     `[CHARACTER CONSISTENCY]`,
-    `- Same character across ALL frames: identical face, hairstyle, body, clothing. No drift.`,
+    hasChars
+      ? `- Same character across ALL frames: identical face, hairstyle, body, clothing. No drift.`
+      : `- 本故事板无角色 (空镜/纯环境镜头). 画面中严禁出现任何人物、人影、人体、面部、手脚. 所有帧只画环境、光影、植被、道具.`,
 
     `[TOP-DOWN DIAGRAM — bottom-right, ~25% of page, labels LARGE and FEW]`,
     `Overhead floor-plan in pencil linework. Keep it simple — too many tiny labels cause garbled text. The diagram MUST cover the FULL spatial scope of ALL shots in [SHOT BREAKDOWN] — every shot's location and movement must appear, none skipped.`,
     `- Scene area: draw ALL locations the story spans, not just one room. If shots happen across multiple areas (e.g. street outside → doorway → shop interior), draw each as a labeled zone side by side. Do NOT cram everything into a single room outline. Place furniture/objects logically within each zone.`,
     `- 镜头运动路线 (camera paths): DASHED lines with arrowheads, tracing each shot's camera movement based on its camera / camMovement description in [SHOT BREAKDOWN] and the plot in [STORY PLOT]. Draw as many paths as the shots describe — a shot may have more than one movement (e.g. "镜头环绕林缺身体并拉远带出店铺外观" = a circular arc around the character + a pull-back line toward the shop exterior). Paths MUST be spatially correct: 环绕=circular arc, 推/拉=line in/out, 摇=arc sweep, 跟=follow path. Paths span all areas the shots cover. Do NOT draw separate camera markers or labels (no ▲, no CAM1/CAM2).`,
-    `- 人物动线 (character path): SOLID line + large arrowhead, from each character's start position (hollow square) to end position (filled square). The path MUST strictly follow the blocking in [SHOT BREAKDOWN] — where each character starts, moves to, and faces, across all areas. Add a small facing arrow (▷) at the end position; facing must be logical. Label start with the name.`,
-    `- Legend (2 lines): dashed arrow = 镜头运动路线 (camera path), solid arrow = 人物动线 (character path).`,
+    hasChars
+      ? `- 人物动线 (character path): SOLID line + large arrowhead, from each character's start position (hollow square) to end position (filled square). The path MUST strictly follow the blocking in [SHOT BREAKDOWN] - where each character starts, moves to, and faces, across all areas. Add a small facing arrow (▷) at the end position; facing must be logical. Label start with the name.`
+      : `- 本故事板无角色, 不画人物动线 (no character path). 只画场景区域和镜头运动路线.`,
+    hasChars
+      ? `- Legend (2 lines): dashed arrow = 镜头运动路线 (camera path), solid arrow = 人物动线 (character path).`
+      : `- Legend (1 line): dashed arrow = 镜头运动路线 (camera path).`,
 
     referenceImageBlock,
 
@@ -2015,10 +2062,14 @@ function buildPitchDeckPrompt(opts: {
     `[OUTPUT RULES]`,
     `1. Pencil line-art only — no color, no rendering beyond hatching.`,
     `2. 16:9 landscape, ${SUGGESTED_PANELS} frames.`,
-    `3. Character lock — same face/body/clothes across frames.`,
+    hasChars
+      ? `3. Character lock - same face/body/clothes across frames.`
+      : `3. No characters - 画面中不得出现任何人物 (空镜/纯环境镜头).`,
     `4. Story faithful — follow [STORY PLOT] and [SHOT BREAKDOWN], no invented content.`,
     `5. Text crisp & legible — Chinese shot types (远景/中景/近景/特写/过肩), no WS/MS/CU; no emoji (📷) or circled numbers (①②③); use plain labels (镜头1, 镜头2) + Arabic numerals.`,
-    `6. Diagram logic — the diagram covers ALL shots' locations (not just one room); camera paths (dashed) reflect each shot's camera movement described in [SHOT BREAKDOWN] (环绕/推/拉/摇/跟 → corresponding arcs/lines, may be multiple paths); character paths (solid) strictly follow the blocking in [SHOT BREAKDOWN].`,
+    hasChars
+      ? `6. Diagram logic - the diagram covers ALL shots' locations (not just one room); camera paths (dashed) reflect each shot's camera movement described in [SHOT BREAKDOWN] (环绕/推/拉/摇/跟 -> corresponding arcs/lines, may be multiple paths); character paths (solid) strictly follow the blocking in [SHOT BREAKDOWN].`
+      : `6. Diagram logic - the diagram covers ALL shots' locations (not just one room); camera paths (dashed) reflect each shot's camera movement described in [SHOT BREAKDOWN] (环绕/推/拉/摇/跟 -> corresponding arcs/lines). 本故事板无人物, 不画人物动线.`,
 
     `Begin. Output a 16:9 pencil line-art storyboard with ${SUGGESTED_PANELS} frames.`,
   ]
@@ -2031,8 +2082,8 @@ function buildPitchDeckPrompt(opts: {
  * 2026/07:对齐"去 emoji/带圈符号 + 纯文字标注"的新 prompt,
  * 去掉与"不用 ①②③/○●"约束矛盾的旧否定项,补 emoji/序号错误否定。
  */
-function buildPitchDeckNegative(): string {
-  return [
+function buildPitchDeckNegative(hasCharacters: boolean): string {
+  const base = [
     "garbled text, fake characters, pseudo Chinese, jumbled glyphs, broken strokes, illegible labels, blurry text, smeared text, distorted text, unreadable captions, mismatched font widths, comic font, decorative font, handwritten scribble",
     "emoji icons, camera emoji 📷, circled numbers ①②③, unicode symbols as labels, emoji in diagram, emoji in captions",
     "skipped frame numbers, duplicated numbers, out-of-order sequence labels, missing frame numbers",
@@ -2041,10 +2092,20 @@ function buildPitchDeckNegative(): string {
     "wrong aspect ratio, vertical 9:16, square 1:1, 4:3, portrait orientation",
     "extra characters not in [CHARACTERS], scenery not in [SCENE], invented plot, frames unrelated to [SHOT BREAKDOWN]",
     "low resolution, blurry, pixelated, JPEG artifacts, low quality, soft focus",
-    "missing top-down diagram, diagram without dashed camera movement paths, diagram without solid character movement lines, camera paths drawn as solid instead of dashed, character path drawn as dashed instead of solid, camera paths without arrowhead, character paths without arrowheads, separate camera markers or CAM1/CAM2 labels on the diagram, diagram without legend, character positions without start/end squares, character movement not matching the blocking in [SHOT BREAKDOWN], camera paths not matching the camera/camMovement descriptions in [SHOT BREAKDOWN], camera paths collapsed into one line when shots describe multiple movements, diagram too small to read labels, diagram covering only one room when the story spans multiple locations, missing shots' locations in the diagram",
+    hasCharacters
+      ? "missing top-down diagram, diagram without dashed camera movement paths, diagram without solid character movement lines, camera paths drawn as solid instead of dashed, character path drawn as dashed instead of solid, camera paths without arrowhead, character paths without arrowheads, separate camera markers or CAM1/CAM2 labels on the diagram, diagram without legend, character positions without start/end squares, character movement not matching the blocking in [SHOT BREAKDOWN], camera paths not matching the camera/camMovement descriptions in [SHOT BREAKDOWN], camera paths collapsed into one line when shots describe multiple movements, diagram too small to read labels, diagram covering only one room when the story spans multiple locations, missing shots' locations in the diagram"
+      : "missing top-down diagram, diagram without dashed camera movement paths, camera paths drawn as solid instead of dashed, camera paths without arrowhead, separate camera markers or CAM1/CAM2 labels on the diagram, diagram without legend, camera paths not matching the camera/camMovement descriptions in [SHOT BREAKDOWN], camera paths collapsed into one line when shots describe multiple movements, diagram too small to read labels, diagram covering only one room when the story spans multiple locations, missing shots' locations in the diagram",
     "frames without 镜头N label, frames without duration label, frames without shot type tag, frames without action description, long paragraph captions, English shot type abbreviations WS MS CU ECU OTS on frames",
     "art style drift from reference images, inconsistent rendering across sections, anime when reference is realistic, realistic when reference is anime, cel-shading when reference is painterly, 3D render when reference is 2D, watercolor when reference is digital illustration, different line treatment from reference, different color saturation from reference, different shading style from reference, mixed art styles, inconsistent brush strokes between frames, mixing 2D and 3D, mixing photoreal and stylized",
-  ].join(", ");
+  ];
+  // 空镜(无角色):故事板 prompt 默认强制"角色一致性+人物动线",模型会在纯风景剧情里凭空画人。
+  // 显式把 person/human/figure 加进禁词,且去掉"必须有人物动线"的否定项(否则模型为满足 negative 反而画人)。
+  if (!hasCharacters) {
+    base.push(
+      "person, human, people, figure, character, silhouette, human body, face, hand, protagonist, character in scene, man, woman, boy, girl",
+    );
+  }
+  return base.join(", ");
 }
 
 export const generateStoryboardPitchDeck = createServerFn({ method: "POST" })
@@ -2055,10 +2116,28 @@ export const generateStoryboardPitchDeck = createServerFn({ method: "POST" })
     // 2026/06:加 negative prompt 主攻 "文字乱码 / 文字模糊 / 伪手写"等
     // 文字渲染常见问题,呼应 prompt 里 RULE 3(文字最高优先级)。
     // **2026/06 二次强化**:加画风漂移 negative,防故事板插画跟参考图画风不一致
-    const negative = buildPitchDeckNegative();
+    const negative = buildPitchDeckNegative((data.characters || []).length > 0);
     const prompt = appendNegative(buildPitchDeckPrompt({ data, styleSpec }), negative);
 
     const requested = normalizeImageModelForRouting(data.model);
+    // 2026/07:查看提示词模式必须在路由分发前拦截 -- 否则非 ARK 路由
+    // (pixflow/claude360/tokenflash/revora/aigcfamily/shuci 等)会直接生成图,
+    // previewOnly 被忽略,查看提示词按钮失效。
+    if (data.previewOnly) {
+      return {
+        ok: true as const,
+        previewPrompt: prompt,
+        negativePrompt: negative,
+        promptSize: "3840x2160",
+        promptExtra: {
+          model: requested,
+          route: "故事板 (Pitch Deck)",
+          refImages: (data.referenceImages || []).join(" / ") || "(none)",
+          characters: (data.characters || []).map((c) => c.name).join(", ") || "(none)",
+          shotCount: String((data.shots || []).length),
+        },
+      } as any;
+    }
     if (requested.toLowerCase().startsWith("pixflow/")) {
       const { callPixflowImage } = await import("./pixflow.functions");
       const r = await callPixflowImage({
@@ -2261,23 +2340,6 @@ export const generateStoryboardPitchDeck = createServerFn({ method: "POST" })
     if (!apiKey) return { ok: false as const, error: "ARK_API_KEY not configured" };
     const model = requested || defaultModel;
 
-    // 2026/06:查看提示词模式 —— 跳过实际生成
-    if (data.previewOnly) {
-      return {
-        ok: true as const,
-        previewPrompt: prompt,
-        negativePrompt: negative,
-        promptSize: "3840x2160",
-        promptExtra: {
-          model,
-          route: "故事板 (Pitch Deck)",
-          refImages: (data.referenceImages || []).join(" / ") || "(none)",
-          characters: (data.characters || []).map((c) => c.name).join(", ") || "(none)",
-          shotCount: String((data.shots || []).length),
-        },
-      } as any;
-    }
-
     // 2026/06 用户重写:从 9:16 竖屏漫剧分镜改成 16:9 横向导演预制作 pitch deck。
     // 起初 2560×1440 (3.69M pixels) 卡在 Seedream 最小像素门槛上;**2026/06 二次提升**
     // 到 **3840×2160** (16:9 4K, 8.29M pixels) —— 用户要求"文字可读性最高优先",
@@ -2428,7 +2490,7 @@ export const regenerateStoryboardPitchDeck = createServerFn({ method: "POST" })
 
     const prompt = appendNegative(
       buildRegenPitchDeckPrompt({ data, styleSpec }),
-      buildPitchDeckNegative(),
+      buildPitchDeckNegative((data.characters || []).length > 0),
     );
 
     // 图 1 = 当前故事板(图布局 / 风格 / 文字位置的真值),后面跟原 referenceImages
@@ -2448,6 +2510,22 @@ export const regenerateStoryboardPitchDeck = createServerFn({ method: "POST" })
     // 路由:跟 generateStoryboardPitchDeck 完全对齐(Seedream 主力,
     // Pixflow/Lovable 不支持 4K 8.3M pixels 故跳过兜底)
     const requested = normalizeImageModelForRouting(data.model);
+    // 2026/07:查看提示词模式必须在路由分发前拦截 -- 即使选了非 Seedream 模型,
+    // 查看提示词也应能展示 prompt(否则用户看不到为什么报"只支持 Seedream")。
+    if (data.previewOnly) {
+      return {
+        ok: true as const,
+        previewPrompt: prompt,
+        negativePrompt: "",
+        promptSize: "3840x2160",
+        promptExtra: {
+          model: requested,
+          route: "I2I 故事板按意见重生",
+          userInstruction: data.userInstruction,
+          refImages: images.join(" / "),
+        },
+      } as any;
+    }
     if (requested && !isSeedreamModel(requested)) {
       return {
         ok: false as const,
@@ -2458,22 +2536,6 @@ export const regenerateStoryboardPitchDeck = createServerFn({ method: "POST" })
     const { apiKey, baseUrl, model: defaultModel } = getArkConfig();
     if (!apiKey) return { ok: false as const, error: "ARK_API_KEY not configured" };
     const model = requested || defaultModel;
-
-    // 2026/06:查看提示词模式
-    if (data.previewOnly) {
-      return {
-        ok: true as const,
-        previewPrompt: prompt,
-        negativePrompt: "",
-        promptSize: "3840x2160",
-        promptExtra: {
-          model,
-          route: "I2I 故事板按意见重生",
-          userInstruction: data.userInstruction,
-          refImages: images.join(" / "),
-        },
-      } as any;
-    }
 
     const result = await callSeedreamImages(
       {
