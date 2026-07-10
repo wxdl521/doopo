@@ -1279,11 +1279,11 @@ function WorkspacePage() {
   const [expandedEpisodes, setExpandedEpisodes] = useState<Set<number>>(new Set([1]));
   const [episodeEditing, setEpisodeEditing] = useState<number | null>(null);
   const [episodeDraft, setEpisodeDraft] = useState("");
-  // 2026/06:分镜组 plotText 行内编辑(跟 synopsis / episode 同模式,Pencil→textarea→Check)。
+  // 2026/07:分镜组「分镜描述」行内编辑(镜头分解 + 台词/剧情(跟 synopsis / episode 同模式,Pencil→textarea→Check)。
   // 用 Record 存每个 group 的 draft(只一个 group 同时处于编辑态,editingGroupId 决定)。
   // runEnterStoryboard 重置 storyboardGroups 时会清空这两个 state,避免旧 id 的 draft 残留。
   const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
-  const [groupPlotDraft, setGroupPlotDraft] = useState<Record<string, string>>({});
+  const [groupBreakdownDraft, setGroupBreakdownDraft] = useState<Record<string, string>>({});
   const episodeEditRef = useRef<HTMLTextAreaElement>(null);
   const [synopsisStreaming, setSynopsisStreaming] = useState(false);
   const [episodeStreaming, setEpisodeStreaming] = useState(false);
@@ -1429,6 +1429,10 @@ function WorkspacePage() {
   // callGenVideo 完成后若轮次不匹配(被中止或已被新一轮覆盖)则丢弃结果不写状态,
   // 避免旧的 hang 请求 resolve 后覆盖用户已重置的 groupVideos。
   const videoGenRoundRef = useRef<Record<string, number>>({});
+  // 2026/07:故事板生成轮次标记。generateMangaStoryboardForGroup 每次调用自增;
+  // 生成中点"重新生成"会发起新轮次,旧请求 resolve 后若轮次不匹配则丢弃,
+  // 避免旧请求把已中断的 running 覆盖成 succeeded/failed。
+  const storyboardGenRoundRef = useRef<Record<string, number>>({});
   const [selectedVideoIndex, setSelectedVideoIndex] = useState<Record<string, number>>({});
   const getActiveVideoEntry = useCallback(
     (groupId: string): VideoGenEntry | undefined => {
@@ -3897,7 +3901,7 @@ function WorkspacePage() {
       }));
       // 2026/06:同步清掉 plotText 行内编辑的 draft —— 老 group id 已被 wipe,留着会占内存
       // 且下一次编辑同 id 的新 group 时可能误用旧草稿。
-      setGroupPlotDraft({});
+      setGroupBreakdownDraft({});
       setEditingGroupId(null);
       const stream = (await callGenerateStoryboard({
         data: {
@@ -3988,6 +3992,53 @@ function WorkspacePage() {
     // 老数据可能含 "【本组分镜】..." 尾巴(2026/06 之前 composePlotText 的产物),
     // 剥掉,只保留 AI 写的那部分;新数据没这尾巴,split 不影响。
     return raw.split(/\n\n【本组分镜】/)[0].trimEnd();
+  }
+
+  /**
+   * 2026/07:分镜描述相关 helper。分镜组左侧模块从「剧情·Plot」改成「分镜描述」,
+   * 内容 = 镜头分解(与视频提示词 [SHOT BREAKDOWN] 同格式)+ plotText(含台词)。
+   * 用户编辑后存到 g.shotBreakdownText,视频生成 [SHOT BREAKDOWN] 段用它覆盖。
+   */
+  // 镜头分解:Shot N [起-止s] [景别] 动作 (camera: X) -> Shot 2 ... (与视频提示词同格式)
+  function buildShotBreakdown(g: StoryboardGroup): string {
+    return g.shots
+      .map((s, i) => {
+        const cam = s.camera ? ` (camera: ${s.camera})` : "";
+        const time =
+          s.startSec != null && s.endSec != null
+            ? ` [${s.startSec.toFixed(0)}-${s.endSec.toFixed(0)}s]`
+            : "";
+        return `Shot ${i + 1}${time} [${s.shotTypeLabel}] ${s.action}${cam}`;
+      })
+      .join(" → ");
+  }
+  // 分镜描述默认值 = 镜头分解 + plotText(含台词)。镜头分解拼在 plotText 前面。
+  function buildShotBreakdownDisplay(g: StoryboardGroup): string {
+    const breakdown = buildShotBreakdown(g);
+    const plot = (g.plotText ?? "").trim();
+    return plot ? `${breakdown}\n\n${plot}` : breakdown;
+  }
+  // 生效的分镜描述:已编辑用编辑值,否则用默认值。左侧展示 / 视频生成都走这里。
+  function effectiveShotBreakdown(g: StoryboardGroup): string {
+    const v = g.shotBreakdownText?.trim();
+    return v ?? buildShotBreakdownDisplay(g);
+  }
+
+  /**
+   * 生成故事板 / 分镜图时传给 server 的"剧情"文本。
+   *
+   * 2026/07 修复:之前这两条链路直接用 group.plotText(AI 切分时写死的原始剧情),
+   * 导致用户在左侧"分镜描述"里改了剧情后,故事板 / 分镜图仍按原剧情出图
+   * (只有视频生成链路用 effectiveShotBreakdown 是对的)。
+   *
+   * 现在与视频生成对齐:用户编辑过(g.shotBreakdownText 非空)-> 用编辑后的内容;
+   * 否则用 AI 原始剧情 g.plotText,保持未编辑 group 的原行为(零副作用)。
+   * slice(0, 2000) 守 server 端 ShotInput / PitchDeckInput 的 plotText max(2000)。
+   */
+  function effectivePlotText(g: StoryboardGroup): string {
+    const edited = g.shotBreakdownText?.trim();
+    if (edited) return edited.slice(0, 2000);
+    return (g.plotText ?? "").slice(0, 2000);
   }
 
   /**
@@ -4254,11 +4305,11 @@ function WorkspacePage() {
   }
 
   /**
-   * 2026/06:把 group.plotText 写回。draft 与现有值相同则 bail out。
-   * 不在 useEffect 里跑(避免在编辑过程中被 composePlotText 覆盖)。
+   * 2026/07:把分镜描述(groupBreakdownDraft)写回 g.shotBreakdownText。draft 与当前生效值
+   * 相同则 bail out。不在 useEffect 里跑(避免编辑过程中被覆盖)。
    */
-  function commitGroupPlot(groupId: string) {
-    const draft = groupPlotDraft[groupId];
+  function commitGroupBreakdown(groupId: string) {
+    const draft = groupBreakdownDraft[groupId];
     if (draft === undefined) {
       setEditingGroupId(null);
       return;
@@ -4268,7 +4319,9 @@ function WorkspacePage() {
       return {
         ...prev,
         storyboardGroups: prev.storyboardGroups.map((g) =>
-          g.id === groupId && g.plotText !== draft ? { ...g, plotText: draft } : g,
+          g.id === groupId && effectiveShotBreakdown(g) !== draft
+            ? { ...g, shotBreakdownText: draft }
+            : g,
         ),
       };
     });
@@ -4349,10 +4402,13 @@ function WorkspacePage() {
     try {
       const res = await callGenerateShotImage({
         data: {
-          plotText: group.plotText,
+          // 2026/07:空分镜组的占位 shot action 为空,用 plotText 兜底(截断 400),
+          // 否则 ShotInput.action(min 1) 拒绝报 "minimum 1, too small"。plotText 同理兜底。
+          plotText: effectivePlotText(group) || "(无剧情摘要)",
           shotType: shot.shotType,
           shotTypeLabel: shot.shotTypeLabel,
-          action: shot.action,
+          action:
+            (shot.action || "").trim() || (group.plotText || "").slice(0, 400) || "(未填写动作)",
           camera: shot.camera,
           characterImageUrls: charImageUrls,
           characterNames: charNames,
@@ -4502,10 +4558,13 @@ function WorkspacePage() {
         data: {
           referenceImageUrl: referenceUrl,
           userInstruction: instruction,
-          plotText: group.plotText,
+          // 2026/07:同 generateShotImageForGroup -- action 为空时用 plotText 兜底,
+          // 避免 RegenShotInput.action(min 1) 拒绝空分镜占位 shot。
+          plotText: effectivePlotText(group) || "(无剧情摘要)",
           shotType: shot.shotType,
           shotTypeLabel: shot.shotTypeLabel,
-          action: shot.action,
+          action:
+            (shot.action || "").trim() || (group.plotText || "").slice(0, 400) || "(未填写动作)",
           camera: shot.camera,
           characterImageUrls: charImageUrls,
           characterNames: charNames,
@@ -4750,20 +4809,12 @@ function WorkspacePage() {
       modeLabel = `多模态参考模式 (${shotUrls.length} 张分镜图 + ${Math.min(supRefs.length, 9 - shotUrls.length)} 张补充参考,共 ${referenceUrls.length} 张)`;
     }
 
-    // 拼整组镜头序列的 prompt
-    const shotDescriptions = shotImagesList
-      .map((x, i) => {
-        const cam = x.shot.camera ? ` (camera: ${x.shot.camera})` : "";
-        return `Shot ${i + 1} [${x.shot.shotTypeLabel}] ${x.shot.action}${cam}`;
-      })
-      .join(" → ");
     // 注入项目视觉风格
     const videoStyleSpec = resolveProjectStyle(project?.style);
     // 2026/07:parts 标记 tech 的项是给 AI 的技术指令(风格锁),预览时隐藏
     // (previewPrompt 只含核心可更改部分),实际生成用完整 prompt。
     const parts: { text: string; tech?: boolean }[] = [
-      { text: `[Storyboard sequence: ${group.plotText || ""}]` },
-      { text: `Shot breakdown: ${shotDescriptions}` },
+      { text: `Shot breakdown: ${effectiveShotBreakdown(group)}` },
       {
         text: `Render as a single continuous video clip that flows through all ${shotImagesList.length} shots in order.`,
       },
@@ -4925,18 +4976,6 @@ function WorkspacePage() {
 
     const modeLabel = `多模态参考模式 (${referenceUrls.length} 张参考图)`;
 
-    // 收集 shot 描述当作叙事提示(可选,无图也行,只是给文字 context)
-    const shotDescriptions = group.shots
-      .map((s, i) => {
-        const cam = s.camera ? ` (camera: ${s.camera})` : "";
-        const time =
-          s.startSec != null && s.endSec != null
-            ? ` [${s.startSec.toFixed(0)}-${s.endSec.toFixed(0)}s]`
-            : "";
-        return `Shot ${i + 1}${time} [${s.shotTypeLabel}] ${s.action}${cam}`;
-      })
-      .join(" → ");
-
     // 注入项目视觉风格
     const videoStyleSpec2 = resolveProjectStyle(project?.style);
     // 2026/07:parts 标记 tech 的项是给 AI 的技术指令(模式标记/风格锁/约束),
@@ -4949,12 +4988,8 @@ function WorkspacePage() {
       {
         text: `Your task: produce a single continuous video clip that **brings the storyboard to life** — following the shot sequence, camera positions, lighting transitions, and overall mood as laid out in the storyboard. Use the storyboard's frame breakdown as the structural guide for what happens when. Use the additional reference images to maintain character identity, environment consistency, and prop accuracy.`,
       },
-      { text: `[NARRATIVE REFERENCE — plot context, secondary]` },
-      { text: group.plotText || "(无剧情摘要)" },
       {
-        text: shotDescriptions
-          ? `[SHOT BREAKDOWN — for additional sequence hints]\n${shotDescriptions}`
-          : "",
+        text: `[SHOT BREAKDOWN – for additional sequence hints]\n${effectiveShotBreakdown(group)}`,
       },
       { text: buildStyleLock(videoStyleSpec2, "scene"), tech: true },
       { text: `[CONSTRAINTS]`, tech: true },
@@ -5264,10 +5299,11 @@ function WorkspacePage() {
   async function generateMangaStoryboardForGroup(groupId: string) {
     const group = data.storyboardGroups.find((g) => g.id === groupId);
     if (!group) return;
-    if (groupStoryboards[groupId]?.at(-1)?.status === "running") {
-      toast.message("该故事板正在生成中…");
-      return;
-    }
+    // 2026/07:支持生成中"重新生成" -- 不再拦截 running,改为自增轮次。
+    // 旧请求 resolve 后若轮次不匹配则丢弃,避免覆盖新一轮的状态。
+    const round = (storyboardGenRoundRef.current[groupId] =
+      (storyboardGenRoundRef.current[groupId] ?? 0) + 1);
+    const isStale = () => storyboardGenRoundRef.current[groupId] !== round;
 
     setGroupStoryboards((m) => {
       const entries = [...(m[groupId] ?? [])];
@@ -5375,24 +5411,30 @@ function WorkspacePage() {
     // 这里把 startSec/endSec 一起传给 I2I 生成 call,prompt 里用时间范围描述)
     const groupDuration = (group.endSec ?? 0) - (group.startSec ?? 0);
     const perShotSec = group.shots.length > 0 ? groupDuration / group.shots.length : 5;
-    const shots = group.shots.map((s) => ({
-      shotType: s.shotType,
-      shotTypeLabel: s.shotTypeLabel,
-      action: s.action,
-      camera: s.camera,
-      // 优先用真实 startSec/endSec 算时长,fallback perShotSec
-      durationSec: s.startSec != null && s.endSec != null ? s.endSec - s.startSec : perShotSec,
-      // 2026/06:也把 startSec / endSec 透传到 server,prompt 里可用精确时间区间
-      startSec: s.startSec,
-      endSec: s.endSec,
-    }));
+    // 2026/07:跳过 action 为空的占位 shot。新建空分镜组默认带 1 个 action=""
+    // 的占位 shot,用户只填了组级 plotText 没填 shot 级动作;空 action 会被
+    // server 端 PitchDeckShotSchema.action(min 1) 拒绝,报 "minimum 1, too small"。
+    // 过滤后若无任何 shot,prompt 走 "(derive from plot)" 让模型按剧情自由分格。
+    const shots = group.shots
+      .filter((s) => (s.action || "").trim().length > 0)
+      .map((s) => ({
+        shotType: s.shotType,
+        shotTypeLabel: s.shotTypeLabel,
+        action: s.action,
+        camera: s.camera,
+        // 优先用真实 startSec/endSec 算时长,fallback perShotSec
+        durationSec: s.startSec != null && s.endSec != null ? s.endSec - s.startSec : perShotSec,
+        // 2026/06:也把 startSec / endSec 透传到 server,prompt 里可用精确时间区间
+        startSec: s.startSec,
+        endSec: s.endSec,
+      }));
 
     try {
       const res = await callGenStoryboard({
         data: {
           projectStyle: project?.style,
           groupLabel: group.plotText?.slice(0, 60),
-          plotText: group.plotText || "(无剧情摘要)",
+          plotText: effectivePlotText(group) || "(无剧情摘要)",
           scene,
           characters,
           shots,
@@ -5403,6 +5445,7 @@ function WorkspacePage() {
         },
       });
       // 2026/06:查看提示词模式拦截 —— 把 running 状态清掉(也别标 failed)
+      if (isStale()) return; // 2026/07:轮次检查,被新轮次"重新生成"覆盖则丢弃
       if (interceptPromptPreview(`第 ${group.index} 组 · 故事板`, res)) {
         setGroupStoryboards((m) => {
           const entries = m[groupId];
@@ -5423,6 +5466,7 @@ function WorkspacePage() {
       if (res.ok && res.url) {
         // 2026/06:和其他图片一致 —— 先 await 转 base64 确保立即可见,入库 Supabase 作为额外兜底
         const base64Url = await toBase64WithFallback(res.url);
+        if (isStale()) return; // 2026/07:轮次检查,toBase64 期间可能被新轮次覆盖
         let finalUrl = base64Url ?? res.url;
         if (base64Url) {
           if (user && workspaceId) {
@@ -5430,6 +5474,7 @@ function WorkspacePage() {
               data: { workspaceId, groupId, url: res.url },
             })
               .then((r) => {
+                if (isStale()) return; // 2026/07:轮次检查,异步回调时可能已被覆盖
                 if (r.ok && r.persisted && r.url) {
                   setGroupStoryboards((m) => {
                     const entries = m[groupId];
@@ -5451,6 +5496,7 @@ function WorkspacePage() {
               const r = await callSaveOneStoryboard({
                 data: { workspaceId, groupId, url: res.url },
               });
+              if (isStale()) return; // 2026/07:轮次检查
               if (r.ok && r.persisted && r.url) {
                 finalUrl = r.url;
                 toast.success("故事板已生成");
@@ -5489,6 +5535,7 @@ function WorkspacePage() {
         toast.error(classifyError(res?.error, "故事板生成失败"));
       }
     } catch (e) {
+      if (isStale()) return; // 2026/07:轮次检查,await 抛错时可能已被新轮次覆盖
       setGroupStoryboards((m) => {
         const entries = [...(m[groupId] ?? [])];
         const lastIdx = entries.length - 1;
@@ -5574,15 +5621,19 @@ function WorkspacePage() {
 
     const groupDuration = (group.endSec ?? 0) - (group.startSec ?? 0);
     const perShotSec = group.shots.length > 0 ? groupDuration / group.shots.length : 5;
-    const shots = group.shots.map((s) => ({
-      shotType: s.shotType,
-      shotTypeLabel: s.shotTypeLabel,
-      action: s.action,
-      camera: s.camera,
-      durationSec: s.startSec != null && s.endSec != null ? s.endSec - s.startSec : perShotSec,
-      startSec: s.startSec,
-      endSec: s.endSec,
-    }));
+    // 2026/07:同 generateMangaStoryboardForGroup -- 跳过 action 为空的占位 shot,
+    // 否则空分镜组重生故事板也会被 PitchDeckShotSchema.action(min 1) 拒绝。
+    const shots = group.shots
+      .filter((s) => (s.action || "").trim().length > 0)
+      .map((s) => ({
+        shotType: s.shotType,
+        shotTypeLabel: s.shotTypeLabel,
+        action: s.action,
+        camera: s.camera,
+        durationSec: s.startSec != null && s.endSec != null ? s.endSec - s.startSec : perShotSec,
+        startSec: s.startSec,
+        endSec: s.endSec,
+      }));
 
     // 收集参考图:场景 1 张 + 角色 ≤7 张,Seedream 上限 8 张(2026/07 按用户要求放开)
     const REF_MAX = 8;
@@ -5618,7 +5669,7 @@ function WorkspacePage() {
           userInstruction: instruction,
           projectStyle: project?.style,
           groupLabel: group.plotText?.slice(0, 60),
-          plotText: group.plotText || "(无剧情摘要)",
+          plotText: effectivePlotText(group) || "(无剧情摘要)",
           scene,
           characters,
           shots,
@@ -9445,16 +9496,16 @@ function WorkspacePage() {
                           缩到 max-h-28(112px)以匹配新行高。 */}
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                           {/* 左:plot 描述(可编辑)+ 角色列表(增/减 + look-switcher)+ 场景选择 */}
-                          <div className="rounded-lg border border-border bg-bg-base/40 p-3 space-y-2 max-h-[280px] overflow-y-auto">
-                            {/* 剧情 · Plot label + 编辑/完成 切换 */}
+                          <div className="rounded-lg border border-border bg-bg-base/40 p-3 space-y-2 max-h-[420px] overflow-y-auto">
+                            {/* 分镜描述 label + 编辑/完成 切换 */}
                             <div className="flex items-center justify-between">
                               <div className="text-[10px] tracking-widest uppercase text-text-muted">
-                                剧情 · Plot
+                                分镜描述
                               </div>
                               {editingGroupId === g.id ? (
                                 <button
                                   type="button"
-                                  onClick={() => commitGroupPlot(g.id)}
+                                  onClick={() => commitGroupBreakdown(g.id)}
                                   className="inline-flex items-center gap-1 text-[10px] text-accent hover:text-accent/80 transition"
                                   title="保存修改"
                                 >
@@ -9466,34 +9517,40 @@ function WorkspacePage() {
                                   onClick={() => {
                                     // 切到其他 group 编辑时,先把上一个 group 的草稿落盘
                                     if (editingGroupId && editingGroupId !== g.id) {
-                                      commitGroupPlot(editingGroupId);
+                                      commitGroupBreakdown(editingGroupId);
                                     }
                                     setEditingGroupId(g.id);
-                                    setGroupPlotDraft((prev) => ({ ...prev, [g.id]: g.plotText }));
+                                    setGroupBreakdownDraft((prev) => ({
+                                      ...prev,
+                                      [g.id]: effectiveShotBreakdown(g),
+                                    }));
                                   }}
                                   className="inline-flex items-center gap-1 text-[10px] text-text-muted hover:text-accent transition"
-                                  title="编辑剧情"
+                                  title="编辑分镜描述"
                                 >
                                   <Pencil size={11} /> 编辑
                                 </button>
                               )}
                             </div>
-                            {/* plotText:预读 <pre> / 编辑 <textarea> 切换 */}
+                            {/* 分镜描述:预读 <pre> / 编辑 <textarea> 切换 */}
                             {editingGroupId === g.id ? (
                               <textarea
-                                value={groupPlotDraft[g.id] ?? g.plotText}
+                                value={groupBreakdownDraft[g.id] ?? effectiveShotBreakdown(g)}
                                 onChange={(e) =>
-                                  setGroupPlotDraft((prev) => ({ ...prev, [g.id]: e.target.value }))
+                                  setGroupBreakdownDraft((prev) => ({
+                                    ...prev,
+                                    [g.id]: e.target.value,
+                                  }))
                                 }
-                                className="w-full text-[11px] text-text-secondary leading-relaxed font-mono p-2 rounded border border-accent/40 bg-bg-elevated/40 min-h-[80px] resize-y"
+                                className="w-full text-[11px] text-text-secondary leading-relaxed font-mono p-2 rounded border border-accent/40 bg-bg-elevated/40 min-h-[180px] resize-y"
                                 autoFocus
                               />
                             ) : (
-                              // 2026/06 改造:plotText 改为按 shot 拆分的结构化列表,
-                              // 每行格式: 分镜N: Xs-Xs · 景别 · 动作 · 镜头。
-                              // 用 font-mono 等宽字体让排版对齐。
+                              // 2026/07 改造:左侧改为「分镜描述」= 镜头分解(Shot N [时段] [景别]
+                              // 动作 (camera: X) -> ...)+ plotText(含台词),与视频生成 [SHOT BREAKDOWN]
+                              // 同源;编辑后存 g.shotBreakdownText 覆盖该段。font-mono 等宽对齐。
                               <pre className="text-[11px] text-text-secondary leading-relaxed font-mono whitespace-pre-wrap break-words m-0">
-                                {g.plotText}
+                                {effectiveShotBreakdown(g)}
                               </pre>
                             )}
                             {/* 资产:角色 / 场景 / 道具 三列统一布局(2026/06) */}
@@ -10044,15 +10101,25 @@ function WorkspacePage() {
                             })()}
                             {getActiveStoryboard(g.id)?.status === "running" &&
                             getActiveStoryboard(g.id)?.startedAt ? (
-                              <div className="w-full text-[10px] py-1 rounded border border-accent/40 bg-accent-dim/10 text-accent inline-flex items-center justify-center gap-1.5">
-                                <Loader2 size={9} className="animate-spin" />
-                                <span>
-                                  生成中…{" "}
-                                  {formatElapsed(
-                                    (Date.now() - getActiveStoryboard(g.id)!.startedAt!) / 1000,
-                                  )}
-                                  <span className="text-text-muted ml-1">· 预计 1-3 分钟</span>
-                                </span>
+                              <div className="w-full flex items-center gap-1">
+                                <div className="flex-1 text-[10px] py-1 rounded border border-accent/40 bg-accent-dim/10 text-accent inline-flex items-center justify-center gap-1.5">
+                                  <Loader2 size={9} className="animate-spin" />
+                                  <span>
+                                    生成中…{" "}
+                                    {formatElapsed(
+                                      (Date.now() - getActiveStoryboard(g.id)!.startedAt!) / 1000,
+                                    )}
+                                    <span className="text-text-muted ml-1">· 预计 1-3 分钟</span>
+                                  </span>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => void generateMangaStoryboardForGroup(g.id)}
+                                  className="shrink-0 text-[10px] py-1 px-2 rounded border border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent transition inline-flex items-center gap-1"
+                                  title="中断当前并重新生成"
+                                >
+                                  <RefreshCw size={9} /> 重新生成
+                                </button>
                               </div>
                             ) : (
                               (!getActiveStoryboard(g.id) ||
@@ -10507,19 +10574,43 @@ function WorkspacePage() {
                           key={`${u}-${i}`}
                           role="button"
                           tabIndex={0}
-                          onClick={() => setSelectedGenIdx(i)}
+                          onClick={() => {
+                            // 2026/07:对齐场景/道具 -- 点缩略图直接选为推荐(reference),
+                            // 同时切换大图到这张;再次点击已推荐的图则取消推荐。
+                            setSelectedGenIdx(i);
+                            setSelectedCharImages((m) => {
+                              if (m[imageKey] === u) {
+                                const { [imageKey]: _, ...rest } = m;
+                                return rest;
+                              }
+                              return { ...m, [imageKey]: u };
+                            });
+                          }}
                           onKeyDown={(e) => {
                             if (e.key === "Enter" || e.key === " ") {
                               e.preventDefault();
                               setSelectedGenIdx(i);
+                              setSelectedCharImages((m) => {
+                                if (m[imageKey] === u) {
+                                  const { [imageKey]: _, ...rest } = m;
+                                  return rest;
+                                }
+                                return { ...m, [imageKey]: u };
+                              });
                             }
                           }}
                           className={`block w-full rounded border-2 overflow-hidden transition cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 ${
                             i === currentIdx
                               ? "border-accent"
-                              : "border-border hover:border-accent/60"
+                              : selectedCharImages[imageKey] === u
+                                ? "border-emerald-400/70"
+                                : "border-border hover:border-accent/60"
                           }`}
-                          title={`第 ${i + 1} 张`}
+                          title={
+                            selectedCharImages[imageKey] === u
+                              ? "已是推荐(reference) - 再点取消"
+                              : "把这张设为推荐(分镜 reference)"
+                          }
                         >
                           <div className="relative w-full aspect-[3/4] bg-bg-base">
                             <img
@@ -10539,35 +10630,13 @@ function WorkspacePage() {
                             <span className="absolute bottom-1 right-1 px-1 py-0.5 rounded bg-black/60 text-white text-[9px] tabular-nums">
                               #{i + 1}
                             </span>
-                            {/* 2026/06:每张历史缩略图可独立"设为推荐"。点星标把
-                              这张 url 钉到 selectedCharImages[imageKey],作为分镜
-                              流程的 reference。互斥:同 imageKey 只能选 1 张,
-                              这里选了一张会自动覆盖前一次。 */}
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedCharImages((m) => {
-                                  if (m[imageKey] === u) {
-                                    const { [imageKey]: _, ...rest } = m;
-                                    return rest;
-                                  }
-                                  return { ...m, [imageKey]: u };
-                                });
-                              }}
-                              className={`absolute top-1 right-1 inline-flex items-center justify-center w-5 h-5 rounded-full transition ${
-                                selectedCharImages[imageKey] === u
-                                  ? "bg-accent text-accent-foreground shadow-md"
-                                  : "bg-black/60 text-white hover:bg-black/90"
-                              }`}
-                              title={
-                                selectedCharImages[imageKey] === u
-                                  ? "已是推荐 — 再点取消"
-                                  : "把这张设为推荐(分镜 reference)"
-                              }
-                            >
-                              <Target size={10} />
-                            </button>
+                            {/* 2026/07:已选为推荐角标(跟场景/道具的"选中"角标一致)。
+                              点缩略图即选为推荐,无需再点单独按钮。 */}
+                            {selectedCharImages[imageKey] === u && (
+                              <span className="absolute top-1 right-1 px-1 py-0.5 rounded bg-emerald-500 text-white text-[9px] font-bold inline-flex items-center gap-0.5 shadow-md">
+                                <Target size={9} /> 推荐
+                              </span>
+                            )}
                           </div>
                         </div>
                       ))
@@ -10677,47 +10746,8 @@ function WorkspacePage() {
                           />
                         ))}
                       </div>
-                      {/* 选中按钮(2026/06) — 跟卡片本体右上角的"选中"对称。
-                        在预览模态里也能直接钉住当前选中的图,不用回卡片本体点。
-                        镜像逻辑完全一致:imageKey → setSelectedCharImages。
-                        2026/06 Bugfix:`cur` 必须跟随左栏缩略图选中的 currentUrl
-                        (即 generations[currentIdx]),不能写 .at(-1) 否则永远钉最新。 */}
-                      {(() => {
-                        const imageKey =
-                          previewTarget.lookId == null ? c.id : `${c.id}::${previewTarget.lookId}`;
-                        const cur = currentUrl; // 跟随左栏选中的图,不是最新
-                        if (!cur) return null;
-                        const isPinned = selectedCharImages[imageKey] === cur;
-                        return (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setSelectedCharImages((m) => {
-                                if (m[imageKey] === cur) {
-                                  const { [imageKey]: _, ...rest } = m;
-                                  return rest;
-                                }
-                                return { ...m, [imageKey]: cur };
-                              });
-                            }}
-                            className={`mt-1 w-full text-[10px] py-1 rounded border inline-flex items-center justify-center gap-1 transition ${
-                              isPinned
-                                ? "bg-accent border-accent text-accent-foreground"
-                                : "border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent"
-                            }`}
-                          >
-                            {isPinned ? (
-                              <>
-                                <Check size={10} /> 已选中此图作为 reference
-                              </>
-                            ) : (
-                              <>
-                                <Target size={10} /> 选中此图作为 reference
-                              </>
-                            )}
-                          </button>
-                        );
-                      })()}
+                      {/* 2026/07:选为推荐改为点左栏缩略图直接生效(对齐场景/道具),
+                        此处原"选中此图作为 reference"按钮已移除。 */}
                     </div>
 
                     {/* 2026/07:角色参考音频试听(只读展示,上传/替换/删除走角色卡 Popover) */}
