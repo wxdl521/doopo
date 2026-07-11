@@ -32,6 +32,7 @@ import { generateImage, regenerateSceneImage } from "../lib/seedream.functions";
 import { logImageMeta } from "../lib/logImageMeta";
 import { uploadLocalImage, serverUrlToBase64 } from "../lib/uploadImage.functions";
 import { audioFileToWavDataUrl } from "../lib/audioWav";
+import { estimateDialogueSpeechSec } from "../lib/dialogueDuration";
 import { regenerateCharacterLook } from "../lib/characterRegen.functions";
 import { describeCharacterImage } from "../lib/describeCharacterImage.functions";
 import {
@@ -4015,11 +4016,15 @@ function WorkspacePage() {
     return g.shots
       .map((s, i) => {
         const cam = s.camera ? ` (camera: ${s.camera})` : "";
+        // 2026/07:补运镜(镜头动线)/走位(人物动线)到 Shot breakdown,
+        // 视频生成 prompt 才能遵循故事板的镜头动线与人物动线,不止是机位。
+        const mov = s.cameraMovement ? ` | 运镜: ${s.cameraMovement}` : "";
+        const blk = s.characterBlocking ? ` | 走位: ${s.characterBlocking}` : "";
         const time =
           s.startSec != null && s.endSec != null
             ? ` [${s.startSec.toFixed(0)}-${s.endSec.toFixed(0)}s]`
             : "";
-        return `Shot ${i + 1}${time} [${s.shotTypeLabel}] ${s.action}${cam}`;
+        return `Shot ${i + 1}${time} [${s.shotTypeLabel}] ${s.action}${cam}${mov}${blk}`;
       })
       .join(" → ");
   }
@@ -4724,6 +4729,33 @@ function WorkspacePage() {
   };
   const propNameOf = (pid: string) => data.props.find((x) => x.id === pid)?.name ?? pid;
 
+  /**
+   * 2026/07:视频时长 = 组内 shot 时长总和(每个 shot 2~5s,整组 ≤10s)。
+   * 优先用 shot 的 startSec/endSec 求和;无 shot 时长则 fallback 到组区间;再无则 10s。
+   * 夹在 [5,10]:5s 下限(ARK Seedance 最小支持时长),10s 上限(单段视频上限)。
+   */
+  function groupVideoDurationSec(group: StoryboardGroup): number {
+    let sum = 0;
+    for (const s of group.shots) {
+      if (s.startSec != null && s.endSec != null && s.endSec > s.startSec) {
+        sum += s.endSec - s.startSec;
+      }
+    }
+    const span = sum > 0 ? sum : (group.endSec ?? 0) - (group.startSec ?? 0);
+    if (span <= 0) return 10;
+    let dur = Math.min(10, Math.max(5, Math.round(span)));
+
+    // 2026/07 兜底:视频时长至少要够说完台词(≤10s)。LLM 切分时可能 shot 时长
+    // 偏短但塞了较多台词,这里按台词字数兜底拉长(只向上、不超 10s,绝不缩短)。
+    // 实际发给视频模型的台词在 effectiveShotBreakdown(group) 里(含用户编辑),按它估。
+    const dialogueSec = estimateDialogueSpeechSec(effectiveShotBreakdown(group));
+    if (dialogueSec > 0) {
+      const need = Math.min(10, dialogueSec + 1); // +1s 收尾余量,封顶 10
+      if (need > dur) dur = need;
+    }
+    return dur;
+  }
+
   /** 按分镜图生成视频 —— 收集参考图 + 拼 prompt。无分镜图时 toast 并返回 null。 */
   function buildVideoGenPayloadForShots(groupId: string): VideoGenPayload | null {
     const group = data.storyboardGroups.find((g) => g.id === groupId);
@@ -4833,6 +4865,9 @@ function WorkspacePage() {
         text: `Camera transitions, lighting continuity, and character appearance MUST stay consistent across all shots.`,
       },
       { text: `Cinematic motion, smooth camera movement, 24fps.` },
+      {
+        text: `Follow each shot's 运镜 (camera movement) and 走位 (character blocking) exactly as described in the Shot breakdown above: the camera moves as specified (push/pull/pan/track/orbit/fixed), characters move along their described paths, and fixed-camera shots keep the camera still. Do not invent extra camera movement or character motion not in the breakdown.`,
+      },
       { text: buildStyleLock(videoStyleSpec, "scene"), tech: true },
       {
         text:
@@ -4893,7 +4928,7 @@ function WorkspacePage() {
         first_frame: firstFrame || "(none)",
         last_frame: lastFrame || "(none)",
         referenceImages: referenceUrls.length ? `${referenceUrls.length} 张` : "(none)",
-        duration: "10s (fixed)",
+        duration: `${groupVideoDurationSec(group)}s`,
         ratio: project?.aspect ?? "16:9",
       },
     };
@@ -5017,6 +5052,10 @@ function WorkspacePage() {
         tech: true,
       },
       {
+        text: `- Follow the storyboard's top-down camera diagram: each shot's camera movement (dashed path labeled 镜头N) and character blocking (solid path) must be reflected in the video - camera moves along its labeled path, fixed-camera shots (▲ 镜头N) stay still, characters follow their blocking paths. Also follow the 运镜 / 走位 hints in [SHOT BREAKDOWN].`,
+        tech: true,
+      },
+      {
         text: `- The attached storyboard image is a sketch/line-art reference for composition ONLY. Your output MUST be rendered in the project's visual style described above — full color, full rendering, NOT line-art, NOT sketch.`,
         tech: true,
       },
@@ -5069,7 +5108,7 @@ function WorkspacePage() {
         first_frame: "(none)",
         last_frame: "(none)",
         referenceImages: `${referenceUrls.length} 张`,
-        duration: `${Math.min(10, Math.max(5, Math.round(group.endSec - group.startSec)))}s`,
+        duration: `${groupVideoDurationSec(group)}s`,
         ratio: project?.aspect ?? "16:9",
       },
     };
@@ -5160,13 +5199,13 @@ function WorkspacePage() {
                 ...commonData,
                 imageUrl: payload.firstFrame,
                 lastFrameImageUrl: payload.lastFrame,
-                duration: 10,
+                duration: groupVideoDurationSec(group),
               },
             })
           : await callGenVideo({
               data: {
                 ...commonData,
-                duration: Math.min(10, Math.max(5, Math.round(group.endSec - group.startSec))),
+                duration: groupVideoDurationSec(group),
               },
             });
       if (videoGenRoundRef.current[groupId] !== myRound) return false; // 已被中止或新一轮覆盖,丢弃
@@ -5433,6 +5472,8 @@ function WorkspacePage() {
         shotTypeLabel: s.shotTypeLabel,
         action: s.action,
         camera: s.camera,
+        cameraMovement: s.cameraMovement,
+        characterBlocking: s.characterBlocking,
         // 优先用真实 startSec/endSec 算时长,fallback perShotSec
         durationSec: s.startSec != null && s.endSec != null ? s.endSec - s.startSec : perShotSec,
         // 2026/06:也把 startSec / endSec 透传到 server,prompt 里可用精确时间区间
@@ -5641,6 +5682,8 @@ function WorkspacePage() {
         shotTypeLabel: s.shotTypeLabel,
         action: s.action,
         camera: s.camera,
+        cameraMovement: s.cameraMovement,
+        characterBlocking: s.characterBlocking,
         durationSec: s.startSec != null && s.endSec != null ? s.endSec - s.startSec : perShotSec,
         startSec: s.startSec,
         endSec: s.endSec,
@@ -9423,6 +9466,18 @@ function WorkspacePage() {
                                 {g.startSec.toFixed(0)}s → {g.endSec.toFixed(0)}s ·{" "}
                                 {(g.endSec - g.startSec).toFixed(0)}s
                               </span>
+                              {/* 2026/07:台词可说完性兜底 — 台词超 10s 硬上限的组打警告标记,提示拆组/精简 */}
+                              {g.dialogueOverloadSec != null && g.dialogueOverloadSec > 0 && (
+                                <span
+                                  className="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/40 text-amber-600 dark:text-amber-400"
+                                  title={t("sb_dialogue_overload_hint")}
+                                >
+                                  ⚠{" "}
+                                  {t("sb_dialogue_overload", {
+                                    sec: Math.ceil(g.dialogueOverloadSec),
+                                  })}
+                                </span>
+                              )}
                               {g.sceneLocation && (
                                 <span className="px-1.5 py-0.5 rounded bg-bg-base border border-border">
                                   📍 {g.sceneLocation}

@@ -1494,6 +1494,11 @@ export const zh = {
   home_community_view_all: "查看全部",
   home_community_empty_pre: "还没有社区作品。前往",
   home_community_empty_post: "分享你的第一个作品。",
+
+  // ============ Storyboard dialogue budget warning ============
+  sb_dialogue_overload: "台词超长约 {{sec}}s，建议拆组或精简",
+  sb_dialogue_overload_hint:
+    "该组台词在单个视频(≤10s)内说不完，生成的视频可能漏台词或语序混乱。请拆成更多分镜组，或精简台词。",
 };
 
 export type Translations = typeof zh;

@@ -7,7 +7,9 @@
  *
  * 音频用 Edge TTS 生成(中文)。扩充风格:加 mp3 到 public/voice-styles/ + 在下面加一项。
  * 注意:audioUrl 是相对路径,buildVideoGenPayload 收集时会拼成绝对 URL
- * (Seedance 在云端,需要公网可访问的完整 URL;dev localhost 测不了克隆效果)。
+ * (Seedance 在云端,需要公网可访问的完整 URL)。dev 下拼出来是 http://localhost/...,
+ * 后端 generateVideo 里的 persistAudioUrl 会把它下载转存到 Supabase 拿公网签名 URL,
+ * 所以 dev 也能用预设音色克隆。
  */
 export type VoiceStyle = {
   id: string;

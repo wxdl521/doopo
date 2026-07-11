@@ -1517,4 +1517,9 @@ export const en: Translations = {
   home_community_view_all: "View all",
   home_community_empty_pre: "No community works yet. Head to ",
   home_community_empty_post: "to share your first work.",
+
+  // ============ Storyboard dialogue budget warning ============
+  sb_dialogue_overload: "Dialogue ~{{sec}}s over, split or trim",
+  sb_dialogue_overload_hint:
+    "The dialogue in this group cannot be spoken clearly within a single video (≤10s). The generated video may omit lines or produce garbled speech. Please split into more storyboard groups or trim the dialogue.",
 };
