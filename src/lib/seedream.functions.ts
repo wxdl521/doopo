@@ -1939,7 +1939,7 @@ function buildPitchDeckPrompt(opts: {
   const hasChars = chars.length > 0;
   const shots = data.shots || [];
   const shotCount = shots.length;
-  const SUGGESTED_PANELS = Math.min(12, Math.max(4, shotCount || 6));
+  const SUGGESTED_PANELS = Math.min(12, Math.max(1, shotCount || 6));
 
   const refImgs = data.referenceImages || [];
   const refLabels = data.referenceImageLabels || [];
@@ -2025,8 +2025,8 @@ function buildPitchDeckPrompt(opts: {
     `- Top: short title bar (episode/group label + frame count ${SUGGESTED_PANELS}).`,
     `- Main: grid of ${SUGGESTED_PANELS} frames, left-to-right, top-to-bottom. Each frame = a pencil-sketch thumbnail of the shot.`,
     hasChars
-      ? `- Below each frame: ONE caption line - "镜头N · Ns · 景别 · 动作" (e.g. 镜头1 · 4s · 中景 · 陆深推门入场坐下). 景别用中文(远景/中景/近景/特写/过肩), 动作写明白但用短句非长段. Clean printed font, NOT handwritten.`
-      : `- Below each frame: ONE caption line - "镜头N · Ns · 景别 · 环境" (e.g. 镜头1 · 4s · 远景 · 晨光穿透树冠洒落斑驳光影). 景别用中文(远景/中景/近景/特写/过肩), 环境写明白但用短句非长段. Clean printed font, NOT handwritten. **本故事板是纯环境/空镜, 画面中不得出现任何人物.**`,
+      ? `- Below each frame: ONE caption line - "镜头N · Ns · 景别 · 动作 · 机位:camera" (e.g. 镜头1 · 4s · 中景 · 陆深推门入场坐下 · 机位:平视50mm讲台左侧). 景别用中文(远景/中景/近景/特写/过肩), 动作写明白但用短句非长段, 机位取自 [SHOT BREAKDOWN] 该镜头的 camera 字段(焦段/角度/位置). Clean printed font, NOT handwritten.`
+      : `- Below each frame: ONE caption line - "镜头N · Ns · 景别 · 环境 · 机位:camera" (e.g. 镜头1 · 4s · 远景 · 晨光穿透树冠洒落斑驳光影 · 机位:平视广角24mm林缘). 景别用中文(远景/中景/近景/特写/过肩), 环境写明白但用短句非长段, 机位取自 [SHOT BREAKDOWN] 该镜头的 camera 字段. Clean printed font, NOT handwritten. **本故事板是纯环境/空镜, 画面中不得出现任何人物.**`,
     `- Bottom-right: top-down diagram (see [TOP-DOWN DIAGRAM]).`,
 
     `[CHARACTER CONSISTENCY]`,
@@ -2037,13 +2037,13 @@ function buildPitchDeckPrompt(opts: {
     `[TOP-DOWN DIAGRAM — bottom-right, ~25% of page, labels LARGE and FEW]`,
     `Overhead floor-plan in pencil linework. Keep it simple — too many tiny labels cause garbled text. The diagram MUST cover the FULL spatial scope of ALL shots in [SHOT BREAKDOWN] — every shot's location and movement must appear, none skipped.`,
     `- Scene area: draw ALL locations the story spans, not just one room. If shots happen across multiple areas (e.g. street outside → doorway → shop interior), draw each as a labeled zone side by side. Do NOT cram everything into a single room outline. Place furniture/objects logically within each zone.`,
-    `- 镜头运动路线 (camera paths): DASHED lines with arrowheads, tracing each shot's camera movement based on its camera / camMovement description in [SHOT BREAKDOWN] and the plot in [STORY PLOT]. Draw as many paths as the shots describe — a shot may have more than one movement (e.g. "镜头环绕林缺身体并拉远带出店铺外观" = a circular arc around the character + a pull-back line toward the shop exterior). Paths MUST be spatially correct: 环绕=circular arc, 推/拉=line in/out, 摇=arc sweep, 跟=follow path. Paths span all areas the shots cover. Do NOT draw separate camera markers or labels (no ▲, no CAM1/CAM2).`,
+    `- 镜头运动路线 (camera paths): DASHED lines with arrowheads, tracing each shot's camera movement based on its camera / camMovement description in [SHOT BREAKDOWN] and the plot in [STORY PLOT]. Draw as many paths as the shots describe — a shot may have more than one movement (e.g. "镜头环绕林缺身体并拉远带出店铺外观" = a circular arc around the character + a pull-back line toward the shop exterior). Paths MUST be spatially correct: 环绕=circular arc, 推/拉=line in/out, 摇=arc sweep, 跟=follow path. Paths span all areas the shots cover. **每条镜头动线必须用小字标注它对应的"镜头N"(与上方分镜格的镜头N编号一致);同一镜头的多条动线(如环绕+拉远)标同一个"镜头N",让每条动线都能明确区分属于哪个分镜.** If a shot's camMovement is 「固定机位」/「无运镜」 or absent (the shot has NO camera movement), do NOT draw a dashed path -- instead draw a FIXED CAMERA MARKER: a triangle ▲ at the shooting position (tip pointing toward the subject / facing direction), with a small "镜头N" label next to it, so the fixed camera's position and coverage are also visible on the diagram. 严禁无中生有编造运镜; 但固定机位也必须画▲标记+镜头N, 不能留空.`,
     hasChars
-      ? `- 人物动线 (character path): SOLID line + large arrowhead, from each character's start position (hollow square) to end position (filled square). The path MUST strictly follow the blocking in [SHOT BREAKDOWN] - where each character starts, moves to, and faces, across all areas. Add a small facing arrow (▷) at the end position; facing must be logical. Label start with the name.`
+      ? `- 人物动线 (character path): SOLID line + large arrowhead, from each character's start position (hollow square) to end position (filled square). The path MUST strictly follow the blocking in [SHOT BREAKDOWN] - where each character starts, moves to, and faces, across all areas. Add a small facing arrow (▷) at the end position; facing must be logical. Label start with the name. If a shot's blocking is 「人物静止, 无走位」 or absent (the character does NOT move), draw NO character path for that shot -- 人物没动就不画动线, 严禁无中生有.`
       : `- 本故事板无角色, 不画人物动线 (no character path). 只画场景区域和镜头运动路线.`,
     hasChars
-      ? `- Legend (2 lines): dashed arrow = 镜头运动路线 (camera path), solid arrow = 人物动线 (character path).`
-      : `- Legend (1 line): dashed arrow = 镜头运动路线 (camera path).`,
+      ? `- Legend (3 lines): dashed arrow + 镜头N = 镜头运动路线 (camera path), ▲ + 镜头N = 固定机位 (fixed camera position, 尖端朝向拍摄方向), solid arrow = 人物动线 (character path).`
+      : `- Legend (2 lines): dashed arrow + 镜头N = 镜头运动路线 (camera path), ▲ + 镜头N = 固定机位 (fixed camera position, 尖端朝向拍摄方向).`,
 
     referenceImageBlock,
 
@@ -2068,8 +2068,8 @@ function buildPitchDeckPrompt(opts: {
     `4. Story faithful — follow [STORY PLOT] and [SHOT BREAKDOWN], no invented content.`,
     `5. Text crisp & legible — Chinese shot types (远景/中景/近景/特写/过肩), no WS/MS/CU; no emoji (📷) or circled numbers (①②③); use plain labels (镜头1, 镜头2) + Arabic numerals.`,
     hasChars
-      ? `6. Diagram logic - the diagram covers ALL shots' locations (not just one room); camera paths (dashed) reflect each shot's camera movement described in [SHOT BREAKDOWN] (环绕/推/拉/摇/跟 -> corresponding arcs/lines, may be multiple paths); character paths (solid) strictly follow the blocking in [SHOT BREAKDOWN].`
-      : `6. Diagram logic - the diagram covers ALL shots' locations (not just one room); camera paths (dashed) reflect each shot's camera movement described in [SHOT BREAKDOWN] (环绕/推/拉/摇/跟 -> corresponding arcs/lines). 本故事板无人物, 不画人物动线.`,
+      ? `6. Diagram logic - the diagram covers ALL shots' locations (not just one room); camera paths (dashed) reflect each shot's camera movement described in [SHOT BREAKDOWN] (环绕/推/拉/摇/跟 -> corresponding arcs/lines, may be multiple paths), fixed-camera shots use a ▲ marker at their shooting position; character paths (solid) strictly follow the blocking in [SHOT BREAKDOWN]. 每条镜头动线和每个固定机位▲都必须标注对应的"镜头N",与上方分镜格编号一一对应,让分镜和俯视图动线能明确对上.`
+      : `6. Diagram logic - the diagram covers ALL shots' locations (not just one room); camera paths (dashed) reflect each shot's camera movement described in [SHOT BREAKDOWN] (环绕/推/拉/摇/跟 -> corresponding arcs/lines), fixed-camera shots use a ▲ marker at their shooting position. 每条镜头动线和每个固定机位▲都必须标注对应的"镜头N",与上方分镜格编号一一对应. 本故事板无人物, 不画人物动线.`,
 
     `Begin. Output a 16:9 pencil line-art storyboard with ${SUGGESTED_PANELS} frames.`,
   ]
@@ -2093,8 +2093,8 @@ function buildPitchDeckNegative(hasCharacters: boolean): string {
     "extra characters not in [CHARACTERS], scenery not in [SCENE], invented plot, frames unrelated to [SHOT BREAKDOWN]",
     "low resolution, blurry, pixelated, JPEG artifacts, low quality, soft focus",
     hasCharacters
-      ? "missing top-down diagram, diagram without dashed camera movement paths, diagram without solid character movement lines, camera paths drawn as solid instead of dashed, character path drawn as dashed instead of solid, camera paths without arrowhead, character paths without arrowheads, separate camera markers or CAM1/CAM2 labels on the diagram, diagram without legend, character positions without start/end squares, character movement not matching the blocking in [SHOT BREAKDOWN], camera paths not matching the camera/camMovement descriptions in [SHOT BREAKDOWN], camera paths collapsed into one line when shots describe multiple movements, diagram too small to read labels, diagram covering only one room when the story spans multiple locations, missing shots' locations in the diagram"
-      : "missing top-down diagram, diagram without dashed camera movement paths, camera paths drawn as solid instead of dashed, camera paths without arrowhead, separate camera markers or CAM1/CAM2 labels on the diagram, diagram without legend, camera paths not matching the camera/camMovement descriptions in [SHOT BREAKDOWN], camera paths collapsed into one line when shots describe multiple movements, diagram too small to read labels, diagram covering only one room when the story spans multiple locations, missing shots' locations in the diagram",
+      ? "missing top-down diagram, diagram without dashed camera movement paths, diagram without solid character movement lines, camera paths drawn as solid instead of dashed, character path drawn as dashed instead of solid, camera paths without arrowhead, character paths without arrowheads, diagram without legend, character positions without start/end squares, character movement not matching the blocking in [SHOT BREAKDOWN], camera paths not matching the camera/camMovement descriptions in [SHOT BREAKDOWN], camera paths collapsed into one line when shots describe multiple movements, camera paths or fixed camera markers missing their 镜头N label, fixed-camera shots drawn as a dashed movement path instead of a ▲ marker, diagram too small to read labels, diagram covering only one room when the story spans multiple locations, missing shots' locations in the diagram"
+      : "missing top-down diagram, diagram without dashed camera movement paths, camera paths drawn as solid instead of dashed, camera paths without arrowhead, diagram without legend, camera paths not matching the camera/camMovement descriptions in [SHOT BREAKDOWN], camera paths collapsed into one line when shots describe multiple movements, camera paths or fixed camera markers missing their 镜头N label, fixed-camera shots drawn as a dashed movement path instead of a ▲ marker, diagram too small to read labels, diagram covering only one room when the story spans multiple locations, missing shots' locations in the diagram",
     "frames without 镜头N label, frames without duration label, frames without shot type tag, frames without action description, long paragraph captions, English shot type abbreviations WS MS CU ECU OTS on frames",
     "art style drift from reference images, inconsistent rendering across sections, anime when reference is realistic, realistic when reference is anime, cel-shading when reference is painterly, 3D render when reference is 2D, watercolor when reference is digital illustration, different line treatment from reference, different color saturation from reference, different shading style from reference, mixed art styles, inconsistent brush strokes between frames, mixing 2D and 3D, mixing photoreal and stylized",
   ];

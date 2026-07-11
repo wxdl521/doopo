@@ -2391,6 +2391,52 @@ async function persistDataUriUrl(
   }
 }
 
+/**
+ * 把参考音频 URL 归一化为 ARK 云端可访问的 Supabase 公网签名 URL。
+ *
+ * - 已是 Supabase 存储 URL(用户上传的音频):公网可访问,直接放行。
+ * - 其余(data: URI、dev localhost 预设音频、应用自有静态资源):
+ *   服务端下载后转存到 workspace-media,拿签名 URL。
+ *
+ * 背景:预设音色(public/voice-styles/*.mp3)在 dev 下被前端拼成
+ * http://localhost:xxxx/voice-styles/xxx.mp3,ARK 云端拉不到,报
+ * "content[N].audio_url ... resource download failed"。必须转存成公网 URL。
+ * 已是 Supabase URL 的(用户上传)不必重复转存。
+ */
+async function persistAudioUrl(
+  url: string,
+  supabase: any,
+  userId: string,
+): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+  if (!url) return { ok: true, url };
+  // 已是 Supabase 存储 URL -> 公网可访问,直接放行
+  if (url.includes("supabase.co/storage/")) return { ok: true, url };
+  try {
+    const { buf, contentType } = await fetchMedia(url);
+    const ct = (contentType || "audio/mpeg").toLowerCase();
+    let ext = "mp3";
+    if (ct.includes("audio/mpeg") || ct.includes("mp3")) ext = "mp3";
+    else if (ct.includes("wav")) ext = "wav";
+    else if (ct.includes("mp4") || ct.includes("m4a") || ct.includes("aac")) ext = "m4a";
+    else if (ct.includes("webm")) ext = "webm";
+    else if (ct.includes("ogg")) ext = "ogg";
+    const mime = contentType || "audio/mpeg";
+    const path = `${userId}/video-gen/audio-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const blob = new Blob([buf], { type: mime });
+    const { error: uploadErr } = await supabase.storage
+      .from("workspace-media")
+      .upload(path, blob, { contentType: mime, upsert: true });
+    if (uploadErr) return { ok: false, error: `参考音频转存失败: ${uploadErr.message}` };
+    const { data: signed } = await supabase.storage
+      .from("workspace-media")
+      .createSignedUrl(path, 315360000); // 10 年
+    if (!signed?.signedUrl) return { ok: false, error: "参考音频转存失败: 未取到签名 URL" };
+    return { ok: true, url: signed.signedUrl };
+  } catch (e: any) {
+    return { ok: false, error: `参考音频转存失败: ${e?.message ?? String(e)}` };
+  }
+}
+
 const GenerateVideoInput = z.object({
   prompt: z.string().min(1).max(10000),
   // 单张图生视频(图作为首帧 / 参考图)
@@ -2444,7 +2490,9 @@ export const generateVideo = createServerFn({ method: "POST" })
     }
     let referenceAudioUrl = data.referenceAudioUrl;
     if (referenceAudioUrl) {
-      const r = await persistDataUriUrl(referenceAudioUrl, supabase, userId);
+      // 预设音频(dev 下是 localhost URL)必须转存成 Supabase 公网 URL,ARK 云端才拉得到;
+      // 用户上传的已是 Supabase URL,persistAudioUrl 内部会直接放行。
+      const r = await persistAudioUrl(referenceAudioUrl, supabase, userId);
       if (!r.ok) return { ok: false as const, error: r.error, taskId: undefined, backend };
       referenceAudioUrl = r.url;
     }

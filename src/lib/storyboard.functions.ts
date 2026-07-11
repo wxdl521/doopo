@@ -38,6 +38,7 @@ import {
   arkTextEndpoint,
   qwenApiKey,
 } from "./arkText";
+import { estimateDialogueSpeechSec } from "./dialogueDuration";
 
 // --------------------------------------------------------------------
 // 1) generateStoryboardFromPlot —— 文本任务
@@ -132,32 +133,63 @@ export const generateStoryboardFromPlot = createServerFn({ method: "POST" })
       : "(无场景信息)";
 
     // 强制 JSON 输出,避免模型输出自然语言;prompt 里明确告诉模型输出 schema。
-    const systemPrompt = `你是一名资深影视分镜师。你的任务是把一集剧本按镜头切分成若干个分镜。
-**一个分镜 = 一个镜头(shot)**。每个分镜包含:该镜头覆盖的剧情描述(plotText)、
+    const systemPrompt = `你是一名资深影视分镜师。你的任务是把一集剧本切成若干个**分镜组**,
+每个分镜组 = 一段约 10 秒的视频。**一个分镜组不锁死 1 个 shot**:根据这段剧情的节奏,
+在组内生成 **1~3 个 shot**,每个 shot 2~5 秒,加起来不超过 10 秒,把这段剧情表现完整。
+组分镜组级字段:该组覆盖的剧情描述(plotText)、场景(sceneId)、角色(characterIds)、
+时间区间(startSec/endSec,整组 ≤10s)。组内 shots 数组每个元素是一个镜头(shot):
 景别(shotType)、动作(action)、机位(camera)、运镜(cameraMovement)、
 走位(characterBlocking)、时间区间(startSec/endSec)。
 
 ═══════════════════════════════════════════════════════════
 【第 0 条 —— 剧情覆盖完整性(最高优先级,压倒一切)】
 ═══════════════════════════════════════════════════════════
-你必须保证:把所有分镜的 plotText 按顺序拼接起来,**完整覆盖**原剧本的
+你必须保证:把所有分镜组的 plotText 按顺序拼接起来,**完整覆盖**原剧本的
 全部内容,从第一个字到最后一个字,不跳过任何一段。
 
+切分粒度按"一段 ~10s 视频"来切:把剧本按剧情节奏拆成若干个约 10s 的段落,
+每段能在一段 10s 视频里讲完(不要把 30s 的剧情塞进一组,也不要把 2s 的小动作单独成组)。
+
 在输出 JSON 之前,强制执行以下自检:
-1. 把原剧本按动作/台词/场景切换拆成 N 个"镜头单元"。
-2. 为每个镜头单元分配一个分镜,确保分镜数 ≥ 镜头单元数。
-3. 逐个检查:单元 1 → 分镜[0] 的 plotText 覆盖了吗? 单元 2 → 分镜[1]?
-   ... 单元 N → 分镜[N-1]?
-4. 如果任何一个镜头单元没有被分镜覆盖 → **必须补分镜**,不能合并到相邻分镜。
-5. 特别检查原剧本的**最后一段**(结尾),必须有一个分镜专门覆盖它,
+1. 把原剧本按动作/台词/场景切换拆成若干段落,每段大致能在 ~10s 内演完。
+2. 为每段分配一个分镜组,组内再按节奏拆 1~3 个 shot(每个 2~5s,整组 ≤10s)。
+3. 逐个检查:段落 1 → 组[0] 的 plotText 覆盖了吗? 段落 2 → 组[1]? ... 直到结尾。
+4. 任何段落没被覆盖 → **必须补组**,不能合并到相邻组。
+5. 特别检查原剧本的**最后一段**(结尾),必须有专门一组覆盖它,
    不能因为 token 不够就省略结尾。
 
-【分镜数量硬性要求】
-- 一个分镜 = 一个镜头。分镜数 = 镜头数。
-- 按剧本的剧情节奏切分:**切细!** 每句台词→至少一个镜头;每个动作/反应→至少一个镜头;不要把多句台词合并到一个镜头里。每个独立的动作/台词/情绪转折点都可以是一个镜头。
-- 正常剧本(5 句以上对话或 2 个以上场景切换)必须 **≥ 5 个分镜**。
-- 极短剧本(仅一句话)也必须 ≥ 2 个分镜(开头 + 结尾)。
-- **禁止整集只输出 1 个分镜**。禁止把多个镜头合并成 1 个分镜。
+═══════════════════════════════════════════════════════════
+【第 0.5 条 -- 台词可说完性(最高优先级,与第 0 条同级,压倒其余)】
+═══════════════════════════════════════════════════════════
+每个分镜组 = 一段 ≤10s 的视频,视频里要把该组台词**说出来**(配音)。
+中文 spoken 台词约 **4 字/秒**(正常稍快、含句间停顿、能清楚说完),即每字 ≈ 0.25 秒。
+若一组塞的台词太多、10s 说不完,视频就会漏台词 / 语序发音乱 -- 这是必须避免的。
+
+硬性预算(每组都必须满足):
+  每组的「spoken 台词总字数」× 0.25 秒  ≤  组内所有 shot 时长之和(= 该组视频时长)  ≤  10 秒
+
+统计口径(只数"说出口的字"):
+- 只统计**引号内**说出口的内容:「」『』""'' 或 ASCII " ... " 之内
+- **不统计**:角色名标签(如 "陆深:")、动作描写、心理、旁白叙述、标点(，。！？…)
+- 标点和句间停顿的余量已含在 4 字/秒里,不要再额外加秒数
+
+由此推出拆组规则(台词驱动组时长,而不是先定 10s 再硬塞台词):
+- **先算台词**:数该段 spoken 台词字数 N,说完需要 N×0.25 秒。
+- **再定组时长**:使组内 shot 时长之和 **≥** 台词所需时长(且 ≤10s)。
+  台词多的组要把 shot 时长拉足(例:8s 台词 -> 组内 shot 之和 ≥8s,如 4s+4s)。
+- **若一段剧情的台词在 10s 内说不完 -> 必须切成多个分镜组**,每组台词各自能在 ≤10s 内说完。
+  台词密集的对话段要拆得更细 -- **组数由台词密度决定,不再只按 ~10s 切**。
+- **不要在一句台词中间切组**:单句台词必须完整落在同一组,不能把一句话劈成两半。
+- 反向:一句短台词不要单独成组,跟相邻动作/反应合到同一组(组时长仍受台词预算约束)。
+- **空镜组(无台词)**:不受台词预算约束,按原 ~10s 节奏切即可(台词字数=0,预算=0)。
+
+【分镜组与 shot 数量要求】
+- 一个分镜组 = 一段 ~10s 视频。组内 **1~3 个 shot**,每个 shot **2~5 秒**,整组 ≤10s。
+- 组时长由**台词说完所需时长**驱动:台词多的组,组内 shot 时长之和要够说完台词(≤10s);
+  台词超 10s 的段必须拆多组(见【第 0.5 条】)。
+- 按这段剧情的节奏决定 shot 数:简单的静态段落 1 个 shot;有动作切换的 2 个;节奏密集的 3 个。
+- **禁止整组只给 0 个 shot**;也禁止把整集塞进 1 组。
+- 组数由剧情节奏**与台词密度共同**决定(台词密集处多拆组,不设上限);但**禁止整集只输出 1 组**。
 
 【plotText 字段(镜头剧情描述)】
 - plotText 是**该镜头对应的那段剧情的详细扩写散文**,描述该镜头中发生的一切
@@ -200,6 +232,7 @@ export const generateStoryboardFromPlot = createServerFn({ method: "POST" })
   • 正确:"固定机位,无运镜"
   • 错误:"推" (太简略,缺方向和幅度)
   • 错误:"运动镜头" (太模糊)
+  • **没动就写"固定机位,无运镜",严禁无中生有编造运镜**(故事板俯视图会按这个画运镜线,编造会导致分镜与图不符)
   • 连续分镜之间的运镜必须逻辑连贯,禁止跳轴(180° rule):
     - 上一分镜结束的机位 ≈ 下一分镜开始的机位(空间连续性)
 - characterBlocking 用中文描述本镜头中人物的走位/动线路径,
@@ -207,10 +240,11 @@ export const generateStoryboardFromPlot = createServerFn({ method: "POST" })
   • 正确:"林夏从门口(画面左侧)走向窗边座位(画面右侧)"
   • 正确:"两人原地对话,无走位"
   • 错误:"走位" (太简略,缺人物和路径)
+  • **人物没动就写"人物静止,无走位",严禁无中生有编造动线**
 - startSec / endSec 必填:该镜头在当集时间轴上的区间(秒)
   - 必须在 group 的 startSec~endSec 范围内
-  - 连续分镜的时间区间要无缝衔接(分镜 N 的 endSec == 分镜 N+1 的 startSec)
-  - 单镜头时长通常 1~5 秒,但你可以按剧情节奏自由调整,不必死守这个范围
+  - 组内连续 shot 的时间区间要无缝衔接(shot N 的 endSec == shot N+1 的 startSec)
+  - **每个 shot 时长 2~5 秒**;组内所有 shot 时长之和 = 组的 endSec - startSec,整组 ≤10s
 - shotType 必填,5 个里选
 
 【空镜 / 环境镜头(重要,务必遵守)】
@@ -225,26 +259,26 @@ export const generateStoryboardFromPlot = createServerFn({ method: "POST" })
 
 【其他】
 1. **剧情覆盖完整性(最重要)**：严格按剧本顺序切分,**必须覆盖整集全部剧情**,不得遗漏任何段落。
-   开头 / 发展 / 高潮 / 结尾都要有对应的分镜。输出前请逐段对照原剧本自查。
-2. **最少分镜数**：正常剧本必须 ≥ 5 个；极短剧本(仅一句话)也必须 ≥ 2 个；禁止整集只输出 1 个。
+   开头 / 发展 / 高潮 / 结尾都要有对应的分镜组。输出前请逐段对照原剧本自查。
+2. **分镜组与 shot 数**：每组 = 一段 ~10s 视频,组内 1~3 个 shot(每个 2~5s,整组 ≤10s);禁止整集只输出 1 组。
 3. 景别在 [WS 远景 / MS 中景 / CU 近景 / ECU 特写 / OTS 过肩] 中选择,按剧情需要混合使用,**不要所有分镜用同一个景别**。
-4. 时间用秒(startSec / endSec),单分镜时长由剧情内容决定,不设固定范围;整集时长应合理。
+4. 时间用秒(startSec / endSec):每个 shot 2~5s,组内 shot 时长之和 ≤10s;组之间时间区间无缝衔接(组 N 末 shot 的 endSec == 组 N+1 首 shot 的 startSec)。
+   **组内 shot 时长之和 ≥ 该组 spoken 台词字数 × 0.25s**(够说完台词),且 ≤10s;台词超 10s 的段必须拆多组(见【第 0.5 条】)。
 5. 角色 ID 必须是传入的角色列表中的 id,场景 ID 必须是传入的场景列表中的 id。
 6. 只输出 JSON,不要任何解释、Markdown 包裹、代码块标记。`;
 
-    const userPrompt = `请把下面第 ${data.episodeIndex} 集剧本按镜头切分成若干个分镜,输出 JSON。
-**每个分镜 = 1 个镜头(shot)**,即每个 group 的 shots 数组里只有 1 个元素。
+    const userPrompt = `请把下面第 ${data.episodeIndex} 集剧本切成若干个**分镜组**,输出 JSON。
+**每个分镜组 = 一段约 10s 的视频**,组内按剧情节奏生成 **1~3 个 shot**(每个 2~5s,整组 ≤10s)。
 
-【分镜数量要求】
-- 一个分镜 = 一个镜头。**切细!** 按以下粒度切分:
-  • 每句台词 → 至少一个分镜(角色说一句话,就是一个镜头)
-  • 每个动作/反应 → 至少一个分镜
-  • 每个场景切换 → 一个分镜
-  • 每个情绪转折 → 一个分镜
-- 不要把多句台词合并到一个镜头里。
-- 正常剧本必须 ≥ 5 个分镜。极短剧本(仅一句话)也必须 ≥ 2 个分镜。
-- **禁止整集只输出 1 个分镜**。禁止把多个镜头合并成 1 个分镜。
-- 输出 JSON 前请确认:每一句台词、每一段剧情都被分配到了某个分镜的 plotText 中,没有遗漏。
+【分镜组与 shot 要求】
+- 一个分镜组 = 一段 ~10s 视频。按这段剧情的节奏决定组内 shot 数:
+  • 简单静态段落 → 1 个 shot(2~5s)
+  • 有动作/反应切换 → 2 个 shot
+  • 节奏密集(多句台词+动作) → 3 个 shot
+- 每个 shot **2~5 秒**,组内 shot 时长之和 ≤10s。
+- 按剧情把整集切成若干段 ~10s 的分镜组,覆盖整集剧情;组数 ≈ 整集时长 / 10。
+- **禁止整集只输出 1 组**;也禁止把过长的剧情(>10s)塞进一组。
+- 输出 JSON 前请确认:每一段剧情都被分配到了某个分镜组的 plotText 中,没有遗漏。
 
 ===== 角色列表 =====
 ${charList}
@@ -265,88 +299,80 @@ ${data.previousEpisodesText}
 ${data.episodeText}
 
 ===== 输出前强制自检(必须执行,否则输出无效) =====
-在脑中逐句过一遍原剧本,把每句台词、每个动作、每个场景切换点标出来:
-  剧本开头(第 1 个镜头单元): _____ → 分镜[0] 覆盖了吗? ✓/✗
-  剧本中间(第 2 个镜头单元): _____ → 分镜[1] 覆盖了吗? ✓/✗
-  剧本中间(第 3 个镜头单元): _____ → 分镜[2] 覆盖了吗? ✓/✗
+在脑中逐段过一遍原剧本,把每段(约 10s 能演完的剧情)标出来:
+  剧本开头(第 1 段): _____ → 组[0] 的 plotText 覆盖了吗? ✓/✗
+  剧本中间(第 2 段): _____ → 组[1] 覆盖了吗? ✓/✗
+  剧本中间(第 3 段): _____ → 组[2] 覆盖了吗? ✓/✗
   ...(继续,直到剧本最后一段)
-  剧本结尾(最后一个镜头单元): _____ → 分镜[N-1] 覆盖了吗? ✓/✗
-如果任何一行是 ✗ → 必须补一个分镜,不能跳过。输出前再检查一遍。
+  剧本结尾(最后一段): _____ → 组[N-1] 覆盖了吗? ✓/✗
+如果任何一行是 ✗ → 必须补一个组,不能跳过。输出前再检查一遍。
 
-===== 输出 JSON Schema(每个分镜只有 1 个 shot;示例故意用了 3 种不同景别,提醒你必须混合使用) =====
+===== 输出前强制自检(续):台词可说完性(见【第 0.5 条】) =====
+对每个分镜组,数一下 plotText 里引号内"说出口"的台词字数 N,算 N×0.25 秒:
+  组[0]: 台词 N=__ 字 → 需 __s | 组内 shot 时长之和 __s → 够说完吗? ✓/✗
+  组[1]: 台词 N=__ 字 → 需 __s | 组内 shot 时长之和 __s → ✓/✗
+  ...(每组都要查,含结尾组)
+  组[N-1]: 台词 N=__ 字 → 需 __s | 组内 shot 时长之和 __s → ✓/✗
+规则:
+  - 组内 shot 时长之和必须 ≥ 台词所需时长,且 ≤10s。
+  - 任何一组 ✗(台词在 10s 内说不完) → **必须拆成更多组**,直到每组台词都能在 ≤10s 内说完。
+  - 单句台词不能被拆到两个组(保持完整落在同一组)。
+  - 空镜组(无台词,N=0)跳过此项。
+
+===== 输出 JSON Schema(每组 1~3 个 shot;示例三组分别用了 1/2/3 个 shot,并混合景别) =====
 {
   "groups": [
     {
       "id": "grp-1",
-      "plotText": "该镜头对应的剧情详细扩写(≥ 100 字散文,严格遵循剧本逻辑,涵盖:人物状态 / 环境 / 动作 / 完整引用台词 / 承接)",
+      "plotText": "该组(约 5s)对应的剧情详细扩写(≥ 100 字散文,严格遵循剧本逻辑,涵盖:人物状态 / 环境 / 动作 / 完整引用台词 / 承接)",
       "startSec": 0,
-      "endSec": 3,
+      "endSec": 5,
       "sceneId": "sc-xxx (必须从上面场景列表里挑一个最接近的,没有就 null)",
       "characterIds": ["ch-xxx"],
       "shots": [
-        {
-          "shotType": "WS",
-          "action": "什么人做什么,1~2 句",
-          "camera": "机位/焦段/角度(中文简短,只描述摄像机位置,不重复 shotType)",
-          "cameraMovement": "运镜方式+方向/幅度,如:固定机位,无运镜",
-          "characterBlocking": "人物走位路径,如:人物静止,无走位",
-          "startSec": 0,
-          "endSec": 3
-        }
+        { "shotType": "WS", "action": "什么人做什么,1~2 句", "camera": "机位/焦段/角度(中文简短,只描述摄像机位置,不重复 shotType)", "cameraMovement": "固定机位,无运镜", "characterBlocking": "人物静止,无走位", "startSec": 0, "endSec": 5 }
       ]
     },
     {
       "id": "grp-2",
-      "plotText": "下一个镜头的剧情扩写...",
-      "startSec": 3,
-      "endSec": 7,
+      "plotText": "该组(约 7s)对应的剧情扩写...",
+      "startSec": 5,
+      "endSec": 12,
       "sceneId": "sc-xxx",
       "characterIds": ["ch-xxx", "ch-yyy"],
       "shots": [
-        {
-          "shotType": "CU",
-          "action": "什么人做什么",
-          "camera": "...",
-          "cameraMovement": "...",
-          "characterBlocking": "...",
-          "startSec": 3,
-          "endSec": 7
-        }
+        { "shotType": "CU", "action": "什么人做什么", "camera": "...", "cameraMovement": "从全景缓慢推到角色面部特写", "characterBlocking": "林夏从门口走向窗边座位", "startSec": 5, "endSec": 8 },
+        { "shotType": "OTS", "action": "什么人做什么", "camera": "...", "cameraMovement": "固定机位,无运镜", "characterBlocking": "两人原地对话,无走位", "startSec": 8, "endSec": 12 }
       ]
     },
     {
       "id": "grp-3",
-      "plotText": "再下一个镜头的剧情扩写...",
-      "startSec": 7,
-      "endSec": 12,
+      "plotText": "该组(约 10s)对应的剧情扩写...",
+      "startSec": 12,
+      "endSec": 22,
       "sceneId": "sc-xxx",
       "characterIds": ["ch-xxx"],
       "shots": [
-        {
-          "shotType": "OTS",
-          "action": "什么人做什么",
-          "camera": "...",
-          "cameraMovement": "...",
-          "characterBlocking": "...",
-          "startSec": 7,
-          "endSec": 12
-        }
+        { "shotType": "MS", "action": "什么人做什么", "camera": "...", "cameraMovement": "...", "characterBlocking": "...", "startSec": 12, "endSec": 15 },
+        { "shotType": "ECU", "action": "什么人做什么", "camera": "...", "cameraMovement": "...", "characterBlocking": "...", "startSec": 15, "endSec": 19 },
+        { "shotType": "WS", "action": "什么人做什么", "camera": "...", "cameraMovement": "...", "characterBlocking": "...", "startSec": 19, "endSec": 22 }
       ]
     }
   ]
 }
 
 注意:
-- **剧情覆盖检查(最重要)**：输出 JSON 后请逐句对照原剧本自查 —— 开头、中间每一段、结尾是否都有对应的分镜。**严禁遗漏任何一段剧情**。
-- **最少 5 个分镜(硬性要求)**：正常剧本必须 ≥ 5 个；极短剧本(仅一句话)也必须 ≥ 2 个；禁止整集只输出 1 个。
-- **每个分镜只有 1 个 shot**：shots 数组长度 = 1,不要塞多个 shot。
-- 严格按照剧本的剧情顺序排分镜(不要乱序)
-- 所有分镜的 plotText 按顺序拼接起来,必须完整覆盖原剧本全部内容
+- **剧情覆盖检查(最重要)**：输出 JSON 后请逐段对照原剧本自查 -- 开头、中间每一段、结尾是否都有对应的分镜组。**严禁遗漏任何一段剧情**。
+- **每组 1~3 个 shot**：每组 = 一段 ~10s 视频,组内 1~3 个 shot(每个 2~5s,整组 ≤10s);禁止整集只输出 1 组。
+- 组内 shot 时长之和 = 组 endSec - startSec(≤10s);组之间首尾 shot 的 endSec/startSec 无缝衔接。
+- 没有运镜就写「固定机位,无运镜」;人物没动就写「人物静止,无走位」。**严禁无中生有编造动线**。
+- 严格按照剧本的剧情顺序排分镜组(不要乱序)
+- 所有分镜组的 plotText 按顺序拼接起来,必须完整覆盖原剧本全部内容
 - sceneId 必须在传入的场景列表里;不确定时给最接近的
 - characterIds 必须在传入的角色列表里;没有明确角色时给空数组 [](纯环境/风景描写 = 空镜,必须给 [],严禁分配角色)
-- 连续分镜的 endSec 必须等于下一个分镜的 startSec(无缝衔接)
-- 镜头组合要有变化,不要所有分镜都是 MS 中景 —— 按剧情需要混合使用 WS/CU/ECU/OTS
-- 整集时长应合理。分镜数由剧情内容量决定,不设上限。`;
+- 镜头组合要有变化,不要所有 shot 都是 MS 中景 -- 按剧情需要混合使用 WS/CU/ECU/OTS
+- 整集时长应合理。组数由剧情内容量**与台词密度共同**决定(台词密集处多拆组,不设上限)。
+- **台词可说完性**:每组引号内 spoken 台词字数 × 0.25s ≤ 组内 shot 时长之和(≤10s);超了就拆组。台词多的对话段拆细,不要硬塞进一组。`;
 
     // ---- 调文本模型 (SSE 流式) ----
     // 2026/07:ARK DeepSeek V4 Pro 为主,Qwen 兜底;key 复用 ARK_API_KEY / Qwen。
@@ -635,6 +661,10 @@ function normalizeGroup(
   endSec: number;
   sceneId?: string;
   characterIds: string[];
+  /** 2026/07:该组 spoken 台词估算说完秒数(4字/秒)。 */
+  estDialogueSec?: number;
+  /** 2026/07:台词超出单视频 10s 硬上限的秒数(>0 表示该组台词一个视频说不完,需拆组/精简)。 */
+  dialogueOverloadSec?: number;
   shots: Array<{
     id: string;
     shotType: "WS" | "MS" | "CU" | "ECU" | "OTS";
@@ -651,10 +681,10 @@ function normalizeGroup(
   const plotText =
     typeof g.plotText === "string" && g.plotText.trim() ? g.plotText.trim().slice(0, 2000) : "";
   if (!plotText) return null;
-  const startSec = Number.isFinite(g.startSec) ? Math.max(0, Number(g.startSec)) : index * 5;
+  const startSec = Number.isFinite(g.startSec) ? Math.max(0, Number(g.startSec)) : index * 10;
   const endSec = Number.isFinite(g.endSec)
     ? Math.max(startSec + 1, Number(g.endSec))
-    : startSec + 5;
+    : startSec + 10;
   const validSceneIds = new Set(data.sceneSummaries.map((s) => s.id));
   const sceneId =
     typeof g.sceneId === "string" && validSceneIds.has(g.sceneId) ? g.sceneId : undefined;
@@ -670,6 +700,11 @@ function normalizeGroup(
     .map((s: any, i: number, arr: any[]) => normalizeShot(s, index, i, startSec, endSec, arr))
     .filter((s): s is NonNullable<ReturnType<typeof normalizeShot>> => s !== null);
   if (!shots.length) return null;
+  // 2026/07:台词可说完性兜底 —— 估算该组 spoken 台词说完需要多少秒。
+  // 若超 10s 硬上限 -> dialogueOverloadSec 标记,后续 UI 展示警告;≤10s 的
+  // 情况由 workspace route 的 groupVideoDurationSec 兜底拉长(见改动 3)。
+  const estDialogueSec = estimateDialogueSpeechSec(plotText);
+  const dialogueOverloadSec = estDialogueSec > 10 ? Math.ceil(estDialogueSec) - 10 : undefined;
   return {
     id: `grp-${index + 1}-${Date.now().toString(36)}`,
     index: index + 1,
@@ -677,6 +712,8 @@ function normalizeGroup(
     startSec,
     endSec,
     sceneId,
+    estDialogueSec: estDialogueSec || undefined,
+    dialogueOverloadSec,
     characterIds,
     shots,
   };
