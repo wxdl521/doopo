@@ -8,8 +8,8 @@
 //    - 无参考图(T2I): POST /v1/images/generations
 //    - 有参考图(I2I): POST /v1/images/edits  (multipart/form-data)
 //
-//  当前已验证可用模型:
-//    - gpt-image-2
+//  当前可用模型:
+//    - gpt-image-2-high / gpt-image-2-medium / gpt-image-2-low
 //
 //  UI 选项约定:所有走 Revora 的模型 id 都加 `revora/` 前缀,
 //  与 pixflow/ / tokenflash/ 等命名空间互不冲突;在调用时本模块
@@ -33,7 +33,9 @@ export function isRevoraModel(modelId: string | null | undefined): boolean {
 
 /** 剥离 `revora/` 前缀,得到真正的 upstream model id */
 export function stripRevoraPrefix(modelId: string): string {
-  return modelId.replace(/^revora\//i, "");
+  const model = modelId.replace(/^revora\//i, "");
+  // 兼容已保存的旧项目。Revora 目前不再授权裸 gpt-image-2，默认映射为均衡档。
+  return /^gpt-image-2$/i.test(model) ? "gpt-image-2-medium" : model;
 }
 
 function getRevoraConfig() {
@@ -60,13 +62,13 @@ type RevoraImageResult = {
   model: string;
 };
 
-/** Revora gpt-image-2 支持的尺寸白名单 */
+/** Revora gpt-image-2 各质量档支持的尺寸白名单 */
 const REVORA_GPT_IMAGE2_SIZES = new Set(["1024x1024", "1024x1792", "1792x1024"]);
 
 /** 把任意 size 字符串(WxH / 2K / 1328*1328)折算成 Revora 接受的尺寸 */
 function normalizeRevoraSize(size: string | undefined, model: string): string {
   const s = (size || "").trim().toLowerCase().replace(/\*/g, "x");
-  if (/^gpt-image-2$/i.test(model)) {
+  if (/^gpt-image-2(?:-(?:high|medium|low))?$/i.test(model)) {
     if (REVORA_GPT_IMAGE2_SIZES.has(s)) return s;
     // 按宽高比就近 fallback
     const m = s.match(/^(\d+)x(\d+)$/);

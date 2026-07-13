@@ -61,7 +61,9 @@ export const IMAGE_MODELS: ImageModelOption[] = [
   // ---- [Revora · OpenAI 兼容] revora.vip → /v1/images/generations|edits ----
   //  2026/06 接入:OpenAI 兼容 gpt-image-2 中转
   { key: "", label: "—— [Revora · OpenAI 兼容] ——", sub: undefined, legacy: true },
-  { key: "revora/gpt-image-2", label: "GPT Image 2", sub: "[Revora·OpenAI] Image2 · T2I/I2I" },
+  { key: "revora/gpt-image-2-high", label: "GPT Image 2 High", sub: "[Revora·OpenAI] 高质量 · T2I/I2I" },
+  { key: "revora/gpt-image-2-medium", label: "GPT Image 2 Medium", sub: "[Revora·OpenAI] 均衡 · T2I/I2I" },
+  { key: "revora/gpt-image-2-low", label: "GPT Image 2 Low", sub: "[Revora·OpenAI] 快速 · T2I/I2I" },
 
   // ---- [Tokenflash · OpenAI 兼容] tokenflash.cn → /v1/images/generations|edits ----
   //  2026/06 接入:实测 gpt-image-2 单次 ~45-55s,显著快于 pixflow,且未观测到 502

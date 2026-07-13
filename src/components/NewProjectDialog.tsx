@@ -81,9 +81,19 @@ const imageModelOptions = [
   // ---- Revora(OpenAI 兼容)----
   { id: "__sep_revora__", label: "—— Revora(OpenAI 兼容)——", sub: "" },
   {
-    id: "revora/gpt-image-2",
-    label: "GPT Image 2 (Revora)",
-    sub: "4积分/张",
+    id: "revora/gpt-image-2-high",
+    label: "GPT Image 2 High (Revora)",
+    sub: "高质量",
+  },
+  {
+    id: "revora/gpt-image-2-medium",
+    label: "GPT Image 2 Medium (Revora)",
+    sub: "均衡 · 推荐",
+  },
+  {
+    id: "revora/gpt-image-2-low",
+    label: "GPT Image 2 Low (Revora)",
+    sub: "快速",
   },
 
   // ---- OneToken(OpenAI 兼容)----

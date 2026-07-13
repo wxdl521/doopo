@@ -441,7 +441,11 @@ const VALID_T2I_MODELS = new Set<string>([
   // Tokenflash gateway 前缀(tokenflash.cn,OpenAI 兼容)
   "tokenflash/gpt-image-2",
   // Revora gateway 前缀(revora.vip,OpenAI 兼容)
-  "revora/gpt-image-2",
+  "revora/gpt-image-2-high",
+  "revora/gpt-image-2-medium",
+  "revora/gpt-image-2-low",
+  // 汇流 Confluo gateway
+  "confluo/gpt-image-2",
   // AIGCFamily gateway 前缀
   "aigcfamily/gpt-image-2",
   // Azure OpenAI 直连
@@ -489,7 +493,10 @@ const VALID_I2I_MODELS = new Set<string>([
   "pixflow/gemini-3-flash",
   "pixflow/gemini-3.5-flash",
   "tokenflash/gpt-image-2",
-  "revora/gpt-image-2",
+  "revora/gpt-image-2-high",
+  "revora/gpt-image-2-medium",
+  "revora/gpt-image-2-low",
+  "confluo/gpt-image-2",
   // AIGC Family 网关仅支持 T2I(无 /v1/images/edits),不列入 I2I
   "azure/gpt-image-2",
   "azure2/gpt-image-2",
@@ -513,6 +520,7 @@ const KNOWN_MODEL_PREFIXES = [
   "pixflow/",
   "tokenflash/",
   "revora/",
+  "confluo/",
   "aigcfamily/",
   "claude360/",
   "shuci/",

@@ -129,6 +129,49 @@ function normalizeAzureQuality(q: string | undefined): "low" | "medium" | "high"
   return "medium";
 }
 
+type AzureImageItem = { url?: string; b64_json?: string };
+
+/** Azure 在 stream=true 时返回 SSE；只优先取完成事件中的最终图，避免把中间预览当成成品。 */
+function parseAzureImageItems(rawText: string): AzureImageItem[] {
+  const payloads: any[] = [];
+  const normalJson = (() => {
+    try {
+      return JSON.parse(rawText);
+    } catch {
+      return null;
+    }
+  })();
+  if (normalJson) payloads.push(normalJson);
+
+  // SSE event 中可能是 `data: { ... }`，也可能分成多行 data 字段。
+  for (const block of rawText.split(/\r?\n\r?\n/)) {
+    const data = block
+      .split(/\r?\n/)
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => line.slice(5).trim())
+      .filter((line) => line && line !== "[DONE]")
+      .join("\n");
+    if (!data) continue;
+    try {
+      payloads.push(JSON.parse(data));
+    } catch {
+      // 非 JSON 心跳事件无需处理。
+    }
+  }
+
+  const eventItems = payloads.map((payload) => ({
+    type: String(payload?.type || payload?.event || ""),
+    items: (Array.isArray(payload?.data) && payload.data) ||
+      (payload?.b64_json || payload?.url ? [{ b64_json: payload.b64_json, url: payload.url }] : []),
+  }));
+  // 完成事件优先；若服务端仅发 partial 事件，最后一张仍是当前可用的最佳结果。
+  const completed = eventItems.filter(({ type, items }) =>
+    items.length && /completed|final|result|done/i.test(type),
+  );
+  const selected = completed.length ? completed.at(-1)!.items : eventItems.filter((x) => x.items.length).at(-1)?.items;
+  return (selected ?? []) as AzureImageItem[];
+}
+
 export async function callAzureImage(input: AzureImageInput): Promise<AzureImageResult> {
   const { apiKey, baseUrl } = getAzureConfig(input.model);
   const deployment = stripAzurePrefix(input.model) || "gpt-image-2";
@@ -143,12 +186,13 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
   const url = `${baseUrl}${path}?api-version=${apiVersion}`;
   const size = normalizeAzureSize(input.size);
   const quality = normalizeAzureQuality(input.quality);
+  const streamPartialImages = quality === "high";
   const t0 = Date.now();
   const requestId = `azr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
   const endpoint: "generations" | "edits" = hasRefs ? "edits" : "generations";
   const baseMeta = { requestId, deployment, endpoint, apiVersion };
   console.log(
-    `[azure→] rid=${requestId} deployment=${deployment} endpoint=${endpoint} apiVersion=${apiVersion} refs=${input.referenceImages?.length ?? 0} size=${size} quality=${quality}`,
+    `[azure→] rid=${requestId} deployment=${deployment} endpoint=${endpoint} apiVersion=${apiVersion} refs=${input.referenceImages?.length ?? 0} size=${size} quality=${quality} stream=${streamPartialImages}`,
   );
 
   if (!apiKey) {
@@ -182,6 +226,10 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
       form.append("n", String(input.n ?? 1));
       form.append("size", size);
       form.append("quality", quality);
+      if (streamPartialImages) {
+        form.append("stream", "true");
+        form.append("partial_images", "3");
+      }
       const refs = input.referenceImages!;
       // Azure gpt-image-2 edits: 单图用 `image`，多图必须用 `image[]`（重复 `image` 会 400 Duplicate parameter）
       const fieldName = refs.length > 1 ? "image[]" : "image";
@@ -211,7 +259,10 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
       }
       requestInit = {
         method: "POST",
-        headers: { "api-key": apiKey },
+        headers: {
+          "api-key": apiKey,
+          ...(streamPartialImages ? { Accept: "text/event-stream" } : {}),
+        },
         body: form,
         signal: controller.signal,
       };
@@ -221,12 +272,14 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
         n: input.n ?? 1,
         size,
         quality,
+        ...(streamPartialImages ? { stream: true, partial_images: 3 } : {}),
       };
       requestInit = {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "api-key": apiKey,
+          ...(streamPartialImages ? { Accept: "text/event-stream" } : {}),
         },
         body: JSON.stringify(body),
         signal: controller.signal,
@@ -292,8 +345,7 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
       json = JSON.parse(rawText);
     } catch {}
 
-    const items: Array<{ url?: string; b64_json?: string }> =
-      (Array.isArray(json?.data) && json.data) || [];
+    const items = parseAzureImageItems(rawText);
     const urls = items
       .map((d) => {
         if (d.url) return d.url;

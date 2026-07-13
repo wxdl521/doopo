@@ -110,11 +110,13 @@ export async function callConfluoImage(input: ConfluoImageInput): Promise<Conflu
       form.append("model", model);
       form.append("prompt", input.prompt);
       form.append("size", size);
+      form.append("quality", input.quality ?? "auto");
       // gpt-image-2 不支持 n 参数(始终生成 1 张)
       if (!/^gpt-image/i.test(model)) {
         form.append("n", String(input.n ?? 1));
       }
-      form.append("response_format", "url");
+      // gpt-image-* 不支持 response_format=url；汇流会返回 b64_json，下面统一解析。
+      if (!/^gpt-image/i.test(model)) form.append("response_format", "url");
       // 下载每张参考图为 Blob 后以 image[] 文件字段上传
       for (let i = 0; i < input.referenceImages!.length; i++) {
         const refUrl = input.referenceImages![i];
@@ -148,6 +150,7 @@ export async function callConfluoImage(input: ConfluoImageInput): Promise<Conflu
         model,
         prompt: input.prompt,
         size,
+        quality: input.quality ?? "auto",
       };
       // gpt-image-2 不支持 n 参数(始终生成 1 张)
       if (!/^gpt-image/i.test(model)) {
