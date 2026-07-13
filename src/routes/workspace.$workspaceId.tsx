@@ -10120,12 +10120,13 @@ function WorkspacePage() {
                               {g.dialogueOverloadSec != null && g.dialogueOverloadSec > 0 && (
                                 <span
                                   className="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/40 text-amber-600 dark:text-amber-400"
-                                  title={t("sb_dialogue_overload_hint")}
+                                  title={t.sb_dialogue_overload_hint}
                                 >
                                   ⚠{" "}
-                                  {t("sb_dialogue_overload", {
-                                    sec: Math.ceil(g.dialogueOverloadSec),
-                                  })}
+                                  {t.sb_dialogue_overload.replace(
+                                    "{{sec}}",
+                                    String(Math.ceil(g.dialogueOverloadSec)),
+                                  )}
                                 </span>
                               )}
                               {g.sceneLocation && (
