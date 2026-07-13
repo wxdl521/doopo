@@ -29,6 +29,10 @@ import {
   type ImportedScriptResult,
   type ParseStreamEvent,
 } from "../../lib/parseImportedScript.functions";
+import {
+  planWorkspaceAgentAction,
+  type WorkspaceAgentPlan,
+} from "../../lib/workspaceAgent.functions";
 
 type Attachment = { id: string; name: string; size: number; type: string; url?: string };
 
@@ -106,6 +110,7 @@ function clearStoredMessages(workspaceId: string) {
 
 type Message =
   | { id: string; kind: "user"; text: string; attachments?: Attachment[] }
+  | { id: string; kind: "agent_thought"; text: string; pending: boolean }
   | {
       id: string;
       kind: "workflow";
@@ -132,6 +137,13 @@ type Message =
       selectedAudioUrl?: string;
       /** pending=待确认 / generating=生成中 / done=已生成 / failed=失败可重试 / cancelled=已取消 */
       status: "pending" | "generating" | "done" | "failed" | "cancelled";
+    }
+  | {
+      id: string;
+      kind: "agent_plan";
+      plan: WorkspaceAgentPlan;
+      status: "pending" | "executing" | "done" | "cancelled";
+      result?: string;
     };
 type WorkflowDef = {
   steps: string[];
@@ -345,6 +357,9 @@ const ZopiaChatPanel = forwardRef<
      * resolve 又写状态)。卡片自身把 status 改回 pending(可重试)。
      */
     onCancelVideoGen?: (groupId: string) => void;
+    /** 由工作区执行已规划且已确认的 Agent 动作。 */
+    onExecuteAgentAction?: (plan: WorkspaceAgentPlan) => Promise<{ summary?: string } | void>;
+    agentContext?: { characterCount: number; storyboardGroupCount: number; hasSynopsis: boolean };
   }
 >(function ZopiaChatPanel(
   {
@@ -366,15 +381,22 @@ const ZopiaChatPanel = forwardRef<
     onModifyReference,
     onConfirmVideoGen,
     onCancelVideoGen,
+    onExecuteAgentAction,
+    agentContext,
   },
   ref: React.Ref<ZopiaChatPanelHandle>,
 ) {
   const { t, lang } = useLanguage();
   const callParseScript = useServerFn(parseImportedScript);
+  const callPlanAgentAction = useServerFn(planWorkspaceAgentAction);
   // 优先用 localStorage 的历史(每个 workspace 一份)初始化,这样刷新
   // 页面 / 重新进入 workspace 时对话记录还在。读取失败 / SSR 退化为空。
   const [messages, setMessages] = useState<Message[]>(() => loadStoredMessages(workspaceId));
   const [input, setInput] = useState("");
+  const [skipCreditConfirmation, setSkipCreditConfirmation] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.localStorage.getItem(`doopoo:agent-skip-credit-confirm:${workspaceId}`) === "true";
+  });
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [showUpgrade, setShowUpgrade] = useState(true);
   const [ctasCollapsed, setCtasCollapsed] = useState(false);
@@ -421,6 +443,10 @@ const ZopiaChatPanel = forwardRef<
     imageUrl: string;
     lookId?: string | null;
   } | null>(null);
+  const [pendingReferenceCost, setPendingReferenceCost] = useState<{
+    ref: NonNullable<typeof pendingRef>;
+    instruction: string;
+  } | null>(null);
   const [lockModal, setLockModal] = useState<string | null>(null);
   // Import script modal state
   const [importModal, setImportModal] = useState<
@@ -448,6 +474,12 @@ const ZopiaChatPanel = forwardRef<
   useEffect(() => {
     saveStoredMessages(workspaceId, messages);
   }, [messages, workspaceId]);
+
+  useEffect(() => {
+    setSkipCreditConfirmation(
+      window.localStorage.getItem(`doopoo:agent-skip-credit-confirm:${workspaceId}`) === "true",
+    );
+  }, [workspaceId]);
 
   // 从首页带入的预填文本：仅在首次有值时填入输入框
   useEffect(() => {
@@ -561,6 +593,188 @@ const ZopiaChatPanel = forwardRef<
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  }
+
+  function setProjectCreditConfirmationPreference(skip: boolean) {
+    setSkipCreditConfirmation(skip);
+    try {
+      window.localStorage.setItem(`doopoo:agent-skip-credit-confirm:${workspaceId}`, String(skip));
+    } catch {
+      // localStorage 不可用时仅保留当前会话偏好。
+    }
+  }
+
+  function executeReferenceModification(
+    refInfo: NonNullable<typeof pendingRef>,
+    instruction: string,
+  ) {
+    onModifyReference?.(
+      refInfo.refType,
+      refInfo.refId,
+      instruction,
+      refInfo.lookId,
+      refInfo.imageUrl,
+    );
+    setPendingReferenceCost(null);
+  }
+
+  async function executeAgentPlan(messageId: string, plan: WorkspaceAgentPlan) {
+    if (plan.action === "clarify" || plan.action === "explain_capabilities") return;
+    setMessages((prev) =>
+      prev.map((message) =>
+        message.id === messageId && message.kind === "agent_plan"
+          ? { ...message, status: "executing" }
+          : message,
+      ),
+    );
+    try {
+      const result = await onExecuteAgentAction?.(plan);
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id === messageId && message.kind === "agent_plan"
+            ? { ...message, status: "done", result: result?.summary ?? "已完成。" }
+            : message,
+        ),
+      );
+    } catch (error) {
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id === messageId && message.kind === "agent_plan"
+            ? {
+                ...message,
+                status: "pending",
+                result: error instanceof Error ? error.message : "执行失败，请调整后重试。",
+              }
+            : message,
+        ),
+      );
+    }
+  }
+
+  function queueAgentPlan(plan: WorkspaceAgentPlan) {
+    const planId = `plan-${Date.now()}`;
+    setMessages((prev) => [...prev, { id: planId, kind: "agent_plan", plan, status: "pending" }]);
+    if (
+      plan.action !== "clarify" &&
+      plan.action !== "explain_capabilities" &&
+      (!plan.requiresCredit || skipCreditConfirmation)
+    ) {
+      void executeAgentPlan(planId, plan);
+    }
+  }
+
+  type AvailablePageAction = {
+    id: string;
+    label: string;
+    hint?: string;
+    requiresCredit: boolean;
+  };
+
+  function collectAvailablePageActions(): AvailablePageAction[] {
+    if (typeof document === "undefined") return [];
+    const root = document.querySelector("main");
+    if (!root) return [];
+    const costPattern = /生成|重生|提取|融合|连跑|切分|渲染|写剧本|开始创作/;
+    return Array.from(root.querySelectorAll<HTMLElement>("button, a[href], label[for], [role=button]"))
+      .filter((element) => {
+        const disabled = element instanceof HTMLButtonElement && element.disabled;
+        const hidden = element.getClientRects().length === 0;
+        return !disabled && !hidden;
+      })
+      .slice(0, 160)
+      .map((element, index) => {
+        const label = (element.innerText || element.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim();
+        const id = `ui-${index}`;
+        element.dataset.doopooAgentAction = id;
+        return {
+          id,
+          label: label.slice(0, 120) || "未命名操作",
+          hint: element.getAttribute("title")?.slice(0, 160) || undefined,
+          requiresCredit: costPattern.test(label),
+        };
+      })
+      .filter((action) => action.label !== "未命名操作");
+  }
+
+  async function planAgentCommand(userMsg: Message & { kind: "user" }) {
+    const thoughtId = `agent-thought-${Date.now()}`;
+    setMessages((prev) => [
+      ...prev,
+      userMsg,
+      { id: thoughtId, kind: "agent_thought", text: "正在理解目标、确认所需页面和执行顺序…", pending: true },
+    ]);
+    try {
+      const availableActions = collectAvailablePageActions();
+      const responsePlan = await callPlanAgentAction({
+        data: {
+          instruction: userMsg.text,
+          stage,
+          selectedEpisodeIndex,
+          context: {
+            episodeCount: episodeCount ?? 0,
+            characterCount: agentContext?.characterCount ?? 0,
+            storyboardGroupCount: agentContext?.storyboardGroupCount ?? 0,
+            hasSynopsis: agentContext?.hasSynopsis ?? false,
+          },
+          availableActions,
+        },
+      });
+      const selectedButton = availableActions.find((action) => action.id === responsePlan.uiActionId);
+      const plan: WorkspaceAgentPlan =
+        responsePlan.action === "click_ui" &&
+        !selectedButton &&
+        !responsePlan.uiActionLabel &&
+        !responsePlan.uiSteps?.some((step) => step.uiActionId || step.uiActionLabel)
+          ? {
+              action: "clarify",
+              targetStage: stage,
+              title: "找不到要操作的按钮",
+              summary: "页面状态已变化，无法安全地执行该操作。",
+              executionPrompt: "",
+              requiresCredit: false,
+              clarification: "请确认左侧页面已打开目标内容后，再告诉我要点击的按钮名称。",
+            }
+          : {
+              ...responsePlan,
+              requiresCredit:
+                responsePlan.action === "click_ui"
+                  ? (selectedButton?.requiresCredit ?? responsePlan.requiresCredit)
+                  : responsePlan.requiresCredit,
+              uiActionLabel: selectedButton?.label ?? responsePlan.uiActionLabel,
+            };
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id === thoughtId && message.kind === "agent_thought"
+            ? {
+                ...message,
+                pending: false,
+                text:
+                  plan.action === "clarify"
+                    ? `我需要补充一点信息：${plan.summary}`
+                    : `我理解为：${plan.summary}${plan.requiresCredit ? " 接下来会先向你确认积分消耗。" : " 正在按这个顺序执行。"}`,
+              }
+            : message,
+        ),
+      );
+      queueAgentPlan(plan);
+    } catch {
+      setMessages((prev) =>
+        prev.map((message) =>
+          message.id === thoughtId && message.kind === "agent_thought"
+            ? { ...message, pending: false, text: "暂时无法完成规划，我会给出可继续执行的下一步。" }
+            : message,
+        ),
+      );
+      queueAgentPlan({
+        action: "clarify",
+        targetStage: stage,
+        title: "暂时无法规划此操作",
+        summary: "请补充要操作的阶段或具体对象后重试。",
+        executionPrompt: "",
+        requiresCredit: false,
+        clarification: "例如：提取第 2 集角色场景，或切分当前集分镜。",
+      });
+    }
   }
 
   // ============= Import script flow =============
@@ -752,7 +966,20 @@ const ZopiaChatPanel = forwardRef<
       setAttachments([]);
       const pr = pendingRef;
       setPendingRef(null);
-      onModifyReference?.(pr.refType, pr.refId, trimmed, pr.lookId, pr.imageUrl);
+      if (skipCreditConfirmation) {
+        executeReferenceModification(pr, trimmed);
+      } else {
+        setPendingReferenceCost({ ref: pr, instruction: trimmed });
+      }
+      return;
+    }
+
+    // 自由输入走真正的 Agent 规划器：先理解意图，再决定是否需要积分确认。
+    // 有 targetStage 的 CTA 保持既有参数化工作流，避免改变已验证的按钮行为。
+    if (!opts) {
+      setInput("");
+      setAttachments([]);
+      void planAgentCommand(userMsg);
       return;
     }
 
@@ -1372,14 +1599,13 @@ const ZopiaChatPanel = forwardRef<
     // await onEnterStoryboard() 完成,展示 summary + "进入时间轴阶段 /
     // 继续精修" CTAs,再自动切到分镜 tab。
     if (c.key === "enter_storyboard") {
-      const userMsg: Message = {
-        id: `u-${Date.now()}`,
-        kind: "user",
-        text: t.zp_cta_enter_storyboard,
-      };
-      runWorkflowAnimation("storyboard", () => onEnterStoryboard?.(), {
-        jumpAfter: true,
-        userMsg,
+      queueAgentPlan({
+        action: "create_storyboard_groups",
+        targetStage: "storyboard",
+        title: "切分当前集分镜",
+        summary: "根据当前剧本、角色和场景生成分镜组。",
+        executionPrompt: "",
+        requiresCredit: true,
       });
       return;
     }
@@ -1479,7 +1705,10 @@ const ZopiaChatPanel = forwardRef<
     if (cta.key === "generate_script") {
       setPendingCta(null);
       const text = buildPrompt(spec, values, tag);
-      send(text, { targetStage: "script", jumpAfter: true });
+      queueAgentPlan({
+        action: "produce_script", targetStage: "canvas", title: "生成故事梗概", summary: "根据已选参数生成剧本梗概。",
+        executionPrompt: text, requiresCredit: true,
+      });
       return;
     }
 
@@ -1488,7 +1717,10 @@ const ZopiaChatPanel = forwardRef<
       setPendingCta(null);
       const sceneCount = values.sceneCount ?? "5";
       const text = `生成本集分镜\n分镜数：${sceneCount}`;
-      send(text, { targetStage: "script", jumpAfter: false });
+      queueAgentPlan({
+        action: "produce_episode", targetStage: "script", title: "生成下一集剧本", summary: `按 ${sceneCount} 个分镜生成下一集剧本。`,
+        executionPrompt: text, requiresCredit: true,
+      });
       return;
     }
 
@@ -1496,7 +1728,10 @@ const ZopiaChatPanel = forwardRef<
     if (cta.key === "extract") {
       setPendingCta(null);
       const epIdx = (values.episode as string) ?? String(selectedEpisodeIndex ?? 1);
-      send(`从第 ${epIdx} 集提取角色、场景和道具`, { targetStage: "character", jumpAfter: true });
+      queueAgentPlan({
+        action: "extract_assets", targetStage: "character", title: `提取第 ${epIdx} 集素材`, summary: "提取角色、场景和道具。",
+        executionPrompt: `从第 ${epIdx} 集提取角色、场景和道具`, requiresCredit: true,
+      });
       return;
     }
 
@@ -1506,13 +1741,23 @@ const ZopiaChatPanel = forwardRef<
       const targetEp = values.targetEp ?? "10";
       const sceneCount = values.sceneCount ?? "5";
       const text = `自动连跑多集\n连跑至第 ${targetEp} 集\n分镜数：${sceneCount}`;
-      send(text, { targetStage: "script", jumpAfter: false });
+      queueAgentPlan({
+        action: "produce_episode", targetStage: "script", title: `连续生成至第 ${targetEp} 集`, summary: `每集按 ${sceneCount} 个分镜生成。`,
+        executionPrompt: text, requiresCredit: true,
+      });
       return;
     }
 
     const text = buildPrompt(spec, values, tag);
     setPendingCta(null);
-    send(text, { targetStage: spec.targetStage, jumpAfter: spec.jumpAfter });
+    queueAgentPlan({
+      action: "produce_workspace_content",
+      targetStage: spec.targetStage,
+      title: cta.label,
+      summary: "按已选参数生成工作区内容。",
+      executionPrompt: text,
+      requiresCredit: true,
+    });
   }
 
   if (collapsed) {
@@ -1641,7 +1886,7 @@ const ZopiaChatPanel = forwardRef<
                   return (
                     <button
                       key={q.key}
-                      onClick={() => send(q.userText, { targetStage: q.target, jumpAfter: true })}
+                      onClick={() => send(q.userText)}
                       className="px-3 py-2.5 rounded-lg border border-border bg-bg-elevated hover:border-accent hover:bg-accent-dim/20 text-xs text-left inline-flex items-center gap-2 transition"
                     >
                       <Icon size={14} className="text-accent shrink-0" />
@@ -1688,6 +1933,90 @@ const ZopiaChatPanel = forwardRef<
                       </div>
                     )}
                   </div>
+                </div>
+              );
+            }
+            if (m.kind === "agent_thought") {
+              return (
+                <div key={m.id} className="flex items-start gap-2 px-1 text-xs text-text-secondary">
+                  {m.pending ? <Loader2 size={13} className="mt-0.5 animate-spin text-accent shrink-0" /> : <Sparkles size={13} className="mt-0.5 text-accent shrink-0" />}
+                  <p className="leading-relaxed">{m.text}</p>
+                </div>
+              );
+            }
+            if (m.kind === "agent_plan") {
+              const needsConfirmation =
+                m.plan.requiresCredit && !skipCreditConfirmation && m.status === "pending";
+              return (
+                <div key={m.id} className="rounded-xl border border-accent/30 bg-accent-dim/10 p-3 space-y-2">
+                  <div className="flex items-start gap-2">
+                    <Sparkles size={15} className="text-accent mt-0.5 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-semibold text-text-primary">{m.plan.title}</div>
+                      <p className="text-xs text-text-secondary leading-relaxed mt-1">{m.plan.summary}</p>
+                    </div>
+                  </div>
+                  {m.plan.action === "clarify" || m.plan.action === "explain_capabilities" ? (
+                    <p className="text-xs rounded-md border border-border bg-bg-surface p-2 text-text-secondary">
+                      {m.plan.clarification}
+                    </p>
+                  ) : needsConfirmation ? (
+                    <div className="rounded-md border border-amber-500/35 bg-amber-500/10 p-2 space-y-2">
+                      <p className="text-xs text-amber-700 dark:text-amber-300 inline-flex gap-1 items-center">
+                        <AlertTriangle size={13} /> 此操作会消耗积分，确认后执行。
+                      </p>
+                      <label className="flex items-center gap-2 text-xs text-text-secondary cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={skipCreditConfirmation}
+                          onChange={(event) => setProjectCreditConfirmationPreference(event.target.checked)}
+                          className="accent-accent"
+                        />
+                        本项目后续积分操作不再提醒
+                      </label>
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void executeAgentPlan(m.id, m.plan)}
+                          className="px-2.5 py-1 rounded bg-accent text-accent-foreground text-xs font-semibold hover:opacity-90"
+                        >
+                          确认执行
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setMessages((prev) =>
+                              prev.map((message) =>
+                                message.id === m.id && message.kind === "agent_plan"
+                                  ? { ...message, status: "cancelled" }
+                                  : message,
+                              ),
+                            )
+                          }
+                          className="px-2.5 py-1 rounded border border-border text-xs text-text-secondary hover:border-accent"
+                        >
+                          暂不执行
+                        </button>
+                      </div>
+                    </div>
+                  ) : m.status === "executing" ? (
+                    <p className="text-xs text-accent inline-flex items-center gap-1"><Loader2 size={12} className="animate-spin" /> 正在执行计划…</p>
+                  ) : m.status === "done" ? (
+                    <p className="text-xs text-emerald-600 dark:text-emerald-400">✓ {m.result ?? "已完成。"}</p>
+                  ) : m.status === "cancelled" ? (
+                    <p className="text-xs text-text-muted">已取消，未执行。</p>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => void executeAgentPlan(m.id, m.plan)}
+                      className="px-2.5 py-1 rounded border border-accent text-accent text-xs hover:bg-accent-dim"
+                    >
+                      执行计划
+                    </button>
+                  )}
+                  {m.result && m.status === "pending" && !needsConfirmation && (
+                    <p className="text-xs text-rose-500">{m.result}</p>
+                  )}
                 </div>
               );
             }
@@ -2324,6 +2653,44 @@ const ZopiaChatPanel = forwardRef<
           </div>
         </div>
       </div>
+
+      {pendingReferenceCost && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" role="dialog" aria-modal="true">
+          <div className="bg-bg-surface border border-border rounded-2xl shadow-2xl max-w-sm w-full p-5 space-y-3">
+            <div className="flex items-center gap-2 text-amber-600 dark:text-amber-300 font-semibold">
+              <AlertTriangle size={18} /> 确认消耗积分
+            </div>
+            <p className="text-sm text-text-secondary leading-relaxed">
+              将按你的意见重生成「{pendingReferenceCost.ref.label}」的参考图，此操作会消耗积分。
+            </p>
+            <label className="flex items-center gap-2 text-xs text-text-secondary cursor-pointer">
+              <input
+                type="checkbox"
+                checked={skipCreditConfirmation}
+                onChange={(event) => setProjectCreditConfirmationPreference(event.target.checked)}
+                className="accent-accent"
+              />
+              本项目后续积分操作不再提醒
+            </label>
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setPendingReferenceCost(null)}
+                className="px-3 py-1.5 rounded border border-border text-sm text-text-secondary hover:border-accent"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                onClick={() => executeReferenceModification(pendingReferenceCost.ref, pendingReferenceCost.instruction)}
+                className="px-3 py-1.5 rounded bg-accent text-accent-foreground text-sm font-semibold hover:opacity-90"
+              >
+                确认重生成
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Locked genre modal */}
       {lockModal && (
