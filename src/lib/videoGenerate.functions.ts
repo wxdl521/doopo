@@ -71,8 +71,10 @@ export function getVideoBackend(
   | "kling"
   | "confluo"
   | "topenrouter"
-  | "hongmeng" {
+  | "hongmeng"
+  | "sdreal" {
   const m = (modelId || "").trim().toLowerCase();
+  if (m.startsWith("dreamina-seedance-")) return "sdreal";
   if (m.startsWith("doubao-seedance-") || m.startsWith("seedance-")) return "ark";
   if (m.startsWith("shuci-")) return "shuci";
   if (m.startsWith("jimeng-")) return "jimeng";
@@ -114,6 +116,14 @@ export const HONGMENG_VIDEO_MODELS = {
   "hongmeng-seedance2-pro": "Seedance 2 Pro (弘梦)",
 } as const;
 
+// SD Real Max（service-inference.ai）—— Dreamina Seedance 2.0 系列。
+// 该供应商要求先把公网素材登记为 asset，再以 asset://<id> 作为视频参考图。
+export const SDREAL_VIDEO_MODELS = {
+  "dreamina-seedance-2-0-fast-hc": "Dreamina Seedance 2.0 Fast (SD Real Max)",
+  "dreamina-seedance-2-0-hc": "Dreamina Seedance 2.0 (SD Real Max)",
+  "dreamina-seedance-2-0-mini-hc": "Dreamina Seedance 2.0 Mini (SD Real Max)",
+} as const;
+
 export const SEEDANCE_MODELS = {
   "doubao-seedance-2-0-260128": "Doubao Seedance 2.0",
   "doubao-seedance-2-0-fast-260128": "Doubao Seedance 2.0 Fast (720p)",
@@ -123,6 +133,7 @@ export const SEEDANCE_MODELS = {
   ...CONFLUO_VIDEO_MODELS,
   ...TOPENROUTER_VIDEO_MODELS,
   ...HONGMENG_VIDEO_MODELS,
+  ...SDREAL_VIDEO_MODELS,
   ...KLING_VIDEO_MODELS,
 } as const;
 
@@ -1930,12 +1941,190 @@ async function vapeurPoll(input: {
     return { ok: false, error: `[vapeur] poll network: ${msg}` };
   }
 }
+
+// ====================================================================
+// SD Real Max —— Dreamina Seedance 2.0
+//
+// 协议：先 POST /v1/sd/assets 创建图片素材，再 POST /v1/video/generate；
+// 任务查询为 GET /v1/video/tasks/{taskId}。素材接口只接受公网 URL，因此调用
+// generateVideo 前的数据 URI 已由统一逻辑转存为可访问 URL。
+// ====================================================================
+
+const SDREAL_DEFAULT_BASE_URL = "https://model.service-inference.ai";
+
+function getSdrealConfig() {
+  return {
+    apiKey: process.env.SD_REAL_MAX_API_KEY,
+    baseUrl: (process.env.SD_REAL_MAX_BASE_URL || SDREAL_DEFAULT_BASE_URL).replace(/\/+$/, ""),
+  };
+}
+
+async function sdrealCreateImageAsset(input: {
+  url: string;
+  name: string;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<{ ok: true; assetId: string } | { ok: false; error: string }> {
+  try {
+    const res = await fetch(`${input.baseUrl}/v1/sd/assets`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${input.apiKey}`,
+      },
+      body: JSON.stringify({ URL: input.url, Name: input.name, AssetType: "Image" }),
+    });
+    const text = await res.text().catch(() => "");
+    if (!res.ok) return { ok: false, error: `[sdreal] asset ${res.status}: ${text.slice(0, 300)}` };
+    let json: { data?: { Id?: string; base_resp?: { status_code?: number; status_msg?: string } } } = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    const statusCode = json.data?.base_resp?.status_code;
+    const assetId = json.data?.Id;
+    if (statusCode !== 0 || !assetId) {
+      return {
+        ok: false,
+        error: `[sdreal] asset creation failed: ${json.data?.base_resp?.status_msg || text.slice(0, 300)}`,
+      };
+    }
+    return { ok: true, assetId };
+  } catch (error) {
+    return { ok: false, error: `[sdreal] asset network: ${error instanceof Error ? error.message : "fetch failed"}` };
+  }
+}
+
+async function sdrealSubmit(input: {
+  model: string;
+  prompt: string;
+  media: DashScopeMediaItem[];
+  ratio?: SeedanceRatio;
+  resolution?: string;
+  duration?: number;
+  generateAudio?: boolean;
+  watermark?: boolean;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<{ ok: true; taskId: string; model: string } | { ok: false; error: string }> {
+  const imageMedia = input.media.filter(
+    (item) => item.type === "first_frame" || item.type === "last_frame" || item.type === "reference_image",
+  );
+  const assets = await Promise.all(
+    imageMedia.map((item, index) =>
+      sdrealCreateImageAsset({
+        url: item.url,
+        name: `doopoo-video-reference-${Date.now()}-${index + 1}`,
+        apiKey: input.apiKey,
+        baseUrl: input.baseUrl,
+      }),
+    ),
+  );
+  const failedAsset = assets.find((asset) => !asset.ok);
+  if (failedAsset && !failedAsset.ok) return failedAsset;
+
+  const content: ContentItem[] = [{ type: "text", text: input.prompt }];
+  for (const asset of assets) {
+    if (asset.ok) {
+      content.push({
+        type: "image_url",
+        image_url: { url: `asset://${asset.assetId}` },
+        role: "reference_image",
+      });
+    }
+  }
+  const body: Record<string, unknown> = { model: input.model, content };
+  if (input.ratio) body.ratio = input.ratio;
+  if (input.resolution) body.resolution = toArkResolution(input.resolution);
+  if (typeof input.duration === "number") body.duration = input.duration;
+  if (typeof input.generateAudio === "boolean") body.generate_audio = input.generateAudio;
+  if (typeof input.watermark === "boolean") body.watermark = input.watermark;
+
+  try {
+    const res = await fetch(`${input.baseUrl}/v1/video/generate`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${input.apiKey}`,
+      },
+      body: JSON.stringify(body),
+    });
+    const text = await res.text().catch(() => "");
+    if (!res.ok) return { ok: false, error: `[sdreal] submit ${res.status}: ${text.slice(0, 300)}` };
+    let json: { task?: { id?: string; error?: string } } = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    if (!json.task?.id) return { ok: false, error: `[sdreal] no task id: ${json.task?.error || text.slice(0, 300)}` };
+    return { ok: true, taskId: json.task.id, model: input.model };
+  } catch (error) {
+    return { ok: false, error: `[sdreal] submit network: ${error instanceof Error ? error.message : "fetch failed"}` };
+  }
+}
+
+async function sdrealPoll(input: {
+  taskId: string;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<PollResult> {
+  try {
+    const res = await fetch(`${input.baseUrl}/v1/video/tasks/${encodeURIComponent(input.taskId)}`, {
+      headers: { Authorization: `Bearer ${input.apiKey}` },
+    });
+    const text = await res.text().catch(() => "");
+    if (!res.ok) return { ok: false, error: `[sdreal] poll ${res.status}: ${text.slice(0, 300)}` };
+    let json: { task?: { status?: string; outputs?: string[]; error?: unknown } } = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    const task = json.task;
+    if (!task) return { ok: false, error: `[sdreal] invalid task response: ${text.slice(0, 300)}` };
+    return {
+      ok: true,
+      status: seedanceStatusToProgress(task.status),
+      videoUrl: task.outputs?.[0] || null,
+      raw: { error: { message: typeof task.error === "string" ? task.error : "" }, ...json },
+    };
+  } catch (error) {
+    return { ok: false, error: `[sdreal] poll network: ${error instanceof Error ? error.message : "fetch failed"}` };
+  }
+}
+
 type SubmitResult =
   | { ok: true; taskId: string; model: string; backend: VideoBackend }
   | { ok: false; error: string };
 
 async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
   const backend = getVideoBackend(input.model);
+  if (backend === "sdreal") {
+    const { apiKey, baseUrl } = getSdrealConfig();
+    if (!apiKey) {
+      return {
+        ok: false,
+        error: "[sdreal] 缺少 SD_REAL_MAX_API_KEY，请在 Cloudflare Secrets 或 .env.local 中配置后再试。",
+      };
+    }
+    if (input.referenceVideoUrl || input.referenceAudioUrl) {
+      return {
+        ok: false,
+        error: "[sdreal] 当前接口文档仅支持文本与图片参考素材，暂不支持参考视频或音频。",
+      };
+    }
+    const r = await sdrealSubmit({
+      model: input.model,
+      prompt: input.prompt,
+      media: input.media,
+      ratio: input.ratio,
+      resolution: input.resolution,
+      duration: input.duration,
+      generateAudio: input.generateAudio,
+      watermark: input.watermark,
+      apiKey,
+      baseUrl,
+    });
+    return r.ok
+      ? { ok: true, taskId: r.taskId, model: r.model, backend: "sdreal" }
+      : { ok: false, error: r.error };
+  }
   if (backend === "ark") {
     const { apiKey, baseUrl } = getArkConfig();
     if (!apiKey) return { ok: false, error: "ARK_API_KEY not configured" };
@@ -2256,6 +2445,11 @@ type PollResult =
   | { ok: false; error: string; status?: SeedanceProgress; raw?: any };
 
 async function pollVideoTask(input: PollInput): Promise<PollResult> {
+  if (input.backend === "sdreal") {
+    const { apiKey, baseUrl } = getSdrealConfig();
+    if (!apiKey) return { ok: false, error: "[sdreal] 缺少 SD_REAL_MAX_API_KEY" };
+    return sdrealPoll({ taskId: input.taskId, apiKey, baseUrl });
+  }
   if (input.backend === "ark") {
     const { apiKey, baseUrl } = getArkConfig();
     if (!apiKey) return { ok: false, error: "ARK_API_KEY not configured" };
@@ -2390,6 +2584,7 @@ const PollServerInput = z.object({
     "confluo",
     "topenrouter",
     "hongmeng",
+    "sdreal",
   ]),
 });
 
