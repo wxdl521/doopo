@@ -7,7 +7,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
   AlertDialog,
-  AlertDialogAction,
   AlertDialogCancel,
   AlertDialogContent,
   AlertDialogDescription,
@@ -72,14 +71,18 @@ export default function SettingsTab({
   const handleDissolve = async () => {
     setDissolving(true);
     setDissolveError(null);
-
-    const r: any = await callDeleteTeam({ data: { teamId } });
-
-    setDissolving(false);
-    if (r?.ok) {
-      navigate({ to: "/team" });
-    } else {
-      setDissolveError(r?.error ?? t.common_save_error);
+    try {
+      const r: any = await callDeleteTeam({ data: { teamId } });
+      if (r?.ok) {
+        setShowDissolve(false);
+        navigate({ to: "/team" });
+      } else {
+        setDissolveError(r?.error ?? t.common_save_error);
+      }
+    } catch (error) {
+      setDissolveError(error instanceof Error ? error.message : t.common_save_error);
+    } finally {
+      setDissolving(false);
     }
   };
 
@@ -184,13 +187,14 @@ export default function SettingsTab({
                 <AlertDialogCancel onClick={() => setShowDissolve(false)}>
                   {t.common_cancel}
                 </AlertDialogCancel>
-                <AlertDialogAction
+                <Button
+                  type="button"
                   disabled={confirmName !== initialName}
                   onClick={() => setDissolveStep("final")}
-                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  variant="destructive"
                 >
                   {t.settings_dissolve_continue}
-                </AlertDialogAction>
+                </Button>
               </AlertDialogFooter>
             </>
           ) : (
@@ -212,13 +216,14 @@ export default function SettingsTab({
                 <AlertDialogCancel onClick={() => setDissolveStep("confirm")}>
                   {t.settings_dissolve_back}
                 </AlertDialogCancel>
-                <AlertDialogAction
+                <Button
+                  type="button"
                   onClick={handleDissolve}
                   disabled={dissolving}
-                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                  variant="destructive"
                 >
                   {dissolving ? t.settings_dissolve_processing : t.settings_dissolve_confirm_btn}
-                </AlertDialogAction>
+                </Button>
               </AlertDialogFooter>
             </>
           )}

@@ -1,4 +1,4 @@
-import type { AssetTab, CharacterAsset, SceneAsset, PropAsset } from "../data/assetsMock";
+import type { AssetTab, CharacterAsset, SceneAsset, PropAsset } from "../data/assetTypes";
 
 type Labels = {
   role: string;

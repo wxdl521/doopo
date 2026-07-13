@@ -1,21 +1,23 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useMemo, useState, useEffect } from "react";
-import { ArrowLeft, Copy, Download, Sparkles, Loader2 } from "lucide-react";
+import { useState, useEffect } from "react";
+import { ArrowLeft, Copy, Download, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { useServerFn } from "@tanstack/react-start";
 import { useLanguage } from "../i18n/LanguageContext";
-import {
-  type AssetTab,
-  type CharacterAsset,
-  type SceneAsset,
-  type PropAsset,
-  getAssetById,
-} from "../data/assetsMock";
+import type {
+  AssetTab,
+  CharacterAsset,
+  SceneAsset,
+  PropAsset,
+} from "../data/assetTypes";
 import { assetToMarkdown, downloadMarkdown } from "../lib/assetMarkdown";
-import { generateImage } from "../lib/seedream.functions";
-import { IMAGE_MODELS } from "../lib/imageModels";
-import { logImageMeta } from "../lib/logImageMeta";
-import { loadCharacters, loadScenes, type DbCharacter, type DbScene } from "../lib/assetsStorage";
+import {
+  loadCharacters,
+  loadScenes,
+  loadProps,
+  type DbCharacter,
+  type DbScene,
+  type DbProp,
+} from "../lib/assetsStorage";
 import { useAuth } from "../hooks/useAuth";
 
 export const Route = createFileRoute("/assets_/$tab/$id")({
@@ -31,13 +33,7 @@ function AssetDetailPage() {
   const [dbAsset, setDbAsset] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
-  const mockAsset = useMemo(() => getAssetById(tab as AssetTab, id), [tab, id]);
-
   useEffect(() => {
-    if (mockAsset) {
-      setLoading(false);
-      return;
-    }
     if (!user) {
       setLoading(false);
       return;
@@ -82,13 +78,39 @@ function AssetDetailPage() {
               emoji: "🌄",
               gradient: found.gradient || "from-emerald-400/40 via-teal-300/30 to-sky-200/30",
               time: found.time_of_day || "",
-              mood: "",
-              shot: "",
-              lighting: "",
-              sound: "",
-              reference: "",
-              tags: [],
+              mood: found.mood || "",
+              shot: found.shot || "",
+              lighting: found.lighting || "",
+              sound: found.sound || "",
+              reference: found.reference || "",
+              tags: [found.location, found.time_of_day].filter(Boolean),
               summary: found.action || "",
+              cover: found.cover_url || "",
+              location: found.location || "",
+              action: found.action || "",
+              beats: Array.isArray(found.beats) ? found.beats : [],
+              dialogue: found.dialogue || "",
+            });
+          }
+        } else if (tab === "prop") {
+          const { data } = await loadProps(user.id);
+          const found = data?.find((p: DbProp) => p.id === id);
+          if (found) {
+            setDbAsset({
+              id: found.id,
+              name: found.name,
+              emoji: "📦",
+              gradient: found.gradient || "from-teal-400/40 via-cyan-300/30 to-emerald-200/30",
+              cover: found.cover_url || "",
+              owner: found.owner || "",
+              appearance: found.description || "",
+              firstAppear: "",
+              lastAppear: "",
+              material: found.visual_style || "",
+              symbol: found.key_moments || "",
+              detail: found.movement_description || found.description || "",
+              summary: found.description || "",
+              tags: [found.visual_style, found.palette].filter(Boolean),
             });
           }
         }
@@ -98,9 +120,9 @@ function AssetDetailPage() {
         setLoading(false);
       }
     })();
-  }, [tab, id, user, mockAsset]);
+  }, [tab, id, user]);
 
-  const asset = mockAsset || dbAsset;
+  const asset = dbAsset;
 
   if (loading) {
     return (
@@ -181,24 +203,32 @@ function AssetDetailPage() {
             <ArrowLeft size={14} /> {t.assets_back}
           </button>
           <span className="text-text-muted text-xs">/</span>
-          <span className="text-xs text-text-secondary">{t.assets_title}</span>
+          <Link to="/assets" className="text-xs text-text-secondary hover:text-text-primary transition">
+            {t.assets_title}
+          </Link>
           <span className="text-text-muted text-xs">/</span>
-          <span className="text-xs text-text-secondary">{tabLabel}</span>
+          <Link
+            to="/assets"
+            search={{ tab }}
+            className="text-xs text-text-secondary hover:text-text-primary transition"
+          >
+            {tabLabel}
+          </Link>
           <span className="text-text-muted text-xs">/</span>
           <span className="text-xs text-text-primary font-medium">{asset.name}</span>
         </div>
-        <div className="flex items-center gap-2">
+        {tab === "character" && <div className="flex items-center gap-2">
           <button onClick={handleCopy} className="btn-ghost text-xs">
             <Copy size={14} /> {t.assets_copy_md}
           </button>
           <button onClick={handleExport} className="btn-primary text-xs">
             <Download size={14} /> {t.assets_export_md}
           </button>
-        </div>
+        </div>}
       </header>
 
       {tab === "character" && <CharacterDetail c={asset as CharacterAsset} />}
-      {tab === "scene" && <SceneDetail s={asset as SceneAsset} />}
+      {tab === "scene" && <SceneDetail s={asset as SceneAsset & { cover?: string; location?: string; action?: string; beats?: string[]; dialogue?: string }} />}
       {tab === "prop" && <PropDetail p={asset as PropAsset} />}
     </div>
   );
@@ -321,32 +351,23 @@ function CharacterDetail({ c }: { c: CharacterAsset }) {
 }
 
 /* ---------------- Scene ---------------- */
-function SceneDetail({ s }: { s: SceneAsset }) {
+function SceneDetail({ s }: { s: SceneAsset & { cover?: string; location?: string; action?: string; beats?: string[]; dialogue?: string } }) {
   const { t } = useLanguage();
-  const prompt = [
-    `Cinematic scene illustration: ${s.name}.`,
-    s.summary,
-    s.time && `Time: ${s.time}.`,
-    s.mood && `Mood: ${s.mood}.`,
-    s.shot && `Shot: ${s.shot}.`,
-    s.lighting && `Lighting: ${s.lighting}.`,
-    s.tags?.length ? `Tags: ${s.tags.join(", ")}.` : "",
-    "High detail, atmospheric, no text, no watermark.",
-  ]
-    .filter(Boolean)
-    .join(" ");
   return (
-    <div className="flex flex-col gap-6">
-      <ImageStage
-        prompt={prompt}
-        fallback={<span className="text-8xl drop-shadow-lg">{s.emoji}</span>}
-        gradient={s.gradient}
-        heightClass="h-64 md:h-80"
-      />
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <div className="flex flex-col gap-3">
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <div className="lg:col-span-5">
+        <ImageStage
+          initialUrl={s.cover}
+          fallback={<span className="text-8xl drop-shadow-lg">{s.emoji}</span>}
+          gradient={s.gradient}
+          heightClass="aspect-[4/3] lg:aspect-square"
+          imageClass="object-contain"
+        />
+      </div>
+      <section className="lg:col-span-7 flex flex-col gap-4">
+        <div>
           <h1 className="text-3xl font-bold text-text-primary tracking-tight">{s.name}</h1>
-          <div className="flex flex-wrap gap-1.5">
+          <div className="mt-2 flex flex-wrap gap-1.5">
             {s.tags.map((tag) => (
               <span
                 key={tag}
@@ -356,17 +377,20 @@ function SceneDetail({ s }: { s: SceneAsset }) {
               </span>
             ))}
           </div>
-          <p className="text-sm text-text-secondary leading-relaxed">{s.summary}</p>
+          <p className="mt-3 text-sm leading-relaxed text-text-secondary">{s.summary}</p>
         </div>
         <div className="panel p-4 flex flex-col gap-2">
+          <Row label="地点" value={s.location || ""} />
           <Row label={t.assets_field_time} value={s.time} />
+          <Row label="动作" value={s.action || ""} />
           <Row label={t.assets_field_mood} value={s.mood} />
           <Row label={t.assets_field_shot} value={s.shot} />
           <Row label={t.assets_field_lighting} value={s.lighting} />
           <Row label={t.assets_field_sound} value={s.sound} />
           <Row label={t.assets_field_reference} value={s.reference} />
         </div>
-      </div>
+        {s.beats?.length ? <Block title="剧情节点" body={s.beats.join("\n")} /> : null}
+      </section>
     </div>
   );
 }
@@ -374,25 +398,15 @@ function SceneDetail({ s }: { s: SceneAsset }) {
 /* ---------------- Prop ---------------- */
 function PropDetail({ p }: { p: PropAsset }) {
   const { t } = useLanguage();
-  const prompt = [
-    `Product-style illustration of a prop: ${p.name}.`,
-    p.summary,
-    p.detail,
-    p.material && `Material: ${p.material}.`,
-    p.appearance && `Appearance: ${p.appearance}.`,
-    p.tags?.length ? `Tags: ${p.tags.join(", ")}.` : "",
-    "Centered composition, soft studio lighting, no text, no watermark.",
-  ]
-    .filter(Boolean)
-    .join(" ");
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
       <div className="lg:col-span-5">
         <ImageStage
-          prompt={prompt}
+        initialUrl={(p as PropAsset & { cover?: string }).cover}
           fallback={<span className="text-9xl drop-shadow-lg">{p.emoji}</span>}
           gradient={p.gradient}
-          heightClass="aspect-square"
+        heightClass="aspect-square"
+        imageClass="object-contain"
         />
       </div>
       <section className="lg:col-span-7 flex flex-col gap-4">
@@ -426,72 +440,28 @@ function PropDetail({ p }: { p: PropAsset }) {
 
 /* ---------------- Shared ---------------- */
 function ImageStage({
-  prompt,
   fallback,
   gradient,
   heightClass,
+  initialUrl = "",
+  imageClass = "object-cover",
 }: {
-  prompt: string;
   fallback: React.ReactNode;
   gradient: string;
   heightClass: string;
+  initialUrl?: string;
+  imageClass?: string;
 }) {
-  const callGenerateImage = useServerFn(generateImage);
-  const [model, setModel] = useState<string>("");
-  const [url, setUrl] = useState<string>("");
-  const [loading, setLoading] = useState(false);
-
-  async function handleGenerate() {
-    if (loading) return;
-    setLoading(true);
-    try {
-      const r = await callGenerateImage({ data: { prompt, model: model || undefined } });
-      logImageMeta("assets.generate", r);
-      if (r?.url) {
-        setUrl(r.url);
-      } else {
-        toast.error(r?.error || "Image generation failed");
-      }
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Image generation failed");
-    } finally {
-      setLoading(false);
-    }
-  }
-
   return (
-    <div className="flex flex-col gap-2">
+    <div>
       <div
         className={`panel overflow-hidden bg-gradient-to-br ${gradient} ${heightClass} flex items-center justify-center relative`}
       >
-        {url ? (
-          <img src={url} alt="" className="w-full h-full object-cover animate-fade-in" />
+        {initialUrl ? (
+          <img src={initialUrl} alt="" className={`w-full h-full ${imageClass} animate-fade-in`} />
         ) : (
           fallback
         )}
-        {loading && (
-          <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-            <Loader2 className="animate-spin text-white" size={28} />
-          </div>
-        )}
-      </div>
-      <div className="flex items-center gap-2">
-        <select
-          value={model}
-          onChange={(e) => setModel(e.target.value)}
-          disabled={loading}
-          className="text-xs px-2 py-1.5 rounded-md bg-bg-elevated border border-border text-text-secondary focus:outline-none focus:border-accent"
-        >
-          {IMAGE_MODELS.map((m) => (
-            <option key={m.key} value={m.key}>
-              {m.label}
-            </option>
-          ))}
-        </select>
-        <button onClick={handleGenerate} disabled={loading} className="btn-primary text-xs">
-          {loading ? <Loader2 className="animate-spin" size={14} /> : <Sparkles size={14} />}
-          {url ? "Regenerate" : "Generate image"}
-        </button>
       </div>
     </div>
   );

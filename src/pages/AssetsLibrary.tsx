@@ -1,15 +1,9 @@
 import { useState, useEffect } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useSearch } from "@tanstack/react-router";
 import { ChevronDown, Plus, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useLanguage } from "../i18n/LanguageContext";
 import { useAuth } from "../hooks/useAuth";
-import {
-  type AssetTab,
-  characterAssets as mockCharacters,
-  sceneAssets as mockScenes,
-  propAssets,
-} from "../data/assetsMock";
 import {
   loadCharacters,
   loadScenes,
@@ -20,10 +14,12 @@ import {
 } from "../lib/assetsStorage";
 
 type Scope = "personal" | "team";
+type AssetTab = "character" | "scene" | "prop";
 
 export default function AssetsLibrary() {
   const { t } = useLanguage();
   const { user, isAuthenticated } = useAuth();
+  const { tab: requestedTab } = useSearch({ from: "/assets" });
   const [tab, setTab] = useState<AssetTab>("character");
   const [scope, setScope] = useState<Scope>("personal");
   const [scopeOpen, setScopeOpen] = useState(false);
@@ -32,15 +28,22 @@ export default function AssetsLibrary() {
   const [dbProps, setDbProps] = useState<any[]>([]);
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (requestedTab) setTab(requestedTab);
+  }, [requestedTab]);
+
   // 2026/06:刷新列表的辅助函数,从资产库移除单条后重新拉
   async function refresh(kind: "character" | "scene" | "prop") {
     if (!user) return;
     if (kind === "character") {
       const { data } = await loadCharacters(user.id);
       if (data) setDbCharacters(data);
-    } else {
+    } else if (kind === "scene") {
       const { data } = await loadScenes(user.id);
       if (data) setDbScenes(data);
+    } else {
+      const { data } = await loadProps(user.id);
+      if (data) setDbProps(data);
     }
   }
 
@@ -88,8 +91,7 @@ export default function AssetsLibrary() {
 
   const renderCards = () => {
     if (tab === "character") {
-      const allChars = [
-        ...dbCharacters.map((c) => ({
+      const allChars = dbCharacters.map((c) => ({
           id: c.id,
           name: c.name,
           emoji: "👤",
@@ -100,22 +102,8 @@ export default function AssetsLibrary() {
           role: c.role_label || c.role,
           age: String(c.age || ""),
           personality: c.personality || "",
-          fromDb: true,
-        })),
-        ...mockCharacters.map((c) => ({
-          id: c.id,
-          name: c.name,
-          emoji: c.emoji,
-          gradient: c.gradient,
-          cover: c.cover,
-          summary: c.summary,
-          tags: c.tags,
-          role: c.role,
-          age: c.age,
-          personality: c.personality,
-          fromDb: false,
-        })),
-      ];
+        fromDb: true,
+      }));
       if (!allChars.length) return <Empty />;
       return (
         <Grid>
@@ -142,8 +130,7 @@ export default function AssetsLibrary() {
       );
     }
     if (tab === "scene") {
-      const allScenes = [
-        ...dbScenes.map((s) => ({
+      const allScenes = dbScenes.map((s) => ({
           id: s.id,
           name: s.name,
           emoji: "🎬",
@@ -154,23 +141,8 @@ export default function AssetsLibrary() {
           time: s.time_of_day || "",
           mood: "",
           shot: "",
-          fromDb: true,
-        })),
-        ...mockScenes.map((s) => ({
-          id: s.id,
-          name: s.name,
-          emoji: s.emoji,
-          gradient: s.gradient,
-          // SceneAsset 类型没 cover 字段,mock 场景只有 emoji 占位
-          cover: undefined as string | undefined,
-          summary: s.summary,
-          tags: s.tags,
-          time: s.time,
-          mood: s.mood,
-          shot: s.shot,
-          fromDb: false,
-        })),
-      ];
+        fromDb: true,
+      }));
       if (!allScenes.length) return <Empty />;
       return (
         <Grid>
@@ -197,8 +169,7 @@ export default function AssetsLibrary() {
       );
     }
     if (tab === "prop") {
-      const allProps = [
-        ...dbProps.map((p) => ({
+      const allProps = dbProps.map((p) => ({
           id: p.id,
           name: p.name,
           emoji: "📦",
@@ -206,25 +177,11 @@ export default function AssetsLibrary() {
           cover: p.cover_url || undefined,
           summary: p.description?.slice(0, 100) || "",
           tags: [] as string[],
-          owner: "",
-          appearance: "",
-          symbol: "",
-          fromDb: true,
-        })),
-        ...propAssets.map((p) => ({
-          id: p.id,
-          name: p.name,
-          emoji: p.emoji,
-          gradient: p.gradient,
-          cover: undefined as string | undefined,
-          summary: p.summary,
-          tags: p.tags,
-          owner: p.owner,
-          appearance: p.appearance,
-          symbol: p.symbol,
-          fromDb: false,
-        })),
-      ];
+        owner: p.owner || "",
+        appearance: p.description || "",
+        symbol: p.key_moments || "",
+        fromDb: true,
+      }));
       if (!allProps.length) return <Empty />;
       return (
         <Grid>

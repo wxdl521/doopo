@@ -102,6 +102,7 @@ export const getMyTeams = createServerFn({ method: "POST" })
           name,
           description,
           owner_id,
+          deleted_at,
           created_at,
           updated_at
         )
@@ -115,7 +116,7 @@ export const getMyTeams = createServerFn({ method: "POST" })
     }
 
     const teams = (memberships ?? [])
-      .filter((m: any) => m.team != null)
+      .filter((m: any) => m.team != null && m.team.deleted_at == null)
       .map((m: any) => ({
         id: m.team.id,
         name: m.team.name,

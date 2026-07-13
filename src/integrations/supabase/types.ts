@@ -267,6 +267,7 @@ export type Database = {
           completed_stages: string[]
           created_at: string
           custom_cover: string | null
+          custom_style: string | null
           group_id: string | null
           id: string
           name: string
@@ -287,6 +288,7 @@ export type Database = {
           completed_stages?: string[]
           created_at?: string
           custom_cover?: string | null
+          custom_style?: string | null
           group_id?: string | null
           id: string
           name?: string
@@ -307,6 +309,7 @@ export type Database = {
           completed_stages?: string[]
           created_at?: string
           custom_cover?: string | null
+          custom_style?: string | null
           group_id?: string | null
           id?: string
           name?: string

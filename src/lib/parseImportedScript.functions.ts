@@ -270,7 +270,7 @@ export const parseImportedScript = createServerFn({ method: "POST" })
       kind: "progress",
       message:
         data.lang === "zh"
-          ? `已提交给 ${picked.provider} / ${picked.model}，正在分析并切分集数…`
+          ? "正在分析并切分集数…"
           : `Submitted to ${picked.provider} / ${picked.model}, analyzing and splitting…`,
     };
 

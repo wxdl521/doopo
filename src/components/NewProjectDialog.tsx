@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import {
@@ -10,7 +10,6 @@ import {
   X,
   Check,
   Flame,
-  Upload,
   Clock,
 } from "lucide-react";
 import { Dialog, DialogContent, DialogTrigger } from "./ui/dialog";
@@ -255,6 +254,24 @@ const videoModels = [
     sub: "I2V",
   },
 
+  // ---- SD Real Max（Dreamina Seedance 2.0，需 SD_REAL_MAX_API_KEY）----
+  { id: "__video_sep_sdreal__", label: "—— SD Real Max（Dreamina Seedance 2.0）——", sub: "" },
+  {
+    id: "dreamina-seedance-2-0-fast-hc",
+    label: "Dreamina Seedance 2.0 Fast",
+    sub: "SD Real Max · 快速版",
+  },
+  {
+    id: "dreamina-seedance-2-0-hc",
+    label: "Dreamina Seedance 2.0",
+    sub: "SD Real Max · 标准版",
+  },
+  {
+    id: "dreamina-seedance-2-0-mini-hc",
+    label: "Dreamina Seedance 2.0 Mini",
+    sub: "SD Real Max · 轻量版",
+  },
+
   // ---- 即梦 3.0 Pro(火山引擎视觉服务,需 AK/SK)----
   { id: "__video_sep_jimeng__", label: "—— 即梦 3.0 Pro(Volcengine 视觉服务)——", sub: "" },
   { id: "jimeng-3.0-pro", label: "即梦 3.0 Pro (文生视频)", sub: "需配置 JIMENG AK/SK" },
@@ -408,6 +425,7 @@ const VISIBLE_VIDEO_PREFIXES = [
   "topenrouter-", // TopenRouter 中转 Seedance
   "hongmeng-", // 弘梦 中转 Seedance 2
   "shuci-", // 数安词源
+  "dreamina-seedance-", // SD Real Max
 ];
 const isVisibleVideo = (id: string) =>
   VISIBLE_VIDEO_PREFIXES.some((p) => id.toLowerCase().startsWith(p));
@@ -430,6 +448,9 @@ const VIDEO_RESOLUTIONS: Record<string, string[]> = {
   "hongmeng-seedance2-fast": ["480P", "720P"],
   "hongmeng-seedance2-mini": ["480P", "720P"],
   "hongmeng-seedance2-pro": ["480P", "720P", "1080P"],
+  "dreamina-seedance-2-0-fast-hc": ["480P"],
+  "dreamina-seedance-2-0-hc": ["480P"],
+  "dreamina-seedance-2-0-mini-hc": ["480P"],
 };
 function videoResolutionOptions(videoModel: string | undefined): string[] {
   if (!videoModel) return [];
@@ -468,6 +489,8 @@ export type ProjectConfig = {
   workflow: string;
   style: string;
   customCover?: string | null;
+  /** 仅在选择「自定义风格」时使用的文字风格描述。 */
+  customStyle?: string | null;
 };
 
 export function NewProjectDialog({
@@ -496,7 +519,7 @@ export function NewProjectDialog({
 }) {
   const { t } = useLanguage();
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const userId = user?.id;
   const saveProject = useServerFn(upsertProject);
   const [openInner, setOpenInner] = useState(false);
@@ -536,8 +559,8 @@ export function NewProjectDialog({
     return realVideoModels[0]?.id ?? "doubao-seedance-2-0-260128";
   };
   const [aspect, setAspect] = useState(() => initial?.aspect ?? "16:9");
-  const [customCover, setCustomCover] = useState<string | null>(() => initial?.customCover ?? null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [customCover] = useState<string | null>(() => initial?.customCover ?? null);
+  const [customStyle, setCustomStyle] = useState(() => initial?.customStyle ?? "");
   // 2026 重构:默认全走火山方舟 Seedream(图像) + 阿里 HappyHorse(视频,实测可用)
   const [storyboardModel, setStoryboardModel] = useState(pickScene);
   // Seedream 统一支持 T2I + I2I,没有 qwen-image-2.0-pro 那样的"I2I-only"坑
@@ -688,6 +711,14 @@ export function NewProjectDialog({
     // 新建项目时,生成新 id 并跳转到新 workspace。
     const isEdit = !!initial?.id;
     const id = initial?.id ?? `ws-${Date.now().toString(36)}`;
+    if (authLoading) {
+      toast.message("正在恢复登录状态，请稍后重试");
+      return;
+    }
+    if (!user) {
+      toast.error("请先登录后再保存项目配置");
+      return;
+    }
     try {
       const res = await saveProject({
         data: {
@@ -701,6 +732,7 @@ export function NewProjectDialog({
           workflow,
           style,
           customCover: customCover ?? null,
+          customStyle: style === "custom" ? customStyle.trim() || null : null,
           ...(groupContext && {
             teamId: groupContext.teamId,
             groupId: groupContext.groupId,
@@ -712,7 +744,8 @@ export function NewProjectDialog({
         return;
       }
     } catch (e) {
-      toast.error("保存项目配置失败，请先登录");
+      const message = e instanceof Error ? e.message : String(e);
+      toast.error(`保存项目配置失败${message ? `: ${message}` : "，请稍后重试"}`);
       return;
     }
     if (isEdit) {
@@ -729,6 +762,7 @@ export function NewProjectDialog({
         workflow,
         style,
         customCover: customCover ?? null,
+        customStyle: style === "custom" ? customStyle.trim() || null : null,
       });
       setOpen(false);
       return;
@@ -909,47 +943,24 @@ export function NewProjectDialog({
                 </button>
               );
             })}
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              className={`relative rounded-xl overflow-hidden border-2 text-left bg-bg-elevated transition ${style === "custom" ? "border-accent shadow-glow" : "border-dashed border-border hover:border-accent/60"}`}
+            <div
+              onClick={() => setStyle("custom")}
+              className={`col-span-2 sm:col-span-4 flex cursor-text items-center gap-2 rounded-xl border-2 bg-bg-elevated px-3 py-2 transition ${style === "custom" ? "border-accent shadow-glow" : "border-dashed border-border hover:border-accent/60"}`}
             >
-              <div className="aspect-square flex items-center justify-center bg-gradient-to-br from-bg-elevated to-bg-surface">
-                {customCover ? (
-                  <img src={customCover} alt="custom" className="w-full h-full object-cover" />
-                ) : (
-                  <div className="flex flex-col items-center gap-1.5 text-text-muted">
-                    <div className="w-10 h-10 rounded-full bg-bg-surface border border-border flex items-center justify-center">
-                      <Upload size={16} />
-                    </div>
-                    <span className="text-[11px]">{t.np_style_upload}</span>
-                  </div>
-                )}
-              </div>
-              <div
-                className={`px-2 py-1.5 text-xs ${style === "custom" ? "text-accent font-semibold" : "text-text-secondary"}`}
-              >
-                {t.np_style_custom}
-              </div>
-              {style === "custom" && (
-                <Check
-                  className="absolute top-1.5 left-1.5 text-accent bg-bg-surface rounded-full p-0.5"
-                  size={18}
-                />
-              )}
-            </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (!f) return;
-                const url = URL.createObjectURL(f);
-                setCustomCover(url);
-                setStyle("custom");
-              }}
-            />
+              <Sparkles size={15} className={style === "custom" ? "text-accent" : "text-text-muted"} />
+              <input
+                value={customStyle}
+                onFocus={() => setStyle("custom")}
+                onChange={(e) => {
+                  setStyle("custom");
+                  setCustomStyle(e.target.value);
+                }}
+                maxLength={2000}
+                placeholder="自定义风格，例如：水墨武侠、留白构图、青灰配色"
+                className="min-w-0 flex-1 bg-transparent text-sm text-text-primary outline-none placeholder:text-text-muted"
+              />
+              {style === "custom" && <Check className="shrink-0 text-accent" size={16} />}
+            </div>
           </div>
         </div>
 

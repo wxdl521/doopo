@@ -322,6 +322,15 @@ export function resolveProjectStyle(
   projectStyle: string | null | undefined,
 ): VisualStyleSpec & { key: string } {
   const key = projectStyle || "realistic";
+  if (key.startsWith("custom:")) {
+    const customPrompt = key.slice("custom:".length).trim();
+    return {
+      key: "custom",
+      label: "自定义风格",
+      positive: customPrompt || PROJECT_STYLE_PROMPTS.realistic.positive,
+      negative: PROJECT_STYLE_PROMPTS.realistic.negative,
+    };
+  }
   const spec = PROJECT_STYLE_PROMPTS[key] ?? PROJECT_STYLE_PROMPTS.realistic;
   return { key, ...spec };
 }

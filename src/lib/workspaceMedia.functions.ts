@@ -91,11 +91,11 @@ export const saveOneStoryboard = createServerFn({ method: "POST" })
           error: `storage upload failed: ${uploadErr.message}`,
         };
       }
-      const { data: signed } = await supabase.storage.from(BUCKET).createSignedUrl(path, 315360000);
-      if (!signed?.signedUrl) {
-        return { ok: false, url, persisted: false, error: "no signed url after upload" };
+      const { data: publicUrl } = supabase.storage.from(BUCKET).getPublicUrl(path);
+      if (!publicUrl?.publicUrl) {
+        return { ok: false, url, persisted: false, error: "no public url after upload" };
       }
-      return { ok: true, url: signed.signedUrl, persisted: true };
+      return { ok: true, url: publicUrl.publicUrl, persisted: true };
     } catch (e: any) {
       return { ok: false, url, persisted: false, error: e?.message ?? String(e) };
     }
@@ -116,6 +116,7 @@ export const saveOneStoryboard = createServerFn({ method: "POST" })
 const SaveOneVideoInput = z.object({
   workspaceId: z.string().min(1).max(64),
   groupId: z.string().min(1).max(64),
+  fileId: z.string().min(1).max(128).optional(),
   url: z.string().min(1).max(200000),
 });
 
@@ -131,7 +132,7 @@ export const saveOneVideo = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => SaveOneVideoInput.parse(input))
   .handler(async ({ data, context }): Promise<SaveOneVideoResult> => {
     const { supabase, userId } = context as { supabase: any; userId: string };
-    const { workspaceId, groupId, url } = data;
+    const { workspaceId, groupId, fileId, url } = data;
 
     if (!url) {
       return { ok: true, url: "", persisted: false };
@@ -143,7 +144,7 @@ export const saveOneVideo = createServerFn({ method: "POST" })
 
     try {
       const { buf, contentType } = await fetchMedia(url);
-      const path = makePath(userId, workspaceId, "video", groupId, contentType);
+      const path = makePath(userId, workspaceId, "video", fileId ?? groupId, contentType);
       const mime = MIME_BY_KIND.video;
       const blob = new Blob([buf], { type: mime });
       const { error: uploadErr } = await supabase.storage
@@ -157,11 +158,11 @@ export const saveOneVideo = createServerFn({ method: "POST" })
           error: `storage upload failed: ${uploadErr.message}`,
         };
       }
-      const { data: signed } = await supabase.storage.from(BUCKET).createSignedUrl(path, 315360000);
-      if (!signed?.signedUrl) {
-        return { ok: false, url, persisted: false, error: "no signed url after upload" };
+      const { data: publicUrl } = supabase.storage.from(BUCKET).getPublicUrl(path);
+      if (!publicUrl?.publicUrl) {
+        return { ok: false, url, persisted: false, error: "no public url after upload" };
       }
-      return { ok: true, url: signed.signedUrl, persisted: true };
+      return { ok: true, url: publicUrl.publicUrl, persisted: true };
     } catch (e: any) {
       return { ok: false, url, persisted: false, error: e?.message ?? String(e) };
     }
@@ -205,10 +206,9 @@ export const persistAssetImage = createServerFn({ method: "POST" })
         .from(BUCKET)
         .upload(path, blob, { contentType: contentType || "image/png", upsert: true });
       if (uploadErr) return { ok: false, url: "", error: `upload failed: ${uploadErr.message}` };
-      // 用签名 URL（10年有效期），避免 RLS 限制导致 <img> 无法加载
-      const { data: signed } = await supabase.storage.from(BUCKET).createSignedUrl(path, 315360000); // 10 years
-      if (!signed?.signedUrl) return { ok: false, url: "", error: "no signed url" };
-      return { ok: true, url: signed.signedUrl };
+      const { data: publicUrl } = supabase.storage.from(BUCKET).getPublicUrl(path);
+      if (!publicUrl?.publicUrl) return { ok: false, url: "", error: "no public url" };
+      return { ok: true, url: publicUrl.publicUrl };
     } catch (e: any) {
       return { ok: false, url: "", error: e?.message ?? String(e) };
     }
@@ -399,11 +399,9 @@ export const persistWorkspaceMedia = createServerFn({ method: "POST" })
           if (uploadErr) {
             throw new Error(`storage upload failed: ${uploadErr.message}`);
           }
-          const { data: signed } = await supabase.storage
-            .from(BUCKET)
-            .createSignedUrl(path, 315360000);
-          if (!signed?.signedUrl) throw new Error("no signed url after upload");
-          outputMap[groupId] = { url: signed.signedUrl, status: "succeeded" };
+          const { data: publicUrl } = supabase.storage.from(BUCKET).getPublicUrl(path);
+          if (!publicUrl?.publicUrl) throw new Error("no public url after upload");
+          outputMap[groupId] = { url: publicUrl.publicUrl, status: "succeeded" };
           result.persistedCount++;
         } catch (e: any) {
           // 失败 → 原样保留 ephemeral URL,统计错误

@@ -16,6 +16,7 @@ const ProjectInput = z.object({
   audio: z.enum(["on", "off"]).optional(),
   workflow: z.string().max(50).optional(),
   style: z.string().max(50).optional(),
+  customStyle: z.string().max(2000).nullable().optional(),
   customCover: z.string().max(2000).nullable().optional(),
   teamId: z.string().uuid().nullable().optional(),
   groupId: z.string().uuid().nullable().optional(),
@@ -32,6 +33,7 @@ export type ProjectConfigRow = {
   audio: "on" | "off";
   workflow: string;
   style: string;
+  customStyle: string | null;
   customCover: string | null;
 };
 
@@ -52,6 +54,7 @@ export const upsertProject = createServerFn({ method: "POST" })
       ...(data.audio !== undefined && { audio: data.audio }),
       ...(data.workflow !== undefined && { workflow: data.workflow }),
       ...(data.style !== undefined && { style: data.style }),
+      ...(data.customStyle !== undefined && { custom_style: data.customStyle }),
       ...(data.customCover !== undefined && { custom_cover: data.customCover }),
       ...(data.teamId !== undefined && { team_id: data.teamId }),
       ...(data.groupId !== undefined && { group_id: data.groupId }),
@@ -69,7 +72,7 @@ export const getProject = createServerFn({ method: "POST" })
     const { data: row, error } = await supabase
       .from("projects")
       .select(
-        "id,name,aspect,storyboard_model,scene_model,video_model,audio,workflow,style,custom_cover,resolution",
+        "id,name,aspect,storyboard_model,scene_model,video_model,audio,workflow,style,custom_style,custom_cover,resolution",
       )
       .eq("id", data.id)
       .maybeSingle();
@@ -86,6 +89,7 @@ export const getProject = createServerFn({ method: "POST" })
       audio: row.audio as "on" | "off",
       workflow: row.workflow,
       style: row.style,
+      customStyle: row.custom_style ?? null,
       customCover: row.custom_cover,
     };
     return { project, error: null as string | null };
