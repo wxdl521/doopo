@@ -112,6 +112,7 @@ export const en: Translations = {
 
   // Quick actions
   quick_story_video: "Story Video",
+  quick_restyle: "Restyle",
   quick_music_mv: "Music MV",
   quick_product_promo: "Product Promo",
   quick_digital_human: "Digital Human Ad",
@@ -1012,12 +1013,12 @@ export const en: Translations = {
   ws_produced_toast: "Written to the workspace — open the matching tab to review.",
   ws_just_generated: "Just generated",
 
-  // Zopia Chat Panel
+  // Doopoo Chat Panel
   zp_new_chat: "New chat",
   zp_chat_dropdown: "New Chat",
   zp_today_help: "How can I help today?",
   zp_intro_script:
-    "Hi, I'm Zopia. I help you build short narrative videos — scripts, characters, scenes, storyboards and renders.",
+    "Hi, I'm Doopoo. I help you build short narrative videos — scripts, characters, scenes, storyboards and renders.",
   zp_intro_script_hint: "This episode is empty. You can tell me directly, e.g.:",
   zp_intro_character:
     "I can extract leads, supporting roles and villains, then generate character sheets.",

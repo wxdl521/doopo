@@ -106,6 +106,7 @@ export const zh = {
 
   // Quick actions
   quick_story_video: "故事视频",
+  quick_restyle: "转绘",
   quick_music_mv: "音乐 MV",
   quick_product_promo: "产品宣传",
   quick_digital_human: "数字人广告",
@@ -994,12 +995,12 @@ export const zh = {
   ws_produced_toast: "已写入工作区，可在对应 Tab 查看。",
   ws_just_generated: "刚生成",
 
-  // ============ Zopia Chat Panel ============
+  // ============ Doopoo Chat Panel ============
   zp_new_chat: "新建聊天",
   zp_chat_dropdown: "新对话",
   zp_today_help: "今天我能帮您什么？",
   zp_intro_script:
-    "你好，我是 Zopia，可以帮你做剧情型短视频的创作，比如短剧剧本、角色设定、场景设计、分镜画面/视频生成。",
+    "你好，我是 Doopoo，可以帮你做剧情型短视频的创作，比如短剧剧本、角色设定、场景设计、分镜画面/视频生成。",
   zp_intro_script_hint: "你现在这个剧集还是空的，可以直接告诉我你想做什么，比如：",
   zp_intro_character: "我可以帮你从剧本中抽取角色，并生成角色设定卡。",
   zp_intro_storyboard: "我可以根据剧本生成分镜表、扩写镜头描述。",
