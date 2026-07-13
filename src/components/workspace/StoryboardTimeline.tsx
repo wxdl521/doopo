@@ -10,6 +10,7 @@ import {
   GripVertical,
   CloudCheck,
   CloudOff,
+  Download,
 } from "lucide-react";
 import type { StoryboardGroup } from "../../data/workspaceGenerators";
 
@@ -23,10 +24,7 @@ function isPersistedUrl(url: string | undefined | null): boolean {
   try {
     const u = new URL(url);
     const path = u.pathname || "";
-    return (
-      path.includes("/storage/v1/object/public/workspace-media/") ||
-      path.includes("/object/public/workspace-media/")
-    );
+    return /\/(?:storage\/v1\/)?object\/(?:public|sign)\/workspace-media\//.test(path);
   } catch {
     return false;
   }
@@ -35,7 +33,8 @@ function isPersistedUrl(url: string | undefined | null): boolean {
 /**
  * 2026/06:Storyboard → Timeline 拼接播放视图。
  *
- *  - 多个分镜组生成的视频按"clipOrder"顺序拼接播放,每个 clip 默认 10s。
+ *  - 多个分镜组生成的视频按"clipOrder"顺序拼接播放，时长取视频 metadata；
+ *    metadata 尚未加载时才按分镜/生成请求时长兜底。
  *  - 顶部主视频播放器,只渲染当前 active clip 的 <video>(其他隐藏 mount,
  *    切换 src 时不重建 DOM,降低闪烁)。
  *  - 底部按帧时间轴:横向 clip 缩略图条 + 可拖拽竖线 playhead。
@@ -48,7 +47,7 @@ function isPersistedUrl(url: string | undefined | null): boolean {
 
 export type GroupVideoMap = Record<
   string,
-  { url: string; status: "running" | "succeeded" | "failed" }
+  { url: string; status: "running" | "succeeded" | "failed"; durationSec?: number }
 >;
 
 type Props = {
@@ -57,8 +56,10 @@ type Props = {
   /** 用户可调整的播放顺序(groupId 数组)。父组件管理以便持久化/重置。 */
   clipOrder: string[];
   onClipReorder: (nextOrder: string[]) => void;
-  /** 默认每个 clip 长度(秒)。当前分镜视频固定 10s。 */
+  /** 旧数据没有真实 metadata 时的兜底时长。 */
   clipDurationSec?: number;
+  /** 浏览器读到视频 metadata 后，回写真实时长以便持久化。 */
+  onVideoDurationDetected?: (groupId: string, durationSec: number) => void;
   /** i18n 文案 */
   i18n: {
     title: string;
@@ -82,6 +83,7 @@ export default function StoryboardTimeline({
   clipOrder,
   onClipReorder,
   clipDurationSec = DEFAULT_CLIP_DUR,
+  onVideoDurationDetected,
   i18n,
 }: Props) {
   // ----- 派生数据 -----
@@ -96,8 +98,14 @@ export default function StoryboardTimeline({
     thumb: string | undefined;
     /** 是否已入库到用户自己的 Supabase Storage(永久有效) */
     persisted: boolean;
+    /** 文件实际时长优先，未加载 metadata 时回退为生成请求/分镜时长。 */
+    durationSec: number;
+    /** 该片段在完整时间轴中的起始秒数。 */
+    startSec: number;
   };
+  const [measuredDurations, setMeasuredDurations] = useState<Record<string, number>>({});
   const clips: Clip[] = useMemo(() => {
+    let cursor = 0;
     return clipOrder
       .map((id) => groups.find((g) => g.id === id))
       .filter((g): g is StoryboardGroup => !!g)
@@ -105,26 +113,41 @@ export default function StoryboardTimeline({
         const v = groupVideos[g.id];
         const firstShotImg = g.shots.find((s) => s.imageUrl)?.imageUrl;
         const thumb = firstShotImg;
-        return {
+        const storyboardDuration =
+          typeof g.startSec === "number" && typeof g.endSec === "number" && g.endSec > g.startSec
+            ? g.endSec - g.startSec
+            : clipDurationSec;
+        const durationSec = Math.max(
+          0.1,
+          measuredDurations[g.id] ?? v?.durationSec ?? storyboardDuration ?? clipDurationSec,
+        );
+        const clip = {
           groupId: g.id,
           group: g,
           video: v,
           playable: !!v && v.status === "succeeded",
           thumb,
           persisted: isPersistedUrl(v?.url),
+          durationSec,
+          startSec: cursor,
         };
+        cursor += durationSec;
+        return clip;
       });
-  }, [clipOrder, groups, groupVideos]);
+  }, [clipOrder, groups, groupVideos, measuredDurations, clipDurationSec]);
 
   const playableClips = useMemo(() => clips.filter((c) => c.playable), [clips]);
-  const totalSec = clips.length * clipDurationSec;
-  const playableTotalSec = playableClips.length * clipDurationSec;
+  const totalSec = clips.reduce((sum, clip) => sum + clip.durationSec, 0);
+  const playableTotalSec = playableClips.reduce((sum, clip) => sum + clip.durationSec, 0);
+  const clipOrderKey = clipOrder.join(",");
 
   // ----- 播放状态 -----
   const [activeClipIndex, setActiveClipIndex] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentSec, setCurrentSec] = useState(0);
   const [userReordered, setUserReordered] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
 
   // ----- Refs -----
   const trackRef = useRef<HTMLDivElement | null>(null);
@@ -150,10 +173,13 @@ export default function StoryboardTimeline({
     const v = videoRefs.current[activeClip.groupId];
     if (!v) return;
     if (isPlaying) {
-      // 切到新的 clip 时,把 currentSec 对齐到该 clip 的"绝对起始"
-      const offset =
-        playableClips.findIndex((c) => c.groupId === activeClip.groupId) * clipDurationSec;
-      v.currentTime = Math.max(0, currentSec - offset);
+      // 切片的起点来自完整轨道(而非 playableClips 的数组下标)，避免中间有
+      // 未生成片段时播放头和视频错位。
+      const relative = Math.max(
+        0,
+        Math.min(activeClip.durationSec, currentSec - activeClip.startSec),
+      );
+      if (Math.abs(v.currentTime - relative) > 0.15) v.currentTime = relative;
       void v.play().catch(() => {
         /* 用户没交互时 autoplay 可能被拒,忽略 */
       });
@@ -162,54 +188,35 @@ export default function StoryboardTimeline({
     }
     // 仅在 activeClip / isPlaying 切换时同步,避免每帧重跑
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeClip?.groupId, isPlaying]);
-
-  // ----- 推进播放(currentSec + activeClipIndex 联动) -----
-  useEffect(() => {
-    if (!isPlaying) return;
-    let raf = 0;
-    let last = performance.now();
-    const tick = (now: number) => {
-      const dt = (now - last) / 1000;
-      last = now;
-      setCurrentSec((cur) => {
-        const next = cur + dt;
-        if (next >= totalSec) {
-          // 全部播完 → 停在末尾并暂停
-          setIsPlaying(false);
-          return totalSec;
-        }
-        return next;
-      });
-      raf = requestAnimationFrame(tick);
-    };
-    raf = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(raf);
-  }, [isPlaying, totalSec]);
-
-  // currentSec → activeClipIndex 联动(自动切到下一个)
-  useEffect(() => {
-    if (playableClips.length === 0) return;
-    const idx = Math.min(playableClips.length - 1, Math.floor(currentSec / clipDurationSec));
-    if (idx !== activeClipIndex) setActiveClipIndex(idx);
-  }, [currentSec, playableClips, clipDurationSec, activeClipIndex]);
+  }, [activeClip?.groupId, activeClip?.startSec, activeClip?.durationSec, isPlaying]);
 
   // ----- seek -----
   const seekTo = useCallback(
     (sec: number) => {
       const clamped = Math.max(0, Math.min(totalSec, sec));
-      setCurrentSec(clamped);
       if (playableClips.length === 0) return;
-      const nextIdx = Math.min(playableClips.length - 1, Math.floor(clamped / clipDurationSec));
+      const targetClip = clips.find(
+        (clip) => clamped >= clip.startSec && clamped < clip.startSec + clip.durationSec,
+      );
+      // 点击尚未生成的片段时，跳至后续最近可播放片段；没有后续时回退到前一个。
+      const nextClip =
+        (targetClip && playableClips.find((clip) => clip.groupId === targetClip.groupId)) ||
+        playableClips.find((clip) => clip.startSec >= clamped) ||
+        playableClips.at(-1);
+      if (!nextClip) return;
+      const nextIdx = playableClips.findIndex((clip) => clip.groupId === nextClip.groupId);
+      const nextSec = Math.max(
+        nextClip.startSec,
+        Math.min(clamped, nextClip.startSec + nextClip.durationSec),
+      );
+      setCurrentSec(nextSec);
       setActiveClipIndex(nextIdx);
-      const nextClip = playableClips[nextIdx];
       const nextVid = nextClip ? videoRefs.current[nextClip.groupId] : null;
       if (nextVid) {
-        const offset = nextIdx * clipDurationSec;
-        nextVid.currentTime = Math.max(0, clamped - offset);
+        nextVid.currentTime = Math.max(0, nextSec - nextClip.startSec);
       }
     },
-    [totalSec, playableClips, clipDurationSec],
+    [totalSec, playableClips, clips],
   );
 
   // ----- 切到 tab / 重置时,自动对齐到 0 -----
@@ -217,7 +224,7 @@ export default function StoryboardTimeline({
     setCurrentSec(0);
     setActiveClipIndex(0);
     setIsPlaying(false);
-  }, [clipOrder.join(","), groups.length]);
+  }, [clipOrderKey, groups.length]);
 
   // ----- playhead 拖拽 -----
   const onPlayheadPointerDown = (e: React.PointerEvent) => {
@@ -263,10 +270,11 @@ export default function StoryboardTimeline({
     const track = trackRef.current;
     if (!d || !track) return;
     const rect = track.getBoundingClientRect();
-    const relX = e.clientX - rect.left;
-    const slotW = rect.width / clips.length;
-    // 中心点命中目标 slot
-    const target = Math.max(0, Math.min(clips.length - 1, Math.floor((relX + slotW / 2) / slotW)));
+    const rel = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const sec = rel * totalSec;
+    // 片段宽度按实际时长比例渲染，拖拽命中也必须按同一时间坐标计算。
+    const hit = clips.findIndex((clip) => sec < clip.startSec + clip.durationSec);
+    const target = hit === -1 ? clips.length - 1 : hit;
     if (target !== dragOverIndex) setDragOverIndex(target);
   };
   const onClipPointerUp = (e: React.PointerEvent) => {
@@ -328,13 +336,115 @@ export default function StoryboardTimeline({
 
   const togglePlay = () => {
     if (playableClips.length === 0) return;
-    if (currentSec >= totalSec - 0.05) setCurrentSec(0);
+    if (currentSec >= totalSec - 0.05) {
+      setCurrentSec(playableClips[0].startSec);
+      setActiveClipIndex(0);
+    }
     setIsPlaying((p) => !p);
   };
 
   const resetOrder = () => {
     onClipReorder(groups.map((g) => g.id));
     setUserReordered(false);
+  };
+
+  /**
+   * 浏览器端逐条播放到 canvas，再用 MediaRecorder 录制为一个可下载的 WebM。
+   * 这避免把大体积的 ffmpeg.wasm 打进 Cloudflare Worker；源视频必须允许浏览器跨域读取。
+   */
+  const exportTimelineVideo = async () => {
+    if (playableClips.length === 0 || exporting) return;
+    if (typeof MediaRecorder === "undefined" || typeof HTMLCanvasElement === "undefined") {
+      setExportError("当前浏览器不支持视频渲染导出，请使用最新版 Chrome 或 Edge。");
+      return;
+    }
+
+    setExporting(true);
+    setExportError(null);
+    setIsPlaying(false);
+    const source = document.createElement("video");
+    source.crossOrigin = "anonymous";
+    source.playsInline = true;
+    source.preload = "auto";
+    const canvas = document.createElement("canvas");
+    const context = canvas.getContext("2d");
+    let animationFrame = 0;
+    let audioContext: AudioContext | undefined;
+
+    try {
+      if (!context) throw new Error("无法创建视频渲染画布。");
+      const ready = (video: HTMLVideoElement) =>
+        new Promise<void>((resolve, reject) => {
+          video.oncanplay = () => resolve();
+          video.onerror = () => reject(new Error("视频加载失败，无法导出。"));
+        });
+
+      source.src = playableClips[0].video!.url;
+      source.load();
+      await ready(source);
+      canvas.width = source.videoWidth || 1280;
+      canvas.height = source.videoHeight || 720;
+
+      const canvasStream = canvas.captureStream(30);
+      const outputTracks = [...canvasStream.getVideoTracks()];
+      try {
+        audioContext = new AudioContext();
+        const destination = audioContext.createMediaStreamDestination();
+        audioContext.createMediaElementSource(source).connect(destination);
+        await audioContext.resume();
+        outputTracks.push(...destination.stream.getAudioTracks());
+      } catch {
+        // 音轨获取失败时仍导出画面；跨域源常会限制 Web Audio。
+      }
+
+      const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")
+        ? "video/webm;codecs=vp9,opus"
+        : "video/webm";
+      const recorder = new MediaRecorder(new MediaStream(outputTracks), { mimeType });
+      const chunks: BlobPart[] = [];
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) chunks.push(event.data);
+      };
+      const finished = new Promise<Blob>((resolve) => {
+        recorder.onstop = () => resolve(new Blob(chunks, { type: mimeType }));
+      });
+      const drawFrame = () => {
+        context.drawImage(source, 0, 0, canvas.width, canvas.height);
+        animationFrame = requestAnimationFrame(drawFrame);
+      };
+
+      recorder.start();
+      drawFrame();
+      for (const clip of playableClips) {
+        source.src = clip.video!.url;
+        source.load();
+        await ready(source);
+        source.currentTime = 0;
+        await new Promise<void>((resolve, reject) => {
+          source.onended = () => resolve();
+          source.onerror = () => reject(new Error("渲染时有视频片段加载失败。"));
+          void source.play().catch(reject);
+        });
+      }
+      cancelAnimationFrame(animationFrame);
+      recorder.stop();
+      const blob = await finished;
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `doopoo-timeline-${new Date().toISOString().slice(0, 10)}.webm`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+    } catch (error) {
+      cancelAnimationFrame(animationFrame);
+      setExportError(error instanceof Error ? error.message : "视频渲染导出失败。");
+    } finally {
+      source.pause();
+      source.removeAttribute("src");
+      source.load();
+      await audioContext?.close().catch(() => {});
+      setExporting(false);
+    }
   };
 
   // ----- 渲染:空态 -----
@@ -375,6 +485,16 @@ export default function StoryboardTimeline({
           </div>
         )}
         <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => void exportTimelineVideo()}
+            disabled={playableClips.length === 0 || exporting}
+            className="text-xs px-2.5 py-1 rounded border border-accent bg-accent-dim text-accent hover:bg-accent hover:text-white transition inline-flex items-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed"
+            title="按当前时间轴顺序渲染为一个 WebM 视频并下载"
+          >
+            {exporting ? <Loader2 size={11} className="animate-spin" /> : <Download size={11} />}
+            {exporting ? "渲染导出中…" : "渲染并导出"}
+          </button>
           {userReordered && (
             <button
               type="button"
@@ -386,6 +506,7 @@ export default function StoryboardTimeline({
           )}
         </div>
       </div>
+      {exportError && <p className="text-xs text-rose-500 -mt-2">{exportError}</p>}
 
       {/* 主视频播放器 */}
       <div className="panel p-3">
@@ -399,12 +520,33 @@ export default function StoryboardTimeline({
               className="absolute inset-0 w-full h-full"
               playsInline
               muted={false}
+              onLoadedMetadata={(event) => {
+                const duration = event.currentTarget.duration;
+                if (!Number.isFinite(duration) || duration <= 0) return;
+                setMeasuredDurations((current) => {
+                  if (Math.abs((current[activeClip.groupId] ?? 0) - duration) < 0.05) {
+                    return current;
+                  }
+                  return { ...current, [activeClip.groupId]: duration };
+                });
+                onVideoDurationDetected?.(activeClip.groupId, duration);
+              }}
+              onTimeUpdate={(event) => {
+                if (!isPlaying) return;
+                setCurrentSec(activeClip.startSec + event.currentTarget.currentTime);
+              }}
               onEnded={() => {
-                // 推进 currentSec 到下一个 clip 的起始
-                setCurrentSec((cur) => Math.min(totalSec, cur + clipDurationSec));
+                // 以真实媒体时长结束当前片段，再切到下一条可播放片段。
+                const clipEnd = Math.min(totalSec, activeClip.startSec + activeClip.durationSec);
+                setCurrentSec(clipEnd);
                 const nextIdx = activeClipIndex + 1;
-                if (nextIdx < playableClips.length) setActiveClipIndex(nextIdx);
-                else setIsPlaying(false);
+                if (nextIdx < playableClips.length) {
+                  const next = playableClips[nextIdx];
+                  setCurrentSec(next.startSec);
+                  setActiveClipIndex(nextIdx);
+                } else {
+                  setIsPlaying(false);
+                }
               }}
             />
           ) : (
@@ -441,6 +583,17 @@ export default function StoryboardTimeline({
             {clips.length} 个片段 · 已生成 {playableClips.length} / {clips.length}
           </div>
         </div>
+        <input
+          type="range"
+          min={0}
+          max={Math.max(totalSec, 0.1)}
+          step={0.01}
+          value={Math.min(currentSec, totalSec)}
+          onChange={(event) => seekTo(Number(event.target.value))}
+          disabled={playableClips.length === 0}
+          className="mt-2 w-full h-1.5 accent-accent cursor-pointer disabled:cursor-not-allowed disabled:opacity-40"
+          aria-label="视频播放进度"
+        />
       </div>
 
       {/* 时间轴(Ruler + Track) */}
@@ -450,12 +603,11 @@ export default function StoryboardTimeline({
 
         {/* 标尺 */}
         <div className="relative h-4 px-1 text-[10px] font-mono text-text-muted select-none">
-          {Array.from({ length: clips.length + 1 }).map((_, i) => {
-            const sec = i * clipDurationSec;
-            const left = clips.length > 0 ? (i / clips.length) * 100 : 0;
+          {[...clips, { startSec: totalSec }].map((clip, i) => {
+            const left = totalSec > 0 ? (clip.startSec / totalSec) * 100 : 0;
             return (
               <span key={i} className="absolute -translate-x-1/2" style={{ left: `${left}%` }}>
-                {sec}s
+                {clip.startSec.toFixed(1).replace(/\.0$/, "")}s
               </span>
             );
           })}
@@ -477,10 +629,11 @@ export default function StoryboardTimeline({
                 onPointerMove={onClipPointerMove}
                 onPointerUp={onClipPointerUp}
                 onPointerCancel={onClipPointerCancel}
-                className={`relative shrink-0 grow basis-0 border-r last:border-r-0 border-border/60 cursor-grab active:cursor-grabbing transition-transform ${
+                className={`relative shrink-0 border-r last:border-r-0 border-border/60 cursor-grab active:cursor-grabbing transition-transform ${
                   isDragging ? "opacity-60 scale-[1.02] z-10" : ""
                 }`}
                 style={{
+                  width: `${totalSec > 0 ? (c.durationSec / totalSec) * 100 : 0}%`,
                   transform: `translateX(${offset * 100}%)`,
                   transition: isDragging ? "none" : "transform 200ms ease",
                 }}
@@ -492,6 +645,14 @@ export default function StoryboardTimeline({
                     src={c.thumb}
                     alt=""
                     draggable={false}
+                    className="absolute inset-0 w-full h-full object-cover opacity-70"
+                  />
+                ) : c.playable && c.video?.url ? (
+                  <video
+                    src={c.video.url}
+                    muted
+                    playsInline
+                    preload="metadata"
                     className="absolute inset-0 w-full h-full object-cover opacity-70"
                   />
                 ) : (
@@ -539,9 +700,9 @@ export default function StoryboardTimeline({
                     )}
                   </div>
                 </div>
-                {/* 底部 sceneLocation 标签 */}
+                {/* 组号始终可见，场景名作为补充。 */}
                 <div className="absolute bottom-1 left-1 right-1 text-[10px] text-white/80 truncate">
-                  {c.group.sceneLocation || `第 ${i + 1} 段`}
+                  第 {c.group.index} 分镜组{c.group.sceneLocation ? ` · ${c.group.sceneLocation}` : ""}
                 </div>
                 {/* 当前 active 高亮 */}
                 {activeClip?.groupId === c.groupId && (

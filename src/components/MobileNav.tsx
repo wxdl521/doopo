@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { Home, FolderOpen, FileText, Library, Bookmark, ShieldCheck, User } from "lucide-react";
+import { Home, FolderOpen, FileText, Library, Bookmark, Palette, ShieldCheck, User } from "lucide-react";
 import { useLanguage } from "../i18n/LanguageContext";
 
 export default function MobileNav() {
@@ -10,6 +10,7 @@ export default function MobileNav() {
     { to: "/projects", label: t.nav_projects, icon: FolderOpen },
     { to: "/assets", label: t.nav_assets, icon: Library },
     { to: "/bases", label: t.nav_bases, icon: Bookmark },
+    { to: "/restyle", label: t.nav_restyle, icon: Palette },
     { to: "/team", label: t.nav_team, icon: ShieldCheck },
     { to: "/account", label: t.nav_me, icon: User },
   ];

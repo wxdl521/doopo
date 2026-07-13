@@ -2392,16 +2392,14 @@ async function persistDataUriUrl(
 }
 
 /**
- * 把参考音频 URL 归一化为 ARK 云端可访问的 Supabase 公网签名 URL。
+ * 把参考音频 URL 归一化为 ARK 云端可访问的 Supabase 公网 URL。
  *
- * - 已是 Supabase 存储 URL(用户上传的音频):公网可访问,直接放行。
- * - 其余(data: URI、dev localhost 预设音频、应用自有静态资源):
- *   服务端下载后转存到 workspace-media,拿签名 URL。
+ * - 所有来源(包括既有 Supabase URL)都重新转存，避免历史签名 URL 或私有对象
+ *   被 ARK 侧下载失败。
  *
- * 背景:预设音色(public/voice-styles/*.mp3)在 dev 下被前端拼成
- * http://localhost:xxxx/voice-styles/xxx.mp3,ARK 云端拉不到,报
- * "content[N].audio_url ... resource download failed"。必须转存成公网 URL。
- * 已是 Supabase URL 的(用户上传)不必重复转存。
+ * 预设音色的本地 URL 不能直接给 ARK：ARK 是云端服务，无法访问开发机的
+ * localhost。这里将本地预设映射到测试站的同路径公开文件；线上则直接使用
+ * Doopoo 域名的静态公开文件，二者均不经过 Supabase。
  */
 async function persistAudioUrl(
   url: string,
@@ -2409,8 +2407,24 @@ async function persistAudioUrl(
   userId: string,
 ): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
   if (!url) return { ok: true, url };
-  // 已是 Supabase 存储 URL -> 公网可访问,直接放行
-  if (url.includes("supabase.co/storage/")) return { ok: true, url };
+  // 预设音色已经由 Doopoo 的静态站点以公开 audio/mpeg 提供。开发时传来的
+  // localhost 只对当前电脑可见，必须映射到 test.doopoo.ai 的同一静态资源；
+  // 部署环境则保持现有公开 URL。两种情况都不应触发转存或数据库迁移提示。
+  try {
+    const parsed = new URL(url);
+    const isDoopooHost = ["doopoo.ai", "www.doopoo.ai", "test.doopoo.ai"].includes(
+      parsed.hostname,
+    );
+    const isPresetVoice = /^\/voice-styles\/[\w-]+\.mp3$/i.test(parsed.pathname);
+    if (parsed.protocol === "http:" && parsed.hostname === "localhost" && isPresetVoice) {
+      return { ok: true, url: `https://test.doopoo.ai${parsed.pathname}` };
+    }
+    if (parsed.protocol === "https:" && isDoopooHost && isPresetVoice) {
+      return { ok: true, url };
+    }
+  } catch {
+    // 非 URL 由后续 fetchMedia 给出标准错误。
+  }
   try {
     const { buf, contentType } = await fetchMedia(url);
     const ct = (contentType || "audio/mpeg").toLowerCase();
@@ -2427,11 +2441,24 @@ async function persistAudioUrl(
       .from("workspace-media")
       .upload(path, blob, { contentType: mime, upsert: true });
     if (uploadErr) return { ok: false, error: `参考音频转存失败: ${uploadErr.message}` };
-    const { data: signed } = await supabase.storage
-      .from("workspace-media")
-      .createSignedUrl(path, 315360000); // 10 年
-    if (!signed?.signedUrl) return { ok: false, error: "参考音频转存失败: 未取到签名 URL" };
-    return { ok: true, url: signed.signedUrl };
+    // workspace-media 是公开 bucket。ARK 在拉取音频时对某些 Supabase 签名 URL
+    // (特别是超长有效期 token)会报 resource download failed；使用公开对象 URL
+    // 可避免网关重定向/签名校验差异，也不会暴露非公开资源。
+    const { data: publicUrl } = supabase.storage.from("workspace-media").getPublicUrl(path);
+    if (!publicUrl?.publicUrl) return { ok: false, error: "参考音频转存失败: 未取到公开 URL" };
+    // 在发给 ARK 前以匿名请求验证对象确实可被公网下载。既有 bucket 若曾以私有
+    // 模式创建，getPublicUrl 仍会拼出 URL，但 ARK 只能得到 resource download failed。
+    const probe = await fetch(publicUrl.publicUrl, {
+      headers: { Range: "bytes=0-1" },
+      redirect: "follow",
+    });
+    if (!probe.ok) {
+      return {
+        ok: false,
+        error: `参考音频转存后仍不可公网读取 (${probe.status})；请上传可公开访问的音频，或联系管理员检查 workspace-media 公开读权限。`,
+      };
+    }
+    return { ok: true, url: publicUrl.publicUrl };
   } catch (e: any) {
     return { ok: false, error: `参考音频转存失败: ${e?.message ?? String(e)}` };
   }

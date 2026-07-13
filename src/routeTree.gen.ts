@@ -13,6 +13,7 @@ import { Route as ZoclawRouteImport } from './routes/zoclaw'
 import { Route as TeamRouteImport } from './routes/team'
 import { Route as ShowcaseRouteImport } from './routes/showcase'
 import { Route as ScriptsRouteImport } from './routes/scripts'
+import { Route as RestyleRouteImport } from './routes/restyle'
 import { Route as ResetPasswordRouteImport } from './routes/reset-password'
 import { Route as RegisterRouteImport } from './routes/register'
 import { Route as ProjectsRouteImport } from './routes/projects'
@@ -73,6 +74,11 @@ const ShowcaseRoute = ShowcaseRouteImport.update({
 const ScriptsRoute = ScriptsRouteImport.update({
   id: '/scripts',
   path: '/scripts',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const RestyleRoute = RestyleRouteImport.update({
+  id: '/restyle',
+  path: '/restyle',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ResetPasswordRoute = ResetPasswordRouteImport.update({
@@ -298,6 +304,7 @@ export interface FileRoutesByFullPath {
   '/projects': typeof ProjectsRouteWithChildren
   '/register': typeof RegisterRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/restyle': typeof RestyleRoute
   '/scripts': typeof ScriptsRouteWithChildren
   '/showcase': typeof ShowcaseRouteWithChildren
   '/team': typeof TeamRouteWithChildren
@@ -342,6 +349,7 @@ export interface FileRoutesByTo {
   '/projects': typeof ProjectsRouteWithChildren
   '/register': typeof RegisterRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/restyle': typeof RestyleRoute
   '/showcase': typeof ShowcaseRouteWithChildren
   '/zoclaw': typeof ZoclawRoute
   '/account/assets': typeof AccountAssetsRoute
@@ -388,6 +396,7 @@ export interface FileRoutesById {
   '/projects': typeof ProjectsRouteWithChildren
   '/register': typeof RegisterRoute
   '/reset-password': typeof ResetPasswordRoute
+  '/restyle': typeof RestyleRoute
   '/scripts': typeof ScriptsRouteWithChildren
   '/showcase': typeof ShowcaseRouteWithChildren
   '/team': typeof TeamRouteWithChildren
@@ -437,6 +446,7 @@ export interface FileRouteTypes {
     | '/projects'
     | '/register'
     | '/reset-password'
+    | '/restyle'
     | '/scripts'
     | '/showcase'
     | '/team'
@@ -481,6 +491,7 @@ export interface FileRouteTypes {
     | '/projects'
     | '/register'
     | '/reset-password'
+    | '/restyle'
     | '/showcase'
     | '/zoclaw'
     | '/account/assets'
@@ -526,6 +537,7 @@ export interface FileRouteTypes {
     | '/projects'
     | '/register'
     | '/reset-password'
+    | '/restyle'
     | '/scripts'
     | '/showcase'
     | '/team'
@@ -574,6 +586,7 @@ export interface RootRouteChildren {
   ProjectsRoute: typeof ProjectsRouteWithChildren
   RegisterRoute: typeof RegisterRoute
   ResetPasswordRoute: typeof ResetPasswordRoute
+  RestyleRoute: typeof RestyleRoute
   ScriptsRoute: typeof ScriptsRouteWithChildren
   ShowcaseRoute: typeof ShowcaseRouteWithChildren
   TeamRoute: typeof TeamRouteWithChildren
@@ -611,6 +624,13 @@ declare module '@tanstack/react-router' {
       path: '/scripts'
       fullPath: '/scripts'
       preLoaderRoute: typeof ScriptsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/restyle': {
+      id: '/restyle'
+      path: '/restyle'
+      fullPath: '/restyle'
+      preLoaderRoute: typeof RestyleRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/reset-password': {
@@ -1039,6 +1059,7 @@ const rootRouteChildren: RootRouteChildren = {
   ProjectsRoute: ProjectsRouteWithChildren,
   RegisterRoute: RegisterRoute,
   ResetPasswordRoute: ResetPasswordRoute,
+  RestyleRoute: RestyleRoute,
   ScriptsRoute: ScriptsRouteWithChildren,
   ShowcaseRoute: ShowcaseRouteWithChildren,
   TeamRoute: TeamRouteWithChildren,
@@ -1050,3 +1071,13 @@ const rootRouteChildren: RootRouteChildren = {
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}

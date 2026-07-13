@@ -40,43 +40,15 @@ const GENRES = [
 ];
 const TONES = [
   { value: "Serious", key: "script_tone_serious" as const },
-  { value: "Comedy", key: "script_tone_comedy" as const },
   { value: "Suspense", key: "script_tone_suspense" as const },
-  { value: "Romance", key: "script_tone_romance" as const },
-  { value: "Horror", key: "script_tone_horror" as const },
 ];
 
 function getModels(t: ReturnType<typeof useLanguage>["t"]) {
   return [
-    { id: "gemini:gemini-3.5-flash", label: `✨ Gemini 3.5 Flash ${t.sl_model_default}` },
-    { id: "gemini:gemini-2.5-flash", label: "✨ Gemini 2.5 Flash" },
-    { id: "gemini:gemini-2.5-pro", label: "✨ Gemini 2.5 Pro" },
-    { id: "openrouter:anthropic/claude-sonnet-4.5", label: "💎 OpenRouter · Claude Sonnet 4.5" },
-    { id: "openrouter:anthropic/claude-opus-4.1", label: "💎 OpenRouter · Claude Opus 4.1" },
-    { id: "openrouter:anthropic/claude-3.7-sonnet", label: "💎 OpenRouter · Claude 3.7 Sonnet" },
-    { id: "openrouter:anthropic/claude-3.5-haiku", label: "💎 OpenRouter · Claude 3.5 Haiku" },
-    { id: "openrouter:openai/gpt-5", label: "💎 OpenRouter · GPT-5" },
-    { id: "openrouter:openai/gpt-5-mini", label: "💎 OpenRouter · GPT-5 Mini" },
-    { id: "openrouter:openai/gpt-4o", label: "💎 OpenRouter · GPT-4o" },
-    { id: "openrouter:openai/gpt-4o-mini", label: "💎 OpenRouter · GPT-4o Mini" },
-    { id: "openrouter:openai/o1", label: "💎 OpenRouter · OpenAI o1" },
-    { id: "openrouter:openai/o3-mini", label: "💎 OpenRouter · OpenAI o3-mini" },
-    { id: "openrouter:google/gemini-2.5-pro", label: "💎 OpenRouter · Gemini 2.5 Pro" },
-    { id: "openrouter:google/gemini-2.5-flash", label: "💎 OpenRouter · Gemini 2.5 Flash" },
-    { id: "openrouter:x-ai/grok-4", label: "💎 OpenRouter · Grok 4" },
-    { id: "openrouter:x-ai/grok-3", label: "💎 OpenRouter · Grok 3" },
-    { id: "openrouter:deepseek/deepseek-chat-v3.1", label: "💎 OpenRouter · DeepSeek V3.1" },
-    { id: "openrouter:deepseek/deepseek-r1", label: "💎 OpenRouter · DeepSeek R1" },
-    { id: "openrouter:meta-llama/llama-3.3-70b-instruct", label: "💎 OpenRouter · Llama 3.3 70B" },
-    { id: "openrouter:mistralai/mistral-large-2411", label: "💎 OpenRouter · Mistral Large" },
-    { id: "openrouter:qwen/qwen3-max", label: "💎 OpenRouter · Qwen3 Max" },
-    { id: "minimax:MiniMax-M2.7", label: `🔵 MiniMax M2.7 ${t.sl_model_backup}` },
+    { id: "ark:deepseek-v4-pro-260425", label: `🟠 DeepSeek V4 Pro (ARK) ${t.sl_model_default}` },
     { id: "qwen:qwen3-max", label: `🟣 Qwen3 Max ${t.sl_model_flagship}` },
-    { id: "qwen:qwen3-plus", label: `🟣 Qwen3 Plus ${t.sl_model_balanced}` },
-    { id: "qwen:qwen3-turbo", label: `🟣 Qwen3 Turbo ${t.sl_model_high_speed}` },
-    { id: "qwen:qwen3-coder-plus", label: `🟣 Qwen3 Coder Plus ${t.sl_model_code}` },
-    { id: "qwen:qwen-plus", label: `🟣 Qwen Plus ${t.sl_model_stable}` },
-    { id: "qwen:qwen-turbo", label: `🟣 Qwen Turbo ${t.sl_model_light}` },
+    { id: "qwen:qwen-plus", label: `🟣 Qwen Plus ${t.sl_model_balanced}` },
+    { id: "qwen:qwen-turbo", label: `🟣 Qwen Turbo ${t.sl_model_high_speed}` },
   ];
 }
 

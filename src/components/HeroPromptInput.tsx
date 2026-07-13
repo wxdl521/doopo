@@ -17,42 +17,30 @@ import { useLanguage } from "../i18n/LanguageContext";
 import { useAuth } from "../hooks/useAuth";
 import { NewProjectDialog } from "./NewProjectDialog";
 
-const PROXY_URL = "http://43.130.52.57:8080/v1/chat/completions";
-
 export default function HeroPromptInput() {
   const { t, lang } = useLanguage();
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
   const AI_MODELS = [
     {
-      id: "gemini-3.5-flash",
-      label: "✨ Gemini 3.5 Flash",
-      desc: lang === "zh" ? "最新·快·准" : "Latest · Fast · Precise",
+      id: "ark:deepseek-v4-pro-260425",
+      label: "🟠 DeepSeek V4 Pro (ARK)",
+      desc: lang === "zh" ? "主力·剧本与创意生成" : "Primary · Script & creative generation",
     },
     {
-      id: "gemini-2.5-flash",
-      label: "✨ Gemini 2.5 Flash",
-      desc: lang === "zh" ? "均衡·多模态" : "Balanced · Multimodal",
+      id: "qwen:qwen3-max",
+      label: "🟣 Qwen3 Max",
+      desc: lang === "zh" ? "旗舰·长文本与复杂创作" : "Flagship · Long-form & complex writing",
     },
     {
-      id: "gemini-2.5-pro",
-      label: "✨ Gemini 2.5 Pro",
-      desc: lang === "zh" ? "最强·长上下文" : "Most capable · Long context",
+      id: "qwen:qwen-plus",
+      label: "🟣 Qwen Plus",
+      desc: lang === "zh" ? "均衡·稳定备用" : "Balanced · Reliable fallback",
     },
     {
-      id: "deepseek/deepseek-chat-v3",
-      label: "DeepSeek Chat",
-      desc: lang === "zh" ? "快速·中文友好" : "Fast · Chinese-friendly",
-    },
-    {
-      id: "mistralai/mistral-nemo",
-      label: "Mistral Nemo",
-      desc: lang === "zh" ? "均衡·多语言" : "Balanced · Multilingual",
-    },
-    {
-      id: "meta-llama/llama-3.1-8b-instruct",
-      label: "Llama 3.1",
-      desc: lang === "zh" ? "开源·推理强" : "Open Source · Strong Reasoning",
+      id: "qwen:qwen-turbo",
+      label: "🟣 Qwen Turbo",
+      desc: lang === "zh" ? "高速·轻量任务" : "Fast · Lightweight tasks",
     },
   ];
   const placeholders = [

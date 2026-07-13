@@ -1,5 +1,6 @@
-import { useState } from "react";
-// no Link needed; Logo provides home link
+import { useEffect, useRef, useState } from "react";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { useServerFn } from "@tanstack/react-start";
 import {
   ChevronDown,
   MoreHorizontal,
@@ -16,11 +17,15 @@ import {
   Plus,
   Eye,
   EyeOff,
+  User,
+  LogOut,
 } from "lucide-react";
 import Logo from "../Logo";
 import { useLanguage } from "../../i18n/LanguageContext";
 import { NewProjectDialog } from "../NewProjectDialog";
 import type { ProjectConfig } from "../NewProjectDialog";
+import { useAuth } from "../../hooks/useAuth";
+import { getUserBalance } from "../../lib/userCredits.functions";
 
 export type WorkspaceTab =
   | "canvas"
@@ -78,9 +83,36 @@ export default function WorkspaceTopbar({
   /** 编辑保存成功回调(用于刷新本地 project state) */
   onProjectSaved?: (saved: ProjectConfig & { id: string }) => void;
 }) {
-  const { t, lang, toggleLang } = useLanguage();
+  const { t, lang, setLang } = useLanguage();
+  const { isAuthenticated, loading, user, signOut } = useAuth();
+  const navigate = useNavigate();
   const [epOpen, setEpOpen] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [creditBalance, setCreditBalance] = useState<number | null>(null);
+  const accountRef = useRef<HTMLDivElement>(null);
+  const callGetBalance = useServerFn(getUserBalance);
+
+  useEffect(() => {
+    if (!isAuthenticated || loading) return;
+    callGetBalance({ data: undefined })
+      .then((result: { balance?: number }) => setCreditBalance(result?.balance ?? 0))
+      .catch(() => setCreditBalance(0));
+  }, [callGetBalance, isAuthenticated, loading]);
+
+  useEffect(() => {
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (!accountRef.current?.contains(event.target as Node)) setAccountOpen(false);
+    };
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    return () => document.removeEventListener("mousedown", closeOnOutsideClick);
+  }, []);
+
+  const handleLogout = async () => {
+    setAccountOpen(false);
+    await signOut();
+    navigate({ to: "/home" });
+  };
 
   const tabLabel: Record<WorkspaceTab, string> = {
     canvas: t.ws_tab_canvas,
@@ -240,12 +272,19 @@ export default function WorkspaceTopbar({
       </nav>
 
       <div className="flex items-center gap-2 shrink-0">
-        <button
-          onClick={toggleLang}
-          className="px-2 py-1 text-xs rounded-md border border-border text-text-secondary hover:text-text-primary inline-flex items-center gap-1"
-        >
-          Language <ChevronDown size={12} />
-        </button>
+        <label className="relative inline-flex items-center">
+          <span className="sr-only">Language</span>
+          <select
+            value={lang}
+            onChange={(event) => setLang(event.target.value as "zh" | "en")}
+            className="appearance-none pl-2 pr-6 py-1 text-xs rounded-md border border-border bg-bg-surface text-text-secondary hover:text-text-primary focus:outline-none focus:border-accent"
+            aria-label="Language"
+          >
+            <option value="zh">中文</option>
+            <option value="en">English</option>
+          </select>
+          <ChevronDown size={12} className="pointer-events-none absolute right-1.5 text-text-muted" />
+        </label>
         {/* 2026/06:查看提示词 toggle —— 开启后所有生成按钮变成"展示 prompt"而不是真正生成 */}
         {onToggleViewPromptsMode && (
           <button
@@ -266,13 +305,47 @@ export default function WorkspaceTopbar({
             查看提示词
           </button>
         )}
-        <span className="px-2 py-1 text-xs rounded-full bg-bg-elevated border border-border text-accent font-semibold">
-          ✦ 73
+        <span className="px-2 py-1 text-xs rounded-full bg-bg-elevated border border-border text-accent font-semibold tabular-nums">
+          ✦ {creditBalance ?? "–"}
         </span>
         <button className="px-3 py-1 text-xs rounded-full bg-gradient-to-r from-rose-500 to-orange-500 text-white font-semibold">
           {t.header_upgrade}
         </button>
-        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-accent to-accent-mint" />
+        {!loading && isAuthenticated && (
+          <div className="relative" ref={accountRef}>
+            <button
+              type="button"
+              onClick={() => setAccountOpen((open) => !open)}
+              className="w-8 h-8 rounded-full overflow-hidden border border-border bg-gradient-to-br from-emerald-400 to-cyan-500 hover:ring-2 hover:ring-accent/50 transition grid place-items-center"
+              aria-label={t.header_account}
+            >
+              <User size={15} className="text-white" />
+            </button>
+            {accountOpen && (
+              <div className="absolute right-0 top-full mt-2 py-2 rounded-xl border border-border bg-bg-surface shadow-lg min-w-[180px] z-[110]">
+                <div className="px-4 py-2 border-b border-border">
+                  <p className="text-sm font-medium text-text-primary truncate max-w-[160px]">
+                    {user?.email || t.header_account}
+                  </p>
+                </div>
+                <Link
+                  to="/account"
+                  onClick={() => setAccountOpen(false)}
+                  className="flex items-center gap-2 px-4 py-2 text-sm text-text-secondary hover:bg-bg-elevated hover:text-text-primary transition-colors"
+                >
+                  <User size={14} /> {t.header_account}
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => void handleLogout()}
+                  className="w-full flex items-center gap-2 px-4 py-2 text-sm text-text-secondary hover:bg-bg-elevated hover:text-text-primary transition-colors text-left"
+                >
+                  <LogOut size={14} /> {t.header_logout}
+                </button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </header>
   );

@@ -53,6 +53,7 @@ export const zh = {
   assets_view_back: "背面",
   assets_view_expression: "表情",
   nav_bases: "素材库",
+  nav_restyle: "转绘",
   nav_zoclaw: "DooClaw",
   nav_models: "模型",
   nav_openclaw: "DooClaw",
@@ -1498,7 +1499,7 @@ export const zh = {
   // ============ Storyboard dialogue budget warning ============
   sb_dialogue_overload: "台词超长约 {{sec}}s，建议拆组或精简",
   sb_dialogue_overload_hint:
-    "该组台词在单个视频(≤10s)内说不完，生成的视频可能漏台词或语序混乱。请拆成更多分镜组，或精简台词。",
+  "该组台词在单个视频(≤15s)内说不完，生成的视频可能漏台词或语序混乱。请拆成更多分镜组，或精简台词。",
 };
 
 export type Translations = typeof zh;

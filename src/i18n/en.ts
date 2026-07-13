@@ -56,6 +56,7 @@ export const en: Translations = {
   assets_view_back: "Back",
   assets_view_expression: "Expressions",
   nav_bases: "Bases",
+  nav_restyle: "Restyle",
   nav_zoclaw: "DooClaw",
   nav_models: "Models",
   nav_openclaw: "DooClaw",
@@ -1521,5 +1522,5 @@ export const en: Translations = {
   // ============ Storyboard dialogue budget warning ============
   sb_dialogue_overload: "Dialogue ~{{sec}}s over, split or trim",
   sb_dialogue_overload_hint:
-    "The dialogue in this group cannot be spoken clearly within a single video (≤10s). The generated video may omit lines or produce garbled speech. Please split into more storyboard groups or trim the dialogue.",
+  "The dialogue in this group cannot be spoken clearly within a single video (≤15s). The generated video may omit lines or produce garbled speech. Please split into more storyboard groups or trim the dialogue.",
 };

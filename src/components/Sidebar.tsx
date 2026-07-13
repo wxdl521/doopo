@@ -9,6 +9,7 @@ import {
   Headphones,
   FileText,
   Library,
+  Palette,
 } from "lucide-react";
 import { useLanguage } from "../i18n/LanguageContext";
 
@@ -21,6 +22,7 @@ export default function Sidebar() {
     { to: "/projects", label: t.nav_projects, icon: FolderOpen },
     { to: "/assets", label: t.nav_assets, icon: Library },
     { to: "/bases", label: t.nav_bases, icon: Bookmark },
+    { to: "/restyle", label: t.nav_restyle, icon: Palette },
     { to: "/zoclaw", label: t.nav_zoclaw, icon: WandSparkles },
     { to: "/models", label: t.nav_models, icon: Sparkles },
   ];

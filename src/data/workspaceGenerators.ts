@@ -246,7 +246,7 @@ export type StoryboardGroup = {
   shots: StoryboardShot[];
   /** 2026/07:该组 spoken 台词估算说完秒数(4字/秒)。用于台词可说完性兜底/警告。 */
   estDialogueSec?: number;
-  /** 2026/07:台词超出单视频 10s 硬上限的秒数(>0 表示该组台词一个视频说不完,需拆组/精简)。 */
+  /** 台词超出单视频 15s 硬上限的秒数(>0 表示该组台词一个视频说不完,需拆组/精简)。 */
   dialogueOverloadSec?: number;
 };
 
