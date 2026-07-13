@@ -336,16 +336,6 @@ const IMAGE_MODELS: ImageModel[] = [
     status: "available",
   },
   {
-    id: "azure/gpt-image-2",
-    name: "Azure-gpt-image-2",
-    nameEn: "Azure-gpt-image-2",
-    vendor: "Azure · OpenAI",
-    tagline: "gpt-image-2 · T2I/I2I · 官方",
-    taglineEn: "gpt-image-2 · T2I/I2I · Official",
-    gradient: "from-sky-500 to-blue-700",
-    status: "available",
-  },
-  {
     id: "azure2/gpt-image-2",
     name: "Azure-gpt-image-2",
     nameEn: "Azure-gpt-image-2",
@@ -353,16 +343,6 @@ const IMAGE_MODELS: ImageModel[] = [
     tagline: "gpt-image-2 · T2I/I2I",
     taglineEn: "gpt-image-2 · T2I/I2I",
     gradient: "from-blue-500 to-cyan-600",
-    status: "available",
-  },
-  {
-    id: "azure3/gpt-image-2",
-    name: "Azure（测试）",
-    nameEn: "Azure (Test)",
-    vendor: "Azure AI Foundry",
-    tagline: "gpt-image-2 · T2I/I2I · 测试",
-    taglineEn: "gpt-image-2 · T2I/I2I · Test",
-    gradient: "from-cyan-500 to-teal-600",
     status: "available",
   },
   {

@@ -192,21 +192,9 @@ const imageModelOptions = [
     sub: "vapeur.ai · OpenAI · Image2 · T2I/I2I",
   },
 
-  // ---- Azure OpenAI ----
-  { id: "__sep_azure__", label: "—— Azure · OpenAI ——", sub: "" },
-  {
-    id: "azure/gpt-image-2",
-    label: "Azure-gpt-image-2",
-    sub: "9积分/张",
-  },
   {
     id: "azure2/gpt-image-2",
     label: "Azure-gpt-image-2 (终结点)",
-    sub: "9积分/张",
-  },
-  {
-    id: "azure3/gpt-image-2",
-    label: "Azure（测试）",
     sub: "9积分/张",
   },
 ];
@@ -221,8 +209,6 @@ const VISIBLE_IMAGE_PREFIXES = [
   "aigcfamily/",
   "confluo/", // AIGC Family + 汇流
   "shuci/", // 数安词源 · GPT Image 2
-  "azure/",
-  "azure3/", // Azure(azure2 已在星标)
 ];
 const isVisibleImage = (id: string) =>
   VISIBLE_IMAGE_PREFIXES.some((p) => id.toLowerCase().startsWith(p));
@@ -448,9 +434,9 @@ const VIDEO_RESOLUTIONS: Record<string, string[]> = {
   "hongmeng-seedance2-fast": ["480P", "720P"],
   "hongmeng-seedance2-mini": ["480P", "720P"],
   "hongmeng-seedance2-pro": ["480P", "720P", "1080P"],
-  "dreamina-seedance-2-0-fast-hc": ["480P"],
-  "dreamina-seedance-2-0-hc": ["480P"],
-  "dreamina-seedance-2-0-mini-hc": ["480P"],
+  "dreamina-seedance-2-0-fast-hc": ["480P", "720P"],
+  "dreamina-seedance-2-0-hc": ["480P", "720P"],
+  "dreamina-seedance-2-0-mini-hc": ["480P", "720P"],
 };
 function videoResolutionOptions(videoModel: string | undefined): string[] {
   if (!videoModel) return [];

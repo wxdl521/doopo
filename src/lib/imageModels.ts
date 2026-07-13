@@ -146,29 +146,12 @@ export const IMAGE_MODELS: ImageModelOption[] = [
   { key: "", label: "—— [vapeur.ai · OpenAI 兼容] ——", sub: undefined, legacy: true },
   { key: "vapeur/gpt-image-2", label: "GPT Image 2", sub: "[vapeur·OpenAI] Image2 · T2I/I2I" },
 
-  // ---- [Azure OpenAI] ywkjpolandcentral.cognitiveservices.azure.com ----
-  { key: "", label: "—— [Azure · OpenAI] ——", sub: undefined, legacy: true },
-  {
-    key: "azure/gpt-image-2",
-    label: "Azure-gpt-image-2",
-    sub: "[Azure·OpenAI] gpt-image-2 · T2I/I2I",
-  },
-
   // ---- [Azure OpenAI 终结点] 4-0528-aoai-eu2-bfe.openai.azure.com ----
   { key: "", label: "—— [Azure OpenAI 终结点] ——", sub: undefined, legacy: true },
   {
     key: "azure2/gpt-image-2",
     label: "Azure-gpt-image-2",
     sub: "[Azure OpenAI 终结点] gpt-image-2 · T2I/I2I",
-  },
-
-  // ---- [Azure AI Foundry · 测试] 0528-aoai-sc-87d.services.ai.azure.com ----
-  //  2026/07 接入:AI Foundry 资源,走 deployment 路径(与 azure/azure2 一致,便于 Portal 对账)
-  { key: "", label: "—— [Azure AI Foundry · 测试] ——", sub: undefined, legacy: true },
-  {
-    key: "azure3/gpt-image-2",
-    label: "Azure（测试）",
-    sub: "[Azure AI Foundry] gpt-image-2 · T2I/I2I",
   },
 
   // ---- [DashScope] 阿里百炼 · 通义千问 / 万相 ----
