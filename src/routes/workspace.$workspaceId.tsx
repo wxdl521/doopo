@@ -142,14 +142,6 @@ type CharacterImagePromptRecord = {
   mode: "initial" | "modify" | "three-view" | "multi-asset";
 };
 
-type CharacterDetailDraft = {
-  age: string;
-  faceDescription: string;
-  bodyDescription: string;
-  clothingDescription: string;
-  palette: string;
-};
-
 type SceneDetailDraft = {
   location: string;
   timeOfDay: GenScene["timeOfDay"];
@@ -896,9 +888,7 @@ function WorkspacePage() {
   const [openLookMenu, setOpenLookMenu] = useState<string | null>(null);
   const [modInput, setModInput] = useState("");
   const [modError, setModError] = useState<string | null>(null);
-  const [characterDetailDraft, setCharacterDetailDraft] = useState<CharacterDetailDraft | null>(
-    null,
-  );
+  const [characterAttributesExpanded, setCharacterAttributesExpanded] = useState(false);
   // 场景修改输入弹层(2026/06 跟角色修改对齐体验:打开直接输入,Enter 提交)。
   // 跟 modPanel 解耦:角色 modPanel 走的是"打开预览 + 内嵌输入",场景没
   // selectedGenIdx / 多图 history 概念,只需要"打开输入弹层"即可,不需要
@@ -966,6 +956,8 @@ function WorkspacePage() {
   const callSaveOneStoryboard = useServerFn(saveOneStoryboard);
   const callSaveOneVideo = useServerFn(saveOneVideo);
   const [project, setProject] = useState<ProjectConfigRow | null>(null);
+  const projectVisualStyle =
+    project?.style === "custom" ? `custom:${project.customStyle ?? ""}` : project?.style;
   const [savingWorkspace, setSavingWorkspace] = useState(false);
   const [savedWorkspace, setSavedWorkspace] = useState(false);
   const [dataLoaded, setDataLoaded] = useState(false);
@@ -1737,10 +1729,14 @@ function WorkspacePage() {
   // 跟 shotModInput/shotModBusy 对称,但故事板没有"多代"概念,所以一组只有 1 张。
   const [storyboardModInput, setStoryboardModInput] = useState("");
   const [storyboardModBusy, setStoryboardModBusy] = useState(false);
+  const [storyboardModUploadedRef, setStoryboardModUploadedRef] = useState<string | null>(null);
+  const [storyboardMentionedRefs, setStoryboardMentionedRefs] = useState<string[]>([]);
+  const [storyboardReferencePickerOpen, setStoryboardReferencePickerOpen] = useState(false);
   const [shotPreview, setShotPreview] = useState<{ groupId: string; shotId: string } | null>(null);
   const [shotSelectedGenIdx, setShotSelectedGenIdx] = useState(0);
   const [shotModInput, setShotModInput] = useState("");
   const [shotModBusy, setShotModBusy] = useState(false);
+  const [shotModUploadedRef, setShotModUploadedRef] = useState<string | null>(null);
   const workspaceId = Route.useParams().workspaceId;
 
   // 2026/07:从 localStorage 恢复 groupVideos / groupStoryboards（刷新不丢图/视频）
@@ -2010,7 +2006,7 @@ function WorkspacePage() {
         (async () => {
           try {
             const r = await callSaveOneVideo({
-              data: { workspaceId, groupId: gid, url: item.url },
+              data: { workspaceId, groupId: gid, fileId: `${gid}-${entryIndex}`, url: item.url },
             });
             if (r.ok && r.persisted && r.url && r.url !== item.url) {
               setGroupVideos((m) => {
@@ -2099,7 +2095,7 @@ function WorkspacePage() {
       // 2026/06 修:场景图之前完全没注入项目视觉风格,导致场景 A/B/C
       // 跟角色画风漂移。现在统一走 buildStyleLock,跟角色 / 分镜 /
       // 故事板 / 多维资产共享同一段风格指纹。
-      const styleSpec = resolveProjectStyle(project?.style);
+      const styleSpec = resolveProjectStyle(projectVisualStyle);
       const prompt = [
         buildStyleLock(styleSpec, "scene"),
         `---`,
@@ -2147,7 +2143,7 @@ function WorkspacePage() {
     if (busyProp) return;
     setBusyProp(p.id);
     try {
-      const styleSpec = resolveProjectStyle(project?.style);
+      const styleSpec = resolveProjectStyle(projectVisualStyle);
       const prompt = [
         buildStyleLock(styleSpec, "scene"),
         `---`,
@@ -2668,7 +2664,7 @@ function WorkspacePage() {
       // ============== 默认 look 走原 T2I 路径(无参考图)==============
       try {
         // 解析项目视觉风格。每个 look 共享项目风格(项目级美术指导),但只换衣服/身份。
-        const styleSpec = resolveProjectStyle(project?.style);
+        const styleSpec = resolveProjectStyle(projectVisualStyle);
         const paletteLine = c.palette?.length
           ? `signature color palette (must appear in clothing / accessories): ${c.palette.join(", ")}`
           : "";
@@ -2823,7 +2819,7 @@ function WorkspacePage() {
             "overwrite",
             {
               rawPrompt: `${prompt}\n\nFORBIDDEN (avoid these): ${negativePrompt}`,
-              editablePrompt: characterAttributeEditorValue(c, null),
+              editablePrompt: characterEditablePrompt(c, null),
               mode: "initial",
             },
           );
@@ -2952,7 +2948,7 @@ function WorkspacePage() {
           characterAge: c.age,
           lookLabel: lk.label,
           palette: c.palette,
-          projectStyle: project?.style,
+          projectStyle: projectVisualStyle,
           model: resolveI2IModel(project?.sceneModel),
           mode: "modify",
         },
@@ -3020,7 +3016,7 @@ function WorkspacePage() {
           characterAge: c.age,
           lookLabel: lk?.label || "默认",
           palette: c.palette,
-          projectStyle: project?.style,
+          projectStyle: projectVisualStyle,
           // 2026/06 修复:跟同文件 1167/1327/1510 三处保持一致,先过 resolveI2IModel
           // 防止把 T2I-only model id 直接打到 ARK 报 400
           model: resolveI2IModel(project?.sceneModel),
@@ -3053,15 +3049,15 @@ function WorkspacePage() {
   // "打开这个角色卡片的预览+编辑"。
   function openScenePreview(s: GenScene) {
     setScenePreview(s);
-    setSceneDetailDraft(sceneDetailDraftValue(s));
-    setSceneModInput("");
+    setSceneDetailDraft(null);
+    setSceneModInput(sceneEditablePrompt(s));
     setSceneModError(null);
   }
 
   function openPropPreview(p: GenProp) {
     setPropPreview(p);
-    setPropDetailDraft(propDetailDraftValue(p));
-    setPropModInput("");
+    setPropDetailDraft(null);
+    setPropModInput(propEditablePrompt(p));
     setPropModError(null);
   }
 
@@ -3163,69 +3159,106 @@ function WorkspacePage() {
     return (value || "").replace(/\s*【用户要求】\s*[\s\S]*/g, "").trim();
   }
 
-  /** 用户可编辑的角色属性；固定构图、风格锁与负面词仍由服务端自动拼接。 */
-  function characterAttributeEditorValue(c: GenCharacter, lookId: string | null): string {
+  /** 角色详情页给用户编辑的中文提示词。系统约束仍由服务端补齐，不让用户面对 API 噪声。 */
+  function characterEditablePrompt(c: GenCharacter, lookId: string | null): string {
     const look = lookId == null ? null : (c.looks?.find((item) => item.id === lookId) ?? null);
+    const styleSpec = resolveProjectStyle(projectVisualStyle);
+    const realisticStyle = [
+      "风格：写实-真人",
+      "  渲染：照片级真实人像，解剖结构准确，保留真实人类皮肤纹理、自然毛孔与肌理；保留少量自然瑕疵、细微汗毛与真实妆效，柔和高光不过度泛油光。",
+      "  光照：商业摄影级布光；电影感伦勃朗光或自然窗光；柔和主光搭配轻微补光，眼睛中保留自然眼神光；避免平板影棚光、赛璐璐渲染和发光轮廓光。",
+      "  色彩：自然写实的低饱和色彩；准确呈现皮肤底色与不同皮肤区域的轻微变化；避免过度饱和、色块断层和 AI 美颜滤镜式偏色。",
+      "  镜头：浅景深，呈现 50–85mm 定焦镜头质感；背景虚化；平视机位；自然人体比例；商业人像摄影构图。",
+      "  材质：摄影级皮肤次表面散射；真实布料垂坠感与重量感；保留单根发丝细节；避免橡皮泥、黏土、像素化、卡通式渲染和蜡像质感。",
+    ];
+    const styleLines =
+      styleSpec.key === "realistic"
+        ? realisticStyle
+        : [
+            `风格：${styleSpec.label}`,
+            `  风格描述：${styleSpec.positive.replace(/\n/g, "；")}`,
+          ];
     return [
-      `年龄：${c.age}`,
-      `面部特征：${cleanLegacyUserRequirement(look?.faceDescription || c.faceDescription)}`,
-      `身材体型：${cleanLegacyUserRequirement(look?.bodyDescription || c.bodyDescription)}`,
-      `服装配饰：${cleanLegacyUserRequirement(look?.clothingDescription || c.clothingDescription)}`,
-    ].join("\n");
+      ...styleLines,
+      `角色：${c.name}（${c.roleLabel || "角色"}, age ${c.age}${look?.label ? `，${look.label}` : ""}）`,
+      `  面部特征：${cleanLegacyUserRequirement(look?.faceDescription || c.faceDescription)}`,
+      `  身材体型：${cleanLegacyUserRequirement(look?.bodyDescription || c.bodyDescription)}`,
+      `  服装配饰：${cleanLegacyUserRequirement(look?.clothingDescription || c.clothingDescription)}`,
+    ]
+      .filter(Boolean)
+      .join("\n");
   }
 
-  function characterDetailDraftValue(c: GenCharacter, lookId: string | null): CharacterDetailDraft {
-    const look = lookId == null ? null : (c.looks?.find((item) => item.id === lookId) ?? null);
-    return {
-      age: String(c.age),
-      faceDescription: cleanLegacyUserRequirement(look?.faceDescription || c.faceDescription),
-      bodyDescription: cleanLegacyUserRequirement(look?.bodyDescription || c.bodyDescription),
-      clothingDescription: cleanLegacyUserRequirement(look?.clothingDescription || c.clothingDescription),
-      palette: c.palette.join("、"),
-    };
-  }
-
-  function applyCharacterDetailDraft(
+  /** 从中文编辑提示词中取回真正可持久化的角色属性。 */
+  function parseCharacterEditablePrompt(
+    input: string,
     c: GenCharacter,
     lookId: string | null,
-    draft: CharacterDetailDraft,
-  ): GenCharacter {
-    const age = Number(draft.age);
-    const normalizedAge = Number.isInteger(age) && age >= 0 && age <= 200 ? age : c.age;
-    const palette = draft.palette
-      .split(/[、,，\n]/)
-      .map((value) => value.trim())
-      .filter(Boolean);
-    const next = {
-      ...c,
-      age: normalizedAge,
-      palette,
+  ): CharacterAttributeDraft {
+    const draft = parseCharacterAttributeEditor(input, c, lookId);
+    const readBlock = (label: string) => {
+      const match = input.match(
+        new RegExp(
+          `(?:^|\\n)\\s*${label}\\s*[：:]\\s*([\\s\\S]*?)(?=\\n\\s*(?:面部特征|身材体型|服装配饰|配色|风格|角色)\\s*[：:]|$)`,
+          "m",
+        ),
+      );
+      return match?.[1]?.trim() || "";
     };
-    if (lookId == null) {
-      return {
-        ...next,
-        faceDescription: draft.faceDescription.trim(),
-        bodyDescription: draft.bodyDescription.trim(),
-        clothingDescription: draft.clothingDescription.trim(),
-      };
+    draft.faceDescription = readBlock("面部特征") || draft.faceDescription;
+    draft.bodyDescription = readBlock("身材体型") || draft.bodyDescription;
+    draft.clothingDescription = readBlock("服装配饰") || draft.clothingDescription;
+    const ageMatch = input.match(/(?:年龄\\s*[：:]\\s*|age\\s*)(\\d{1,3})/i);
+    if (ageMatch) {
+      const age = Number(ageMatch[1]);
+      if (Number.isInteger(age) && age >= 0 && age <= 200) draft.age = age;
     }
-    return {
-      ...next,
-      looks: (c.looks ?? []).map((look) =>
-        look.id === lookId
-          ? {
-              ...look,
-              faceDescription: draft.faceDescription.trim(),
-              bodyDescription: draft.bodyDescription.trim(),
-              clothingDescription: draft.clothingDescription.trim(),
-            }
-          : look,
-      ),
-    };
+    return draft;
   }
 
   function sceneDetailDraftValue(s: GenScene): SceneDetailDraft {
     return { location: s.location, timeOfDay: s.timeOfDay, action: s.action };
+  }
+
+  function readEditablePromptField(input: string, label: string, labels: string[]): string {
+    const escaped = labels.map((item) => item.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+    const match = input.match(
+      new RegExp(`(?:^|\\n)\\s*${label}\\s*[：:]\\s*([\\s\\S]*?)(?=\\n\\s*(?:${escaped})\\s*[：:]|$)`, "m"),
+    );
+    return match?.[1]?.trim() || "";
+  }
+
+  function sceneEditablePrompt(s: GenScene): string {
+    const style = resolveProjectStyle(projectVisualStyle).label;
+    return [
+      `风格：${style}`,
+      `场景名称：${s.slug}`,
+      `地点：${s.location}`,
+      `时段：${SCENE_TIME_LABELS[s.timeOfDay] ?? s.timeOfDay}`,
+      `剧情动作：${s.action}`,
+      s.beats.length ? `关键节拍：${s.beats.join("；")}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  function applySceneEditablePrompt(s: GenScene, input: string): GenScene {
+    const labels = ["风格", "场景名称", "地点", "时段", "剧情动作", "关键节拍"];
+    const timeText = readEditablePromptField(input, "时段", labels);
+    const timeOfDay = (Object.entries(SCENE_TIME_LABELS).find(([, label]) => label === timeText)?.[0] ??
+      s.timeOfDay) as GenScene["timeOfDay"];
+    const beats = readEditablePromptField(input, "关键节拍", labels)
+      .split(/[；;\n]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+    return {
+      ...s,
+      slug: readEditablePromptField(input, "场景名称", labels) || s.slug,
+      location: readEditablePromptField(input, "地点", labels) || s.location,
+      timeOfDay,
+      action: readEditablePromptField(input, "剧情动作", labels) || s.action,
+      beats: beats.length ? beats : s.beats,
+    };
   }
 
   function applySceneDetailDraft(s: GenScene, draft: SceneDetailDraft | null): GenScene {
@@ -3246,6 +3279,75 @@ function WorkspacePage() {
       keyMoments: p.keyMoments.join("\n"),
       palette: p.palette.join("、"),
     };
+  }
+
+  function propEditablePrompt(p: GenProp): string {
+    const style = resolveProjectStyle(projectVisualStyle).label;
+    return [
+      `风格：${style}`,
+      `道具名称：${p.name}`,
+      `道具描述：${p.description}`,
+      p.movementDescription ? `剧情运动：${p.movementDescription}` : "",
+      p.keyMoments.length ? `关键节点：${p.keyMoments.join("；")}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  function applyPropEditablePrompt(p: GenProp, input: string): GenProp {
+    const labels = ["风格", "道具名称", "道具描述", "剧情运动", "关键节点"];
+    const keyMoments = readEditablePromptField(input, "关键节点", labels)
+      .split(/[；;\n]/)
+      .map((item) => item.trim())
+      .filter(Boolean);
+    return {
+      ...p,
+      name: readEditablePromptField(input, "道具名称", labels) || p.name,
+      description: readEditablePromptField(input, "道具描述", labels) || p.description,
+      movementDescription: readEditablePromptField(input, "剧情运动", labels) || p.movementDescription,
+      keyMoments: keyMoments.length ? keyMoments : p.keyMoments,
+    };
+  }
+
+  function shotEditablePrompt(group: StoryboardGroup, shot: StoryboardShot): string {
+    return [
+      `分镜图：第 ${group.index} 组`,
+      `剧情：${group.plotText}`,
+      `景别：${shot.shotTypeLabel}`,
+      `动作：${shot.action}`,
+      shot.camera ? `机位：${shot.camera}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
+  function applyShotEditablePrompt(group: StoryboardGroup, shot: StoryboardShot, input: string) {
+    const labels = ["分镜图", "剧情", "景别", "动作", "机位"];
+    return {
+      shot: {
+        ...shot,
+        shotTypeLabel: readEditablePromptField(input, "景别", labels) || shot.shotTypeLabel,
+        action: readEditablePromptField(input, "动作", labels) || shot.action,
+        camera: readEditablePromptField(input, "机位", labels) || shot.camera,
+      },
+      plotText: readEditablePromptField(input, "剧情", labels) || group.plotText,
+    };
+  }
+
+  function storyboardEditablePrompt(group: StoryboardGroup): string {
+    return [
+      `故事板：第 ${group.index} 组`,
+      `剧情：${group.plotText}`,
+      group.sceneLocation ? `场景：${group.sceneLocation}` : "",
+      `风格：${resolveProjectStyle(projectVisualStyle).label}`,
+      "[镜头拆解]",
+      ...group.shots.map(
+        (shot, index) =>
+          `镜头 ${index + 1}：${shot.shotTypeLabel}；动作：${shot.action}${shot.camera ? `；机位：${shot.camera}` : ""}`,
+      ),
+    ]
+      .filter(Boolean)
+      .join("\n");
   }
 
   function applyPropDetailDraft(p: GenProp, draft: PropDetailDraft | null): GenProp {
@@ -3319,9 +3421,8 @@ function WorkspacePage() {
     setModPanel({ character: c, lookId, imageKey });
     setPreviewTarget({ character: c, lookId });
     setSelectedGenIdx(0);
-    const record = charImagePromptsRef.current[imageKey]?.[0];
-    setModInput(record?.mode === "multi-asset" || record?.mode === "three-view" ? record.rawPrompt : "");
-    setCharacterDetailDraft(characterDetailDraftValue(c, lookId));
+    setCharacterAttributesExpanded(false);
+    setModInput(characterEditablePrompt(c, lookId));
     setModError(null);
     setCharModUploadedRefs([]);
   }
@@ -3330,10 +3431,10 @@ function WorkspacePage() {
     // 即使正在生成也允许关闭,让用户在后台继续看其他内容
     setModPanel(null);
     setPreviewTarget(null);
+    setCharacterAttributesExpanded(false);
     setModInput("");
     setModError(null);
     setCharModUploadedRefs([]);
-    setCharacterDetailDraft(null);
   }
 
   /**
@@ -3365,7 +3466,7 @@ function WorkspacePage() {
      * 迭代历史。提交时也走 I2I,不影响人脸锁逻辑。
      */
     replaceExisting = false,
-    /** 详情页编辑的是完整 API prompt，直接重放而不是再包一层修改模板。 */
+      /** 内部重放完整 API prompt 时使用；详情页的中文提示词正常经模板展开。 */
     rawApiPrompt?: string,
   ) {
     const lk = lookId == null ? null : (c.looks?.find((x) => x.id === lookId) ?? null);
@@ -3401,7 +3502,7 @@ function WorkspacePage() {
         characterAge: c.age,
         lookLabel: lk?.label || "默认",
         palette: c.palette,
-        projectStyle: project?.style,
+        projectStyle: projectVisualStyle,
         model: resolveI2IModel(project?.sceneModel),
         mode,
       };
@@ -3441,10 +3542,10 @@ function WorkspacePage() {
         updateCharImagePrompts((m) => ({
           ...m,
           [imageKey]: replaceExisting
-            ? [{ rawPrompt: apiPrompt, editablePrompt: characterAttributeEditorValue(c, lookId), mode }]
+            ? [{ rawPrompt: apiPrompt, editablePrompt: characterEditablePrompt(c, lookId), mode }]
             : [
                 ...(m[imageKey] ?? []),
-                { rawPrompt: apiPrompt, editablePrompt: characterAttributeEditorValue(c, lookId), mode },
+                { rawPrompt: apiPrompt, editablePrompt: characterEditablePrompt(c, lookId), mode },
               ],
         }));
         const modeLabel =
@@ -3605,44 +3706,19 @@ function WorkspacePage() {
     const currentIdx = Math.min(selectedGenIdx, Math.max(0, existingImages.length - 1));
     const currentUrl = existingImages[currentIdx];
     const record = charImagePromptsRef.current[imageKey]?.[currentIdx];
-    const isSpecialAsset = record?.mode === "multi-asset" || record?.mode === "three-view";
-
-    // 多维资产图/四视图以当前这张图保存的真实 API prompt 为编辑对象，直接重放。
-    if (isSpecialAsset) {
-      const rawPrompt = modInput.trim();
-      if (!rawPrompt) {
-        setModError("请填写生成提示词");
-        return;
-      }
-      if (!currentUrl) {
-        setModError("未选中要修改的图片,请先在左侧历史里点一张");
-        return;
-      }
-      const ok = await doRegen(
-        c,
-        lookId,
-        record.mode,
-        "使用编辑后的完整提示词重生。",
-        currentUrl,
-        charModUploadedRefs,
-        false,
-        rawPrompt,
-      );
-      if (ok) {
-        setModInput("");
-        closeModPanel();
-      } else {
-        setModError("生成失败,请重试或换更简单的提示词");
-      }
+    const instruction = modInput.trim();
+    if (!instruction) {
+      setModError("请填写角色提示词");
       return;
     }
-
-    const instruction = modInput.trim() || "按已编辑的角色资料重生，保持参考图中的身份和画风一致。";
-    const editedCharacter = applyCharacterDetailDraft(
+    // 无论当前图是普通角色、四视图还是多维资产图，都从同一份中文提示词
+    // 解析角色属性；生成模式仍按原图保留，避免丢失四视图/设定稿构图约束。
+    const editedCharacter = applyCharacterAttributeDraft(
       c,
       lookId,
-      characterDetailDraft ?? characterDetailDraftValue(c, lookId),
+      parseCharacterEditablePrompt(instruction, c, lookId),
     );
+    const mode = record?.mode === "multi-asset" || record?.mode === "three-view" ? record.mode : "modify";
 
     // 手动添加的空角色:还没有图片,把用户输入解析为结构化描述走 T2I 首次生成
     if (existingImages.length === 0) {
@@ -3670,7 +3746,7 @@ function WorkspacePage() {
     const ok = await doRegen(
       editedCharacter,
       lookId,
-      "modify",
+      mode,
       instruction,
       currentUrl,
       charModUploadedRefs,
@@ -3913,7 +3989,7 @@ function WorkspacePage() {
           sceneLocation: s.location,
           sceneTimeOfDay: s.timeOfDay,
           sceneAction: s.action,
-          projectStyle: project?.style,
+          projectStyle: projectVisualStyle,
           model: resolveI2IModel(project?.sceneModel),
           previewOnly: viewPromptsModeRef.current,
         },
@@ -3978,10 +4054,15 @@ function WorkspacePage() {
   /**
    * 道具图重生 —— 对称于 doSceneRegen。
    */
-  async function doPropRegen(p: GenProp, mode: "modify" | "three-view", instruction: string) {
+  async function doPropRegen(
+    p: GenProp,
+    mode: "modify" | "three-view",
+    instruction: string,
+    referenceOverride?: string,
+  ) {
     const history = propImages[p.id] ?? [];
     const pinned = selectedPropImagesRef.current[p.id];
-    const referenceUrl = pinned && history.includes(pinned) ? pinned : history.at(-1);
+    const referenceUrl = referenceOverride ?? (pinned && history.includes(pinned) ? pinned : history.at(-1));
     if (!referenceUrl) {
       toast.error("该道具还没生成,无法重生");
       return false;
@@ -4012,7 +4093,7 @@ function WorkspacePage() {
             .join("\n"),
           sceneTimeOfDay: "DAY" as const,
           sceneAction: p.movementDescription ? `剧情运动：${p.movementDescription}` : "",
-          projectStyle: project?.style,
+          projectStyle: projectVisualStyle,
           model: resolveI2IModel(project?.sceneModel),
           previewOnly: viewPromptsModeRef.current,
         },
@@ -4168,7 +4249,7 @@ function WorkspacePage() {
       setSceneModError("请输入修改意见");
       return;
     }
-    const editedScene = applySceneDetailDraft(s, sceneDetailDraft);
+    const editedScene = applySceneEditablePrompt(s, instruction);
     setSceneModError(null);
     const ok = await doSceneRegen(
       editedScene,
@@ -4198,9 +4279,9 @@ function WorkspacePage() {
       setPropModError("请输入修改意见");
       return;
     }
-    const editedProp = applyPropDetailDraft(p, propDetailDraft);
+    const editedProp = applyPropEditablePrompt(p, instruction);
     setPropModError(null);
-    const ok = await doPropRegen(editedProp, "modify", instruction);
+    const ok = await doPropRegen(editedProp, "modify", instruction, propModUploadedRef ?? undefined);
     if (!ok) {
       setPropModError("生成失败,请重试或换更简单的修改");
       return;
@@ -4224,7 +4305,7 @@ function WorkspacePage() {
       const scene = data.scenes.find((s) => s.id === p.sceneId);
       // 分镜也跟随项目视觉风格,避免出现"角色是动漫风 / 分镜是写实"
       // 这种割裂。分镜不需要"纯白背景"(分镜本身有场景),所以只注入风格。
-      const styleSpec = resolveProjectStyle(project?.style);
+      const styleSpec = resolveProjectStyle(projectVisualStyle);
       const prompt = [
         `[VISUAL STYLE — must follow the project's art direction]`,
         buildStyleLock(styleSpec, "panel"),
@@ -4366,7 +4447,7 @@ function WorkspacePage() {
           sceneSummaries: sceneSummaries,
           groupCount: 0, // 0 = 不设上限,让 AI 按剧情自行决定
           previousEpisodesText: prevEps || undefined,
-          projectStyle: project?.style,
+          projectStyle: projectVisualStyle,
         },
       })) as AsyncIterable<
         | { kind: "progress"; message: string }
@@ -4874,7 +4955,7 @@ function WorkspacePage() {
           sceneImageUrl,
           sceneLocation: sceneObj?.location || group.sceneLocation || "",
           sceneTimeOfDay: sceneObj?.timeOfDay || "",
-          projectStyle: project?.style,
+          projectStyle: projectVisualStyle,
           // 2026/06 修复:历史上从来不传 model,导致用户切了 sceneModel
           // 也不影响分镜图,默认走 ARK Seedream。现在补上委派路由。
           model: resolveI2IModel(project?.sceneModel),
@@ -4988,13 +5069,15 @@ function WorkspacePage() {
     const imageKey = `${groupId}::${shotId}`;
     const generations = shotImages[imageKey] ?? [];
     const currentIdx = Math.min(shotSelectedGenIdx, Math.max(0, generations.length - 1));
-    const referenceUrl = generations[currentIdx] ?? shot.imageUrl;
+    const referenceUrl = shotModUploadedRef ?? generations[currentIdx] ?? shot.imageUrl;
     const instruction = shotModInput.trim();
     if (!referenceUrl || !instruction) return;
+    const edited = applyShotEditablePrompt(group, shot, instruction);
+    const editedShot = edited.shot;
 
     // 2026/06:按 shot 覆盖 > group 默认 取角色 + 场景(同 generateShotImageForGroup)。
-    const shotCharIds = pickShotCharacterIds(shot, group);
-    const shotSceneId = pickShotSceneId(shot, group);
+    const shotCharIds = pickShotCharacterIds(editedShot, group);
+    const shotSceneId = pickShotSceneId(editedShot, group);
     const charImageUrls: string[] = [];
     const charNames: string[] = [];
     const hasScene = !!(shotSceneId && sceneImages[shotSceneId]?.length);
@@ -5019,18 +5102,18 @@ function WorkspacePage() {
           userInstruction: instruction,
           // 2026/07:同 generateShotImageForGroup -- action 为空时用 plotText 兜底,
           // 避免 RegenShotInput.action(min 1) 拒绝空分镜占位 shot。
-          plotText: effectivePlotText(group) || "(无剧情摘要)",
+          plotText: edited.plotText || effectivePlotText(group) || "(无剧情摘要)",
           shotType: shot.shotType,
           shotTypeLabel: shot.shotTypeLabel,
           action:
-            (shot.action || "").trim() || (group.plotText || "").slice(0, 400) || "(未填写动作)",
-          camera: shot.camera,
+            (editedShot.action || "").trim() || (edited.plotText || "").slice(0, 400) || "(未填写动作)",
+          camera: editedShot.camera,
           characterImageUrls: charImageUrls,
           characterNames: charNames,
           sceneImageUrl,
           sceneLocation: sceneObj?.location || group.sceneLocation || "",
           sceneTimeOfDay: sceneObj?.timeOfDay || "",
-          projectStyle: project?.style,
+          projectStyle: projectVisualStyle,
           // 2026/06 修复:跟 shot generate 调用对称,补 model 字段
           model: resolveI2IModel(project?.sceneModel),
           previewOnly: viewPromptsModeRef.current,
@@ -5058,7 +5141,7 @@ function WorkspacePage() {
               ? {
                   ...g,
                   shots: g.shots.map((sh) =>
-                    sh.id === shotId ? { ...sh, imageUrl: tempUrl } : sh,
+                    sh.id === shotId ? { ...editedShot, imageUrl: tempUrl } : sh,
                   ),
                 }
               : g,
@@ -5074,7 +5157,7 @@ function WorkspacePage() {
                     ? {
                         ...g,
                         shots: g.shots.map((sh) =>
-                          sh.id === shotId ? { ...sh, imageUrl: base64Url } : sh,
+                          sh.id === shotId ? { ...editedShot, imageUrl: base64Url } : sh,
                         ),
                       }
                     : g,
@@ -5093,7 +5176,8 @@ function WorkspacePage() {
           });
         }
         setShotSelectedGenIdx(newLen - 1);
-        setShotModInput("");
+        setShotModInput(shotEditablePrompt({ ...group, plotText: edited.plotText }, editedShot));
+        setShotModUploadedRef(null);
         toast.success("已按意见重生");
       } else {
         toast.error(res?.error || "重生失败");
@@ -5310,7 +5394,7 @@ function WorkspacePage() {
     }
 
     // 注入项目视觉风格
-    const videoStyleSpec = resolveProjectStyle(project?.style);
+    const videoStyleSpec = resolveProjectStyle(projectVisualStyle);
     const dialogueInstruction =
       project?.audio === "on" ? buildDialogueDeliveryInstruction(group) : null;
     // 2026/07:parts 标记 tech 的项是给 AI 的技术指令(风格锁),预览时隐藏
@@ -5483,7 +5567,7 @@ function WorkspacePage() {
     const modeLabel = `多模态参考模式 (${referenceUrls.length} 张参考图)`;
 
     // 注入项目视觉风格
-    const videoStyleSpec2 = resolveProjectStyle(project?.style);
+    const videoStyleSpec2 = resolveProjectStyle(projectVisualStyle);
     const dialogueInstruction =
       project?.audio === "on" ? buildDialogueDeliveryInstruction(group) : null;
     // 2026/07:parts 标记 tech 的项是给 AI 的技术指令(模式标记/风格锁/约束),
@@ -5676,13 +5760,29 @@ function WorkspacePage() {
             });
       if (videoGenRoundRef.current[groupId] !== myRound) return false; // 已被中止或新一轮覆盖,丢弃
       if (res.ok && res.videoUrl) {
+        // 供应商视频 URL 会过期；在写入工作区状态前立即转存。
+        let videoUrl = res.videoUrl;
+        try {
+          const persisted = await callSaveOneVideo({
+            data: {
+              workspaceId,
+              groupId,
+              fileId: `${groupId}-${myRound}`,
+              url: res.videoUrl,
+            },
+          });
+          if (persisted.ok && persisted.url) videoUrl = persisted.url;
+          else console.warn("[video persist]", persisted.error ?? "转存失败");
+        } catch (persistError) {
+          console.warn("[video persist]", persistError);
+        }
         setGroupVideos((m) => {
           const entries = [...(m[groupId] ?? [])];
           const lastIdx = entries.length - 1;
           if (lastIdx >= 0 && entries[lastIdx].status === "running") {
-            entries[lastIdx] = { ...entries[lastIdx], url: res.videoUrl!, status: "succeeded" };
+            entries[lastIdx] = { ...entries[lastIdx], url: videoUrl, status: "succeeded" };
           } else {
-            entries.push({ url: res.videoUrl!, status: "succeeded", method });
+            entries.push({ url: videoUrl, status: "succeeded", method });
           }
           setSelectedVideoIndex((s) => ({ ...s, [groupId]: entries.length - 1 }));
           return { ...m, [groupId]: entries };
@@ -5941,7 +6041,7 @@ function WorkspacePage() {
     try {
       const res = await callGenStoryboard({
         data: {
-          projectStyle: project?.style,
+          projectStyle: projectVisualStyle,
           groupLabel: group.plotText?.slice(0, 60),
           plotText: effectivePlotText(group) || "(无剧情摘要)",
           scene,
@@ -6058,6 +6158,9 @@ function WorkspacePage() {
     if (!current?.url) return;
     const instruction = storyboardModInput.trim();
     if (!instruction) return;
+    const editablePlot =
+      readEditablePromptField(instruction, "剧情", ["故事板", "剧情", "场景", "风格"]) ||
+      group.plotText;
 
     // 2026/06:跟 generateMangaStoryboardForGroup 一致 —— 用各 shot 有效角色并集 +
     //   第一个 shot 的有效场景,体现 shot 级 override。
@@ -6132,6 +6235,15 @@ function WorkspacePage() {
     const REF_MAX = 8;
     const referenceImages: string[] = [];
     const referenceImageLabels: string[] = [];
+    if (storyboardModUploadedRef) {
+      referenceImages.push(storyboardModUploadedRef);
+      referenceImageLabels.push("用户上传参考图");
+    }
+    for (const url of storyboardMentionedRefs) {
+      if (!url || referenceImages.includes(url) || referenceImages.length >= REF_MAX) continue;
+      referenceImages.push(url);
+      referenceImageLabels.push("@参考图");
+    }
     const sceneImgUrl = deckSceneId ? pickSceneImageUrl(deckSceneId) : undefined;
     if (sceneImgUrl) {
       referenceImages.push(sceneImgUrl);
@@ -6160,9 +6272,9 @@ function WorkspacePage() {
         data: {
           referenceImageUrl: current.url,
           userInstruction: instruction,
-          projectStyle: project?.style,
+          projectStyle: projectVisualStyle,
           groupLabel: group.plotText?.slice(0, 60),
-          plotText: effectivePlotText(group) || "(无剧情摘要)",
+          plotText: editablePlot || effectivePlotText(group) || "(无剧情摘要)",
           scene,
           characters,
           shots,
@@ -6227,7 +6339,15 @@ function WorkspacePage() {
           setSelectedStoryboardIndex((s) => ({ ...s, [groupId]: entries.length - 1 }));
           return { ...m, [groupId]: entries };
         });
-        setStoryboardModInput("");
+        setData((currentData) => ({
+          ...currentData,
+          storyboardGroups: currentData.storyboardGroups.map((item) =>
+            item.id === groupId ? { ...item, plotText: editablePlot } : item,
+          ),
+        }));
+        setStoryboardModInput(storyboardEditablePrompt({ ...group, plotText: editablePlot }));
+        setStoryboardModUploadedRef(null);
+        setStoryboardMentionedRefs([]);
       } else {
         toast.error(res?.error || "故事板重生失败");
       }
@@ -8100,6 +8220,7 @@ function WorkspacePage() {
                 workflow: project.workflow,
                 style: project.style,
                 customCover: project.customCover,
+                customStyle: project.customStyle,
               }
             : undefined
         }
@@ -10520,15 +10641,8 @@ function WorkspacePage() {
                                             setShotSelectedGenIdx(
                                               generations ? generations.length - 1 : 0,
                                             );
-                                            setShotModInput([
-                                              `电影分镜图：第 ${g.index} 组`,
-                                              `剧情：${g.plotText}`,
-                                              `景别：${s.shotTypeLabel}`,
-                                              s.action && `动作：${s.action}`,
-                                              s.camera && `机位：${s.camera}`,
-                                              project?.style && `视觉风格：${project.style}`,
-                                              "电影感分镜画面，构图清晰，角色身份一致",
-                                            ].filter(Boolean).join("\n"));
+                                            setShotModInput(shotEditablePrompt(g, s));
+                                            setShotModUploadedRef(null);
                                             setShotPreview({ groupId: g.id, shotId: s.id });
                                           }}
                                           className="absolute bottom-1.5 right-1.5 p-1 rounded bg-black/60 text-white opacity-0 group-hover:opacity-100 transition hover:bg-black/80"
@@ -10637,13 +10751,10 @@ function WorkspacePage() {
                                   onLoad={() => clearStoryboardBroken(g.id)}
                                   onError={() => markStoryboardBroken(g.id)}
                                   onClick={() => {
-                                    setStoryboardModInput([
-                                      `电影故事板：第 ${g.index} 组`,
-                                      `剧情：${g.plotText}`,
-                                      g.sceneLocation && `场景：${g.sceneLocation}`,
-                                      project?.style && `视觉风格：${project.style}`,
-                                      "完整故事板构图，镜头叙事连贯，文字清晰可读",
-                                    ].filter(Boolean).join("\n"));
+                                    setStoryboardModInput(storyboardEditablePrompt(g));
+                                    setStoryboardModUploadedRef(null);
+                                    setStoryboardMentionedRefs([]);
+                                    setStoryboardReferencePickerOpen(false);
                                     setStoryboardPreview({ groupId: g.id });
                                   }}
                                   className="max-h-28 w-auto block cursor-zoom-in object-contain"
@@ -11212,15 +11323,7 @@ function WorkspacePage() {
                             // 2026/07:对齐场景/道具 -- 点缩略图直接选为推荐(reference),
                             // 同时切换大图到这张;再次点击已推荐的图则取消推荐。
                             setSelectedGenIdx(i);
-                            const record = charImagePrompts[imageKey]?.[i];
-                            setModInput(
-                              record?.mode === "multi-asset" || record?.mode === "three-view"
-                                ? record.rawPrompt
-                                : "",
-                            );
-                            setCharacterDetailDraft(
-                              characterDetailDraftValue(c, previewTarget.lookId),
-                            );
+                            setModInput(characterEditablePrompt(c, previewTarget.lookId));
                             setSelectedCharImages((m) => {
                               if (m[imageKey] === u) {
                                 const { [imageKey]: _, ...rest } = m;
@@ -11233,15 +11336,7 @@ function WorkspacePage() {
                             if (e.key === "Enter" || e.key === " ") {
                               e.preventDefault();
                               setSelectedGenIdx(i);
-                              const record = charImagePrompts[imageKey]?.[i];
-                              setModInput(
-                                record?.mode === "multi-asset" || record?.mode === "three-view"
-                                  ? record.rawPrompt
-                                  : "",
-                              );
-                              setCharacterDetailDraft(
-                                characterDetailDraftValue(c, previewTarget.lookId),
-                              );
+                              setModInput(characterEditablePrompt(c, previewTarget.lookId));
                               setSelectedCharImages((m) => {
                                 if (m[imageKey] === u) {
                                   const { [imageKey]: _, ...rest } = m;
@@ -11323,19 +11418,11 @@ function WorkspacePage() {
                   </div>
 
                   {/* === Right: 角色属性编辑 + 轻量素材信息 === */}
-                  <div className="flex flex-col min-h-0 gap-3">
-                    <div className="shrink-0 rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2">
-                      <div className="flex items-center justify-between gap-2 text-xs">
-                        <span className="text-text-muted">当前图：{currentUrl ? `#${currentIdx + 1}` : "未生成"}</span>
-                        <div className="flex gap-1">
-                          {c.palette.map((p) => (
-                            <span key={p} className="w-4 h-4 rounded border border-border" style={{ background: p }} title={p} />
-                          ))}
-                        </div>
-                      </div>
-                      {/* 如果角色有多个 look,展示 look 切换 */}
-                      {(c.looks?.length ?? 0) > 0 && (
-                        <div className="pt-1 flex flex-wrap gap-1.5">
+                  <div className="flex flex-col min-h-0 gap-3 overflow-y-auto pr-1">
+                    {/* 如果角色有多个 look,展示 look 切换 */}
+                    {(c.looks?.length ?? 0) > 0 && (
+                      <div className="shrink-0 rounded-lg border border-border bg-bg-elevated/40 p-3">
+                        <div className="flex flex-wrap gap-1.5">
                           <button
                             type="button"
                             onClick={() => openModPanel(c, null)}
@@ -11362,78 +11449,62 @@ function WorkspacePage() {
                             </button>
                           ))}
                         </div>
-                      )}
-                    </div>
-
-                    {currentPromptRecord?.mode !== "multi-asset" &&
-                      currentPromptRecord?.mode !== "three-view" && (
-                        <div className="shrink-0 rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2 text-xs">
-                          <div className="text-text-secondary font-semibold">角色属性（编辑后随本次发送生效）</div>
-                          {(() => {
-                            const draft = characterDetailDraft ?? characterDetailDraftValue(c, previewTarget.lookId);
-                            const update = (patch: Partial<CharacterDetailDraft>) =>
-                              setCharacterDetailDraft({ ...draft, ...patch });
-                            return (
-                              <div className="grid grid-cols-2 gap-2">
-                                <label className="text-text-muted">年龄
-                                  <input value={draft.age} onChange={(e) => update({ age: e.target.value })} inputMode="numeric" className="mt-1 w-full rounded bg-bg-base border border-border px-2 py-1 text-text-primary" />
-                                </label>
-                                <label className="text-text-muted">配色（用顿号分隔）
-                                  <input value={draft.palette} onChange={(e) => update({ palette: e.target.value })} className="mt-1 w-full rounded bg-bg-base border border-border px-2 py-1 text-text-primary" />
-                                </label>
-                                <label className="col-span-2 text-text-muted">面部特征
-                                  <textarea value={draft.faceDescription} onChange={(e) => update({ faceDescription: e.target.value })} rows={2} className="mt-1 w-full rounded bg-bg-base border border-border p-2 text-text-primary resize-y" />
-                                </label>
-                                <label className="col-span-2 text-text-muted">身材体型
-                                  <textarea value={draft.bodyDescription} onChange={(e) => update({ bodyDescription: e.target.value })} rows={2} className="mt-1 w-full rounded bg-bg-base border border-border p-2 text-text-primary resize-y" />
-                                </label>
-                                <label className="col-span-2 text-text-muted">服装配饰
-                                  <textarea value={draft.clothingDescription} onChange={(e) => update({ clothingDescription: e.target.value })} rows={2} className="mt-1 w-full rounded bg-bg-base border border-border p-2 text-text-primary resize-y" />
-                                </label>
-                              </div>
-                            );
-                          })()}
-                        </div>
-                      )}
-
-                    {/* 2026/07:角色参考音频试听(只读展示,上传/替换/删除走角色卡 Popover) */}
-                    {c.referenceAudioUrl && (
-                      <div className="shrink-0 rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-1.5">
-                        <div className="text-xs text-text-secondary font-semibold inline-flex items-center gap-1">
-                          <AudioWaveform size={12} className="text-accent" /> {t.char_audio}
-                        </div>
-                        <audio controls src={c.referenceAudioUrl} className="w-full h-8" />
                       </div>
                     )}
 
-                    {/* 用户只编辑角色属性；固定构图、风格锁与负面词不暴露，服务端自动附加。 */}
+                    <div className="shrink-0 rounded-lg border border-border bg-bg-elevated/40 p-3 text-xs leading-relaxed">
+                      <div className="mb-1.5 flex items-center justify-between gap-2">
+                        <span className="font-semibold text-text-secondary">角色属性</span>
+                        <button
+                          type="button"
+                          onClick={() => setCharacterAttributesExpanded((value) => !value)}
+                          className="text-[10px] text-accent hover:opacity-80"
+                        >
+                          {characterAttributesExpanded ? "收起" : "展开"}
+                        </button>
+                      </div>
+                      {(() => {
+                        // 输入框内每次编辑都即时解析，右上方预览无需等到点击发送。
+                        const draftCharacter = applyCharacterAttributeDraft(
+                          c,
+                          previewTarget.lookId,
+                          parseCharacterEditablePrompt(modInput, c, previewTarget.lookId),
+                        );
+                        const look = previewTarget.lookId == null
+                          ? null
+                          : draftCharacter.looks?.find((item) => item.id === previewTarget.lookId);
+                        return (
+                          <div
+                            className={`text-text-secondary overflow-hidden ${
+                              characterAttributesExpanded ? "" : "max-h-[9rem]"
+                            }`}
+                          >
+                            <p>年龄：{draftCharacter.age}</p>
+                            <p className="mt-1.5"><span className="text-text-muted">面部：</span>{cleanLegacyUserRequirement(look?.faceDescription || draftCharacter.faceDescription)}</p>
+                            <p className="mt-1.5"><span className="text-text-muted">身材：</span>{cleanLegacyUserRequirement(look?.bodyDescription || draftCharacter.bodyDescription)}</p>
+                            <p className="mt-1.5"><span className="text-text-muted">服装：</span>{cleanLegacyUserRequirement(look?.clothingDescription || draftCharacter.clothingDescription)}</p>
+                          </div>
+                        );
+                      })()}
+                    </div>
+
+                    {/* 所有角色图片共用同一份中文编辑提示词；服务端再补齐固定构图与负面词。 */}
                     {(() => {
                       const busyKey =
                         previewTarget.lookId == null ? c.id : `${c.id}::${previewTarget.lookId}`;
                       const thisBusy = regenBusyKeys.has(busyKey);
-                      const isSpecialAsset =
-                        currentPromptRecord?.mode === "multi-asset" ||
-                        currentPromptRecord?.mode === "three-view";
                       return (
-                        <div className="flex-1 min-h-0 flex flex-col rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2">
+                        <div className="shrink-0 flex flex-col rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2">
                           <div className="flex items-center justify-between">
                             <div className="text-xs text-text-secondary font-semibold">
-                              {isSpecialAsset ? "本图真实生成提示词（可编辑）" : "修改意见"}
+                              角色提示词（可编辑）
                             </div>
                             <span className="text-[10px] text-text-muted">
-                              {currentPromptRecord?.mode === "multi-asset"
-                                ? "多维资产图"
-                                : currentPromptRecord?.mode === "three-view"
-                                  ? "四视图"
-                                  : currentPromptRecord?.mode === "modify"
-                                    ? "按属性重生"
-                                    : "初始形象"}
+                              编辑后会同步更新角色属性
                             </span>
                           </div>
                           <p className="text-[10px] text-text-muted leading-relaxed">
-                            {isSpecialAsset
-                              ? "左侧每张多维资产图或四视图都保留自己的真实 API prompt；修改后会以该提示词重生。"
-                              : "在上方编辑角色资料；这里补充本次想调整的修改意见。固定构图、风格锁与负面词由系统自动附加。"}
+                            风格与角色描述均可修改；四视图、多维资产仍保留各自的构图约束，真实 API prompt 会据此重新生成。
                           </p>
                           <div className="flex items-center gap-2 mb-2 flex-wrap">
                             <button
@@ -11492,10 +11563,10 @@ function WorkspacePage() {
                                 void submitModPanel();
                               }
                             }}
-                            placeholder={isSpecialAsset ? "编辑这张图的完整生成提示词…" : "输入修改意见，例如：表情更坚定，外套材质改为粗花呢"}
-                            rows={10}
+                            placeholder="编辑风格、面部特征、身材体型或服装配饰…"
+                            rows={8}
                             disabled={thisBusy}
-                            className="w-full flex-1 min-h-56 rounded-md bg-bg-base border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-y placeholder:text-text-muted disabled:opacity-50 leading-relaxed"
+                            className="w-full flex-1 min-h-64 max-h-[55vh] rounded-md bg-bg-base border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-y placeholder:text-text-muted disabled:opacity-50 leading-relaxed"
                           />
                           {modError && (
                             <div className="px-2.5 py-1.5 rounded-md bg-rose-500/10 border border-rose-500/30 text-[11px] text-rose-400">
@@ -11513,7 +11584,7 @@ function WorkspacePage() {
                               onClick={() => void submitModPanel()}
                               disabled={
                                 thisBusy ||
-                                (isSpecialAsset && !modInput.trim()) ||
+                                !modInput.trim() ||
                                 (generations.filter(Boolean).length > 0 && !currentUrl)
                               }
                               className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
@@ -11672,9 +11743,21 @@ function WorkspacePage() {
                   </div>
                   <div className="overflow-y-auto p-4 space-y-3 bg-bg-surface min-h-0">
                     <div className="text-[10px] uppercase tracking-wide text-accent font-semibold">
-                      素材上下文（自动同步到生成）
+                      场景描述（随提示词实时更新）
                     </div>
                     {(() => {
+                      const draft = applySceneEditablePrompt(s, sceneModInput);
+                      return (
+                        <div className="rounded-lg border border-border bg-bg-elevated/40 p-3 text-xs leading-relaxed text-text-secondary">
+                          <p>场景：{draft.slug}</p>
+                          <p className="mt-1.5">地点：{draft.location}</p>
+                          <p className="mt-1.5">时段：{SCENE_TIME_LABELS[draft.timeOfDay] ?? draft.timeOfDay}</p>
+                          <p className="mt-1.5">剧情动作：{draft.action || "未填写"}</p>
+                          {draft.beats.length > 0 && <p className="mt-1.5">关键节拍：{draft.beats.join("；")}</p>}
+                        </div>
+                      );
+                    })()}
+                    {false && (() => {
                       const draft = sceneDetailDraft ?? sceneDetailDraftValue(s);
                       const update = (patch: Partial<SceneDetailDraft>) =>
                         setSceneDetailDraft({ ...draft, ...patch });
@@ -11695,7 +11778,7 @@ function WorkspacePage() {
                         </div>
                       );
                     })()}
-                    {s.beats.length > 0 && (
+                    {false && s.beats.length > 0 && (
                       <div>
                         <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1">
                           节拍
@@ -11710,7 +11793,7 @@ function WorkspacePage() {
                         </ul>
                       </div>
                     )}
-                    {s.dialogue.length > 0 && (
+                    {false && s.dialogue.length > 0 && (
                       <div>
                         <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1">
                           对白
@@ -11733,7 +11816,7 @@ function WorkspacePage() {
                     {/* 修改场景:嵌入预览右侧底部,和角色修改对齐 */}
                     <div className="shrink-0 rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2">
                       <div className="flex items-center justify-between">
-                        <div className="text-xs text-text-secondary font-semibold">修改意见</div>
+                        <div className="text-xs text-text-secondary font-semibold">场景提示词（可编辑）</div>
                         <span className="text-[10px] text-text-muted">Enter 发送</span>
                       </div>
                       <div className="flex items-center gap-2 mb-2">
@@ -11775,15 +11858,11 @@ function WorkspacePage() {
                             void submitSceneDetailRegen(s);
                           }
                         }}
-                        placeholder="输入修改意见，例如：把黄昏改为雨后傍晚，增加地面的潮湿反光"
-                        rows={7}
+                        placeholder="编辑场景名称、地点、时段或剧情动作…"
+                        rows={12}
                         disabled={regenBusyKeys.has(s.id)}
-                        className="w-full min-h-40 rounded-md bg-bg-base border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-y placeholder:text-text-muted disabled:opacity-50"
+                        className="w-full min-h-64 max-h-[55vh] rounded-md bg-bg-base border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-y placeholder:text-text-muted disabled:opacity-50"
                       />
-                      <details className="rounded-md border border-border bg-bg-base px-2 py-1.5 text-[10px] text-text-muted">
-                        <summary className="cursor-pointer text-text-secondary">固定约束与负面词（自动附加）</summary>
-                        <p className="mt-1 leading-relaxed">系统会锁定图 1 的构图、地点、时段与风格，并附加纯环境、无人物和画质负面词。</p>
-                      </details>
                       {sceneModError && (
                         <div className="px-2.5 py-1.5 rounded-md bg-rose-500/10 border border-rose-500/30 text-[11px] text-rose-400">
                           {sceneModError}
@@ -11938,9 +12017,17 @@ function WorkspacePage() {
                   </div>
                   <div className="overflow-y-auto p-4 space-y-3 bg-bg-surface min-h-0">
                     <div className="text-[10px] uppercase tracking-wide text-accent font-semibold">
-                      素材上下文（自动同步到生成）
+                      道具描述（随提示词实时更新）
                     </div>
                     {(() => {
+                      const draft = applyPropEditablePrompt(p, propModInput);
+                      return (
+                        <div className="rounded-lg border border-border bg-bg-elevated/40 p-3 text-xs leading-relaxed text-text-secondary">
+                          道具：{draft.name}；描述：{draft.description || "未填写"}{draft.movementDescription ? `；剧情运动：${draft.movementDescription}` : ""}{draft.keyMoments.length ? `；关键节点：${draft.keyMoments.join("；")}` : ""}
+                        </div>
+                      );
+                    })()}
+                    {false && (() => {
                       const draft = propDetailDraft ?? propDetailDraftValue(p);
                       const update = (patch: Partial<PropDetailDraft>) =>
                         setPropDetailDraft({ ...draft, ...patch });
@@ -11965,14 +12052,14 @@ function WorkspacePage() {
                         </div>
                       );
                     })()}
-                    <div className="rounded-lg border border-border bg-bg-base p-2 text-[10px] leading-relaxed text-text-muted">
-                      <div>视觉风格：<span className="text-text-secondary">{project?.style || "项目默认风格"}</span></div>
+                    {false && <div className="rounded-lg border border-border bg-bg-base p-2 text-[10px] leading-relaxed text-text-muted">
+                      <div>视觉风格：<span className="text-text-secondary">{project?.style === "custom" ? project.customStyle || "自定义风格" : project?.style || "项目默认风格"}</span></div>
                       <div className="mt-1">固定约束：单一道具，主体完整清晰，无人物，无文字。</div>
-                    </div>
+                    </div>}
                     {/* 修改道具:嵌入预览右侧底部 */}
                     <div className="shrink-0 rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2">
                       <div className="flex items-center justify-between">
-                        <div className="text-xs text-text-secondary font-semibold">修改意见</div>
+                        <div className="text-xs text-text-secondary font-semibold">道具提示词（可编辑）</div>
                         <span className="text-[10px] text-text-muted">Enter 发送</span>
                       </div>
                       <div className="flex items-center gap-2 mb-2">
@@ -12013,15 +12100,11 @@ function WorkspacePage() {
                             void submitPropDetailRegen(p);
                           }
                         }}
-                        placeholder="输入修改意见，例如：把金属表面改为有划痕的旧银色"
+                        placeholder="编辑道具名称、描述、剧情运动或关键节点…"
                         rows={7}
                         disabled={regenBusyKeys.has(p.id)}
                         className="w-full min-h-40 rounded-md bg-bg-base border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-y placeholder:text-text-muted disabled:opacity-50"
                       />
-                      <details className="rounded-md border border-border bg-bg-base px-2 py-1.5 text-[10px] text-text-muted">
-                        <summary className="cursor-pointer text-text-secondary">固定约束与负面词（自动附加）</summary>
-                        <p className="mt-1 leading-relaxed">当前道具仍复用场景重生链路；会附加参考图、风格和画质约束。</p>
-                      </details>
                       {propModError && (
                         <div className="px-2.5 py-1.5 rounded-md bg-rose-500/10 border border-rose-500/30 text-[11px] text-rose-400">
                           {propModError}
@@ -12537,6 +12620,7 @@ function WorkspacePage() {
           const generations = shotImages[imageKey] ?? (shot.imageUrl ? [shot.imageUrl] : []);
           const currentIdx = Math.min(shotSelectedGenIdx, Math.max(0, generations.length - 1));
           const currentUrl = generations[currentIdx];
+          const editableShot = applyShotEditablePrompt(group, shot, shotModInput);
           const cardTitle = `${shot.shotTypeLabel} · ${shot.action.slice(0, 24)}${shot.action.length > 24 ? "…" : ""}`;
           return (
             <div
@@ -12544,6 +12628,7 @@ function WorkspacePage() {
               onClick={() => {
                 setShotPreview(null);
                 setShotModInput("");
+                setShotModUploadedRef(null);
               }}
               role="dialog"
               aria-modal="true"
@@ -12568,6 +12653,7 @@ function WorkspacePage() {
                     onClick={() => {
                       setShotPreview(null);
                       setShotModInput("");
+                      setShotModUploadedRef(null);
                     }}
                     className="p-1.5 rounded-md hover:bg-bg-elevated text-text-muted"
                     aria-label="关闭"
@@ -12666,17 +12752,17 @@ function WorkspacePage() {
                         <div>
                           <dt className="text-text-muted">景别</dt>
                           <dd className="text-text-secondary">
-                            {shot.shotTypeLabel}（{shot.shotType}）
+                            {editableShot.shot.shotTypeLabel}（{shot.shotType}）
                           </dd>
                         </div>
                         <div>
                           <dt className="text-text-muted">动作</dt>
-                          <dd className="text-text-secondary">{shot.action || "-"}</dd>
+                          <dd className="text-text-secondary">{editableShot.shot.action || "-"}</dd>
                         </div>
-                        {shot.camera && (
+                        {editableShot.shot.camera && (
                           <div>
                             <dt className="text-text-muted">机位</dt>
-                            <dd className="text-text-secondary">🎥 {shot.camera}</dd>
+                            <dd className="text-text-secondary">🎥 {editableShot.shot.camera}</dd>
                           </div>
                         )}
                       </dl>
@@ -12685,7 +12771,7 @@ function WorkspacePage() {
                           剧情
                         </div>
                         <p className="text-[11px] text-text-secondary leading-relaxed mt-0.5">
-                          {group.plotText}
+                          {editableShot.plotText}
                         </p>
                       </div>
                       {/* 2026/06:本镜头的"实际生效角色列表"(shot 覆盖 group)。
@@ -12719,6 +12805,21 @@ function WorkspacePage() {
                       <p className="text-[10px] text-text-muted leading-relaxed">
                         这段指令会原样传入生成流程；系统会自动补充当前分镜、参考图和风格一致性约束。
                       </p>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => pickLocalImageAsDataUrl((url) => setShotModUploadedRef(url))}
+                          className="btn-ghost text-xs inline-flex items-center gap-1"
+                        >
+                          <ImageUp size={12} /> 上传参考图
+                        </button>
+                        {shotModUploadedRef && (
+                          <div className="relative w-10 h-10 rounded border border-accent overflow-hidden">
+                            <img src={shotModUploadedRef} alt="参考图" className="w-full h-full object-cover" />
+                            <button type="button" onClick={() => setShotModUploadedRef(null)} className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"><X size={10} /></button>
+                          </div>
+                        )}
+                      </div>
                       <textarea
                         value={shotModInput}
                         onChange={(e) => setShotModInput(e.target.value)}
@@ -12730,19 +12831,15 @@ function WorkspacePage() {
                         }}
                         placeholder="填写这张分镜图的生成提示词…"
                         rows={8}
-                        disabled={shotModBusy || !currentUrl}
+                        disabled={shotModBusy || (!currentUrl && !shotModUploadedRef)}
                         className="w-full min-h-44 rounded-md bg-bg-elevated border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-y placeholder:text-text-muted disabled:opacity-50"
                       />
-                      <details className="rounded-md border border-border bg-bg-base px-2 py-1.5 text-[10px] text-text-muted">
-                        <summary className="cursor-pointer text-text-secondary">固定约束与负面词（自动附加）</summary>
-                        <p className="mt-1 leading-relaxed">系统会附加当前分镜图、角色/场景参考、景别、机位、剧情与风格锁定。</p>
-                      </details>
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-[10px] text-text-muted">⌘/Ctrl + Enter 发送</span>
                         <button
                           type="button"
                           onClick={() => void handleRegenShot()}
-                          disabled={shotModBusy || !shotModInput.trim() || !currentUrl}
+                          disabled={shotModBusy || !shotModInput.trim() || (!currentUrl && !shotModUploadedRef)}
                           className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
                         >
                           {shotModBusy ? (
@@ -12778,10 +12875,24 @@ function WorkspacePage() {
           const group = data.storyboardGroups.find((gg) => gg.id === storyboardPreview.groupId);
           const title = group ? `第 ${group.index} 组 · 故事板` : "故事板";
           const isRunning = activeEntry?.status === "running";
+          const storyboardLivePlot = group
+            ? readEditablePromptField(storyboardModInput, "剧情", ["故事板", "剧情", "场景", "风格"]) || group.plotText
+            : "";
+          const mentionCandidates = group
+            ? group.shots.map((shot, index) => ({
+                url: shotImages[`${group.id}::${shot.id}`]?.at(-1) ?? shot.imageUrl,
+                label: `分镜图 ${index + 1}`,
+              }))
+            : [];
           return (
             <div
               className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4"
-              onClick={() => setStoryboardPreview(null)}
+              onClick={() => {
+                setStoryboardPreview(null);
+                setStoryboardModUploadedRef(null);
+                setStoryboardMentionedRefs([]);
+                setStoryboardReferencePickerOpen(false);
+              }}
               role="dialog"
               aria-modal="true"
               aria-label="故事板预览"
@@ -12797,7 +12908,12 @@ function WorkspacePage() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => setStoryboardPreview(null)}
+                    onClick={() => {
+                      setStoryboardPreview(null);
+                      setStoryboardModUploadedRef(null);
+                      setStoryboardMentionedRefs([]);
+                      setStoryboardReferencePickerOpen(false);
+                    }}
                     className="p-1.5 rounded-md bg-white/10 hover:bg-white/20 text-white"
                     aria-label="关闭"
                   >
@@ -12880,7 +12996,13 @@ function WorkspacePage() {
                             <div>
                               <dt className="text-text-muted">剧情</dt>
                               <dd className="text-text-secondary leading-relaxed">
-                                {group.plotText || "-"}
+                                {storyboardLivePlot || "-"}
+                              </dd>
+                            </div>
+                            <div>
+                              <dt className="text-text-muted">镜头拆解</dt>
+                              <dd className="text-text-secondary leading-relaxed whitespace-pre-wrap">
+                                {storyboardModInput.split("[镜头拆解]")[1]?.trim() || "-"}
                               </dd>
                             </div>
                             {group.characterIds.length > 0 && (
@@ -12911,6 +13033,52 @@ function WorkspacePage() {
                       <p className="text-[10px] text-text-muted leading-relaxed">
                         这段指令会原样传入生成流程；系统会自动补充当前故事板、镜头和风格锁定约束。
                       </p>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <button
+                          type="button"
+                          onClick={() => pickLocalImageAsDataUrl((url) => setStoryboardModUploadedRef(url))}
+                          className="btn-ghost text-xs inline-flex items-center gap-1"
+                        >
+                          <ImageUp size={12} /> 上传参考图
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setStoryboardReferencePickerOpen((open) => !open)}
+                          className="btn-ghost text-xs inline-flex items-center gap-1"
+                        >
+                          @参考图
+                        </button>
+                        {storyboardModUploadedRef && (
+                          <div className="relative w-10 h-10 rounded border border-accent overflow-hidden">
+                            <img src={storyboardModUploadedRef} alt="上传参考图" className="w-full h-full object-cover" />
+                            <button type="button" onClick={() => setStoryboardModUploadedRef(null)} className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"><X size={10} /></button>
+                          </div>
+                        )}
+                        {storyboardMentionedRefs.map((url, index) => (
+                          <div key={url} className="relative w-10 h-10 rounded border border-emerald-400 overflow-hidden">
+                            <img src={url} alt={`@参考图 ${index + 1}`} className="w-full h-full object-cover" />
+                            <button type="button" onClick={() => setStoryboardMentionedRefs((refs) => refs.filter((item) => item !== url))} className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"><X size={10} /></button>
+                          </div>
+                        ))}
+                      </div>
+                      {storyboardReferencePickerOpen && (
+                        <div className="rounded-md border border-border bg-bg-base p-2 text-xs space-y-1">
+                          <div className="text-text-muted">从本组已生成分镜中引用：</div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {mentionCandidates.map((candidate) => candidate.url ? (
+                              <button
+                                key={`${candidate.label}-${candidate.url}`}
+                                type="button"
+                                onClick={() => setStoryboardMentionedRefs((refs) => refs.includes(candidate.url!) ? refs : [...refs, candidate.url!].slice(0, 3))}
+                                className="rounded border border-border px-2 py-1 text-text-secondary hover:border-accent"
+                              >
+                                {candidate.label}
+                              </button>
+                            ) : null)}
+                            {!mentionCandidates.some((candidate) => candidate.url) && <span className="text-text-muted">暂无可引用分镜图</span>}
+                          </div>
+                        </div>
+                      )}
                       <textarea
                         value={storyboardModInput}
                         onChange={(e) => setStoryboardModInput(e.target.value)}
@@ -12925,10 +13093,6 @@ function WorkspacePage() {
                         disabled={storyboardModBusy || isRunning || !url}
                         className="w-full min-h-44 rounded-md bg-bg-elevated border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-y placeholder:text-text-muted disabled:opacity-50"
                       />
-                      <details className="rounded-md border border-border bg-bg-elevated px-2 py-1.5 text-[10px] text-text-muted">
-                        <summary className="cursor-pointer text-text-secondary">固定约束与负面词（自动附加）</summary>
-                        <p className="mt-1 leading-relaxed">系统会锁定当前故事板的镜头顺序、版式、角色身份、场景和项目风格。</p>
-                      </details>
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-[10px] text-text-muted">⌘/Ctrl + Enter 发送</span>
                         <button
