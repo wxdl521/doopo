@@ -30,21 +30,24 @@ function CreateTeamPage() {
     if (!name.trim()) return;
     setCreating(true);
     setError(null);
+    try {
+      const r: any = await callCreateTeam({
+        data: {
+          name: name.trim(),
+          description: description.trim() || undefined,
+          credits: credits ? parseInt(credits, 10) : undefined,
+        },
+      });
 
-    const r: any = await callCreateTeam({
-      data: {
-        name: name.trim(),
-        description: description.trim() || undefined,
-        credits: credits ? parseInt(credits, 10) : undefined,
-      },
-    });
-
-    setCreating(false);
-
-    if (r?.team) {
-      navigate({ to: "/team" });
-    } else {
-      setError(r?.error ?? t.team_create_error);
+      if (r?.ok && r.teamId) {
+        navigate({ to: "/team" });
+      } else {
+        setError(r?.error ?? t.team_create_error);
+      }
+    } catch (error) {
+      setError(error instanceof Error ? error.message : t.team_create_error);
+    } finally {
+      setCreating(false);
     }
   };
 

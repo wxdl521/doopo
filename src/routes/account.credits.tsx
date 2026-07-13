@@ -18,11 +18,11 @@ export const Route = createFileRoute("/account/credits")({
   component: AccountCredits,
 });
 
-// 1元 = 100积分
+// 1元 = 20积分
 const PACKAGES = [
-  { amount: 1000, price: 10, popular: false },
-  { amount: 5000, price: 50, popular: true },
-  { amount: 15000, price: 128, popular: false },
+  { amount: 200, price: 10, popular: false },
+  { amount: 1000, price: 50, popular: true },
+  { amount: 3000, price: 150, popular: false },
 ];
 
 const PAGE_SIZE = 20;
@@ -51,7 +51,7 @@ function AccountCredits() {
 
   const customCredits = parseInt(customAmount, 10);
   const customPrice =
-    isNaN(customCredits) || customCredits <= 0 ? null : (customCredits / 100).toFixed(2);
+    isNaN(customCredits) || customCredits <= 0 ? null : (customCredits / 20).toFixed(2);
 
   return (
     <div className="space-y-6">
@@ -68,7 +68,7 @@ function AccountCredits() {
 
       {/* 充值套餐 */}
       <h3 className="font-display text-lg font-bold">充值积分</h3>
-      <p className="text-xs text-text-muted -mt-4">1元 = 100积分</p>
+      <p className="text-xs text-text-muted -mt-4">1元 = 20积分</p>
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {PACKAGES.map((pkg) => (
           <div

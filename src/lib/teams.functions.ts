@@ -55,39 +55,27 @@ export const createTeam = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator(CreateTeamInput)
   .handler(async ({ data, context }) => {
-    const { supabase, userId } = context;
+    const { supabase } = context;
 
-    // 1. 创建团队
-    const { data: team, error: teamError } = await supabase
-      .from("teams")
-      .insert({
-        name: data.name,
-        description: data.description ?? null,
-        owner_id: userId,
-      })
-      .select("id")
-      .single();
-
-    if (teamError || !team) {
-      return { ok: false as const, error: teamError?.message ?? "Failed to create team" };
-    }
-
-    // 2. 将创建者加入为 owner
-    const { error: memberError } = await supabase.from("team_members").insert({
-      team_id: team.id,
-      user_id: userId,
-      role: "owner",
-      credits_balance: data.credits ?? 0,
-      subscription_credits: 0,
+    // 新团队尚无成员，直接 INSERT owner 会触发 team_members 的 RLS。
+    // 该 RPC 在数据库内以 auth.uid() 为创建者原子完成 teams + owner member，
+    // 不需要也不应在应用环境配置 service role key。
+    const { data: teamId, error } = await (supabase as any).rpc("create_team_as_owner", {
+      p_name: data.name,
+      p_description: data.description ?? null,
+      p_credits: data.credits ?? 0,
     });
 
-    if (memberError) {
-      // 回滚：删除刚创建的团队
-      await supabase.from("teams").delete().eq("id", team.id);
-      return { ok: false as const, error: memberError.message };
+    if (error || !teamId) {
+      return {
+        ok: false as const,
+        error:
+          error?.message ??
+          "创建团队初始化失败；请确认管理员已执行 create_team_as_owner 数据库函数。",
+      };
     }
 
-    return { ok: true as const, teamId: team.id };
+    return { ok: true as const, teamId: String(teamId) };
   });
 
 // ====================================================================
