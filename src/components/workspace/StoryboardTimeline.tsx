@@ -35,8 +35,8 @@ function isPersistedUrl(url: string | undefined | null): boolean {
  *
  *  - 多个分镜组生成的视频按"clipOrder"顺序拼接播放，时长取视频 metadata；
  *    metadata 尚未加载时才按分镜/生成请求时长兜底。
- *  - 顶部主视频播放器,只渲染当前 active clip 的 <video>(其他隐藏 mount,
- *    切换 src 时不重建 DOM,降低闪烁)。
+ *  - 顶部主视频播放器会预加载所有片段；切换时只切换可见层，不替换 video src，
+ *    避免下一个片段重新缓冲导致黑帧。
  *  - 底部按帧时间轴:横向 clip 缩略图条 + 可拖拽竖线 playhead。
  *  - 支持两种拖拽(都用 Pointer Events,零依赖):
  *      1) 拖 playhead → 跳转播放进度
@@ -189,6 +189,13 @@ export default function StoryboardTimeline({
     // 仅在 activeClip / isPlaying 切换时同步,避免每帧重跑
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeClip?.groupId, activeClip?.startSec, activeClip?.durationSec, isPlaying]);
+
+  // 切段或暂停时立即停掉非当前媒体，避免它们在隐藏层继续播放音频。
+  useEffect(() => {
+    for (const [groupId, video] of Object.entries(videoRefs.current)) {
+      if (groupId !== activeClip?.groupId) video?.pause();
+    }
+  }, [activeClip?.groupId, isPlaying]);
 
   // ----- seek -----
   const seekTo = useCallback(
@@ -512,43 +519,48 @@ export default function StoryboardTimeline({
       <div className="panel p-3">
         <div className="relative w-full max-w-3xl mx-auto bg-black rounded-lg overflow-hidden aspect-video">
           {activeClip ? (
-            <video
-              ref={(el) => {
-                videoRefs.current[activeClip.groupId] = el;
-              }}
-              src={activeClip.video?.url}
-              className="absolute inset-0 w-full h-full"
-              playsInline
-              muted={false}
-              onLoadedMetadata={(event) => {
-                const duration = event.currentTarget.duration;
-                if (!Number.isFinite(duration) || duration <= 0) return;
-                setMeasuredDurations((current) => {
-                  if (Math.abs((current[activeClip.groupId] ?? 0) - duration) < 0.05) {
-                    return current;
+            playableClips.map((clip, index) => (
+              <video
+                key={clip.groupId}
+                ref={(el) => {
+                  videoRefs.current[clip.groupId] = el;
+                }}
+                src={clip.video?.url}
+                preload="auto"
+                className={`absolute inset-0 w-full h-full transition-opacity duration-0 ${
+                  index === activeClipIndex ? "opacity-100" : "opacity-0 pointer-events-none"
+                }`}
+                playsInline
+                muted={false}
+                onLoadedMetadata={(event) => {
+                  const duration = event.currentTarget.duration;
+                  if (!Number.isFinite(duration) || duration <= 0) return;
+                  setMeasuredDurations((current) => {
+                    if (Math.abs((current[clip.groupId] ?? 0) - duration) < 0.05) return current;
+                    return { ...current, [clip.groupId]: duration };
+                  });
+                  onVideoDurationDetected?.(clip.groupId, duration);
+                }}
+                onTimeUpdate={(event) => {
+                  if (!isPlaying || activeClip.groupId !== clip.groupId) return;
+                  setCurrentSec(clip.startSec + event.currentTarget.currentTime);
+                }}
+                onEnded={() => {
+                  if (activeClip.groupId !== clip.groupId) return;
+                  // 下一条已经预加载，只切换可见层并立即播放，不会经过黑屏缓冲。
+                  const clipEnd = Math.min(totalSec, clip.startSec + clip.durationSec);
+                  setCurrentSec(clipEnd);
+                  const nextIdx = index + 1;
+                  if (nextIdx < playableClips.length) {
+                    const next = playableClips[nextIdx];
+                    setCurrentSec(next.startSec);
+                    setActiveClipIndex(nextIdx);
+                  } else {
+                    setIsPlaying(false);
                   }
-                  return { ...current, [activeClip.groupId]: duration };
-                });
-                onVideoDurationDetected?.(activeClip.groupId, duration);
-              }}
-              onTimeUpdate={(event) => {
-                if (!isPlaying) return;
-                setCurrentSec(activeClip.startSec + event.currentTarget.currentTime);
-              }}
-              onEnded={() => {
-                // 以真实媒体时长结束当前片段，再切到下一条可播放片段。
-                const clipEnd = Math.min(totalSec, activeClip.startSec + activeClip.durationSec);
-                setCurrentSec(clipEnd);
-                const nextIdx = activeClipIndex + 1;
-                if (nextIdx < playableClips.length) {
-                  const next = playableClips[nextIdx];
-                  setCurrentSec(next.startSec);
-                  setActiveClipIndex(nextIdx);
-                } else {
-                  setIsPlaying(false);
-                }
-              }}
-            />
+                }}
+              />
+            ))
           ) : (
             <div className="absolute inset-0 flex items-center justify-center text-text-muted text-sm">
               <div className="text-center space-y-2">

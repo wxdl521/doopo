@@ -109,6 +109,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import CharacterPortrait from "../components/workspace/CharacterPortrait";
 import StoryboardTimeline from "../components/workspace/StoryboardTimeline";
 import { toast } from "sonner";
+import type { WorkspaceAgentPlan } from "../lib/workspaceAgent.functions";
 
 export const Route = createFileRoute("/workspace/$workspaceId")({
   head: ({ params }) => ({ meta: [{ title: `Workspace ${params.workspaceId} — Doopoo` }] }),
@@ -2963,12 +2964,143 @@ function WorkspacePage() {
   // 内 look 切换 都会调到这里 —— 一次调用同时打开预览 + 修改 state。
   // 旧名 openModPanel 保留,避免在多个调用点批量重命名;语义上现在等价于
   // "打开这个角色卡片的预览+编辑"。
+  function characterImagePrompt(c: GenCharacter, lookId: string | null) {
+    const look = lookId == null ? undefined : c.looks?.find((item) => item.id === lookId);
+    return [
+      `角色设定图：${c.name}，${c.roleLabel}，${c.gender}，${c.age}岁`,
+      `面部：${look?.faceDescription || c.faceDescription}`,
+      `身材：${look?.bodyDescription || c.bodyDescription}`,
+      `服装：${look?.clothingDescription || c.clothingDescription}`,
+      c.personality && `人物气质：${c.personality}`,
+      project?.style && `视觉风格：${project.style}`,
+      "高质量角色设定图，主体清晰，保持角色身份一致",
+    ].filter(Boolean).join("\n");
+  }
+
+  function sceneImagePrompt(s: GenScene) {
+    return [
+      `电影场景图：${s.slug}`,
+      s.location && `地点：${s.location}`,
+      `时间：${SCENE_TIME_LABELS[s.timeOfDay] ?? s.timeOfDay}`,
+      s.action && `剧情动作：${s.action}`,
+      s.beats.length > 0 && `场景要点：${s.beats.join("；")}`,
+      project?.style && `视觉风格：${project.style}`,
+      "电影感构图，环境细节清晰",
+    ].filter(Boolean).join("\n");
+  }
+
+  function propImagePrompt(p: GenProp) {
+    return [
+      `道具设定图：${p.name}`,
+      `外观：${p.description}`,
+      p.movementDescription && `剧情作用：${p.movementDescription}`,
+      p.palette.length > 0 && `配色：${p.palette.join("、")}`,
+      project?.style && `视觉风格：${project.style}`,
+      "单一道具，主体完整清晰，无人物，无文字",
+    ].filter(Boolean).join("\n");
+  }
+
+  function openScenePreview(s: GenScene) {
+    setScenePreview(s);
+    setSceneModInput(sceneImagePrompt(s));
+    setSceneModError(null);
+  }
+
+  function openPropPreview(p: GenProp) {
+    setPropPreview(p);
+    setPropModInput(propImagePrompt(p));
+    setPropModError(null);
+  }
+
+  function removeCharacter(c: GenCharacter) {
+    if (!window.confirm(`确定删除角色“${c.name}”吗？该角色不会再用于现有分镜。`)) return;
+    setData((current) => ({
+      ...current,
+      characters: current.characters.filter((item) => item.id !== c.id),
+      storyboardGroups: current.storyboardGroups.map((group) => ({
+        ...group,
+        characterIds: group.characterIds.filter((id) => id !== c.id),
+        shots: group.shots.map((shot) => {
+          const { [c.id]: _, ...characterRefs } = shot.characterRefs ?? {};
+          return {
+            ...shot,
+            characterIds: shot.characterIds?.filter((id) => id !== c.id),
+            characterRefs,
+          };
+        }),
+      })),
+    }));
+    setCharImages((images) => Object.fromEntries(
+      Object.entries(images).filter(([key]) => key !== c.id && !key.startsWith(`${c.id}::`)),
+    ));
+    setSelectedCharImages((images) => Object.fromEntries(
+      Object.entries(images).filter(([key]) => key !== c.id && !key.startsWith(`${c.id}::`)),
+    ));
+    closeModPanel();
+    toast.success("已删除角色");
+  }
+
+  function removeScene(s: GenScene) {
+    if (!window.confirm(`确定删除场景“${s.slug}”吗？该场景会从现有分镜中移除。`)) return;
+    setData((current) => ({
+      ...current,
+      scenes: current.scenes.filter((item) => item.id !== s.id),
+      storyboardGroups: current.storyboardGroups.map((group) => {
+        const sceneIds = (group.sceneIds ?? []).filter((id) => id !== s.id);
+        const primarySceneId = group.sceneId === s.id ? sceneIds[0] : group.sceneId;
+        return {
+          ...group,
+          sceneIds,
+          sceneId: primarySceneId,
+          sceneLocation: group.sceneId === s.id ? undefined : group.sceneLocation,
+          shots: group.shots.map((shot) =>
+            shot.sceneId === s.id ? { ...shot, sceneId: null } : shot,
+          ),
+        };
+      }),
+    }));
+    setSceneImages((images) => {
+      const { [s.id]: _, ...rest } = images;
+      return rest;
+    });
+    setSelectedSceneImages((images) => {
+      const { [s.id]: _, ...rest } = images;
+      return rest;
+    });
+    setScenePreview(null);
+    setSceneModOpen(null);
+    toast.success("已删除场景");
+  }
+
+  function removeProp(p: GenProp) {
+    if (!window.confirm(`确定删除道具“${p.name}”吗？该道具会从现有分镜中移除。`)) return;
+    setData((current) => ({
+      ...current,
+      props: current.props.filter((item) => item.id !== p.id),
+      storyboardGroups: current.storyboardGroups.map((group) => ({
+        ...group,
+        propIds: (group.propIds ?? []).filter((id) => id !== p.id),
+      })),
+    }));
+    setPropImages((images) => {
+      const { [p.id]: _, ...rest } = images;
+      return rest;
+    });
+    setSelectedPropImages((images) => {
+      const { [p.id]: _, ...rest } = images;
+      return rest;
+    });
+    setPropPreview(null);
+    setPropModOpen(null);
+    toast.success("已删除道具");
+  }
+
   function openModPanel(c: GenCharacter, lookId: string | null) {
     const imageKey = lookId == null ? c.id : `${c.id}::${lookId}`;
     setModPanel({ character: c, lookId, imageKey });
     setPreviewTarget({ character: c, lookId });
     setSelectedGenIdx(0);
-    setModInput("");
+    setModInput(characterImagePrompt(c, lookId));
     setModError(null);
     setCharModUploadedRefs([]);
   }
@@ -3747,7 +3879,7 @@ function WorkspacePage() {
 
   function openPropModPanel(p: GenProp) {
     setPropModOpen(p);
-    setPropModInput("");
+    setPropModInput(propImagePrompt(p));
     setPropModError(null);
   }
 
@@ -3800,7 +3932,7 @@ function WorkspacePage() {
 
   function openSceneModPanel(s: GenScene) {
     setSceneModOpen(s);
-    setSceneModInput("");
+    setSceneModInput(sceneImagePrompt(s));
     setSceneModError(null);
   }
 
@@ -7623,6 +7755,83 @@ function WorkspacePage() {
     return scriptPromise;
   }
 
+  async function executeWorkspaceAgentAction(plan: WorkspaceAgentPlan) {
+    if (plan.action === "explain_capabilities" || plan.action === "clarify") {
+      return { summary: plan.summary };
+    }
+    if (plan.action === "navigate") {
+      setTab(plan.targetStage);
+      return { summary: `已进入${plan.targetStage === "timeline" ? "时间轴" : "目标"}阶段。` };
+    }
+    if (plan.action === "click_ui") {
+      const steps = plan.uiSteps?.length
+        ? plan.uiSteps
+        : [{ targetStage: plan.targetStage, uiActionId: plan.uiActionId, uiActionLabel: plan.uiActionLabel }];
+      if (typeof document === "undefined" || !steps.every((step) => step.uiActionId || step.uiActionLabel)) {
+        throw new Error("当前无法定位页面操作。");
+      }
+      let lastLabel = plan.uiActionLabel;
+      for (const step of steps) {
+        // 先完成阶段切换并等待 React 提交新页面；再按稳定 id 或可读按钮名定位。
+        setTab(step.targetStage);
+        await new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        });
+        const label = step.uiActionLabel?.replace(/\s+/g, " ").trim();
+        const candidates = Array.from(
+          document.querySelectorAll<HTMLElement>('main button, main a[href], main label[for], main [role=button]'),
+        );
+        const target =
+          (step.uiActionId
+            ? document.querySelector<HTMLElement>(`[data-doopoo-agent-action="${step.uiActionId}"]`)
+            : null) ??
+          candidates.find((element) => {
+            const candidate = (element.innerText || element.getAttribute("aria-label") || "")
+              .replace(/\s+/g, " ")
+              .trim();
+            return Boolean(label && (candidate === label || candidate.includes(label) || label.includes(candidate)));
+          });
+        if (!target) throw new Error("目标按钮已变化，请重新说明要执行的操作。");
+        if (target instanceof HTMLButtonElement && target.disabled) {
+          throw new Error("该按钮当前不可用，请先完成必要的前置内容。");
+        }
+        target.scrollIntoView({ behavior: "smooth", block: "center" });
+        target.click();
+        lastLabel = step.uiActionLabel ?? target.innerText.trim();
+      }
+      return { summary: `已执行“${lastLabel ?? plan.title}”。` };
+    }
+    if (plan.action === "create_storyboard_groups") {
+      await runEnterStoryboard();
+      setTab("storyboard");
+      return { summary: "已开始按当前剧本切分分镜组。" };
+    }
+    if (plan.action === "modify_content") {
+      if (plan.targetStage === "episodes") {
+        await produce(
+          "episodes",
+          `修改第 ${selectedEpisodeIndex} 集剧本\n${plan.executionPrompt}`,
+        );
+        return { summary: `已开始修改第 ${selectedEpisodeIndex} 集剧本。` };
+      }
+      if (plan.targetStage === "script" || plan.targetStage === "canvas") {
+        await produce("script", `修改剧本\n${plan.executionPrompt}`);
+        return { summary: "已开始修改剧本内容。" };
+      }
+      throw new Error("当前仅支持通过 Agent 修改剧本或分集内容；素材修改请先从对应素材卡片发起。");
+    }
+    await produce(plan.targetStage, plan.executionPrompt);
+    setTab(plan.targetStage);
+    const labels: Partial<Record<WorkspaceAgentPlan["action"], string>> = {
+      produce_outline: "已开始生成故事梗概。",
+      produce_script: "已开始生成剧本。",
+      produce_episode: "已开始生成下一集剧本。",
+      extract_assets: "已开始提取角色、场景和道具。",
+      produce_workspace_content: "已开始生成工作区内容。",
+    };
+    return { summary: labels[plan.action] ?? "已开始执行。" };
+  }
+
   return (
     <div className="h-screen flex flex-col bg-bg overflow-hidden">
       <WorkspaceTopbar
@@ -8179,11 +8388,11 @@ function WorkspacePage() {
                                   key={s.id}
                                   role="button"
                                   tabIndex={0}
-                                  onClick={() => setScenePreview(s)}
+                                  onClick={() => openScenePreview(s)}
                                   onKeyDown={(e) => {
                                     if (e.key === "Enter" || e.key === " ") {
                                       e.preventDefault();
-                                      setScenePreview(s);
+                                      openScenePreview(s);
                                     }
                                   }}
                                   className={`group relative text-left rounded-xl border bg-bg-elevated/40 hover:border-accent hover:bg-bg-elevated/70 hover:-translate-y-0.5 transition-all overflow-hidden flex flex-col focus:outline-none focus:ring-2 focus:ring-accent/40 cursor-pointer ${
@@ -8493,11 +8702,11 @@ function WorkspacePage() {
                                   key={p.id}
                                   role="button"
                                   tabIndex={0}
-                                  onClick={() => setPropPreview(p)}
+                                  onClick={() => openPropPreview(p)}
                                   onKeyDown={(e) => {
                                     if (e.key === "Enter" || e.key === " ") {
                                       e.preventDefault();
-                                      setPropPreview(p);
+                                      openPropPreview(p);
                                     }
                                   }}
                                   className={`group relative text-left rounded-xl border bg-bg-elevated/40 hover:border-accent hover:bg-bg-elevated/70 hover:-translate-y-0.5 transition-all overflow-hidden flex flex-col focus:outline-none focus:ring-2 focus:ring-accent/40 cursor-pointer ${
@@ -10071,7 +10280,15 @@ function WorkspacePage() {
                                             setShotSelectedGenIdx(
                                               generations ? generations.length - 1 : 0,
                                             );
-                                            setShotModInput("");
+                                            setShotModInput([
+                                              `电影分镜图：第 ${g.index} 组`,
+                                              `剧情：${g.plotText}`,
+                                              `景别：${s.shotTypeLabel}`,
+                                              s.action && `动作：${s.action}`,
+                                              s.camera && `机位：${s.camera}`,
+                                              project?.style && `视觉风格：${project.style}`,
+                                              "电影感分镜画面，构图清晰，角色身份一致",
+                                            ].filter(Boolean).join("\n"));
                                             setShotPreview({ groupId: g.id, shotId: s.id });
                                           }}
                                           className="absolute bottom-1.5 right-1.5 p-1 rounded bg-black/60 text-white opacity-0 group-hover:opacity-100 transition hover:bg-black/80"
@@ -10179,7 +10396,16 @@ function WorkspacePage() {
                                   alt="故事板"
                                   onLoad={() => clearStoryboardBroken(g.id)}
                                   onError={() => markStoryboardBroken(g.id)}
-                                  onClick={() => setStoryboardPreview({ groupId: g.id })}
+                                  onClick={() => {
+                                    setStoryboardModInput([
+                                      `电影故事板：第 ${g.index} 组`,
+                                      `剧情：${g.plotText}`,
+                                      g.sceneLocation && `场景：${g.sceneLocation}`,
+                                      project?.style && `视觉风格：${project.style}`,
+                                      "完整故事板构图，镜头叙事连贯，文字清晰可读",
+                                    ].filter(Boolean).join("\n"));
+                                    setStoryboardPreview({ groupId: g.id });
+                                  }}
                                   className="max-h-28 w-auto block cursor-zoom-in object-contain"
                                 />
                                 <button
@@ -10655,6 +10881,12 @@ function WorkspacePage() {
             return await executeVideoGen(groupId, method, editedPreviewPrompt, selectedAudioUrl);
           }}
           onCancelVideoGen={(groupId) => cancelVideoGen(groupId)}
+          onExecuteAgentAction={executeWorkspaceAgentAction}
+          agentContext={{
+            characterCount: data.characters.length,
+            storyboardGroupCount: data.storyboardGroups.length,
+            hasSynopsis: Boolean(synopsisText || synopsisDraft),
+          }}
         />
       </div>
       {previewTarget &&
@@ -10697,17 +10929,26 @@ function WorkspacePage() {
                       {c.roleLabel} · {c.age} 岁 · 共 {generations.length} 张
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      closeModPanel();
-                      setRegenInput("");
-                    }}
-                    className="p-1.5 rounded-md hover:bg-bg-elevated text-text-muted"
-                    aria-label="关闭"
-                  >
-                    <X size={16} />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => removeCharacter(c)}
+                      className="px-2 py-1 rounded-md text-xs text-rose-400 hover:bg-rose-500/10"
+                    >
+                      删除
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        closeModPanel();
+                        setRegenInput("");
+                      }}
+                      className="p-1.5 rounded-md hover:bg-bg-elevated text-text-muted"
+                      aria-label="关闭"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
                 </div>
 
                 {/* 3 列布局:左 thumbnails / 中 大图 / 右 描述+输入 */}
@@ -10830,6 +11071,9 @@ function WorkspacePage() {
                   <div className="flex flex-col min-h-0 gap-3">
                     {/* Right TOP: 描述 */}
                     <div className="flex-1 min-h-0 overflow-y-auto rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2">
+                      <div className="text-[10px] uppercase tracking-wide text-accent font-semibold">
+                        素材上下文（自动同步到生成）
+                      </div>
                       <div>
                         <div className="text-[10px] uppercase tracking-wide text-text-muted">
                           当前选中
@@ -10928,15 +11172,14 @@ function WorkspacePage() {
                         <div className="shrink-0 rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2">
                           <div className="flex items-center justify-between">
                             <div className="text-xs text-text-secondary font-semibold">
-                              修改形象
+                              创作指令（可编辑）
                             </div>
                             <span className="text-[10px] text-text-muted">
                               Enter 发送 · Shift+Enter 换行
                             </span>
                           </div>
                           <p className="text-[10px] text-text-muted leading-relaxed">
-                            输入你想要修改的内容，AI 会自动识别并归类到面部、身材、服装等属性。
-                            未提及的部分保持不变。
+                            这段指令会原样传入生成流程；系统会自动补充参考图、角色身份和风格锁定约束。
                           </p>
                           <div className="flex items-center gap-2 mb-2 flex-wrap">
                             <button
@@ -10995,11 +11238,15 @@ function WorkspacePage() {
                                 void submitModPanel();
                               }
                             }}
-                            placeholder="例如:把头发改成黑色短发 / 加一副黑框眼镜 / 把外套换成红色风衣…"
-                            rows={4}
+                            placeholder="填写这张角色图的生成提示词…"
+                            rows={8}
                             disabled={thisBusy}
-                            className="w-full rounded-md bg-bg-base border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-none placeholder:text-text-muted disabled:opacity-50"
+                            className="w-full min-h-44 rounded-md bg-bg-base border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-y placeholder:text-text-muted disabled:opacity-50"
                           />
+                          <details className="rounded-md border border-border bg-bg-elevated/40 px-2 py-1.5 text-[10px] text-text-muted">
+                            <summary className="cursor-pointer text-text-secondary">固定约束与负面词（自动附加）</summary>
+                            <p className="mt-1 leading-relaxed">图 1 身份锚点、脸/身材/服装一致性、项目风格锁定和负面词会由系统自动追加，无需手写。</p>
+                          </details>
                           {modError && (
                             <div className="px-2.5 py-1.5 rounded-md bg-rose-500/10 border border-rose-500/30 text-[11px] text-rose-400">
                               {modError}
@@ -11082,14 +11329,23 @@ function WorkspacePage() {
                       {s.slug}
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setScenePreview(null)}
-                    className="p-1.5 rounded-md hover:bg-bg-elevated text-text-muted"
-                    aria-label="关闭"
-                  >
-                    <X size={18} />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => removeScene(s)}
+                      className="px-2 py-1 rounded-md text-xs text-rose-400 hover:bg-rose-500/10"
+                    >
+                      删除
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setScenePreview(null)}
+                      className="p-1.5 rounded-md hover:bg-bg-elevated text-text-muted"
+                      aria-label="关闭"
+                    >
+                      <X size={18} />
+                    </button>
+                  </div>
                 </div>
                 {/* Body: 大图 + 描述,深色背景让大图更显质感 */}
                 <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[2fr_1fr]">
@@ -11165,6 +11421,9 @@ function WorkspacePage() {
                     )}
                   </div>
                   <div className="overflow-y-auto p-4 space-y-3 bg-bg-surface min-h-0">
+                    <div className="text-[10px] uppercase tracking-wide text-accent font-semibold">
+                      素材上下文（自动同步到生成）
+                    </div>
                     <div>
                       <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1">
                         地点 / 时段
@@ -11219,7 +11478,7 @@ function WorkspacePage() {
                     {/* 修改场景:嵌入预览右侧底部,和角色修改对齐 */}
                     <div className="shrink-0 rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2">
                       <div className="flex items-center justify-between">
-                        <div className="text-xs text-text-secondary font-semibold">修改场景</div>
+                        <div className="text-xs text-text-secondary font-semibold">创作指令（可编辑）</div>
                         <span className="text-[10px] text-text-muted">Enter 发送</span>
                       </div>
                       <div className="flex items-center gap-2 mb-2">
@@ -11265,11 +11524,15 @@ function WorkspacePage() {
                             void doSceneRegen(s, "modify", text, sceneModUploadedRef ?? undefined);
                           }
                         }}
-                        placeholder="例如:把时间改成黄昏 / 增加下雨效果 / 改成室内暖光…"
-                        rows={3}
+                        placeholder="填写这张场景图的生成提示词…"
+                        rows={7}
                         disabled={sceneModBusy}
-                        className="w-full rounded-md bg-bg-base border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-none placeholder:text-text-muted disabled:opacity-50"
+                        className="w-full min-h-40 rounded-md bg-bg-base border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-y placeholder:text-text-muted disabled:opacity-50"
                       />
+                      <details className="rounded-md border border-border bg-bg-base px-2 py-1.5 text-[10px] text-text-muted">
+                        <summary className="cursor-pointer text-text-secondary">固定约束与负面词（自动附加）</summary>
+                        <p className="mt-1 leading-relaxed">系统会锁定图 1 的构图、地点、时段与风格，并附加纯环境、无人物和画质负面词。</p>
+                      </details>
                       {sceneModError && (
                         <div className="px-2.5 py-1.5 rounded-md bg-rose-500/10 border border-rose-500/30 text-[11px] text-rose-400">
                           {sceneModError}
@@ -11336,14 +11599,23 @@ function WorkspacePage() {
                       {p.name}
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setPropPreview(null)}
-                    className="p-1.5 rounded-md hover:bg-bg-elevated text-text-muted"
-                    aria-label="关闭"
-                  >
-                    <X size={18} />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => removeProp(p)}
+                      className="px-2 py-1 rounded-md text-xs text-rose-400 hover:bg-rose-500/10"
+                    >
+                      删除
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPropPreview(null)}
+                      className="p-1.5 rounded-md hover:bg-bg-elevated text-text-muted"
+                      aria-label="关闭"
+                    >
+                      <X size={18} />
+                    </button>
+                  </div>
                 </div>
                 {/* Body: large image + description */}
                 <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[2fr_1fr]">
@@ -11418,6 +11690,9 @@ function WorkspacePage() {
                     )}
                   </div>
                   <div className="overflow-y-auto p-4 space-y-3 bg-bg-surface min-h-0">
+                    <div className="text-[10px] uppercase tracking-wide text-accent font-semibold">
+                      素材上下文（自动同步到生成）
+                    </div>
                     <div>
                       <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1">
                         道具名称
@@ -11475,7 +11750,7 @@ function WorkspacePage() {
                     {/* 修改道具:嵌入预览右侧底部 */}
                     <div className="shrink-0 rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2">
                       <div className="flex items-center justify-between">
-                        <div className="text-xs text-text-secondary font-semibold">修改道具</div>
+                        <div className="text-xs text-text-secondary font-semibold">创作指令（可编辑）</div>
                         <span className="text-[10px] text-text-muted">Enter 发送</span>
                       </div>
                       <div className="flex items-center gap-2 mb-2">
@@ -11520,11 +11795,15 @@ function WorkspacePage() {
                             void doPropRegen(p, "modify", text);
                           }
                         }}
-                        placeholder="例如:把颜色改成红色 / 加一个提手 / 缩小尺寸…"
-                        rows={3}
+                        placeholder="填写这张道具图的生成提示词…"
+                        rows={7}
                         disabled={propModBusy}
-                        className="w-full rounded-md bg-bg-base border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-none placeholder:text-text-muted disabled:opacity-50"
+                        className="w-full min-h-40 rounded-md bg-bg-base border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-y placeholder:text-text-muted disabled:opacity-50"
                       />
+                      <details className="rounded-md border border-border bg-bg-base px-2 py-1.5 text-[10px] text-text-muted">
+                        <summary className="cursor-pointer text-text-secondary">固定约束与负面词（自动附加）</summary>
+                        <p className="mt-1 leading-relaxed">当前道具仍复用场景重生链路；会附加参考图、风格和画质约束。</p>
+                      </details>
                       {propModError && (
                         <div className="px-2.5 py-1.5 rounded-md bg-rose-500/10 border border-rose-500/30 text-[11px] text-rose-400">
                           {propModError}
@@ -12156,6 +12435,9 @@ function WorkspacePage() {
                   {/* Right: description + modify input */}
                   <div className="flex flex-col min-h-0 gap-3">
                     <div className="flex-1 min-h-0 overflow-y-auto rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2">
+                      <div className="text-[10px] uppercase tracking-wide text-accent font-semibold">
+                        素材上下文（自动同步到生成）
+                      </div>
                       <div>
                         <div className="text-[10px] uppercase tracking-wide text-text-muted">
                           当前选中
@@ -12219,10 +12501,9 @@ function WorkspacePage() {
                     </div>
 
                     <div className="shrink-0 rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2">
-                      <div className="text-xs text-text-secondary font-semibold">修改分镜图</div>
+                      <div className="text-xs text-text-secondary font-semibold">创作指令（可编辑）</div>
                       <p className="text-[10px] text-text-muted leading-relaxed">
-                        AI
-                        会保留当前镜头的:景别、构图、视角、风格。只改你描述的部分(角色表情、道具、光照等)。
+                        这段指令会原样传入生成流程；系统会自动补充当前分镜、参考图和风格一致性约束。
                       </p>
                       <textarea
                         value={shotModInput}
@@ -12233,11 +12514,15 @@ function WorkspacePage() {
                             void handleRegenShot();
                           }
                         }}
-                        placeholder="例如:让角色表情更紧张 / 把背景换成雨天 / 加一束侧逆光…"
-                        rows={4}
+                        placeholder="填写这张分镜图的生成提示词…"
+                        rows={8}
                         disabled={shotModBusy || !currentUrl}
-                        className="w-full rounded-md bg-bg-elevated border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-none placeholder:text-text-muted disabled:opacity-50"
+                        className="w-full min-h-44 rounded-md bg-bg-elevated border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-y placeholder:text-text-muted disabled:opacity-50"
                       />
+                      <details className="rounded-md border border-border bg-bg-base px-2 py-1.5 text-[10px] text-text-muted">
+                        <summary className="cursor-pointer text-text-secondary">固定约束与负面词（自动附加）</summary>
+                        <p className="mt-1 leading-relaxed">系统会附加当前分镜图、角色/场景参考、景别、机位、剧情与风格锁定。</p>
+                      </details>
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-[10px] text-text-muted">⌘/Ctrl + Enter 发送</span>
                         <button
@@ -12251,7 +12536,7 @@ function WorkspacePage() {
                           ) : (
                             <Send size={12} />
                           )}
-                          {shotModBusy ? "生成中…" : "发送修改"}
+                          {shotModBusy ? "生成中…" : "按提示词生成"}
                         </button>
                       </div>
                     </div>
@@ -12374,7 +12659,7 @@ function WorkspacePage() {
                   {/* 右:上下文 + 修改输入 */}
                   <div className="flex flex-col min-h-0 gap-3">
                     <div className="flex-1 min-h-0 overflow-y-auto rounded-lg border border-border bg-bg-surface/95 text-text-primary p-3 space-y-2">
-                      <div className="text-xs font-semibold">故事板上下文</div>
+                      <div className="text-xs font-semibold text-accent">素材上下文（自动同步到生成）</div>
                       {group && (
                         <>
                           <dl className="space-y-1.5 text-xs">
@@ -12402,23 +12687,15 @@ function WorkspacePage() {
                                 </dd>
                               </div>
                             )}
-                            {group.shots.length > 0 && (
-                              <div>
-                                <dt className="text-text-muted">镜头数</dt>
-                                <dd className="text-text-secondary">{group.shots.length} 个</dd>
-                              </div>
-                            )}
                           </dl>
                         </>
                       )}
                     </div>
 
                     <div className="shrink-0 rounded-lg border border-border bg-bg-surface/95 text-text-primary p-3 space-y-2">
-                      <div className="text-xs font-semibold">修改故事板</div>
+                      <div className="text-xs font-semibold">创作指令（可编辑）</div>
                       <p className="text-[10px] text-text-muted leading-relaxed">
-                        AI 会保留当前故事板的 6-section
-                        布局、字号层级、文字可读性、角色身份和场景。只改你描述的部分(色板 / 标题 /
-                        故事板帧内容 / 灯光情绪 / 关键词等)。
+                        这段指令会原样传入生成流程；系统会自动补充当前故事板、镜头和风格锁定约束。
                       </p>
                       <textarea
                         value={storyboardModInput}
@@ -12429,11 +12706,15 @@ function WorkspacePage() {
                             void handleRegenStoryboard();
                           }
                         }}
-                        placeholder="例如:整体色调换成冷色 / 故事板第 3 格改成雨天 / 标题改成英文 / 加一个'孤独'情绪关键词…"
-                        rows={4}
+                        placeholder="填写这张故事板图的生成提示词…"
+                        rows={8}
                         disabled={storyboardModBusy || isRunning || !url}
-                        className="w-full rounded-md bg-bg-elevated border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-none placeholder:text-text-muted disabled:opacity-50"
+                        className="w-full min-h-44 rounded-md bg-bg-elevated border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-y placeholder:text-text-muted disabled:opacity-50"
                       />
+                      <details className="rounded-md border border-border bg-bg-elevated px-2 py-1.5 text-[10px] text-text-muted">
+                        <summary className="cursor-pointer text-text-secondary">固定约束与负面词（自动附加）</summary>
+                        <p className="mt-1 leading-relaxed">系统会锁定当前故事板的镜头顺序、版式、角色身份、场景和项目风格。</p>
+                      </details>
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-[10px] text-text-muted">⌘/Ctrl + Enter 发送</span>
                         <button
@@ -12449,7 +12730,7 @@ function WorkspacePage() {
                           ) : (
                             <Send size={12} />
                           )}
-                          {storyboardModBusy ? "生成中…" : "发送修改"}
+                          {storyboardModBusy ? "生成中…" : "按提示词生成"}
                         </button>
                       </div>
                     </div>
