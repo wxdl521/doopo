@@ -43,7 +43,9 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 const SaveOneStoryboardInput = z.object({
   workspaceId: z.string().min(1).max(64),
   groupId: z.string().min(1).max(64),
-  url: z.string().min(1).max(5000000),
+  // Azure / GPT-Image 高质量流式响应可能已经是 data:image/...;base64，
+  // 单张 1792px 图片常超过 5MB 字符串；和资产图片入库保持相同上限。
+  url: z.string().min(1).max(15_000_000),
 });
 
 export type SaveOneStoryboardResult = {
@@ -63,8 +65,11 @@ export const saveOneStoryboard = createServerFn({ method: "POST" })
     if (!url) {
       return { ok: true, url: "", persisted: false };
     }
-    // 已入库(浏览器走的 supabase 域名)→ 跳过,直接返回原 URL
+    // 已是长期签名链接才可跳过。旧 public URL 在私有 bucket 中会裂图，
+    // 需换成签名链接以自愈已保存的历史故事板。
     if (isAlreadyPersisted(url)) {
+      const signed = await toLongLivedStoryboardUrl(supabase, url);
+      if (signed) return { ok: true, url: signed, persisted: signed !== url };
       return { ok: true, url, persisted: false };
     }
 
@@ -78,7 +83,11 @@ export const saveOneStoryboard = createServerFn({ method: "POST" })
         `${groupId}-${Date.now()}`,
         contentType,
       );
-      const mime = MIME_BY_KIND.storyboard;
+      // 不要把 Azure 返回的 JPEG 强标成 PNG。二进制与 Content-Type 不一致时，
+      // 浏览器/Storage 网关可能拒绝解码，表现为“已生成但裂图”。
+      const mime = /^image\/(png|jpeg|webp|gif)$/i.test(contentType)
+        ? contentType
+        : MIME_BY_KIND.storyboard;
       const blob = new Blob([buf], { type: mime });
       const { error: uploadErr } = await supabase.storage
         .from(BUCKET)
@@ -91,11 +100,21 @@ export const saveOneStoryboard = createServerFn({ method: "POST" })
           error: `storage upload failed: ${uploadErr.message}`,
         };
       }
-      const { data: publicUrl } = supabase.storage.from(BUCKET).getPublicUrl(path);
-      if (!publicUrl?.publicUrl) {
-        return { ok: false, url, persisted: false, error: "no public url after upload" };
+      // 不依赖 bucket 的 public 开关：自动入库完成后立刻替换成可读的长期签名 URL。
+      // 之前 getPublicUrl 在私有桶中也会拼出一个貌似合法的 URL，图片先显示
+      // Base64、待异步替换后便裂图，正是此处造成的。
+      const { data: signedUrl, error: signErr } = await supabase.storage
+        .from(BUCKET)
+        .createSignedUrl(path, 315_360_000);
+      if (signErr || !signedUrl?.signedUrl) {
+        return {
+          ok: false,
+          url,
+          persisted: false,
+          error: `storage sign failed: ${signErr?.message ?? "no signed url after upload"}`,
+        };
       }
-      return { ok: true, url: publicUrl.publicUrl, persisted: true };
+      return { ok: true, url: signedUrl.signedUrl, persisted: true };
     } catch (e: any) {
       return { ok: false, url, persisted: false, error: e?.message ?? String(e) };
     }
@@ -249,6 +268,37 @@ function isAlreadyPersisted(url: string): boolean {
   return false;
 }
 
+/** 从 workspace-media 的 public/sign URL 中提取 Storage 内部路径。 */
+function getWorkspaceMediaPath(url: string): string | null {
+  try {
+    const match = new URL(url).pathname.match(
+      /\/storage\/v1\/object\/(?:public|sign)\/workspace-media\/(.+)$/i,
+    );
+    return match?.[1] ? decodeURIComponent(match[1]) : null;
+  } catch {
+    return null;
+  }
+}
+
+function isSignedWorkspaceMediaUrl(url: string): boolean {
+  try {
+    return /\/storage\/v1\/object\/sign\/workspace-media\//i.test(new URL(url).pathname);
+  } catch {
+    return false;
+  }
+}
+
+/** public URL 即使 bucket 为私有也能被拼出，但浏览器不可读；统一改成长效签名 URL。 */
+async function toLongLivedStoryboardUrl(supabase: any, url: string): Promise<string | null> {
+  if (isSignedWorkspaceMediaUrl(url)) return url;
+  const path = getWorkspaceMediaPath(url);
+  if (!path) return null;
+  const { data, error } = await supabase.storage
+    .from(BUCKET)
+    .createSignedUrl(path, 315_360_000);
+  return error || !data?.signedUrl ? null : data.signedUrl;
+}
+
 const EXT_BY_KIND: Record<"video" | "storyboard", string> = {
   video: "mp4",
   storyboard: "png",
@@ -381,8 +431,18 @@ export const persistWorkspaceMedia = createServerFn({ method: "POST" })
           outputMap[groupId] = { url: item.url, status: item.status as MediaItem["status"] };
           continue;
         }
-        // 3) 已入库 → 跳过
+        // 3) 已入库 → 视频保持原逻辑；故事板的旧 public URL 必须改签名 URL，
+        //    否则点击“保存”会再次写回不可读的 public 链接。
         if (isAlreadyPersisted(item.url)) {
+          if (kind === "storyboard") {
+            const signed = await toLongLivedStoryboardUrl(supabase, item.url);
+            if (signed) {
+              outputMap[groupId] = { url: signed, status: item.status as MediaItem["status"] };
+              if (signed === item.url) result.skippedCount++;
+              else result.persistedCount++;
+              continue;
+            }
+          }
           outputMap[groupId] = { url: item.url, status: item.status as MediaItem["status"] };
           result.skippedCount++;
           continue;
@@ -399,9 +459,19 @@ export const persistWorkspaceMedia = createServerFn({ method: "POST" })
           if (uploadErr) {
             throw new Error(`storage upload failed: ${uploadErr.message}`);
           }
-          const { data: publicUrl } = supabase.storage.from(BUCKET).getPublicUrl(path);
-          if (!publicUrl?.publicUrl) throw new Error("no public url after upload");
-          outputMap[groupId] = { url: publicUrl.publicUrl, status: "succeeded" };
+          if (kind === "storyboard") {
+            const { data: signedUrl, error: signErr } = await supabase.storage
+              .from(BUCKET)
+              .createSignedUrl(path, 315_360_000);
+            if (signErr || !signedUrl?.signedUrl) {
+              throw new Error(`storage sign failed: ${signErr?.message ?? "no signed url after upload"}`);
+            }
+            outputMap[groupId] = { url: signedUrl.signedUrl, status: "succeeded" };
+          } else {
+            const { data: publicUrl } = supabase.storage.from(BUCKET).getPublicUrl(path);
+            if (!publicUrl?.publicUrl) throw new Error("no public url after upload");
+            outputMap[groupId] = { url: publicUrl.publicUrl, status: "succeeded" };
+          }
           result.persistedCount++;
         } catch (e: any) {
           // 失败 → 原样保留 ephemeral URL,统计错误

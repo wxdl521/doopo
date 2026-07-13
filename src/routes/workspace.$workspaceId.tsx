@@ -1942,13 +1942,12 @@ function WorkspacePage() {
       arr.forEach((item, idx) => {
         if (item.status !== "succeeded" || !item.url) return;
         void idx; // entryIndex 由 saveOneStoryboard 内部 timestamp 路径处理
-        // 已入库的跳过(URL 是 supabase.co / 自己的 storage 域名)
+        // 仅长期签名 URL 才跳过。历史 public URL 要换为签名 URL，避免
+        // 私有 bucket 在异步保存完成后把正常图片替换成裂图。
         if (
           item.url.startsWith("data:") ||
-          item.url.includes(".supabase.co") ||
-          item.url.includes(".supabase.in") ||
-          item.url.includes("/storage/v1/object/public/workspace-media/") ||
-          item.url.includes("/object/public/workspace-media/")
+          item.url.includes("/storage/v1/object/sign/workspace-media/") ||
+          item.url.includes("/object/sign/workspace-media/")
         )
           return;
         // 同 url 已发起的请求跳过(防重)
@@ -6080,7 +6079,9 @@ function WorkspacePage() {
         if (base64Url) {
           if (user && workspaceId) {
             callSaveOneStoryboard({
-              data: { workspaceId, groupId, url: res.url },
+              // base64 已在当前请求中成功读取，直接入库，不能再二次下载
+              // Azure 的临时结果 URL（可能已失效或拒绝第二次访问）。
+              data: { workspaceId, groupId, url: base64Url },
             })
               .then((r) => {
                 if (isStale()) return; // 2026/07:轮次检查,异步回调时可能已被覆盖
@@ -6292,7 +6293,9 @@ function WorkspacePage() {
         let finalUrl = base64Url ?? res.url;
         if (base64Url) {
           if (user && workspaceId) {
-            callSaveOneStoryboard({ data: { workspaceId, groupId, url: res.url } })
+            // 同生成链路：优先使用已验证可显示的图像数据入库，避免二次读取
+            // Azure 临时 URL 导致成功生成后仍显示裂图。
+            callSaveOneStoryboard({ data: { workspaceId, groupId, url: base64Url } })
               .then((r) => {
                 if (r.ok && r.persisted && r.url) {
                   setGroupStoryboards((m) => {

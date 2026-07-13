@@ -131,6 +131,32 @@ function normalizeAzureQuality(q: string | undefined): "low" | "medium" | "high"
 
 type AzureImageItem = { url?: string; b64_json?: string };
 
+/** 把 Azure / 兼容网关的图片字段统一成浏览器可用的 data URL。
+ *
+ * 官方 Azure 返回的是纯 base64；部分兼容网关却把完整 data URL 放进
+ * b64_json。旧逻辑会在后者前面再拼一次 `data:image/png;base64,`，得到
+ * 一个看似成功、实际无法解码的 src，前端遂显示裂图。
+ */
+function toImageDataUrl(value: unknown): string {
+  if (typeof value !== "string") return "";
+  const raw = value.trim();
+  if (!raw) return "";
+  if (/^data:image\/[\w.+-]+;base64,/i.test(raw)) return raw;
+  // SSE 代理偶尔会在 base64 中插入换行；浏览器 data URL 不接受这些空白。
+  return `data:image/png;base64,${raw.replace(/\s/g, "")}`;
+}
+
+function imageBytesAreValid(dataUrl: string): boolean {
+  const match = dataUrl.match(/^data:image\/[\w.+-]+;base64,([A-Za-z0-9+/=]+)$/i);
+  if (!match) return false;
+  const bytes = Buffer.from(match[1], "base64");
+  if (bytes.length < 12) return false;
+  // GPT Image 的输出是 PNG 或 JPEG；在这里拒绝 HTML/JSON 等误被当作图片的响应。
+  const isPng = bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47;
+  const isJpeg = bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  return isPng || isJpeg;
+}
+
 /** Azure 在 stream=true 时返回 SSE；只优先取完成事件中的最终图，避免把中间预览当成成品。 */
 function parseAzureImageItems(rawText: string): AzureImageItem[] {
   const payloads: any[] = [];
@@ -349,10 +375,13 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
     const urls = items
       .map((d) => {
         if (d.url) return d.url;
-        if (d.b64_json) return `data:image/png;base64,${d.b64_json}`;
+        if (d.b64_json) return toImageDataUrl(d.b64_json);
         return "";
       })
-      .filter(Boolean);
+      .filter(Boolean)
+      // URL 由 Azure 托管时不能在这里同步验证；base64 则必须先验证，避免将
+      // SSE 事件、错误 JSON 或被二次包装的 data URL 误报为成功结果。
+      .filter((value) => !value.startsWith("data:") || imageBytesAreValid(value));
 
     if (urls.length === 0) {
       const dur = Date.now() - t0;
