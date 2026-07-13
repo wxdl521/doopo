@@ -48,11 +48,19 @@ async function saveOwnAssetRecord(
   // 同一用户快速重复点击时可能先后插入同一行;再按用户范围更新一次兜底。
   if (insertError.code === "23505") {
     const retryQuery = supabase.from(table) as any;
-    const { error: retryError } = await retryQuery
+    const { data: retried, error: retryError } = await retryQuery
       .update(record)
       .eq("user_id", record.user_id)
-      .eq("id", record.id);
-    if (!retryError) return { ok: true };
+      .eq("id", record.id)
+      .select("id")
+      .maybeSingle();
+    if (!retryError && retried) return { ok: true };
+    if (!retryError) {
+      return {
+        ok: false,
+        error: "资产 ID 与其他用户的旧记录冲突；请管理员执行 assets 复合主键迁移后重试。",
+      };
+    }
     return { ok: false, error: retryError.message };
   }
 

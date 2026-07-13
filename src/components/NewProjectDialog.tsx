@@ -201,7 +201,7 @@ const imageModelOptions = [
     sub: "9积分/张",
   },
 ];
-// 2026/07:图下拉只保留指定供应商(星标 + AIGC Family + 汇流 + Azure),
+// 2026/07:图下拉只保留指定供应商(星标 + AIGC Family + 汇流 + Azure + 数安词源),
 // 其余(qwen/wan/pixflow/claude360/onetoken/otu 等)不显示。
 const VISIBLE_IMAGE_PREFIXES = [
   "doubao-seedream/", // 默认主力 Seedream
@@ -211,6 +211,7 @@ const VISIBLE_IMAGE_PREFIXES = [
   "tokenhub/", // 星标
   "aigcfamily/",
   "confluo/", // AIGC Family + 汇流
+  "shuci/", // 数安词源 · GPT Image 2
   "azure/",
   "azure3/", // Azure(azure2 已在星标)
 ];
@@ -396,6 +397,7 @@ const VISIBLE_VIDEO_PREFIXES = [
   "kling-", // 汇流 + ToAPIS + 可灵
   "topenrouter-", // TopenRouter 中转 Seedance
   "hongmeng-", // 弘梦 中转 Seedance 2
+  "shuci-", // 数安词源
 ];
 const isVisibleVideo = (id: string) =>
   VISIBLE_VIDEO_PREFIXES.some((p) => id.toLowerCase().startsWith(p));

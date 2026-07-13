@@ -178,10 +178,10 @@ const VAPEUR_DEFAULT_BASE_URL = "https://api.vapeur.ai";
 const VAPEUR_CREATE_PATH = "/v1/videos/generations"; // POST 提交(newapi 风格)
 const VAPEUR_STATUS_PATH = "/v1/videos/generations"; // GET /v1/videos/generations/{id} 查询
 
-// 数安词源 配置 —— ARK 兼容,中转 Doubao Seedance 2.0
+// 数安词源配置。实测其网关是 New API / OpenAI video 兼容协议：
+// POST /v1/videos、GET /v1/videos/{id}；不是 ARK 的 /contents/generations/tasks。
+// 该域名当前 HTTPS 证书主机名不匹配，因此默认保留供应商可用的 HTTP 地址。
 const SHUCIYUAN_DEFAULT_BASE_URL = "http://token.ds.cyberpeace.cn";
-const SHUCIYUAN_VIDEO_CREATE_PATH = "/contents/generations/tasks";
-const SHUCIYUAN_VIDEO_STATUS_PATH = "/contents/generations/tasks";
 const SHUCIYUAN_VIDEO_MODEL_MAP: Record<string, string> = {
   "shuci-seedance-2-0": "doubao-seedance-2-0-260128",
   "shuci-seedance-2-0-fast": "doubao-seedance-2-0-fast-260128",
@@ -196,6 +196,73 @@ function getShuciVideoConfig() {
       "",
     ),
   };
+}
+
+function shuciStatusToProgress(status: string | undefined): SeedanceProgress {
+  const value = (status || "").toLowerCase();
+  if (["completed", "succeeded", "success"].includes(value)) return "succeeded";
+  if (["failed", "error"].includes(value)) return "failed";
+  if (["cancelled", "canceled"].includes(value)) return "cancelled";
+  if (["running", "processing", "in_progress"].includes(value)) return "running";
+  return "queued";
+}
+
+async function shuciSubmit(input: {
+  model: string;
+  prompt: string;
+  media: DashScopeMediaItem[];
+  ratio?: SeedanceRatio;
+  duration?: number;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<{ ok: true; taskId: string; model: string } | { ok: false; error: string }> {
+  const body: Record<string, unknown> = { model: input.model, prompt: input.prompt };
+  const firstFrame = input.media.find((item) => item.type === "first_frame")?.url;
+  if (firstFrame) body.image = firstFrame;
+  if (input.ratio) body.size = input.ratio;
+  if (typeof input.duration === "number") body.duration = input.duration;
+  try {
+    const response = await fetch(`${input.baseUrl}/v1/videos`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${input.apiKey}` },
+      body: JSON.stringify(body),
+    });
+    const text = await response.text().catch(() => "");
+    if (!response.ok) return { ok: false, error: `[shuci] submit ${response.status}: ${text.slice(0, 300)}` };
+    const json = JSON.parse(text) as { id?: string; task_id?: string; data?: { id?: string; task_id?: string }; error?: { message?: string }; message?: string };
+    const taskId = json.id || json.task_id || json.data?.id || json.data?.task_id;
+    return taskId
+      ? { ok: true, taskId, model: input.model }
+      : { ok: false, error: `[shuci] no task id: ${json.error?.message || json.message || text.slice(0, 200)}` };
+  } catch (error) {
+    return { ok: false, error: `[shuci] network: ${error instanceof Error ? error.message : "fetch failed"}` };
+  }
+}
+
+async function shuciPoll(input: {
+  taskId: string;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<PollResult> {
+  try {
+    const response = await fetch(`${input.baseUrl}/v1/videos/${encodeURIComponent(input.taskId)}`, {
+      headers: { Authorization: `Bearer ${input.apiKey}` },
+    });
+    const text = await response.text().catch(() => "");
+    if (!response.ok) return { ok: false, error: `[shuci] poll ${response.status}: ${text.slice(0, 300)}` };
+    const json = JSON.parse(text) as {
+      status?: string; url?: string; video_url?: string; video?: { url?: string };
+      output?: { url?: string; video_url?: string }; error?: { message?: string };
+    };
+    return {
+      ok: true,
+      status: shuciStatusToProgress(json.status),
+      videoUrl: json.url || json.video_url || json.video?.url || json.output?.url || json.output?.video_url || null,
+      raw: { error: { message: json.error?.message || "" }, ...json },
+    };
+  } catch (error) {
+    return { ok: false, error: `[shuci] poll network: ${error instanceof Error ? error.message : "fetch failed"}` };
+  }
 }
 
 // 即梦 3.0 Pro 文生/图生视频统一用同一个 req_key
@@ -1564,10 +1631,19 @@ function topenrouterModelToUpstream(modelId: string): string {
 // 真实 API 主机是 https://api.kunagent.com(用户给的网址),路径不变,仍带 /api/v3 前缀。
 const HONGMENG_DEFAULT_BASE_URL = "https://api.kunagent.com/api/v3";
 
+/**
+ * 弘梦客服提供的是完整提交地址；环境变量则约定填写 API 根地址。
+ * 两种写法都兼容，避免把完整 tasks 地址再次拼上 `/contents/generations/tasks`。
+ */
+function normalizeHongmengBaseUrl(value: string | undefined): string {
+  const raw = (value || HONGMENG_DEFAULT_BASE_URL).trim().replace(/\/+$/, "");
+  return raw.replace(/\/contents\/generations\/tasks(?:\/[^/?#]+)?$/i, "");
+}
+
 function getHongmengConfig() {
   return {
     apiKey: process.env.HONGMENG_API_KEY,
-    baseUrl: (process.env.HONGMENG_BASE_URL || HONGMENG_DEFAULT_BASE_URL).replace(/\/+$/, ""),
+    baseUrl: normalizeHongmengBaseUrl(process.env.HONGMENG_BASE_URL),
   };
 }
 
@@ -2029,27 +2105,14 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
     const { apiKey, baseUrl } = getShuciVideoConfig();
     if (!apiKey) return { ok: false, error: "SHUANCIYUAN_VIDEO_KEY not configured" };
     const upstreamModel = SHUCIYUAN_VIDEO_MODEL_MAP[input.model] || "doubao-seedance-2-0-260128";
-    const firstFrameImageUrl = input.media.find((m) => m.type === "first_frame")?.url;
-    const lastFrameImageUrl = input.media.find((m) => m.type === "last_frame")?.url;
-    const referenceImageUrls = input.media
-      .filter((m) => m.type === "reference_image")
-      .map((m) => m.url);
-    const content = buildArkContent(input.prompt, {
-      firstFrameImageUrl,
-      lastFrameImageUrl,
-      referenceImageUrls,
-      referenceAudioUrl: input.referenceAudioUrl,
-    });
-    const r = await arkSubmit({
+    const r = await shuciSubmit({
       model: upstreamModel,
-      content,
+      prompt: input.prompt,
+      media: input.media,
       ratio: input.ratio,
       duration: input.duration,
-      generateAudio: input.generateAudio,
-      watermark: input.watermark,
       apiKey,
       baseUrl,
-      label: "shuci",
     });
     return r.ok
       ? { ok: true, taskId: r.taskId, model: input.model, backend: "shuci" }
@@ -2227,7 +2290,7 @@ async function pollVideoTask(input: PollInput): Promise<PollResult> {
   if (input.backend === "shuci") {
     const { apiKey, baseUrl } = getShuciVideoConfig();
     if (!apiKey) return { ok: false, error: "[shuci] 缺少 SHUANCIYUAN_VIDEO_KEY" };
-    return arkPoll({ taskId: input.taskId, apiKey, baseUrl, label: "shuci" });
+    return shuciPoll({ taskId: input.taskId, apiKey, baseUrl });
   }
   if (input.backend === "kling") {
     const { callKlingVideoPoll } = await import("./klingVideo.functions");
