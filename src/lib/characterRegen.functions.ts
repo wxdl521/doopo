@@ -25,6 +25,11 @@ const Input = z.object({
    */
   extraReferenceImageUrls: z.array(z.string().url()).max(4).optional(),
   userInstruction: z.string().min(1).max(2000),
+  /**
+   * 已完整展开的 API prompt；传入后服务端不再二次包裹编辑模板。
+   * 分镜/角色的真实原始 prompt 可能很长，不能在外层 Server Function 提前截断。
+   */
+  rawPrompt: z.string().min(1).max(64_000).optional(),
   faceDescription: z.string().max(4000),
   bodyDescription: z.string().max(4000),
   clothingDescription: z.string().max(4000),
@@ -62,7 +67,17 @@ export type RegenerateInput = z.infer<typeof Input>;
  * 这里只保留 Zod schema(客户端类型推导需要)和 server function 入口。
  */
 export const regenerateCharacterLook = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => Input.parse(d))
+  .inputValidator((d: unknown) => {
+    const parsed = Input.safeParse(d);
+    if (!parsed.success) {
+      const detail = parsed.error.issues
+        .map((issue) => `${issue.path.join(".") || "input"}: ${issue.message}`)
+        .join("; ");
+      console.warn(`[character-regen×] invalid request: ${detail}`);
+      throw parsed.error;
+    }
+    return parsed.data;
+  })
   .handler(async ({ data }) => {
     // 动态 import 避免循环引用
     const { regenerateCharacterLook: seedreamImpl } = await import("./seedream.functions");

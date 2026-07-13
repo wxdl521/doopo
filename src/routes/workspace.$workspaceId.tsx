@@ -134,6 +134,36 @@ type WorkspaceData = {
   nextSceneCount: number;
 };
 
+type CharacterImagePromptRecord = {
+  /** 实际提交给供应商的完整内部 prompt，仅用于可追溯和重放。 */
+  rawPrompt: string;
+  /** 右侧展示给用户编辑的角色属性快照。 */
+  editablePrompt: string;
+  mode: "initial" | "modify" | "three-view" | "multi-asset";
+};
+
+type CharacterDetailDraft = {
+  age: string;
+  faceDescription: string;
+  bodyDescription: string;
+  clothingDescription: string;
+  palette: string;
+};
+
+type SceneDetailDraft = {
+  location: string;
+  timeOfDay: GenScene["timeOfDay"];
+  action: string;
+};
+
+type PropDetailDraft = {
+  name: string;
+  description: string;
+  movementDescription: string;
+  keyMoments: string;
+  palette: string;
+};
+
 const emptyData: WorkspaceData = {
   outline: null,
   scenes: [],
@@ -866,6 +896,9 @@ function WorkspacePage() {
   const [openLookMenu, setOpenLookMenu] = useState<string | null>(null);
   const [modInput, setModInput] = useState("");
   const [modError, setModError] = useState<string | null>(null);
+  const [characterDetailDraft, setCharacterDetailDraft] = useState<CharacterDetailDraft | null>(
+    null,
+  );
   // 场景修改输入弹层(2026/06 跟角色修改对齐体验:打开直接输入,Enter 提交)。
   // 跟 modPanel 解耦:角色 modPanel 走的是"打开预览 + 内嵌输入",场景没
   // selectedGenIdx / 多图 history 概念,只需要"打开输入弹层"即可,不需要
@@ -874,6 +907,7 @@ function WorkspacePage() {
   const [sceneModInput, setSceneModInput] = useState("");
   const [sceneModBusy, setSceneModBusy] = useState(false);
   const [sceneModError, setSceneModError] = useState<string | null>(null);
+  const [sceneDetailDraft, setSceneDetailDraft] = useState<SceneDetailDraft | null>(null);
   // 2026/06:场景卡片点击放大(lightbox)用的 state。点卡片设上,关闭置空。
   // 比角色卡那个复杂的三栏 preview modal 简单 —— 用户明确说"点击后放大那种",
   // 就是大图 + 描述,不是完整的编辑面板(编辑输入已由底部「编辑」按钮触发)。
@@ -900,6 +934,7 @@ function WorkspacePage() {
   const [propModInput, setPropModInput] = useState("");
   const [propModBusy, setPropModBusy] = useState(false);
   const [propModError, setPropModError] = useState<string | null>(null);
+  const [propDetailDraft, setPropDetailDraft] = useState<PropDetailDraft | null>(null);
   const callAi = useServerFn(generateStageAi);
   const callImage = useServerFn(generateImage);
   const callUpsertProject = useServerFn(upsertProject);
@@ -939,6 +974,11 @@ function WorkspacePage() {
   const [imagesRestored, setImagesRestored] = useState(false);
   const autoSavedRef = useRef(false);
   const [charImages, setCharImages] = useState<Record<string, string[]>>({});
+  // 与 charImages 按下标一一对应，保存每张图的内部 prompt、用户可编辑属性快照和生成类型。
+  const [charImagePrompts, setCharImagePrompts] = useState<
+    Record<string, CharacterImagePromptRecord[]>
+  >({});
+  const charImagePromptsRef = useRef<Record<string, CharacterImagePromptRecord[]>>({});
   // charImages 的镜像 ref:processCharacter 内部循环里要"看最新"以跳过已
   // 生成的图。React state 闭包是快照,useRef 才是实时的。
   // 2026/06 关键修复:useEffect 镜像有 race condition(下一个 processCharacter 跑时
@@ -962,9 +1002,21 @@ function WorkspacePage() {
     // 2) 触发 re-render(把 ref 的当前值推给 state,React 不再二次调用 updater)
     setCharImages(next);
   };
+  const updateCharImagePrompts = (
+    updater: (
+      m: Record<string, CharacterImagePromptRecord[]>,
+    ) => Record<string, CharacterImagePromptRecord[]>,
+  ) => {
+    const next = updater(charImagePromptsRef.current);
+    charImagePromptsRef.current = next;
+    setCharImagePrompts(next);
+  };
   useEffect(() => {
     charImagesRef.current = charImages;
   }, [charImages]);
+  useEffect(() => {
+    charImagePromptsRef.current = charImagePrompts;
+  }, [charImagePrompts]);
   // 角色/场景/道具修改面板的 I2I 参考图上传(用户上传本地图片作为图生图参考,不上传到服务端)
   const [charModUploadedRefs, setCharModUploadedRefs] = useState<string[]>([]);
   const [sceneModUploadedRef, setSceneModUploadedRef] = useState<string | null>(null);
@@ -1050,13 +1102,22 @@ function WorkspacePage() {
     kind: "character" | "scene" | "prop",
     id: string,
     mode: "overwrite" | "append" = "overwrite",
+    promptRecord?: CharacterImagePromptRecord,
   ) {
+    const savePrompt = () => {
+      if (!promptRecord) return;
+      updateCharImagePrompts((m) => ({
+        ...m,
+        [imageKey]: mode === "append" ? [...(m[imageKey] ?? []), promptRecord] : [promptRecord],
+      }));
+    };
     if (isPersistedUrl(tempUrl)) {
       if (mode === "append") {
         updateCharImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), tempUrl] }));
       } else {
         updateCharImages((m) => ({ ...m, [imageKey]: [tempUrl] }));
       }
+      savePrompt();
       return { ok: true as const, url: tempUrl };
     }
     if (user) {
@@ -1068,6 +1129,7 @@ function WorkspacePage() {
           } else {
             updateCharImages((m) => ({ ...m, [imageKey]: [r.url] }));
           }
+          savePrompt();
           return { ok: true as const, url: r.url };
         }
         console.warn("[persist] persistAssetImage failed:", r.error);
@@ -1081,6 +1143,7 @@ function WorkspacePage() {
     } else {
       updateCharImages((m) => ({ ...m, [imageKey]: [tempUrl] }));
     }
+    savePrompt();
     return { ok: false as const, url: tempUrl };
   }
 
@@ -1787,6 +1850,21 @@ function WorkspacePage() {
           }));
         }
         if (wd.charImages) setCharImages(wd.charImages as Record<string, string[]>);
+        if ((wd as any).charImagePrompts) {
+          const savedPrompts = (wd as any).charImagePrompts as Record<string, unknown[]>;
+          setCharImagePrompts(
+            Object.fromEntries(
+              Object.entries(savedPrompts).map(([key, entries]) => [
+                key,
+                (Array.isArray(entries) ? entries : []).map((entry) =>
+                  typeof entry === "string"
+                    ? { rawPrompt: entry, editablePrompt: "", mode: "initial" as const }
+                    : (entry as CharacterImagePromptRecord),
+                ),
+              ]),
+            ),
+          );
+        }
         if (wd.shotImages) setShotImages(wd.shotImages as Record<string, string[]>);
         if ((wd as any).selectedCharImages)
           setSelectedCharImages((wd as any).selectedCharImages as Record<string, string | null>);
@@ -2053,8 +2131,10 @@ function WorkspacePage() {
       } else {
         toast.error(classifyError(res.error, "场景图生成失败"));
       }
-    } catch {
-      toast.error(classifyError(undefined, "场景图生成失败"));
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error("[workspace.scene] generate failed", e);
+      toast.error(classifyError(message, "场景图生成失败"));
     } finally {
       setBusyScene(null);
     }
@@ -2092,8 +2172,10 @@ function WorkspacePage() {
       } else {
         toast.error(classifyError(res.error, "道具图生成失败"));
       }
-    } catch {
-      toast.error(classifyError(undefined, "道具图生成失败"));
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error("[workspace.prop] generate failed", e);
+      toast.error(classifyError(message, "道具图生成失败"));
     } finally {
       setBusyProp(null);
     }
@@ -2739,6 +2821,11 @@ function WorkspacePage() {
             "character",
             c.id,
             "overwrite",
+            {
+              rawPrompt: `${prompt}\n\nFORBIDDEN (avoid these): ${negativePrompt}`,
+              editablePrompt: characterAttributeEditorValue(c, null),
+              mode: "initial",
+            },
           );
           if (permResult.ok) {
             toast.success(`已生成 ${cardTitle}（${styleSpec.label}）`);
@@ -2964,51 +3051,17 @@ function WorkspacePage() {
   // 内 look 切换 都会调到这里 —— 一次调用同时打开预览 + 修改 state。
   // 旧名 openModPanel 保留,避免在多个调用点批量重命名;语义上现在等价于
   // "打开这个角色卡片的预览+编辑"。
-  function characterImagePrompt(c: GenCharacter, lookId: string | null) {
-    const look = lookId == null ? undefined : c.looks?.find((item) => item.id === lookId);
-    return [
-      `角色设定图：${c.name}，${c.roleLabel}，${c.gender}，${c.age}岁`,
-      `面部：${look?.faceDescription || c.faceDescription}`,
-      `身材：${look?.bodyDescription || c.bodyDescription}`,
-      `服装：${look?.clothingDescription || c.clothingDescription}`,
-      c.personality && `人物气质：${c.personality}`,
-      project?.style && `视觉风格：${project.style}`,
-      "高质量角色设定图，主体清晰，保持角色身份一致",
-    ].filter(Boolean).join("\n");
-  }
-
-  function sceneImagePrompt(s: GenScene) {
-    return [
-      `电影场景图：${s.slug}`,
-      s.location && `地点：${s.location}`,
-      `时间：${SCENE_TIME_LABELS[s.timeOfDay] ?? s.timeOfDay}`,
-      s.action && `剧情动作：${s.action}`,
-      s.beats.length > 0 && `场景要点：${s.beats.join("；")}`,
-      project?.style && `视觉风格：${project.style}`,
-      "电影感构图，环境细节清晰",
-    ].filter(Boolean).join("\n");
-  }
-
-  function propImagePrompt(p: GenProp) {
-    return [
-      `道具设定图：${p.name}`,
-      `外观：${p.description}`,
-      p.movementDescription && `剧情作用：${p.movementDescription}`,
-      p.palette.length > 0 && `配色：${p.palette.join("、")}`,
-      project?.style && `视觉风格：${project.style}`,
-      "单一道具，主体完整清晰，无人物，无文字",
-    ].filter(Boolean).join("\n");
-  }
-
   function openScenePreview(s: GenScene) {
     setScenePreview(s);
-    setSceneModInput(sceneImagePrompt(s));
+    setSceneDetailDraft(sceneDetailDraftValue(s));
+    setSceneModInput("");
     setSceneModError(null);
   }
 
   function openPropPreview(p: GenProp) {
     setPropPreview(p);
-    setPropModInput(propImagePrompt(p));
+    setPropDetailDraft(propDetailDraftValue(p));
+    setPropModInput("");
     setPropModError(null);
   }
 
@@ -3035,6 +3088,9 @@ function WorkspacePage() {
     ));
     setSelectedCharImages((images) => Object.fromEntries(
       Object.entries(images).filter(([key]) => key !== c.id && !key.startsWith(`${c.id}::`)),
+    ));
+    updateCharImagePrompts((prompts) => Object.fromEntries(
+      Object.entries(prompts).filter(([key]) => key !== c.id && !key.startsWith(`${c.id}::`)),
     ));
     closeModPanel();
     toast.success("已删除角色");
@@ -3095,12 +3151,177 @@ function WorkspacePage() {
     toast.success("已删除道具");
   }
 
+  type CharacterAttributeDraft = {
+    age: number;
+    faceDescription: string;
+    bodyDescription: string;
+    clothingDescription: string;
+  };
+
+  function cleanLegacyUserRequirement(value: string | undefined): string {
+    // 旧版本会把每次 Agent 指令追加为“【用户要求】…”，多轮后会指数式膨胀。
+    return (value || "").replace(/\s*【用户要求】\s*[\s\S]*/g, "").trim();
+  }
+
+  /** 用户可编辑的角色属性；固定构图、风格锁与负面词仍由服务端自动拼接。 */
+  function characterAttributeEditorValue(c: GenCharacter, lookId: string | null): string {
+    const look = lookId == null ? null : (c.looks?.find((item) => item.id === lookId) ?? null);
+    return [
+      `年龄：${c.age}`,
+      `面部特征：${cleanLegacyUserRequirement(look?.faceDescription || c.faceDescription)}`,
+      `身材体型：${cleanLegacyUserRequirement(look?.bodyDescription || c.bodyDescription)}`,
+      `服装配饰：${cleanLegacyUserRequirement(look?.clothingDescription || c.clothingDescription)}`,
+    ].join("\n");
+  }
+
+  function characterDetailDraftValue(c: GenCharacter, lookId: string | null): CharacterDetailDraft {
+    const look = lookId == null ? null : (c.looks?.find((item) => item.id === lookId) ?? null);
+    return {
+      age: String(c.age),
+      faceDescription: cleanLegacyUserRequirement(look?.faceDescription || c.faceDescription),
+      bodyDescription: cleanLegacyUserRequirement(look?.bodyDescription || c.bodyDescription),
+      clothingDescription: cleanLegacyUserRequirement(look?.clothingDescription || c.clothingDescription),
+      palette: c.palette.join("、"),
+    };
+  }
+
+  function applyCharacterDetailDraft(
+    c: GenCharacter,
+    lookId: string | null,
+    draft: CharacterDetailDraft,
+  ): GenCharacter {
+    const age = Number(draft.age);
+    const normalizedAge = Number.isInteger(age) && age >= 0 && age <= 200 ? age : c.age;
+    const palette = draft.palette
+      .split(/[、,，\n]/)
+      .map((value) => value.trim())
+      .filter(Boolean);
+    const next = {
+      ...c,
+      age: normalizedAge,
+      palette,
+    };
+    if (lookId == null) {
+      return {
+        ...next,
+        faceDescription: draft.faceDescription.trim(),
+        bodyDescription: draft.bodyDescription.trim(),
+        clothingDescription: draft.clothingDescription.trim(),
+      };
+    }
+    return {
+      ...next,
+      looks: (c.looks ?? []).map((look) =>
+        look.id === lookId
+          ? {
+              ...look,
+              faceDescription: draft.faceDescription.trim(),
+              bodyDescription: draft.bodyDescription.trim(),
+              clothingDescription: draft.clothingDescription.trim(),
+            }
+          : look,
+      ),
+    };
+  }
+
+  function sceneDetailDraftValue(s: GenScene): SceneDetailDraft {
+    return { location: s.location, timeOfDay: s.timeOfDay, action: s.action };
+  }
+
+  function applySceneDetailDraft(s: GenScene, draft: SceneDetailDraft | null): GenScene {
+    if (!draft) return s;
+    return {
+      ...s,
+      location: draft.location.trim(),
+      timeOfDay: draft.timeOfDay,
+      action: draft.action.trim(),
+    };
+  }
+
+  function propDetailDraftValue(p: GenProp): PropDetailDraft {
+    return {
+      name: p.name,
+      description: p.description,
+      movementDescription: p.movementDescription || "",
+      keyMoments: p.keyMoments.join("\n"),
+      palette: p.palette.join("、"),
+    };
+  }
+
+  function applyPropDetailDraft(p: GenProp, draft: PropDetailDraft | null): GenProp {
+    if (!draft) return p;
+    return {
+      ...p,
+      name: draft.name.trim() || p.name,
+      description: draft.description.trim(),
+      movementDescription: draft.movementDescription.trim(),
+      keyMoments: draft.keyMoments
+        .split(/\r?\n|[；;]/)
+        .map((value) => value.trim())
+        .filter(Boolean),
+      palette: draft.palette
+        .split(/[、,，\n]/)
+        .map((value) => value.trim())
+        .filter(Boolean),
+    };
+  }
+
+  function parseCharacterAttributeEditor(
+    input: string,
+    c: GenCharacter,
+    lookId: string | null,
+  ): CharacterAttributeDraft {
+    const look = lookId == null ? null : (c.looks?.find((item) => item.id === lookId) ?? null);
+    const draft: CharacterAttributeDraft = {
+      age: c.age,
+      faceDescription: cleanLegacyUserRequirement(look?.faceDescription || c.faceDescription),
+      bodyDescription: cleanLegacyUserRequirement(look?.bodyDescription || c.bodyDescription),
+      clothingDescription: cleanLegacyUserRequirement(look?.clothingDescription || c.clothingDescription),
+    };
+    for (const line of input.split(/\r?\n/)) {
+      const match = line.match(/^\s*(年龄|面部特征|身材体型|服装配饰)\s*[：:]\s*(.*)\s*$/);
+      if (!match) continue;
+      const [, label, value] = match;
+      if (label === "年龄") {
+        const age = Number(value);
+        if (Number.isInteger(age) && age >= 0 && age <= 200) draft.age = age;
+      } else if (label === "面部特征") draft.faceDescription = value;
+      else if (label === "身材体型") draft.bodyDescription = value;
+      else if (label === "服装配饰") draft.clothingDescription = value;
+    }
+    return draft;
+  }
+
+  function applyCharacterAttributeDraft(
+    c: GenCharacter,
+    lookId: string | null,
+    draft: CharacterAttributeDraft,
+  ): GenCharacter {
+    if (lookId == null) return { ...c, ...draft };
+    return {
+      ...c,
+      age: draft.age,
+      looks: (c.looks ?? []).map((look) =>
+        look.id === lookId
+          ? {
+              ...look,
+              faceDescription: draft.faceDescription,
+              bodyDescription: draft.bodyDescription,
+              clothingDescription: draft.clothingDescription,
+            }
+          : look,
+      ),
+    };
+  }
+
   function openModPanel(c: GenCharacter, lookId: string | null) {
     const imageKey = lookId == null ? c.id : `${c.id}::${lookId}`;
     setModPanel({ character: c, lookId, imageKey });
     setPreviewTarget({ character: c, lookId });
     setSelectedGenIdx(0);
-    setModInput(characterImagePrompt(c, lookId));
+    const record = charImagePromptsRef.current[imageKey]?.[0];
+    setModInput(record?.mode === "multi-asset" || record?.mode === "three-view" ? record.rawPrompt : "");
+    setCharacterDetailDraft(characterDetailDraftValue(c, lookId));
     setModError(null);
     setCharModUploadedRefs([]);
   }
@@ -3112,6 +3333,7 @@ function WorkspacePage() {
     setModInput("");
     setModError(null);
     setCharModUploadedRefs([]);
+    setCharacterDetailDraft(null);
   }
 
   /**
@@ -3143,6 +3365,8 @@ function WorkspacePage() {
      * 迭代历史。提交时也走 I2I,不影响人脸锁逻辑。
      */
     replaceExisting = false,
+    /** 详情页编辑的是完整 API prompt，直接重放而不是再包一层修改模板。 */
+    rawApiPrompt?: string,
   ) {
     const lk = lookId == null ? null : (c.looks?.find((x) => x.id === lookId) ?? null);
     const imageKey = lk ? `${c.id}::${lk.id}` : c.id;
@@ -3165,41 +3389,47 @@ function WorkspacePage() {
     const extraRefs = extraReferenceUrls.filter((u) => u && u !== resolvedMainView);
     setRegenBusyKeys((m) => new Map(m).set(imageKey, mode));
     try {
-      const res = await callRegenCharacter({
-        data: {
-          referenceImageUrl: resolvedMainView,
-          extraReferenceImageUrls: extraRefs.length ? extraRefs : undefined,
-          userInstruction: instruction,
-          faceDescription: lk?.faceDescription || c.faceDescription || "",
-          bodyDescription: lk?.bodyDescription || c.bodyDescription || "",
-          clothingDescription: lk?.clothingDescription || c.clothingDescription || "",
-          characterName: c.name,
-          characterRoleLabel: c.roleLabel,
-          characterAge: c.age,
-          lookLabel: lk?.label || "默认",
-          palette: c.palette,
-          projectStyle: project?.style,
-          // I2I(model 必须支持 multimodal input)。qwen-image-max 等只支持 T2I 的
-          // 模型会 400 "url error";用 resolveI2IModel 强制映射到订阅里 I2I 兼容的
-          // model(qwen-image-2.0-pro)。
-          model: resolveI2IModel(project?.sceneModel),
-          mode,
-          previewOnly: viewPromptsModeRef.current,
-        },
-      });
-      // 2026/06:查看提示词模式 —— 拦截到 previewPrompt 就弹 modal 不写图
-      if (
+      const requestData = {
+        referenceImageUrl: resolvedMainView,
+        extraReferenceImageUrls: extraRefs.length ? extraRefs : undefined,
+        userInstruction: rawApiPrompt ? "Use the supplied raw API prompt exactly." : instruction,
+        faceDescription: lk?.faceDescription || c.faceDescription || "",
+        bodyDescription: lk?.bodyDescription || c.bodyDescription || "",
+        clothingDescription: lk?.clothingDescription || c.clothingDescription || "",
+        characterName: c.name,
+        characterRoleLabel: c.roleLabel,
+        characterAge: c.age,
+        lookLabel: lk?.label || "默认",
+        palette: c.palette,
+        projectStyle: project?.style,
+        model: resolveI2IModel(project?.sceneModel),
+        mode,
+      };
+      if (viewPromptsModeRef.current) {
+        const preview = await callRegenCharacter({ data: { ...requestData, previewOnly: true } });
         interceptPromptPreview(
           mode === "three-view"
             ? `${c.name} · 四视图`
             : mode === "multi-asset"
               ? `${c.name} · 多维资产`
               : `${c.name} · 修改 (${instruction.slice(0, 30)}…)`,
-          res,
-        )
-      ) {
-        return true; // 视为"成功",让上层关 modal/清错误状态
+          preview,
+        );
+        return true;
       }
+      // 普通修改先由服务端展开模板，再把同一份完整文本原样传给实际调用并归档。
+      // 这样右侧展示的 prompt 与供应商实际收到的内容严格一致。
+      let apiPrompt = rawApiPrompt?.trim() || "";
+      if (!apiPrompt) {
+        const preview = await callRegenCharacter({ data: { ...requestData, previewOnly: true } });
+        apiPrompt = preview?.previewPrompt || instruction;
+      }
+      const res = await callRegenCharacter({
+        data: {
+          ...requestData,
+          rawPrompt: apiPrompt,
+        },
+      });
       if (res?.ok && res.url) {
         // 2026/06 修复:ARK TOS URL <img> 加载失败，先 await 转 base64
         const base64Url = await toBase64WithFallback(res.url);
@@ -3207,6 +3437,15 @@ function WorkspacePage() {
         updateCharImages((m) => ({
           ...m,
           [imageKey]: replaceExisting ? [displayUrl] : [...(m[imageKey] ?? []), displayUrl],
+        }));
+        updateCharImagePrompts((m) => ({
+          ...m,
+          [imageKey]: replaceExisting
+            ? [{ rawPrompt: apiPrompt, editablePrompt: characterAttributeEditorValue(c, lookId), mode }]
+            : [
+                ...(m[imageKey] ?? []),
+                { rawPrompt: apiPrompt, editablePrompt: characterAttributeEditorValue(c, lookId), mode },
+              ],
         }));
         const modeLabel =
           mode === "modify"
@@ -3220,7 +3459,9 @@ function WorkspacePage() {
       toast.error(classifyError(res?.error, "生成失败"));
       return false;
     } catch (e) {
-      toast.error(classifyError(undefined, "生成失败"));
+      const message = e instanceof Error ? e.message : String(e);
+      console.error("[workspace.character] regenerate failed", e);
+      toast.error(classifyError(message, "生成失败"));
       return false;
     } finally {
       setRegenBusyKeys((m) => {
@@ -3357,150 +3598,98 @@ function WorkspacePage() {
   // 失败不阻塞(只 console.warn),用户至少图已更新。
   async function submitModPanel() {
     if (!modPanel) return;
-    const instruction = modInput.trim();
-    if (!instruction) {
-      setModError("请输入修改意见");
-      return;
-    }
     const c = modPanel.character;
     const lookId = modPanel.lookId;
     const imageKey = modPanel.imageKey;
+    const existingImages = charImagesRef.current[imageKey] ?? [];
+    const currentIdx = Math.min(selectedGenIdx, Math.max(0, existingImages.length - 1));
+    const currentUrl = existingImages[currentIdx];
+    const record = charImagePromptsRef.current[imageKey]?.[currentIdx];
+    const isSpecialAsset = record?.mode === "multi-asset" || record?.mode === "three-view";
+
+    // 多维资产图/四视图以当前这张图保存的真实 API prompt 为编辑对象，直接重放。
+    if (isSpecialAsset) {
+      const rawPrompt = modInput.trim();
+      if (!rawPrompt) {
+        setModError("请填写生成提示词");
+        return;
+      }
+      if (!currentUrl) {
+        setModError("未选中要修改的图片,请先在左侧历史里点一张");
+        return;
+      }
+      const ok = await doRegen(
+        c,
+        lookId,
+        record.mode,
+        "使用编辑后的完整提示词重生。",
+        currentUrl,
+        charModUploadedRefs,
+        false,
+        rawPrompt,
+      );
+      if (ok) {
+        setModInput("");
+        closeModPanel();
+      } else {
+        setModError("生成失败,请重试或换更简单的提示词");
+      }
+      return;
+    }
+
+    const instruction = modInput.trim() || "按已编辑的角色资料重生，保持参考图中的身份和画风一致。";
+    const editedCharacter = applyCharacterDetailDraft(
+      c,
+      lookId,
+      characterDetailDraft ?? characterDetailDraftValue(c, lookId),
+    );
 
     // 手动添加的空角色:还没有图片,把用户输入解析为结构化描述走 T2I 首次生成
-    const existingImages = charImagesRef.current[imageKey] ?? [];
     if (existingImages.length === 0) {
-      // 将用户输入拆解为面部/身材/服装三段描述
-      const parsed = parseCharacterInstruction(instruction);
-      // 把用户输入写回角色描述
-      setData((prev) => {
-        if (!prev) return prev;
-        return {
-          ...prev,
-          characters: prev.characters.map((x) => {
-            if (x.id !== c.id) return x;
-            return {
-              ...x,
-              faceDescription: parsed.faceDescription,
-              bodyDescription: parsed.bodyDescription,
-              clothingDescription: parsed.clothingDescription,
-              personality: instruction,
-            };
-          }),
-        };
-      });
+      setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              characters: prev.characters.map((item) =>
+                item.id === c.id ? editedCharacter : item,
+              ),
+            }
+          : prev,
+      );
       closeModPanel();
-      setModInput("");
       setModError(null);
-      // 走 T2I 生成
-      await processCharacter({
-        ...c,
-        faceDescription: parsed.faceDescription,
-        bodyDescription: parsed.bodyDescription,
-        clothingDescription: parsed.clothingDescription,
-        personality: instruction,
-      });
+      await processCharacter(editedCharacter);
       return;
     }
 
     // 2026/07:主视图(图1)= 用户在预览里选中的那张(要改的那张);额外参考图 = 上传的多张本地图
-    const generations = existingImages;
-    const currentIdx = Math.min(selectedGenIdx, Math.max(0, generations.length - 1));
-    const currentUrl = generations[currentIdx];
     if (!currentUrl) {
       setModError("未选中要修改的图片,请先在左侧历史里点一张");
       return;
     }
-    const ok = await doRegen(c, lookId, "modify", instruction, currentUrl, charModUploadedRefs);
+    const ok = await doRegen(
+      editedCharacter,
+      lookId,
+      "modify",
+      instruction,
+      currentUrl,
+      charModUploadedRefs,
+      false,
+    );
     if (ok) {
-      // 2026/06:保留 AI 描述 + 追加用户意见。先调 describeCharacterImage 生成详细描述,
-      // 然后把用户的修改意见作为补充说明追加到对应字段末尾,这样既有详细描述又体现用户意图。
-      const newUrl = charImagesRef.current[imageKey]?.at(-1);
-      const lk = lookId == null ? null : (c.looks?.find((x) => x.id === lookId) ?? null);
-      const instr = instruction.toLowerCase();
-      // 判断用户意见涉及哪些维度
-      const touchFace = /脸|面容|五官|face/i.test(instr);
-      const touchBody = /身材|体型|body/i.test(instr);
-      const touchClothing = /衣服|服装|穿着|穿搭|clothing|outfit/i.test(instr);
-      const touchAll = !touchFace && !touchBody && !touchClothing;
-      // 调 AI 看图生成详细描述
-      if (newUrl) {
-        try {
-          const res = await callDescribeCharImg({
-            data: {
-              imageUrl: newUrl,
-              characterName: c.name,
-              characterRoleLabel: c.roleLabel,
-              characterAge: c.age,
-              lookLabel: lk?.label || "默认",
-            },
-          });
-          if (res?.ok) {
-            setData((prev) => {
-              if (!prev) return prev;
-              return {
-                ...prev,
-                characters: prev.characters.map((x) => {
-                  if (x.id !== c.id) return x;
-                  const append = (orig: string | undefined, userInstr: string) =>
-                    orig ? `${orig}\n【用户要求】${userInstr}` : userInstr;
-                  if (lookId == null) {
-                    return {
-                      ...x,
-                      faceDescription:
-                        touchAll || touchFace
-                          ? append(res.faceDescription || x.faceDescription, instruction)
-                          : x.faceDescription,
-                      bodyDescription:
-                        touchAll || touchBody
-                          ? append(res.bodyDescription || x.bodyDescription, instruction)
-                          : x.bodyDescription,
-                      clothingDescription:
-                        touchAll || touchClothing
-                          ? append(res.clothingDescription || x.clothingDescription, instruction)
-                          : x.clothingDescription,
-                    };
-                  }
-                  return {
-                    ...x,
-                    looks: (x.looks ?? []).map((lk2) =>
-                      lk2.id !== lookId
-                        ? lk2
-                        : {
-                            ...lk2,
-                            faceDescription:
-                              touchAll || touchFace
-                                ? append(res.faceDescription || lk2.faceDescription, instruction)
-                                : lk2.faceDescription,
-                            bodyDescription:
-                              touchAll || touchBody
-                                ? append(res.bodyDescription || lk2.bodyDescription, instruction)
-                                : lk2.bodyDescription,
-                            clothingDescription:
-                              touchAll || touchClothing
-                                ? append(
-                                    res.clothingDescription || lk2.clothingDescription,
-                                    instruction,
-                                  )
-                                : lk2.clothingDescription,
-                          },
-                    ),
-                  };
-                }),
-              };
-            });
-            toast.success("文字描述已同步到新图");
-            // 立即保存,避免刷新后数据丢失
-            void handleSaveWorkspace({ silent: true });
-          } else {
-            console.warn("[describeCharacterImage] failed:", res?.error);
-          }
-        } catch (e) {
-          console.warn("[describeCharacterImage] error:", e);
-        }
-      }
-    }
-    if (ok) {
+      setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              characters: prev.characters.map((item) =>
+                item.id === c.id ? editedCharacter : item,
+              ),
+            }
+          : prev,
+      );
+      setModInput("");
       closeModPanel();
+      return;
     } else {
       setModError("生成失败,请重试或换更简单的修改");
     }
@@ -3526,7 +3715,8 @@ function WorkspacePage() {
     }
     const ok = await doRegen(c, lookId, "modify", instruction, coverUrl);
     if (ok) {
-      // 同 submitModPanel:AI 看图描述 + 追加用户意见
+      // 用新图反推一次干净描述；不再把同一句【用户要求】反复附加到角色资料，
+      // 否则后续每次重生都会把历史修改意见重复塞进 prompt。
       const newUrl = charImagesRef.current[imageKey]?.at(-1);
       const lk = lookId == null ? null : (c.looks?.find((x) => x.id === lookId) ?? null);
       if (newUrl) {
@@ -3543,8 +3733,6 @@ function WorkspacePage() {
           if (res?.ok) {
             setData((prev) => {
               if (!prev) return prev;
-              const append = (orig: string | undefined, userInstr: string) =>
-                orig ? `${orig}\n【用户要求】${userInstr}` : userInstr;
               return {
                 ...prev,
                 characters: prev.characters.map((x) => {
@@ -3552,18 +3740,9 @@ function WorkspacePage() {
                   if (lookId == null) {
                     return {
                       ...x,
-                      faceDescription: append(
-                        res.faceDescription || x.faceDescription,
-                        instruction,
-                      ),
-                      bodyDescription: append(
-                        res.bodyDescription || x.bodyDescription,
-                        instruction,
-                      ),
-                      clothingDescription: append(
-                        res.clothingDescription || x.clothingDescription,
-                        instruction,
-                      ),
+                      faceDescription: res.faceDescription || x.faceDescription,
+                      bodyDescription: res.bodyDescription || x.bodyDescription,
+                      clothingDescription: res.clothingDescription || x.clothingDescription,
                     };
                   }
                   return {
@@ -3573,18 +3752,9 @@ function WorkspacePage() {
                         ? lk2
                         : {
                             ...lk2,
-                            faceDescription: append(
-                              res.faceDescription || lk2.faceDescription,
-                              instruction,
-                            ),
-                            bodyDescription: append(
-                              res.bodyDescription || lk2.bodyDescription,
-                              instruction,
-                            ),
-                            clothingDescription: append(
-                              res.clothingDescription || lk2.clothingDescription,
-                              instruction,
-                            ),
+                            faceDescription: res.faceDescription || lk2.faceDescription,
+                            bodyDescription: res.bodyDescription || lk2.bodyDescription,
+                            clothingDescription: res.clothingDescription || lk2.clothingDescription,
                           },
                     ),
                   };
@@ -3770,8 +3940,10 @@ function WorkspacePage() {
       }
       toast.error(classifyError(res?.error, "生成失败"));
       return false;
-    } catch {
-      toast.error(classifyError(undefined, "生成失败"));
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error("[workspace.scene] regenerate failed", e);
+      toast.error(classifyError(message, "生成失败"));
       return false;
     } finally {
       setRegenBusyKeys((m) => {
@@ -3829,10 +4001,17 @@ function WorkspacePage() {
           referenceImageUrl: referenceUrl,
           userInstruction: instruction,
           mode,
+          assetKind: "prop" as const,
           sceneSlug: p.name,
-          sceneLocation: p.description,
+          sceneLocation: [
+            `外观描述：${p.description}`,
+            p.keyMoments.length ? `关键节点：${p.keyMoments.join("；")}` : "",
+            p.palette.length ? `配色：${p.palette.join("、")}` : "",
+          ]
+            .filter(Boolean)
+            .join("\n"),
           sceneTimeOfDay: "DAY" as const,
-          sceneAction: p.movementDescription,
+          sceneAction: p.movementDescription ? `剧情运动：${p.movementDescription}` : "",
           projectStyle: project?.style,
           model: resolveI2IModel(project?.sceneModel),
           previewOnly: viewPromptsModeRef.current,
@@ -3853,8 +4032,10 @@ function WorkspacePage() {
       }
       toast.error(classifyError(res?.error, "生成失败"));
       return false;
-    } catch {
-      toast.error(classifyError(undefined, "生成失败"));
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error("[workspace.prop] regenerate failed", e);
+      toast.error(classifyError(message, "生成失败"));
       return false;
     } finally {
       setRegenBusyKeys((m) => {
@@ -3879,7 +4060,7 @@ function WorkspacePage() {
 
   function openPropModPanel(p: GenProp) {
     setPropModOpen(p);
-    setPropModInput(propImagePrompt(p));
+    setPropModInput("");
     setPropModError(null);
   }
 
@@ -3932,7 +4113,7 @@ function WorkspacePage() {
 
   function openSceneModPanel(s: GenScene) {
     setSceneModOpen(s);
-    setSceneModInput(sceneImagePrompt(s));
+    setSceneModInput("");
     setSceneModError(null);
   }
 
@@ -3979,6 +4160,61 @@ function WorkspacePage() {
     } else {
       setSceneModError("生成失败,请重试或换更简单的修改");
     }
+  }
+
+  async function submitSceneDetailRegen(s: GenScene) {
+    const instruction = sceneModInput.trim();
+    if (!instruction) {
+      setSceneModError("请输入修改意见");
+      return;
+    }
+    const editedScene = applySceneDetailDraft(s, sceneDetailDraft);
+    setSceneModError(null);
+    const ok = await doSceneRegen(
+      editedScene,
+      "modify",
+      instruction,
+      sceneModUploadedRef ?? undefined,
+    );
+    if (!ok) {
+      setSceneModError("生成失败,请重试或换更简单的修改");
+      return;
+    }
+    setData((prev) =>
+      prev
+        ? {
+            ...prev,
+            scenes: prev.scenes.map((item) => (item.id === s.id ? editedScene : item)),
+          }
+        : prev,
+    );
+    setSceneModInput("");
+    toast.success("已按资料和修改意见重生场景图");
+  }
+
+  async function submitPropDetailRegen(p: GenProp) {
+    const instruction = propModInput.trim();
+    if (!instruction) {
+      setPropModError("请输入修改意见");
+      return;
+    }
+    const editedProp = applyPropDetailDraft(p, propDetailDraft);
+    setPropModError(null);
+    const ok = await doPropRegen(editedProp, "modify", instruction);
+    if (!ok) {
+      setPropModError("生成失败,请重试或换更简单的修改");
+      return;
+    }
+    setData((prev) =>
+      prev
+        ? {
+            ...prev,
+            props: prev.props.map((item) => (item.id === p.id ? editedProp : item)),
+          }
+        : prev,
+    );
+    setPropModInput("");
+    toast.success("已按资料和修改意见重生道具图");
   }
 
   async function genPanelImage(p: StoryboardPanel) {
@@ -6594,6 +6830,7 @@ function WorkspacePage() {
         charImages: Object.fromEntries(
           Object.entries(charImagesRef.current).map(([k, v]) => [k, keepArr(v)]),
         ),
+        charImagePrompts: charImagePromptsRef.current,
         shotImages: Object.fromEntries(Object.entries(shotImages).map(([k, v]) => [k, keepArr(v)])),
         sceneImages: Object.fromEntries(
           Object.entries(sceneImagesRef.current).map(([k, v]) => [k, keepArr(v)]),
@@ -6721,6 +6958,9 @@ function WorkspacePage() {
     charImgs: Object.keys(charImages).length,
     charImgsHash: Object.values(charImages)
       .map((arr) => (arr?.length ?? 0) + ":" + (arr?.at(-1)?.length ?? 0))
+      .join("|"),
+    charPromptsHash: Object.values(charImagePrompts)
+      .map((arr) => (arr?.length ?? 0) + ":" + (arr?.at(-1)?.rawPrompt.length ?? 0))
       .join("|"),
     shotImgs: Object.keys(shotImages).length,
     sceneImgs: Object.keys(sceneImages).length,
@@ -10900,10 +11140,7 @@ function WorkspacePage() {
           const generations = charImages[imageKey] ?? [];
           const currentIdx = Math.min(selectedGenIdx, Math.max(0, generations.length - 1));
           const currentUrl = generations[currentIdx];
-          const faceDesc = lk?.faceDescription || c.faceDescription;
-          const bodyDesc = lk?.bodyDescription || c.bodyDescription;
-          const clothDesc = lk?.clothingDescription || c.clothingDescription;
-          const lookLabelForCall = lk?.label || "默认";
+          const currentPromptRecord = charImagePrompts[imageKey]?.[currentIdx];
           const cardTitle = lk ? `${c.name} · ${lk.label}` : c.name;
           return (
             <div
@@ -10975,6 +11212,15 @@ function WorkspacePage() {
                             // 2026/07:对齐场景/道具 -- 点缩略图直接选为推荐(reference),
                             // 同时切换大图到这张;再次点击已推荐的图则取消推荐。
                             setSelectedGenIdx(i);
+                            const record = charImagePrompts[imageKey]?.[i];
+                            setModInput(
+                              record?.mode === "multi-asset" || record?.mode === "three-view"
+                                ? record.rawPrompt
+                                : "",
+                            );
+                            setCharacterDetailDraft(
+                              characterDetailDraftValue(c, previewTarget.lookId),
+                            );
                             setSelectedCharImages((m) => {
                               if (m[imageKey] === u) {
                                 const { [imageKey]: _, ...rest } = m;
@@ -10987,6 +11233,15 @@ function WorkspacePage() {
                             if (e.key === "Enter" || e.key === " ") {
                               e.preventDefault();
                               setSelectedGenIdx(i);
+                              const record = charImagePrompts[imageKey]?.[i];
+                              setModInput(
+                                record?.mode === "multi-asset" || record?.mode === "three-view"
+                                  ? record.rawPrompt
+                                  : "",
+                              );
+                              setCharacterDetailDraft(
+                                characterDetailDraftValue(c, previewTarget.lookId),
+                              );
                               setSelectedCharImages((m) => {
                                 if (m[imageKey] === u) {
                                   const { [imageKey]: _, ...rest } = m;
@@ -11067,45 +11322,17 @@ function WorkspacePage() {
                     )}
                   </div>
 
-                  {/* === Right top: description / Right bottom: input dialog === */}
+                  {/* === Right: 角色属性编辑 + 轻量素材信息 === */}
                   <div className="flex flex-col min-h-0 gap-3">
-                    {/* Right TOP: 描述 */}
-                    <div className="flex-1 min-h-0 overflow-y-auto rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2">
-                      <div className="text-[10px] uppercase tracking-wide text-accent font-semibold">
-                        素材上下文（自动同步到生成）
-                      </div>
-                      <div>
-                        <div className="text-[10px] uppercase tracking-wide text-text-muted">
-                          当前选中
-                        </div>
-                        <div className="text-sm font-semibold text-text-primary mt-0.5">
-                          {currentUrl
-                            ? `第 ${currentIdx + 1} / ${generations.length} 张`
-                            : "未生成"}
+                    <div className="shrink-0 rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2">
+                      <div className="flex items-center justify-between gap-2 text-xs">
+                        <span className="text-text-muted">当前图：{currentUrl ? `#${currentIdx + 1}` : "未生成"}</span>
+                        <div className="flex gap-1">
+                          {c.palette.map((p) => (
+                            <span key={p} className="w-4 h-4 rounded border border-border" style={{ background: p }} title={p} />
+                          ))}
                         </div>
                       </div>
-                      <dl className="space-y-1.5 text-xs">
-                        <div>
-                          <dt className="text-text-muted">性别</dt>
-                          <dd className="text-text-secondary">{c.gender || "-"}</dd>
-                        </div>
-                        <div>
-                          <dt className="text-text-muted">年龄</dt>
-                          <dd className="text-text-secondary">{c.age} 岁</dd>
-                        </div>
-                        <div>
-                          <dt className="text-text-muted">面部</dt>
-                          <dd className="text-text-secondary">{faceDesc || "-"}</dd>
-                        </div>
-                        <div>
-                          <dt className="text-text-muted">身材</dt>
-                          <dd className="text-text-secondary">{bodyDesc || "-"}</dd>
-                        </div>
-                        <div>
-                          <dt className="text-text-muted">服装{lk ? `（${lk.label}）` : ""}</dt>
-                          <dd className="text-text-secondary">{clothDesc || "-"}</dd>
-                        </div>
-                      </dl>
                       {/* 如果角色有多个 look,展示 look 切换 */}
                       {(c.looks?.length ?? 0) > 0 && (
                         <div className="pt-1 flex flex-wrap gap-1.5">
@@ -11136,19 +11363,38 @@ function WorkspacePage() {
                           ))}
                         </div>
                       )}
-                      <div className="flex gap-1 pt-1">
-                        {c.palette.map((p) => (
-                          <span
-                            key={p}
-                            className="w-5 h-5 rounded border border-border"
-                            style={{ background: p }}
-                            title={p}
-                          />
-                        ))}
-                      </div>
-                      {/* 2026/07:选为推荐改为点左栏缩略图直接生效(对齐场景/道具),
-                        此处原"选中此图作为 reference"按钮已移除。 */}
                     </div>
+
+                    {currentPromptRecord?.mode !== "multi-asset" &&
+                      currentPromptRecord?.mode !== "three-view" && (
+                        <div className="shrink-0 rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2 text-xs">
+                          <div className="text-text-secondary font-semibold">角色属性（编辑后随本次发送生效）</div>
+                          {(() => {
+                            const draft = characterDetailDraft ?? characterDetailDraftValue(c, previewTarget.lookId);
+                            const update = (patch: Partial<CharacterDetailDraft>) =>
+                              setCharacterDetailDraft({ ...draft, ...patch });
+                            return (
+                              <div className="grid grid-cols-2 gap-2">
+                                <label className="text-text-muted">年龄
+                                  <input value={draft.age} onChange={(e) => update({ age: e.target.value })} inputMode="numeric" className="mt-1 w-full rounded bg-bg-base border border-border px-2 py-1 text-text-primary" />
+                                </label>
+                                <label className="text-text-muted">配色（用顿号分隔）
+                                  <input value={draft.palette} onChange={(e) => update({ palette: e.target.value })} className="mt-1 w-full rounded bg-bg-base border border-border px-2 py-1 text-text-primary" />
+                                </label>
+                                <label className="col-span-2 text-text-muted">面部特征
+                                  <textarea value={draft.faceDescription} onChange={(e) => update({ faceDescription: e.target.value })} rows={2} className="mt-1 w-full rounded bg-bg-base border border-border p-2 text-text-primary resize-y" />
+                                </label>
+                                <label className="col-span-2 text-text-muted">身材体型
+                                  <textarea value={draft.bodyDescription} onChange={(e) => update({ bodyDescription: e.target.value })} rows={2} className="mt-1 w-full rounded bg-bg-base border border-border p-2 text-text-primary resize-y" />
+                                </label>
+                                <label className="col-span-2 text-text-muted">服装配饰
+                                  <textarea value={draft.clothingDescription} onChange={(e) => update({ clothingDescription: e.target.value })} rows={2} className="mt-1 w-full rounded bg-bg-base border border-border p-2 text-text-primary resize-y" />
+                                </label>
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      )}
 
                     {/* 2026/07:角色参考音频试听(只读展示,上传/替换/删除走角色卡 Popover) */}
                     {c.referenceAudioUrl && (
@@ -11160,26 +11406,34 @@ function WorkspacePage() {
                       </div>
                     )}
 
-                    {/* Right BOTTOM: 修改意见输入区(2026/06 改造)
-                      - 直接嵌入预览,不再弹独立 slide-in
-                      - Enter 提交,Shift+Enter 换行
-                      - 错误 / busy 状态内联展示 */}
+                    {/* 用户只编辑角色属性；固定构图、风格锁与负面词不暴露，服务端自动附加。 */}
                     {(() => {
                       const busyKey =
                         previewTarget.lookId == null ? c.id : `${c.id}::${previewTarget.lookId}`;
                       const thisBusy = regenBusyKeys.has(busyKey);
+                      const isSpecialAsset =
+                        currentPromptRecord?.mode === "multi-asset" ||
+                        currentPromptRecord?.mode === "three-view";
                       return (
-                        <div className="shrink-0 rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2">
+                        <div className="flex-1 min-h-0 flex flex-col rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2">
                           <div className="flex items-center justify-between">
                             <div className="text-xs text-text-secondary font-semibold">
-                              创作指令（可编辑）
+                              {isSpecialAsset ? "本图真实生成提示词（可编辑）" : "修改意见"}
                             </div>
                             <span className="text-[10px] text-text-muted">
-                              Enter 发送 · Shift+Enter 换行
+                              {currentPromptRecord?.mode === "multi-asset"
+                                ? "多维资产图"
+                                : currentPromptRecord?.mode === "three-view"
+                                  ? "四视图"
+                                  : currentPromptRecord?.mode === "modify"
+                                    ? "按属性重生"
+                                    : "初始形象"}
                             </span>
                           </div>
                           <p className="text-[10px] text-text-muted leading-relaxed">
-                            这段指令会原样传入生成流程；系统会自动补充参考图、角色身份和风格锁定约束。
+                            {isSpecialAsset
+                              ? "左侧每张多维资产图或四视图都保留自己的真实 API prompt；修改后会以该提示词重生。"
+                              : "在上方编辑角色资料；这里补充本次想调整的修改意见。固定构图、风格锁与负面词由系统自动附加。"}
                           </p>
                           <div className="flex items-center gap-2 mb-2 flex-wrap">
                             <button
@@ -11238,15 +11492,11 @@ function WorkspacePage() {
                                 void submitModPanel();
                               }
                             }}
-                            placeholder="填写这张角色图的生成提示词…"
-                            rows={8}
+                            placeholder={isSpecialAsset ? "编辑这张图的完整生成提示词…" : "输入修改意见，例如：表情更坚定，外套材质改为粗花呢"}
+                            rows={10}
                             disabled={thisBusy}
-                            className="w-full min-h-44 rounded-md bg-bg-base border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-y placeholder:text-text-muted disabled:opacity-50"
+                            className="w-full flex-1 min-h-56 rounded-md bg-bg-base border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-y placeholder:text-text-muted disabled:opacity-50 leading-relaxed"
                           />
-                          <details className="rounded-md border border-border bg-bg-elevated/40 px-2 py-1.5 text-[10px] text-text-muted">
-                            <summary className="cursor-pointer text-text-secondary">固定约束与负面词（自动附加）</summary>
-                            <p className="mt-1 leading-relaxed">图 1 身份锚点、脸/身材/服装一致性、项目风格锁定和负面词会由系统自动追加，无需手写。</p>
-                          </details>
                           {modError && (
                             <div className="px-2.5 py-1.5 rounded-md bg-rose-500/10 border border-rose-500/30 text-[11px] text-rose-400">
                               {modError}
@@ -11263,7 +11513,7 @@ function WorkspacePage() {
                               onClick={() => void submitModPanel()}
                               disabled={
                                 thisBusy ||
-                                !modInput.trim() ||
+                                (isSpecialAsset && !modInput.trim()) ||
                                 (generations.filter(Boolean).length > 0 && !currentUrl)
                               }
                               className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
@@ -11273,7 +11523,7 @@ function WorkspacePage() {
                               ) : (
                                 <Send size={12} />
                               )}
-                              {thisBusy ? "生成中…" : "发送"}
+                              {thisBusy ? "生成中…" : "发送并重生"}
                             </button>
                           </div>
                         </div>
@@ -11424,22 +11674,27 @@ function WorkspacePage() {
                     <div className="text-[10px] uppercase tracking-wide text-accent font-semibold">
                       素材上下文（自动同步到生成）
                     </div>
-                    <div>
-                      <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1">
-                        地点 / 时段
-                      </div>
-                      <div className="text-sm text-text-primary">
-                        {s.location || "—"} · {SCENE_TIME_LABELS[s.timeOfDay] ?? s.timeOfDay}
-                      </div>
-                    </div>
-                    <div>
-                      <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1">
-                        动作
-                      </div>
-                      <p className="text-sm text-text-secondary leading-relaxed">
-                        {s.action || "—"}
-                      </p>
-                    </div>
+                    {(() => {
+                      const draft = sceneDetailDraft ?? sceneDetailDraftValue(s);
+                      const update = (patch: Partial<SceneDetailDraft>) =>
+                        setSceneDetailDraft({ ...draft, ...patch });
+                      return (
+                        <div className="rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2 text-xs">
+                          <div className="text-text-secondary font-semibold">场景资料（编辑后随本次发送生效）</div>
+                          <label className="block text-text-muted">地点
+                            <input value={draft.location} onChange={(e) => update({ location: e.target.value })} className="mt-1 w-full rounded bg-bg-base border border-border px-2 py-1.5 text-sm text-text-primary" />
+                          </label>
+                          <label className="block text-text-muted">时段
+                            <select value={draft.timeOfDay} onChange={(e) => update({ timeOfDay: e.target.value as GenScene["timeOfDay"] })} className="mt-1 w-full rounded bg-bg-base border border-border px-2 py-1.5 text-sm text-text-primary">
+                              {Object.entries(SCENE_TIME_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                            </select>
+                          </label>
+                          <label className="block text-text-muted">剧情动作
+                            <textarea value={draft.action} onChange={(e) => update({ action: e.target.value })} rows={3} className="mt-1 w-full rounded bg-bg-base border border-border p-2 text-sm text-text-primary resize-y" />
+                          </label>
+                        </div>
+                      );
+                    })()}
                     {s.beats.length > 0 && (
                       <div>
                         <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1">
@@ -11478,7 +11733,7 @@ function WorkspacePage() {
                     {/* 修改场景:嵌入预览右侧底部,和角色修改对齐 */}
                     <div className="shrink-0 rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2">
                       <div className="flex items-center justify-between">
-                        <div className="text-xs text-text-secondary font-semibold">创作指令（可编辑）</div>
+                        <div className="text-xs text-text-secondary font-semibold">修改意见</div>
                         <span className="text-[10px] text-text-muted">Enter 发送</span>
                       </div>
                       <div className="flex items-center gap-2 mb-2">
@@ -11517,16 +11772,12 @@ function WorkspacePage() {
                         onKeyDown={(e) => {
                           if (e.key === "Enter" && !e.shiftKey) {
                             e.preventDefault();
-                            const text = sceneModInput.trim();
-                            if (!text) return;
-                            setSceneModInput("");
-                            setSceneModError(null);
-                            void doSceneRegen(s, "modify", text, sceneModUploadedRef ?? undefined);
+                            void submitSceneDetailRegen(s);
                           }
                         }}
-                        placeholder="填写这张场景图的生成提示词…"
+                        placeholder="输入修改意见，例如：把黄昏改为雨后傍晚，增加地面的潮湿反光"
                         rows={7}
-                        disabled={sceneModBusy}
+                        disabled={regenBusyKeys.has(s.id)}
                         className="w-full min-h-40 rounded-md bg-bg-base border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-y placeholder:text-text-muted disabled:opacity-50"
                       />
                       <details className="rounded-md border border-border bg-bg-base px-2 py-1.5 text-[10px] text-text-muted">
@@ -11540,28 +11791,24 @@ function WorkspacePage() {
                       )}
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-[10px] text-text-muted">
-                          {sceneModBusy
+                          {regenBusyKeys.has(s.id)
                             ? "生成中…"
                             : `参考图:第 ${currentIdx + 1} / ${history.length} 张`}
                         </span>
                         <button
                           type="button"
                           onClick={() => {
-                            const text = sceneModInput.trim();
-                            if (!text) return;
-                            setSceneModInput("");
-                            setSceneModError(null);
-                            void doSceneRegen(s, "modify", text, sceneModUploadedRef ?? undefined);
+                            void submitSceneDetailRegen(s);
                           }}
-                          disabled={sceneModBusy || !sceneModInput.trim()}
+                          disabled={regenBusyKeys.has(s.id) || !sceneModInput.trim()}
                           className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
                         >
-                          {sceneModBusy ? (
+                          {regenBusyKeys.has(s.id) ? (
                             <Loader2 size={12} className="animate-spin" />
                           ) : (
                             <Send size={12} />
                           )}
-                          {sceneModBusy ? "生成中…" : "发送"}
+                          {regenBusyKeys.has(s.id) ? "生成中…" : "发送并重生"}
                         </button>
                       </div>
                     </div>
@@ -11693,64 +11940,39 @@ function WorkspacePage() {
                     <div className="text-[10px] uppercase tracking-wide text-accent font-semibold">
                       素材上下文（自动同步到生成）
                     </div>
-                    <div>
-                      <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1">
-                        道具名称
-                      </div>
-                      <div className="text-sm text-text-primary">{p.name}</div>
-                    </div>
-                    <div>
-                      <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1">
-                        描述
-                      </div>
-                      <p className="text-sm text-text-secondary leading-relaxed">
-                        {p.description || "—"}
-                      </p>
-                    </div>
-                    <div>
-                      <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1">
-                        剧情运动
-                      </div>
-                      <p className="text-sm text-text-secondary leading-relaxed">
-                        {p.movementDescription || "—"}
-                      </p>
-                    </div>
-                    {p.keyMoments.length > 0 && (
-                      <div>
-                        <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1">
-                          关键节点
+                    {(() => {
+                      const draft = propDetailDraft ?? propDetailDraftValue(p);
+                      const update = (patch: Partial<PropDetailDraft>) =>
+                        setPropDetailDraft({ ...draft, ...patch });
+                      return (
+                        <div className="rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2 text-xs">
+                          <div className="text-text-secondary font-semibold">道具资料（编辑后随本次发送生效）</div>
+                          <label className="block text-text-muted">道具名称
+                            <input value={draft.name} onChange={(e) => update({ name: e.target.value })} className="mt-1 w-full rounded bg-bg-base border border-border px-2 py-1.5 text-sm text-text-primary" />
+                          </label>
+                          <label className="block text-text-muted">描述
+                            <textarea value={draft.description} onChange={(e) => update({ description: e.target.value })} rows={3} className="mt-1 w-full rounded bg-bg-base border border-border p-2 text-sm text-text-primary resize-y" />
+                          </label>
+                          <label className="block text-text-muted">剧情运动
+                            <textarea value={draft.movementDescription} onChange={(e) => update({ movementDescription: e.target.value })} rows={2} className="mt-1 w-full rounded bg-bg-base border border-border p-2 text-sm text-text-primary resize-y" />
+                          </label>
+                          <label className="block text-text-muted">关键节点（每行一项）
+                            <textarea value={draft.keyMoments} onChange={(e) => update({ keyMoments: e.target.value })} rows={3} className="mt-1 w-full rounded bg-bg-base border border-border p-2 text-sm text-text-primary resize-y" />
+                          </label>
+                          <label className="block text-text-muted">配色（用顿号分隔）
+                            <input value={draft.palette} onChange={(e) => update({ palette: e.target.value })} className="mt-1 w-full rounded bg-bg-base border border-border px-2 py-1.5 text-sm text-text-primary" />
+                          </label>
                         </div>
-                        <ul className="space-y-1 text-sm">
-                          {p.keyMoments.map((m, i) => (
-                            <li key={i} className="flex gap-2 text-text-secondary">
-                              <span className="text-accent shrink-0">·</span>
-                              <span>{m}</span>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                    {p.palette.length > 0 && (
-                      <div>
-                        <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1">
-                          配色
-                        </div>
-                        <div className="flex gap-1.5">
-                          {p.palette.map((color, i) => (
-                            <div
-                              key={i}
-                              className="w-6 h-6 rounded-full border border-border"
-                              style={{ background: color }}
-                              title={color}
-                            />
-                          ))}
-                        </div>
-                      </div>
-                    )}
+                      );
+                    })()}
+                    <div className="rounded-lg border border-border bg-bg-base p-2 text-[10px] leading-relaxed text-text-muted">
+                      <div>视觉风格：<span className="text-text-secondary">{project?.style || "项目默认风格"}</span></div>
+                      <div className="mt-1">固定约束：单一道具，主体完整清晰，无人物，无文字。</div>
+                    </div>
                     {/* 修改道具:嵌入预览右侧底部 */}
                     <div className="shrink-0 rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2">
                       <div className="flex items-center justify-between">
-                        <div className="text-xs text-text-secondary font-semibold">创作指令（可编辑）</div>
+                        <div className="text-xs text-text-secondary font-semibold">修改意见</div>
                         <span className="text-[10px] text-text-muted">Enter 发送</span>
                       </div>
                       <div className="flex items-center gap-2 mb-2">
@@ -11788,16 +12010,12 @@ function WorkspacePage() {
                         onKeyDown={(e) => {
                           if (e.key === "Enter" && !e.shiftKey) {
                             e.preventDefault();
-                            const text = propModInput.trim();
-                            if (!text) return;
-                            setPropModInput("");
-                            setPropModError(null);
-                            void doPropRegen(p, "modify", text);
+                            void submitPropDetailRegen(p);
                           }
                         }}
-                        placeholder="填写这张道具图的生成提示词…"
+                        placeholder="输入修改意见，例如：把金属表面改为有划痕的旧银色"
                         rows={7}
-                        disabled={propModBusy}
+                        disabled={regenBusyKeys.has(p.id)}
                         className="w-full min-h-40 rounded-md bg-bg-base border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-y placeholder:text-text-muted disabled:opacity-50"
                       />
                       <details className="rounded-md border border-border bg-bg-base px-2 py-1.5 text-[10px] text-text-muted">
@@ -11811,28 +12029,24 @@ function WorkspacePage() {
                       )}
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-[10px] text-text-muted">
-                          {propModBusy
+                          {regenBusyKeys.has(p.id)
                             ? "生成中…"
                             : `参考图:第 ${currentIdx + 1} / ${history.length} 张`}
                         </span>
                         <button
                           type="button"
                           onClick={() => {
-                            const text = propModInput.trim();
-                            if (!text) return;
-                            setPropModInput("");
-                            setPropModError(null);
-                            void doPropRegen(p, "modify", text);
+                            void submitPropDetailRegen(p);
                           }}
-                          disabled={propModBusy || !propModInput.trim() || !currentUrl}
+                          disabled={regenBusyKeys.has(p.id) || !propModInput.trim() || !currentUrl}
                           className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
                         >
-                          {propModBusy ? (
+                          {regenBusyKeys.has(p.id) ? (
                             <Loader2 size={12} className="animate-spin" />
                           ) : (
                             <Send size={12} />
                           )}
-                          {propModBusy ? "生成中…" : "发送"}
+                          {regenBusyKeys.has(p.id) ? "生成中…" : "发送并重生"}
                         </button>
                       </div>
                     </div>

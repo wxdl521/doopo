@@ -238,7 +238,6 @@ const KlingVideoInput = z.object({
   duration: z.number().int().min(3).max(15).optional(),
   ratio: z.enum(["16:9", "9:16", "1:1"]).optional(),
   generateAudio: z.boolean().optional(),
-  deadlineMs: z.number().min(10_000).max(600_000).optional(),
   pollMs: z.number().min(2_000).max(30_000).optional(),
 });
 
@@ -259,17 +258,15 @@ export const generateKlingVideo = createServerFn({ method: "POST" })
 
     // 2) 轮询
     const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-    const deadline = Date.now() + (data.deadlineMs ?? 300_000);
     const pollInterval = data.pollMs ?? 5_000;
-    let lastStatus = "submitted";
-    while (Date.now() < deadline) {
+    // 供应商任务未进入明确失败态前持续轮询，不用本地 deadline 误判长任务失败。
+    while (true) {
       await sleep(pollInterval);
       const poll = await callKlingVideoPoll({
         taskId: submit.taskId,
         endpoint: submit.endpoint,
       });
       if (!poll.ok) continue;
-      lastStatus = poll.status;
       if (poll.status === "succeeded") {
         return {
           ok: true as const,
@@ -284,9 +281,4 @@ export const generateKlingVideo = createServerFn({ method: "POST" })
         return { ok: false as const, error: `[kling] failed: ${errMsg}`, taskId: submit.taskId };
       }
     }
-    return {
-      ok: false as const,
-      error: `[kling] timed out (last status: ${lastStatus})`,
-      taskId: submit.taskId,
-    };
   });

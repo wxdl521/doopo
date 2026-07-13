@@ -223,7 +223,10 @@ async function callSeedreamImages(
 // ====================================================================
 
 const GenerateImageInput = z.object({
-  prompt: z.string().min(1).max(8000),
+  // 完整的角色/故事板 API prompt（尤其含负面词）很容易超过旧的 8k 上限。
+  // 校验在 handler 之前执行，旧上限会导致前端只收到通用“生成失败”、供应商日志
+  // 也完全不出现。上游仍会自行限制实际可接受的 prompt 长度。
+  prompt: z.string().min(1).max(64_000),
   model: z.string().max(200).optional(),
   size: z.string().max(50).optional(),
   negativePrompt: z.string().max(4000).optional(),
@@ -232,10 +235,25 @@ const GenerateImageInput = z.object({
   previewOnly: z.boolean().default(false),
 });
 
+function validateGenerateImageInput(data: unknown) {
+  const parsed = GenerateImageInput.safeParse(data);
+  if (!parsed.success) {
+    const detail = parsed.error.issues
+      .map((issue) => `${issue.path.join(".") || "input"}: ${issue.message}`)
+      .join("; ");
+    console.warn(`[image×] invalid request: ${detail}`);
+    throw parsed.error;
+  }
+  return parsed.data;
+}
+
 export const generateImage = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => GenerateImageInput.parse(d))
+  .inputValidator(validateGenerateImageInput)
   .handler(async ({ data }) => {
     const requested = normalizeImageModelForRouting(data.model);
+    console.log(
+      `[image→] model=${requested || "default"} promptChars=${data.prompt.length} refs=0 size=${data.size || "default"}`,
+    );
     // 委托给 Lovable AI Gateway(openai/gpt-image-*, google/gemini-*-image*)
     {
       const { isLovableGatewayImageModel, callLovableGatewayImage } =
@@ -476,6 +494,8 @@ const RegenerateInput = z.object({
   // 2026/07:额外参考图(图2..N),主视图(要改的那张)强制在图1,额外图仅作风格/细节参考。
   extraReferenceImageUrls: z.array(z.string().url()).max(4).optional(),
   userInstruction: z.string().min(1).max(2000),
+  /** 已展开的完整 API prompt，供详情页编辑后直接重放。 */
+  rawPrompt: z.string().min(1).max(64_000).optional(),
   faceDescription: z.string().max(4000),
   bodyDescription: z.string().max(4000),
   clothingDescription: z.string().max(4000),
@@ -845,7 +865,8 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
     const requested = normalizeImageModelForRouting(data.model);
     // 2026/07:多图参考 -- 图1=主视图(要改的那张,referenceImageUrl),图2..N=额外参考
     const allImages = [data.referenceImageUrl, ...(data.extraReferenceImageUrls ?? [])];
-    const prompt = appendNegative(positive, negative);
+    // 详情页允许直接编辑并重放当次完整 API prompt；普通入口仍由模板统一构造。
+    const prompt = data.rawPrompt?.trim() || appendNegative(positive, negative);
 
     // 2026/06:查看提示词模式 —— 不调 Seedream,直接把 prompt 返回
     if (data.previewOnly) {
@@ -2586,6 +2607,8 @@ const RegenerateSceneInput = z.object({
   sceneLocation: z.string().max(200).default(""),
   sceneTimeOfDay: z.string().max(50).default(""),
   sceneAction: z.string().max(2000).default(""),
+  /** 道具复用同一 I2I 入口，但必须使用单一道具的专用约束。 */
+  assetKind: z.enum(["scene", "prop"]).default("scene"),
   projectStyle: z.string().max(50).optional(),
   model: z.string().max(100).optional(),
   mode: z.enum(["modify", "three-view", "directional-views"]).default("modify"),
@@ -2599,6 +2622,54 @@ function buildScenePrompts(
   data: RegenerateSceneInputType,
   styleSpec: VisualStyleSpec,
 ): { positive: string; negative: string; size: string } {
+  if (data.assetKind === "prop" && data.mode === "three-view") {
+    const positive = [
+      `[STYLE LOCK — 道具多视图,适用对象:prop]`,
+      buildStyleLock(styleSpec, "scene"),
+      ``,
+      `[任务] 基于图1生成同一道具的三个展示角度，外观、材质、配色必须一致。`,
+      `[道具名称] ${data.sceneSlug}`,
+      data.sceneLocation ? `[道具资料] ${data.sceneLocation}` : "",
+      data.sceneAction ? `[剧情运动] ${data.sceneAction}` : "",
+      ``,
+      `[固定约束] 单一道具，主体完整清晰，无人物，无文字。纯净背景，不添加任何场景或额外物体。`,
+      `输出横向三面板：正面、侧面、细节或俯视角；三格必须是同一道具。`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    return {
+      positive,
+      negative:
+        "people, character, human, hand holding object, multiple props, scene, background clutter, text, logo, watermark, label, caption, low quality, blurry",
+      size: "3072x1280",
+    };
+  }
+
+  if (data.assetKind === "prop") {
+    const positive = [
+      `[STYLE LOCK — 道具图按意见重生,适用对象:prop]`,
+      buildStyleLock(styleSpec, "scene"),
+      ``,
+      `[任务] 修改图1中的单一道具，只按修改意见调整；未提及的外观、材质、比例和配色保持图1一致。`,
+      `[修改意见] ${data.userInstruction}`,
+      ``,
+      `[道具名称] ${data.sceneSlug}`,
+      data.sceneLocation ? `[道具资料] ${data.sceneLocation}` : "",
+      data.sceneAction ? `[剧情运动 / 使用语境] ${data.sceneAction}` : "",
+      ``,
+      `[固定约束] 单一道具，主体完整清晰，无人物，无文字。纯净背景；不得加入手、人物、场景、其他道具、logo或标注。`,
+      `保持图1的主体身份、构图和视觉风格，不重新设计成不同道具。`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    return {
+      positive,
+      negative:
+        "people, character, human, hand, holding, multiple props, duplicate object, scene, environment, background clutter, text, logo, watermark, label, caption, low quality, blurry, style drift",
+      size: "2K",
+    };
+  }
+
   if (data.mode === "three-view") {
     // ----------------------------------------------------------------
     // 场景三视图(横向 3 面板,横向 3072x1280 ≈ 3.93M 像素,过 Seedream 最小门槛)

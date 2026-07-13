@@ -381,9 +381,10 @@ ${data.episodeText}
 
     const DASHSCOPE_CHAT = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
     // 2026/07:由 DashScope Qwen 改为「ARK DeepSeek V4 Pro 为主、Qwen 兜底」。
-    // 尝试序列:系统默认 ARK DeepSeek -> Qwen flash -> plus -> max(小->大,超时递增)。
+    // 尝试序列:系统默认 ARK DeepSeek -> Qwen flash -> plus -> max。
+    // 分镜拆分可能很长，不人为中止模型的流式输出；仅在用户请求的组数已满足时中止。
     // data.model 显式指定时覆盖首项(粗判 provider)。
-    type SbAttempt = { provider: "ark" | "qwen"; model: string; timeoutMs: number };
+    type SbAttempt = { provider: "ark" | "qwen"; model: string };
     const attempts: SbAttempt[] = [];
     if (data.model) {
       const isArk =
@@ -393,15 +394,14 @@ ${data.episodeText}
       attempts.push({
         provider: isArk ? "ark" : "qwen",
         model: data.model.replace(/^(ark:|deepseek:)/, ""),
-        timeoutMs: isArk ? 300_000 : 90_000,
       });
     } else if (arkKey) {
-      attempts.push({ provider: "ark", model: ARK_TEXT_MODEL, timeoutMs: 300_000 });
+      attempts.push({ provider: "ark", model: ARK_TEXT_MODEL });
     }
     if (qwenKey) {
-      attempts.push({ provider: "qwen", model: "qwen3.6-flash", timeoutMs: 60_000 });
-      attempts.push({ provider: "qwen", model: "qwen3.6-plus", timeoutMs: 90_000 });
-      attempts.push({ provider: "qwen", model: "qwen3.7-max", timeoutMs: 180_000 });
+      attempts.push({ provider: "qwen", model: "qwen3.6-flash" });
+      attempts.push({ provider: "qwen", model: "qwen3.6-plus" });
+      attempts.push({ provider: "qwen", model: "qwen3.7-max" });
     }
     if (attempts.length === 0) {
       yield {
@@ -416,9 +416,7 @@ ${data.episodeText}
 
     let lastError = "";
     for (const attempt of attempts) {
-      const timeoutMs = attempt.timeoutMs;
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), timeoutMs);
       // 单模型尝试期间是否已成功 yield 过 group。已经 yield 出去的 group
       // 是不可撤回的(客户端已经展示了),后续即便流出错也不能切换模型重头来。
       let yieldedAny = false;
@@ -427,7 +425,6 @@ ${data.episodeText}
       const attemptKey = isArk ? arkKey : qwenKey;
       if (!attemptKey) {
         lastError = `[${attempt.model}] API key missing`;
-        clearTimeout(timeout);
         continue;
       }
       const endpoint = isArk ? arkTextEndpoint() : DASHSCOPE_CHAT;
@@ -461,16 +458,13 @@ ${data.episodeText}
           lastError = `[${attempt.model}] ${res.status}: ${text.slice(0, 200)}`;
           // ark(主)任何失败都回退下一个 attempt(qwen);qwen 仅可重试状态继续
           if (isArk || FALLBACK_RETRYABLE.has(res.status)) {
-            clearTimeout(timeout);
             continue;
           }
-          clearTimeout(timeout);
           yield { kind: "error", message: lastError };
           return;
         }
         if (!res.body) {
           lastError = `[${attempt.model}] 上游无响应体`;
-          clearTimeout(timeout);
           continue;
         }
         // SSE 流式消费 + StreamingGroupExtractor:每个 group `{...}` 闭合一份
@@ -529,7 +523,6 @@ ${data.episodeText}
           }
           if (data.groupCount > 0 && groupCount >= data.groupCount) break;
         }
-        clearTimeout(timeout);
         if (groupCount > 0) {
           yield { kind: "done", model: attempt.model, count: groupCount };
           modelSucceeded = true;
@@ -562,10 +555,7 @@ ${data.episodeText}
         lastError = `[${attempt.model}] 流结束但未解析到任何分镜组 (raw: ${fullText.slice(0, 200)})`;
       } catch (e) {
         lastError =
-          e instanceof Error && e.name === "AbortError"
-            ? `[${attempt.model}] timed out (>${Math.round(timeoutMs / 1000)}s)`
-            : `[${attempt.model}] ${e instanceof Error ? e.message : "network error"}`;
-        clearTimeout(timeout);
+          `[${attempt.model}] ${e instanceof Error ? e.message : "network error"}`;
       }
       // 关键:已经 yield 过 group 的模型不能 fallback 重试 —— 客户端那边
       // 已经展示了部分组,换模型重新来一遍会重复。

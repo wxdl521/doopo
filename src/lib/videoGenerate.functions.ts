@@ -2543,7 +2543,6 @@ const GenerateVideoInput = z.object({
   generateAudio: z.boolean().optional(),
   watermark: z.boolean().optional(),
   onProgress: z.function().optional(),
-  deadlineMs: z.number().int().min(5_000).max(600_000).optional(),
   pollMs: z.number().int().min(1_000).max(30_000).optional(),
 });
 
@@ -2621,10 +2620,10 @@ export const generateVideo = createServerFn({ method: "POST" })
     data.onProgress?.("queued", { taskId: submit.taskId, backend });
 
     // 2) 轮询
-    const deadline = Date.now() + (data.deadlineMs ?? 300_000); // 5 min default(视频生成比图慢)
     const pollInterval = data.pollMs ?? 5_000;
-    let lastStatus: SeedanceProgress = "queued";
-    while (Date.now() < deadline) {
+    // 视频任务由供应商异步执行；只要不是明确失败/取消，就持续轮询，
+    // 不再用本地 5 分钟 deadline 把仍在生成的任务错误标记为失败。
+    while (true) {
       await sleep(pollInterval);
       const poll = await pollVideoTask({ taskId: submit.taskId, backend: submit.backend });
       if (!poll.ok) {
@@ -2641,7 +2640,6 @@ export const generateVideo = createServerFn({ method: "POST" })
         }
         continue;
       }
-      lastStatus = poll.status;
       if (poll.status === "succeeded") {
         data.onProgress?.("succeeded", {
           taskId: submit.taskId,
@@ -2680,13 +2678,6 @@ export const generateVideo = createServerFn({ method: "POST" })
       }
       data.onProgress?.(poll.status, { taskId: submit.taskId, backend: submit.backend });
     }
-    return {
-      ok: false as const,
-      error: `[${submit.backend}] timed out after ${Math.round((data.deadlineMs ?? 300_000) / 1000)}s (last status: ${lastStatus})`,
-      taskId: submit.taskId,
-      backend: submit.backend,
-      lastStatus,
-    };
   });
 
 // ====================================================================
