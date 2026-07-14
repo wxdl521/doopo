@@ -222,14 +222,9 @@ export const persistAssetImage = createServerFn({ method: "POST" })
       else if (ct.includes("webp")) ext = "webp";
       else if (ct.includes("gif")) ext = "gif";
       const path = `${userId}/assets/${kind}/${id}-${Date.now()}.${ext}`;
-      const blob = new Blob([buf], { type: contentType || "image/png" });
-      const { error: uploadErr } = await supabase.storage
-        .from(BUCKET)
-        .upload(path, blob, { contentType: contentType || "image/png", upsert: true });
-      if (uploadErr) return { ok: false, url: "", error: `upload failed: ${uploadErr.message}` };
-      const { data: publicUrl } = supabase.storage.from(BUCKET).getPublicUrl(path);
-      if (!publicUrl?.publicUrl) return { ok: false, url: "", error: "no public url" };
-      return { ok: true, url: publicUrl.publicUrl };
+      const r = await uploadMediaSmart(supabase, path, buf, contentType || "image/png");
+      if (!r.ok) return { ok: false, url: "", error: r.error };
+      return { ok: true, url: r.url };
     } catch (e: any) {
       return { ok: false, url: "", error: e?.message ?? String(e) };
     }
