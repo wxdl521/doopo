@@ -2635,6 +2635,13 @@ async function persistDataUriUrl(
     else if (ct.includes("audio/wav")) ext = "wav";
     const mime = contentType || "image/png";
     const path = `${userId}/video-gen/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    // 优先腾讯云 COS + CDN
+    const { isCosConfigured, uploadToCos } = await import("./cosClient");
+    if (isCosConfigured()) {
+      const r = await uploadToCos(path, buf as ArrayBuffer, mime);
+      if (r.ok) return { ok: true, url: r.url };
+      if (!r.fallback) return { ok: false, error: `参考图上传失败: ${r.error}` };
+    }
     const blob = new Blob([buf], { type: mime });
     const { error: uploadErr } = await supabase.storage
       .from("workspace-media")
@@ -2695,6 +2702,22 @@ async function persistAudioUrl(
     else if (ct.includes("ogg")) ext = "ogg";
     const mime = contentType || "audio/mpeg";
     const path = `${userId}/video-gen/audio-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    // 优先腾讯云 COS + CDN（公开 URL，ARK 云端可直接拉取）
+    const { isCosConfigured, uploadToCos } = await import("./cosClient");
+    if (isCosConfigured()) {
+      const r = await uploadToCos(path, buf as ArrayBuffer, mime);
+      if (r.ok) {
+        const probe = await fetch(r.url, { headers: { Range: "bytes=0-1" }, redirect: "follow" });
+        if (!probe.ok) {
+          return {
+            ok: false,
+            error: `参考音频转存到 CDN 后仍不可公网读取 (${probe.status})；请检查 CDN/COS 公共读配置。`,
+          };
+        }
+        return { ok: true, url: r.url };
+      }
+      if (!r.fallback) return { ok: false, error: `参考音频转存失败: ${r.error}` };
+    }
     const blob = new Blob([buf], { type: mime });
     const { error: uploadErr } = await supabase.storage
       .from("workspace-media")
