@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { isCosConfigured, uploadToCos } from "./cosClient";
 
 const UploadInput = z.object({
   base64: z.string().min(100),
@@ -38,14 +39,19 @@ export const uploadLocalImage = createServerFn({ method: "POST" })
       .replace("x-m4a", "m4a");
     const buf = Buffer.from(match[2], "base64");
 
-    // 2) 上传到 workspace-media bucket
     const path = `${userId}/uploads/${kind}/${id}-${Date.now()}.${ext}`;
+    // 2) 优先上传到腾讯云 COS + CDN
+    if (isCosConfigured()) {
+      const r = await uploadToCos(path, buf, mime);
+      if (r.ok) return { ok: true as const, url: r.url };
+      if (!r.fallback) return { ok: false as const, error: `cos upload failed: ${r.error}` };
+    }
+    // 3) 回落 Supabase Storage
     const { error: uploadErr } = await supabase.storage
       .from("workspace-media")
       .upload(path, buf, { contentType: mime, upsert: false });
     if (uploadErr) return { ok: false as const, error: uploadErr.message };
 
-    // 3) 取签名 URL（10年有效期，绕开 RLS）
     const { data: signed } = await supabase.storage
       .from("workspace-media")
       .createSignedUrl(path, 315360000);
