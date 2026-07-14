@@ -241,6 +241,8 @@ type MediaItem = {
 /** 检测 URL 是否已经是我们自己的 Supabase Storage 链接(已入库) */
 function isAlreadyPersisted(url: string): boolean {
   if (!url) return false;
+  // 已通过腾讯云 CDN / COS 分发的 URL 视为已入库
+  if (isCosCdnUrl(url)) return true;
   try {
     const u = new URL(url);
     const host = u.hostname.toLowerCase();
