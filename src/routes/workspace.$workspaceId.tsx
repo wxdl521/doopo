@@ -142,6 +142,12 @@ type CharacterImagePromptRecord = {
   mode: "initial" | "modify" | "three-view" | "multi-asset";
 };
 
+/** 每张场景/道具图自己的可编辑提示词快照，必须与图片历史按下标对应。 */
+type AssetImagePromptRecord = {
+  editablePrompt: string;
+  mode: "initial" | "modify" | "t2i" | "upload";
+};
+
 type SceneDetailDraft = {
   location: string;
   timeOfDay: GenScene["timeOfDay"];
@@ -904,6 +910,19 @@ function WorkspacePage() {
   const [scenePreview, setScenePreview] = useState<GenScene | null>(null);
   // 2026/06:道具的 state —— 与场景对称
   const [propImages, setPropImages] = useState<Record<string, string[]>>({});
+  const [propImagePrompts, setPropImagePrompts] = useState<
+    Record<string, AssetImagePromptRecord[]>
+  >({});
+  const propImagePromptsRef = useRef<Record<string, AssetImagePromptRecord[]>>({});
+  const updatePropImagePrompts = (
+    updater: (
+      m: Record<string, AssetImagePromptRecord[]>,
+    ) => Record<string, AssetImagePromptRecord[]>,
+  ) => {
+    const next = updater(propImagePromptsRef.current);
+    propImagePromptsRef.current = next;
+    setPropImagePrompts(next);
+  };
   const propImagesRef = useRef<Record<string, string[]>>({});
   const updatePropImages = (updater: (m: Record<string, string[]>) => Record<string, string[]>) => {
     const next = updater(propImagesRef.current);
@@ -913,6 +932,9 @@ function WorkspacePage() {
   useEffect(() => {
     propImagesRef.current = propImages;
   }, [propImages]);
+  useEffect(() => {
+    propImagePromptsRef.current = propImagePrompts;
+  }, [propImagePrompts]);
   const [selectedPropImages, setSelectedPropImages] = useState<Record<string, string | null>>({});
   const selectedPropImagesRef = useRef(selectedPropImages);
   useEffect(() => {
@@ -967,6 +989,8 @@ function WorkspacePage() {
   const [imagesRestored, setImagesRestored] = useState(false);
   const autoSavedRef = useRef(false);
   const [charImages, setCharImages] = useState<Record<string, string[]>>({});
+  /** 正在上传的角色/场景/道具图片；用于在卡片上显示上传进度。 */
+  const [uploadingImageKeys, setUploadingImageKeys] = useState<Set<string>>(() => new Set());
   // 与 charImages 按下标一一对应，保存每张图的内部 prompt、用户可编辑属性快照和生成类型。
   const [charImagePrompts, setCharImagePrompts] = useState<
     Record<string, CharacterImagePromptRecord[]>
@@ -1141,9 +1165,23 @@ function WorkspacePage() {
   }
 
   /** 服务端持久化场景图片 */
-  async function persistSceneImage(s: GenScene, tempUrl: string) {
+  async function persistSceneImage(
+    s: GenScene,
+    tempUrl: string,
+    promptRecord: AssetImagePromptRecord = {
+      editablePrompt: sceneEditablePrompt(s),
+      mode: "initial",
+    },
+  ) {
+    const append = (url: string) => {
+      updateSceneImages((m) => ({ ...m, [s.id]: [...(m[s.id] ?? []), url] }));
+      updateSceneImagePrompts((m) => ({
+        ...m,
+        [s.id]: [...(m[s.id] ?? []), promptRecord],
+      }));
+    };
     if (isPersistedUrl(tempUrl)) {
-      setSceneImages((m) => ({ ...m, [s.id]: [...(m[s.id] ?? []), tempUrl] }));
+      append(tempUrl);
       return { ok: true as const, url: tempUrl };
     }
     if (user) {
@@ -1152,21 +1190,35 @@ function WorkspacePage() {
           data: { url: tempUrl, userId: user.id, kind: "scene", id: s.id },
         });
         if (r.ok && r.url) {
-          setSceneImages((m) => ({ ...m, [s.id]: [...(m[s.id] ?? []), r.url] }));
+          append(r.url);
           return { ok: true as const, url: r.url };
         }
       } catch {
         /* 持久化失败 */
       }
     }
-    setSceneImages((m) => ({ ...m, [s.id]: [...(m[s.id] ?? []), tempUrl] }));
+    append(tempUrl);
     return { ok: false as const, url: tempUrl };
   }
 
   /** 服务端持久化道具图片 */
-  async function persistPropImage(p: GenProp, tempUrl: string) {
+  async function persistPropImage(
+    p: GenProp,
+    tempUrl: string,
+    promptRecord: AssetImagePromptRecord = {
+      editablePrompt: propEditablePrompt(p),
+      mode: "initial",
+    },
+  ) {
+    const append = (url: string) => {
+      updatePropImages((m) => ({ ...m, [p.id]: [...(m[p.id] ?? []), url] }));
+      updatePropImagePrompts((m) => ({
+        ...m,
+        [p.id]: [...(m[p.id] ?? []), promptRecord],
+      }));
+    };
     if (isPersistedUrl(tempUrl)) {
-      setPropImages((m) => ({ ...m, [p.id]: [...(m[p.id] ?? []), tempUrl] }));
+      append(tempUrl);
       return { ok: true as const, url: tempUrl };
     }
     if (user) {
@@ -1175,14 +1227,14 @@ function WorkspacePage() {
           data: { url: tempUrl, userId: user.id, kind: "prop", id: p.id },
         });
         if (r.ok && r.url) {
-          setPropImages((m) => ({ ...m, [p.id]: [...(m[p.id] ?? []), r.url] }));
+          append(r.url);
           return { ok: true as const, url: r.url };
         }
       } catch {
         /* 持久化失败 */
       }
     }
-    setPropImages((m) => ({ ...m, [p.id]: [...(m[p.id] ?? []), tempUrl] }));
+    append(tempUrl);
     return { ok: false as const, url: tempUrl };
   }
   // processCharacter 入口 ref 守卫(2026/06):防止 useEffect 多次触发
@@ -1191,6 +1243,19 @@ function WorkspacePage() {
   const processCharacterInFlightRef = useRef<Set<string>>(new Set());
   const [panelImages, setPanelImages] = useState<Record<string, string>>({});
   const [sceneImages, setSceneImages] = useState<Record<string, string[]>>({});
+  const [sceneImagePrompts, setSceneImagePrompts] = useState<
+    Record<string, AssetImagePromptRecord[]>
+  >({});
+  const sceneImagePromptsRef = useRef<Record<string, AssetImagePromptRecord[]>>({});
+  const updateSceneImagePrompts = (
+    updater: (
+      m: Record<string, AssetImagePromptRecord[]>,
+    ) => Record<string, AssetImagePromptRecord[]>,
+  ) => {
+    const next = updater(sceneImagePromptsRef.current);
+    sceneImagePromptsRef.current = next;
+    setSceneImagePrompts(next);
+  };
   const sceneImagesRef = useRef<Record<string, string[]>>({});
   const updateSceneImages = (
     updater: (m: Record<string, string[]>) => Record<string, string[]>,
@@ -1202,6 +1267,9 @@ function WorkspacePage() {
   useEffect(() => {
     sceneImagesRef.current = sceneImages;
   }, [sceneImages]);
+  useEffect(() => {
+    sceneImagePromptsRef.current = sceneImagePrompts;
+  }, [sceneImagePrompts]);
   // 2026/06:跟角色 selectedCharImages 对称 —— 用户从历史里"选中"的某张
   // 场景图,作为分镜 / 故事板 / 按意见重生的 reference。
   // - 用 url 而不是 index 引用,避免新增图后被偏移
@@ -1321,7 +1389,7 @@ function WorkspacePage() {
   // 在 regen 期间给对应卡片加黑屏遮罩(spinner + "正在生成三视图" 等),
   // 防止用户重复点 / 让进度可感知。value 存 mode 用来显示对应的提示文字。
   const [regenBusyKeys, setRegenBusyKeys] = useState<
-    Map<string, "modify" | "three-view" | "multi-asset" | "directional-views">
+    Map<string, "modify" | "three-view" | "multi-asset" | "directional-views" | "t2i">
   >(new Map());
   // 用户在角色卡片右上角点"选中"后,该 look(imageKey)被钉住指向哪张 url。
   // 用 url 而不是 index 引用,避免新增图后被偏移。
@@ -1942,12 +2010,22 @@ function WorkspacePage() {
           setSelectedCharImages((wd as any).selectedCharImages as Record<string, string | null>);
         if (wd.panelImages) setPanelImages(wd.panelImages as Record<string, string>);
         if (wd.sceneImages) setSceneImages(wd.sceneImages as Record<string, string[]>);
+        if ((wd as any).sceneImagePrompts) {
+          setSceneImagePrompts(
+            (wd as any).sceneImagePrompts as Record<string, AssetImagePromptRecord[]>,
+          );
+        }
         if ((wd as any).selectedSceneImages)
           setSelectedSceneImages((wd as any).selectedSceneImages as Record<string, string | null>);
         if (Array.isArray(wd.props) && wd.props.length) {
           setData((d) => ({ ...d, props: wd.props as GenProp[] }));
         }
         if (wd.propImages) setPropImages(wd.propImages as Record<string, string[]>);
+        if ((wd as any).propImagePrompts) {
+          setPropImagePrompts(
+            (wd as any).propImagePrompts as Record<string, AssetImagePromptRecord[]>,
+          );
+        }
         if ((wd as any).selectedPropImages)
           setSelectedPropImages((wd as any).selectedPropImages as Record<string, string | null>);
         // 2026/06:跨 session 恢复入库后的永久视频 / 故事板图 URL。
@@ -2163,7 +2241,7 @@ function WorkspacePage() {
     return combined;
   }
 
-  async function genSceneImage(s: GenScene) {
+  async function genSceneImage(s: GenScene, editablePrompt = sceneEditablePrompt(s)) {
     if (busyScene) return;
     setBusyScene(s.id);
     try {
@@ -2193,7 +2271,10 @@ function WorkspacePage() {
       logImageMeta("workspace.scene", res);
       if (res.url) {
         // 2026/06 修复:直接持久化到 Storage
-        const permResult = await persistSceneImage(s, res.url);
+        const permResult = await persistSceneImage(s, res.url, {
+          editablePrompt,
+          mode: "initial",
+        });
         if (permResult.ok) {
           toast.success(`已生成场景图「${s.slug}」`);
         } else {
@@ -2214,7 +2295,7 @@ function WorkspacePage() {
   /**
    * 生成道具图片(2026/06 新增)——与 genSceneImage 对称。
    */
-  async function genPropImage(p: GenProp) {
+  async function genPropImage(p: GenProp, editablePrompt = propEditablePrompt(p)) {
     if (busyProp) return;
     setBusyProp(p.id);
     try {
@@ -2234,7 +2315,10 @@ function WorkspacePage() {
       logImageMeta("workspace.scene", res);
       if (res.url) {
         // 2026/06 修复:直接持久化到 Storage
-        const permResult = await persistPropImage(p, res.url);
+        const permResult = await persistPropImage(p, res.url, {
+          editablePrompt,
+          mode: "initial",
+        });
         if (permResult.ok) {
           toast.success(`已生成道具图「${p.name}」`);
         } else {
@@ -2265,6 +2349,8 @@ function WorkspacePage() {
     input.onchange = async () => {
       const file = input.files?.[0];
       if (!file) return;
+      const uploadKey = `${kind}:${imageKey}`;
+      setUploadingImageKeys((keys) => new Set(keys).add(uploadKey));
       try {
         const base64 = await new Promise<string>((resolve, reject) => {
           const reader = new FileReader();
@@ -2276,10 +2362,45 @@ function WorkspacePage() {
         if (res.ok && res.url) {
           if (kind === "character") {
             updateCharImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), res.url!] }));
+            const character = data.characters.find((item) => item.id === id);
+            if (character) {
+              const lookId = imageKey.startsWith(`${id}::`) ? imageKey.slice(id.length + 2) : null;
+              updateCharImagePrompts((m) => ({
+                ...m,
+                [imageKey]: [
+                  ...(m[imageKey] ?? []),
+                  {
+                    rawPrompt: "",
+                    editablePrompt: characterEditablePrompt(character, lookId),
+                    mode: "initial",
+                  },
+                ],
+              }));
+            }
           } else if (kind === "scene") {
             updateSceneImages((m) => ({ ...m, [id]: [...(m[id] ?? []), res.url!] }));
+            const scene = data.scenes.find((item) => item.id === id);
+            if (scene) {
+              updateSceneImagePrompts((m) => ({
+                ...m,
+                [id]: [
+                  ...(m[id] ?? []),
+                  { editablePrompt: sceneEditablePrompt(scene), mode: "upload" },
+                ],
+              }));
+            }
           } else if (kind === "prop") {
             updatePropImages((m) => ({ ...m, [id]: [...(m[id] ?? []), res.url!] }));
+            const prop = data.props.find((item) => item.id === id);
+            if (prop) {
+              updatePropImagePrompts((m) => ({
+                ...m,
+                [id]: [
+                  ...(m[id] ?? []),
+                  { editablePrompt: propEditablePrompt(prop), mode: "upload" },
+                ],
+              }));
+            }
           } else if (kind === "panel") {
             setPanelImages((m) => ({ ...m, [id]: res.url! }));
           } else if (kind === "shot") {
@@ -2299,6 +2420,12 @@ function WorkspacePage() {
         }
       } catch {
         toast.error("上传失败");
+      } finally {
+        setUploadingImageKeys((keys) => {
+          const next = new Set(keys);
+          next.delete(uploadKey);
+          return next;
+        });
       }
     };
     input.click();
@@ -2534,7 +2661,11 @@ function WorkspacePage() {
     return c.looks ?? [];
   }
 
-  async function processCharacter(c: GenCharacter) {
+  async function processCharacter(
+    c: GenCharacter,
+    options: { forceT2I?: boolean; targetLookId?: string | null; editablePrompt?: string } = {},
+  ) {
+    const { forceT2I = false, targetLookId, editablePrompt } = options;
     // ===== 入口可观测性 + 防并发(2026/06 排查用)=====
     console.log(
       `[CHAR-AUTOGEN] processCharacter called: id=${c.id} name=${c.name} looks=${(c.looks ?? []).length}`,
@@ -2584,20 +2715,32 @@ function WorkspacePage() {
     // doRegen 的 replaceExisting 参数保留(供未来用),本路径暂不传。
     // 2026/06:多形象拆分后 lookSpecs 永远只有 1 个条目(默认),lookSpec 维度
     // 已经没意义。保留这个结构是为了让下方 I2I/T2I 分支代码能跑通(单点路径)。
+    const requestedLook =
+      targetLookId == null ? null : (c.looks?.find((look) => look.id === targetLookId) ?? null);
     const lookSpecs: {
       imageKey: string;
       label: string;
       data: { faceDescription: string; bodyDescription: string; clothingDescription: string };
     }[] = [
-      {
-        imageKey: c.id,
-        label: "默认",
-        data: {
-          faceDescription: c.faceDescription,
-          bodyDescription: c.bodyDescription,
-          clothingDescription: c.clothingDescription,
-        },
-      },
+      requestedLook
+        ? {
+            imageKey: `${c.id}::${requestedLook.id}`,
+            label: requestedLook.label,
+            data: {
+              faceDescription: requestedLook.faceDescription,
+              bodyDescription: requestedLook.bodyDescription,
+              clothingDescription: requestedLook.clothingDescription,
+            },
+          }
+        : {
+            imageKey: c.id,
+            label: "默认",
+            data: {
+              faceDescription: c.faceDescription,
+              bodyDescription: c.bodyDescription,
+              clothingDescription: c.clothingDescription,
+            },
+          },
     ];
 
     // ====================================================================
@@ -2631,7 +2774,7 @@ function WorkspacePage() {
       const ls = lookSpecs[i];
       // 跳过已经生成过的(可能在并发期间被其他 useEffect 跑过)
       const currentImages = charImagesRef.current;
-      if (currentImages[ls.imageKey]?.length) continue;
+      if (currentImages[ls.imageKey]?.length && !forceT2I) continue;
 
       setActiveImageKey(ls.imageKey);
 
@@ -2652,11 +2795,13 @@ function WorkspacePage() {
       //   1) 新架构下的兄弟锚图(同组其他角色已有图) → 用兄弟的 url
       //   2) 旧架构下的默认 look 图(同角色其他 look 已有图,理论上新架构下不会触发)
       //   3) 自己已有图(用户主动重生时 referenceOverride 走别的分支,这里只考虑 T2I 首次)
-      const referenceImageUrl = usingSiblingAnchor
-        ? siblingAnchor!.url
-        : isDefaultLook
-          ? undefined
-          : defaultLookImages[defaultLookImages.length - 1];
+      const referenceImageUrl = forceT2I
+        ? undefined
+        : usingSiblingAnchor
+          ? siblingAnchor!.url
+          : isDefaultLook
+            ? undefined
+            : defaultLookImages[defaultLookImages.length - 1];
 
       if (referenceImageUrl) {
         // ============== 后续 look 走 I2I(以默认 look 的图为视觉锚点)==============
@@ -2892,10 +3037,10 @@ function WorkspacePage() {
             res.url,
             "character",
             c.id,
-            "overwrite",
+            forceT2I ? "append" : "overwrite",
             {
               rawPrompt: `${prompt}\n\nFORBIDDEN (avoid these): ${negativePrompt}`,
-              editablePrompt: characterEditablePrompt(c, null),
+              editablePrompt: editablePrompt || characterEditablePrompt(c, targetLookId ?? null),
               mode: "initial",
             },
           );
@@ -3126,16 +3271,28 @@ function WorkspacePage() {
   // 旧名 openModPanel 保留,避免在多个调用点批量重命名;语义上现在等价于
   // "打开这个角色卡片的预览+编辑"。
   function openScenePreview(s: GenScene) {
+    const history = sceneImagesRef.current[s.id] ?? [];
+    const selected = selectedSceneImagesRef.current[s.id];
+    const currentUrl = selected && history.includes(selected) ? selected : history.at(-1);
+    const currentIndex = currentUrl ? history.indexOf(currentUrl) : -1;
     setScenePreview(s);
     setSceneDetailDraft(null);
-    setSceneModInput(sceneEditablePrompt(s));
+    setSceneModInput(
+      sceneImagePromptsRef.current[s.id]?.[currentIndex]?.editablePrompt || sceneEditablePrompt(s),
+    );
     setSceneModError(null);
   }
 
   function openPropPreview(p: GenProp) {
+    const history = propImagesRef.current[p.id] ?? [];
+    const selected = selectedPropImagesRef.current[p.id];
+    const currentUrl = selected && history.includes(selected) ? selected : history.at(-1);
+    const currentIndex = currentUrl ? history.indexOf(currentUrl) : -1;
     setPropPreview(p);
     setPropDetailDraft(null);
-    setPropModInput(propEditablePrompt(p));
+    setPropModInput(
+      propImagePromptsRef.current[p.id]?.[currentIndex]?.editablePrompt || propEditablePrompt(p),
+    );
     setPropModError(null);
   }
 
@@ -3563,6 +3720,8 @@ function WorkspacePage() {
     replaceExisting = false,
     /** 内部重放完整 API prompt 时使用；详情页的中文提示词正常经模板展开。 */
     rawApiPrompt?: string,
+    /** 当前这张新图的用户可编辑提示词快照，不能覆盖被参考的旧图。 */
+    editablePrompt = characterEditablePrompt(c, lookId),
   ) {
     const lk = lookId == null ? null : (c.looks?.find((x) => x.id === lookId) ?? null);
     const imageKey = lk ? `${c.id}::${lk.id}` : c.id;
@@ -3641,12 +3800,10 @@ function WorkspacePage() {
         updateCharImagePrompts((m) => ({
           ...m,
           [imageKey]: replaceExisting
-            ? [{ rawPrompt: apiPrompt, editablePrompt: characterEditablePrompt(c, lookId), mode }]
-            : [
-                ...(m[imageKey] ?? []),
-                { rawPrompt: apiPrompt, editablePrompt: characterEditablePrompt(c, lookId), mode },
-              ],
+            ? [{ rawPrompt: apiPrompt, editablePrompt, mode }]
+            : [...(m[imageKey] ?? []), { rawPrompt: apiPrompt, editablePrompt, mode }],
         }));
+        setSelectedCharImages((m) => ({ ...m, [imageKey]: displayUrl }));
         const modeLabel =
           mode === "modify"
             ? "已按意见重生"
@@ -3834,7 +3991,10 @@ function WorkspacePage() {
       );
       closeModPanel();
       setModError(null);
-      await processCharacter(editedCharacter);
+      await processCharacter(editedCharacter, {
+        targetLookId: lookId,
+        editablePrompt: instruction,
+      });
       return;
     }
 
@@ -3861,6 +4021,8 @@ function WorkspacePage() {
       currentUrl,
       charModUploadedRefs,
       false,
+      undefined,
+      instruction,
     );
     if (ok) {
       setModInput("");
@@ -3868,6 +4030,53 @@ function WorkspacePage() {
       return;
     } else {
       setModError("生成失败,请重试或换更简单的修改");
+    }
+  }
+
+  /** 角色详情页“重新生成”：不用任何图片参考，按当前编辑后的完整资料走初始 T2I 流程。 */
+  async function submitCharacterDetailT2I() {
+    if (!modPanel) return;
+    const c = modPanel.character;
+    const lookId = modPanel.lookId;
+    const instruction = modInput.trim();
+    if (!instruction) {
+      setModError("请填写角色提示词");
+      return;
+    }
+    const imageKey = modPanel.imageKey;
+    const editedCharacter = applyCharacterAttributeDraft(
+      c,
+      lookId,
+      parseCharacterEditablePrompt(instruction, c, lookId),
+    );
+    setModError(null);
+    setRegenBusyKeys((m) => new Map(m).set(imageKey, "t2i"));
+    try {
+      const beforeCount = charImagesRef.current[imageKey]?.length ?? 0;
+      await processCharacter(editedCharacter, {
+        forceT2I: true,
+        targetLookId: lookId,
+        editablePrompt: instruction,
+      });
+      const newest = charImagesRef.current[imageKey]?.at(-1);
+      if ((charImagesRef.current[imageKey]?.length ?? 0) <= beforeCount || !newest) return;
+      setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              characters: prev.characters.map((item) =>
+                item.id === c.id ? editedCharacter : item,
+              ),
+            }
+          : prev,
+      );
+      setSelectedCharImages((m) => ({ ...m, [imageKey]: newest }));
+    } finally {
+      setRegenBusyKeys((m) => {
+        const next = new Map(m);
+        next.delete(imageKey);
+        return next;
+      });
     }
   }
 
@@ -4056,6 +4265,8 @@ function WorkspacePage() {
     instruction: string,
     /** 可选:用户手动上传的参考图,优先于 history 里的图片 */
     referenceOverride?: string,
+    /** 只归档到本次新图，不能改写当前参考图已有的提示词。 */
+    editablePrompt = sceneEditablePrompt(s),
   ) {
     const history = sceneImages[s.id] ?? [];
     // 2026/07:reference 优先级(对齐 doRegen 角色)
@@ -4104,7 +4315,12 @@ function WorkspacePage() {
         // 2026/06 修复:ARK TOS URL <img> 加载失败，先 await 转 base64
         const base64Url = await toBase64WithFallback(res.url);
         const displayUrl = base64Url ?? res.url;
-        setSceneImages((m) => ({ ...m, [s.id]: [...(m[s.id] ?? []), displayUrl] }));
+        updateSceneImages((m) => ({ ...m, [s.id]: [...(m[s.id] ?? []), displayUrl] }));
+        updateSceneImagePrompts((m) => ({
+          ...m,
+          [s.id]: [...(m[s.id] ?? []), { editablePrompt, mode: "modify" }],
+        }));
+        setSelectedSceneImages((m) => ({ ...m, [s.id]: displayUrl }));
         toast.success(
           mode === "three-view"
             ? "已生成场景三视图"
@@ -4159,6 +4375,7 @@ function WorkspacePage() {
     mode: "modify" | "three-view",
     instruction: string,
     referenceOverride?: string,
+    editablePrompt = propEditablePrompt(p),
   ) {
     const history = propImages[p.id] ?? [];
     const pinned = selectedPropImagesRef.current[p.id];
@@ -4208,7 +4425,12 @@ function WorkspacePage() {
         // 2026/06 修复:ARK TOS URL <img> 加载失败，先 await 转 base64
         const base64Url = await toBase64WithFallback(res.url);
         const displayUrl = base64Url ?? res.url;
-        setPropImages((m) => ({ ...m, [p.id]: [...(m[p.id] ?? []), displayUrl] }));
+        updatePropImages((m) => ({ ...m, [p.id]: [...(m[p.id] ?? []), displayUrl] }));
+        updatePropImagePrompts((m) => ({
+          ...m,
+          [p.id]: [...(m[p.id] ?? []), { editablePrompt, mode: "modify" }],
+        }));
+        setSelectedPropImages((m) => ({ ...m, [p.id]: displayUrl }));
         toast.success(mode === "three-view" ? "已生成道具三视图" : "已按意见重生");
         return true;
       }
@@ -4277,7 +4499,10 @@ function WorkspacePage() {
       closePropModPanel();
       setPropModInput("");
       setPropModError(null);
-      await genPropImage({ ...p, description: instruction, name: instruction.slice(0, 30) });
+      await genPropImage(
+        { ...p, description: instruction, name: instruction.slice(0, 30) },
+        instruction,
+      );
       return;
     }
     setPropModBusy(true);
@@ -4330,7 +4555,10 @@ function WorkspacePage() {
       closeSceneModPanel();
       setSceneModInput("");
       setSceneModError(null);
-      await genSceneImage({ ...s, slug: instruction.slice(0, 60), action: instruction });
+      await genSceneImage(
+        { ...s, slug: instruction.slice(0, 60), action: instruction },
+        instruction,
+      );
       return;
     }
     setSceneModBusy(true);
@@ -4357,6 +4585,7 @@ function WorkspacePage() {
       "modify",
       instruction,
       sceneModUploadedRef ?? undefined,
+      instruction,
     );
     if (!ok) {
       setSceneModError("生成失败,请重试或换更简单的修改");
@@ -4374,6 +4603,36 @@ function WorkspacePage() {
     toast.success("已按资料和修改意见重生场景图");
   }
 
+  /** 场景详情页“重新生成”：不使用现有图片，按当前编辑后的资料走初始 T2I。 */
+  async function submitSceneDetailT2I(s: GenScene) {
+    const instruction = sceneModInput.trim();
+    if (!instruction) {
+      setSceneModError("请输入提示词");
+      return;
+    }
+    const editedScene = applySceneEditablePrompt(s, instruction);
+    setSceneModError(null);
+    setRegenBusyKeys((m) => new Map(m).set(s.id, "t2i"));
+    try {
+      const beforeCount = sceneImagesRef.current[s.id]?.length ?? 0;
+      await genSceneImage(editedScene, instruction);
+      const newest = sceneImagesRef.current[s.id]?.at(-1);
+      if ((sceneImagesRef.current[s.id]?.length ?? 0) <= beforeCount || !newest) return;
+      setData((prev) =>
+        prev
+          ? { ...prev, scenes: prev.scenes.map((item) => (item.id === s.id ? editedScene : item)) }
+          : prev,
+      );
+      setSelectedSceneImages((m) => ({ ...m, [s.id]: newest }));
+    } finally {
+      setRegenBusyKeys((m) => {
+        const next = new Map(m);
+        next.delete(s.id);
+        return next;
+      });
+    }
+  }
+
   async function submitPropDetailRegen(p: GenProp) {
     const instruction = propModInput.trim();
     if (!instruction) {
@@ -4387,6 +4646,7 @@ function WorkspacePage() {
       "modify",
       instruction,
       propModUploadedRef ?? undefined,
+      instruction,
     );
     if (!ok) {
       setPropModError("生成失败,请重试或换更简单的修改");
@@ -4402,6 +4662,36 @@ function WorkspacePage() {
     );
     setPropModInput("");
     toast.success("已按资料和修改意见重生道具图");
+  }
+
+  /** 道具详情页“重新生成”：不使用现有图片，按当前编辑后的资料走初始 T2I。 */
+  async function submitPropDetailT2I(p: GenProp) {
+    const instruction = propModInput.trim();
+    if (!instruction) {
+      setPropModError("请输入提示词");
+      return;
+    }
+    const editedProp = applyPropEditablePrompt(p, instruction);
+    setPropModError(null);
+    setRegenBusyKeys((m) => new Map(m).set(p.id, "t2i"));
+    try {
+      const beforeCount = propImagesRef.current[p.id]?.length ?? 0;
+      await genPropImage(editedProp, instruction);
+      const newest = propImagesRef.current[p.id]?.at(-1);
+      if ((propImagesRef.current[p.id]?.length ?? 0) <= beforeCount || !newest) return;
+      setData((prev) =>
+        prev
+          ? { ...prev, props: prev.props.map((item) => (item.id === p.id ? editedProp : item)) }
+          : prev,
+      );
+      setSelectedPropImages((m) => ({ ...m, [p.id]: newest }));
+    } finally {
+      setRegenBusyKeys((m) => {
+        const next = new Map(m);
+        next.delete(p.id);
+        return next;
+      });
+    }
   }
 
   async function genPanelImage(p: StoryboardPanel) {
@@ -7138,9 +7428,11 @@ function WorkspacePage() {
         sceneImages: Object.fromEntries(
           Object.entries(sceneImagesRef.current).map(([k, v]) => [k, keepArr(v)]),
         ),
+        sceneImagePrompts: sceneImagePromptsRef.current,
         propImages: Object.fromEntries(
           Object.entries(propImagesRef.current).map(([k, v]) => [k, keepArr(v)]),
         ),
+        propImagePrompts: propImagePromptsRef.current,
         panelImages: Object.fromEntries(
           Object.entries(panelImages).map(([k, v]) => [k, keepNonEmpty(v)]),
         ),
@@ -7276,7 +7568,13 @@ function WorkspacePage() {
       .join("|"),
     shotImgs: Object.keys(shotImages).length,
     sceneImgs: Object.keys(sceneImages).length,
+    scenePromptsHash: Object.values(sceneImagePrompts)
+      .map((arr) => (arr ?? []).map((record) => record.editablePrompt).join(","))
+      .join("|"),
     propImgs: Object.keys(propImages).length,
+    propPromptsHash: Object.values(propImagePrompts)
+      .map((arr) => (arr ?? []).map((record) => record.editablePrompt).join(","))
+      .join("|"),
     panelImgs: Object.keys(panelImages).length,
     groupVids: Object.entries(groupVideos)
       .map(([k, arr]) => `${k}:${(arr ?? []).map((v) => v.status).join(",")}`)
@@ -8943,6 +9241,7 @@ function WorkspacePage() {
                               const sceneRegenMode = regenBusyKeys.get(s.id);
                               const isRegening = sceneRegenMode !== undefined;
                               const sceneImgCount = history.length;
+                              const isUploading = uploadingImageKeys.has(`scene:${s.id}`);
                               // 2026/06:跟角色 selectedCharImages 对称 —— 选中的图作封面
                               const pinned = selectedSceneImages[s.id];
                               const coverUrl =
@@ -9000,51 +9299,17 @@ function WorkspacePage() {
                                         {sceneImgCount} 张
                                       </span>
                                     )}
-                                    {/* 2026/06:跟角色卡对齐 —— "已选为推荐" 角标 + 右上"选中"按钮 */}
+                                    {/* 当前封面已被详情页中的缩略图选中。 */}
                                     {isPinned && (
                                       <div className="absolute top-1.5 right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent text-accent-foreground text-[10px] font-bold shadow-md">
-                                        <Target size={10} /> 已选为推荐
+                                        <Check size={10} /> 选中
                                       </div>
                                     )}
-                                    {hasImg && !isRegening && (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          // 互斥:同 sceneId 只能选 1 张,这里选/取消切换
-                                          if (isPinned) {
-                                            setSelectedSceneImages((m) => {
-                                              const { [s.id]: _omit, ...rest } = m;
-                                              return rest;
-                                            });
-                                          } else {
-                                            setSelectedSceneImages((m) => ({
-                                              ...m,
-                                              [s.id]: coverUrl!,
-                                            }));
-                                          }
-                                        }}
-                                        title={
-                                          isPinned
-                                            ? "已选中此图作为场景 reference,再点取消"
-                                            : "把这张设为场景 reference(分镜/故事板/按意见重生都会用)"
-                                        }
-                                        className={`absolute bottom-1.5 right-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium backdrop-blur-sm transition ${
-                                          isPinned
-                                            ? "bg-accent text-accent-foreground shadow-sm"
-                                            : "bg-black/70 text-white hover:bg-black/90"
-                                        }`}
-                                      >
-                                        {isPinned ? (
-                                          <>
-                                            <Check size={10} /> 已选中
-                                          </>
-                                        ) : (
-                                          <>
-                                            <Target size={10} /> 设为推荐
-                                          </>
-                                        )}
-                                      </button>
+                                    {isUploading && (
+                                      <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-black/55 text-white backdrop-blur-sm">
+                                        <Loader2 size={22} className="animate-spin" />
+                                        <span className="text-[10px]">上传中…</span>
+                                      </div>
                                     )}
                                     {/* 上传本地图片按钮 */}
                                     {!hasImg ? (
@@ -9184,7 +9449,11 @@ function WorkspacePage() {
                                           ? "正在生成三视图…"
                                           : sceneRegenMode === "directional-views"
                                             ? "正在生成方向多视角…"
-                                            : "正在重生…"}
+                                            : sceneRegenMode === "modify"
+                                              ? "正在局部修改…"
+                                              : sceneRegenMode === "t2i"
+                                                ? "正在重新生成…"
+                                                : "正在重生…"}
                                       </div>
                                       <div className="text-[10px] text-white/60 leading-snug">
                                         生成中请勿关闭页面
@@ -9258,6 +9527,7 @@ function WorkspacePage() {
                               const propRegenMode = regenBusyKeys.get(p.id);
                               const isRegening = propRegenMode !== undefined;
                               const propImgCount = history.length;
+                              const isUploading = uploadingImageKeys.has(`prop:${p.id}`);
                               const pinned = selectedPropImages[p.id];
                               const coverUrl =
                                 pinned && history.includes(pinned) ? pinned : history.at(-1);
@@ -9372,58 +9642,15 @@ function WorkspacePage() {
                                     )}
                                     {isPinned && (
                                       <div className="absolute top-1.5 right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent text-accent-foreground text-[10px] font-bold shadow-md">
-                                        <Target size={10} /> 已选为推荐
+                                        <Check size={10} /> 选中
                                       </div>
                                     )}
-                                    {hasImg && !isRegening && (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          if (isPinned) {
-                                            setSelectedPropImages((m) => {
-                                              const { [p.id]: _omit, ...rest } = m;
-                                              return rest;
-                                            });
-                                          } else {
-                                            setSelectedPropImages((m) => ({
-                                              ...m,
-                                              [p.id]: coverUrl!,
-                                            }));
-                                          }
-                                        }}
-                                        title={
-                                          isPinned ? "已选中,再点取消" : "把这张设为道具 reference"
-                                        }
-                                        className={`absolute bottom-1.5 right-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium backdrop-blur-sm transition ${
-                                          isPinned
-                                            ? "bg-accent text-accent-foreground shadow-sm"
-                                            : "bg-black/70 text-white hover:bg-black/90"
-                                        }`}
-                                      >
-                                        {isPinned ? (
-                                          <>
-                                            <Check size={10} /> 已选中
-                                          </>
-                                        ) : (
-                                          <>
-                                            <Target size={10} /> 设为推荐
-                                          </>
-                                        )}
-                                      </button>
+                                    {isUploading && (
+                                      <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-black/55 text-white backdrop-blur-sm">
+                                        <Loader2 size={22} className="animate-spin" />
+                                        <span className="text-[10px]">上传中…</span>
+                                      </div>
                                     )}
-                                    {/* 上传本地图片按钮 */}
-                                    <button
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleUploadImage("prop", p.id, p.id);
-                                      }}
-                                      className="absolute bottom-1.5 left-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] hover:bg-accent hover:text-accent-foreground transition backdrop-blur-sm"
-                                      title="上传本地图片覆盖"
-                                    >
-                                      <Upload size={10} /> 上传
-                                    </button>
                                   </div>
 
                                   {/* Text area */}
@@ -9492,7 +9719,11 @@ function WorkspacePage() {
                                       <div className="text-sm font-medium leading-snug">
                                         {propRegenMode === "three-view"
                                           ? "正在生成三视图…"
-                                          : "正在重生…"}
+                                          : propRegenMode === "modify"
+                                            ? "正在局部修改…"
+                                            : propRegenMode === "t2i"
+                                              ? "正在重新生成…"
+                                              : "正在重生…"}
                                       </div>
                                       <div className="text-[10px] text-white/60 leading-snug">
                                         生成中请勿关闭页面
@@ -9616,6 +9847,7 @@ function WorkspacePage() {
                               //   都不在:没排上(其他角色在画、或本角色所有 look 都好了)
                               const isActive = activeImageKey === imageKey;
                               const isQueued = !isActive && busyChars.has(c.id);
+                              const isUploading = uploadingImageKeys.has(`character:${imageKey}`);
                               // I2I 重生(按意见 / 三视图 / 多维资产)是否在这张卡上跑,
                               // 跑了就显示黑屏遮罩 + 对应模式的提示文字。
                               const regenMode = regenBusyKeys.get(imageKey);
@@ -9626,8 +9858,10 @@ function WorkspacePage() {
                                   : regenMode === "multi-asset"
                                     ? "正在生成多维资产图…"
                                     : regenMode === "modify"
-                                      ? "正在按意见重生…"
-                                      : "正在生成…";
+                                      ? "正在局部修改…"
+                                      : regenMode === "t2i"
+                                        ? "正在重新生成…"
+                                        : "正在生成…";
                               // 2026/06:per-episode roleLabel override —— ep 切换时若
                               // 该 GenCharacter 在该集有不同 roleLabel,这里会读到 override 后的版本
                               const effectiveRoleLabel = getEffectiveRoleLabel(
@@ -9794,6 +10028,12 @@ function WorkspacePage() {
                                         <Upload size={10} /> 上传
                                       </button>
                                     )}
+                                    {isUploading && (
+                                      <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-black/55 text-white backdrop-blur-sm">
+                                        <Loader2 size={22} className="animate-spin" />
+                                        <span className="text-[10px]">上传中…</span>
+                                      </div>
+                                    )}
                                     {/* "选中" 按钮(钉住当前展示图作为该 look 在分镜里的 reference)
                                     - 2026/06:始终可见(不再 opacity-70),让用户在不 hover
                                       的情况下也能直接看到/操作"选中"状态
@@ -9826,7 +10066,7 @@ function WorkspacePage() {
                                       >
                                         {selectedCharImages[imageKey] ? (
                                           <>
-                                            <Check size={10} /> 已选中
+                                            <Check size={10} /> 选中
                                           </>
                                         ) : (
                                           <>
@@ -10934,7 +11174,7 @@ function WorkspacePage() {
                             </div>
                             {getActiveStoryboard(g.id)?.status === "succeeded" &&
                             getActiveStoryboard(g.id)?.url ? (
-                            <div className="relative group rounded border border-accent/30 overflow-hidden bg-bg-base flex items-center justify-center">
+                              <div className="relative group rounded border border-accent/30 overflow-hidden bg-bg-base flex items-center justify-center">
                                 {/* eslint-disable-next-line @next/next/no-img-element */}
                                 <img
                                   src={getActiveStoryboard(g.id)!.url}
@@ -11068,296 +11308,302 @@ function WorkspacePage() {
                               技术设定。复古烫金边框,深色调背景。
                             </p>
                           </div>
-                        {/* 视频与故事板同排,各占下排一半 */}
-                        <div className="md:col-span-3 rounded-lg border border-border bg-bg-base/40 p-3 space-y-2">
-                          {(() => {
-                            const videoEntry = getActiveVideoEntry(g.id);
-                            const vidEntries = groupVideos[g.id] ?? [];
-                            const isVideoRunning =
-                              vidEntries.length > 0 &&
-                              vidEntries[vidEntries.length - 1].status === "running";
-                            const runningEntry = isVideoRunning
-                              ? vidEntries[vidEntries.length - 1]
-                              : undefined;
-                            const activeIdx = selectedVideoIndex[g.id] ?? vidEntries.length - 1;
-                            return (
-                              <>
-                                <div className="flex items-center justify-between">
-                                  <div className="text-[10px] tracking-widest uppercase text-text-muted">
-                                    视频 · Video
-                                  </div>
-                                  {videoEntry?.status === "succeeded" ? (
-                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-accent/15 text-accent border border-accent/30">
-                                      已生成
-                                    </span>
-                                  ) : videoEntry?.status === "running" ? (
-                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-elevated border border-border text-text-muted">
-                                      生成中…
-                                    </span>
-                                  ) : videoEntry?.status === "failed" ? (
-                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-500 border border-rose-500/30">
-                                      失败
-                                    </span>
-                                  ) : (
-                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-elevated border border-border text-text-muted">
-                                      未生成
-                                    </span>
-                                  )}
-                                </div>
-                                {/* 视频区 */}
-                                {videoEntry?.status === "succeeded" && videoEntry?.url ? (
-                                  <div className="relative group w-full max-w-[520px] rounded border border-accent/30 overflow-hidden bg-black aspect-video mx-auto">
-                                    <video
-                                      src={videoEntry.url}
-                                      controls
-                                      loop
-                                      playsInline
-                                      className="w-full h-full object-contain block"
-                                    />
-                                    <div className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition flex gap-1">
-                                      <a
-                                        href={videoEntry.url}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="px-1.5 py-0.5 rounded bg-black/70 text-white text-[10px] hover:bg-black/90"
-                                        title="在新标签页打开原视频"
-                                      >
-                                        ↗
-                                      </a>
-                                      <button
-                                        type="button"
-                                        onClick={() => void generateVideoForGroup(g.id)}
-                                        className="px-1.5 py-0.5 rounded bg-black/70 text-white text-[10px] hover:bg-black/90"
-                                        title="重新生成视频"
-                                      >
-                                        <RefreshCw size={9} className="inline -mt-0.5" />
-                                      </button>
+                          {/* 视频与故事板同排,各占下排一半 */}
+                          <div className="md:col-span-3 rounded-lg border border-border bg-bg-base/40 p-3 space-y-2">
+                            {(() => {
+                              const videoEntry = getActiveVideoEntry(g.id);
+                              const vidEntries = groupVideos[g.id] ?? [];
+                              const isVideoRunning =
+                                vidEntries.length > 0 &&
+                                vidEntries[vidEntries.length - 1].status === "running";
+                              const runningEntry = isVideoRunning
+                                ? vidEntries[vidEntries.length - 1]
+                                : undefined;
+                              const activeIdx = selectedVideoIndex[g.id] ?? vidEntries.length - 1;
+                              return (
+                                <>
+                                  <div className="flex items-center justify-between">
+                                    <div className="text-[10px] tracking-widest uppercase text-text-muted">
+                                      视频 · Video
                                     </div>
+                                    {videoEntry?.status === "succeeded" ? (
+                                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-accent/15 text-accent border border-accent/30">
+                                        已生成
+                                      </span>
+                                    ) : videoEntry?.status === "running" ? (
+                                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-elevated border border-border text-text-muted">
+                                        生成中…
+                                      </span>
+                                    ) : videoEntry?.status === "failed" ? (
+                                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-500 border border-rose-500/30">
+                                        失败
+                                      </span>
+                                    ) : (
+                                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-elevated border border-border text-text-muted">
+                                        未生成
+                                      </span>
+                                    )}
                                   </div>
-                                ) : videoEntry?.status === "running" ? (
-                                  <div className="w-full max-w-[520px] aspect-video rounded border border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted mx-auto">
-                                    <Loader2 size={20} className="animate-spin text-accent" />
-                                    <span className="text-[10px]">视频生成中…</span>
-                                    <span className="text-[9px] opacity-70">约 1-3 分钟</span>
-                                  </div>
-                                ) : (
-                                  <div className="w-full max-w-[520px] aspect-video rounded border border-dashed border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted mx-auto">
-                                    <Camera size={20} className="opacity-40" />
-                                    <span className="text-[10px]">视频占位</span>
-                                    <span className="text-[9px] opacity-70">
-                                      整组合成 · {g.shots.length} 个镜头 · 约{" "}
-                                      {(g.endSec - g.startSec).toFixed(0)}s
-                                    </span>
-                                  </div>
-                                )}
-                                {/* 版本历史切换器 */}
-                                {vidEntries.length > 1 && (
-                                  <div className="flex items-center gap-1 overflow-x-auto pb-0.5">
-                                    {vidEntries.map((entry, vi) => (
-                                      <button
-                                        key={vi}
-                                        type="button"
-                                        onClick={() => {
-                                          setGroupVideoFailures((current) => {
-                                            const { [g.id]: _, ...rest } = current;
-                                            return rest;
-                                          });
-                                          setSelectedVideoIndex((s) => ({ ...s, [g.id]: vi }));
-                                        }}
-                                        className={`shrink-0 text-[10px] px-2 py-0.5 rounded border transition ${
-                                          vi === activeIdx
-                                            ? "border-accent bg-accent/15 text-accent"
-                                            : "border-border bg-bg-elevated text-text-muted hover:border-accent/60"
-                                        }`}
-                                        title={`视频 #${vi + 1}${
-                                          entry.method === "storyboard"
-                                            ? "（按故事板）"
-                                            : entry.method === "shots"
-                                              ? "（按分镜图）"
-                                              : ""
-                                        }`}
-                                      >
-                                        视频 #{vi + 1}
-                                        {vi === vidEntries.length - 1 &&
-                                          entry.status === "succeeded" && (
-                                            <span className="ml-1 text-[8px] text-accent">NEW</span>
-                                          )}
-                                      </button>
-                                    ))}
-                                  </div>
-                                )}
-                                {/* 触发按钮:只有当组里至少有一张分镜图时才点亮 */}
-                                {(() => {
-                                  const hasAnyShotImage = g.shots.some((s) => {
-                                    const key = `${g.id}::${s.id}`;
-                                    const gens = shotImages[key] ?? [];
-                                    const hasUrl = !!(gens.length
-                                      ? gens[gens.length - 1]
-                                      : s.imageUrl);
-                                    // 同 allShotsHaveImage:url 存在但图加载失败 = 视为无图
-                                    return hasUrl && !brokenShotImages.has(key);
-                                  });
-                                  if (!hasAnyShotImage) {
-                                    return (
-                                      <p className="text-[10px] text-text-muted leading-relaxed">
-                                        需先生成该组至少一张分镜图,才能按分镜图生成视频。
-                                      </p>
-                                    );
-                                  }
-                                  return (
-                                    <div className="w-full inline-flex items-center gap-1">
-                                      <button
-                                        type="button"
-                                        onClick={() => void generateVideoForGroup(g.id)}
-                                        disabled={isVideoRunning}
-                                        className="flex-1 text-[10px] py-1 rounded border border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent transition disabled:opacity-40 inline-flex items-center justify-center gap-1"
-                                      >
-                                        {isVideoRunning ? (
-                                          <span className="inline-flex items-center gap-1.5">
-                                            <Loader2 size={9} className="animate-spin" />
-                                            视频生成中…{" "}
-                                            {runningEntry?.startedAt
-                                              ? formatElapsed(
-                                                  (Date.now() - runningEntry.startedAt!) / 1000,
-                                                )
-                                              : ""}
-                                            <span className="opacity-50 ml-1">· 预计 3-5 分钟</span>
-                                          </span>
-                                        ) : videoEntry?.status === "succeeded" ? (
-                                          <>
-                                            <RefreshCw size={9} /> 按分镜图重新生成视频
-                                          </>
-                                        ) : (
-                                          <>
-                                            <Camera size={9} /> 按分镜图生成视频
-                                          </>
-                                        )}
-                                      </button>
-                                      {isVideoRunning && (
+                                  {/* 视频区 */}
+                                  {videoEntry?.status === "succeeded" && videoEntry?.url ? (
+                                    <div className="relative group w-full max-w-[520px] rounded border border-accent/30 overflow-hidden bg-black aspect-video mx-auto">
+                                      <video
+                                        src={videoEntry.url}
+                                        controls
+                                        loop
+                                        playsInline
+                                        className="w-full h-full object-contain block"
+                                      />
+                                      <div className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition flex gap-1">
+                                        <a
+                                          href={videoEntry.url}
+                                          target="_blank"
+                                          rel="noreferrer"
+                                          className="px-1.5 py-0.5 rounded bg-black/70 text-white text-[10px] hover:bg-black/90"
+                                          title="在新标签页打开原视频"
+                                        >
+                                          ↗
+                                        </a>
                                         <button
                                           type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            cancelVideoGen(g.id);
-                                          }}
-                                          className="shrink-0 text-[10px] py-1 px-1.5 rounded border border-border text-text-secondary hover:border-rose-400 hover:text-rose-400 transition inline-flex items-center"
-                                          title="取消生成"
+                                          onClick={() => void generateVideoForGroup(g.id)}
+                                          className="px-1.5 py-0.5 rounded bg-black/70 text-white text-[10px] hover:bg-black/90"
+                                          title="重新生成视频"
                                         >
-                                          <X size={10} />
+                                          <RefreshCw size={9} className="inline -mt-0.5" />
                                         </button>
-                                      )}
+                                      </div>
                                     </div>
-                                  );
-                                })()}
-                                {/* 2026/06 新增:按故事板图生成视频(并列第二个按钮)。
+                                  ) : videoEntry?.status === "running" ? (
+                                    <div className="w-full max-w-[520px] aspect-video rounded border border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted mx-auto">
+                                      <Loader2 size={20} className="animate-spin text-accent" />
+                                      <span className="text-[10px]">视频生成中…</span>
+                                      <span className="text-[9px] opacity-70">约 1-3 分钟</span>
+                                    </div>
+                                  ) : (
+                                    <div className="w-full max-w-[520px] aspect-video rounded border border-dashed border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted mx-auto">
+                                      <Camera size={20} className="opacity-40" />
+                                      <span className="text-[10px]">视频占位</span>
+                                      <span className="text-[9px] opacity-70">
+                                        整组合成 · {g.shots.length} 个镜头 · 约{" "}
+                                        {(g.endSec - g.startSec).toFixed(0)}s
+                                      </span>
+                                    </div>
+                                  )}
+                                  {/* 版本历史切换器 */}
+                                  {vidEntries.length > 1 && (
+                                    <div className="flex items-center gap-1 overflow-x-auto pb-0.5">
+                                      {vidEntries.map((entry, vi) => (
+                                        <button
+                                          key={vi}
+                                          type="button"
+                                          onClick={() => {
+                                            setGroupVideoFailures((current) => {
+                                              const { [g.id]: _, ...rest } = current;
+                                              return rest;
+                                            });
+                                            setSelectedVideoIndex((s) => ({ ...s, [g.id]: vi }));
+                                          }}
+                                          className={`shrink-0 text-[10px] px-2 py-0.5 rounded border transition ${
+                                            vi === activeIdx
+                                              ? "border-accent bg-accent/15 text-accent"
+                                              : "border-border bg-bg-elevated text-text-muted hover:border-accent/60"
+                                          }`}
+                                          title={`视频 #${vi + 1}${
+                                            entry.method === "storyboard"
+                                              ? "（按故事板）"
+                                              : entry.method === "shots"
+                                                ? "（按分镜图）"
+                                                : ""
+                                          }`}
+                                        >
+                                          视频 #{vi + 1}
+                                          {vi === vidEntries.length - 1 &&
+                                            entry.status === "succeeded" && (
+                                              <span className="ml-1 text-[8px] text-accent">
+                                                NEW
+                                              </span>
+                                            )}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {/* 触发按钮:只有当组里至少有一张分镜图时才点亮 */}
+                                  {(() => {
+                                    const hasAnyShotImage = g.shots.some((s) => {
+                                      const key = `${g.id}::${s.id}`;
+                                      const gens = shotImages[key] ?? [];
+                                      const hasUrl = !!(gens.length
+                                        ? gens[gens.length - 1]
+                                        : s.imageUrl);
+                                      // 同 allShotsHaveImage:url 存在但图加载失败 = 视为无图
+                                      return hasUrl && !brokenShotImages.has(key);
+                                    });
+                                    if (!hasAnyShotImage) {
+                                      return (
+                                        <p className="text-[10px] text-text-muted leading-relaxed">
+                                          需先生成该组至少一张分镜图,才能按分镜图生成视频。
+                                        </p>
+                                      );
+                                    }
+                                    return (
+                                      <div className="w-full inline-flex items-center gap-1">
+                                        <button
+                                          type="button"
+                                          onClick={() => void generateVideoForGroup(g.id)}
+                                          disabled={isVideoRunning}
+                                          className="flex-1 text-[10px] py-1 rounded border border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent transition disabled:opacity-40 inline-flex items-center justify-center gap-1"
+                                        >
+                                          {isVideoRunning ? (
+                                            <span className="inline-flex items-center gap-1.5">
+                                              <Loader2 size={9} className="animate-spin" />
+                                              视频生成中…{" "}
+                                              {runningEntry?.startedAt
+                                                ? formatElapsed(
+                                                    (Date.now() - runningEntry.startedAt!) / 1000,
+                                                  )
+                                                : ""}
+                                              <span className="opacity-50 ml-1">
+                                                · 预计 3-5 分钟
+                                              </span>
+                                            </span>
+                                          ) : videoEntry?.status === "succeeded" ? (
+                                            <>
+                                              <RefreshCw size={9} /> 按分镜图重新生成视频
+                                            </>
+                                          ) : (
+                                            <>
+                                              <Camera size={9} /> 按分镜图生成视频
+                                            </>
+                                          )}
+                                        </button>
+                                        {isVideoRunning && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              cancelVideoGen(g.id);
+                                            }}
+                                            className="shrink-0 text-[10px] py-1 px-1.5 rounded border border-border text-text-secondary hover:border-rose-400 hover:text-rose-400 transition inline-flex items-center"
+                                            title="取消生成"
+                                          >
+                                            <X size={10} />
+                                          </button>
+                                        )}
+                                      </div>
+                                    );
+                                  })()}
+                                  {/* 2026/06 新增:按故事板图生成视频(并列第二个按钮)。
                               用 storyboard image 作 first_frame,plot text 作叙事参考。
                               前置条件:故事板已生成。 */}
-                                {(() => {
-                                  const sb = getActiveStoryboard(g.id);
-                                  const hasStoryboard = sb?.status === "succeeded" && !!sb.url;
-                                  if (!hasStoryboard) {
+                                  {(() => {
+                                    const sb = getActiveStoryboard(g.id);
+                                    const hasStoryboard = sb?.status === "succeeded" && !!sb.url;
+                                    if (!hasStoryboard) {
+                                      return (
+                                        <p className="text-[10px] text-text-muted leading-relaxed">
+                                          需先生成该组的故事板,才能用故事板生成视频。
+                                        </p>
+                                      );
+                                    }
                                     return (
-                                      <p className="text-[10px] text-text-muted leading-relaxed">
-                                        需先生成该组的故事板,才能用故事板生成视频。
-                                      </p>
-                                    );
-                                  }
-                                  return (
-                                    <div className="w-full inline-flex items-center gap-1">
-                                      <button
-                                        type="button"
-                                        onClick={() =>
-                                          void generateVideoFromStoryboardForGroup(g.id)
-                                        }
-                                        disabled={isVideoRunning}
-                                        className="flex-1 text-[10px] py-1 rounded border border-accent/60 bg-accent-dim/20 text-accent hover:border-accent hover:bg-accent-dim/40 transition disabled:opacity-40 inline-flex items-center justify-center gap-1"
-                                        title="基于故事板图(作为视觉锚)+ 剧情文字(作叙事参考)生成视频"
-                                      >
-                                        {isVideoRunning ? (
-                                          <span className="inline-flex items-center gap-1.5">
-                                            <Loader2 size={9} className="animate-spin" />
-                                            视频生成中…{" "}
-                                            {runningEntry?.startedAt
-                                              ? formatElapsed(
-                                                  (Date.now() - runningEntry.startedAt!) / 1000,
-                                                )
-                                              : ""}
-                                            <span className="opacity-50 ml-1">· 预计 3-5 分钟</span>
-                                          </span>
-                                        ) : videoEntry?.status === "succeeded" ? (
-                                          <>
-                                            <RefreshCw size={9} /> 按故事板重新生成视频
-                                          </>
-                                        ) : (
-                                          <>
-                                            <LayoutGrid size={9} /> 按故事板生成视频
-                                          </>
-                                        )}
-                                      </button>
-                                      {isVideoRunning && (
+                                      <div className="w-full inline-flex items-center gap-1">
                                         <button
                                           type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            cancelVideoGen(g.id);
-                                          }}
-                                          className="shrink-0 text-[10px] py-1 px-1.5 rounded border border-border text-text-secondary hover:border-rose-400 hover:text-rose-400 transition inline-flex items-center"
-                                          title="取消生成"
+                                          onClick={() =>
+                                            void generateVideoFromStoryboardForGroup(g.id)
+                                          }
+                                          disabled={isVideoRunning}
+                                          className="flex-1 text-[10px] py-1 rounded border border-accent/60 bg-accent-dim/20 text-accent hover:border-accent hover:bg-accent-dim/40 transition disabled:opacity-40 inline-flex items-center justify-center gap-1"
+                                          title="基于故事板图(作为视觉锚)+ 剧情文字(作叙事参考)生成视频"
                                         >
-                                          <X size={10} />
+                                          {isVideoRunning ? (
+                                            <span className="inline-flex items-center gap-1.5">
+                                              <Loader2 size={9} className="animate-spin" />
+                                              视频生成中…{" "}
+                                              {runningEntry?.startedAt
+                                                ? formatElapsed(
+                                                    (Date.now() - runningEntry.startedAt!) / 1000,
+                                                  )
+                                                : ""}
+                                              <span className="opacity-50 ml-1">
+                                                · 预计 3-5 分钟
+                                              </span>
+                                            </span>
+                                          ) : videoEntry?.status === "succeeded" ? (
+                                            <>
+                                              <RefreshCw size={9} /> 按故事板重新生成视频
+                                            </>
+                                          ) : (
+                                            <>
+                                              <LayoutGrid size={9} /> 按故事板生成视频
+                                            </>
+                                          )}
                                         </button>
-                                      )}
-                                    </div>
-                                  );
-                                })()}
-                                <input
-                                  type="file"
-                                  accept="video/mp4,video/webm,video/quicktime"
-                                  id={"video-upload-" + g.id}
-                                  className="hidden"
-                                  onChange={async (e) => {
-                                    const file = e.target.files?.[0];
-                                    if (!file) return;
-                                    try {
-                                      const base64 = await new Promise<string>(
-                                        (resolve, reject) => {
-                                          const reader = new FileReader();
-                                          reader.onload = () => resolve(reader.result as string);
-                                          reader.onerror = reject;
-                                          reader.readAsDataURL(file);
-                                        },
-                                      );
-                                      const res = await callUploadImage({
-                                        data: { base64, id: g.id, kind: "video" },
-                                      });
-                                      if (res.ok && res.url) {
-                                        setGroupVideos((m) => ({
-                                          ...m,
-                                          [g.id]: [
-                                            ...(m[g.id] ?? []),
-                                            { url: res.url!, status: "succeeded" },
-                                          ],
-                                        }));
-                                        toast.success("视频已上传");
-                                        void handleSaveWorkspace();
-                                      } else {
-                                        toast.error(res?.error || "上传失败");
+                                        {isVideoRunning && (
+                                          <button
+                                            type="button"
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              cancelVideoGen(g.id);
+                                            }}
+                                            className="shrink-0 text-[10px] py-1 px-1.5 rounded border border-border text-text-secondary hover:border-rose-400 hover:text-rose-400 transition inline-flex items-center"
+                                            title="取消生成"
+                                          >
+                                            <X size={10} />
+                                          </button>
+                                        )}
+                                      </div>
+                                    );
+                                  })()}
+                                  <input
+                                    type="file"
+                                    accept="video/mp4,video/webm,video/quicktime"
+                                    id={"video-upload-" + g.id}
+                                    className="hidden"
+                                    onChange={async (e) => {
+                                      const file = e.target.files?.[0];
+                                      if (!file) return;
+                                      try {
+                                        const base64 = await new Promise<string>(
+                                          (resolve, reject) => {
+                                            const reader = new FileReader();
+                                            reader.onload = () => resolve(reader.result as string);
+                                            reader.onerror = reject;
+                                            reader.readAsDataURL(file);
+                                          },
+                                        );
+                                        const res = await callUploadImage({
+                                          data: { base64, id: g.id, kind: "video" },
+                                        });
+                                        if (res.ok && res.url) {
+                                          setGroupVideos((m) => ({
+                                            ...m,
+                                            [g.id]: [
+                                              ...(m[g.id] ?? []),
+                                              { url: res.url!, status: "succeeded" },
+                                            ],
+                                          }));
+                                          toast.success("视频已上传");
+                                          void handleSaveWorkspace();
+                                        } else {
+                                          toast.error(res?.error || "上传失败");
+                                        }
+                                      } catch {
+                                        toast.error("视频上传失败");
                                       }
-                                    } catch {
-                                      toast.error("视频上传失败");
-                                    }
-                                  }}
-                                />
-                                <label
-                                  htmlFor={"video-upload-" + g.id}
-                                  className="w-full text-[10px] py-1 rounded border border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent transition cursor-pointer inline-flex items-center justify-center gap-1"
-                                >
-                                  <Upload size={9} /> 上传视频
-                                </label>
-                              </>
-                            );
-                          })()}
-                        </div>
+                                    }}
+                                  />
+                                  <label
+                                    htmlFor={"video-upload-" + g.id}
+                                    className="w-full text-[10px] py-1 rounded border border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent transition cursor-pointer inline-flex items-center justify-center gap-1"
+                                  >
+                                    <Upload size={9} /> 上传视频
+                                  </label>
+                                </>
+                              );
+                            })()}
+                          </div>
                         </div>
                       </div>
                     );
@@ -11568,10 +11814,10 @@ function WorkspacePage() {
                             >
                               {selectedCharImages[imageKey] === u ? (
                                 <>
-                                  <Check size={9} /> 已选中
+                                  <Check size={9} /> 选中
                                 </>
                               ) : (
-                                "未选中"
+                                "未选"
                               )}
                             </span>
                           </div>
@@ -11765,18 +12011,9 @@ function WorkspacePage() {
                           <textarea
                             value={modInput}
                             onChange={(e) => {
-                              const editablePrompt = e.target.value;
-                              setModInput(editablePrompt);
-                              // 草稿按当前图片保存；自动保存会将其与 workspace_data 一起持久化，
-                              // 因此切换缩略图或刷新页面都不会丢失已编辑的内容。
-                              updateCharImagePrompts((prompts) => {
-                                const entries = [...(prompts[imageKey] ?? [])];
-                                const existing = entries[currentIdx];
-                                entries[currentIdx] = existing
-                                  ? { ...existing, editablePrompt }
-                                  : { rawPrompt: "", editablePrompt, mode: "modify" };
-                                return { ...prompts, [imageKey]: entries };
-                              });
+                              // 编辑中的内容只是本次生成草稿；只有生成成功的新图才会保存
+                              // 这份提示词，不能反写覆盖当前历史图片的原始提示词。
+                              setModInput(e.target.value);
                             }}
                             placeholder="编辑风格、面部特征、身材体型或服装配饰…"
                             rows={8}
@@ -11794,23 +12031,40 @@ function WorkspacePage() {
                                 ? "生成中…"
                                 : `主视图:第 ${currentIdx + 1} / ${generations.length} 张${charModUploadedRefs.length ? ` + 额外 ${charModUploadedRefs.length} 张` : ""}`}
                             </span>
-                            <button
-                              type="button"
-                              onClick={() => void submitModPanel()}
-                              disabled={
-                                thisBusy ||
-                                !modInput.trim() ||
-                                (generations.filter(Boolean).length > 0 && !currentUrl)
-                              }
-                              className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
-                            >
-                              {thisBusy ? (
-                                <Loader2 size={12} className="animate-spin" />
-                              ) : (
-                                <Send size={12} />
-                              )}
-                              {thisBusy ? "生成中…" : "发送并重生"}
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void submitModPanel()}
+                                disabled={
+                                  thisBusy ||
+                                  !modInput.trim() ||
+                                  (generations.filter(Boolean).length > 0 && !currentUrl)
+                                }
+                                title="使用当前选中的图片作为参考，只修改提示词中变更的部分"
+                                className="px-3 py-1.5 rounded-md border border-accent text-accent text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-accent-dim/40 inline-flex items-center gap-1.5"
+                              >
+                                {thisBusy ? (
+                                  <Loader2 size={12} className="animate-spin" />
+                                ) : (
+                                  <Pencil size={12} />
+                                )}
+                                局部修改
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void submitCharacterDetailT2I()}
+                                disabled={thisBusy || !modInput.trim()}
+                                title="不使用任何参考图，按当前提示词重新生成一张角色图"
+                                className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
+                              >
+                                {thisBusy ? (
+                                  <Loader2 size={12} className="animate-spin" />
+                                ) : (
+                                  <RefreshCw size={12} />
+                                )}
+                                重新生成
+                              </button>
+                            </div>
                           </div>
                         </div>
                       );
@@ -11852,7 +12106,7 @@ function WorkspacePage() {
               aria-modal="true"
             >
               <div
-                className="relative bg-bg-surface border border-border rounded-2xl overflow-hidden shadow-2xl w-full max-w-5xl max-h-[90vh] flex flex-col"
+                className="relative bg-bg-surface border border-border rounded-2xl overflow-hidden shadow-2xl w-full max-w-[1100px] max-h-[90vh] flex flex-col"
                 onClick={(e) => e.stopPropagation()}
               >
                 {/* Top bar */}
@@ -11884,7 +12138,7 @@ function WorkspacePage() {
                   </div>
                 </div>
                 {/* Body: 大图 + 描述,深色背景让大图更显质感 */}
-                <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[2fr_1fr]">
+                <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[minmax(0,1.7fr)_minmax(420px,1fr)]">
                   <div className="relative bg-black flex items-center justify-center min-h-[300px] max-h-[calc(90vh-180px)]">
                     {currentUrl ? (
                       <img
@@ -11911,20 +12165,14 @@ function WorkspacePage() {
                               key={`${u}-${i}`}
                               type="button"
                               onClick={() => {
-                                // 点缩略图 = 选为推荐(reference)
-                                setSelectedSceneImages((m) => {
-                                  if (isPinned) {
-                                    const { [s.id]: _omit, ...rest } = m;
-                                    return rest;
-                                  }
-                                  return { ...m, [s.id]: u };
-                                });
+                                // 点缩略图即选中；选中后不能通过再次点击取消。
+                                setSelectedSceneImages((m) => ({ ...m, [s.id]: u }));
+                                setSceneModInput(
+                                  sceneImagePrompts[s.id]?.[i]?.editablePrompt ||
+                                    sceneEditablePrompt(s),
+                                );
                               }}
-                              title={
-                                isPinned
-                                  ? "已是推荐(reference) — 再点取消"
-                                  : "把这张设为场景 reference"
-                              }
+                              title="点击选中这张场景图"
                               className={`relative shrink-0 w-12 h-9 rounded overflow-hidden border-2 transition ${
                                 i === currentIdx
                                   ? "border-accent"
@@ -12114,21 +12362,38 @@ function WorkspacePage() {
                             ? "生成中…"
                             : `参考图:第 ${currentIdx + 1} / ${history.length} 张`}
                         </span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void submitSceneDetailRegen(s);
-                          }}
-                          disabled={regenBusyKeys.has(s.id) || !sceneModInput.trim()}
-                          className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
-                        >
-                          {regenBusyKeys.has(s.id) ? (
-                            <Loader2 size={12} className="animate-spin" />
-                          ) : (
-                            <Send size={12} />
-                          )}
-                          {regenBusyKeys.has(s.id) ? "生成中…" : "发送并重生"}
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void submitSceneDetailRegen(s)}
+                            disabled={
+                              regenBusyKeys.has(s.id) || !sceneModInput.trim() || !currentUrl
+                            }
+                            title="使用当前选中的场景图作为参考，只修改提示词中变更的部分"
+                            className="whitespace-nowrap px-3 py-1.5 rounded-md border border-accent text-accent text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-accent-dim/40 inline-flex items-center gap-1.5"
+                          >
+                            {regenBusyKeys.has(s.id) ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <Pencil size={12} />
+                            )}
+                            局部修改
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void submitSceneDetailT2I(s)}
+                            disabled={regenBusyKeys.has(s.id) || !sceneModInput.trim()}
+                            title="不使用任何参考图，按当前提示词重新生成场景图"
+                            className="whitespace-nowrap px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
+                          >
+                            {regenBusyKeys.has(s.id) ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <RefreshCw size={12} />
+                            )}
+                            重新生成
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -12154,7 +12419,7 @@ function WorkspacePage() {
               aria-modal="true"
             >
               <div
-                className="relative bg-bg-surface border border-border rounded-2xl overflow-hidden shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col"
+                className="relative bg-bg-surface border border-border rounded-2xl overflow-hidden shadow-2xl w-full max-w-[1100px] max-h-[90vh] flex flex-col"
                 onClick={(e) => e.stopPropagation()}
               >
                 {/* Top bar */}
@@ -12184,7 +12449,7 @@ function WorkspacePage() {
                   </div>
                 </div>
                 {/* Body: large image + description */}
-                <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[2fr_1fr]">
+                <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[minmax(0,1.7fr)_minmax(420px,1fr)]">
                   <div className="relative bg-black flex items-center justify-center min-h-[300px] max-h-[calc(90vh-180px)]">
                     {currentUrl ? (
                       <img
@@ -12211,20 +12476,14 @@ function WorkspacePage() {
                               key={`${u}-${i}`}
                               type="button"
                               onClick={() => {
-                                if (isPinned) {
-                                  setSelectedPropImages((m) => {
-                                    const { [p.id]: _omit, ...rest } = m;
-                                    return rest;
-                                  });
-                                } else {
-                                  setSelectedPropImages((m) => ({ ...m, [p.id]: u }));
-                                }
+                                // 点缩略图即选中；选中后不能通过再次点击取消。
+                                setSelectedPropImages((m) => ({ ...m, [p.id]: u }));
+                                setPropModInput(
+                                  propImagePrompts[p.id]?.[i]?.editablePrompt ||
+                                    propEditablePrompt(p),
+                                );
                               }}
-                              title={
-                                isPinned
-                                  ? "已是推荐(reference) — 再点取消"
-                                  : "把这张设为道具 reference"
-                              }
+                              title="点击选中这张道具图"
                               className={`relative shrink-0 w-12 h-9 rounded overflow-hidden border-2 transition ${
                                 i === currentIdx
                                   ? "border-accent"
@@ -12400,21 +12659,38 @@ function WorkspacePage() {
                             ? "生成中…"
                             : `参考图:第 ${currentIdx + 1} / ${history.length} 张`}
                         </span>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            void submitPropDetailRegen(p);
-                          }}
-                          disabled={regenBusyKeys.has(p.id) || !propModInput.trim() || !currentUrl}
-                          className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
-                        >
-                          {regenBusyKeys.has(p.id) ? (
-                            <Loader2 size={12} className="animate-spin" />
-                          ) : (
-                            <Send size={12} />
-                          )}
-                          {regenBusyKeys.has(p.id) ? "生成中…" : "发送并重生"}
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => void submitPropDetailRegen(p)}
+                            disabled={
+                              regenBusyKeys.has(p.id) || !propModInput.trim() || !currentUrl
+                            }
+                            title="使用当前选中的道具图作为参考，只修改提示词中变更的部分"
+                            className="whitespace-nowrap px-3 py-1.5 rounded-md border border-accent text-accent text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-accent-dim/40 inline-flex items-center gap-1.5"
+                          >
+                            {regenBusyKeys.has(p.id) ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <Pencil size={12} />
+                            )}
+                            局部修改
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void submitPropDetailT2I(p)}
+                            disabled={regenBusyKeys.has(p.id) || !propModInput.trim()}
+                            title="不使用任何参考图，按当前提示词重新生成道具图"
+                            className="whitespace-nowrap px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
+                          >
+                            {regenBusyKeys.has(p.id) ? (
+                              <Loader2 size={12} className="animate-spin" />
+                            ) : (
+                              <RefreshCw size={12} />
+                            )}
+                            重新生成
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -12495,15 +12771,13 @@ function WorkspacePage() {
                               key={`${u}-${i}`}
                               type="button"
                               onClick={() => {
-                                setSelectedPropImages((m) => {
-                                  if (isPinned) {
-                                    const { [p.id]: _omit, ...rest } = m;
-                                    return rest;
-                                  }
-                                  return { ...m, [p.id]: u };
-                                });
+                                setSelectedPropImages((m) => ({ ...m, [p.id]: u }));
+                                setPropModInput(
+                                  propImagePrompts[p.id]?.[i]?.editablePrompt ||
+                                    propEditablePrompt(p),
+                                );
                               }}
-                              title={isPinned ? "已选为参考(reference),再点取消" : "把这张设为参考"}
+                              title="点击选中这张道具图"
                               className={`relative shrink-0 w-14 h-10 rounded overflow-hidden border-2 transition ${
                                 u === currentUrl
                                   ? "border-accent"
@@ -12676,15 +12950,13 @@ function WorkspacePage() {
                               key={`${u}-${i}`}
                               type="button"
                               onClick={() => {
-                                setSelectedSceneImages((m) => {
-                                  if (isPinned) {
-                                    const { [s.id]: _omit, ...rest } = m;
-                                    return rest;
-                                  }
-                                  return { ...m, [s.id]: u };
-                                });
+                                setSelectedSceneImages((m) => ({ ...m, [s.id]: u }));
+                                setSceneModInput(
+                                  sceneImagePrompts[s.id]?.[i]?.editablePrompt ||
+                                    sceneEditablePrompt(s),
+                                );
                               }}
-                              title={isPinned ? "已选为参考(reference),再点取消" : "把这张设为参考"}
+                              title="点击选中这张场景图"
                               className={`relative shrink-0 w-14 h-10 rounded overflow-hidden border-2 transition ${
                                 u === currentUrl
                                   ? "border-accent"

@@ -256,6 +256,8 @@ export const generateStoryboardFromPlot = createServerFn({ method: "POST" })
   • 正确:"林夏站在窗边画面右侧面向左，小明留在门口画面左侧面向右；两人原地对话，无走位，地图始终在林夏右手"
   • 错误:"走位" (太简略,缺人物和路径)
   • **人物没动就写"人物静止,无走位",严禁无中生有编造动线**
+- **场景/道具逻辑守恒**：只允许画出剧本、场景资料、角色资料或既有参考图明确提到的门、窗、家具、道具及其状态；不确定的元素宁可不画、不写，严禁为丰富画面虚构。人物手持、使用或携带的道具必须符合所在空间与剧情：例如人物已经进入室内且剧情未写“仍撑伞/持伞”，不得让其在屋内撑伞；下雨、室外雨景不等于室内角色自动持伞。
+- **门的连续性**：门是空间锚点。只有剧情/场景明确存在或角色正通过的门才可列入分镜；写清门位于哪个房间边界、开向室内还是室外、铰链/开门方向（若资料未给出，写“门开启，方向未定”，不要编造）。同一扇门在连续 shot 中的位置、开合状态与朝向必须不变，除非剧情明确发生开/关门动作。
 - startSec / endSec 必填:该镜头在当集时间轴上的区间(秒)
   - 必须在 group 的 startSec~endSec 范围内
   - 组内连续 shot 的时间区间要无缝衔接(shot N 的 endSec == shot N+1 的 startSec)
@@ -280,7 +282,8 @@ export const generateStoryboardFromPlot = createServerFn({ method: "POST" })
 4. 时间用秒(startSec / endSec):每个 shot 2~8s,组内 shot 时长之和 ≤${MAX_VIDEO_DURATION_SEC}s;组之间时间区间无缝衔接(组 N 末 shot 的 endSec == 组 N+1 首 shot 的 startSec)。
     **组内 shot 时长之和 ≥ 该组 spoken 台词字数 × 0.25s + 1s 停顿**(够说完台词),且 ≤${MAX_VIDEO_DURATION_SEC}s;台词超 ${MAX_VIDEO_DURATION_SEC}s 的段必须拆多组(见【第 0.5 条】)。
 5. 角色 ID 必须是传入的角色列表中的 id,场景 ID 必须是传入的场景列表中的 id。
-6. 只输出 JSON,不要任何解释、Markdown 包裹、代码块标记。`;
+6. 分镜生成前先列出“已知空间与道具清单”：只使用剧本/场景资料明确给出的建筑边界、门窗、家具、关键道具、人物持物及状态；**不得用常识补设额外的门、伞、家具或剧情动作**。连续镜头沿用同一清单。
+7. 只输出 JSON,不要任何解释、Markdown 包裹、代码块标记。`;
 
     const userPrompt = `请把下面第 ${data.episodeIndex} 集剧本切成若干个**分镜组**,输出 JSON。
 **每个分镜组 = 一段最长 ${MAX_VIDEO_DURATION_SEC}s 的视频**，先按台词预算确定组时长，再按剧情节奏生成 **1~3 个 shot**(每个 2~8s,整组 ≤${MAX_VIDEO_DURATION_SEC}s)。

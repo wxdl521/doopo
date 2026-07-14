@@ -81,7 +81,8 @@ type AzureImageInput = {
   model: string;
   size?: string;
   n?: number;
-  quality?: "auto" | "low" | "high";
+  quality?: "auto" | "low" | "medium" | "high";
+  stream?: boolean;
   referenceImages?: string[];
 };
 
@@ -212,7 +213,7 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
   const url = `${baseUrl}${path}?api-version=${apiVersion}`;
   const size = normalizeAzureSize(input.size);
   const quality = normalizeAzureQuality(input.quality);
-  const streamPartialImages = quality === "high";
+  const streamPartialImages = input.stream ?? quality === "high";
   const t0 = Date.now();
   const requestId = `azr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
   const endpoint: "generations" | "edits" = hasRefs ? "edits" : "generations";
