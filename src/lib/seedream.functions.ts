@@ -33,8 +33,9 @@ const RETRY_BACKOFF_MS = [1_000, 2_000, 4_000] as const;
 // 和 16:9 故事板(6 section, ~3500 字 prompt)单图渲染负担更重,
 // **2026/06 二次提到 180s**(3 分钟)给单次重活兜底。
 // 极端情况 3+ 分钟的请求仍可能超,但 retry 1s/2s/4s 退避 + 用户体验上更平滑。
-const REQUEST_TIMEOUT_MS = 180_000;
-const I2I_TIMEOUT_MS = 180_000;
+// 复杂的多参考图/4K 故事板由上游决定完成时间；应用层不再以 180 秒提前中断。
+const REQUEST_TIMEOUT_MS = 600_000;
+const I2I_TIMEOUT_MS = 600_000;
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 // ---------- 工具函数 ----------
@@ -492,21 +493,21 @@ export const generateImage = createServerFn({ method: "POST" })
 const RegenerateInput = z.object({
   referenceImageUrl: z.string().url(),
   // 2026/07:额外参考图(图2..N),主视图(要改的那张)强制在图1,额外图仅作风格/细节参考。
-  extraReferenceImageUrls: z.array(z.string().url()).max(4).optional(),
-  userInstruction: z.string().min(1).max(2000),
+  extraReferenceImageUrls: z.array(z.string().url()).max(9).optional(),
+  userInstruction: z.string().min(1).max(64_000),
   /** 已展开的完整 API prompt，供详情页编辑后直接重放。 */
   rawPrompt: z.string().min(1).max(64_000).optional(),
   faceDescription: z.string().max(4000),
   bodyDescription: z.string().max(4000),
   clothingDescription: z.string().max(4000),
   characterName: z.string().min(1).max(100),
-  characterRoleLabel: z.string().min(1).max(200),
+  characterRoleLabel: z.string().min(1).max(4_000),
   characterAge: z.number().int().min(0).max(200),
   lookLabel: z.string().min(1).max(100),
   palette: z.array(z.string()).max(8).optional(),
   projectStyle: z.string().max(50).optional(),
   characterNationality: z.string().min(1).max(100).optional(),
-  model: z.string().max(100).optional(),
+  model: z.string().max(1_000).optional(),
   mode: z.enum(["modify", "three-view", "multi-asset"]).default("modify"),
   // 2026/06:查看提示词模式
   previewOnly: z.boolean().default(false),
@@ -1932,11 +1933,11 @@ const PitchDeckInput = z.object({
   // 根因是之前不传 image 字段,纯 T2I。改成传入参考图(场景至少 1 张 + 角色若干)。
   // 每张配一个 label,在 prompt 里说明"图 N 是 X"。不在应用层限制上传数量。
   referenceImages: z.array(z.string().url()).default([]),
-  referenceImageLabels: z.array(z.string().max(120)).default([]),
+  referenceImageLabels: z.array(z.string().max(2_000)).default([]),
   // 老字段保留向后兼容,不再实际使用
   characterImageUrl: z.string().url().optional(),
   sceneImageUrl: z.string().url().optional(),
-  model: z.string().max(100).optional(),
+  model: z.string().max(1_000).optional(),
   // 2026/06:查看提示词模式
   previewOnly: z.boolean().default(false),
 });
@@ -2067,6 +2068,11 @@ function buildPitchDeckPrompt(opts: {
       : `- Below each frame: ONE caption line - "镜头N · Ns · 景别 · 环境 · 机位:camera" (e.g. 镜头1 · 4s · 远景 · 晨光穿透树冠洒落斑驳光影 · 机位:平视广角24mm林缘). 景别用中文(远景/中景/近景/特写/过肩), 环境写明白但用短句非长段, 机位取自 [SHOT BREAKDOWN] 该镜头的 camera 字段. Clean printed font, NOT handwritten. **本故事板是纯环境/空镜, 画面中不得出现任何人物.**`,
     `- Bottom-right: top-down diagram (see [TOP-DOWN DIAGRAM]).`,
 
+    `[FRAME IS THE SOURCE OF TRUTH — NON-NEGOTIABLE]`,
+    `For every Frame N, first draw exactly what [SHOT BREAKDOWN] says: the action's grammatical subject (who performs it), the gaze/interaction target (what they look at or handle), action stage, shot size, camera height, camera side, lens and viewing direction. The visible frame must prove its own caption. Example: “男主低头审视陷阱和诱饵，低机位仰拍” means the male lead remains the pictured subject, he looks downward toward the trap/bait, and the camera looks upward at him; do NOT misread the gaze target as a replacement for the character subject. Do not swap the composition, subject, camera side, or caption between Frame N and Frame N+1.`,
+    `The top-down diagram is NOT an independent creative design. Draw the finished frames first, then derive every camera marker/path from those exact frame compositions. For each “镜头N” marker, its triangle/camera path must point toward the subject actually visible in Frame N, from the same relative side and height implied by Frame N. If there is any conflict, [SHOT BREAKDOWN] → Frame N is authoritative; correct the diagram, never reinterpret the frame.`,
+    `Camera-group continuity: when adjacent frames are a continuous action/reaction beat, keep their camera markers on the SAME side of the action axis and in neighboring positions; do not scatter them to opposite sides of the set. A change to the reverse side is allowed only when that frame's camera description explicitly calls it a reverse angle. For an OTS/过肩 frame, identify the foreground shoulder character and target character from [SHOT BREAKDOWN]: put the camera marker BEHIND the foreground character, point it THROUGH that character's shoulder toward the target, and never place it behind the target character.`,
+
     `[CHARACTER CONSISTENCY]`,
     hasChars
       ? `- Same character across ALL frames: identical face, hairstyle, body, clothing. No drift.`
@@ -2075,7 +2081,7 @@ function buildPitchDeckPrompt(opts: {
     `[TOP-DOWN DIAGRAM — bottom-right, ~25% of page, labels LARGE and FEW]`,
     `Overhead floor-plan in pencil linework. Keep it simple — too many tiny labels cause garbled text. The diagram MUST cover the FULL spatial scope of ALL shots in [SHOT BREAKDOWN] — every shot's location and movement must appear, none skipped.`,
     `- Scene area: draw ALL locations the story spans, not just one room. If shots happen across multiple areas (e.g. street outside → doorway → shop interior), draw each as a labeled zone side by side. Do NOT cram everything into a single room outline. Place furniture/objects logically within each zone.`,
-    `- 镜头运动路线 (camera paths): DASHED lines with arrowheads, tracing each shot's camera movement based on its camera / camMovement description in [SHOT BREAKDOWN] and the plot in [STORY PLOT]. Draw as many paths as the shots describe — a shot may have more than one movement (e.g. "镜头环绕林缺身体并拉远带出店铺外观" = a circular arc around the character + a pull-back line toward the shop exterior). Paths MUST be spatially correct: 环绕=circular arc, 推/拉=line in/out, 摇=arc sweep, 跟=follow path. Paths span all areas the shots cover. **每条镜头动线必须用小字标注它对应的"镜头N"(与上方分镜格的镜头N编号一致);同一镜头的多条动线(如环绕+拉远)标同一个"镜头N",让每条动线都能明确区分属于哪个分镜.** If a shot's camMovement is 「固定机位」/「无运镜」 or absent (the shot has NO camera movement), do NOT draw a dashed path -- instead draw a FIXED CAMERA MARKER: a triangle ▲ at the shooting position (tip pointing toward the subject / facing direction), with a small "镜头N" label next to it, so the fixed camera's position and coverage are also visible on the diagram. 严禁无中生有编造运镜; 但固定机位也必须画▲标记+镜头N, 不能留空.`,
+    `- 镜头运动路线 (camera paths): DASHED lines with arrowheads, tracing each shot's camera movement based on its camera / camMovement description in [SHOT BREAKDOWN] and the already-drawn matching Frame N. Draw as many paths as the shots describe — a shot may have more than one movement (e.g. "镜头环绕林缺身体并拉远带出店铺外观" = a circular arc around the character + a pull-back line toward the shop exterior). Paths MUST be spatially correct: 环绕=circular arc, 推/拉=line in/out, 摇=arc sweep, 跟=follow path. Paths span all areas the shots cover. **每条镜头动线必须用小字标注它对应的"镜头N"，且只对应上方同编号的分镜格；不得把镜头1的机位/视线/主体画到镜头2，反之亦然。** If a shot's camMovement is 「固定机位」/「无运镜」 or absent (the shot has NO camera movement), do NOT draw a dashed path -- instead draw a FIXED CAMERA MARKER: a triangle ▲ at the shooting position (tip pointing toward the SAME subject visible in Frame N), with a small "镜头N" label next to it. 严禁无中生有编造运镜; 但固定机位也必须画▲标记+镜头N, 不能留空.`,
     hasChars
       ? `- 人物动线 (character path): SOLID line + large arrowhead, from each character's start position (hollow square) to end position (filled square). The path MUST strictly follow the blocking in [SHOT BREAKDOWN] - where each character starts, moves to, and faces, across all areas. Add a small facing arrow (▷) at the end position; facing must be logical. Label start with the name. If a shot's blocking is 「人物静止, 无走位」 or absent (the character does NOT move), draw NO character path for that shot -- 人物没动就不画动线, 严禁无中生有.`
       : `- 本故事板无角色, 不画人物动线 (no character path). 只画场景区域和镜头运动路线.`,
@@ -2105,6 +2111,7 @@ function buildPitchDeckPrompt(opts: {
       : `3. No characters - 画面中不得出现任何人物 (空镜/纯环境镜头).`,
     `4. Story faithful — follow [STORY PLOT] and [SHOT BREAKDOWN], no invented content.`,
     `5. Text crisp & legible — Chinese shot types (远景/中景/近景/特写/过肩), no WS/MS/CU; no emoji (📷) or circled numbers (①②③); use plain labels (镜头1, 镜头2) + Arabic numerals.`,
+    `5.5. Mandatory consistency audit before output: check N = 1 to ${SUGGESTED_PANELS} one by one. For each N, the caption, Frame N visual focus/action/camera angle, and the diagram's “镜头N” camera marker/path must describe the SAME shot. A swapped or reversed camera label, subject, view direction, or camera side is an invalid result and must be corrected before output.`,
     hasChars
       ? `6. Diagram logic - the diagram covers ALL shots' locations (not just one room); camera paths (dashed) reflect each shot's camera movement described in [SHOT BREAKDOWN] (环绕/推/拉/摇/跟 -> corresponding arcs/lines, may be multiple paths), fixed-camera shots use a ▲ marker at their shooting position; character paths (solid) strictly follow the blocking in [SHOT BREAKDOWN]. 每条镜头动线和每个固定机位▲都必须标注对应的"镜头N",与上方分镜格编号一一对应,让分镜和俯视图动线能明确对上.`
       : `6. Diagram logic - the diagram covers ALL shots' locations (not just one room); camera paths (dashed) reflect each shot's camera movement described in [SHOT BREAKDOWN] (环绕/推/拉/摇/跟 -> corresponding arcs/lines), fixed-camera shots use a ▲ marker at their shooting position. 每条镜头动线和每个固定机位▲都必须标注对应的"镜头N",与上方分镜格编号一一对应. 本故事板无人物, 不画人物动线.`,
@@ -2439,7 +2446,7 @@ export const generateStoryboardPitchDeck = createServerFn({ method: "POST" })
 
 const RegeneratePitchDeckInput = PitchDeckInput.extend({
   referenceImageUrl: z.string().url(),
-  userInstruction: z.string().min(1).max(500),
+  userInstruction: z.string().min(1).max(64_000),
 });
 
 export type RegeneratePitchDeckInputType = z.infer<typeof RegeneratePitchDeckInput>;
@@ -2455,6 +2462,10 @@ function buildRegenPitchDeckPrompt(opts: {
   const referenceLabelLines = referenceLabels.length
     ? referenceLabels.map((label, index) => `图 ${index + 2}: ${label}`).join("\n")
     : "图 2..N: 额外视觉参考图";
+  const explicitMentionLines = referenceLabels
+    .filter((label) => label.startsWith("用户明确 @引用："))
+    .map((label) => `- ${label.replace("用户明确 @引用：", "")}`)
+    .join("\n");
 
   // 角色描述块(简化版,regen 主要靠参考图锁定)
   const charLines = chars.length
@@ -2481,6 +2492,10 @@ function buildRegenPitchDeckPrompt(opts: {
     `[USER FEEDBACK — the ONLY things to change]`,
     data.userInstruction,
 
+    explicitMentionLines
+      ? `[MANDATORY @ ASSETS — MUST be visibly incorporated]\nThe user explicitly @-mentioned these assets. They are REQUIRED story content, not optional style references:\n${explicitMentionLines}\nFor an @道具, visibly place the exact object in the relevant frame(s) and the top-down diagram when applicable; if feedback implies a replacement, replace the old object. Preserve its recognizable silhouette, construction, and details from its reference image.`
+      : "",
+
     `[CONTEXT — preserved from 图1 unless feedback says otherwise]`,
     `Style: ${styleSpec.label} (${styleSpec.positive.slice(0, 80)}...)`,
     `Plot: ${data.plotText || "(no plot text)"}`,
@@ -2497,10 +2512,10 @@ function buildRegenPitchDeckPrompt(opts: {
 
     `[MODIFICATION RULES]`,
     `1. 图1 is the structural source of truth — preserve its layout, proportions, fonts, line-art style.`,
-    `2. Apply ONLY [USER FEEDBACK]; everything else identical to 图1.`,
+    `2. Apply [USER FEEDBACK] and every [MANDATORY @ ASSETS] instruction; everything else identical to 图1.`,
     `3. Vague feedback ("好看点") → minimal refinement only.`,
     `4. If feedback contradicts 图1 layout (e.g. "改 4 格"), follow feedback but keep other style consistency.`,
-    `5. Don't change faces/outfits/scene unless feedback explicitly says so. Don't introduce new characters/scenes.`,
+    `5. Don't change faces/outfits/scene unless feedback explicitly says so. Don't introduce new characters/scenes, except that explicitly @-mentioned props must be added/replaced as required.`,
     `6. Keep 16:9, same shot count and order, frame/camera numbers continuous.`,
 
     `[REFERENCE IMAGES — 图 2..N are visual anchors]`,
@@ -2535,8 +2550,8 @@ export const regenerateStoryboardPitchDeck = createServerFn({ method: "POST" })
       images.push(url);
     }
 
-    // 路由:跟 generateStoryboardPitchDeck 完全对齐(Seedream 主力,
-    // Pixflow/Lovable 不支持 4K 8.3M pixels 故跳过兜底)
+    // Azure GPT Image 2 支持 I2I；其接口会把 4K 横图归一化为可用的 1792×1024。
+    // 这样用户无需为“按意见重生”切换项目模型，仍保留当前故事板作为首张参考图。
     const requested = normalizeImageModelForRouting(data.model);
     // 2026/07:查看提示词模式必须在路由分发前拦截 -- 即使选了非 Seedream 模型,
     // 查看提示词也应能展示 prompt(否则用户看不到为什么报"只支持 Seedream")。
@@ -2554,11 +2569,111 @@ export const regenerateStoryboardPitchDeck = createServerFn({ method: "POST" })
         },
       } as any;
     }
-    if (requested && !isSeedreamModel(requested)) {
-      return {
-        ok: false as const,
-        error: `故事板按意见重生目前只支持 Seedream 模型(用户选了 ${requested},Seedream 4K 是唯一能稳定输出 3840×2160 的)。`,
+    // 与首次故事板生成使用同一套供应商路由；所有支持参考图的模型均传入图1+补充素材。
+    const providerRoutes = [
+      ["pixflow/", "./pixflow.functions", "callPixflowImage", "Pixflow"],
+      ["claude360/", "./claude360Image.functions", "callClaude360Image", "Claude360"],
+      ["tokenflash/", "./tokenflash.functions", "callTokenflashImage", "Tokenflash"],
+      ["revora/", "./revoraImage.functions", "callRevoraImage", "Revora"],
+      ["aigcfamily/", "./aigcfamilyImage.functions", "callAigcfamilyImage", "AIGCFamily"],
+      ["shuci/", "./shuanciyuan.functions", "callShuanciyuanImage", "数安词源"],
+      ["onetoken/", "./onetokenImage.functions", "callOnetokenImage", "OneToken"],
+      ["otu/", "./otuImage.functions", "callOtuImage", "OTU"],
+      ["aitokenvibe/", "./aitokenvibeImage.functions", "callAitokenvibeImage", "AI Tokenvibe"],
+      ["thhtcloud/", "./thhtcloudImage.functions", "callThhtcloudImage", "天鸿智算"],
+      ["ailinzi/", "./ailinziImage.functions", "callAilinziImage", "ailinzi"],
+      ["vapeur/", "./vapeurImage.functions", "callVapeurImage", "vapeur"],
+      ["tokenhub/", "./tokenhubImage.functions", "callTokenhubImage", "Tokenhub"],
+      ["nagora/", "./nagoraImage.functions", "callNagoraImage", "Nagora"],
+      ["meridian/", "./meridianImage.functions", "callMeridianImage", "Meridian"],
+      ["confluo/", "./confluoImage.functions", "callConfluoImage", "汇流"],
+    ] as const;
+    const matchedProvider = providerRoutes.find(([prefix]) =>
+      requested.toLowerCase().startsWith(prefix),
+    );
+    if (matchedProvider) {
+      const [, modulePath, functionName, label] = matchedProvider;
+      const providerInput = {
+        prompt,
+        model: requested,
+        size: "3840x2160",
+        referenceImages: images,
+        quality: "high",
       };
+      // 保持静态 import，确保 Cloudflare 构建会把每个供应商实现打进产物。
+      const result =
+        modulePath === "./pixflow.functions"
+          ? await (await import("./pixflow.functions")).callPixflowImage(providerInput)
+          : modulePath === "./claude360Image.functions"
+            ? await (await import("./claude360Image.functions")).callClaude360Image(providerInput)
+            : modulePath === "./tokenflash.functions"
+              ? await (await import("./tokenflash.functions")).callTokenflashImage(providerInput)
+              : modulePath === "./revoraImage.functions"
+                ? await (await import("./revoraImage.functions")).callRevoraImage(providerInput)
+                : modulePath === "./aigcfamilyImage.functions"
+                  ? await (
+                      await import("./aigcfamilyImage.functions")
+                    ).callAigcfamilyImage(providerInput)
+                  : modulePath === "./shuanciyuan.functions"
+                    ? await (
+                        await import("./shuanciyuan.functions")
+                      ).callShuanciyuanImage(providerInput)
+                    : modulePath === "./onetokenImage.functions"
+                      ? await (
+                          await import("./onetokenImage.functions")
+                        ).callOnetokenImage(providerInput)
+                      : modulePath === "./otuImage.functions"
+                        ? await (await import("./otuImage.functions")).callOtuImage(providerInput)
+                        : modulePath === "./aitokenvibeImage.functions"
+                          ? await (
+                              await import("./aitokenvibeImage.functions")
+                            ).callAitokenvibeImage(providerInput)
+                          : modulePath === "./thhtcloudImage.functions"
+                            ? await (
+                                await import("./thhtcloudImage.functions")
+                              ).callThhtcloudImage(providerInput)
+                            : modulePath === "./ailinziImage.functions"
+                              ? await (
+                                  await import("./ailinziImage.functions")
+                                ).callAilinziImage(providerInput)
+                              : modulePath === "./vapeurImage.functions"
+                                ? await (
+                                    await import("./vapeurImage.functions")
+                                  ).callVapeurImage(providerInput)
+                                : modulePath === "./tokenhubImage.functions"
+                                  ? await (
+                                      await import("./tokenhubImage.functions")
+                                    ).callTokenhubImage(providerInput)
+                                  : modulePath === "./nagoraImage.functions"
+                                    ? await (
+                                        await import("./nagoraImage.functions")
+                                      ).callNagoraImage(providerInput)
+                                    : modulePath === "./meridianImage.functions"
+                                      ? await (
+                                          await import("./meridianImage.functions")
+                                        ).callMeridianImage(providerInput)
+                                      : modulePath === "./confluoImage.functions"
+                                        ? await (
+                                            await import("./confluoImage.functions")
+                                          ).callConfluoImage(providerInput)
+                                        : null;
+      if (!result) return { ok: false as const, error: `${functionName} 路由未找到` };
+      if (!result.url) return { ok: false as const, error: result.error || `${label} 未返回图片` };
+      return { ok: true as const, url: result.url, model: result.model, meta: result.meta };
+    }
+    if (
+      ["azure/", "azure2/", "azure3/"].some((prefix) => requested.toLowerCase().startsWith(prefix))
+    ) {
+      const { callAzureImage } = await import("./azureImage.functions");
+      const result = await callAzureImage({
+        prompt,
+        model: requested,
+        size: "3840x2160",
+        referenceImages: images,
+        quality: "high",
+      });
+      if (!result.url) return { ok: false as const, error: result.error || "Azure 未返回图片" };
+      return { ok: true as const, url: result.url, model: result.model, meta: result.meta };
     }
 
     const { apiKey, baseUrl, model: defaultModel } = getArkConfig();

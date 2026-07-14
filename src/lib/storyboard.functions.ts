@@ -225,13 +225,21 @@ export const generateStoryboardFromPlot = createServerFn({ method: "POST" })
   • 正确:"低角度仰拍,广角24mm,机位在教室门口地面"
   • 正确:"平视,中焦50mm,机位在讲台左侧"
   • 错误:"特写镜头" (shotType 已经是特写了,camera 不应该重复)
+  • **过肩镜头(OTS)必须写完整物理关系**：格式为"机位在[前景角色]身后[左/右]侧，越过[前景角色]的[左/右]肩，正对[目标角色]"。前景角色 = 画面里只出现背部/肩部的那个人；目标角色 = 被拍到正面的那个人。例："机位在灵黎身后右侧，越过灵黎右肩，正对顾寒渊"。禁止只写"过肩，35mm"，也禁止把机位画到目标角色身后。
+  • 非 OTS 镜头也必须写出拍摄侧相对谁/哪个空间锚点，不能只写"正前方"。例如"机位在灵黎正前方，面向她的脸"，或"机位在顾寒渊身后，面向灵黎"。
 - cameraMovement 用中文描述摄像机本身的移动方式(推/拉/摇/移/跟/升/降/固定),
-  必须包含方向/幅度,不能只写一个词:
+  它必须与 camera 字段的物理机位严格一致，写清摄像机的**起点/支点、起始朝向、运动类型、终止朝向或终点、跟随目标**；不能把人物运动方向误写成摄影机路径，不能只写一个词:
   • 正确:"从全景缓慢推到角色面部特写(推镜,正面→正面近)"
   • 正确:"从左向右横摇扫过教室(摇镜,80°左→右)"
+  • 正确:"机位固定在顾寒渊身后，镜头起始朝左对准灌木；原地向右横摇约45°，始终跟随灵黎飞踢至顾寒渊面前（摇镜，不移动机位）"
+  • 正确:"摄影机从顾寒渊身后左侧平移至正后方，始终面向灵黎，移动约2米（横移跟拍）"
   • 正确:"固定机位,无运镜"
   • 错误:"推" (太简略,缺方向和幅度)
   • 错误:"运动镜头" (太模糊)
+  • 错误:"快速摇镜跟随灵黎的运动轨迹（左→右）"（这只写了人物方向，未说明摄影机是否原地摇、从何处朝向何处，俯视图无法落位）
+  • **摇镜(pan)规则**：摄像机位置/支点不变，只改变镜头朝向；在俯视图中画以该机位为圆心的短弧，绝不能画成长距离位移路线。
+  • **跟拍/移镜(track/dolly)规则**：只有明确写“跟拍/平移/移镜”时摄像机才改变位置；必须写从哪个空间锚点移动到哪个空间锚点、移动距离/方向，以及始终拍谁。
+  • **固定机位规则**："固定机位,无运镜"才代表位置和朝向都不变；"固定机位原地摇镜"代表位置不变但朝向改变，二者不得混写。
   • **没动就写"固定机位,无运镜",严禁无中生有编造运镜**(故事板俯视图会按这个画运镜线,编造会导致分镜与图不符)
   • 连续分镜之间的运镜必须逻辑连贯,禁止跳轴(180° rule):
     - 先在脑中建立场景平面：门、窗、桌椅、车辆、关键道具和人物初始位置是空间锚点；后续镜头不得无故换位、消失或新增。
@@ -239,6 +247,8 @@ export const generateStoryboardFromPlot = createServerFn({ method: "POST" })
     - 上一镜头的结束姿态 = 下一镜头的开始状态：人物站位、左右/前后关系、视线、朝向、手中道具和已完成动作必须自然承接。
     - 上一分镜结束的机位 ≈ 下一分镜开始的机位；若景别或机位改变，必须是同侧合理切换，不能瞬移到人物另一边。
     - 每个 shot 只推进一个明确动作阶段。不要在同一镜头中塞入“走过去又坐下再拿起道具”等多个结果；需要多个阶段就拆成连续 shots。
+    - 输出前逐镜头做“机位物理可执行性”检查：camera 写出的起始位置必须能拍到 action；cameraMovement 的起点必须等于该 camera 位置。人物从左到右移动，不等于摄影机从左到右移动；若是摇镜，机位留在原处，仅改变朝向；若是跟拍/移镜，写明摄影机实际移动路线。任何一项不成立就重写该镜头。
+    - **连续动作机位组规则**：若 Shot N 与 Shot N+1 是同一动作的连续拆解（例如“手指弹后脑勺”→“被弹者捂头回头反应”），默认属于同一个机位组：两镜头的机位必须在同一拍摄侧、相邻位置、朝向连续，俯视图中两个镜头标记应落在同一侧的相邻区域，不能一镜在人物前方、下一镜无理由跳到人物后方。只有剧本明确要求反打/主观镜头/越轴过渡时才可换侧，且 camera 必须明写“反打到…侧”及原因。
 - characterBlocking 用中文描述本镜头中人物的走位/动线路径,
   写清楚"谁从哪移动到哪、面向哪里、与谁/什么道具的关系"；每个有角色镜头都要写状态，不得只写笼统的“走位”:
   • 正确:"林夏从门口(画面左侧)走向窗边座位(画面右侧)"
@@ -559,8 +569,7 @@ ${data.episodeText}
         }
         lastError = `[${attempt.model}] 流结束但未解析到任何分镜组 (raw: ${fullText.slice(0, 200)})`;
       } catch (e) {
-        lastError =
-          `[${attempt.model}] ${e instanceof Error ? e.message : "network error"}`;
+        lastError = `[${attempt.model}] ${e instanceof Error ? e.message : "network error"}`;
       }
       // 关键:已经 yield 过 group 的模型不能 fallback 重试 —— 客户端那边
       // 已经展示了部分组,换模型重新来一遍会重复。
@@ -901,9 +910,9 @@ export const regenerateStoryboardShot = createServerFn({ method: "POST" })
 // --------------------------------------------------------------------
 
 const RegenPitchDeckInput = z.object({
-  projectStyle: z.string().max(50).optional(),
-  groupLabel: z.string().max(200).optional(),
-  plotText: z.string().min(1).max(2000),
+  projectStyle: z.string().max(4_000).optional(),
+  groupLabel: z.string().max(8_000).optional(),
+  plotText: z.string().min(1).max(64_000),
   scene: z
     .object({
       slug: z.string().max(200).optional(),
@@ -940,14 +949,14 @@ const RegenPitchDeckInput = z.object({
     )
     .max(20)
     .default([]),
-  referenceImages: z.array(z.string().url()).max(10).default([]),
-  referenceImageLabels: z.array(z.string().max(120)).max(10).default([]),
+  referenceImages: z.array(z.string().url()).default([]),
+  referenceImageLabels: z.array(z.string().max(2_000)).default([]),
   characterImageUrl: z.string().url().optional(),
   sceneImageUrl: z.string().url().optional(),
-  model: z.string().max(100).optional(),
+  model: z.string().max(1_000).optional(),
   previewOnly: z.boolean().default(false),
   referenceImageUrl: z.string().url(),
-  userInstruction: z.string().min(1).max(500),
+  userInstruction: z.string().min(1).max(64_000),
 });
 
 export type RegenerateStoryboardPitchDeckInput = z.infer<typeof RegenPitchDeckInput>;
