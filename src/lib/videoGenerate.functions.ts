@@ -1806,7 +1806,8 @@ type VideoBackend =
   | "kling"
   | "confluo"
   | "topenrouter"
-  | "hongmeng";
+  | "hongmeng"
+  | "sdreal";
 
 // ====================================================================
 // vapeur.ai 端实现 —— 透传火山方舟 ARK Seedance 原生格式
