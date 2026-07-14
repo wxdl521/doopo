@@ -37,7 +37,7 @@ function Login() {
       return;
     }
     toast.success("登录成功");
-    navigate({ to: "/scripts" });
+    navigate({ to: "/home" });
   };
   return (
     <div className="min-h-[70vh] flex items-center justify-center animate-fade-in">

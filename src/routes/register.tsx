@@ -27,7 +27,7 @@ function Register() {
       email: form.email,
       password: form.password,
       options: {
-        emailRedirectTo: `${window.location.origin}/scripts`,
+        emailRedirectTo: `${window.location.origin}/home`,
         data: { name: form.name, account_type: form.accountType },
       },
     });
@@ -38,7 +38,7 @@ function Register() {
     }
     if (data.session) {
       toast.success("注册成功");
-      navigate({ to: "/scripts" });
+      navigate({ to: "/home" });
     } else {
       try {
         sessionStorage.setItem("pendingActivationEmail", form.email);
