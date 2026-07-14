@@ -128,33 +128,9 @@ export const saveOneStoryboard = createServerFn({ method: "POST" })
       const mime = /^image\/(png|jpeg|webp|gif)$/i.test(contentType)
         ? contentType
         : MIME_BY_KIND.storyboard;
-      const blob = new Blob([buf], { type: mime });
-      const { error: uploadErr } = await supabase.storage
-        .from(BUCKET)
-        .upload(path, blob, { contentType: mime, upsert: true });
-      if (uploadErr) {
-        return {
-          ok: false,
-          url,
-          persisted: false,
-          error: `storage upload failed: ${uploadErr.message}`,
-        };
-      }
-      // 不依赖 bucket 的 public 开关：自动入库完成后立刻替换成可读的长期签名 URL。
-      // 之前 getPublicUrl 在私有桶中也会拼出一个貌似合法的 URL，图片先显示
-      // Base64、待异步替换后便裂图，正是此处造成的。
-      const { data: signedUrl, error: signErr } = await supabase.storage
-        .from(BUCKET)
-        .createSignedUrl(path, 315_360_000);
-      if (signErr || !signedUrl?.signedUrl) {
-        return {
-          ok: false,
-          url,
-          persisted: false,
-          error: `storage sign failed: ${signErr?.message ?? "no signed url after upload"}`,
-        };
-      }
-      return { ok: true, url: signedUrl.signedUrl, persisted: true };
+      const r = await uploadMediaSmart(supabase, path, buf, mime, { signed: true });
+      if (!r.ok) return { ok: false, url, persisted: false, error: r.error };
+      return { ok: true, url: r.url, persisted: true };
     } catch (e: any) {
       return { ok: false, url, persisted: false, error: e?.message ?? String(e) };
     }
