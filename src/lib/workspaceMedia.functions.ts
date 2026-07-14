@@ -24,6 +24,46 @@ import "./loadEnv";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { isCosConfigured, uploadToCos, isCosCdnUrl } from "./cosClient";
+
+/**
+ * 统一上传入口：优先走腾讯云 COS + CDN，未配置时回落到 Supabase Storage。
+ * 返回最终对外可访问的 URL（CDN URL 或 Supabase public/signed URL）。
+ * `signed` 仅在 Supabase 回落且 kind='storyboard' 时生效（历史逻辑要求签名 URL）。
+ */
+async function uploadMediaSmart(
+  supabase: any,
+  key: string,
+  buf: ArrayBuffer | Buffer | Uint8Array,
+  contentType: string,
+  opts: { signed?: boolean } = {},
+): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+  // 1) 优先 COS
+  if (isCosConfigured()) {
+    const r = await uploadToCos(key, buf, contentType);
+    if (r.ok) return { ok: true, url: r.url };
+    if (!r.fallback) return { ok: false, error: `cos upload failed: ${r.error}` };
+    // 配置错误：回落 Supabase
+  }
+  // 2) 回落 Supabase Storage
+  const blob = new Blob([buf as ArrayBuffer], { type: contentType });
+  const { error: uploadErr } = await supabase.storage
+    .from(BUCKET)
+    .upload(key, blob, { contentType, upsert: true });
+  if (uploadErr) return { ok: false, error: `storage upload failed: ${uploadErr.message}` };
+  if (opts.signed) {
+    const { data: signed, error: signErr } = await supabase.storage
+      .from(BUCKET)
+      .createSignedUrl(key, 315_360_000);
+    if (signErr || !signed?.signedUrl) {
+      return { ok: false, error: `storage sign failed: ${signErr?.message ?? "no signed url"}` };
+    }
+    return { ok: true, url: signed.signedUrl };
+  }
+  const { data: publicUrl } = supabase.storage.from(BUCKET).getPublicUrl(key);
+  if (!publicUrl?.publicUrl) return { ok: false, error: "no public url after upload" };
+  return { ok: true, url: publicUrl.publicUrl };
+}
 
 /**
  * 2026/06:saveOneStoryboard —— 单条故事板图入库(自动入库链路)。
