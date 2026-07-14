@@ -10392,17 +10392,15 @@ function WorkspacePage() {
                             <X size={11} /> 删除
                           </button>
                         </div>
-                        {/* 四列:左 plot / 中-左 分镜图(2 列多行) / 中-右 故事板占位 / 右 视频占位
-                          比例:1.2 / 2 / 1.5 / 1 —— 分镜图占大头(2 列多行天然把行拉高),
-                          故事板留足未来空间,视频放最右。
+                        {/* 两行布局:上排分镜描述(2/3)+分镜图(1/3),下排故事板(1/2)+视频(1/2)。
+                          使用六列栅格,上排为 4/2 列,下排为 3/3 列。
 
                           2026/06 行高改造(二次压缩):cell max-h 从 420px 再降一半
                           到 220px,每个分镜组的可见高度约 ~半屏的 1/3。
-                          内容超出由 cell 自身 overflow-y-auto 滑;故事板图片配套
-                          缩到 max-h-28(112px)以匹配新行高。 */}
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-stretch">
+                          内容超出由 cell 自身 overflow-y-auto 滑;故事板缩略图按原始比例展示。 */}
+                        <div className="grid grid-cols-1 md:grid-cols-6 gap-3 items-stretch">
                           {/* 左:plot 描述(可编辑)+ 角色列表(增/减 + look-switcher)+ 场景选择 */}
-                          <div className="h-[420px] rounded-lg border border-border bg-bg-base/40 p-3 space-y-2 overflow-y-auto">
+                          <div className="md:col-span-4 h-[420px] rounded-lg border border-border bg-bg-base/40 p-3 space-y-2 overflow-y-auto">
                             {/* 分镜描述 label + 编辑/完成 切换 */}
                             <div className="flex items-center justify-between">
                               <div className="text-[10px] tracking-widest uppercase text-text-muted">
@@ -10744,7 +10742,7 @@ function WorkspacePage() {
                             </div>
                           </div>
                           {/* 分镜图 */}
-                          <div className="h-[420px] rounded-lg border border-border bg-bg-base/40 p-3 space-y-3 overflow-y-auto">
+                          <div className="md:col-span-2 h-[420px] rounded-lg border border-border bg-bg-base/40 p-3 space-y-3 overflow-y-auto">
                             {/* 顶部:shots 标题 + 全部生成 */}
                             <div className="flex items-center justify-between gap-2">
                               <div className="flex items-center gap-2">
@@ -10902,7 +10900,7 @@ function WorkspacePage() {
                             </div>
                           </div>
                           {/* 中右:故事板 */}
-                          <div className="h-[420px] rounded-lg border border-border bg-bg-base/40 p-3 space-y-2 overflow-y-auto">
+                          <div className="md:col-span-3 rounded-lg border border-border bg-bg-base/40 p-3 space-y-2 overflow-y-auto">
                             <div className="flex items-center justify-between">
                               <div className="text-[10px] tracking-widest uppercase text-text-muted">
                                 故事板 · Storyboard
@@ -10936,7 +10934,7 @@ function WorkspacePage() {
                             </div>
                             {getActiveStoryboard(g.id)?.status === "succeeded" &&
                             getActiveStoryboard(g.id)?.url ? (
-                              <div className="relative group rounded border border-accent/30 overflow-hidden bg-bg-base max-h-28 flex items-center justify-center">
+                            <div className="relative group rounded border border-accent/30 overflow-hidden bg-bg-base flex items-center justify-center">
                                 {/* eslint-disable-next-line @next/next/no-img-element */}
                                 <img
                                   src={getActiveStoryboard(g.id)!.url}
@@ -10951,7 +10949,7 @@ function WorkspacePage() {
                                     setStoryboardReferencePickerOpen(false);
                                     setStoryboardPreview({ groupId: g.id });
                                   }}
-                                  className="max-h-28 w-auto block cursor-zoom-in object-contain"
+                                  className="max-h-[420px] max-w-full w-auto h-auto block cursor-zoom-in object-contain"
                                 />
                                 <button
                                   type="button"
@@ -10971,12 +10969,12 @@ function WorkspacePage() {
                                 </button>
                               </div>
                             ) : getActiveStoryboard(g.id)?.status === "running" ? (
-                              <div className="max-h-28 h-20 rounded border border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted">
+                              <div className="h-64 rounded border border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted">
                                 <Loader2 size={20} className="animate-spin text-accent" />
                                 <span className="text-[10px]">融合中…</span>
                               </div>
                             ) : (
-                              <div className="max-h-28 h-20 rounded border border-dashed border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted">
+                              <div className="h-64 rounded border border-dashed border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted">
                                 <LayoutGrid size={20} className="opacity-40" />
                                 <span className="text-[10px]">故事板占位</span>
                                 <span className="text-[9px] opacity-70">含剧情/角色/场景/分镜</span>
@@ -11070,8 +11068,7 @@ function WorkspacePage() {
                               技术设定。复古烫金边框,深色调背景。
                             </p>
                           </div>
-                        </div>
-                        {/* 视频换行占一整行 */}
+                        {/* 视频与故事板同排,各占下排一半 */}
                         <div className="md:col-span-3 rounded-lg border border-border bg-bg-base/40 p-3 space-y-2">
                           {(() => {
                             const videoEntry = getActiveVideoEntry(g.id);
@@ -11109,7 +11106,7 @@ function WorkspacePage() {
                                 </div>
                                 {/* 视频区 */}
                                 {videoEntry?.status === "succeeded" && videoEntry?.url ? (
-                                  <div className="relative group w-full max-w-[370px] rounded border border-accent/30 overflow-hidden bg-black aspect-video mx-auto">
+                                  <div className="relative group w-full max-w-[520px] rounded border border-accent/30 overflow-hidden bg-black aspect-video mx-auto">
                                     <video
                                       src={videoEntry.url}
                                       controls
@@ -11138,13 +11135,13 @@ function WorkspacePage() {
                                     </div>
                                   </div>
                                 ) : videoEntry?.status === "running" ? (
-                                  <div className="w-full max-w-[370px] aspect-video rounded border border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted mx-auto">
+                                  <div className="w-full max-w-[520px] aspect-video rounded border border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted mx-auto">
                                     <Loader2 size={20} className="animate-spin text-accent" />
                                     <span className="text-[10px]">视频生成中…</span>
                                     <span className="text-[9px] opacity-70">约 1-3 分钟</span>
                                   </div>
                                 ) : (
-                                  <div className="w-full max-w-[370px] aspect-video rounded border border-dashed border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted mx-auto">
+                                  <div className="w-full max-w-[520px] aspect-video rounded border border-dashed border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted mx-auto">
                                     <Camera size={20} className="opacity-40" />
                                     <span className="text-[10px]">视频占位</span>
                                     <span className="text-[9px] opacity-70">
@@ -11360,6 +11357,7 @@ function WorkspacePage() {
                               </>
                             );
                           })()}
+                        </div>
                         </div>
                       </div>
                     );
