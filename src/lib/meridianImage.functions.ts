@@ -21,7 +21,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 const DEFAULT_BASE_URL = "https://www.meridiangolf.xyz";
-const IMAGE_REQUEST_TIMEOUT_MS = 400_000;
+const IMAGE_REQUEST_TIMEOUT_MS = 600_000;
 const MERIDIAN_PREFIX = "meridian/";
 
 export function isMeridianModel(modelId: string | null | undefined): boolean {

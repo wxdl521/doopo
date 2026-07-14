@@ -23,8 +23,8 @@ const Input = z.object({
    * 主视图(要改的那张)强制在图1,额外图仅作风格/细节参考,不得改主视图的身份特征。
    * 上限 4 张,加主视图总 5 张(Seedream 上限 10)。
    */
-  extraReferenceImageUrls: z.array(z.string().url()).max(4).optional(),
-  userInstruction: z.string().min(1).max(2000),
+  extraReferenceImageUrls: z.array(z.string().url()).max(9).optional(),
+  userInstruction: z.string().min(1).max(64_000),
   /**
    * 已完整展开的 API prompt；传入后服务端不再二次包裹编辑模板。
    * 分镜/角色的真实原始 prompt 可能很长，不能在外层 Server Function 提前截断。
@@ -34,13 +34,13 @@ const Input = z.object({
   bodyDescription: z.string().max(4000),
   clothingDescription: z.string().max(4000),
   characterName: z.string().min(1).max(100),
-  characterRoleLabel: z.string().min(1).max(200),
+  characterRoleLabel: z.string().min(1).max(4_000),
   characterAge: z.number().int().min(0).max(200),
   lookLabel: z.string().min(1).max(100),
   palette: z.array(z.string()).max(8).optional(),
   projectStyle: z.string().max(50).optional(),
   characterNationality: z.string().min(1).max(100).optional(),
-  model: z.string().max(100).optional(),
+  model: z.string().max(1_000).optional(),
   /**
    * 生成模式:
    *   - 'modify'      : 用户给修改意见,在原图基础上改。单图、严格约束

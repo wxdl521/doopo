@@ -3,12 +3,7 @@ import { useState, useEffect } from "react";
 import { ArrowLeft, Copy, Download, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useLanguage } from "../i18n/LanguageContext";
-import type {
-  AssetTab,
-  CharacterAsset,
-  SceneAsset,
-  PropAsset,
-} from "../data/assetTypes";
+import type { AssetTab, CharacterAsset, SceneAsset, PropAsset } from "../data/assetTypes";
 import { assetToMarkdown, downloadMarkdown } from "../lib/assetMarkdown";
 import {
   loadCharacters,
@@ -86,6 +81,7 @@ function AssetDetailPage() {
               tags: [found.location, found.time_of_day].filter(Boolean),
               summary: found.action || "",
               cover: found.cover_url || "",
+              images: Array.isArray((found as any).images) ? (found as any).images : undefined,
               location: found.location || "",
               action: found.action || "",
               beats: Array.isArray(found.beats) ? found.beats : [],
@@ -102,6 +98,7 @@ function AssetDetailPage() {
               emoji: "📦",
               gradient: found.gradient || "from-teal-400/40 via-cyan-300/30 to-emerald-200/30",
               cover: found.cover_url || "",
+              images: Array.isArray((found as any).images) ? (found as any).images : undefined,
               owner: found.owner || "",
               appearance: found.description || "",
               firstAppear: "",
@@ -203,7 +200,10 @@ function AssetDetailPage() {
             <ArrowLeft size={14} /> {t.assets_back}
           </button>
           <span className="text-text-muted text-xs">/</span>
-          <Link to="/assets" className="text-xs text-text-secondary hover:text-text-primary transition">
+          <Link
+            to="/assets"
+            className="text-xs text-text-secondary hover:text-text-primary transition"
+          >
             {t.assets_title}
           </Link>
           <span className="text-text-muted text-xs">/</span>
@@ -217,18 +217,32 @@ function AssetDetailPage() {
           <span className="text-text-muted text-xs">/</span>
           <span className="text-xs text-text-primary font-medium">{asset.name}</span>
         </div>
-        {tab === "character" && <div className="flex items-center gap-2">
-          <button onClick={handleCopy} className="btn-ghost text-xs">
-            <Copy size={14} /> {t.assets_copy_md}
-          </button>
-          <button onClick={handleExport} className="btn-primary text-xs">
-            <Download size={14} /> {t.assets_export_md}
-          </button>
-        </div>}
+        {tab === "character" && (
+          <div className="flex items-center gap-2">
+            <button onClick={handleCopy} className="btn-ghost text-xs">
+              <Copy size={14} /> {t.assets_copy_md}
+            </button>
+            <button onClick={handleExport} className="btn-primary text-xs">
+              <Download size={14} /> {t.assets_export_md}
+            </button>
+          </div>
+        )}
       </header>
 
       {tab === "character" && <CharacterDetail c={asset as CharacterAsset} />}
-      {tab === "scene" && <SceneDetail s={asset as SceneAsset & { cover?: string; location?: string; action?: string; beats?: string[]; dialogue?: string }} />}
+      {tab === "scene" && (
+        <SceneDetail
+          s={
+            asset as SceneAsset & {
+              cover?: string;
+              location?: string;
+              action?: string;
+              beats?: string[];
+              dialogue?: string;
+            }
+          }
+        />
+      )}
       {tab === "prop" && <PropDetail p={asset as PropAsset} />}
     </div>
   );
@@ -351,13 +365,25 @@ function CharacterDetail({ c }: { c: CharacterAsset }) {
 }
 
 /* ---------------- Scene ---------------- */
-function SceneDetail({ s }: { s: SceneAsset & { cover?: string; location?: string; action?: string; beats?: string[]; dialogue?: string } }) {
+function SceneDetail({
+  s,
+}: {
+  s: SceneAsset & {
+    cover?: string;
+    location?: string;
+    action?: string;
+    beats?: string[];
+    dialogue?: string;
+  };
+}) {
   const { t } = useLanguage();
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
       <div className="lg:col-span-5">
-        <ImageStage
-          initialUrl={s.cover}
+        <AssetImageGallery
+          images={s.images}
+          cover={s.cover}
+          name={s.name}
           fallback={<span className="text-8xl drop-shadow-lg">{s.emoji}</span>}
           gradient={s.gradient}
           heightClass="aspect-[4/3] lg:aspect-square"
@@ -401,12 +427,14 @@ function PropDetail({ p }: { p: PropAsset }) {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
       <div className="lg:col-span-5">
-        <ImageStage
-        initialUrl={(p as PropAsset & { cover?: string }).cover}
+        <AssetImageGallery
+          images={p.images}
+          cover={(p as PropAsset & { cover?: string }).cover}
+          name={p.name}
           fallback={<span className="text-9xl drop-shadow-lg">{p.emoji}</span>}
           gradient={p.gradient}
-        heightClass="aspect-square"
-        imageClass="object-contain"
+          heightClass="aspect-square"
+          imageClass="object-contain"
         />
       </div>
       <section className="lg:col-span-7 flex flex-col gap-4">
@@ -439,6 +467,64 @@ function PropDetail({ p }: { p: PropAsset }) {
 }
 
 /* ---------------- Shared ---------------- */
+function AssetImageGallery({
+  images,
+  cover,
+  name,
+  fallback,
+  gradient,
+  heightClass,
+  imageClass = "object-cover",
+}: {
+  images?: { url: string; label: string }[];
+  cover?: string;
+  name: string;
+  fallback: React.ReactNode;
+  gradient: string;
+  heightClass: string;
+  imageClass?: string;
+}) {
+  const imageList = images?.length ? images : cover ? [{ url: cover, label: "主图" }] : [];
+  const [active, setActive] = useState(imageList[0]);
+
+  return (
+    <div className="flex flex-col gap-3">
+      <ImageStage
+        initialUrl={active?.url}
+        fallback={fallback}
+        gradient={gradient}
+        heightClass={heightClass}
+        imageClass={imageClass}
+      />
+      {imageList.length > 1 && (
+        <div className="grid grid-cols-5 gap-2">
+          {imageList.map((image, index) => (
+            <button
+              key={`${image.url}-${index}`}
+              onClick={() => setActive(image)}
+              className={`relative panel overflow-hidden aspect-square transition ${
+                active?.url === image.url
+                  ? "ring-2 ring-accent border-accent/50"
+                  : "hover:border-accent/40"
+              }`}
+            >
+              <img
+                src={image.url}
+                alt={`${name} - ${image.label}`}
+                loading="lazy"
+                className="w-full h-full object-cover"
+              />
+              <span className="absolute bottom-1 left-1 right-1 text-[10px] text-white bg-black/40 rounded px-1 text-center truncate">
+                {image.label}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ImageStage({
   fallback,
   gradient,

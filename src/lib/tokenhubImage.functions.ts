@@ -20,7 +20,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 const DEFAULT_BASE_URL = "https://tokenhub.linkstor.com";
-const IMAGE_REQUEST_TIMEOUT_MS = 400_000;
+const IMAGE_REQUEST_TIMEOUT_MS = 600_000;
 const TOKENHUB_PREFIX = "tokenhub/";
 
 export function isTokenhubModel(modelId: string | null | undefined): boolean {

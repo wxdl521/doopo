@@ -16,6 +16,11 @@ export type PropImageEntry = {
   label: string;
 };
 
+export type SceneImageEntry = {
+  url: string;
+  label: string;
+};
+
 type AssetTable = "characters" | "scenes" | "props";
 type AssetRecord = Record<string, unknown> & { id: string; user_id: string };
 
@@ -96,13 +101,19 @@ function charToRecord(
     cover_url: coverUrl ?? null,
     images: (images ?? null) as Json | null,
     reference_audio_url: c.referenceAudioUrl ?? null,
+    updated_at: new Date().toISOString(),
   };
 }
 
 /**
  * 把 GenScene 转换成 scenes 表的 upsert 记录。
  */
-function sceneToRecord(s: GenScene, userId: string, coverUrl?: string | null) {
+function sceneToRecord(
+  s: GenScene,
+  userId: string,
+  coverUrl?: string | null,
+  images?: SceneImageEntry[],
+) {
   return {
     id: s.id,
     user_id: userId,
@@ -114,6 +125,8 @@ function sceneToRecord(s: GenScene, userId: string, coverUrl?: string | null) {
     dialogue: s.dialogue as unknown as Json,
     gradient: null,
     cover_url: coverUrl ?? null,
+    images: (images ?? null) as Json | null,
+    updated_at: new Date().toISOString(),
   };
 }
 
@@ -157,8 +170,9 @@ export async function saveOneScene(
   s: GenScene,
   userId: string,
   coverUrl?: string | null,
+  images?: SceneImageEntry[],
 ): Promise<{ ok: boolean; error?: string }> {
-  const record = sceneToRecord(s, userId, coverUrl);
+  const record = sceneToRecord(s, userId, coverUrl, images);
   return saveOwnAssetRecord("scenes", record);
 }
 
@@ -181,6 +195,7 @@ function propToRecord(
     palette: p.palette,
     cover_url: coverUrl ?? null,
     images: (images ?? null) as Json | null,
+    updated_at: new Date().toISOString(),
   };
 }
 
@@ -199,7 +214,11 @@ export async function deleteProp(id: string, userId: string) {
 }
 
 export async function loadProps(userId: string) {
-  return supabase.from("props").select("*").eq("user_id", userId);
+  return supabase
+    .from("props")
+    .select("*")
+    .eq("user_id", userId)
+    .order("updated_at", { ascending: false });
 }
 
 /** 从资产库移除单条角色/场景(per-item 删除按钮用) */
@@ -212,9 +231,17 @@ export async function deleteScene(id: string, userId: string) {
 }
 
 export async function loadCharacters(userId: string) {
-  return supabase.from("characters").select("*").eq("user_id", userId);
+  return supabase
+    .from("characters")
+    .select("*")
+    .eq("user_id", userId)
+    .order("updated_at", { ascending: false });
 }
 
 export async function loadScenes(userId: string) {
-  return supabase.from("scenes").select("*").eq("user_id", userId);
+  return supabase
+    .from("scenes")
+    .select("*")
+    .eq("user_id", userId)
+    .order("updated_at", { ascending: false });
 }

@@ -12,7 +12,7 @@
 import "./loadEnv";
 
 const ENDPOINT = "https://ai.gateway.lovable.dev/v1/images/generations";
-const TIMEOUT_MS = 120_000;
+const TIMEOUT_MS = 600_000;
 
 export type LovableImageInput = {
   prompt: string;

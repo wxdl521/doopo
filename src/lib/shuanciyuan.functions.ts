@@ -16,7 +16,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 const DEFAULT_BASE_URL = "http://token.ds.cyberpeace.cn";
-const IMAGE_REQUEST_TIMEOUT_MS = 400_000;
+const IMAGE_REQUEST_TIMEOUT_MS = 600_000;
 const SHUCI_PREFIX = "shuci/";
 
 export function isShuanciyuanModel(modelId: string | null | undefined): boolean {

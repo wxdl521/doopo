@@ -449,7 +449,7 @@ const PIXFLOW_BASE_URL = (
 ).replace(/\/+$/, "");
 const PIXFLOW_IMAGE_GEN_PATH = "/v1/images/generations";
 const PIXFLOW_IMAGE_EDIT_PATH = "/v1/images/edits";
-const PIXFLOW_REQUEST_TIMEOUT_MS = 180_000;
+const PIXFLOW_REQUEST_TIMEOUT_MS = 600_000;
 // 2026/06:Pixflow OpenAI Images 协议下,gpt-image-2 用这个 model id
 const PIXFLOW_GPT_IMAGE_MODEL = "gpt-image-2";
 

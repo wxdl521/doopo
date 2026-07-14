@@ -18,7 +18,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 const DEFAULT_BASE_URL = "https://api.onetoken.one";
-const IMAGE_REQUEST_TIMEOUT_MS = 300_000;
+const IMAGE_REQUEST_TIMEOUT_MS = 600_000;
 const ONETOKEN_PREFIX = "onetoken/";
 
 export function isOnetokenModel(modelId: string | null | undefined): boolean {

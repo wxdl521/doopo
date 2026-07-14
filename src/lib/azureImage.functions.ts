@@ -27,7 +27,7 @@ import { imageCost } from "./creditsCost";
 const DEFAULT_BASE_URL = "https://ywkjpolandcentral.cognitiveservices.azure.com";
 const T2I_API_VERSION = "2025-04-01-preview";
 const I2I_API_VERSION = "2025-04-01-preview";
-const IMAGE_REQUEST_TIMEOUT_MS = 400_000;
+const IMAGE_REQUEST_TIMEOUT_MS = 600_000;
 const AZURE_PREFIX = "azure/";
 const AZURE2_PREFIX = "azure2/";
 const AZURE3_PREFIX = "azure3/";

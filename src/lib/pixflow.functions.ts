@@ -27,8 +27,8 @@ import { z } from "zod";
 
 const DEFAULT_BASE_URL = "https://api.pixflow.im";
 // Pixflow 文档建议:图片请求超时设到 ~400s,文本请求保持较短即可
-const REQUEST_TIMEOUT_MS = 120_000;
-const IMAGE_REQUEST_TIMEOUT_MS = 400_000;
+const REQUEST_TIMEOUT_MS = 600_000;
+const IMAGE_REQUEST_TIMEOUT_MS = 600_000;
 const PIXFLOW_PREFIX = "pixflow/";
 
 export function isPixflowModel(modelId: string | null | undefined): boolean {

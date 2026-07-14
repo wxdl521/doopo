@@ -21,7 +21,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 const DEFAULT_BASE_URL = "https://api.nagora.ai";
-const IMAGE_REQUEST_TIMEOUT_MS = 300_000;
+const IMAGE_REQUEST_TIMEOUT_MS = 600_000;
 const NAGORA_PREFIX = "nagora/";
 
 export function isNagoraModel(modelId: string | null | undefined): boolean {

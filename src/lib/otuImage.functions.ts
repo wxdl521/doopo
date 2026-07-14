@@ -18,7 +18,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
 const DEFAULT_BASE_URL = "https://otuapi.com";
-const IMAGE_REQUEST_TIMEOUT_MS = 300_000;
+const IMAGE_REQUEST_TIMEOUT_MS = 600_000;
 const OTU_PREFIX = "otu/";
 
 export function isOtuModel(modelId: string | null | undefined): boolean {

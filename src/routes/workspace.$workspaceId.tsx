@@ -1731,7 +1731,8 @@ function WorkspacePage() {
   // 2026/06:故事板图按意见重生的输入 + busy 状态。
   // 跟 shotModInput/shotModBusy 对称,但故事板没有"多代"概念,所以一组只有 1 张。
   const [storyboardModInput, setStoryboardModInput] = useState("");
-  const [storyboardModBusy, setStoryboardModBusy] = useState(false);
+  // 按意见重生必须绑定分镜组。全局 boolean 会在用户切换预览后错误地盖到另一组上。
+  const [storyboardModBusyGroupId, setStoryboardModBusyGroupId] = useState<string | null>(null);
   const [storyboardModUploadedRefs, setStoryboardModUploadedRefs] = useState<string[]>([]);
   const [storyboardMentionedRefs, setStoryboardMentionedRefs] = useState<string[]>([]);
   // @ 素材的名字会随图一起传给服务端，让提示词能明确区分角色 / 场景 / 道具。
@@ -3581,7 +3582,8 @@ function WorkspacePage() {
       return;
     }
     // 把这张卡标记为 regen 中,UI 那边会显示黑屏遮罩。结束时(成功/失败)一定清掉。
-    const extraRefs = extraReferenceUrls.filter((u) => u && u !== resolvedMainView);
+    // Seedream 最多接受主图 + 9 张参考；客户端保留最先选择的参考，避免本地校验拒绝请求。
+    const extraRefs = extraReferenceUrls.filter((u) => u && u !== resolvedMainView).slice(0, 9);
     setRegenBusyKeys((m) => new Map(m).set(imageKey, mode));
     try {
       const requestData = {
@@ -3592,8 +3594,10 @@ function WorkspacePage() {
         bodyDescription: lk?.bodyDescription || c.bodyDescription || "",
         clothingDescription: lk?.clothingDescription || c.clothingDescription || "",
         characterName: c.name,
-        characterRoleLabel: c.roleLabel,
-        characterAge: c.age,
+        // 角色提取结果偶尔会把整段人物小传塞进定位，或给出异常年龄；
+        // 重生接口的契约是定位 ≤200 字、年龄 0~200，先在客户端归一化以免多维资产按钮直接报 Zod too_big。
+        characterRoleLabel: (c.roleLabel || "角色").slice(0, 200),
+        characterAge: Math.max(0, Math.min(200, Number.isFinite(c.age) ? c.age : 0)),
         lookLabel: lk?.label || "默认",
         palette: c.palette,
         projectStyle: projectVisualStyle,
@@ -6288,7 +6292,7 @@ function WorkspacePage() {
    * 只改用户提到的部分"。
    */
   async function handleRegenStoryboard() {
-    if (!storyboardPreview || storyboardModBusy) return;
+    if (!storyboardPreview || storyboardModBusyGroupId) return;
     const { groupId } = storyboardPreview;
     const group = data.storyboardGroups.find((g) => g.id === groupId);
     if (!group) return;
@@ -6379,7 +6383,8 @@ function WorkspacePage() {
     for (const url of storyboardMentionedRefs) {
       if (!url || referenceImages.includes(url)) continue;
       referenceImages.push(url);
-      referenceImageLabels.push(storyboardMentionedRefLabels[url] ?? "@参考图");
+      // 显式 @ 的素材不是普通风格参考，服务端会将此标记转为必须出现在画面中的约束。
+      referenceImageLabels.push(`用户明确 @引用：${storyboardMentionedRefLabels[url] ?? "参考图"}`);
     }
     const sceneImgUrl = deckSceneId ? pickSceneImageUrl(deckSceneId) : undefined;
     if (sceneImgUrl) {
@@ -6411,7 +6416,15 @@ function WorkspacePage() {
       referenceImageLabels.push(`角色: ${c.name}${c.roleLabel ? ` (${c.roleLabel})` : ""}`);
     }
 
-    setStoryboardModBusy(true);
+    // 先在正在重生的故事板所属组插入占位，卡片列表立即显示“生成中”。
+    setGroupStoryboards((current) => ({
+      ...current,
+      [groupId]: [
+        ...(current[groupId] ?? []),
+        { url: "", status: "running", startedAt: Date.now() },
+      ],
+    }));
+    setStoryboardModBusyGroupId(groupId);
     try {
       const res = await callRegenStoryboard({
         data: {
@@ -6492,17 +6505,28 @@ function WorkspacePage() {
             item.id === groupId ? { ...item, plotText: editablePlot } : item,
           ),
         }));
-        setStoryboardModInput(storyboardEditablePrompt({ ...group, plotText: editablePlot }));
+        // 不能在成功后重置编辑器，否则 @ mention 会退化为普通文本并丢失高亮。
+        setStoryboardModInput(instruction);
         setStoryboardModUploadedRefs([]);
-        setStoryboardMentionedRefs([]);
-        setStoryboardMentionedRefLabels({});
       } else {
+        setGroupStoryboards((current) => {
+          const entries = [...(current[groupId] ?? [])];
+          const runningIndex = entries.map((entry) => entry.status).lastIndexOf("running");
+          if (runningIndex >= 0) entries.splice(runningIndex, 1);
+          return { ...current, [groupId]: entries };
+        });
         toast.error(res?.error || "故事板重生失败");
       }
     } catch (e) {
+      setGroupStoryboards((current) => {
+        const entries = [...(current[groupId] ?? [])];
+        const runningIndex = entries.map((entry) => entry.status).lastIndexOf("running");
+        if (runningIndex >= 0) entries.splice(runningIndex, 1);
+        return { ...current, [groupId]: entries };
+      });
       toast.error(e instanceof Error ? e.message : "故事板重生失败");
     } finally {
-      setStoryboardModBusy(false);
+      setStoryboardModBusyGroupId(null);
     }
   }
 
@@ -6707,12 +6731,19 @@ function WorkspacePage() {
     }
     const allImgs = charImages[imageKey] ?? [];
     const coverUrl = allImgs.at(-1) ?? null;
-    // 收集所有已生成的图片(含标签),存到 assets 库的 images 字段,
-    // 详情页动态展示(不再硬编码 front/side/back/expression)。
-    const images =
-      allImgs.length > 0
-        ? allImgs.map((url) => ({ url, label: url === coverUrl ? "主图" : "生成图" }))
-        : undefined;
+    // 同时收集默认形象与所有变体的历史，资产详情始终能回看该角色生成过的图。
+    const imageHistories = [
+      { key: c.id, label: "主形象" },
+      ...(c.looks ?? []).map((look) => ({ key: `${c.id}::${look.id}`, label: look.label })),
+    ];
+    const seenImages = new Set<string>();
+    const images = imageHistories.flatMap(({ key, label }) =>
+      (charImages[key] ?? []).flatMap((url) => {
+        if (seenImages.has(url)) return [];
+        seenImages.add(url);
+        return [{ url, label: url === coverUrl ? "主图" : `${label} · 生成图` }];
+      }),
+    );
     // 2026/06 修复:URL 不是永久 URL 则先持久化到 Storage,避免临时链接丢失
     let permCoverUrl = coverUrl;
     if (coverUrl && !isPersistedUrl(coverUrl)) {
@@ -6726,7 +6757,7 @@ function WorkspacePage() {
         toast.warning("图片保存失败，将以临时链接保存(24h 内有效)");
       }
     }
-    const r = await saveOneCharacter(c, user.id, permCoverUrl, images);
+    const r = await saveOneCharacter(c, user.id, permCoverUrl, images.length ? images : undefined);
     if (!r.ok) {
       toast.error(`保存角色失败:${r.error}`);
       return;
@@ -6778,6 +6809,10 @@ function WorkspacePage() {
     }
     const allImgs = sceneImages[imageKey] ?? [];
     const coverUrl = allImgs.at(-1) ?? null;
+    const images =
+      allImgs.length > 0
+        ? allImgs.map((url) => ({ url, label: url === coverUrl ? "主图" : "生成图" }))
+        : undefined;
     let permCoverUrl = coverUrl;
     if (coverUrl && !isPersistedUrl(coverUrl)) {
       try {
@@ -6790,7 +6825,7 @@ function WorkspacePage() {
         toast.warning("场景图片保存失败，将以临时链接保存(24h 内有效)");
       }
     }
-    const r = await saveOneScene(s, user.id, permCoverUrl);
+    const r = await saveOneScene(s, user.id, permCoverUrl, images);
     if (!r.ok) {
       toast.error(`保存场景失败:${r.error}`);
       return;
@@ -13121,14 +13156,18 @@ function WorkspacePage() {
       {storyboardPreview &&
         (() => {
           const sbEntries = groupStoryboards[storyboardPreview.groupId] ?? [];
-          const activeSbIdx =
+          // 重生时末尾会有一条空的 running 占位；预览仍显示最近一张可看的故事板。
+          const latestReadyIdx = sbEntries.map((entry) => entry.status).lastIndexOf("succeeded");
+          const requestedSbIdx =
             selectedStoryboardIndex[storyboardPreview.groupId] ?? sbEntries.length - 1;
+          const activeSbIdx = sbEntries[requestedSbIdx]?.url ? requestedSbIdx : latestReadyIdx;
           const activeEntry = sbEntries[Math.min(activeSbIdx, sbEntries.length - 1)];
           const url = activeEntry?.url;
           if (!url) return null;
           const group = data.storyboardGroups.find((gg) => gg.id === storyboardPreview.groupId);
           const title = group ? `第 ${group.index} 组 · 故事板` : "故事板";
           const isRunning = activeEntry?.status === "running";
+          const isModifying = storyboardModBusyGroupId === storyboardPreview.groupId;
           const storyboardLivePlot = group
             ? readEditablePromptField(storyboardModInput, "剧情", [
                 "故事板",
@@ -13261,7 +13300,7 @@ function WorkspacePage() {
                       onError={() => markStoryboardBroken(storyboardPreview.groupId)}
                       className="max-w-full max-h-full object-contain rounded"
                     />
-                    {storyboardModBusy && (
+                    {isModifying && (
                       <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
                         <div className="flex flex-col items-center gap-2 text-white">
                           <Loader2 size={32} className="animate-spin" />
@@ -13269,7 +13308,7 @@ function WorkspacePage() {
                         </div>
                       </div>
                     )}
-                    {isRunning && !storyboardModBusy && (
+                    {isRunning && !isModifying && (
                       <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
                         <div className="flex flex-col items-center gap-2 text-white">
                           <Loader2 size={32} className="animate-spin" />
@@ -13431,7 +13470,7 @@ function WorkspacePage() {
                       )}
                       <div
                         ref={storyboardPromptEditorRef}
-                        contentEditable={!storyboardModBusy && !isRunning && !!url}
+                        contentEditable={!isModifying && !isRunning && !!url}
                         suppressContentEditableWarning
                         role="textbox"
                         aria-multiline="true"
@@ -13458,17 +13497,15 @@ function WorkspacePage() {
                         <button
                           type="button"
                           onClick={() => void handleRegenStoryboard()}
-                          disabled={
-                            storyboardModBusy || isRunning || !storyboardModInput.trim() || !url
-                          }
+                          disabled={isModifying || isRunning || !storyboardModInput.trim() || !url}
                           className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
                         >
-                          {storyboardModBusy ? (
+                          {isModifying ? (
                             <Loader2 size={12} className="animate-spin" />
                           ) : (
                             <Send size={12} />
                           )}
-                          {storyboardModBusy ? "生成中…" : "按提示词生成"}
+                          {isModifying ? "生成中…" : "按提示词生成"}
                         </button>
                       </div>
                     </div>

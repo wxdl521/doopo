@@ -24,7 +24,7 @@ import { chargeCredits } from "./userCredits.functions";
 import { imageCost } from "./creditsCost";
 
 const DEFAULT_BASE_URL = "https://tokenflash.cn";
-const IMAGE_REQUEST_TIMEOUT_MS = 400_000;
+const IMAGE_REQUEST_TIMEOUT_MS = 600_000;
 const TOKENFLASH_PREFIX = "tokenflash/";
 
 export function isTokenflashModel(modelId: string | null | undefined): boolean {
