@@ -5052,6 +5052,8 @@ function WorkspacePage() {
           action:
             (shot.action || "").trim() || (group.plotText || "").slice(0, 400) || "(未填写动作)",
           camera: shot.camera,
+          cameraMovement: shot.cameraMovement,
+          characterBlocking: shot.characterBlocking,
           characterImageUrls: charImageUrls,
           characterNames: charNames,
           sceneImageUrl,
@@ -5212,6 +5214,8 @@ function WorkspacePage() {
             (edited.plotText || "").slice(0, 400) ||
             "(未填写动作)",
           camera: editedShot.camera,
+          cameraMovement: editedShot.cameraMovement,
+          characterBlocking: editedShot.characterBlocking,
           characterImageUrls: charImageUrls,
           characterNames: charNames,
           sceneImageUrl,
@@ -5515,6 +5519,18 @@ function WorkspacePage() {
       {
         text: `Follow each shot's 运镜 (camera movement) and 走位 (character blocking) exactly as described in the Shot breakdown above: the camera moves as specified (push/pull/pan/track/orbit/fixed), characters move along their described paths, and fixed-camera shots keep the camera still. Do not invent extra camera movement or character motion not in the breakdown.`,
       },
+      {
+        text: `IMAGE-TO-VIDEO STABILITY RULES: Treat each storyboard thumbnail as the visual truth. Preserve faces, hairstyles, body proportions, costumes, props, scene layout, composition, color palette, and visual style throughout. Only animate the action explicitly required by each shot; all uninvolved body parts and objects stay stable. Use subtle secondary motion only when it fits the scene (natural blinking/breathing, slight hair or fabric movement, gentle foliage/water/dust/light movement).`,
+        tech: true,
+      },
+      {
+        text: `For each shot, use ONE camera movement only, at slow and controlled speed. A push/pull/pan/track/orbit must follow the stated direction and be small in amplitude; an orbit is limited to a subtle angle, never a large rotation. No rapid zoom, whip pan, violent shake, abrupt rotation, or invented reframing. Keep the 180-degree screen direction and spatial anchors consistent across cuts.`,
+        tech: true,
+      },
+      {
+        text: `NEGATIVE CONSTRAINTS: no face drift, identity change, costume change, prop substitution, object relocation, extra people, extra limbs/fingers, anatomy distortion, warped architecture, scene replacement, style shift, flicker, tearing, frame jitter, morphing, or large unmotivated movement.`,
+        tech: true,
+      },
       ...(dialogueInstruction ? [{ text: dialogueInstruction }] : []),
       { text: buildStyleLock(videoStyleSpec, "scene"), tech: true },
       {
@@ -5704,6 +5720,18 @@ function WorkspacePage() {
       },
       {
         text: `- Follow the storyboard's top-down camera diagram: each shot's camera movement (dashed path labeled 镜头N) and character blocking (solid path) must be reflected in the video - camera moves along its labeled path, fixed-camera shots (▲ 镜头N) stay still, characters follow their blocking paths. Also follow the 运镜 / 走位 hints in [SHOT BREAKDOWN].`,
+        tech: true,
+      },
+      {
+        text: `- Image-to-video stability: storyboard frames and reference images are visual truth. Preserve character identity, hairstyle, body proportions, wardrobe, props, scene layout, composition, palette, and project style. Animate only the stated action; use only subtle, physically plausible secondary motion (breathing/blinking, hair or fabric, foliage/water/dust/light) when appropriate.`,
+        tech: true,
+      },
+      {
+        text: `- Per shot, use exactly the one camera movement stated in [SHOT BREAKDOWN], at slow controlled speed and small amplitude. Never add rapid zooms, whip pans, violent shake, abrupt rotation, large orbit, or unmotivated reframing. Preserve the 180-degree screen direction and all spatial anchors across every cut.`,
+        tech: true,
+      },
+      {
+        text: `- Negative constraints: no face/identity drift, costume or prop changes, object relocation, extra people or limbs, anatomy distortion, warped architecture, scene replacement, style drift, flicker, tearing, jitter, morphing, or large unmotivated movement.`,
         tech: true,
       },
       {

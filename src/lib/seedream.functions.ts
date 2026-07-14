@@ -1122,6 +1122,8 @@ const ShotInput = z.object({
   shotTypeLabel: z.string().min(1).max(20),
   action: z.string().min(1).max(400),
   camera: z.string().max(200).default(""),
+  cameraMovement: z.string().max(300).optional(),
+  characterBlocking: z.string().max(400).optional(),
   // 2026/07:按用户要求从 ≤3 拉到 ≤8。Seedream 经验上 ≤4 张稳定,
   // 超过易掉融合质量 / 触发 120s 超时,此处放开但风险自负。
   characterImageUrls: z.array(z.string().url()).max(8).default([]),
@@ -1178,6 +1180,8 @@ function buildShotInstruction(data: ShotInputType, styleSpec: VisualStyleSpec): 
     `[剧情上下文] ${data.plotText}`,
     `[本镜头] ${data.shotType} ${data.shotTypeLabel} —— ${data.action}`,
     data.camera ? `[机位] ${data.camera}` : "",
+    data.cameraMovement ? `[运镜] ${data.cameraMovement}` : "[运镜] 固定机位,无运镜",
+    data.characterBlocking ? `[人物走位] ${data.characterBlocking}` : "[人物走位] 人物静止,无走位",
     ``,
     `[参考图清单(严格按下面的对应关系使用)]`,
     charRefs,
@@ -1194,9 +1198,10 @@ function buildShotInstruction(data: ShotInputType, styleSpec: VisualStyleSpec): 
     shotTypeDesc,
     `4. 画面必须是单张分镜图,不能有面板分割、文字、标号。`,
     hasCharacters
-      ? `5. 角色动作 / 表情 / 视线方向严格按本镜头的"${data.action}"执行。`
+      ? `5. 角色动作 / 表情 / 视线方向严格按本镜头的"${data.action}"与[人物走位]执行。画面定格在该镜头动作的合理起始或关键姿态；人物左右关系、前后关系、手持道具、视线和朝向必须与走位一致。`
       : `5. 严格按剧情上下文呈现环境氛围、光线与可见道具,不得添加任何人物。`,
-    `6. 固定机位,画面构图稳定平衡。`,
+    `6. [机位]决定本帧的拍摄位置、焦段、角度和构图；[运镜]只描述本镜头内摄像机从此构图如何运动。严格执行这两项：写“固定机位,无运镜”才保持静止；写推/拉/摇/移/跟/环绕时，不得改成其他运镜、更换拍摄侧或凭空增加运动。`,
+    `7. 连续性硬约束：同一场戏内保持180度轴线，不越轴；场景空间锚点（门窗、桌椅、车辆、关键道具）位置固定；不得改变人物的服装、持物、左右站位、前后关系或行动结果。若剧情没有明确动作，不得新增走路、转身、递交、拿放或镜头运动。`,
     ``,
     buildStyleLock(styleSpec, "panel"),
   ]
@@ -1557,6 +1562,8 @@ function buildRegenShotInstruction(
     `[剧情上下文] ${data.plotText}`,
     `[本镜头] ${data.shotType} ${data.shotTypeLabel} —— ${data.action}`,
     data.camera ? `[机位] ${data.camera}` : "",
+    data.cameraMovement ? `[运镜] ${data.cameraMovement}` : "",
+    data.characterBlocking ? `[人物走位] ${data.characterBlocking}` : "",
     ``,
     `[参考图清单(严格按下面的对应关系使用)]`,
     `图1 = 当前分镜镜头(要被修改的)`,
