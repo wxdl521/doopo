@@ -451,26 +451,11 @@ export const persistWorkspaceMedia = createServerFn({ method: "POST" })
           const { buf, contentType } = await fetchMedia(item.url);
           const path = makePath(userId, workspaceId, kind, groupId, contentType);
           const mime = MIME_BY_KIND[kind];
-          const blob = new Blob([buf], { type: mime });
-          const { error: uploadErr } = await supabase.storage
-            .from(BUCKET)
-            .upload(path, blob, { contentType: mime, upsert: true });
-          if (uploadErr) {
-            throw new Error(`storage upload failed: ${uploadErr.message}`);
-          }
-          if (kind === "storyboard") {
-            const { data: signedUrl, error: signErr } = await supabase.storage
-              .from(BUCKET)
-              .createSignedUrl(path, 315_360_000);
-            if (signErr || !signedUrl?.signedUrl) {
-              throw new Error(`storage sign failed: ${signErr?.message ?? "no signed url after upload"}`);
-            }
-            outputMap[groupId] = { url: signedUrl.signedUrl, status: "succeeded" };
-          } else {
-            const { data: publicUrl } = supabase.storage.from(BUCKET).getPublicUrl(path);
-            if (!publicUrl?.publicUrl) throw new Error("no public url after upload");
-            outputMap[groupId] = { url: publicUrl.publicUrl, status: "succeeded" };
-          }
+          const r = await uploadMediaSmart(supabase, path, buf, mime, {
+            signed: kind === "storyboard",
+          });
+          if (!r.ok) throw new Error(r.error);
+          outputMap[groupId] = { url: r.url, status: "succeeded" };
           result.persistedCount++;
         } catch (e: any) {
           // 失败 → 原样保留 ephemeral URL,统计错误
