@@ -24,6 +24,46 @@ import "./loadEnv";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { isCosConfigured, uploadToCos, isCosCdnUrl } from "./cosClient";
+
+/**
+ * 统一上传入口：优先走腾讯云 COS + CDN，未配置时回落到 Supabase Storage。
+ * 返回最终对外可访问的 URL（CDN URL 或 Supabase public/signed URL）。
+ * `signed` 仅在 Supabase 回落且 kind='storyboard' 时生效（历史逻辑要求签名 URL）。
+ */
+async function uploadMediaSmart(
+  supabase: any,
+  key: string,
+  buf: ArrayBuffer | Buffer | Uint8Array,
+  contentType: string,
+  opts: { signed?: boolean } = {},
+): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+  // 1) 优先 COS
+  if (isCosConfigured()) {
+    const r = await uploadToCos(key, buf, contentType);
+    if (r.ok) return { ok: true, url: r.url };
+    if (!r.fallback) return { ok: false, error: `cos upload failed: ${r.error}` };
+    // 配置错误：回落 Supabase
+  }
+  // 2) 回落 Supabase Storage
+  const blob = new Blob([buf as ArrayBuffer], { type: contentType });
+  const { error: uploadErr } = await supabase.storage
+    .from(BUCKET)
+    .upload(key, blob, { contentType, upsert: true });
+  if (uploadErr) return { ok: false, error: `storage upload failed: ${uploadErr.message}` };
+  if (opts.signed) {
+    const { data: signed, error: signErr } = await supabase.storage
+      .from(BUCKET)
+      .createSignedUrl(key, 315_360_000);
+    if (signErr || !signed?.signedUrl) {
+      return { ok: false, error: `storage sign failed: ${signErr?.message ?? "no signed url"}` };
+    }
+    return { ok: true, url: signed.signedUrl };
+  }
+  const { data: publicUrl } = supabase.storage.from(BUCKET).getPublicUrl(key);
+  if (!publicUrl?.publicUrl) return { ok: false, error: "no public url after upload" };
+  return { ok: true, url: publicUrl.publicUrl };
+}
 
 /**
  * 2026/06:saveOneStoryboard —— 单条故事板图入库(自动入库链路)。
@@ -88,33 +128,9 @@ export const saveOneStoryboard = createServerFn({ method: "POST" })
       const mime = /^image\/(png|jpeg|webp|gif)$/i.test(contentType)
         ? contentType
         : MIME_BY_KIND.storyboard;
-      const blob = new Blob([buf], { type: mime });
-      const { error: uploadErr } = await supabase.storage
-        .from(BUCKET)
-        .upload(path, blob, { contentType: mime, upsert: true });
-      if (uploadErr) {
-        return {
-          ok: false,
-          url,
-          persisted: false,
-          error: `storage upload failed: ${uploadErr.message}`,
-        };
-      }
-      // 不依赖 bucket 的 public 开关：自动入库完成后立刻替换成可读的长期签名 URL。
-      // 之前 getPublicUrl 在私有桶中也会拼出一个貌似合法的 URL，图片先显示
-      // Base64、待异步替换后便裂图，正是此处造成的。
-      const { data: signedUrl, error: signErr } = await supabase.storage
-        .from(BUCKET)
-        .createSignedUrl(path, 315_360_000);
-      if (signErr || !signedUrl?.signedUrl) {
-        return {
-          ok: false,
-          url,
-          persisted: false,
-          error: `storage sign failed: ${signErr?.message ?? "no signed url after upload"}`,
-        };
-      }
-      return { ok: true, url: signedUrl.signedUrl, persisted: true };
+      const r = await uploadMediaSmart(supabase, path, buf, mime, { signed: true });
+      if (!r.ok) return { ok: false, url, persisted: false, error: r.error };
+      return { ok: true, url: r.url, persisted: true };
     } catch (e: any) {
       return { ok: false, url, persisted: false, error: e?.message ?? String(e) };
     }
@@ -165,23 +181,9 @@ export const saveOneVideo = createServerFn({ method: "POST" })
       const { buf, contentType } = await fetchMedia(url);
       const path = makePath(userId, workspaceId, "video", fileId ?? groupId, contentType);
       const mime = MIME_BY_KIND.video;
-      const blob = new Blob([buf], { type: mime });
-      const { error: uploadErr } = await supabase.storage
-        .from(BUCKET)
-        .upload(path, blob, { contentType: mime, upsert: true });
-      if (uploadErr) {
-        return {
-          ok: false,
-          url,
-          persisted: false,
-          error: `storage upload failed: ${uploadErr.message}`,
-        };
-      }
-      const { data: publicUrl } = supabase.storage.from(BUCKET).getPublicUrl(path);
-      if (!publicUrl?.publicUrl) {
-        return { ok: false, url, persisted: false, error: "no public url after upload" };
-      }
-      return { ok: true, url: publicUrl.publicUrl, persisted: true };
+      const r = await uploadMediaSmart(supabase, path, buf, mime);
+      if (!r.ok) return { ok: false, url, persisted: false, error: r.error };
+      return { ok: true, url: r.url, persisted: true };
     } catch (e: any) {
       return { ok: false, url, persisted: false, error: e?.message ?? String(e) };
     }
@@ -220,14 +222,9 @@ export const persistAssetImage = createServerFn({ method: "POST" })
       else if (ct.includes("webp")) ext = "webp";
       else if (ct.includes("gif")) ext = "gif";
       const path = `${userId}/assets/${kind}/${id}-${Date.now()}.${ext}`;
-      const blob = new Blob([buf], { type: contentType || "image/png" });
-      const { error: uploadErr } = await supabase.storage
-        .from(BUCKET)
-        .upload(path, blob, { contentType: contentType || "image/png", upsert: true });
-      if (uploadErr) return { ok: false, url: "", error: `upload failed: ${uploadErr.message}` };
-      const { data: publicUrl } = supabase.storage.from(BUCKET).getPublicUrl(path);
-      if (!publicUrl?.publicUrl) return { ok: false, url: "", error: "no public url" };
-      return { ok: true, url: publicUrl.publicUrl };
+      const r = await uploadMediaSmart(supabase, path, buf, contentType || "image/png");
+      if (!r.ok) return { ok: false, url: "", error: r.error };
+      return { ok: true, url: r.url };
     } catch (e: any) {
       return { ok: false, url: "", error: e?.message ?? String(e) };
     }
@@ -244,6 +241,8 @@ type MediaItem = {
 /** 检测 URL 是否已经是我们自己的 Supabase Storage 链接(已入库) */
 function isAlreadyPersisted(url: string): boolean {
   if (!url) return false;
+  // 已通过腾讯云 CDN / COS 分发的 URL 视为已入库
+  if (isCosCdnUrl(url)) return true;
   try {
     const u = new URL(url);
     const host = u.hostname.toLowerCase();
@@ -452,26 +451,11 @@ export const persistWorkspaceMedia = createServerFn({ method: "POST" })
           const { buf, contentType } = await fetchMedia(item.url);
           const path = makePath(userId, workspaceId, kind, groupId, contentType);
           const mime = MIME_BY_KIND[kind];
-          const blob = new Blob([buf], { type: mime });
-          const { error: uploadErr } = await supabase.storage
-            .from(BUCKET)
-            .upload(path, blob, { contentType: mime, upsert: true });
-          if (uploadErr) {
-            throw new Error(`storage upload failed: ${uploadErr.message}`);
-          }
-          if (kind === "storyboard") {
-            const { data: signedUrl, error: signErr } = await supabase.storage
-              .from(BUCKET)
-              .createSignedUrl(path, 315_360_000);
-            if (signErr || !signedUrl?.signedUrl) {
-              throw new Error(`storage sign failed: ${signErr?.message ?? "no signed url after upload"}`);
-            }
-            outputMap[groupId] = { url: signedUrl.signedUrl, status: "succeeded" };
-          } else {
-            const { data: publicUrl } = supabase.storage.from(BUCKET).getPublicUrl(path);
-            if (!publicUrl?.publicUrl) throw new Error("no public url after upload");
-            outputMap[groupId] = { url: publicUrl.publicUrl, status: "succeeded" };
-          }
+          const r = await uploadMediaSmart(supabase, path, buf, mime, {
+            signed: kind === "storyboard",
+          });
+          if (!r.ok) throw new Error(r.error);
+          outputMap[groupId] = { url: r.url, status: "succeeded" };
           result.persistedCount++;
         } catch (e: any) {
           // 失败 → 原样保留 ephemeral URL,统计错误

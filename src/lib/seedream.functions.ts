@@ -2602,7 +2602,7 @@ export const regenerateStoryboardPitchDeck = createServerFn({ method: "POST" })
         model: requested,
         size: "3840x2160",
         referenceImages: images,
-        quality: "high",
+        quality: "high" as "high",
       };
       // 保持静态 import，确保 Cloudflare 构建会把每个供应商实现打进产物。
       const result =
@@ -2663,7 +2663,7 @@ export const regenerateStoryboardPitchDeck = createServerFn({ method: "POST" })
                                         : null;
       if (!result) return { ok: false as const, error: `${functionName} 路由未找到` };
       if (!result.url) return { ok: false as const, error: result.error || `${label} 未返回图片` };
-      return { ok: true as const, url: result.url, model: result.model, meta: result.meta };
+      return { ok: true as const, url: result.url, model: result.model, meta: (result as any).meta };
     }
     if (
       ["azure/", "azure2/", "azure3/"].some((prefix) => requested.toLowerCase().startsWith(prefix))
