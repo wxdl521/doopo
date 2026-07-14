@@ -10574,29 +10574,6 @@ function WorkspacePage() {
                                     .join("、")}
                                 </span>
                               )}
-                              {/* 2026/06:此组"已钉住选为推荐"的角色数(分镜将用这些图作 reference) */}
-                              {g.characterIds.length > 0 &&
-                                (() => {
-                                  const pinnedInGroup = g.characterIds.filter((cid) => {
-                                    const ch = data.characters.find((c) => c.id === cid);
-                                    if (!ch) return false;
-                                    // 检查该角色的默认 look + 每个变体 look 是否有被选中
-                                    const hasDefault = !!selectedCharImages[ch.id];
-                                    const hasLooks = (ch.looks ?? []).some(
-                                      (lk) => !!selectedCharImages[`${ch.id}::${lk.id}`],
-                                    );
-                                    return hasDefault || hasLooks;
-                                  });
-                                  if (pinnedInGroup.length === 0) return null;
-                                  return (
-                                    <span
-                                      className="px-1.5 py-0.5 rounded bg-accent/20 border border-accent/40 text-accent"
-                                      title="本组已有角色参考图被选为推荐；生成分镜图、故事板和视频时会优先使用这些参考图"
-                                    >
-                                      📌 已选 {pinnedInGroup.length} 个角色参考
-                                    </span>
-                                  );
-                                })()}
                             </div>
                             {/* 2026/06:plotText 现在自包含(场景变化+人物动作+台词),
                               UI 上只在 header 保留 group 时间范围 + 角色选择角标;

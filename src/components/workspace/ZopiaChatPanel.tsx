@@ -12,9 +12,6 @@ import {
   Paperclip,
   FileIcon,
   FileText,
-  Users,
-  Grid3x3,
-  Clock,
   Sparkles,
   Upload,
   Loader2,
@@ -175,7 +172,6 @@ function buildWorkflow(stage: WorkspaceTab, t: any): WorkflowDef {
           t.zp_step_char_parse,
           t.zp_step_char_extract,
           t.zp_step_char_persona,
-          t.zp_step_char_render,
         ],
         summary: {
           title: t.zp_summary_char_done,
@@ -1127,43 +1123,6 @@ const ZopiaChatPanel = forwardRef<
     [runWorkflowAnimation],
   );
 
-  const quickActions: {
-    key: string;
-    icon: typeof FileText;
-    target: WorkspaceTab;
-    label: string;
-    userText: string;
-  }[] = [
-    {
-      key: "qs",
-      icon: FileText,
-      target: "script",
-      label: t.zp_quick_script,
-      userText: t.zp_user_quick_script,
-    },
-    {
-      key: "qc",
-      icon: Users,
-      target: "character",
-      label: t.zp_quick_character,
-      userText: t.zp_user_quick_character,
-    },
-    {
-      key: "qb",
-      icon: Grid3x3,
-      target: "storyboard",
-      label: t.zp_quick_storyboard,
-      userText: t.zp_user_quick_storyboard,
-    },
-    {
-      key: "qt",
-      icon: Clock,
-      target: "timeline",
-      label: t.zp_quick_timeline,
-      userText: t.zp_user_quick_timeline,
-    },
-  ];
-
   // ParamField / ParamSpec 已在 useState 之前定义(见上面),
   // 这里不再重复声明,直接用。
   function getParamSpec(c: { key: CtaKey; target: WorkspaceTab }): ParamSpec | null {
@@ -1875,27 +1834,6 @@ const ZopiaChatPanel = forwardRef<
                 ))}
               </div>
             )}
-
-            <div className="pt-4">
-              <div className="text-xs text-text-muted inline-flex items-center gap-1 mb-2">
-                <Sparkles size={12} className="text-accent" /> {t.zp_quick_title}
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                {quickActions.map((q) => {
-                  const Icon = q.icon;
-                  return (
-                    <button
-                      key={q.key}
-                      onClick={() => send(q.userText)}
-                      className="px-3 py-2.5 rounded-lg border border-border bg-bg-elevated hover:border-accent hover:bg-accent-dim/20 text-xs text-left inline-flex items-center gap-2 transition"
-                    >
-                      <Icon size={14} className="text-accent shrink-0" />
-                      <span className="truncate">{q.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
 
             <p className="text-xs text-text-muted pt-3">{t.zp_unsatisfied}</p>
           </div>
