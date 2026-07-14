@@ -12571,7 +12571,7 @@ function WorkspacePage() {
                           视觉风格：
                           <span className="text-text-secondary">
                             {project?.style === "custom"
-                              ? project.customStyle || "自定义风格"
+                              ? project?.customStyle || "自定义风格"
                               : project?.style || "项目默认风格"}
                           </span>
                         </div>
@@ -13340,7 +13340,7 @@ function WorkspacePage() {
                         </button>
                         {shotModUploadedRef && (
                           <div
-                            key={url}
+                            key={shotModUploadedRef}
                             className="relative w-10 h-10 rounded border border-accent overflow-hidden"
                           >
                             <img

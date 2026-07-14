@@ -65,7 +65,7 @@ function AssetDetailPage() {
           }
         } else if (tab === "scene") {
           const { data } = await loadScenes(user.id);
-          const found = data?.find((s: DbScene) => s.id === id);
+          const found = data?.find((s: DbScene) => s.id === id) as any;
           if (found) {
             setDbAsset({
               id: found.id,
@@ -90,7 +90,7 @@ function AssetDetailPage() {
           }
         } else if (tab === "prop") {
           const { data } = await loadProps(user.id);
-          const found = data?.find((p: DbProp) => p.id === id);
+          const found = data?.find((p: DbProp) => p.id === id) as any;
           if (found) {
             setDbAsset({
               id: found.id,
