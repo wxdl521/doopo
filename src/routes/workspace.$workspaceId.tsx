@@ -958,6 +958,7 @@ function WorkspacePage() {
   const [project, setProject] = useState<ProjectConfigRow | null>(null);
   const projectVisualStyle =
     project?.style === "custom" ? `custom:${project.customStyle ?? ""}` : project?.style;
+  const characterNationality = project?.characterNationality ?? "中国";
   const [savingWorkspace, setSavingWorkspace] = useState(false);
   const [savedWorkspace, setSavedWorkspace] = useState(false);
   const [dataLoaded, setDataLoaded] = useState(false);
@@ -1529,29 +1530,30 @@ function WorkspacePage() {
       const result: Record<string, VideoGenEntry[]> = {};
       for (const [k, v] of Object.entries(raw)) {
         if (Array.isArray(v)) {
-          result[k] = (v as any[]).map((item: any) => ({
-            url: item?.url ?? "",
-            status: item?.status === "running" ? ("failed" as const) : (item?.status ?? "failed"),
-            startedAt: item?.startedAt,
-            method: item?.method,
-            durationSec:
-              typeof item?.durationSec === "number" && item.durationSec > 0
-                ? item.durationSec
-                : undefined,
-          })).filter((item) => item.status !== "failed");
-        } else if (v && typeof v === "object" && "url" in (v as object)) {
-          const item = v as any;
-          const entry =
-            {
+          result[k] = (v as any[])
+            .map((item: any) => ({
               url: item?.url ?? "",
               status: item?.status === "running" ? ("failed" as const) : (item?.status ?? "failed"),
               startedAt: item?.startedAt,
-              method: undefined,
+              method: item?.method,
               durationSec:
                 typeof item?.durationSec === "number" && item.durationSec > 0
                   ? item.durationSec
                   : undefined,
-            };
+            }))
+            .filter((item) => item.status !== "failed");
+        } else if (v && typeof v === "object" && "url" in (v as object)) {
+          const item = v as any;
+          const entry = {
+            url: item?.url ?? "",
+            status: item?.status === "running" ? ("failed" as const) : (item?.status ?? "failed"),
+            startedAt: item?.startedAt,
+            method: undefined,
+            durationSec:
+              typeof item?.durationSec === "number" && item.durationSec > 0
+                ? item.durationSec
+                : undefined,
+          };
           if (entry.status !== "failed") result[k] = [entry];
         }
       }
@@ -1645,19 +1647,20 @@ function WorkspacePage() {
       const result: Record<string, StoryboardGenEntry[]> = {};
       for (const [k, v] of Object.entries(raw)) {
         if (Array.isArray(v)) {
-          result[k] = (v as any[]).map((item: any) => ({
-            url: item?.url ?? "",
-            status: item?.status === "running" ? ("failed" as const) : (item?.status ?? "failed"),
-            startedAt: item?.startedAt,
-          })).filter((item) => item.status !== "failed");
-        } else if (v && typeof v === "object" && "url" in (v as object)) {
-          const item = v as any;
-          const entry =
-            {
+          result[k] = (v as any[])
+            .map((item: any) => ({
               url: item?.url ?? "",
               status: item?.status === "running" ? ("failed" as const) : (item?.status ?? "failed"),
               startedAt: item?.startedAt,
-            };
+            }))
+            .filter((item) => item.status !== "failed");
+        } else if (v && typeof v === "object" && "url" in (v as object)) {
+          const item = v as any;
+          const entry = {
+            url: item?.url ?? "",
+            status: item?.status === "running" ? ("failed" as const) : (item?.status ?? "failed"),
+            startedAt: item?.startedAt,
+          };
           if (entry.status !== "failed") result[k] = [entry];
         }
       }
@@ -1729,15 +1732,87 @@ function WorkspacePage() {
   // 跟 shotModInput/shotModBusy 对称,但故事板没有"多代"概念,所以一组只有 1 张。
   const [storyboardModInput, setStoryboardModInput] = useState("");
   const [storyboardModBusy, setStoryboardModBusy] = useState(false);
-  const [storyboardModUploadedRef, setStoryboardModUploadedRef] = useState<string | null>(null);
+  const [storyboardModUploadedRefs, setStoryboardModUploadedRefs] = useState<string[]>([]);
   const [storyboardMentionedRefs, setStoryboardMentionedRefs] = useState<string[]>([]);
+  // @ 素材的名字会随图一起传给服务端，让提示词能明确区分角色 / 场景 / 道具。
+  const [storyboardMentionedRefLabels, setStoryboardMentionedRefLabels] = useState<
+    Record<string, string>
+  >({});
   const [storyboardReferencePickerOpen, setStoryboardReferencePickerOpen] = useState(false);
+  const storyboardPromptEditorRef = useRef<HTMLDivElement>(null);
+  const storyboardPromptSelectionRef = useRef<Range | null>(null);
+
+  /** 记录编辑器光标，供点击 @ 候选项后把高亮引用插回原来的输入位置。 */
+  function rememberStoryboardPromptSelection() {
+    const selection = window.getSelection();
+    const editor = storyboardPromptEditorRef.current;
+    if (
+      !selection?.rangeCount ||
+      !editor ||
+      !selection.anchorNode ||
+      !editor.contains(selection.anchorNode)
+    ) {
+      return;
+    }
+    storyboardPromptSelectionRef.current = selection.getRangeAt(0).cloneRange();
+  }
+
+  function insertStoryboardReferenceMention(url: string, label: string) {
+    const editor = storyboardPromptEditorRef.current;
+    if (!editor) return;
+    const range = storyboardPromptSelectionRef.current?.cloneRange() ?? document.createRange();
+    if (!storyboardPromptSelectionRef.current || !editor.contains(range.startContainer)) {
+      range.selectNodeContents(editor);
+      range.collapse(false);
+    }
+
+    // 输入 @ 打开候选项后，用高亮标签取代刚输入的 @ 字符。
+    if (
+      range.collapsed &&
+      range.startContainer.nodeType === Node.TEXT_NODE &&
+      range.startOffset > 0 &&
+      range.startContainer.textContent?.[range.startOffset - 1] === "@"
+    ) {
+      range.setStart(range.startContainer, range.startOffset - 1);
+      range.deleteContents();
+    }
+
+    const mention = document.createElement("span");
+    mention.contentEditable = "false";
+    mention.dataset.referenceUrl = url;
+    mention.className =
+      "mx-0.5 inline-flex rounded bg-emerald-500/20 px-1 text-emerald-300 ring-1 ring-emerald-400/40";
+    mention.textContent = `@${label}`;
+    const spacer = document.createTextNode(" ");
+    range.insertNode(spacer);
+    range.insertNode(mention);
+    range.setStartAfter(spacer);
+    range.collapse(true);
+    const selection = window.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    storyboardPromptSelectionRef.current = range.cloneRange();
+
+    setStoryboardMentionedRefs((refs) => (refs.includes(url) ? refs : [...refs, url]));
+    setStoryboardMentionedRefLabels((labels) => ({ ...labels, [url]: label }));
+    setStoryboardModInput(editor.innerText);
+    setStoryboardReferencePickerOpen(false);
+    editor.focus();
+  }
   const [shotPreview, setShotPreview] = useState<{ groupId: string; shotId: string } | null>(null);
   const [shotSelectedGenIdx, setShotSelectedGenIdx] = useState(0);
   const [shotModInput, setShotModInput] = useState("");
   const [shotModBusy, setShotModBusy] = useState(false);
   const [shotModUploadedRef, setShotModUploadedRef] = useState<string | null>(null);
   const workspaceId = Route.useParams().workspaceId;
+
+  // 每次打开另一张故事板时，把该故事板已有提示词放入富文本编辑器。
+  useEffect(() => {
+    if (storyboardPreview && storyboardPromptEditorRef.current) {
+      storyboardPromptEditorRef.current.innerText = storyboardModInput;
+      storyboardPromptSelectionRef.current = null;
+    }
+  }, [storyboardPreview?.groupId]);
 
   // 2026/07:从 localStorage 恢复 groupVideos / groupStoryboards（刷新不丢图/视频）
   useEffect(() => {
@@ -2735,6 +2810,7 @@ function WorkspacePage() {
           `BACKGROUND: 100% pure white #FFFFFF. No scenery, no floor, no shadow, no gradient, no vignette, no horizon line.`,
           ``,
           // 视觉风格(2026/06:统一 buildStyleLock,跨生成入口风格指纹一致)
+          `角色国籍：${characterNationality}`,
           `[VISUAL STYLE — must follow the project's art direction]`,
           buildStyleLock(styleSpec, "character"),
           ``,
@@ -2948,6 +3024,7 @@ function WorkspacePage() {
           lookLabel: lk.label,
           palette: c.palette,
           projectStyle: projectVisualStyle,
+          characterNationality,
           model: resolveI2IModel(project?.sceneModel),
           mode: "modify",
         },
@@ -3016,6 +3093,7 @@ function WorkspacePage() {
           lookLabel: lk?.label || "默认",
           palette: c.palette,
           projectStyle: projectVisualStyle,
+          characterNationality,
           // 2026/06 修复:跟同文件 1167/1327/1510 三处保持一致,先过 resolveI2IModel
           // 防止把 T2I-only model id 直接打到 ARK 报 400
           model: resolveI2IModel(project?.sceneModel),
@@ -3078,15 +3156,21 @@ function WorkspacePage() {
         }),
       })),
     }));
-    setCharImages((images) => Object.fromEntries(
-      Object.entries(images).filter(([key]) => key !== c.id && !key.startsWith(`${c.id}::`)),
-    ));
-    setSelectedCharImages((images) => Object.fromEntries(
-      Object.entries(images).filter(([key]) => key !== c.id && !key.startsWith(`${c.id}::`)),
-    ));
-    updateCharImagePrompts((prompts) => Object.fromEntries(
-      Object.entries(prompts).filter(([key]) => key !== c.id && !key.startsWith(`${c.id}::`)),
-    ));
+    setCharImages((images) =>
+      Object.fromEntries(
+        Object.entries(images).filter(([key]) => key !== c.id && !key.startsWith(`${c.id}::`)),
+      ),
+    );
+    setSelectedCharImages((images) =>
+      Object.fromEntries(
+        Object.entries(images).filter(([key]) => key !== c.id && !key.startsWith(`${c.id}::`)),
+      ),
+    );
+    updateCharImagePrompts((prompts) =>
+      Object.fromEntries(
+        Object.entries(prompts).filter(([key]) => key !== c.id && !key.startsWith(`${c.id}::`)),
+      ),
+    );
     closeModPanel();
     toast.success("已删除角色");
   }
@@ -3173,13 +3257,11 @@ function WorkspacePage() {
     const styleLines =
       styleSpec.key === "realistic"
         ? realisticStyle
-        : [
-            `风格：${styleSpec.label}`,
-            `  风格描述：${styleSpec.positive.replace(/\n/g, "；")}`,
-          ];
+        : [`风格：${styleSpec.label}`, `  风格描述：${styleSpec.positive.replace(/\n/g, "；")}`];
     return [
       ...styleLines,
       `角色：${c.name}（${c.roleLabel || "角色"}, age ${c.age}${look?.label ? `，${look.label}` : ""}）`,
+      `角色国籍：${characterNationality}`,
       `  面部特征：${cleanLegacyUserRequirement(look?.faceDescription || c.faceDescription)}`,
       `  身材体型：${cleanLegacyUserRequirement(look?.bodyDescription || c.bodyDescription)}`,
       `  服装配饰：${cleanLegacyUserRequirement(look?.clothingDescription || c.clothingDescription)}`,
@@ -3222,7 +3304,10 @@ function WorkspacePage() {
   function readEditablePromptField(input: string, label: string, labels: string[]): string {
     const escaped = labels.map((item) => item.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
     const match = input.match(
-      new RegExp(`(?:^|\\n)\\s*${label}\\s*[：:]\\s*([\\s\\S]*?)(?=\\n\\s*(?:${escaped})\\s*[：:]|$)`, "m"),
+      new RegExp(
+        `(?:^|\\n)\\s*${label}\\s*[：:]\\s*([\\s\\S]*?)(?=\\n\\s*(?:${escaped})\\s*[：:]|$)`,
+        "m",
+      ),
     );
     return match?.[1]?.trim() || "";
   }
@@ -3244,8 +3329,9 @@ function WorkspacePage() {
   function applySceneEditablePrompt(s: GenScene, input: string): GenScene {
     const labels = ["风格", "场景名称", "地点", "时段", "剧情动作", "关键节拍"];
     const timeText = readEditablePromptField(input, "时段", labels);
-    const timeOfDay = (Object.entries(SCENE_TIME_LABELS).find(([, label]) => label === timeText)?.[0] ??
-      s.timeOfDay) as GenScene["timeOfDay"];
+    const timeOfDay = (Object.entries(SCENE_TIME_LABELS).find(
+      ([, label]) => label === timeText,
+    )?.[0] ?? s.timeOfDay) as GenScene["timeOfDay"];
     const beats = readEditablePromptField(input, "关键节拍", labels)
       .split(/[；;\n]/)
       .map((item) => item.trim())
@@ -3303,7 +3389,8 @@ function WorkspacePage() {
       ...p,
       name: readEditablePromptField(input, "道具名称", labels) || p.name,
       description: readEditablePromptField(input, "道具描述", labels) || p.description,
-      movementDescription: readEditablePromptField(input, "剧情运动", labels) || p.movementDescription,
+      movementDescription:
+        readEditablePromptField(input, "剧情运动", labels) || p.movementDescription,
       keyMoments: keyMoments.length ? keyMoments : p.keyMoments,
     };
   }
@@ -3377,7 +3464,9 @@ function WorkspacePage() {
       age: c.age,
       faceDescription: cleanLegacyUserRequirement(look?.faceDescription || c.faceDescription),
       bodyDescription: cleanLegacyUserRequirement(look?.bodyDescription || c.bodyDescription),
-      clothingDescription: cleanLegacyUserRequirement(look?.clothingDescription || c.clothingDescription),
+      clothingDescription: cleanLegacyUserRequirement(
+        look?.clothingDescription || c.clothingDescription,
+      ),
     };
     for (const line of input.split(/\r?\n/)) {
       const match = line.match(/^\s*(年龄|面部特征|身材体型|服装配饰)\s*[：:]\s*(.*)\s*$/);
@@ -3417,11 +3506,17 @@ function WorkspacePage() {
 
   function openModPanel(c: GenCharacter, lookId: string | null) {
     const imageKey = lookId == null ? c.id : `${c.id}::${lookId}`;
+    const generations = charImagesRef.current[imageKey] ?? [];
+    const selectedUrl = selectedCharImagesRef.current[imageKey];
+    const selectedIndex = selectedUrl ? generations.indexOf(selectedUrl) : -1;
+    const currentIndex = selectedIndex >= 0 ? selectedIndex : Math.max(0, generations.length - 1);
+    const savedEditablePrompt =
+      charImagePromptsRef.current[imageKey]?.[currentIndex]?.editablePrompt;
     setModPanel({ character: c, lookId, imageKey });
     setPreviewTarget({ character: c, lookId });
-    setSelectedGenIdx(0);
+    setSelectedGenIdx(currentIndex);
     setCharacterAttributesExpanded(false);
-    setModInput(characterEditablePrompt(c, lookId));
+    setModInput(savedEditablePrompt || characterEditablePrompt(c, lookId));
     setModError(null);
     setCharModUploadedRefs([]);
   }
@@ -3465,7 +3560,7 @@ function WorkspacePage() {
      * 迭代历史。提交时也走 I2I,不影响人脸锁逻辑。
      */
     replaceExisting = false,
-      /** 内部重放完整 API prompt 时使用；详情页的中文提示词正常经模板展开。 */
+    /** 内部重放完整 API prompt 时使用；详情页的中文提示词正常经模板展开。 */
     rawApiPrompt?: string,
   ) {
     const lk = lookId == null ? null : (c.looks?.find((x) => x.id === lookId) ?? null);
@@ -3502,6 +3597,7 @@ function WorkspacePage() {
         lookLabel: lk?.label || "默认",
         palette: c.palette,
         projectStyle: projectVisualStyle,
+        characterNationality,
         model: resolveI2IModel(project?.sceneModel),
         mode,
       };
@@ -3717,7 +3813,8 @@ function WorkspacePage() {
       lookId,
       parseCharacterEditablePrompt(instruction, c, lookId),
     );
-    const mode = record?.mode === "multi-asset" || record?.mode === "three-view" ? record.mode : "modify";
+    const mode =
+      record?.mode === "multi-asset" || record?.mode === "three-view" ? record.mode : "modify";
 
     // 手动添加的空角色:还没有图片,把用户输入解析为结构化描述走 T2I 首次生成
     if (existingImages.length === 0) {
@@ -3742,6 +3839,16 @@ function WorkspacePage() {
       setModError("未选中要修改的图片,请先在左侧历史里点一张");
       return;
     }
+    // 发送时先落下文字设定。即使图片生成失败、页面刷新或用户稍后关闭弹窗，
+    // 已编辑的角色属性和提示词仍会由自动保存写回 workspace_data。
+    setData((prev) =>
+      prev
+        ? {
+            ...prev,
+            characters: prev.characters.map((item) => (item.id === c.id ? editedCharacter : item)),
+          }
+        : prev,
+    );
     const ok = await doRegen(
       editedCharacter,
       lookId,
@@ -3752,16 +3859,6 @@ function WorkspacePage() {
       false,
     );
     if (ok) {
-      setData((prev) =>
-        prev
-          ? {
-              ...prev,
-              characters: prev.characters.map((item) =>
-                item.id === c.id ? editedCharacter : item,
-              ),
-            }
-          : prev,
-      );
       setModInput("");
       closeModPanel();
       return;
@@ -4061,7 +4158,8 @@ function WorkspacePage() {
   ) {
     const history = propImages[p.id] ?? [];
     const pinned = selectedPropImagesRef.current[p.id];
-    const referenceUrl = referenceOverride ?? (pinned && history.includes(pinned) ? pinned : history.at(-1));
+    const referenceUrl =
+      referenceOverride ?? (pinned && history.includes(pinned) ? pinned : history.at(-1));
     if (!referenceUrl) {
       toast.error("该道具还没生成,无法重生");
       return false;
@@ -4280,7 +4378,12 @@ function WorkspacePage() {
     }
     const editedProp = applyPropEditablePrompt(p, instruction);
     setPropModError(null);
-    const ok = await doPropRegen(editedProp, "modify", instruction, propModUploadedRef ?? undefined);
+    const ok = await doPropRegen(
+      editedProp,
+      "modify",
+      instruction,
+      propModUploadedRef ?? undefined,
+    );
     if (!ok) {
       setPropModError("生成失败,请重试或换更简单的修改");
       return;
@@ -5105,7 +5208,9 @@ function WorkspacePage() {
           shotType: shot.shotType,
           shotTypeLabel: shot.shotTypeLabel,
           action:
-            (editedShot.action || "").trim() || (edited.plotText || "").slice(0, 400) || "(未填写动作)",
+            (editedShot.action || "").trim() ||
+            (edited.plotText || "").slice(0, 400) ||
+            "(未填写动作)",
           camera: editedShot.camera,
           characterImageUrls: charImageUrls,
           characterNames: charNames,
@@ -5980,13 +6085,9 @@ function WorkspacePage() {
       palette?: string[];
     }>;
 
-    // 2026/06:故事板 I2I 参考图收集
-    //   - Seedream image 字段:2026/07 按用户要求从 4 拉到 8(经验 ≤4 稳定,超过易掉质量/超时)
-    //   - 优先级:场景必占 1 张(用户诉求) → 剩余 ≤7 给角色
-    //   - 无场景图时:全部 8 张给角色
+    // 故事板 I2I 参考图收集：角色、场景、道具都作为组级视觉锚点参与生成。
     //   - 角色取图:selectedCharImages 优先(用户钉住的"已选中"图),否则 charImages 最新
     //   - 每张图配 label,在 prompt 里说明"图 N 是 X"
-    const REF_MAX = 8;
     const referenceImages: string[] = [];
     const referenceImageLabels: string[] = [];
     // 场景图(2026/06:用用户选中的那张,fallback 最新一张)
@@ -5998,13 +6099,21 @@ function WorkspacePage() {
         : "场景";
       referenceImageLabels.push(sLabel);
     }
-    // 角色图:按 unionCharIds(各 shot 有效角色的并集)顺序填,直到 4 张上限
+    // 道具也作为独立视觉锚点参与生成。
+    for (const pid of group.propIds ?? []) {
+      const history = propImages[pid] ?? [];
+      const pinned = selectedPropImages[pid];
+      const url = pinned && history.includes(pinned) ? pinned : history.at(-1);
+      if (!url || referenceImages.includes(url)) continue;
+      referenceImages.push(url);
+      referenceImageLabels.push(`道具: ${propNameOf(pid)}`);
+    }
+    // 角色图:按 unionCharIds(各 shot 有效角色的并集)顺序填满剩余位置。
     // 2026/06 修复:复用 pickShotCharImageUrl,跟分镜图走同一套 4 级 fallback,
     // 尊重 shot 级 characterRefs + 多 look 的钉选。取第一个 shot 作为参照
     // (故事板是组级产物,组内各 shot 共享同一套角色 look 选择)。
     const refShot = group.shots[0];
     for (const cid of unionCharIds || []) {
-      if (referenceImages.length >= REF_MAX) break;
       const c = data.characters.find((x) => x.id === cid);
       if (!c) continue;
       const url = pickShotCharImageUrl(refShot, cid);
@@ -6232,18 +6341,17 @@ function WorkspacePage() {
         endSec: s.endSec,
       }));
 
-    // 收集参考图:场景 1 张 + 角色 ≤7 张,Seedream 上限 8 张(2026/07 按用户要求放开)
-    const REF_MAX = 8;
     const referenceImages: string[] = [];
     const referenceImageLabels: string[] = [];
-    if (storyboardModUploadedRef) {
-      referenceImages.push(storyboardModUploadedRef);
-      referenceImageLabels.push("用户上传参考图");
+    for (const [index, url] of storyboardModUploadedRefs.entries()) {
+      if (!url || referenceImages.includes(url)) continue;
+      referenceImages.push(url);
+      referenceImageLabels.push(`用户上传参考图 ${index + 1}`);
     }
     for (const url of storyboardMentionedRefs) {
-      if (!url || referenceImages.includes(url) || referenceImages.length >= REF_MAX) continue;
+      if (!url || referenceImages.includes(url)) continue;
       referenceImages.push(url);
-      referenceImageLabels.push("@参考图");
+      referenceImageLabels.push(storyboardMentionedRefLabels[url] ?? "@参考图");
     }
     const sceneImgUrl = deckSceneId ? pickSceneImageUrl(deckSceneId) : undefined;
     if (sceneImgUrl) {
@@ -6254,11 +6362,19 @@ function WorkspacePage() {
           : "场景",
       );
     }
+    // 先保留一个道具位置，避免重生后道具设计漂移。
+    for (const pid of group.propIds ?? []) {
+      const history = propImages[pid] ?? [];
+      const pinned = selectedPropImages[pid];
+      const url = pinned && history.includes(pinned) ? pinned : history.at(-1);
+      if (!url || referenceImages.includes(url)) continue;
+      referenceImages.push(url);
+      referenceImageLabels.push(`道具: ${propNameOf(pid)}`);
+    }
     // 2026/06 修复:跟 generateMangaStoryboardForGroup 对齐 —— 复用
     // pickShotCharImageUrl(4 级 fallback),尊重 shot 级 characterRefs + 多 look 钉选。
     const refShot = group.shots[0];
     for (const cid of unionCharIds || []) {
-      if (referenceImages.length >= REF_MAX) break;
       const c = data.characters.find((x) => x.id === cid);
       if (!c) continue;
       const url = pickShotCharImageUrl(refShot, cid);
@@ -6349,8 +6465,9 @@ function WorkspacePage() {
           ),
         }));
         setStoryboardModInput(storyboardEditablePrompt({ ...group, plotText: editablePlot }));
-        setStoryboardModUploadedRef(null);
+        setStoryboardModUploadedRefs([]);
         setStoryboardMentionedRefs([]);
+        setStoryboardMentionedRefLabels({});
       } else {
         toast.error(res?.error || "故事板重生失败");
       }
@@ -6973,9 +7090,7 @@ function WorkspacePage() {
             k,
             (arr ?? [])
               .map((v) =>
-                v.status === "running"
-                  ? { ...v, status: "failed" as const, url: v.url || "" }
-                  : v,
+                v.status === "running" ? { ...v, status: "failed" as const, url: v.url || "" } : v,
               )
               .filter((v) => v.status !== "failed"),
           ]),
@@ -7083,7 +7198,18 @@ function WorkspacePage() {
       .map((arr) => (arr?.length ?? 0) + ":" + (arr?.at(-1)?.length ?? 0))
       .join("|"),
     charPromptsHash: Object.values(charImagePrompts)
-      .map((arr) => (arr?.length ?? 0) + ":" + (arr?.at(-1)?.rawPrompt.length ?? 0))
+      .map((arr) =>
+        (arr ?? [])
+          .map(
+            (record) =>
+              `${record?.rawPrompt?.length ?? 0}:${record?.editablePrompt ?? ""}:${record?.mode ?? ""}`,
+          )
+          .join(","),
+      )
+      .join("|"),
+    selectedCharsHash: Object.entries(selectedCharImages)
+      .map(([key, url]) => `${key}:${url ?? ""}`)
+      .sort()
       .join("|"),
     shotImgs: Object.keys(shotImages).length,
     sceneImgs: Object.keys(sceneImages).length,
@@ -8129,8 +8255,17 @@ function WorkspacePage() {
     if (plan.action === "click_ui") {
       const steps = plan.uiSteps?.length
         ? plan.uiSteps
-        : [{ targetStage: plan.targetStage, uiActionId: plan.uiActionId, uiActionLabel: plan.uiActionLabel }];
-      if (typeof document === "undefined" || !steps.every((step) => step.uiActionId || step.uiActionLabel)) {
+        : [
+            {
+              targetStage: plan.targetStage,
+              uiActionId: plan.uiActionId,
+              uiActionLabel: plan.uiActionLabel,
+            },
+          ];
+      if (
+        typeof document === "undefined" ||
+        !steps.every((step) => step.uiActionId || step.uiActionLabel)
+      ) {
         throw new Error("当前无法定位页面操作。");
       }
       let lastLabel = plan.uiActionLabel;
@@ -8142,7 +8277,9 @@ function WorkspacePage() {
         });
         const label = step.uiActionLabel?.replace(/\s+/g, " ").trim();
         const candidates = Array.from(
-          document.querySelectorAll<HTMLElement>('main button, main a[href], main label[for], main [role=button]'),
+          document.querySelectorAll<HTMLElement>(
+            "main button, main a[href], main label[for], main [role=button]",
+          ),
         );
         const target =
           (step.uiActionId
@@ -8152,7 +8289,10 @@ function WorkspacePage() {
             const candidate = (element.innerText || element.getAttribute("aria-label") || "")
               .replace(/\s+/g, " ")
               .trim();
-            return Boolean(label && (candidate === label || candidate.includes(label) || label.includes(candidate)));
+            return Boolean(
+              label &&
+              (candidate === label || candidate.includes(label) || label.includes(candidate)),
+            );
           });
         if (!target) throw new Error("目标按钮已变化，请重新说明要执行的操作。");
         if (target instanceof HTMLButtonElement && target.disabled) {
@@ -8171,10 +8311,7 @@ function WorkspacePage() {
     }
     if (plan.action === "modify_content") {
       if (plan.targetStage === "episodes") {
-        await produce(
-          "episodes",
-          `修改第 ${selectedEpisodeIndex} 集剧本\n${plan.executionPrompt}`,
-        );
+        await produce("episodes", `修改第 ${selectedEpisodeIndex} 集剧本\n${plan.executionPrompt}`);
         return { summary: `已开始修改第 ${selectedEpisodeIndex} 集剧本。` };
       }
       if (plan.targetStage === "script" || plan.targetStage === "canvas") {
@@ -8220,6 +8357,7 @@ function WorkspacePage() {
                 videoModel: project.videoModel,
                 resolution: project.resolution ?? undefined,
                 audio: project.audio,
+                characterNationality: project.characterNationality,
                 workflow: project.workflow,
                 style: project.style,
                 customCover: project.customCover,
@@ -9454,7 +9592,12 @@ function WorkspacePage() {
                                   key={imageKey}
                                   role="button"
                                   tabIndex={0}
-                                  onClick={() => openModPanel(c, card.lookId)}
+                                  onClick={(event) => {
+                                    // 卡片内的操作按钮（选中、上传、保存等）只执行自身行为，
+                                    // 不能冒泡打开详情页并跳到历史图片。
+                                    if ((event.target as HTMLElement).closest("button")) return;
+                                    openModPanel(c, card.lookId);
+                                  }}
                                   onKeyDown={(e) => {
                                     // 键盘可达:Enter / Space 等价于点击
                                     if (e.key === "Enter" || e.key === " ") {
@@ -9524,20 +9667,6 @@ function WorkspacePage() {
                                             />
                                           );
                                         })()}
-                                        {/* 2026/06:已选为推荐角标(左上) — 封面 === 选中时显示。
-                                        同一 imageKey 只能有 1 个 url 钉在 selectedCharImages 里(互斥),
-                                        再次点击"选中"按钮可取消(清掉 entry)。 */}
-                                        {selectedCharImages[imageKey] &&
-                                          (() => {
-                                            const coverUrl =
-                                              selectedCharImages[imageKey] ||
-                                              charImages[imageKey]?.at(-1);
-                                            return coverUrl === selectedCharImages[imageKey] ? (
-                                              <div className="absolute top-1.5 left-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent text-accent-foreground text-[10px] font-bold shadow-md">
-                                                <Target size={10} /> 已选为推荐
-                                              </div>
-                                            ) : null;
-                                          })()}
                                       </>
                                     ) : isQueued ? (
                                       // 同角色下一张在排队(本角色在跑)
@@ -9613,20 +9742,17 @@ function WorkspacePage() {
                                         type="button"
                                         onClick={(e) => {
                                           e.stopPropagation();
-                                          const cur = charImages[imageKey]?.at(-1);
+                                          // 已选中时必须保留原图，不能因为再次点击把选择跳到
+                                          // 历史数组的最后一张（例如四视图 / 多维资产图）。
+                                          const cur =
+                                            selectedCharImages[imageKey] ??
+                                            charImages[imageKey]?.at(-1);
                                           if (!cur) return;
-                                          setSelectedCharImages((m) => {
-                                            if (m[imageKey] === cur) {
-                                              // 再点一次取消选中,回到"最新图"模式
-                                              const { [imageKey]: _, ...rest } = m;
-                                              return rest;
-                                            }
-                                            return { ...m, [imageKey]: cur };
-                                          });
+                                          setSelectedCharImages((m) => ({ ...m, [imageKey]: cur }));
                                         }}
                                         title={
                                           selectedCharImages[imageKey]
-                                            ? "已选中此图作为该 look 的 reference,再次点击取消"
+                                            ? "已选中此图作为该 look 的 reference"
                                             : "选中当前形象作为该 look 在分镜流程里的 reference"
                                         }
                                         className={`absolute top-1.5 right-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium backdrop-blur-sm transition ${
@@ -10116,7 +10242,7 @@ function WorkspacePage() {
                                 {g.startSec.toFixed(0)}s → {g.endSec.toFixed(0)}s ·{" "}
                                 {(g.endSec - g.startSec).toFixed(0)}s
                               </span>
-                  {/* 台词可说完性兜底 — 台词超 15s 硬上限的组打警告标记,提示拆组/精简 */}
+                              {/* 台词可说完性兜底 — 台词超 15s 硬上限的组打警告标记,提示拆组/精简 */}
                               {g.dialogueOverloadSec != null && g.dialogueOverloadSec > 0 && (
                                 <span
                                   className="px-1.5 py-0.5 rounded bg-amber-500/15 border border-amber-500/40 text-amber-600 dark:text-amber-400"
@@ -10756,8 +10882,9 @@ function WorkspacePage() {
                                   onError={() => markStoryboardBroken(g.id)}
                                   onClick={() => {
                                     setStoryboardModInput(storyboardEditablePrompt(g));
-                                    setStoryboardModUploadedRef(null);
+                                    setStoryboardModUploadedRefs([]);
                                     setStoryboardMentionedRefs([]);
+                                    setStoryboardMentionedRefLabels({});
                                     setStoryboardReferencePickerOpen(false);
                                     setStoryboardPreview({ groupId: g.id });
                                   }}
@@ -10803,15 +10930,13 @@ function WorkspacePage() {
                                     <button
                                       key={vi}
                                       type="button"
-                                      onClick={() =>
-                                        {
-                                          setGroupStoryboardFailures((current) => {
-                                            const { [g.id]: _, ...rest } = current;
-                                            return rest;
-                                          });
-                                          setSelectedStoryboardIndex((s) => ({ ...s, [g.id]: vi }));
-                                        }
-                                      }
+                                      onClick={() => {
+                                        setGroupStoryboardFailures((current) => {
+                                          const { [g.id]: _, ...rest } = current;
+                                          return rest;
+                                        });
+                                        setSelectedStoryboardIndex((s) => ({ ...s, [g.id]: vi }));
+                                      }}
                                       className={`shrink-0 text-[10px] px-2 py-0.5 rounded border transition ${
                                         vi === activeSbIdx
                                           ? "border-accent bg-accent/15 text-accent"
@@ -10972,15 +11097,13 @@ function WorkspacePage() {
                                       <button
                                         key={vi}
                                         type="button"
-                                        onClick={() =>
-                                          {
-                                            setGroupVideoFailures((current) => {
-                                              const { [g.id]: _, ...rest } = current;
-                                              return rest;
-                                            });
-                                            setSelectedVideoIndex((s) => ({ ...s, [g.id]: vi }));
-                                          }
-                                        }
+                                        onClick={() => {
+                                          setGroupVideoFailures((current) => {
+                                            const { [g.id]: _, ...rest } = current;
+                                            return rest;
+                                          });
+                                          setSelectedVideoIndex((s) => ({ ...s, [g.id]: vi }));
+                                        }}
                                         className={`shrink-0 text-[10px] px-2 py-0.5 rounded border transition ${
                                           vi === activeIdx
                                             ? "border-accent bg-accent/15 text-accent"
@@ -11278,7 +11401,8 @@ function WorkspacePage() {
                       {cardTitle}
                     </div>
                     <div className="text-xs text-text-muted">
-                      {c.roleLabel} · {c.age} 岁 · 共 {generations.length} 张
+                      {c.roleLabel} · {c.age} 岁 · {characterNationality} · 共 {generations.length}{" "}
+                      张
                     </div>
                   </div>
                   <div className="flex items-center gap-1">
@@ -11324,30 +11448,23 @@ function WorkspacePage() {
                           role="button"
                           tabIndex={0}
                           onClick={() => {
-                            // 2026/07:对齐场景/道具 -- 点缩略图直接选为推荐(reference),
-                            // 同时切换大图到这张;再次点击已推荐的图则取消推荐。
                             setSelectedGenIdx(i);
-                            setModInput(characterEditablePrompt(c, previewTarget.lookId));
-                            setSelectedCharImages((m) => {
-                              if (m[imageKey] === u) {
-                                const { [imageKey]: _, ...rest } = m;
-                                return rest;
-                              }
-                              return { ...m, [imageKey]: u };
-                            });
+                            setModInput(
+                              charImagePrompts[imageKey]?.[i]?.editablePrompt ||
+                                characterEditablePrompt(c, previewTarget.lookId),
+                            );
+                            // 缩略图始终保持一个明确选择；重复点击同一张只维持选中，不能取消。
+                            setSelectedCharImages((m) => ({ ...m, [imageKey]: u }));
                           }}
                           onKeyDown={(e) => {
                             if (e.key === "Enter" || e.key === " ") {
                               e.preventDefault();
                               setSelectedGenIdx(i);
-                              setModInput(characterEditablePrompt(c, previewTarget.lookId));
-                              setSelectedCharImages((m) => {
-                                if (m[imageKey] === u) {
-                                  const { [imageKey]: _, ...rest } = m;
-                                  return rest;
-                                }
-                                return { ...m, [imageKey]: u };
-                              });
+                              setModInput(
+                                charImagePrompts[imageKey]?.[i]?.editablePrompt ||
+                                  characterEditablePrompt(c, previewTarget.lookId),
+                              );
+                              setSelectedCharImages((m) => ({ ...m, [imageKey]: u }));
                             }
                           }}
                           className={`block w-full rounded border-2 overflow-hidden transition cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 ${
@@ -11359,8 +11476,8 @@ function WorkspacePage() {
                           }`}
                           title={
                             selectedCharImages[imageKey] === u
-                              ? "已是推荐(reference) - 再点取消"
-                              : "把这张设为推荐(分镜 reference)"
+                              ? "已选中，作为重新生成时的参考图"
+                              : "点击选中，作为重新生成时的参考图"
                           }
                         >
                           <div className="relative w-full aspect-[3/4] bg-bg-base">
@@ -11381,13 +11498,21 @@ function WorkspacePage() {
                             <span className="absolute bottom-1 right-1 px-1 py-0.5 rounded bg-black/60 text-white text-[9px] tabular-nums">
                               #{i + 1}
                             </span>
-                            {/* 2026/07:已选为推荐角标(跟场景/道具的"选中"角标一致)。
-                              点缩略图即选为推荐,无需再点单独按钮。 */}
-                            {selectedCharImages[imageKey] === u && (
-                              <span className="absolute top-1 right-1 px-1 py-0.5 rounded bg-emerald-500 text-white text-[9px] font-bold inline-flex items-center gap-0.5 shadow-md">
-                                <Target size={9} /> 推荐
-                              </span>
-                            )}
+                            <span
+                              className={`absolute top-1 right-1 px-1 py-0.5 rounded text-[9px] font-bold inline-flex items-center gap-0.5 shadow-md ${
+                                selectedCharImages[imageKey] === u
+                                  ? "bg-emerald-500 text-white"
+                                  : "bg-black/60 text-white/80"
+                              }`}
+                            >
+                              {selectedCharImages[imageKey] === u ? (
+                                <>
+                                  <Check size={9} /> 已选中
+                                </>
+                              ) : (
+                                "未选中"
+                              )}
+                            </span>
                           </div>
                         </div>
                       ))
@@ -11474,9 +11599,12 @@ function WorkspacePage() {
                           previewTarget.lookId,
                           parseCharacterEditablePrompt(modInput, c, previewTarget.lookId),
                         );
-                        const look = previewTarget.lookId == null
-                          ? null
-                          : draftCharacter.looks?.find((item) => item.id === previewTarget.lookId);
+                        const look =
+                          previewTarget.lookId == null
+                            ? null
+                            : draftCharacter.looks?.find(
+                                (item) => item.id === previewTarget.lookId,
+                              );
                         return (
                           <div
                             className={`text-text-secondary overflow-hidden ${
@@ -11484,9 +11612,24 @@ function WorkspacePage() {
                             }`}
                           >
                             <p>年龄：{draftCharacter.age}</p>
-                            <p className="mt-1.5"><span className="text-text-muted">面部：</span>{cleanLegacyUserRequirement(look?.faceDescription || draftCharacter.faceDescription)}</p>
-                            <p className="mt-1.5"><span className="text-text-muted">身材：</span>{cleanLegacyUserRequirement(look?.bodyDescription || draftCharacter.bodyDescription)}</p>
-                            <p className="mt-1.5"><span className="text-text-muted">服装：</span>{cleanLegacyUserRequirement(look?.clothingDescription || draftCharacter.clothingDescription)}</p>
+                            <p className="mt-1.5">
+                              <span className="text-text-muted">面部：</span>
+                              {cleanLegacyUserRequirement(
+                                look?.faceDescription || draftCharacter.faceDescription,
+                              )}
+                            </p>
+                            <p className="mt-1.5">
+                              <span className="text-text-muted">身材：</span>
+                              {cleanLegacyUserRequirement(
+                                look?.bodyDescription || draftCharacter.bodyDescription,
+                              )}
+                            </p>
+                            <p className="mt-1.5">
+                              <span className="text-text-muted">服装：</span>
+                              {cleanLegacyUserRequirement(
+                                look?.clothingDescription || draftCharacter.clothingDescription,
+                              )}
+                            </p>
                           </div>
                         );
                       })()}
@@ -11508,7 +11651,8 @@ function WorkspacePage() {
                             </span>
                           </div>
                           <p className="text-[10px] text-text-muted leading-relaxed">
-                            风格与角色描述均可修改；四视图、多维资产仍保留各自的构图约束，真实 API prompt 会据此重新生成。
+                            风格与角色描述均可修改；四视图、多维资产仍保留各自的构图约束，真实 API
+                            prompt 会据此重新生成。
                           </p>
                           <div className="flex items-center gap-2 mb-2 flex-wrap">
                             <button
@@ -11559,13 +11703,19 @@ function WorkspacePage() {
                           </div>
                           <textarea
                             value={modInput}
-                            onChange={(e) => setModInput(e.target.value)}
-                            onKeyDown={(e) => {
-                              // Enter 提交;Shift+Enter 换行(更符合"直接在对话框输入"的直觉)
-                              if (e.key === "Enter" && !e.shiftKey) {
-                                e.preventDefault();
-                                void submitModPanel();
-                              }
+                            onChange={(e) => {
+                              const editablePrompt = e.target.value;
+                              setModInput(editablePrompt);
+                              // 草稿按当前图片保存；自动保存会将其与 workspace_data 一起持久化，
+                              // 因此切换缩略图或刷新页面都不会丢失已编辑的内容。
+                              updateCharImagePrompts((prompts) => {
+                                const entries = [...(prompts[imageKey] ?? [])];
+                                const existing = entries[currentIdx];
+                                entries[currentIdx] = existing
+                                  ? { ...existing, editablePrompt }
+                                  : { rawPrompt: "", editablePrompt, mode: "modify" };
+                                return { ...prompts, [imageKey]: entries };
+                              });
                             }}
                             placeholder="编辑风格、面部特征、身材体型或服装配饰…"
                             rows={8}
@@ -11755,33 +11905,62 @@ function WorkspacePage() {
                         <div className="rounded-lg border border-border bg-bg-elevated/40 p-3 text-xs leading-relaxed text-text-secondary">
                           <p>场景：{draft.slug}</p>
                           <p className="mt-1.5">地点：{draft.location}</p>
-                          <p className="mt-1.5">时段：{SCENE_TIME_LABELS[draft.timeOfDay] ?? draft.timeOfDay}</p>
+                          <p className="mt-1.5">
+                            时段：{SCENE_TIME_LABELS[draft.timeOfDay] ?? draft.timeOfDay}
+                          </p>
                           <p className="mt-1.5">剧情动作：{draft.action || "未填写"}</p>
-                          {draft.beats.length > 0 && <p className="mt-1.5">关键节拍：{draft.beats.join("；")}</p>}
+                          {draft.beats.length > 0 && (
+                            <p className="mt-1.5">关键节拍：{draft.beats.join("；")}</p>
+                          )}
                         </div>
                       );
                     })()}
-                    {false && (() => {
-                      const draft = sceneDetailDraft ?? sceneDetailDraftValue(s);
-                      const update = (patch: Partial<SceneDetailDraft>) =>
-                        setSceneDetailDraft({ ...draft, ...patch });
-                      return (
-                        <div className="rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2 text-xs">
-                          <div className="text-text-secondary font-semibold">场景资料（编辑后随本次发送生效）</div>
-                          <label className="block text-text-muted">地点
-                            <input value={draft.location} onChange={(e) => update({ location: e.target.value })} className="mt-1 w-full rounded bg-bg-base border border-border px-2 py-1.5 text-sm text-text-primary" />
-                          </label>
-                          <label className="block text-text-muted">时段
-                            <select value={draft.timeOfDay} onChange={(e) => update({ timeOfDay: e.target.value as GenScene["timeOfDay"] })} className="mt-1 w-full rounded bg-bg-base border border-border px-2 py-1.5 text-sm text-text-primary">
-                              {Object.entries(SCENE_TIME_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                            </select>
-                          </label>
-                          <label className="block text-text-muted">剧情动作
-                            <textarea value={draft.action} onChange={(e) => update({ action: e.target.value })} rows={3} className="mt-1 w-full rounded bg-bg-base border border-border p-2 text-sm text-text-primary resize-y" />
-                          </label>
-                        </div>
-                      );
-                    })()}
+                    {false &&
+                      (() => {
+                        const draft = sceneDetailDraft ?? sceneDetailDraftValue(s);
+                        const update = (patch: Partial<SceneDetailDraft>) =>
+                          setSceneDetailDraft({ ...draft, ...patch });
+                        return (
+                          <div className="rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2 text-xs">
+                            <div className="text-text-secondary font-semibold">
+                              场景资料（编辑后随本次发送生效）
+                            </div>
+                            <label className="block text-text-muted">
+                              地点
+                              <input
+                                value={draft.location}
+                                onChange={(e) => update({ location: e.target.value })}
+                                className="mt-1 w-full rounded bg-bg-base border border-border px-2 py-1.5 text-sm text-text-primary"
+                              />
+                            </label>
+                            <label className="block text-text-muted">
+                              时段
+                              <select
+                                value={draft.timeOfDay}
+                                onChange={(e) =>
+                                  update({ timeOfDay: e.target.value as GenScene["timeOfDay"] })
+                                }
+                                className="mt-1 w-full rounded bg-bg-base border border-border px-2 py-1.5 text-sm text-text-primary"
+                              >
+                                {Object.entries(SCENE_TIME_LABELS).map(([value, label]) => (
+                                  <option key={value} value={value}>
+                                    {label}
+                                  </option>
+                                ))}
+                              </select>
+                            </label>
+                            <label className="block text-text-muted">
+                              剧情动作
+                              <textarea
+                                value={draft.action}
+                                onChange={(e) => update({ action: e.target.value })}
+                                rows={3}
+                                className="mt-1 w-full rounded bg-bg-base border border-border p-2 text-sm text-text-primary resize-y"
+                              />
+                            </label>
+                          </div>
+                        );
+                      })()}
                     {false && s.beats.length > 0 && (
                       <div>
                         <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1">
@@ -11820,8 +11999,10 @@ function WorkspacePage() {
                     {/* 修改场景:嵌入预览右侧底部,和角色修改对齐 */}
                     <div className="shrink-0 rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2">
                       <div className="flex items-center justify-between">
-                        <div className="text-xs text-text-secondary font-semibold">场景提示词（可编辑）</div>
-                        <span className="text-[10px] text-text-muted">Enter 发送</span>
+                        <div className="text-xs text-text-secondary font-semibold">
+                          场景提示词（可编辑）
+                        </div>
+                        <span className="text-[10px] text-text-muted">点击按钮发送</span>
                       </div>
                       <div className="flex items-center gap-2 mb-2">
                         <button
@@ -11856,12 +12037,6 @@ function WorkspacePage() {
                       <textarea
                         value={sceneModInput}
                         onChange={(e) => setSceneModInput(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && !e.shiftKey) {
-                            e.preventDefault();
-                            void submitSceneDetailRegen(s);
-                          }
-                        }}
                         placeholder="编辑场景名称、地点、时段或剧情动作…"
                         rows={12}
                         disabled={regenBusyKeys.has(s.id)}
@@ -12027,44 +12202,94 @@ function WorkspacePage() {
                       const draft = applyPropEditablePrompt(p, propModInput);
                       return (
                         <div className="rounded-lg border border-border bg-bg-elevated/40 p-3 text-xs leading-relaxed text-text-secondary">
-                          道具：{draft.name}；描述：{draft.description || "未填写"}{draft.movementDescription ? `；剧情运动：${draft.movementDescription}` : ""}{draft.keyMoments.length ? `；关键节点：${draft.keyMoments.join("；")}` : ""}
+                          道具：{draft.name}；描述：{draft.description || "未填写"}
+                          {draft.movementDescription
+                            ? `；剧情运动：${draft.movementDescription}`
+                            : ""}
+                          {draft.keyMoments.length
+                            ? `；关键节点：${draft.keyMoments.join("；")}`
+                            : ""}
                         </div>
                       );
                     })()}
-                    {false && (() => {
-                      const draft = propDetailDraft ?? propDetailDraftValue(p);
-                      const update = (patch: Partial<PropDetailDraft>) =>
-                        setPropDetailDraft({ ...draft, ...patch });
-                      return (
-                        <div className="rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2 text-xs">
-                          <div className="text-text-secondary font-semibold">道具资料（编辑后随本次发送生效）</div>
-                          <label className="block text-text-muted">道具名称
-                            <input value={draft.name} onChange={(e) => update({ name: e.target.value })} className="mt-1 w-full rounded bg-bg-base border border-border px-2 py-1.5 text-sm text-text-primary" />
-                          </label>
-                          <label className="block text-text-muted">描述
-                            <textarea value={draft.description} onChange={(e) => update({ description: e.target.value })} rows={3} className="mt-1 w-full rounded bg-bg-base border border-border p-2 text-sm text-text-primary resize-y" />
-                          </label>
-                          <label className="block text-text-muted">剧情运动
-                            <textarea value={draft.movementDescription} onChange={(e) => update({ movementDescription: e.target.value })} rows={2} className="mt-1 w-full rounded bg-bg-base border border-border p-2 text-sm text-text-primary resize-y" />
-                          </label>
-                          <label className="block text-text-muted">关键节点（每行一项）
-                            <textarea value={draft.keyMoments} onChange={(e) => update({ keyMoments: e.target.value })} rows={3} className="mt-1 w-full rounded bg-bg-base border border-border p-2 text-sm text-text-primary resize-y" />
-                          </label>
-                          <label className="block text-text-muted">配色（用顿号分隔）
-                            <input value={draft.palette} onChange={(e) => update({ palette: e.target.value })} className="mt-1 w-full rounded bg-bg-base border border-border px-2 py-1.5 text-sm text-text-primary" />
-                          </label>
+                    {false &&
+                      (() => {
+                        const draft = propDetailDraft ?? propDetailDraftValue(p);
+                        const update = (patch: Partial<PropDetailDraft>) =>
+                          setPropDetailDraft({ ...draft, ...patch });
+                        return (
+                          <div className="rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2 text-xs">
+                            <div className="text-text-secondary font-semibold">
+                              道具资料（编辑后随本次发送生效）
+                            </div>
+                            <label className="block text-text-muted">
+                              道具名称
+                              <input
+                                value={draft.name}
+                                onChange={(e) => update({ name: e.target.value })}
+                                className="mt-1 w-full rounded bg-bg-base border border-border px-2 py-1.5 text-sm text-text-primary"
+                              />
+                            </label>
+                            <label className="block text-text-muted">
+                              描述
+                              <textarea
+                                value={draft.description}
+                                onChange={(e) => update({ description: e.target.value })}
+                                rows={3}
+                                className="mt-1 w-full rounded bg-bg-base border border-border p-2 text-sm text-text-primary resize-y"
+                              />
+                            </label>
+                            <label className="block text-text-muted">
+                              剧情运动
+                              <textarea
+                                value={draft.movementDescription}
+                                onChange={(e) => update({ movementDescription: e.target.value })}
+                                rows={2}
+                                className="mt-1 w-full rounded bg-bg-base border border-border p-2 text-sm text-text-primary resize-y"
+                              />
+                            </label>
+                            <label className="block text-text-muted">
+                              关键节点（每行一项）
+                              <textarea
+                                value={draft.keyMoments}
+                                onChange={(e) => update({ keyMoments: e.target.value })}
+                                rows={3}
+                                className="mt-1 w-full rounded bg-bg-base border border-border p-2 text-sm text-text-primary resize-y"
+                              />
+                            </label>
+                            <label className="block text-text-muted">
+                              配色（用顿号分隔）
+                              <input
+                                value={draft.palette}
+                                onChange={(e) => update({ palette: e.target.value })}
+                                className="mt-1 w-full rounded bg-bg-base border border-border px-2 py-1.5 text-sm text-text-primary"
+                              />
+                            </label>
+                          </div>
+                        );
+                      })()}
+                    {false && (
+                      <div className="rounded-lg border border-border bg-bg-base p-2 text-[10px] leading-relaxed text-text-muted">
+                        <div>
+                          视觉风格：
+                          <span className="text-text-secondary">
+                            {project?.style === "custom"
+                              ? project.customStyle || "自定义风格"
+                              : project?.style || "项目默认风格"}
+                          </span>
                         </div>
-                      );
-                    })()}
-                    {false && <div className="rounded-lg border border-border bg-bg-base p-2 text-[10px] leading-relaxed text-text-muted">
-                      <div>视觉风格：<span className="text-text-secondary">{project?.style === "custom" ? project.customStyle || "自定义风格" : project?.style || "项目默认风格"}</span></div>
-                      <div className="mt-1">固定约束：单一道具，主体完整清晰，无人物，无文字。</div>
-                    </div>}
+                        <div className="mt-1">
+                          固定约束：单一道具，主体完整清晰，无人物，无文字。
+                        </div>
+                      </div>
+                    )}
                     {/* 修改道具:嵌入预览右侧底部 */}
                     <div className="shrink-0 rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2">
                       <div className="flex items-center justify-between">
-                        <div className="text-xs text-text-secondary font-semibold">道具提示词（可编辑）</div>
-                        <span className="text-[10px] text-text-muted">Enter 发送</span>
+                        <div className="text-xs text-text-secondary font-semibold">
+                          道具提示词（可编辑）
+                        </div>
+                        <span className="text-[10px] text-text-muted">点击按钮发送</span>
                       </div>
                       <div className="flex items-center gap-2 mb-2">
                         <button
@@ -12098,12 +12323,6 @@ function WorkspacePage() {
                       <textarea
                         value={propModInput}
                         onChange={(e) => setPropModInput(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && !e.shiftKey) {
-                            e.preventDefault();
-                            void submitPropDetailRegen(p);
-                          }
-                        }}
                         placeholder="编辑道具名称、描述、剧情运动或关键节点…"
                         rows={7}
                         disabled={regenBusyKeys.has(p.id)}
@@ -12288,12 +12507,6 @@ function WorkspacePage() {
                     <textarea
                       value={propModInput}
                       onChange={(e) => setPropModInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && !e.shiftKey) {
-                          e.preventDefault();
-                          void submitPropModPanel();
-                        }
-                      }}
                       placeholder="例如:把颜色改成红色 / 增加金属质感 / 换成木纹材质…"
                       rows={5}
                       disabled={propModBusy}
@@ -12310,7 +12523,7 @@ function WorkspacePage() {
                   )}
                 </div>
                 <div className="shrink-0 border-t border-border p-3 flex items-center justify-between gap-2">
-                  <span className="text-[10px] text-text-muted">Enter 发送 · Shift+Enter 换行</span>
+                  <span className="text-[10px] text-text-muted">点击按钮发送</span>
                   <button
                     type="button"
                     onClick={() => void submitPropModPanel()}
@@ -12476,12 +12689,6 @@ function WorkspacePage() {
                     <textarea
                       value={sceneModInput}
                       onChange={(e) => setSceneModInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && !e.shiftKey) {
-                          e.preventDefault();
-                          void submitSceneModPanel();
-                        }
-                      }}
                       placeholder="例如:把光线调成夜晚霓虹 / 把天气改成下雨 / 加一些桌椅道具…"
                       rows={5}
                       disabled={sceneModBusy}
@@ -12498,7 +12705,7 @@ function WorkspacePage() {
                   )}
                 </div>
                 <div className="shrink-0 border-t border-border p-3 flex items-center justify-between gap-2">
-                  <span className="text-[10px] text-text-muted">Enter 发送 · Shift+Enter 换行</span>
+                  <span className="text-[10px] text-text-muted">点击按钮发送</span>
                   <button
                     type="button"
                     onClick={() => void submitSceneModPanel()}
@@ -12805,45 +13012,60 @@ function WorkspacePage() {
                     </div>
 
                     <div className="shrink-0 rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2">
-                      <div className="text-xs text-text-secondary font-semibold">创作指令（可编辑）</div>
+                      <div className="text-xs text-text-secondary font-semibold">
+                        创作指令（可编辑）
+                      </div>
                       <p className="text-[10px] text-text-muted leading-relaxed">
                         这段指令会原样传入生成流程；系统会自动补充当前分镜、参考图和风格一致性约束。
                       </p>
                       <div className="flex items-center gap-2">
                         <button
                           type="button"
-                          onClick={() => pickLocalImageAsDataUrl((url) => setShotModUploadedRef(url))}
+                          onClick={() =>
+                            pickLocalImageAsDataUrl((url) => setShotModUploadedRef(url))
+                          }
                           className="btn-ghost text-xs inline-flex items-center gap-1"
                         >
                           <ImageUp size={12} /> 上传参考图
                         </button>
                         {shotModUploadedRef && (
-                          <div className="relative w-10 h-10 rounded border border-accent overflow-hidden">
-                            <img src={shotModUploadedRef} alt="参考图" className="w-full h-full object-cover" />
-                            <button type="button" onClick={() => setShotModUploadedRef(null)} className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"><X size={10} /></button>
+                          <div
+                            key={url}
+                            className="relative w-10 h-10 rounded border border-accent overflow-hidden"
+                          >
+                            <img
+                              src={shotModUploadedRef}
+                              alt="参考图"
+                              className="w-full h-full object-cover"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setShotModUploadedRef(null)}
+                              className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"
+                            >
+                              <X size={10} />
+                            </button>
                           </div>
                         )}
                       </div>
                       <textarea
                         value={shotModInput}
                         onChange={(e) => setShotModInput(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                            e.preventDefault();
-                            void handleRegenShot();
-                          }
-                        }}
                         placeholder="填写这张分镜图的生成提示词…"
                         rows={8}
                         disabled={shotModBusy || (!currentUrl && !shotModUploadedRef)}
                         className="w-full min-h-44 rounded-md bg-bg-elevated border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-y placeholder:text-text-muted disabled:opacity-50"
                       />
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-[10px] text-text-muted">⌘/Ctrl + Enter 发送</span>
+                        <span className="text-[10px] text-text-muted">点击按钮发送</span>
                         <button
                           type="button"
                           onClick={() => void handleRegenShot()}
-                          disabled={shotModBusy || !shotModInput.trim() || (!currentUrl && !shotModUploadedRef)}
+                          disabled={
+                            shotModBusy ||
+                            !shotModInput.trim() ||
+                            (!currentUrl && !shotModUploadedRef)
+                          }
                           className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
                         >
                           {shotModBusy ? (
@@ -12880,21 +13102,59 @@ function WorkspacePage() {
           const title = group ? `第 ${group.index} 组 · 故事板` : "故事板";
           const isRunning = activeEntry?.status === "running";
           const storyboardLivePlot = group
-            ? readEditablePromptField(storyboardModInput, "剧情", ["故事板", "剧情", "场景", "风格"]) || group.plotText
+            ? readEditablePromptField(storyboardModInput, "剧情", [
+                "故事板",
+                "剧情",
+                "场景",
+                "风格",
+              ]) || group.plotText
             : "";
-          const mentionCandidates = group
-            ? group.shots.map((shot, index) => ({
-                url: shotImages[`${group.id}::${shot.id}`]?.at(-1) ?? shot.imageUrl,
-                label: `分镜图 ${index + 1}`,
-              }))
-            : [];
+          // 故事板的 @ 引用只允许使用已建立的角色、场景、道具视觉资产；
+          // 不再把低清/风格不同的已生成分镜图反哺给故事板。
+          const mentionCandidates = (() => {
+            if (!group) return [] as Array<{ url: string; label: string }>;
+            const candidates: Array<{ url: string; label: string }> = [];
+            const seen = new Set<string>();
+            const add = (url: string | undefined, label: string) => {
+              if (!url || seen.has(url)) return;
+              seen.add(url);
+              candidates.push({ url, label });
+            };
+            const characterIds = new Set<string>(group.characterIds ?? []);
+            for (const shot of group.shots) {
+              for (const id of pickShotCharacterIds(shot, group)) characterIds.add(id);
+            }
+            const refShot = group.shots[0];
+            for (const id of characterIds) {
+              const character = data.characters.find((item) => item.id === id);
+              add(pickShotCharImageUrl(refShot, id), `角色: ${character?.name ?? id}`);
+            }
+            const sceneIds = new Set<string>([
+              ...(group.sceneIds ?? []),
+              ...(group.sceneId ? [group.sceneId] : []),
+            ]);
+            for (const id of sceneIds) {
+              const scene = data.scenes.find((item) => item.id === id);
+              add(pickSceneImageUrl(id), `场景: ${scene?.location || scene?.slug || id}`);
+            }
+            for (const id of group.propIds ?? []) {
+              const history = propImages[id] ?? [];
+              const pinned = selectedPropImages[id];
+              add(
+                pinned && history.includes(pinned) ? pinned : history.at(-1),
+                `道具: ${propNameOf(id)}`,
+              );
+            }
+            return candidates;
+          })();
           return (
             <div
               className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4"
               onClick={() => {
                 setStoryboardPreview(null);
-                setStoryboardModUploadedRef(null);
+                setStoryboardModUploadedRefs([]);
                 setStoryboardMentionedRefs([]);
+                setStoryboardMentionedRefLabels({});
                 setStoryboardReferencePickerOpen(false);
               }}
               role="dialog"
@@ -12914,8 +13174,9 @@ function WorkspacePage() {
                     type="button"
                     onClick={() => {
                       setStoryboardPreview(null);
-                      setStoryboardModUploadedRef(null);
+                      setStoryboardModUploadedRefs([]);
                       setStoryboardMentionedRefs([]);
+                      setStoryboardMentionedRefLabels({});
                       setStoryboardReferencePickerOpen(false);
                     }}
                     className="p-1.5 rounded-md bg-white/10 hover:bg-white/20 text-white"
@@ -12992,8 +13253,10 @@ function WorkspacePage() {
 
                   {/* 右:上下文 + 修改输入 */}
                   <div className="flex flex-col min-h-0 gap-3">
-                    <div className="flex-1 min-h-0 overflow-y-auto rounded-lg border border-border bg-bg-surface/95 text-text-primary p-3 space-y-2">
-                      <div className="text-xs font-semibold text-accent">素材上下文（自动同步到生成）</div>
+                    <div className="h-[30%] min-h-32 shrink-0 overflow-y-auto rounded-lg border border-border bg-bg-surface/95 text-text-primary p-3 space-y-2">
+                      <div className="text-xs font-semibold text-accent">
+                        素材上下文（自动同步到生成）
+                      </div>
                       {group && (
                         <>
                           <dl className="space-y-1.5 text-xs">
@@ -13032,15 +13295,16 @@ function WorkspacePage() {
                       )}
                     </div>
 
-                    <div className="shrink-0 rounded-lg border border-border bg-bg-surface/95 text-text-primary p-3 space-y-2">
+                    <div className="flex flex-1 min-h-0 flex-col rounded-lg border border-border bg-bg-surface/95 text-text-primary p-3 space-y-2">
                       <div className="text-xs font-semibold">创作指令（可编辑）</div>
-                      <p className="text-[10px] text-text-muted leading-relaxed">
-                        这段指令会原样传入生成流程；系统会自动补充当前故事板、镜头和风格锁定约束。
-                      </p>
-                      <div className="flex items-center gap-2 flex-wrap">
+                      <div className="shrink-0 flex items-center gap-2 flex-wrap max-h-24 overflow-y-auto">
                         <button
                           type="button"
-                          onClick={() => pickLocalImageAsDataUrl((url) => setStoryboardModUploadedRef(url))}
+                          onClick={() =>
+                            pickLocalImagesAsDataUrl((urls) =>
+                              setStoryboardModUploadedRefs((refs) => [...refs, ...urls]),
+                            )
+                          }
                           className="btn-ghost text-xs inline-flex items-center gap-1"
                         >
                           <ImageUp size={12} /> 上传参考图
@@ -13052,53 +13316,117 @@ function WorkspacePage() {
                         >
                           @参考图
                         </button>
-                        {storyboardModUploadedRef && (
-                          <div className="relative w-10 h-10 rounded border border-accent overflow-hidden">
-                            <img src={storyboardModUploadedRef} alt="上传参考图" className="w-full h-full object-cover" />
-                            <button type="button" onClick={() => setStoryboardModUploadedRef(null)} className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"><X size={10} /></button>
+                        {storyboardModUploadedRefs.map((url, index) => (
+                          <div
+                            key={url}
+                            className="relative w-10 h-10 rounded border border-accent overflow-hidden"
+                          >
+                            <img
+                              src={url}
+                              alt={`上传参考图 ${index + 1}`}
+                              className="w-full h-full object-cover"
+                            />
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setStoryboardModUploadedRefs((refs) =>
+                                  refs.filter((item) => item !== url),
+                                )
+                              }
+                              className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"
+                            >
+                              <X size={10} />
+                            </button>
                           </div>
-                        )}
+                        ))}
                         {storyboardMentionedRefs.map((url, index) => (
-                          <div key={url} className="relative w-10 h-10 rounded border border-emerald-400 overflow-hidden">
-                            <img src={url} alt={`@参考图 ${index + 1}`} className="w-full h-full object-cover" />
-                            <button type="button" onClick={() => setStoryboardMentionedRefs((refs) => refs.filter((item) => item !== url))} className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"><X size={10} /></button>
+                          <div
+                            key={url}
+                            className="relative w-10 h-10 rounded border border-emerald-400 overflow-hidden"
+                          >
+                            <img
+                              src={url}
+                              alt={`@参考图 ${index + 1}`}
+                              className="w-full h-full object-cover"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setStoryboardMentionedRefs((refs) =>
+                                  refs.filter((item) => item !== url),
+                                );
+                                setStoryboardMentionedRefLabels((labels) => {
+                                  const { [url]: _, ...rest } = labels;
+                                  return rest;
+                                });
+                                const editor = storyboardPromptEditorRef.current;
+                                editor
+                                  ?.querySelectorAll<HTMLElement>("[data-reference-url]")
+                                  .forEach((element) => {
+                                    if (element.dataset.referenceUrl === url) element.remove();
+                                  });
+                                if (editor) setStoryboardModInput(editor.innerText);
+                              }}
+                              className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"
+                            >
+                              <X size={10} />
+                            </button>
                           </div>
                         ))}
                       </div>
                       {storyboardReferencePickerOpen && (
-                        <div className="rounded-md border border-border bg-bg-base p-2 text-xs space-y-1">
-                          <div className="text-text-muted">从本组已生成分镜中引用：</div>
+                        <div className="shrink-0 max-h-28 overflow-y-auto rounded-md border border-border bg-bg-base p-2 text-xs space-y-1">
+                          <div className="text-text-muted">
+                            引用本组角色、场景、道具的已生成素材：
+                          </div>
                           <div className="flex flex-wrap gap-1.5">
-                            {mentionCandidates.map((candidate) => candidate.url ? (
+                            {mentionCandidates.map((candidate) => (
                               <button
                                 key={`${candidate.label}-${candidate.url}`}
                                 type="button"
-                                onClick={() => setStoryboardMentionedRefs((refs) => refs.includes(candidate.url!) ? refs : [...refs, candidate.url!].slice(0, 3))}
+                                onMouseDown={(event) => event.preventDefault()}
+                                onClick={() =>
+                                  insertStoryboardReferenceMention(candidate.url, candidate.label)
+                                }
                                 className="rounded border border-border px-2 py-1 text-text-secondary hover:border-accent"
                               >
                                 {candidate.label}
                               </button>
-                            ) : null)}
-                            {!mentionCandidates.some((candidate) => candidate.url) && <span className="text-text-muted">暂无可引用分镜图</span>}
+                            ))}
+                            {!mentionCandidates.length && (
+                              <span className="text-text-muted">
+                                暂无已生成的角色、场景或道具素材
+                              </span>
+                            )}
                           </div>
                         </div>
                       )}
-                      <textarea
-                        value={storyboardModInput}
-                        onChange={(e) => setStoryboardModInput(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                            e.preventDefault();
+                      <div
+                        ref={storyboardPromptEditorRef}
+                        contentEditable={!storyboardModBusy && !isRunning && !!url}
+                        suppressContentEditableWarning
+                        role="textbox"
+                        aria-multiline="true"
+                        data-placeholder="填写这张故事板图的生成提示词… 输入 @ 可引用角色、场景或道具"
+                        onInput={(event) => {
+                          setStoryboardModInput(event.currentTarget.innerText);
+                          rememberStoryboardPromptSelection();
+                        }}
+                        onKeyUp={rememberStoryboardPromptSelection}
+                        onClick={rememberStoryboardPromptSelection}
+                        onKeyDown={(event) => {
+                          if (event.key === "@") setStoryboardReferencePickerOpen(true);
+                          if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                            event.preventDefault();
                             void handleRegenStoryboard();
                           }
                         }}
-                        placeholder="填写这张故事板图的生成提示词…"
-                        rows={8}
-                        disabled={storyboardModBusy || isRunning || !url}
-                        className="w-full min-h-44 rounded-md bg-bg-elevated border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-y placeholder:text-text-muted disabled:opacity-50"
+                        className="flex-1 min-h-24 overflow-y-auto whitespace-pre-wrap rounded-md border border-border bg-bg-elevated p-2 text-sm text-text-primary outline-none empty:before:pointer-events-none empty:before:text-text-muted empty:before:content-[attr(data-placeholder)] focus:border-accent"
                       />
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-[10px] text-text-muted">⌘/Ctrl + Enter 发送</span>
+                      <div className="shrink-0 flex items-center justify-between gap-2">
+                        <span className="text-[10px] text-text-muted">
+                          输入 @ 引用素材 · ⌘/Ctrl + Enter 发送
+                        </span>
                         <button
                           type="button"
                           onClick={() => void handleRegenStoryboard()}

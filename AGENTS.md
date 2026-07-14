@@ -210,6 +210,11 @@ CSS 变量主题（`styles.css`），支持亮色/暗色：
 
 ## 重要约束与坑
 
+### 数据库权限与提交规范
+
+1. 当前协作者没有 Supabase 项目权限，也没有 `SUPABASE_SERVICE_ROLE_KEY`；涉及新增或修改数据库表、RLS、Storage、RPC 等迁移时，产出可直接执行的 SQL 并交由老板执行，**不要尝试执行 `bun run db:push`**。
+2. 提交时按独立功能或改动范围分组提交，提交信息使用中文 Conventional Commit 格式（例如：`feat: 新增分镜批量生成`）。
+
 ### 开发环境
 
 1. **只能用 Bun**，不要混用 npm/pnpm

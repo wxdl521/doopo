@@ -39,6 +39,7 @@ const Input = z.object({
   lookLabel: z.string().min(1).max(100),
   palette: z.array(z.string()).max(8).optional(),
   projectStyle: z.string().max(50).optional(),
+  characterNationality: z.string().min(1).max(100).optional(),
   model: z.string().max(100).optional(),
   /**
    * 生成模式:

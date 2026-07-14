@@ -505,6 +505,7 @@ const RegenerateInput = z.object({
   lookLabel: z.string().min(1).max(100),
   palette: z.array(z.string()).max(8).optional(),
   projectStyle: z.string().max(50).optional(),
+  characterNationality: z.string().min(1).max(100).optional(),
   model: z.string().max(100).optional(),
   mode: z.enum(["modify", "three-view", "multi-asset"]).default("modify"),
   // 2026/06:查看提示词模式
@@ -577,6 +578,7 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
       `IDENTITY LOCK ACROSS ALL 4 PANELS: Same face, same body, same physical condition, same outfit, same age, same hair, same skin tone, same accessories, same shoes, same wheelchair or prosthetic if applicable. The ONLY difference between panels is the camera angle. The LEFT and RIGHT side profiles (panels 2 and 3) must show the exact same person — mirror the face/hair/body shape, just from opposite sides.`,
       ``,
       `VISUAL STYLE (MUST match across all 4 panels — no style drift between panels):`,
+      `角色国籍：${data.characterNationality ?? "中国"}`,
       buildStyleLock(styleSpec, "reference"),
       ``,
       `CHARACTER (source of truth, alongside the attached reference image):
@@ -745,6 +747,7 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
 
       // ========== 风格 / 角色数据 ==========
       `[PROJECT VISUAL STYLE — must match across all sub-images]`,
+      `角色国籍：${data.characterNationality ?? "中国"}`,
       buildStyleLock(styleSpec, "character"),
 
       `[CHARACTER IDENTITY — source of truth, copy into the image EXACTLY]`,
@@ -839,6 +842,7 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
   • "加个 X" / "换成 X" → only add/change X, nothing else`,
     `[Subject] ${cardTitle} — ${data.characterRoleLabel}, age ${data.characterAge}.`,
     ``,
+    `角色国籍：${data.characterNationality ?? "中国"}`,
     buildStyleLock(styleSpec, "regen"),
   ].join("\n");
   const negative = [
@@ -1919,10 +1923,9 @@ const PitchDeckInput = z.object({
   shots: z.array(PitchDeckShotSchema).max(20).default([]),
   // 2026/06:故事板 I2I 参考图 —— 用户反映"故事板不按我设定的人物形象/场景画"。
   // 根因是之前不传 image 字段,纯 T2I。改成传入参考图(场景至少 1 张 + 角色若干)。
-  // 客户端按 "场景必占 1 张,剩余给角色" 的优先级挑出最多 10 张(Seedream 上限),
-  // 每张配一个 label,在 prompt 里说明"图 N 是 X"。
-  referenceImages: z.array(z.string().url()).max(10).default([]),
-  referenceImageLabels: z.array(z.string().max(120)).max(10).default([]),
+  // 每张配一个 label,在 prompt 里说明"图 N 是 X"。不在应用层限制上传数量。
+  referenceImages: z.array(z.string().url()).default([]),
+  referenceImageLabels: z.array(z.string().max(120)).default([]),
   // 老字段保留向后兼容,不再实际使用
   characterImageUrl: z.string().url().optional(),
   sceneImageUrl: z.string().url().optional(),
@@ -1964,17 +1967,24 @@ function buildPitchDeckPrompt(opts: {
 
   const refImgs = data.referenceImages || [];
   const refLabels = data.referenceImageLabels || [];
+  const hasCharacterReferences = refLabels.some((label) => label.startsWith("角色:"));
+  const hasSceneReferences = refLabels.some((label) => label.startsWith("场景:"));
+  const hasPropReferences = refLabels.some((label) => label.startsWith("道具:"));
   const referenceImageBlock = refImgs.length
     ? [
         `[REFERENCE IMAGES - ${refImgs.length} 张视觉锚点,${hasChars ? "用于人物/场景身份锁定" : "用于场景环境锁定"}]`,
         ...refImgs.map((_, i) => `  Image ${i + 1}: ${refLabels[i] ?? "(no label)"}`),
         ``,
-        hasChars
-          ? `【身份锁定】同一角色在所有镜头中必须保持完全一致的面部特征、发型、体型、服装款式细节。参考图用于锁定"是谁"--脸型、五官比例、发型轮廓、身材比例、服装款式。`
-          : `【场景锁定】参考图是场景环境图,所有帧的环境构图、空间布局、植被/地形/光照氛围必须与参考图一致。本故事板无角色,画面中不得出现任何人物。`,
-        hasChars
-          ? `【风格转化】参考图是彩色/渲染图,但本故事板要求纯铅笔线稿。请将参考图人物转化为铅笔素描表达:提取轮廓线、结构线、服装褶皱线,忽略参考图的色彩、光影、材质渲染。不要因为参考图是彩色就在素描里加灰阶阴影渲染。`
-          : `【风格转化】参考图是彩色/渲染图,但本故事板要求纯铅笔线稿。请将参考图场景转化为铅笔素描表达:提取轮廓线、结构线、纹理线,忽略参考图的色彩、光影、材质渲染。`,
+        hasCharacterReferences
+          ? `【角色锁定】所有标为“角色:”的图片只用于锁定该角色的身份。每一帧中的脸型、五官比例、发型、体型、服装和配饰必须与对应参考图一致；不同角色不可混用脸或服装。`
+          : "",
+        hasSceneReferences
+          ? `【场景锁定】所有标为“场景:”的图片只用于锁定该场景。环境构图、空间布局、建筑/植被、关键陈设、时间和光照氛围必须与对应参考图一致；不得换成其他地点。`
+          : "",
+        hasPropReferences
+          ? `【道具锁定】所有标为“道具:”的图片只用于锁定该道具。出现该道具的帧必须保持相同的外形、材质、颜色、尺寸比例和关键细节；不得替换成相似但不同的物品。`
+          : "",
+        `【风格转化】参考图是彩色/渲染图时，仅提取其身份与设计细节，输出仍必须是纯铅笔线稿：忽略色彩、光影和材质渲染，不得因此改变角色、场景或道具设计。`,
       ].join("\n")
     : "";
 
@@ -2366,21 +2376,12 @@ export const generateStoryboardPitchDeck = createServerFn({ method: "POST" })
     // 到 **3840×2160** (16:9 4K, 8.29M pixels) —— 用户要求"文字可读性最高优先",
     // 高分辨率给中文文字 fidelity 留余量,小字/标签更不容易糊。
     //
-    // 2026/06 三次改造:加 image 字段(场景 + 角色参考图,最多 10 张)。
+    // 2026/06 三次改造:加 image 字段(场景 + 角色 + 道具参考图)。
     // 之前注释说"塞图会干扰 layout",实测不准 —— Seedream I2I 在多图 + 强 prompt
     // 引导下能正确把参考图融到 Section 2/3/5。客户端按"场景必占 1 张 +
-    // 角色填剩余" 的顺序传 referenceImages,服务端透传到 image 字段。
+    // 角色填剩余" 的顺序传 referenceImages,服务端原样透传到 image 字段。
     // 空数组时不传 image,退化回纯 T2I。
     const refImages = data.referenceImages || [];
-    // 2026/07:服务端兜底 —— Seedream image 字段最多 4 张,base64 参考图过大
-    // 会触发 API "too_big" 错误。客户端 REF_MAX=4 是第一道防线,这里守第二道。
-    const MAX_REF_IMAGES = 4;
-    if (refImages.length > MAX_REF_IMAGES) {
-      return {
-        ok: false as const,
-        error: `参考图过多(${refImages.length} 张,最多 ${MAX_REF_IMAGES} 张)。请减少该组分镜的角色/场景数量。`,
-      };
-    }
     const result = await callSeedreamImages(
       {
         model,
@@ -2443,6 +2444,10 @@ function buildRegenPitchDeckPrompt(opts: {
   const { data, styleSpec } = opts;
   const chars = data.characters || [];
   const shots = data.shots || [];
+  const referenceLabels = data.referenceImageLabels || [];
+  const referenceLabelLines = referenceLabels.length
+    ? referenceLabels.map((label, index) => `图 ${index + 2}: ${label}`).join("\n")
+    : "图 2..N: 额外视觉参考图";
 
   // 角色描述块(简化版,regen 主要靠参考图锁定)
   const charLines = chars.length
@@ -2491,8 +2496,9 @@ function buildRegenPitchDeckPrompt(opts: {
     `5. Don't change faces/outfits/scene unless feedback explicitly says so. Don't introduce new characters/scenes.`,
     `6. Keep 16:9, same shot count and order, frame/camera numbers continuous.`,
 
-    `[REFERENCE IMAGES — 图 2..N are identity anchors only]`,
-    `图 1 = 当前故事板(画风/布局/文字的真值). 图 2..N = 角色/场景参考(彩色), 仅用于锁定人物身份——脸型/五官/发型/身材/服装款式. 输出必须保持图 1 的铅笔线稿风格, 将图 2..N 人物转化为铅笔素描, 忽略其色彩/光影/材质.`,
+    `[REFERENCE IMAGES — 图 2..N are visual anchors]`,
+    `图 1 = 当前故事板(画风/布局/文字的真值).\n${referenceLabelLines}`,
+    `标为“角色:”的图锁定对应角色的脸、发型、身材、服装和配饰；标为“场景:”的图锁定空间布局、环境和光照；标为“道具:”的图锁定道具外形、材质、颜色和细节。不得让不同类别的参考图互相替换。输出必须保持图 1 的铅笔线稿风格，只提取图 2..N 的身份与设计信息，忽略其色彩/光影/材质渲染。`,
 
     `[PROJECT VISUAL STYLE — match 图1]`,
     buildStyleLock(styleSpec, "deck"),
@@ -2514,18 +2520,12 @@ export const regenerateStoryboardPitchDeck = createServerFn({ method: "POST" })
       buildPitchDeckNegative((data.characters || []).length > 0),
     );
 
-    // 图 1 = 当前故事板(图布局 / 风格 / 文字位置的真值),后面跟原 referenceImages
-    // 里的角色/场景参考图 —— 跟原 generate 共享同样 10 张上限
+    // 图 1 = 当前故事板(图布局 / 风格 / 文字位置的真值),后面跟所有额外参考图。
     const images: string[] = [data.referenceImageUrl];
     const extraRefs = data.referenceImages || [];
     for (const url of extraRefs) {
       if (!url || url === data.referenceImageUrl) continue;
-      if (images.length >= 4) break;
       images.push(url);
-    }
-
-    if (images.length > 4) {
-      return { ok: false as const, error: `参考图过多(${images.length} 张,Seedream 最多 4 张)` };
     }
 
     // 路由:跟 generateStoryboardPitchDeck 完全对齐(Seedream 主力,

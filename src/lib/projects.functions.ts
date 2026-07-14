@@ -14,6 +14,7 @@ const ProjectInput = z.object({
   videoModel: z.string().max(100).optional(),
   resolution: z.string().max(10).optional(),
   audio: z.enum(["on", "off"]).optional(),
+  characterNationality: z.string().min(1).max(100).optional(),
   workflow: z.string().max(50).optional(),
   style: z.string().max(50).optional(),
   customStyle: z.string().max(2000).nullable().optional(),
@@ -31,6 +32,7 @@ export type ProjectConfigRow = {
   videoModel: string;
   resolution: string | null;
   audio: "on" | "off";
+  characterNationality: string;
   workflow: string;
   style: string;
   customStyle: string | null;
@@ -52,6 +54,9 @@ export const upsertProject = createServerFn({ method: "POST" })
       ...(data.videoModel !== undefined && { video_model: data.videoModel }),
       ...(data.resolution !== undefined && { resolution: data.resolution }),
       ...(data.audio !== undefined && { audio: data.audio }),
+      ...(data.characterNationality !== undefined && {
+        character_nationality: data.characterNationality,
+      }),
       ...(data.workflow !== undefined && { workflow: data.workflow }),
       ...(data.style !== undefined && { style: data.style }),
       ...(data.customStyle !== undefined && { custom_style: data.customStyle }),
@@ -72,7 +77,7 @@ export const getProject = createServerFn({ method: "POST" })
     const { data: row, error } = await supabase
       .from("projects")
       .select(
-        "id,name,aspect,storyboard_model,scene_model,video_model,audio,workflow,style,custom_style,custom_cover,resolution",
+        "id,name,aspect,storyboard_model,scene_model,video_model,audio,character_nationality,workflow,style,custom_style,custom_cover,resolution",
       )
       .eq("id", data.id)
       .maybeSingle();
@@ -87,6 +92,7 @@ export const getProject = createServerFn({ method: "POST" })
       videoModel: row.video_model,
       resolution: row.resolution ?? null,
       audio: row.audio as "on" | "off",
+      characterNationality: row.character_nationality ?? "中国",
       workflow: row.workflow,
       style: row.style,
       customStyle: row.custom_style ?? null,

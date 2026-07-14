@@ -465,6 +465,19 @@ const styles = [
   { id: "clay", label: "黏土定格", cover: styleClay },
 ];
 
+// ISO 3166-1 全部国家/地区；借助浏览器的本地化名称避免手工维护翻译表。
+const countryCodes = `AF AX AL DZ AS AD AO AI AQ AG AR AM AW AU AT AZ BS BH BD BB BY BE BZ BJ BM BT BO BQ BA BW BV BR IO BN BG BF BI CV KH CM CA KY CF TD CL CN CX CC CO KM CG CD CK CR CI HR CU CW CY CZ DK DJ DM DO EC EG SV GQ ER EE SZ ET FK FO FJ FI FR GF PF TF GA GM GE DE GH GI GR GL GD GP GU GT GG GN GW GY HT HM VA HN HK HU IS IN ID IR IQ IE IM IL IT JM JP JE JO KZ KE KI KP KR KW KG LA LV LB LS LR LY LI LT LU MO MG MW MY MV ML MT MH MQ MR MU YT MX FM MD MC MN ME MS MA MZ MM NA NR NP NL NC NZ NI NE NG NU NF MK MP NO OM PK PW PS PA PG PY PE PH PN PL PT PR QA RE RO RU RW BL SH KN LC MF PM VC WS SM ST SA SN RS SC SL SG SX SK SI SB SO ZA GS SS ES LK SD SR SJ SE CH SY TW TJ TZ TH TL TG TK TO TT TN TR TM TC TV UG UA AE GB US UM UY UZ VU VE VN VG VI WF EH YE ZM ZW`.split(
+  " ",
+);
+const countryNames = new Intl.DisplayNames(["zh-CN"], { type: "region" });
+const characterNationalities = countryCodes
+  .map((code) => countryNames.of(code) ?? code)
+  .sort((a, b) => a.localeCompare(b, "zh-CN"));
+const orderedCharacterNationalities = [
+  "中国",
+  ...characterNationalities.filter((country) => country !== "中国"),
+];
+
 export type ProjectConfig = {
   aspect: string;
   storyboardModel: string;
@@ -472,6 +485,7 @@ export type ProjectConfig = {
   videoModel: string;
   resolution?: string;
   audio: "on" | "off";
+  characterNationality: string;
   workflow: string;
   style: string;
   customCover?: string | null;
@@ -560,6 +574,9 @@ export function NewProjectDialog({
   );
   const [audio, setAudio] = useState<"on" | "off">(
     () => initial?.audio ?? initialPrefs.lastAudio ?? "on",
+  );
+  const [characterNationality, setCharacterNationality] = useState(
+    () => initial?.characterNationality ?? "中国",
   );
   const [workflow, setWorkflow] = useState(
     () => initial?.workflow ?? initialPrefs.lastWorkflow ?? "grid",
@@ -715,6 +732,7 @@ export function NewProjectDialog({
           videoModel,
           resolution,
           audio,
+          characterNationality,
           workflow,
           style,
           customCover: customCover ?? null,
@@ -745,6 +763,7 @@ export function NewProjectDialog({
         videoModel,
         resolution,
         audio,
+        characterNationality,
         workflow,
         style,
         customCover: customCover ?? null,
@@ -830,17 +849,19 @@ export function NewProjectDialog({
           />
         </div>
 
-        <div className="grid md:grid-cols-2 gap-4 pt-3">
+        <div className="grid md:grid-cols-[minmax(0,1.35fr)_180px_minmax(0,1fr)] gap-4 pt-3">
           <FieldSelect
             label={t.np_video_model}
+            hintClassName="min-h-5"
             value={videoModel}
             onChange={setVideoModel}
             options={orderedVideoModels as any}
             pinnedLabel={t.np_model_recently_used}
             recommendedLabel={t.np_model_recommended}
           />
-          <div>
-            <div className="text-sm font-semibold mb-1">{t.np_audio}</div>
+          <div className="w-full">
+            <div className="text-sm font-semibold">{t.np_audio}</div>
+            <div className="min-h-5 mb-1" aria-hidden="true" />
             <div className="bg-bg-elevated border border-border rounded-lg px-3 py-2 flex items-center justify-between">
               <span className="text-sm">{audio === "on" ? t.np_audio_on : t.np_audio_off}</span>
               <div className="flex gap-1">
@@ -856,6 +877,16 @@ export function NewProjectDialog({
               </div>
             </div>
           </div>
+          <FieldSelect
+            label={t.np_character_nationality}
+            hintClassName="min-h-5"
+            value={characterNationality}
+            onChange={setCharacterNationality}
+            options={orderedCharacterNationalities.map((nationality) => ({
+              id: nationality,
+              label: nationality,
+            }))}
+          />
         </div>
 
         <div className="pt-4">
@@ -978,6 +1009,7 @@ function FieldSelect({
   pinnedLabel,
   recommendedLabel,
   disabled,
+  hintClassName,
 }: {
   label: string;
   hint?: string;
@@ -987,11 +1019,17 @@ function FieldSelect({
   pinnedLabel?: string;
   recommendedLabel?: string;
   disabled?: boolean;
+  /** 需要紧凑布局的字段可缩短空说明区，仍保持同一行输入框对齐。 */
+  hintClassName?: string;
 }) {
   return (
     <div>
       <div className="text-sm font-semibold">{label}</div>
-      {hint && <div className="text-[11px] text-text-muted mb-1">{hint}</div>}
+      <div
+        className={`${hintClassName ?? "min-h-[2.75rem]"} mb-1 text-[11px] text-text-muted`}
+      >
+        {hint}
+      </div>
       <div className="relative">
         <select
           value={value}

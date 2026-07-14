@@ -264,6 +264,7 @@ export type Database = {
         Row: {
           aspect: string
           audio: string
+          character_nationality: string
           completed_stages: string[]
           created_at: string
           custom_cover: string | null
@@ -285,6 +286,7 @@ export type Database = {
         Insert: {
           aspect?: string
           audio?: string
+          character_nationality?: string
           completed_stages?: string[]
           created_at?: string
           custom_cover?: string | null
@@ -306,6 +308,7 @@ export type Database = {
         Update: {
           aspect?: string
           audio?: string
+          character_nationality?: string
           completed_stages?: string[]
           created_at?: string
           custom_cover?: string | null
