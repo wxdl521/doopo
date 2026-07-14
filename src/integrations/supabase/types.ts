@@ -33,6 +33,7 @@ export type Database = {
           reference_audio_url: string | null
           role: string
           role_label: string | null
+          updated_at: string
           user_id: string
         }
         Insert: {
@@ -53,6 +54,7 @@ export type Database = {
           reference_audio_url?: string | null
           role?: string
           role_label?: string | null
+          updated_at?: string
           user_id: string
         }
         Update: {
@@ -73,6 +75,7 @@ export type Database = {
           reference_audio_url?: string | null
           role?: string
           role_label?: string | null
+          updated_at?: string
           user_id?: string
         }
         Relationships: []
@@ -398,9 +401,11 @@ export type Database = {
           dialogue: Json | null
           gradient: string | null
           id: string
+          images: Json
           location: string | null
           name: string
           time_of_day: string | null
+          updated_at: string
           user_id: string
         }
         Insert: {
@@ -411,9 +416,11 @@ export type Database = {
           dialogue?: Json | null
           gradient?: string | null
           id: string
+          images?: Json
           location?: string | null
           name: string
           time_of_day?: string | null
+          updated_at?: string
           user_id: string
         }
         Update: {
@@ -424,9 +431,11 @@ export type Database = {
           dialogue?: Json | null
           gradient?: string | null
           id?: string
+          images?: Json
           location?: string | null
           name?: string
           time_of_day?: string | null
+          updated_at?: string
           user_id?: string
         }
         Relationships: []
@@ -705,6 +714,10 @@ export type Database = {
               error: true
             } & "Could not choose the best candidate function between: public.add_user_credits(p_amount => int4), public.add_user_credits(p_amount => numeric). Try renaming the parameters or the function itself in the database so function overloading can be resolved"
           }
+      create_team_as_owner: {
+        Args: { p_credits?: number; p_description?: string; p_name: string }
+        Returns: string
+      }
       deduct_user_credits: {
         Args: {
           p_amount: number
