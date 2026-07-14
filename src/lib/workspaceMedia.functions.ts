@@ -181,23 +181,9 @@ export const saveOneVideo = createServerFn({ method: "POST" })
       const { buf, contentType } = await fetchMedia(url);
       const path = makePath(userId, workspaceId, "video", fileId ?? groupId, contentType);
       const mime = MIME_BY_KIND.video;
-      const blob = new Blob([buf], { type: mime });
-      const { error: uploadErr } = await supabase.storage
-        .from(BUCKET)
-        .upload(path, blob, { contentType: mime, upsert: true });
-      if (uploadErr) {
-        return {
-          ok: false,
-          url,
-          persisted: false,
-          error: `storage upload failed: ${uploadErr.message}`,
-        };
-      }
-      const { data: publicUrl } = supabase.storage.from(BUCKET).getPublicUrl(path);
-      if (!publicUrl?.publicUrl) {
-        return { ok: false, url, persisted: false, error: "no public url after upload" };
-      }
-      return { ok: true, url: publicUrl.publicUrl, persisted: true };
+      const r = await uploadMediaSmart(supabase, path, buf, mime);
+      if (!r.ok) return { ok: false, url, persisted: false, error: r.error };
+      return { ok: true, url: r.url, persisted: true };
     } catch (e: any) {
       return { ok: false, url, persisted: false, error: e?.message ?? String(e) };
     }
