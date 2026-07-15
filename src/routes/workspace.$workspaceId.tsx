@@ -147,7 +147,7 @@ type CharacterImagePromptRecord = {
 /** 每张场景/道具图自己的可编辑提示词快照，必须与图片历史按下标对应。 */
 type AssetImagePromptRecord = {
   editablePrompt: string;
-  mode: "initial" | "modify" | "t2i" | "upload";
+  mode: "initial" | "modify" | "multi-view" | "t2i" | "upload";
 };
 
 type SceneDetailDraft = {
@@ -1389,10 +1389,10 @@ function WorkspacePage() {
   // 跟 activeImageKey(T2I 通道)是两套独立的状态,因为它们发生在不同时间窗口:
   //   T2I:首张图还没出,用户进不去 regen
   //   I2I:首张图已出,用户点三视图/多维资产/修改
-  // 在 regen 期间给对应卡片加黑屏遮罩(spinner + "正在生成三视图" 等),
+  // 在 regen 期间给对应卡片加黑屏遮罩(spinner + "正在生成多视图" 等),
   // 防止用户重复点 / 让进度可感知。value 存 mode 用来显示对应的提示文字。
   const [regenBusyKeys, setRegenBusyKeys] = useState<
-    Map<string, "modify" | "three-view" | "multi-asset" | "directional-views" | "t2i">
+    Map<string, "modify" | "three-view" | "multi-asset" | "multi-view" | "t2i">
   >(new Map());
   // 用户在角色卡片右上角点"选中"后,该 look(imageKey)被钉住指向哪张 url。
   // 用 url 而不是 index 引用,避免新增图后被偏移。
@@ -4281,13 +4281,12 @@ function WorkspacePage() {
 
   /**
    * 场景图重生(2026/06 新增) —— 对称 doRegen。
-   * 模式 'modify' / 'three-view'。三视图对场景来说 = wide/medium/close-up
-   * 三个景别变体(不是 front/side/back),具体语义在 seedream.functions.ts
-   * 的 buildScenePrompts。
+   * 模式 'modify' / 'multi-view'。多视图固定为正面→左侧→背面→右侧，
+   * 具体空间关系与纯环境约束在 seedream.functions.ts 的 buildScenePrompts。
    */
   async function doSceneRegen(
     s: GenScene,
-    mode: "modify" | "three-view" | "directional-views",
+    mode: "modify" | "multi-view",
     instruction: string,
     /** 可选:用户手动上传的参考图,优先于 history 里的图片 */
     referenceOverride?: string,
@@ -4333,7 +4332,7 @@ function WorkspacePage() {
       });
       // 2026/06:查看提示词模式拦截
       if (
-        interceptPromptPreview(`场景 ${s.slug} · ${mode === "three-view" ? "三视图" : "修改"}`, res)
+        interceptPromptPreview(`场景 ${s.slug} · ${mode === "multi-view" ? "多视图" : "修改"}`, res)
       ) {
         return true;
       }
@@ -4344,16 +4343,10 @@ function WorkspacePage() {
         updateSceneImages((m) => ({ ...m, [s.id]: [...(m[s.id] ?? []), displayUrl] }));
         updateSceneImagePrompts((m) => ({
           ...m,
-          [s.id]: [...(m[s.id] ?? []), { editablePrompt, mode: "modify" }],
+          [s.id]: [...(m[s.id] ?? []), { editablePrompt, mode }],
         }));
         setSelectedSceneImages((m) => ({ ...m, [s.id]: displayUrl }));
-        toast.success(
-          mode === "three-view"
-            ? "已生成场景三视图"
-            : mode === "directional-views"
-              ? "已生成方向多视角"
-              : "已按意见重生",
-        );
+        toast.success(mode === "multi-view" ? "已生成场景多视图" : "已按意见重生");
         return true;
       }
       toast.error(classifyError(res?.error, "生成失败"));
@@ -4373,21 +4366,11 @@ function WorkspacePage() {
     }
   }
 
-  /** 场景"三视图"按钮:无 user input,直接跑预设指令(同角色 runPresetRegen 模式) */
+  /** 场景"多视图"按钮:无 user input,按正面→左侧→背面→右侧生成。 */
   async function runScenePresetRegen(s: GenScene) {
     await doSceneRegen(
       s,
-      "three-view",
-      "基于该场景生成 3 景别参考图(wide establishing + medium + close-up detail),同一地点同一时段同一视觉风格,无人物,纯环境。",
-    );
-  }
-
-  /** 场景"方向多视角"按钮:生成正面/左视角/右视角/背面 4 面板合图 */
-  async function runSceneDirectionalViews(s: GenScene) {
-    await doSceneRegen(
-      s,
-      "directional-views",
-      "[方向多视角] 基于该场景生成前/左/右/后四方向参考图,纯环境无人物。",
+      "基于图1按正面→左侧→背面→右侧生成同一场景的四方向多视图；左侧参考正面左侧结构，背面做镜头反打并参考左侧结构，右侧参考背面与正面右侧结构；保持空间逻辑，纯环境无人物。",
     );
   }
 
@@ -9468,31 +9451,21 @@ function WorkspacePage() {
                                         {s.action}
                                       </p>
                                     )}
-                                    {/* 3 个操作按钮:三视图 + 方向多视角 + 编辑。mt-auto 让按钮行贴着卡片底部,
+                                    {/* 2 个操作按钮:多视图 + 编辑。mt-auto 让按钮行贴着卡片底部,
                                     不管 brief 长度如何,位置都一致(跟角色卡行为一致)。 */}
                                     <div
-                                      className="grid grid-cols-3 gap-1.5 pt-1 mt-auto"
+                                      className="grid grid-cols-2 gap-1.5 pt-1 mt-auto"
                                       onClick={(e) => e.stopPropagation()}
                                     >
                                       <button
                                         type="button"
-                                        title="生成 3 景别参考图(wide + medium + close-up)"
+                                        title="生成正面、左侧、背面、右侧四方向多视图"
                                         disabled={!hasImg || isRegening}
                                         onClick={() => void runScenePresetRegen(s)}
                                         className="px-1 py-1.5 rounded border border-border bg-bg-surface text-text-secondary text-[11px] leading-none hover:border-accent hover:text-accent disabled:opacity-40 disabled:cursor-not-allowed transition flex flex-col items-center justify-center gap-0.5"
                                       >
                                         <LayoutGrid size={12} />
-                                        <span>三视图</span>
-                                      </button>
-                                      <button
-                                        type="button"
-                                        title="生成前/左/右/后四方向参考图"
-                                        disabled={!hasImg || isRegening}
-                                        onClick={() => void runSceneDirectionalViews(s)}
-                                        className="px-1 py-1.5 rounded border border-border bg-bg-surface text-text-secondary text-[11px] leading-none hover:border-accent hover:text-accent disabled:opacity-40 disabled:cursor-not-allowed transition flex flex-col items-center justify-center gap-0.5"
-                                      >
-                                        <LayoutGrid size={12} />
-                                        <span>方向多视角</span>
+                                        <span>多视图</span>
                                       </button>
                                       <button
                                         type="button"
@@ -9517,7 +9490,7 @@ function WorkspacePage() {
                                     </div>
                                   </div>
 
-                                  {/* I2I 重生遮罩:点了三视图/编辑后,整张卡盖住 spinner + 提示文字 */}
+                                  {/* I2I 重生遮罩:点了多视图/编辑后,整张卡盖住 spinner + 提示文字 */}
                                   {isRegening && (
                                     <div
                                       role="status"
@@ -9526,15 +9499,13 @@ function WorkspacePage() {
                                     >
                                       <Loader2 size={28} className="animate-spin text-accent" />
                                       <div className="text-sm font-medium leading-snug">
-                                        {sceneRegenMode === "three-view"
-                                          ? "正在生成三视图…"
-                                          : sceneRegenMode === "directional-views"
-                                            ? "正在生成方向多视角…"
-                                            : sceneRegenMode === "modify"
-                                              ? "正在局部修改…"
-                                              : sceneRegenMode === "t2i"
-                                                ? "正在重新生成…"
-                                                : "正在重生…"}
+                                        {sceneRegenMode === "multi-view"
+                                          ? "正在生成多视图…"
+                                          : sceneRegenMode === "modify"
+                                            ? "正在局部修改…"
+                                            : sceneRegenMode === "t2i"
+                                              ? "正在重新生成…"
+                                              : "正在重生…"}
                                       </div>
                                       <div className="text-[10px] text-white/60 leading-snug">
                                         生成中请勿关闭页面

@@ -645,7 +645,7 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
     // ====================================================================
     const positive = [
       `[MISSION] Generate a complete CHARACTER MULTI-ASSET SHEET (角色多维资产图) for "${cardTitle}" — a ${data.characterRoleLabel}, age ${data.characterAge}. ONE large image, PURE WHITE BACKGROUND (#FFFFFF). The image is divided into SIX clearly separated sections, top-to-bottom, with thin neutral dividers between sections. Illustration-grade, clean composition, like a page from an official character design document handed to an animation team or game studio.`,
-      `CANVAS: Use the supplied HIGH-RESOLUTION 2304x3072 portrait design-sheet canvas. Use the full page width for the four-view row and reserve generous vertical space for every full-body pose. Never squeeze, crop, overlap, or replace lower-body anatomy just to fit a narrow page.`,
+      `CANVAS: Use the supplied HIGH-RESOLUTION 3072x3072 square design-sheet canvas. The wider 3072px canvas is required for four full-body views, six expressions, and four poses to remain legible. Use the full page width and never squeeze, crop, overlap, or replace lower-body anatomy to fit the sheet.`,
 
       `You are given TWO sources of truth and BOTH must agree:`,
       `  (A) the attached REFERENCE IMAGE — the current approved look and complete visible anatomy of "${cardTitle}", and`,
@@ -812,7 +812,7 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
       "main portrait too small, main portrait same size as thumbnails, no clear visual centerpiece, hero portrait demoted to side thumbnail",
       "combat poses for a peaceful character, scholarly poses for a child, mismatched poses for character personality",
     ].join(", ");
-    return { positive, negative, size: "2304x3072" };
+    return { positive, negative, size: "3072x3072" };
   }
 
   // ---- 默认 'modify' ----
@@ -875,7 +875,7 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
     const allImages = [data.referenceImageUrl, ...(data.extraReferenceImageUrls ?? [])];
     // 详情页允许直接编辑并重放当次完整 API prompt；普通入口仍由模板统一构造。
     const prompt = data.rawPrompt?.trim() || appendNegative(positive, negative);
-    const generationSize = data.mode === "multi-asset" ? "2304x3072" : normalizeSeedreamSize(size);
+    const generationSize = data.mode === "multi-asset" ? "3072x3072" : normalizeSeedreamSize(size);
     const generationQuality = data.mode === "multi-asset" ? ("high" as const) : undefined;
 
     // 2026/06:查看提示词模式 —— 不调 Seedream,直接把 prompt 返回
@@ -2736,18 +2736,15 @@ export const regenerateStoryboardPitchDeck = createServerFn({ method: "POST" })
   });
 
 // ====================================================================
-// 5) regenerateSceneImage —— 场景图按意见重生 / 场景三视图(2026/06 新增)
+// 5) regenerateSceneImage —— 场景图按意见重生 / 场景多视图(2026/07 合并)
 //
 // 跟角色 regenerateCharacterLook 对称,但语义不同:
-//   - 场景没有"脸/身材/服装"概念,也不需要 front/side/back 三视图
-//   - 场景的"三视图"重新定义为 3 个景别变体:
-//       · wide      = 远景 establishing shot(整场景全景,无人物)
-//       · medium    = 中景(场景关键道具/中距离,氛围细节)
-//       · close-up  = 近景/特写(局部纹理、招牌、天气细节、情绪氛围)
+//   - 场景不是角色,不生成脸/身材/服装类三视图
+//   - 场景多视图固定为同一空间的四个方向:正面 → 左侧 → 背面 → 右侧
 //
 // 模式:
 //   - 'modify'     : 用户给修改意见,在原场景图基础上改(构图/光照/地点保留)
-//   - 'three-view' : 一次性输出 3 景别参考图(横向 3 面板)
+//   - 'multi-view' : 一次性输出 4 方向参考图(2×2 四面板)
 //
 // 风格锁:复用 buildStyleLock(styleSpec, 'scene'),跟 genSceneImage / 角色
 // 重生 / 分镜 / 故事板保持同一段风格指纹。
@@ -2755,7 +2752,7 @@ export const regenerateStoryboardPitchDeck = createServerFn({ method: "POST" })
 
 const RegenerateSceneInput = z.object({
   referenceImageUrl: z.string().url(), // 当前场景主视图作 I2I anchor
-  userInstruction: z.string().min(1).max(2000), // modify 模式必填;three-view 模式会被忽略
+  userInstruction: z.string().min(1).max(2000), // modify 模式必填;multi-view 模式由内置模板约束
   sceneSlug: z.string().min(1).max(200), // e.g. "INT. CAFE - DAY"
   sceneLocation: z.string().max(200).default(""),
   sceneTimeOfDay: z.string().max(50).default(""),
@@ -2764,7 +2761,8 @@ const RegenerateSceneInput = z.object({
   assetKind: z.enum(["scene", "prop"]).default("scene"),
   projectStyle: z.string().max(50).optional(),
   model: z.string().max(100).optional(),
-  mode: z.enum(["modify", "three-view", "directional-views"]).default("modify"),
+  // three-view / directional-views 保留用于旧请求兼容;场景 UI 统一使用 multi-view。
+  mode: z.enum(["modify", "three-view", "directional-views", "multi-view"]).default("modify"),
   // 2026/06:查看提示词模式
   previewOnly: z.boolean().default(false),
 });
@@ -2821,6 +2819,49 @@ function buildScenePrompts(
         "people, character, human, hand, holding, multiple props, duplicate object, scene, environment, background clutter, text, logo, watermark, label, caption, low quality, blurry, style drift",
       size: "2K",
     };
+  }
+
+  if (data.mode === "multi-view") {
+    const positive = [
+      `[STYLE LOCK — 场景多视图,适用对象:scene]`,
+      buildStyleLock(styleSpec, "scene"),
+      ``,
+      `[任务] 基于图1生成同一个场景的四方向参考图,不是四个新场景。图1是正面基线真值。`,
+      `[地点] ${data.sceneSlug}`,
+      data.sceneLocation ? `[具体地点] ${data.sceneLocation}` : "",
+      data.sceneTimeOfDay ? `[时段] ${data.sceneTimeOfDay}` : "",
+      data.sceneAction ? `[场景语义] ${data.sceneAction}` : "",
+      ``,
+      `[画布] 2048×2048, 2×2 等大面板,顺序固定为:左上正面、右上左侧、左下背面、右下右侧。不要在图中绘制文字、编号或标签。`,
+      ``,
+      `[生成顺序与参考关系] 严格按以下顺序理解并构图,四格共享同一个空间坐标系:`,
+      `1. 正面(左上):直接参考图1,建立场景布局、建筑结构、门窗、道路、家具、树木、灯具和其他关键锚点。`,
+      `2. 左侧(右上):镜头从正面向左绕场景旋转90°;重点参考正面图左侧可见的墙面和物体,展示它们的侧面,保持与正面相邻关系。`,
+      `3. 背面(左下):镜头从左侧继续绕到场景背面,做镜头反打;参考左侧图已经揭示的结构和正面图的深度锚点,展示同一空间及物体背面,不是正面镜像。`,
+      `4. 右侧(右下):镜头从背面继续绕到右侧;同时参考背面图与正面图右侧可见的结构,展示与左右两侧、正面和背面都能闭合的同一空间。`,
+      ``,
+      `[一致性规则]`,
+      `- 四格必须是同一地点、同一时段、同一天气、同一光线和同一视觉风格。`,
+      `- 固定物体的数量、材质、颜色、尺寸和空间位置关系保持一致;不同视角只改变可见面和透视。`,
+      `- 只使用图1已有或由其结构必然推出的内容;看不见的细节保守补全,不得添加新的建筑、家具、门窗或装饰。`,
+      `- 画面必须有真实空间深度;不得把四格做成复制、镜像、平移或四个无关背景。`,
+      `- 场景中绝对不出现角色、人物、动物、路人、人形、剪影、手或身体局部;这是纯环境参考图。`,
+      ``,
+      `[提交前检查] 顺序为正面→左侧→背面→右侧;四格能沿同一空间绕行闭合;无人物;无新增物体;无文字水印。`,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const negative = [
+      "people, person, character, human, animal, animal silhouette, figure, crowd, bystander, shadow person, hand, body part",
+      "four unrelated scenes, different location, different room, different architecture, different furniture layout",
+      "front copy, mirrored front, flipped image, duplicated panel, same angle in all panels, flat 2D collage",
+      "left and right showing the same wall, back view showing the front, missing rear structure, impossible perspective",
+      "invented building, invented door, invented window, invented furniture, invented decoration, extra objects, removed objects",
+      "different time of day, different weather, different lighting, different color palette, style drift",
+      "text, label, caption, number, arrow, logo, watermark, grid lines, visible panel border",
+      "top-down view, isometric view, fisheye distortion, low quality, blurry, pixelated, jpeg artifacts",
+    ].join(", ");
+    return { positive, negative, size: "2048x2048" };
   }
 
   if (data.mode === "three-view") {
