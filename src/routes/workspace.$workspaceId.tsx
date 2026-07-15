@@ -4329,7 +4329,7 @@ function WorkspacePage() {
           sceneLocation: String(s.location ?? ""),
           sceneTimeOfDay: String(s.timeOfDay ?? ""),
           sceneAction: String(s.action ?? ""),
-          projectStyle: projectVisualStyle,
+          projectStyle: projectVisualStyle ?? undefined,
           model: resolveI2IModel(project?.sceneModel),
           previewOnly: viewPromptsModeRef.current,
         },

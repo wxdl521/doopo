@@ -2759,8 +2759,8 @@ const RegenerateSceneInput = z.object({
   sceneAction: z.string().max(2000).default(""),
   /** 道具复用同一 I2I 入口，但必须使用单一道具的专用约束。 */
   assetKind: z.enum(["scene", "prop"]).default("scene"),
-  projectStyle: z.string().max(50).optional(),
-  model: z.string().max(100).optional(),
+  projectStyle: z.string().max(50).nullish(),
+  model: z.string().max(100).nullish(),
   // three-view / directional-views 保留用于旧请求兼容;场景 UI 统一使用 multi-view。
   mode: z.enum(["modify", "three-view", "directional-views", "multi-view"]).default("modify"),
   // 2026/06:查看提示词模式
