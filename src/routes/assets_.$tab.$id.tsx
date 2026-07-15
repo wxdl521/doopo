@@ -408,7 +408,7 @@ function SceneDetail({
         <div className="panel p-4 flex flex-col gap-2">
           <Row label="地点" value={s.location || ""} />
           <Row label={t.assets_field_time} value={s.time} />
-          <Row label="动作" value={s.action || ""} />
+          <Row label="场景描述" value={s.action || ""} />
           <Row label={t.assets_field_mood} value={s.mood} />
           <Row label={t.assets_field_shot} value={s.shot} />
           <Row label={t.assets_field_lighting} value={s.lighting} />

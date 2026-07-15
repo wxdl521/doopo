@@ -3503,7 +3503,7 @@ function WorkspacePage() {
       `场景名称：${s.slug}`,
       `地点：${s.location}`,
       `时段：${SCENE_TIME_LABELS[s.timeOfDay] ?? s.timeOfDay}`,
-      `剧情动作：${s.action}`,
+      `场景描述：${s.action}`,
       s.beats.length ? `关键节拍：${s.beats.join("；")}` : "",
     ]
       .filter(Boolean)
@@ -3511,7 +3511,8 @@ function WorkspacePage() {
   }
 
   function applySceneEditablePrompt(s: GenScene, input: string): GenScene {
-    const labels = ["风格", "场景名称", "地点", "时段", "剧情动作", "关键节拍"];
+    // 兼容已经保存的旧提示词中的「剧情动作」字段。
+    const labels = ["风格", "场景名称", "地点", "时段", "场景描述", "剧情动作", "关键节拍"];
     const timeText = readEditablePromptField(input, "时段", labels);
     const timeOfDay = (Object.entries(SCENE_TIME_LABELS).find(
       ([, label]) => label === timeText,
@@ -3525,7 +3526,10 @@ function WorkspacePage() {
       slug: readEditablePromptField(input, "场景名称", labels) || s.slug,
       location: readEditablePromptField(input, "地点", labels) || s.location,
       timeOfDay,
-      action: readEditablePromptField(input, "剧情动作", labels) || s.action,
+      action:
+        readEditablePromptField(input, "场景描述", labels) ||
+        readEditablePromptField(input, "剧情动作", labels) ||
+        s.action,
       beats: beats.length ? beats : s.beats,
     };
   }
@@ -12273,7 +12277,7 @@ function WorkspacePage() {
                           <p className="mt-1.5">
                             时段：{SCENE_TIME_LABELS[draft.timeOfDay] ?? draft.timeOfDay}
                           </p>
-                          <p className="mt-1.5">剧情动作：{draft.action || "未填写"}</p>
+                          <p className="mt-1.5">场景描述：{draft.action || "未填写"}</p>
                           {draft.beats.length > 0 && (
                             <p className="mt-1.5">关键节拍：{draft.beats.join("；")}</p>
                           )}
@@ -12315,7 +12319,7 @@ function WorkspacePage() {
                               </select>
                             </label>
                             <label className="block text-text-muted">
-                              剧情动作
+                              场景描述
                               <textarea
                                 value={draft.action}
                                 onChange={(e) => update({ action: e.target.value })}
@@ -12402,7 +12406,7 @@ function WorkspacePage() {
                       <textarea
                         value={sceneModInput}
                         onChange={(e) => setSceneModInput(e.target.value)}
-                        placeholder="编辑场景名称、地点、时段或剧情动作…"
+                        placeholder="编辑场景名称、地点、时段或场景描述…"
                         rows={12}
                         disabled={regenBusyKeys.has(s.id)}
                         className="w-full min-h-64 max-h-[55vh] rounded-md bg-bg-base border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-y placeholder:text-text-muted disabled:opacity-50"
