@@ -4380,6 +4380,7 @@ function WorkspacePage() {
   async function runScenePresetRegen(s: GenScene) {
     await doSceneRegen(
       s,
+      "multi-view",
       "基于图1按正面→左侧→背面→右侧生成同一场景的四方向多视图；左侧参考正面左侧结构，背面做镜头反打并参考左侧结构，右侧参考背面与正面右侧结构；保持空间逻辑，纯环境无人物。",
     );
   }
