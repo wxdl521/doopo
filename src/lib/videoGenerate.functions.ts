@@ -2593,7 +2593,7 @@ const SubmitServerInput = z.object({
 });
 
 export const submitVideoTaskFn = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => SubmitServerInput.parse(d))
+  .validator((d: unknown) => SubmitServerInput.parse(d))
   .handler(async ({ data }) => {
     const __t0 = Date.now();
     // 把 ARK 风格的 content 数组转成统一 media + ref 形式
@@ -2675,7 +2675,7 @@ const PollServerInput = z.object({
 });
 
 export const pollVideoTaskFn = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => PollServerInput.parse(d))
+  .validator((d: unknown) => PollServerInput.parse(d))
   .handler(async ({ data }) => {
     const r = await pollVideoTask({ taskId: data.taskId, backend: data.backend });
     if (!r.ok) return { ok: false as const, error: r.error, status: r.status };
@@ -2854,7 +2854,7 @@ export type GenerateVideoInputType = z.infer<typeof GenerateVideoInput>;
 
 export const generateVideo = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) => GenerateVideoInput.parse(d))
+  .validator((d: unknown) => GenerateVideoInput.parse(d))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context as { supabase: any; userId: string };
     const backend = getVideoBackend(data.model);

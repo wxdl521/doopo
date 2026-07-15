@@ -110,7 +110,7 @@ export type StoryboardStreamEvent =
   | { kind: "error"; message: string };
 
 export const generateStoryboardFromPlot = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => PlotInput.parse(d))
+  .validator((d: unknown) => PlotInput.parse(d))
   .handler(async function* ({ data }): AsyncGenerator<StoryboardStreamEvent> {
     const { resolveProjectStyle } = await import("./visualStyles");
     const styleSpec = resolveProjectStyle(data.projectStyle);
@@ -861,7 +861,7 @@ const ShotInput = z.object({
 export type GenerateStoryboardShotInput = z.infer<typeof ShotInput>;
 
 export const generateStoryboardShotImage = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => ShotInput.parse(d))
+  .validator((d: unknown) => ShotInput.parse(d))
   .handler(async ({ data }) => {
     // 动态 import 避免循环引用
     const { generateStoryboardShotImage: seedreamImpl } = await import("./seedream.functions");
@@ -903,7 +903,7 @@ const RegenShotInput = z.object({
 export type RegenerateStoryboardShotInput = z.infer<typeof RegenShotInput>;
 
 export const regenerateStoryboardShot = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => RegenShotInput.parse(d))
+  .validator((d: unknown) => RegenShotInput.parse(d))
   .handler(async ({ data }) => {
     // 动态 import 避免循环引用
     const { regenerateStoryboardShot: seedreamImpl } = await import("./seedream.functions");
@@ -970,7 +970,7 @@ const RegenPitchDeckInput = z.object({
 export type RegenerateStoryboardPitchDeckInput = z.infer<typeof RegenPitchDeckInput>;
 
 export const regenerateStoryboardPitchDeck = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => RegenPitchDeckInput.parse(d))
+  .validator((d: unknown) => RegenPitchDeckInput.parse(d))
   .handler(async ({ data }) => {
     const { regenerateStoryboardPitchDeck: seedreamImpl } = await import("./seedream.functions");
     return seedreamImpl({ data } as any);

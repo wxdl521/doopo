@@ -494,7 +494,7 @@ const AzureImageFnInput = z.object({
 });
 
 export const generateAzureImage = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => AzureImageFnInput.parse(d))
+  .validator((d: unknown) => AzureImageFnInput.parse(d))
   .handler(async ({ data }) => {
     return callAzureImage(data);
   });

@@ -13,7 +13,7 @@ import { generateImage } from "./seedream.functions";
  */
 export const uploadScriptCover = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input) =>
+  .validator((input) =>
     z
       .object({
         scriptId: z.string().min(1).max(128),

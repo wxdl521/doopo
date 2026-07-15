@@ -68,7 +68,7 @@ export type RegenerateInput = z.infer<typeof Input>;
  * 这里只保留 Zod schema(客户端类型推导需要)和 server function 入口。
  */
 export const regenerateCharacterLook = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => {
+  .validator((d: unknown) => {
     const parsed = Input.safeParse(d);
     if (!parsed.success) {
       const detail = parsed.error.issues

@@ -206,7 +206,7 @@ const AilinziImageFnInput = z.object({
 });
 
 export const generateAilinziImage = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => AilinziImageFnInput.parse(d))
+  .validator((d: unknown) => AilinziImageFnInput.parse(d))
   .handler(async ({ data }) => {
     return callAilinziImage(data);
   });

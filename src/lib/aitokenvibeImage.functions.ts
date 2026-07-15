@@ -210,7 +210,7 @@ const AitokenvibeImageFnInput = z.object({
 });
 
 export const generateAitokenvibeImage = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => AitokenvibeImageFnInput.parse(d))
+  .validator((d: unknown) => AitokenvibeImageFnInput.parse(d))
   .handler(async ({ data }) => {
     return callAitokenvibeImage(data);
   });

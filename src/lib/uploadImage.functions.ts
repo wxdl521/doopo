@@ -20,7 +20,7 @@ const UploadInput = z.object({
 
 export const uploadLocalImage = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) => UploadInput.parse(d))
+  .validator((d: unknown) => UploadInput.parse(d))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context as { supabase: any; userId: string };
     const { base64, id, kind } = data;
@@ -67,7 +67,7 @@ const ServerUrlToBase64Input = z.object({
   url: z.string().min(1).max(5000000),
 });
 export const serverUrlToBase64 = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => ServerUrlToBase64Input.parse(d))
+  .validator((d: unknown) => ServerUrlToBase64Input.parse(d))
   .handler(async ({ data }) => {
     const { url } = data;
     if (url.startsWith("data:")) return { base64: url, error: null as string | null };

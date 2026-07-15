@@ -620,7 +620,7 @@ type I2IInput = {
 };
 
 export const regenerateImageI2I = createServerFn({ method: "POST" })
-  .inputValidator((input: I2IInput) => {
+  .validator((input: I2IInput) => {
     if (!input || typeof input.prompt !== "string" || !input.prompt.trim()) {
       throw new Error("prompt required");
     }
@@ -696,7 +696,7 @@ export const regenerateImageI2I = createServerFn({ method: "POST" })
 // ====================================================================
 
 export const generateImage = createServerFn({ method: "POST" })
-  .inputValidator((input: Input) => {
+  .validator((input: Input) => {
     if (!input || typeof input.prompt !== "string" || !input.prompt.trim()) {
       throw new Error("prompt required");
     }

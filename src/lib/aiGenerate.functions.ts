@@ -488,7 +488,7 @@ function stageSpec(stage: Input["stage"]) {
 }
 
 export const generateStageAi = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => InputSchema.parse(d))
+  .validator((d: unknown) => InputSchema.parse(d))
   .handler(async ({ data }) => {
     const spec = stageSpec(data.stage);
     const ctxParts: string[] = [];

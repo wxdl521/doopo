@@ -288,7 +288,7 @@ const RevoraImageFnInput = z.object({
 });
 
 export const generateRevoraImage = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => RevoraImageFnInput.parse(d))
+  .validator((d: unknown) => RevoraImageFnInput.parse(d))
   .handler(async ({ data }) => {
     return callRevoraImage(data);
   });

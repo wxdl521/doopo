@@ -273,7 +273,7 @@ const ConfluoImageFnInput = z.object({
 });
 
 export const generateConfluoImage = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => ConfluoImageFnInput.parse(d))
+  .validator((d: unknown) => ConfluoImageFnInput.parse(d))
   .handler(async ({ data }) => {
     return callConfluoImage(data);
   });

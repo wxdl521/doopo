@@ -41,7 +41,7 @@ export type ProjectConfigRow = {
 
 export const upsertProject = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) => ProjectInput.parse(input))
+  .validator((input: unknown) => ProjectInput.parse(input))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
     const row = {
@@ -71,7 +71,7 @@ export const upsertProject = createServerFn({ method: "POST" })
 
 export const getProject = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) => z.object({ id: z.string().min(1).max(64) }).parse(input))
+  .validator((input: unknown) => z.object({ id: z.string().min(1).max(64) }).parse(input))
   .handler(async ({ data, context }) => {
     const { supabase } = context;
     const { data: row, error } = await supabase
@@ -197,7 +197,7 @@ function pickThumbnail(ws: any): string | null {
 }
 
 export const listMyProjects = createServerFn({ method: "POST" })
-  .inputValidator((input: unknown) => z.object({}).parse(input ?? {}))
+  .validator((input: unknown) => z.object({}).parse(input ?? {}))
   .handler(async () => {
     const authorization = getRequestHeader("authorization");
     if (!authorization?.toLowerCase().startsWith("bearer ")) {
@@ -254,7 +254,7 @@ export const listMyProjects = createServerFn({ method: "POST" })
 
 export const renameProject = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) =>
+  .validator((input: unknown) =>
     z
       .object({
         id: z.string().min(1).max(64),
@@ -283,7 +283,7 @@ export const renameProject = createServerFn({ method: "POST" })
 
 export const deleteProject = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) => z.object({ id: z.string().min(1).max(64) }).parse(input))
+  .validator((input: unknown) => z.object({ id: z.string().min(1).max(64) }).parse(input))
   .handler(async ({ data, context }) => {
     const { supabase } = context;
     const { error, count } = await supabase
@@ -305,7 +305,7 @@ export const deleteProject = createServerFn({ method: "POST" })
 export const deleteAllMyProjects = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   // 客户端必须传 confirm: true 作为"二次确认",避免被误触发
-  .inputValidator((input: unknown) =>
+  .validator((input: unknown) =>
     z
       .object({
         confirm: z.literal(true),
@@ -326,7 +326,7 @@ export const deleteAllMyProjects = createServerFn({ method: "POST" })
 
 export const saveWorkspaceData = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) =>
+  .validator((input: unknown) =>
     z
       .object({
         id: z.string().min(1).max(64),
@@ -350,7 +350,7 @@ export const saveWorkspaceData = createServerFn({ method: "POST" })
 
 export const loadWorkspaceData = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) => z.object({ id: z.string().min(1).max(64) }).parse(input))
+  .validator((input: unknown) => z.object({ id: z.string().min(1).max(64) }).parse(input))
   .handler(async ({ data, context }) => {
     const { supabase } = context;
     const { data: row, error } = await supabase

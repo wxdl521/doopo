@@ -264,7 +264,7 @@ const IMPORT_TOOL = {
 };
 
 export const parseImportedScript = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => ParseInput.parse(d))
+  .validator((d: unknown) => ParseInput.parse(d))
   .handler(async function* ({ data }): AsyncGenerator<ParseStreamEvent> {
     // ===== Stage 1: pre-flight =====
     yield { kind: "progress", message: "正在分析输入文本…" };

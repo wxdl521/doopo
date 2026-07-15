@@ -253,7 +253,7 @@ const TokenhubImageFnInput = z.object({
 });
 
 export const generateTokenhubImage = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => TokenhubImageFnInput.parse(d))
+  .validator((d: unknown) => TokenhubImageFnInput.parse(d))
   .handler(async ({ data }) => {
     return callTokenhubImage(data);
   });

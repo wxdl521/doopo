@@ -315,7 +315,7 @@ const LoglineInput = z.object({
 });
 
 export const genLogline = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => LoglineInput.parse(d))
+  .validator((d: unknown) => LoglineInput.parse(d))
   .handler(async ({ data }) => {
     const sys = sysFor(
       data.lang,
@@ -363,7 +363,7 @@ const OutlineInput = z.object({
 });
 
 export const genOutline = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => OutlineInput.parse(d))
+  .validator((d: unknown) => OutlineInput.parse(d))
   .handler(async ({ data }) => {
     const sys = sysFor(
       data.lang,
@@ -427,7 +427,7 @@ const ScenesInput = z.object({
 });
 
 export const genScenes = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => ScenesInput.parse(d))
+  .validator((d: unknown) => ScenesInput.parse(d))
   .handler(async ({ data }) => {
     const sys = sysFor(
       data.lang,
@@ -508,7 +508,7 @@ const CharactersInput = z.object({
 });
 
 export const genCharacters = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => CharactersInput.parse(d))
+  .validator((d: unknown) => CharactersInput.parse(d))
   .handler(async ({ data }) => {
     const sys = sysFor(
       data.lang,
@@ -590,7 +590,7 @@ const RewriteSceneInput = z.object({
 });
 
 export const rewriteScene = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => RewriteSceneInput.parse(d))
+  .validator((d: unknown) => RewriteSceneInput.parse(d))
   .handler(async ({ data }) => {
     const sys = sysFor(
       data.lang,

@@ -288,7 +288,7 @@ const TokenflashImageFnInput = z.object({
 });
 
 export const generateTokenflashImage = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => TokenflashImageFnInput.parse(d))
+  .validator((d: unknown) => TokenflashImageFnInput.parse(d))
   .handler(async ({ data }) => {
     return callTokenflashImage(data);
   });

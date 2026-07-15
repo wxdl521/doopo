@@ -209,7 +209,7 @@ const NagoraImageFnInput = z.object({
 });
 
 export const generateNagoraImage = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => NagoraImageFnInput.parse(d))
+  .validator((d: unknown) => NagoraImageFnInput.parse(d))
   .handler(async ({ data }) => {
     return callNagoraImage(data);
   });

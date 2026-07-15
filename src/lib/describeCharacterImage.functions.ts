@@ -42,7 +42,7 @@ export type DescribeCharacterImageResult =
   | { ok: false; error: string };
 
 export const describeCharacterImage = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => Input.parse(d))
+  .validator((d: unknown) => Input.parse(d))
   .handler(async ({ data }): Promise<DescribeCharacterImageResult> => {
     const apiKey = qwenApiKey();
     if (!apiKey) {

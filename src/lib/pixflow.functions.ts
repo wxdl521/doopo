@@ -574,7 +574,7 @@ const PixflowImageFnInput = z.object({
 });
 
 export const generatePixflowImage = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => PixflowImageFnInput.parse(d))
+  .validator((d: unknown) => PixflowImageFnInput.parse(d))
   .handler(async ({ data }) => {
     return callPixflowImage(data);
   });
@@ -597,7 +597,7 @@ const PixflowChatFnInput = z.object({
 });
 
 export const chatPixflow = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => PixflowChatFnInput.parse(d))
+  .validator((d: unknown) => PixflowChatFnInput.parse(d))
   .handler(async ({ data }) => {
     return callPixflowChat(data);
   });

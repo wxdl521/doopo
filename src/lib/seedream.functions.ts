@@ -249,7 +249,7 @@ function validateGenerateImageInput(data: unknown) {
 }
 
 export const generateImage = createServerFn({ method: "POST" })
-  .inputValidator(validateGenerateImageInput)
+  .validator(validateGenerateImageInput)
   .handler(async ({ data }) => {
     const __t0 = Date.now();
     const __logPayload = {
@@ -895,7 +895,7 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
 }
 
 export const regenerateCharacterLook = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => RegenerateInput.parse(d))
+  .validator((d: unknown) => RegenerateInput.parse(d))
   .handler(async ({ data }) => {
     const { resolveProjectStyle } = await import("./visualStyles");
     const styleSpec = resolveProjectStyle(data.projectStyle);
@@ -1289,7 +1289,7 @@ function buildShotNegative(hasCharacters: boolean): string {
 }
 
 export const generateStoryboardShotImage = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => ShotInput.parse(d))
+  .validator((d: unknown) => ShotInput.parse(d))
   .handler(async ({ data }) => {
     const { resolveProjectStyle } = await import("./visualStyles");
     const styleSpec = resolveProjectStyle(data.projectStyle);
@@ -1646,7 +1646,7 @@ function buildRegenShotInstruction(
 }
 
 export const regenerateStoryboardShot = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => RegenShotInput.parse(d))
+  .validator((d: unknown) => RegenShotInput.parse(d))
   .handler(async ({ data }) => {
     const { resolveProjectStyle } = await import("./visualStyles");
     const styleSpec = resolveProjectStyle(data.projectStyle);
@@ -2222,7 +2222,7 @@ function buildPitchDeckNegative(hasCharacters: boolean): string {
 }
 
 export const generateStoryboardPitchDeck = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => PitchDeckInput.parse(d))
+  .validator((d: unknown) => PitchDeckInput.parse(d))
   .handler(async ({ data }) => {
     const { resolveProjectStyle } = await import("./visualStyles");
     const styleSpec = resolveProjectStyle(data.projectStyle);
@@ -2602,7 +2602,7 @@ function buildRegenPitchDeckPrompt(opts: {
 }
 
 export const regenerateStoryboardPitchDeck = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => RegeneratePitchDeckInput.parse(d))
+  .validator((d: unknown) => RegeneratePitchDeckInput.parse(d))
   .handler(async ({ data }) => {
     const { resolveProjectStyle } = await import("./visualStyles");
     const styleSpec = resolveProjectStyle(data.projectStyle);
@@ -3170,7 +3170,7 @@ function buildScenePrompts(
 }
 
 export const regenerateSceneImage = createServerFn({ method: "POST" })
-  .inputValidator(validateRegenerateSceneInput)
+  .validator(validateRegenerateSceneInput)
   .handler(async ({ data }) => {
     const { resolveProjectStyle } = await import("./visualStyles");
     const styleSpec = resolveProjectStyle(data.projectStyle);

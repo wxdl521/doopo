@@ -197,7 +197,7 @@ const OnetokenImageFnInput = z.object({
 });
 
 export const generateOnetokenImage = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => OnetokenImageFnInput.parse(d))
+  .validator((d: unknown) => OnetokenImageFnInput.parse(d))
   .handler(async ({ data }) => {
     return callOnetokenImage(data);
   });

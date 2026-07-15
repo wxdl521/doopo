@@ -207,7 +207,7 @@ const Claude360ImageFnInput = z.object({
 });
 
 export const generateClaude360Image = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => Claude360ImageFnInput.parse(d))
+  .validator((d: unknown) => Claude360ImageFnInput.parse(d))
   .handler(async ({ data }) => {
     return callClaude360Image(data);
   });

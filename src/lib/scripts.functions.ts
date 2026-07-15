@@ -34,7 +34,7 @@ export const listScriptsRemote = createServerFn({ method: "GET" })
 
 export const getScriptRemote = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input) => z.object({ id: z.string().min(1).max(128) }).parse(input))
+  .validator((input) => z.object({ id: z.string().min(1).max(128) }).parse(input))
   .handler(async ({ data, context }) => {
     const { supabase } = context;
     const { data: row, error } = await supabase
@@ -48,7 +48,7 @@ export const getScriptRemote = createServerFn({ method: "POST" })
 
 export const upsertScriptRemote = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input) => z.object({ script: ScriptSchema }).parse(input))
+  .validator((input) => z.object({ script: ScriptSchema }).parse(input))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
     const s = data.script as SavedScript;
@@ -72,7 +72,7 @@ export const upsertScriptRemote = createServerFn({ method: "POST" })
 
 export const deleteScriptRemote = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input) => z.object({ id: z.string().min(1).max(128) }).parse(input))
+  .validator((input) => z.object({ id: z.string().min(1).max(128) }).parse(input))
   .handler(async ({ data, context }) => {
     const { supabase } = context;
     const { error } = await supabase.from("scripts").delete().eq("id", data.id);

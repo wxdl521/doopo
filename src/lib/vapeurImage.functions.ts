@@ -206,7 +206,7 @@ const VapeurImageFnInput = z.object({
 });
 
 export const generateVapeurImage = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => VapeurImageFnInput.parse(d))
+  .validator((d: unknown) => VapeurImageFnInput.parse(d))
   .handler(async ({ data }) => {
     return callVapeurImage(data);
   });

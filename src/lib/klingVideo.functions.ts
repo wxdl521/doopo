@@ -242,7 +242,7 @@ const KlingVideoInput = z.object({
 });
 
 export const generateKlingVideo = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => KlingVideoInput.parse(d))
+  .validator((d: unknown) => KlingVideoInput.parse(d))
   .handler(async ({ data }) => {
     // 1) 提交
     const submit = await callKlingVideoSubmit({

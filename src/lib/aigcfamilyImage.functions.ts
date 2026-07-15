@@ -238,7 +238,7 @@ const AigcfamilyImageFnInput = z.object({
 });
 
 export const generateAigcfamilyImage = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => AigcfamilyImageFnInput.parse(d))
+  .validator((d: unknown) => AigcfamilyImageFnInput.parse(d))
   .handler(async ({ data }) => {
     return callAigcfamilyImage(data);
   });

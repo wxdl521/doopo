@@ -395,7 +395,7 @@ You MUST output the complete story synopsis first (all sections from # 📖 thro
 (After completing all sections above, append: "Generation complete. You can click 'Generate Next Episode' to continue.")`;
 
 export const streamSynopsis = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => SynopsisInput.parse(d))
+  .validator((d: unknown) => SynopsisInput.parse(d))
   .handler(async function* ({ data }) {
     // Build chapter range buckets that fit the requested episode count,
     // instead of the previous hardcoded 100-episode template.
@@ -449,7 +449,7 @@ const SYS_EPISODE_ZH = `你是一位资深短剧分镜师，请基于已确认�
 const SYS_EPISODE_EN = `You are a short-drama storyboarder. Write Episode N in prose paragraphs and screenplay dialogue lines only — no Markdown, no tables, no bullets, no emoji. Open with one paragraph for the episode's title and emotional goal, then X numbered storyboards, each one labeled on its own line ("Scene 1 | INT. ..."), followed by an 80-160-word prose description and dialogue lines formatted as "ROLE (emotion): \\"line\\"". End with a prose paragraph teasing __NEXT_HINT_EN__, then one prose sentence asking the user whether to continue and inviting adjustments.`;
 
 export const streamEpisodeScenes = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => EpisodeInput.parse(d))
+  .validator((d: unknown) => EpisodeInput.parse(d))
   .handler(async function* ({ data }) {
     // Tailor the "next episodes to tease" hint to how many are actually left,
     // instead of always saying "3-5" even when the user is on/near the finale.
@@ -527,7 +527,7 @@ Rules:
 4) No preamble, start directly with the revised content.`;
 
 export const refineEpisodeScenes = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => RefineEpisodeInput.parse(d))
+  .validator((d: unknown) => RefineEpisodeInput.parse(d))
   .handler(async function* ({ data }) {
     const sys = (data.lang === "zh" ? SYS_REFINE_EPISODE_ZH : SYS_REFINE_EPISODE_EN)
       .replace(/第 N /g, `第 ${data.epIndex} `)
@@ -582,7 +582,7 @@ Rules:
 5) No HTML, tables, or code fences.`;
 
 export const refineSynopsis = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => RefineInput.parse(d))
+  .validator((d: unknown) => RefineInput.parse(d))
   .handler(async function* ({ data }) {
     const sys = wrapFictionSystem(data.lang, data.lang === "zh" ? SYS_REFINE_ZH : SYS_REFINE_EN);
     const histText =

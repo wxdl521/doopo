@@ -268,7 +268,7 @@ const MeridianImageFnInput = z.object({
 });
 
 export const generateMeridianImage = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => MeridianImageFnInput.parse(d))
+  .validator((d: unknown) => MeridianImageFnInput.parse(d))
   .handler(async ({ data }) => {
     return callMeridianImage(data);
   });

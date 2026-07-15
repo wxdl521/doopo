@@ -97,7 +97,7 @@ export type SaveOneStoryboardResult = {
 
 export const saveOneStoryboard = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) => SaveOneStoryboardInput.parse(input))
+  .validator((input: unknown) => SaveOneStoryboardInput.parse(input))
   .handler(async ({ data, context }): Promise<SaveOneStoryboardResult> => {
     const { supabase, userId } = context as { supabase: any; userId: string };
     const { workspaceId, groupId, url } = data;
@@ -164,7 +164,7 @@ export type SaveOneVideoResult = {
 
 export const saveOneVideo = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input: unknown) => SaveOneVideoInput.parse(input))
+  .validator((input: unknown) => SaveOneVideoInput.parse(input))
   .handler(async ({ data, context }): Promise<SaveOneVideoResult> => {
     const { supabase, userId } = context as { supabase: any; userId: string };
     const { workspaceId, groupId, fileId, url } = data;
@@ -206,7 +206,7 @@ const PersistAssetImageInput = z.object({
 
 export const persistAssetImage = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((d: unknown) => PersistAssetImageInput.parse(d))
+  .validator((d: unknown) => PersistAssetImageInput.parse(d))
   .handler(async ({ data, context }): Promise<{ ok: boolean; url: string; error?: string }> => {
     const { supabase, userId } = context as { supabase: any; userId: string };
     const { url, kind, id } = data;
@@ -397,7 +397,7 @@ export type PersistWorkspaceMediaResult = {
 
 export const persistWorkspaceMedia = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input) => PersistInput.parse(input))
+  .validator((input) => PersistInput.parse(input))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context as { supabase: any; userId: string };
     const { workspaceId, groupVideos = {}, groupStoryboards = {} } = data;

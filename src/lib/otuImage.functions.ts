@@ -206,7 +206,7 @@ const OtuImageFnInput = z.object({
 });
 
 export const generateOtuImage = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => OtuImageFnInput.parse(d))
+  .validator((d: unknown) => OtuImageFnInput.parse(d))
   .handler(async ({ data }) => {
     return callOtuImage(data);
   });

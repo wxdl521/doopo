@@ -210,7 +210,7 @@ const ThhtcloudImageFnInput = z.object({
 });
 
 export const generateThhtcloudImage = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => ThhtcloudImageFnInput.parse(d))
+  .validator((d: unknown) => ThhtcloudImageFnInput.parse(d))
   .handler(async ({ data }) => {
     return callThhtcloudImage(data);
   });

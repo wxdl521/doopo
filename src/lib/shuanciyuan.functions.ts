@@ -251,7 +251,7 @@ const ShuanciyuanImageFnInput = z.object({
 });
 
 export const generateShuanciyuanImage = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => ShuanciyuanImageFnInput.parse(d))
+  .validator((d: unknown) => ShuanciyuanImageFnInput.parse(d))
   .handler(async ({ data }) => {
     return callShuanciyuanImage(data);
   });

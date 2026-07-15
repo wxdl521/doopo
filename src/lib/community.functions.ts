@@ -36,7 +36,7 @@ const PublishSchema = z.object({
 
 export const publishPost = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input) => PublishSchema.parse(input))
+  .validator((input) => PublishSchema.parse(input))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
     const { data: row, error } = await supabase
@@ -59,7 +59,7 @@ export const publishPost = createServerFn({ method: "POST" })
 
 export const updatePostVisibility = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input) =>
+  .validator((input) =>
     z
       .object({
         id: z.string().uuid(),
@@ -79,7 +79,7 @@ export const updatePostVisibility = createServerFn({ method: "POST" })
 
 export const deletePost = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input) => z.object({ id: z.string().uuid() }).parse(input))
+  .validator((input) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
     const { supabase } = context;
     const { error } = await supabase.from("community_posts").delete().eq("id", data.id);
@@ -88,7 +88,7 @@ export const deletePost = createServerFn({ method: "POST" })
   });
 
 export const listCommunityPosts = createServerFn({ method: "GET" })
-  .inputValidator((input) =>
+  .validator((input) =>
     z
       .object({
         sort: z.enum(["recent", "hot", "likes"]).default("recent"),
@@ -138,7 +138,7 @@ function score(p: { likes_count: number; views_count: number; created_at: string
 }
 
 export const getPost = createServerFn({ method: "POST" })
-  .inputValidator((input) => z.object({ id: z.string().uuid() }).parse(input))
+  .validator((input) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data }) => {
     const { data: row, error } = await supabaseAdmin
       .from("community_posts")
@@ -153,7 +153,7 @@ export const getPost = createServerFn({ method: "POST" })
 
 export const toggleLike = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input) => z.object({ postId: z.string().uuid() }).parse(input))
+  .validator((input) => z.object({ postId: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
     const { data: existing } = await supabase
@@ -185,7 +185,7 @@ export const toggleLike = createServerFn({ method: "POST" })
 
 export const isLiked = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .inputValidator((input) => z.object({ postId: z.string().uuid() }).parse(input))
+  .validator((input) => z.object({ postId: z.string().uuid() }).parse(input))
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
     const { data: row } = await supabase
@@ -198,7 +198,7 @@ export const isLiked = createServerFn({ method: "POST" })
   });
 
 export const recordView = createServerFn({ method: "POST" })
-  .inputValidator((input) =>
+  .validator((input) =>
     z
       .object({
         postId: z.string().uuid(),

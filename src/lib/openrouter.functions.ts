@@ -23,7 +23,7 @@ const getModelAttempts = (requested?: string) => {
 };
 
 export const generateScript = createServerFn({ method: "POST" })
-  .inputValidator((input: Input) => {
+  .validator((input: Input) => {
     if (!input || !Array.isArray(input.messages) || input.messages.length === 0) {
       throw new Error("messages required");
     }
