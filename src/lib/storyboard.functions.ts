@@ -219,7 +219,12 @@ export const generateStoryboardFromPlot = createServerFn({ method: "POST" })
   低声反问:『什么事?』随即从座位上起身,把椅子推回原位。"
 
 【镜头字段要求】
-- action 用中文描述该镜头"什么人做什么",1~2 句
+- action 是分镜图与视频生成共用的动作表演说明，用中文写 **2~4 句、约 60~220 字**，不能只写“某人走过去/看着对方”。按“起势 → 过程 → 落点/反应”描述：
+  1) 起势：人物的初始站位、朝向、重心、手脚/道具状态；
+  2) 过程：可见的主动作、肢体先后顺序、动作轨迹、速度/力度；
+  3) 落点：动作结束时的姿态、视线、重心、道具位置，以及对方的即时反应；
+  4) 即使是对话或停顿，也给出一个不改变剧情的自然微动作（呼吸起伏、视线转移、手指收紧/松开、吞咽、衣角微动等），避免人物像静态摆拍。
+  只描述剧本支持的动作和合理微动作；一个 shot 仍只推进一个主要动作阶段，复杂动作拆成相邻 shots。
 - camera 用中文描述机位/焦段/角度,必须准确专业,杜绝错误:
   • camera 字段**只描述摄像机的位置/焦段/角度**,不要重复 shotType
   • 正确:"低角度仰拍,广角24mm,机位在教室门口地面"
@@ -250,7 +255,7 @@ export const generateStoryboardFromPlot = createServerFn({ method: "POST" })
     - 输出前逐镜头做“机位物理可执行性”检查：camera 写出的起始位置必须能拍到 action；cameraMovement 的起点必须等于该 camera 位置。人物从左到右移动，不等于摄影机从左到右移动；若是摇镜，机位留在原处，仅改变朝向；若是跟拍/移镜，写明摄影机实际移动路线。任何一项不成立就重写该镜头。
     - **连续动作机位组规则**：若 Shot N 与 Shot N+1 是同一动作的连续拆解（例如“手指弹后脑勺”→“被弹者捂头回头反应”），默认属于同一个机位组：两镜头的机位必须在同一拍摄侧、相邻位置、朝向连续，俯视图中两个镜头标记应落在同一侧的相邻区域，不能一镜在人物前方、下一镜无理由跳到人物后方。只有剧本明确要求反打/主观镜头/越轴过渡时才可换侧，且 camera 必须明写“反打到…侧”及原因。
 - characterBlocking 用中文描述本镜头中人物的走位/动线路径,
-  写清楚"谁从哪移动到哪、面向哪里、与谁/什么道具的关系"；每个有角色镜头都要写状态，不得只写笼统的“走位”:
+  写清楚"谁从哪移动到哪、经过什么路径、面向哪里、重心/肢体如何变化、与谁/什么道具的关系"；每个有角色镜头都要写状态，不得只写笼统的“走位”:
   • 正确:"林夏从门口(画面左侧)走向窗边座位(画面右侧)"
   • 正确:"两人原地对话,无走位"
   • 正确:"林夏站在窗边画面右侧面向左，小明留在门口画面左侧面向右；两人原地对话，无走位，地图始终在林夏右手"
@@ -759,7 +764,7 @@ function normalizeShot(
   if (!s || typeof s !== "object") return null;
   const shotType = SHOT_TYPES.has(s.shotType) ? s.shotType : "MS";
   const action =
-    typeof s.action === "string" && s.action.trim() ? s.action.trim().slice(0, 200) : "";
+    typeof s.action === "string" && s.action.trim() ? s.action.trim().slice(0, 600) : "";
   const camera =
     typeof s.camera === "string" && s.camera.trim() ? s.camera.trim().slice(0, 100) : "";
   const cameraMovement =
@@ -829,7 +834,7 @@ const ShotInput = z.object({
   plotText: z.string().min(1).max(2000),
   shotType: z.enum(["WS", "MS", "CU", "ECU", "OTS"]),
   shotTypeLabel: z.string().min(1).max(20),
-  action: z.string().min(1).max(400),
+  action: z.string().min(1).max(800),
   camera: z.string().max(200).default(""),
   cameraMovement: z.string().max(300).optional(),
   characterBlocking: z.string().max(400).optional(),
@@ -880,7 +885,7 @@ const RegenShotInput = z.object({
   plotText: z.string().min(1).max(2000),
   shotType: z.enum(["WS", "MS", "CU", "ECU", "OTS"]),
   shotTypeLabel: z.string().min(1).max(20),
-  action: z.string().min(1).max(400),
+  action: z.string().min(1).max(800),
   camera: z.string().max(200).default(""),
   cameraMovement: z.string().max(300).optional(),
   characterBlocking: z.string().max(400).optional(),
@@ -943,7 +948,7 @@ const RegenPitchDeckInput = z.object({
       z.object({
         shotType: z.enum(["WS", "MS", "CU", "ECU", "OTS"]),
         shotTypeLabel: z.string().min(1).max(20),
-        action: z.string().min(1).max(400),
+        action: z.string().min(1).max(800),
         camera: z.string().max(200).default(""),
         durationSec: z.number().optional(),
         startSec: z.number().optional(),

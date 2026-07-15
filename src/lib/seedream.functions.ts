@@ -1146,7 +1146,7 @@ const ShotInput = z.object({
   plotText: z.string().min(1).max(2000),
   shotType: z.enum(["WS", "MS", "CU", "ECU", "OTS"]),
   shotTypeLabel: z.string().min(1).max(20),
-  action: z.string().min(1).max(400),
+  action: z.string().min(1).max(800),
   camera: z.string().max(200).default(""),
   cameraMovement: z.string().max(300).optional(),
   characterBlocking: z.string().max(400).optional(),
@@ -1927,7 +1927,7 @@ const PitchDeckCharacterSchema = z.object({
 const PitchDeckShotSchema = z.object({
   shotType: z.enum(["WS", "MS", "CU", "ECU", "OTS"]),
   shotTypeLabel: z.string().min(1).max(20),
-  action: z.string().min(1).max(400),
+  action: z.string().min(1).max(800),
   camera: z.string().max(200).default(""),
   cameraMovement: z.string().max(300).optional(),
   characterBlocking: z.string().max(400).optional(),
@@ -2080,7 +2080,7 @@ function buildPitchDeckPrompt(opts: {
     `[MISSION] Create a professional FILM STORYBOARD in pure PENCIL LINE-ART / SKETCH style. ONE single 16:9 landscape image — hand-drawn by a film pre-production artist, pencil on paper, clean lines, no color, no cel-shading, no 3D render, no watercolor.`,
 
     `[STYLE]`,
-    `- Pure pencil line-art: clean confident lines, varying thickness (thick contour, thin detail).`,
+    `- Pure pencil line-art: clean confident lines, varying thickness (thick contour, thin detail). The only permitted colors are the thin motion-analysis annotations defined below; all characters, props, environments and shading remain monochrome graphite.`,
     `- Shadows via hatching only — no smudging, no gradients, no airbrush.`,
     hasChars
       ? `- Realistic character proportions (not chibi/cartoon). Simple line backgrounds.`
@@ -2093,6 +2093,14 @@ function buildPitchDeckPrompt(opts: {
       ? `- Below each frame: ONE caption line - "镜头N · Ns · 景别 · 动作 · 机位:camera" (e.g. 镜头1 · 4s · 中景 · 陆深推门入场坐下 · 机位:平视50mm讲台左侧). 景别用中文(远景/中景/近景/特写/过肩), 动作写明白但用短句非长段, 机位取自 [SHOT BREAKDOWN] 该镜头的 camera 字段(焦段/角度/位置). Clean printed font, NOT handwritten.`
       : `- Below each frame: ONE caption line - "镜头N · Ns · 景别 · 环境 · 机位:camera" (e.g. 镜头1 · 4s · 远景 · 晨光穿透树冠洒落斑驳光影 · 机位:平视广角24mm林缘). 景别用中文(远景/中景/近景/特写/过肩), 环境写明白但用短句非长段, 机位取自 [SHOT BREAKDOWN] 该镜头的 camera 字段. Clean printed font, NOT handwritten. **本故事板是纯环境/空镜, 画面中不得出现任何人物.**`,
     `- Bottom-right: top-down diagram (see [TOP-DOWN DIAGRAM]).`,
+
+    `[MOTION NOTATION — REQUIRED INSIDE EACH FRAME]`,
+    hasChars
+      ? `- Every frame with a character must visibly communicate performance, not a mannequin pose. Draw the key pose at the action's most readable instant. For a major body movement, add a THIN RED solid arrow tracing the actual body/limb travel from start to end; add one faint graphite “ghost” start pose only when it clarifies the path. For hand, head, gaze or prop actions, use a short red arc/arrow at that body part. Do not draw an arbitrary arrow: every arrow must match the action and blocking exactly.`
+      : `- For an environment shot, use only subtle graphite motion lines for explicitly described wind, rain, water, smoke or light; do not invent character movement.`,
+    `- BLUE thin arrow = camera movement direction; only draw it when [SHOT BREAKDOWN] has an actual camera movement. GREEN thin rectangle = focal subject/object. ORANGE thin arrow = main light direction only when relevant. PURPLE small spiral = an explicitly described inner focus/breathing beat only when relevant. Keep annotations sparse, clear, and outside faces; no full-color rendering.`,
+    `- If a character is speaking or briefly still, show one restrained, story-safe micro-action (eye-line shift, breath in chest/shoulders, fingers tightening, weight settling, fabric response) with a subtle graphite/red mark. Do not turn a still beat into walking, fighting, gesturing, or a new plot event.`,
+    `- Bottom legend: red = character/body or prop trajectory; blue = camera movement; green = focal point; orange = key light; purple = inner focus.`,
 
     `[FRAME IS THE SOURCE OF TRUTH — NON-NEGOTIABLE]`,
     `For every Frame N, first draw exactly what [SHOT BREAKDOWN] says: the action's grammatical subject (who performs it), the gaze/interaction target (what they look at or handle), action stage, shot size, camera height, camera side, lens and viewing direction. The visible frame must prove its own caption. Example: “男主低头审视陷阱和诱饵，低机位仰拍” means the male lead remains the pictured subject, he looks downward toward the trap/bait, and the camera looks upward at him; do NOT misread the gaze target as a replacement for the character subject. Do not swap the composition, subject, camera side, or caption between Frame N and Frame N+1.`,
@@ -2131,7 +2139,7 @@ function buildPitchDeckPrompt(opts: {
     shotLines || `  (derive from plot)`,
 
     `[OUTPUT RULES]`,
-    `1. Pencil line-art only — no color, no rendering beyond hatching.`,
+    `1. Pencil line-art only — no color or rendering beyond hatching, EXCEPT the sparse red/blue/green/orange/purple motion-analysis annotations defined in [MOTION NOTATION].`,
     `2. 16:9 landscape, ${SUGGESTED_PANELS} frames.`,
     hasChars
       ? `3. Character lock - same face/body/clothes across frames.`
@@ -2159,13 +2167,13 @@ function buildPitchDeckNegative(hasCharacters: boolean): string {
     "garbled text, fake characters, pseudo Chinese, jumbled glyphs, broken strokes, illegible labels, blurry text, smeared text, distorted text, unreadable captions, mismatched font widths, comic font, decorative font, handwritten scribble",
     "emoji icons, camera emoji 📷, circled numbers ①②③, unicode symbols as labels, emoji in diagram, emoji in captions",
     "skipped frame numbers, duplicated numbers, out-of-order sequence labels, missing frame numbers",
-    "color, colored rendering, full color, cel-shading, watercolor, oil painting, airbrush, gradient, photorealistic, 3D render, CGI, anime style, digital painting, thick paint, impasto, gouache, pastel, marker rendering, digital art",
+    "colored characters, colored costumes, colored environments, colored rendering beyond sparse motion-analysis arrows/boxes, full color, cel-shading, watercolor, oil painting, airbrush, gradient, photorealistic, 3D render, CGI, anime style, digital painting, thick paint, impasto, gouache, pastel, digital art",
     "cluttered layout, overlapping sections, missing dividers, off-grid placement, no white space, busy decorative borders, ornate frames, gold filigree",
     "wrong aspect ratio, vertical 9:16, square 1:1, 4:3, portrait orientation",
     "extra characters not in [CHARACTERS], scenery not in [SCENE], invented plot, frames unrelated to [SHOT BREAKDOWN]",
     "low resolution, blurry, pixelated, JPEG artifacts, low quality, soft focus",
     hasCharacters
-      ? "missing top-down diagram, diagram without dashed camera movement paths, diagram without solid character movement lines, camera paths drawn as solid instead of dashed, character path drawn as dashed instead of solid, camera paths without arrowhead, character paths without arrowheads, diagram without legend, character positions without start/end squares, character movement not matching the blocking in [SHOT BREAKDOWN], camera paths not matching the camera/camMovement descriptions in [SHOT BREAKDOWN], camera paths collapsed into one line when shots describe multiple movements, camera paths or fixed camera markers missing their 镜头N label, fixed-camera shots drawn as a dashed movement path instead of a ▲ marker, diagram too small to read labels, diagram covering only one room when the story spans multiple locations, missing shots' locations in the diagram"
+      ? "missing top-down diagram, missing frame-level character motion annotations, static mannequin pose despite described action, diagram without dashed camera movement paths, diagram without solid character movement lines, camera paths drawn as solid instead of dashed, character path drawn as dashed instead of solid, camera paths without arrowhead, character paths without arrowheads, diagram without legend, character positions without start/end squares, character movement not matching the blocking in [SHOT BREAKDOWN], camera paths not matching the camera/camMovement descriptions in [SHOT BREAKDOWN], camera paths collapsed into one line when shots describe multiple movements, camera paths or fixed camera markers missing their 镜头N label, fixed-camera shots drawn as a dashed movement path instead of a ▲ marker, diagram too small to read labels, diagram covering only one room when the story spans multiple locations, missing shots' locations in the diagram"
       : "missing top-down diagram, diagram without dashed camera movement paths, camera paths drawn as solid instead of dashed, camera paths without arrowhead, diagram without legend, camera paths not matching the camera/camMovement descriptions in [SHOT BREAKDOWN], camera paths collapsed into one line when shots describe multiple movements, camera paths or fixed camera markers missing their 镜头N label, fixed-camera shots drawn as a dashed movement path instead of a ▲ marker, diagram too small to read labels, diagram covering only one room when the story spans multiple locations, missing shots' locations in the diagram",
     "frames without 镜头N label, frames without duration label, frames without shot type tag, frames without action description, long paragraph captions, English shot type abbreviations WS MS CU ECU OTS on frames",
     "art style drift from reference images, inconsistent rendering across sections, anime when reference is realistic, realistic when reference is anime, cel-shading when reference is painterly, 3D render when reference is 2D, watercolor when reference is digital illustration, different line treatment from reference, different color saturation from reference, different shading style from reference, mixed art styles, inconsistent brush strokes between frames, mixing 2D and 3D, mixing photoreal and stylized",
