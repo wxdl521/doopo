@@ -32,6 +32,27 @@ import {
 } from "../../lib/workspaceAgent.functions";
 
 type Attachment = { id: string; name: string; size: number; type: string; url?: string };
+type StoryboardVideoMethod = "shots" | "storyboard";
+
+function parseStoryboardVideoRequest(text: string): {
+  groupIndex: number;
+  method: StoryboardVideoMethod;
+} | null {
+  if (
+    !/(?:生成|制作|做|渲染|产出|出).{0,18}视频|视频.{0,18}(?:生成|制作|做|渲染|产出|出)/.test(text)
+  ) {
+    return null;
+  }
+  const groupMatch = text.match(
+    /第\s*(\d+)\s*(?:个)?\s*(?:分镜(?:[（(]?组[）)]?)?|镜头(?:[（(]?组[）)]?)?)/,
+  );
+  const groupIndex = Number(groupMatch?.[1]);
+  if (!Number.isInteger(groupIndex) || groupIndex < 1) return null;
+  return {
+    groupIndex,
+    method: /故事板.{0,12}视频|(?:按|用).{0,8}故事板/.test(text) ? "storyboard" : "shots",
+  };
+}
 
 type CtaKey =
   | "extract"
@@ -353,6 +374,15 @@ const ZopiaChatPanel = forwardRef<
      * resolve 又写状态)。卡片自身把 status 改回 pending(可重试)。
      */
     onCancelVideoGen?: (groupId: string) => void;
+    /**
+     * 在分镜阶段解析到“生成第 X 分镜(组)的视频”后调用。
+     * 父组件会构建原始提示词、经 DeepSeek 洗词，并将确认卡推回此对话。
+     */
+    onRequestStoryboardVideo?: (
+      groupIndex: number,
+      userRequirements: string,
+      method: StoryboardVideoMethod,
+    ) => Promise<{ ok: boolean; summary: string }>;
     /** 由工作区执行已规划且已确认的 Agent 动作。 */
     onExecuteAgentAction?: (plan: WorkspaceAgentPlan) => Promise<{ summary?: string } | void>;
     agentContext?: { characterCount: number; storyboardGroupCount: number; hasSynopsis: boolean };
@@ -377,6 +407,7 @@ const ZopiaChatPanel = forwardRef<
     onModifyReference,
     onConfirmVideoGen,
     onCancelVideoGen,
+    onRequestStoryboardVideo,
     onExecuteAgentAction,
     agentContext,
   },
@@ -711,6 +742,27 @@ const ZopiaChatPanel = forwardRef<
       },
     ]);
     try {
+      const storyboardVideoRequest =
+        stage === "storyboard" ? parseStoryboardVideoRequest(userMsg.text) : null;
+      if (storyboardVideoRequest && onRequestStoryboardVideo) {
+        const result = await onRequestStoryboardVideo(
+          storyboardVideoRequest.groupIndex,
+          userMsg.text,
+          storyboardVideoRequest.method,
+        );
+        setMessages((prev) =>
+          prev.map((message) =>
+            message.id === thoughtId && message.kind === "agent_thought"
+              ? {
+                  ...message,
+                  pending: false,
+                  text: result.summary,
+                }
+              : message,
+          ),
+        );
+        return;
+      }
       const availableActions = collectAvailablePageActions();
       const responsePlan = await callPlanAgentAction({
         data: {

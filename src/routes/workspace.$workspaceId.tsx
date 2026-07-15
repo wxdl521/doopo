@@ -46,6 +46,7 @@ import {
   regenerateStoryboardPitchDeck,
 } from "../lib/storyboard.functions";
 import { generateVideo } from "../lib/videoGenerate.functions";
+import { refineStoryboardVideoPrompt } from "../lib/videoPromptRefine.functions";
 import { generateStoryboardPitchDeck } from "../lib/seedream.functions";
 import {
   getProject,
@@ -960,6 +961,7 @@ function WorkspacePage() {
   const callGenerateShotImage = useServerFn(generateStoryboardShotImage);
   const callRegenShot = useServerFn(regenerateStoryboardShot);
   const callGenVideo = useServerFn(generateVideo);
+  const callRefineVideoPrompt = useServerFn(refineStoryboardVideoPrompt);
   const callGenStoryboard = useServerFn(generateStoryboardPitchDeck);
   const callRegenStoryboard = useServerFn(regenerateStoryboardPitchDeck);
   const callUploadImage = useServerFn(uploadLocalImage);
@@ -6288,6 +6290,69 @@ function WorkspacePage() {
       extra: payload.extra,
       audioCandidates: payload.audioCandidates,
     });
+  }
+
+  /**
+   * Agent 对话中的“生成第 X 分镜组视频”入口。
+   * 先基于当前分镜构建完整生成提示词，再让 DeepSeek V4 Pro 合入用户要求，
+   * 最后只把洗过的核心提示词放入确认卡；确认时 executeVideoGen 会照常补回技术块。
+   */
+  async function requestStoryboardVideoFromAgent(
+    groupIndex: number,
+    userRequirements: string,
+    method: "shots" | "storyboard",
+  ): Promise<{ ok: boolean; summary: string }> {
+    const group = data.storyboardGroups.find((item) => item.index === groupIndex);
+    if (!group) {
+      return { ok: false, summary: `没有找到第 ${groupIndex} 分镜组，请确认编号后重试。` };
+    }
+
+    const payload =
+      method === "shots"
+        ? buildVideoGenPayloadForShots(group.id)
+        : buildVideoGenPayloadForStoryboard(group.id);
+    if (!payload) {
+      return {
+        ok: false,
+        summary:
+          method === "shots"
+            ? `第 ${groupIndex} 分镜组还没有分镜图，暂时无法按分镜图生成视频。`
+            : `第 ${groupIndex} 分镜组还没有故事板，暂时无法按故事板生成视频。`,
+      };
+    }
+
+    let previewPrompt = payload.previewPrompt;
+    let refined = false;
+    try {
+      const result = await callRefineVideoPrompt({
+        data: {
+          basePrompt: payload.prompt,
+          previewPrompt: payload.previewPrompt,
+          userRequirements,
+        },
+      });
+      if (result.prompt.trim()) previewPrompt = result.prompt;
+      refined = result.refined;
+    } catch (error) {
+      // DeepSeek 失败时仍提供原确认卡，避免用户的生成动作被一次洗词失败阻塞。
+      console.warn("[video prompt refine]", error);
+    }
+
+    chatPanelRef.current?.pushVideoConfirmCard({
+      groupId: group.id,
+      method,
+      title: `第 ${group.index} 组 · ${method === "shots" ? "按分镜图" : "按故事板"}生成视频`,
+      previewPrompt,
+      images: payload.images,
+      extra: payload.extra,
+      audioCandidates: payload.audioCandidates,
+    });
+    return {
+      ok: true,
+      summary: refined
+        ? "已用 DeepSeek V4 Pro 合入你的要求并生成视频确认。"
+        : "未能完成提示词优化，已使用原始提示词生成视频确认。",
+    };
   }
 
   /**
@@ -11729,6 +11794,7 @@ function WorkspacePage() {
             return await executeVideoGen(groupId, method, editedPreviewPrompt, selectedAudioUrl);
           }}
           onCancelVideoGen={(groupId) => cancelVideoGen(groupId)}
+          onRequestStoryboardVideo={requestStoryboardVideoFromAgent}
           onExecuteAgentAction={executeWorkspaceAgentAction}
           agentContext={{
             characterCount: data.characters.length,
