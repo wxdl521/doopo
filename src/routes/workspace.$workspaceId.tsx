@@ -4310,6 +4310,10 @@ function WorkspacePage() {
       toast.error("请输入修改意见");
       return false;
     }
+    // 旧工作区数据可能缺少 slug/location 等字段；多视图请求必须始终发送字符串，
+    // 否则服务端 Zod 会在请求入口直接报 invalid_type。
+    const sceneSlug =
+      String(s.slug ?? "").trim() || String(s.location ?? "").trim() || `SCENE ${s.index}`;
     setRegenBusyKeys((m) => {
       const n = new Map(m);
       n.set(s.id, mode);
@@ -4321,10 +4325,10 @@ function WorkspacePage() {
           referenceImageUrl: referenceUrl,
           userInstruction: instruction,
           mode,
-          sceneSlug: s.slug,
-          sceneLocation: s.location,
-          sceneTimeOfDay: s.timeOfDay,
-          sceneAction: s.action,
+          sceneSlug,
+          sceneLocation: String(s.location ?? ""),
+          sceneTimeOfDay: String(s.timeOfDay ?? ""),
+          sceneAction: String(s.action ?? ""),
           projectStyle: projectVisualStyle,
           model: resolveI2IModel(project?.sceneModel),
           previewOnly: viewPromptsModeRef.current,
