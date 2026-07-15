@@ -263,7 +263,7 @@ export const generateImage = createServerFn({ method: "POST" })
       r: T,
     ): T => {
       if (r && r.error && !r.url) {
-        import("./errorLogs.functions").then(({ logGenerationError }) =>
+        import("./errorLogs.server").then(({ logGenerationError }) =>
           logGenerationError({
             kind: "image",
             provider,
