@@ -2626,7 +2626,7 @@ export const submitVideoTaskFn = createServerFn({ method: "POST" })
     });
     if (!r.ok) {
       const backend = getVideoBackend(model);
-      import("./errorLogs.functions").then(({ logGenerationError }) =>
+      import("./errorLogs.server").then(({ logGenerationError }) =>
         logGenerationError({
           kind: "video",
           provider: backend,
