@@ -605,6 +605,7 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
       `EXPRESSION IN ALL 4 PANELS: Neutral, expressionless, like a passport photo. No smile, no frown, no emotion, eyes open looking at the camera.`,
       ``,
       `IDENTITY LOCK ACROSS ALL 4 PANELS: Same face, same body, same physical condition, same outfit, same age, same hair, same skin tone, same accessories, same shoes, same wheelchair or prosthetic if applicable. The ONLY difference between panels is the camera angle. The LEFT and RIGHT side profiles (panels 2 and 3) must show the exact same person — mirror the face/hair/body shape, just from opposite sides.`,
+      `SKIN TONE / MATERIAL LOCK (CRITICAL): All exposed skin — face, ears, neck, arms and hands — must retain the same natural warm flesh tone and skin material as the reference image in ALL FOUR PANELS. Skin must never be gray, blue-gray, green-gray, metallic, stone-like, or monochrome. Use one neutral-white soft studio key light with gentle fill; shadows may add depth but must not change the underlying skin color or let the black umbrella cast a colored shadow onto the face or hands.`,
       ``,
       `VISUAL STYLE (MUST match across all 4 panels — no style drift between panels):`,
       `角色国籍：${data.characterNationality ?? "中国"}`,
@@ -731,6 +732,7 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
       `  • 恐惧 (Fear) — eyes wide with tension, brows raised and pulled together`,
       `  • 思考 (Thoughtful) — slight eye narrowing, lips pressed, contemplative`,
       `CRITICAL — same face shape, eye shape, nose, mouth structure, hairstyle, skin tone, camera angle (front), lighting. Special features (glasses, ears, horns) consistent in every expression close-up.`,
+      `SKIN TONE / MATERIAL LOCK: Every face, ear, neck and visible hand in every section must keep the same natural flesh-colored skin tone and material as the approved reference. Use consistent neutral-white studio lighting with soft fill. Shadows may add depth but must never turn exposed skin gray, blue-gray, metallic, stone-like, or monochrome.`,
 
       // ========== Section 4:动作姿势 ==========
       `[SECTION 4 — 动作姿势 / POSES (personality-driven, must respect physical condition)]`,
@@ -765,6 +767,8 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
       `[CRITICAL RULES — output is REJECTED if ANY of these is violated]`,
       `RULE 1 — PURE WHITE BACKGROUND (#FFFFFF) everywhere. NOT gray, NOT cream, NOT textured. No floor, no scenery.`,
       `RULE 2 — IDENTITY LOCK: every face shown across the entire image MUST be the SAME PERSON. Same face shape, eyes, nose, mouth, hairstyle, hair color, skin tone. Different person = REJECT.`,
+      `RULE 2A — EXPOSED SKIN CHECK: The face and visible hands in every section must be clearly flesh-colored and match the reference. If any side-view face or hand is gray or desaturated, regenerate that sub-image.`,
+      `RULE 2A — EXPOSED SKIN CHECK: In every panel, the face and visible hands must be clearly flesh-colored and match the reference. If a side-view face or hand becomes gray or desaturated, regenerate that panel.`,
       `RULE 3 — FEATURE & ANATOMY PRESERVATION: any special trait (glasses, wings, animal ears, tail, horns, special accessories, distinctive markings) AND every identity-defining body part from the approved reference MUST appear in the main portrait, all four views, every expression close-up, and every pose. Keep both sides of any paired feature — two wings means two wings, two legs/feet/claws means two legs/feet/claws. Missing, merged, hidden, cropped, or substituted anatomy in any one of these = REJECT.`,
       `RULE 4 — CHINESE TEXT LABELS: every section carries a Chinese title; every sub-image / icon carries a Chinese label. Text must be readable, simplified Chinese, no garbled characters, no English-only labels.`,
       `RULE 5 — SPACE BUDGET: Section 1 = one big hero portrait. Sections 2-5 use the following maximum content only: 4 views in Section 2, exactly 6 expressions in Section 3, exactly 4 large full-body poses in a 2×2 layout in Section 4, and 4-6 accessory icons in Section 5. Preserve subject size and complete anatomy before adding decorative detail.`,
@@ -827,6 +831,7 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
     const negative = [
       "different art style, style drift, photorealistic when input is anime, anime when input is realistic, inconsistent rendering between sub-images",
       "different face, different face shape, different eye shape, different eye color, different nose, different mouth, different eyebrows, different skin tone, different hairstyle, different hair color, different hair length, different facial proportions, age change, different body, different body proportions, different height, different gender presentation, different outfit, different clothing color, different clothing style, different accessories, different glasses, different jewelry, different shoes",
+      "gray skin, grey skin, gray face, grey face, gray hands, grey hands, desaturated skin, colorless skin, blue-gray skin, ash-colored skin, stone skin, metallic skin, monochrome face, monochrome hands, skin color cast",
       "missing glasses when source has glasses, missing wings when source has wings, one wing when source has a pair of wings, asymmetric wings, missing tail when source has tail, missing animal ears when source has them, missing horns when source has horns, missing distinctive feature, feature drift, lost accessory",
       "perspective distortion in four-view, fish-eye, wide-angle distortion, foreshortening, hero shot, low angle, 3/4 view in front/side/back, diagonal angle, left side and right side showing different face, asymmetric side profiles, inconsistent left vs right side view, different body in left vs right, mirrored incorrectly in side views",
       "cropped at knees, cropped at calves, cropped at ankles, cropped at waist, cropped at chest, head cut off, feet cut off, claws cut off, hooves cut off, body extending beyond frame, missing feet, missing hands, missing legs, missing lower body, legless, footless, one leg only, incomplete paired anatomy",
@@ -2776,11 +2781,11 @@ export const regenerateStoryboardPitchDeck = createServerFn({ method: "POST" })
 //
 // 跟角色 regenerateCharacterLook 对称,但语义不同:
 //   - 场景不是角色,不生成脸/身材/服装类三视图
-//   - 场景多视图固定为同一空间的四个方向:正面 → 左侧 → 背面 → 右侧
+//   - 场景多视图固定为同一空间的横向 2 行 × 3 列摄影机矩阵
 //
 // 模式:
 //   - 'modify'     : 用户给修改意见,在原场景图基础上改(构图/光照/地点保留)
-//   - 'multi-view' : 一次性输出 4 方向参考图(2×2 四面板)
+//   - 'multi-view' : 一次性输出 6 个锁定场景的摄影机视图(2×3 六宫格)
 //
 // 风格锁:复用 buildStyleLock(styleSpec, 'scene'),跟 genSceneImage / 角色
 // 重生 / 分镜 / 故事板保持同一段风格指纹。
@@ -2894,42 +2899,44 @@ function buildScenePrompts(
       `[STYLE LOCK — 场景多视图,适用对象:scene]`,
       buildStyleLock(styleSpec, "scene"),
       ``,
-      `[任务] 基于图1生成同一个场景的四方向参考图,不是四个新场景。图1是正面基线真值。`,
+      `[任务] 基于图1生成同一个场景的横向六宫格摄影机视图，不是六个新场景。图1是唯一的场景参考真值。`,
       `[地点] ${data.sceneSlug}`,
       data.sceneLocation ? `[具体地点] ${data.sceneLocation}` : "",
       data.sceneTimeOfDay ? `[时段] ${data.sceneTimeOfDay}` : "",
       data.sceneAction ? `[场景语义] ${data.sceneAction}` : "",
       ``,
-      `[画布] 2048×2048, 2×2 等大面板,顺序固定为:左上正面、右上左侧、左下背面、右下右侧。不要在图中绘制文字、编号或标签。`,
+      `[画布] 3072×2048 横向画布，严格使用 2 行 × 3 列共六个等大格子；从左到右、从上到下排列。不得输出竖屏、单图、额外格子或空白格。`,
       ``,
-      `[生成顺序与参考关系] 严格按以下顺序理解并构图,四格共享同一个空间坐标系:`,
-      `1. 正面(左上):直接参考图1,建立场景布局、建筑结构、门窗、道路、家具、树木、灯具和其他关键锚点。`,
-      `2. 左侧(右上):镜头从正面向左绕场景旋转90°;重点参考正面图左侧可见的墙面和物体,展示它们的侧面,保持与正面相邻关系。`,
-      `3. 背面(左下):镜头从左侧继续绕到场景背面,做镜头反打;参考左侧图已经揭示的结构和正面图的深度锚点,展示同一空间及物体背面,不是正面镜像。`,
-      `4. 右侧(右下):镜头从背面继续绕到右侧;同时参考背面图与正面图右侧可见的结构,展示与左右两侧、正面和背面都能闭合的同一空间。`,
+      `【场景锁定】以下所有图像共享完全相同的建筑设计、建筑结构、建筑比例、场地规划、空间布局、景观系统、道路系统、背景环境、山体结构、天空结构、云层细节、装饰元素、材质表现、色彩体系、光照方向、阴影方向、体积光效果、天气状态、时间段。禁止重新设计、禁止增减建筑、禁止改变环境布局。仅允许摄影机位置移动。`,
       ``,
-      `[一致性规则]`,
-      `- 四格必须是同一地点、同一时段、同一天气、同一光线和同一视觉风格。`,
-      `- 固定物体的数量、材质、颜色、尺寸和空间位置关系保持一致;不同视角只改变可见面和透视。`,
-      `- 只使用图1已有或由其结构必然推出的内容;看不见的细节保守补全,不得添加新的建筑、家具、门窗或装饰。`,
-      `- 画面必须有真实空间深度;不得把四格做成复制、镜像、平移或四个无关背景。`,
-      `- 场景中绝对不出现角色、人物、动物、路人、人形、剪影、手或身体局部;这是纯环境参考图。`,
+      `【画面质量】建筑摄影级表现，ArchViz可视化标准，电影级环境光效，PBR真实材质系统，8K超高清，HDR，极致锐度，空间层次丰富。`,
       ``,
-      `[提交前检查] 顺序为正面→左侧→背面→右侧;四格能沿同一空间绕行闭合;无人物;无新增物体;无文字水印。`,
+      `【摄影机参数】`,
+      `统一50mm焦段，统一曝光，统一白平衡，统一动态范围，统一景深，统一色彩风格。`,
+      ``,
+      `【格子1：场景说明卡（第1行第1列）】生成一张场景设定说明卡，采用建筑分析图风格（Axonometric Diagram）。画面左侧为「${data.sceneSlug}」的中英文标题，右侧为场景的功能分区轴测爆炸图，用不同颜色标注各区域名称（如：入口区、核心功能区、后勤区、景观区），并用虚线箭头标注动线流向。整体风格为干净的白底技术图纸风，搭配建筑线稿与半透明色块。确保构图清晰、信息层级分明，无透视穿帮；标题和区域文字须清晰可读。`,
+      `【格子2：场景前景（第1行第2列）】机位位于场景正前方近景，相机高度为人眼水平（约1.6米）。镜头靠近场景主入口或核心建筑前部区域，重点展示入口细节、立面材质、门廊结构、地面铺装及近景景观元素。建筑主体占据画面60%以上，前景细节锐利清晰，背景适度虚化但不丢失环境信息。`,
+      `【格子3：场景后景（第1行第3列）】机位位于场景正后方远景，相机高度为人眼水平。完整展示场景背面整体结构、后方环境纵深、背景山体或天际线。建筑背面布局清晰可见，后方的道路系统与景观系统完整呈现。保持与前景完全一致的光影方向与色彩体系。`,
+      `【格子4：左侧视图（第2行第1列）】机位位于场景正左方90°垂直方向，相机高度为人眼水平。完整展示场景左侧立面体量、侧翼建筑结构、左向空间纵深与侧方景观系统。强调建筑侧向的体量对比与立面层次，确保与正面视图的结构比例完全吻合。`,
+      `【格子5：右侧视图（第2行第2列）】机位位于场景正右方90°垂直方向，相机高度为人眼水平。完整展示场景右侧立面体量、侧翼建筑结构、右向空间纵深与侧方景观系统。确保左右两侧视图的建筑比例、材质表现、光照阴影完全对称统一。`,
+      `【格子6：俯视鸟瞰（第2行第3列）】机位位于场景正上方垂直俯瞰，相机垂直于地面。完整展示场景的整体规划布局、建筑屋顶结构、道路网格、景观分区与场地动线。强调正交投影感（无透视畸变），如同建筑总平面图（Site Plan）一样清晰呈现空间组织关系。`,
+      ``,
+      `[提交前检查] 严格输出横向 2×3 六宫格；六格均为图1同一场景，仅摄影机位置变化；格子1为说明卡，其余五格为指定机位；无人物、动物或手；无新增、删除或改造的建筑和环境元素；除格子1所要求的标题与分区文字外，无水印、logo或无关文字。`,
     ]
       .filter(Boolean)
       .join("\n");
     const negative = [
       "people, person, character, human, animal, animal silhouette, figure, crowd, bystander, shadow person, hand, body part",
-      "four unrelated scenes, different location, different room, different architecture, different furniture layout",
-      "front copy, mirrored front, flipped image, duplicated panel, same angle in all panels, flat 2D collage",
-      "left and right showing the same wall, back view showing the front, missing rear structure, impossible perspective",
+      "six unrelated scenes, different location, different room, different architecture, different furniture layout",
+      "mirrored front, flipped image, duplicated panel, same angle in all panels, flat 2D collage",
+      "missing rear structure, impossible perspective, incorrect aerial view, fisheye distortion",
       "invented building, invented door, invented window, invented furniture, invented decoration, extra objects, removed objects",
       "different time of day, different weather, different lighting, different color palette, style drift",
-      "text, label, caption, number, arrow, logo, watermark, grid lines, visible panel border",
-      "top-down view, isometric view, fisheye distortion, low quality, blurry, pixelated, jpeg artifacts",
+      "portrait orientation, vertical canvas, portrait layout, single image, extra panel, empty panel",
+      "watermark, logo, unreadable text, garbled text, random text",
+      "low quality, blurry, pixelated, jpeg artifacts",
     ].join(", ");
-    return { positive, negative, size: "2048x2048" };
+    return { positive, negative, size: "3072x2048" };
   }
 
   if (data.mode === "three-view") {
