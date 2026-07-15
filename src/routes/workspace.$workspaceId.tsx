@@ -47,6 +47,7 @@ import {
 } from "../lib/storyboard.functions";
 import { generateVideo } from "../lib/videoGenerate.functions";
 import { refineStoryboardVideoPrompt } from "../lib/videoPromptRefine.functions";
+import { runStoryboardVideoAgent } from "../lib/storyboardVideoAgent.functions";
 import { generateStoryboardPitchDeck } from "../lib/seedream.functions";
 import {
   getProject,
@@ -962,6 +963,7 @@ function WorkspacePage() {
   const callRegenShot = useServerFn(regenerateStoryboardShot);
   const callGenVideo = useServerFn(generateVideo);
   const callRefineVideoPrompt = useServerFn(refineStoryboardVideoPrompt);
+  const callStoryboardVideoAgent = useServerFn(runStoryboardVideoAgent);
   const callGenStoryboard = useServerFn(generateStoryboardPitchDeck);
   const callRegenStoryboard = useServerFn(regenerateStoryboardPitchDeck);
   const callUploadImage = useServerFn(uploadLocalImage);
@@ -6308,6 +6310,19 @@ function WorkspacePage() {
       return { ok: false, summary: `没有找到第 ${groupIndex} 分镜组，请确认编号后重试。` };
     }
 
+    const hasShotImage = group.shots.some((shot) => {
+      const gens = shotImages[`${group.id}::${shot.id}`] ?? [];
+      return Boolean(gens.at(-1) || shot.imageUrl);
+    });
+    const activeStoryboard = getActiveStoryboard(group.id);
+    const hasStoryboard = activeStoryboard?.status === "succeeded" && Boolean(activeStoryboard.url);
+    if (method === "shots" && !hasShotImage) {
+      return { ok: false, summary: `第 ${groupIndex} 分镜组还没有分镜图，无法按分镜图生成视频。` };
+    }
+    if (method === "storyboard" && !hasStoryboard) {
+      return { ok: false, summary: `第 ${groupIndex} 分镜组还没有故事板，无法按故事板生成视频。` };
+    }
+
     const payload =
       method === "shots"
         ? buildVideoGenPayloadForShots(group.id)
@@ -6354,6 +6369,26 @@ function WorkspacePage() {
         ? "已用 DeepSeek V4 Pro 合入你的要求并生成视频确认。"
         : "未能完成提示词优化，已使用原始提示词生成视频确认。",
     };
+  }
+
+  /** DeepSeek 工具 Agent 的入口：读组状态 → 决定视频来源 → 推确认卡。 */
+  async function requestStoryboardVideoWithAgent(
+    instruction: string,
+  ): Promise<{ ok: boolean; summary: string }> {
+    const groups = data.storyboardGroups.map((group) => ({
+      index: group.index,
+      hasShotImage: group.shots.some((shot) => {
+        const gens = shotImages[`${group.id}::${shot.id}`] ?? [];
+        return Boolean(gens.at(-1) || shot.imageUrl);
+      }),
+      hasStoryboard: (() => {
+        const storyboard = getActiveStoryboard(group.id);
+        return storyboard?.status === "succeeded" && Boolean(storyboard.url);
+      })(),
+    }));
+    const decision = await callStoryboardVideoAgent({ data: { instruction, groups } });
+    if (decision.action === "clarify") return { ok: false, summary: decision.summary };
+    return requestStoryboardVideoFromAgent(decision.groupIndex, instruction, decision.method);
   }
 
   /**
@@ -11795,7 +11830,7 @@ function WorkspacePage() {
             return await executeVideoGen(groupId, method, editedPreviewPrompt, selectedAudioUrl);
           }}
           onCancelVideoGen={(groupId) => cancelVideoGen(groupId)}
-          onRequestStoryboardVideo={requestStoryboardVideoFromAgent}
+          onRequestStoryboardVideo={requestStoryboardVideoWithAgent}
           onExecuteAgentAction={executeWorkspaceAgentAction}
           agentContext={{
             characterCount: data.characters.length,

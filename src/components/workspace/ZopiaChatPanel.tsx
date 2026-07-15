@@ -32,26 +32,27 @@ import {
 } from "../../lib/workspaceAgent.functions";
 
 type Attachment = { id: string; name: string; size: number; type: string; url?: string };
-type StoryboardVideoMethod = "shots" | "storyboard";
-
-function parseStoryboardVideoRequest(text: string): {
-  groupIndex: number;
-  method: StoryboardVideoMethod;
-} | null {
-  if (
-    !/(?:生成|制作|做|渲染|产出|出).{0,18}视频|视频.{0,18}(?:生成|制作|做|渲染|产出|出)/.test(text)
-  ) {
-    return null;
+/** 避免 Server Function 网络连接异常时，Agent 思考气泡永久停在加载状态。 */
+async function awaitAgentRequest<T>(request: Promise<T>, timeoutMs = 35_000): Promise<T> {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      request,
+      new Promise<T>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("Agent 请求超时")), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
   }
-  const groupMatch = text.match(
-    /第\s*(\d+)\s*(?:个)?\s*(?:分镜(?:[（(]?组[）)]?)?|镜头(?:[（(]?组[）)]?)?)/,
+}
+
+function isStoryboardVideoRequest(text: string): boolean {
+  return (
+    /(?:生成|制作|做|渲染|产出|出).{0,18}视频|视频.{0,18}(?:生成|制作|做|渲染|产出|出)/.test(
+      text,
+    ) && /分镜|镜头|故事[板版]/.test(text)
   );
-  const groupIndex = Number(groupMatch?.[1]);
-  if (!Number.isInteger(groupIndex) || groupIndex < 1) return null;
-  return {
-    groupIndex,
-    method: /故事板.{0,12}视频|(?:按|用).{0,8}故事板/.test(text) ? "storyboard" : "shots",
-  };
 }
 
 type CtaKey =
@@ -378,11 +379,7 @@ const ZopiaChatPanel = forwardRef<
      * 在分镜阶段解析到“生成第 X 分镜(组)的视频”后调用。
      * 父组件会构建原始提示词、经 DeepSeek 洗词，并将确认卡推回此对话。
      */
-    onRequestStoryboardVideo?: (
-      groupIndex: number,
-      userRequirements: string,
-      method: StoryboardVideoMethod,
-    ) => Promise<{ ok: boolean; summary: string }>;
+    onRequestStoryboardVideo?: (instruction: string) => Promise<{ ok: boolean; summary: string }>;
     /** 由工作区执行已规划且已确认的 Agent 动作。 */
     onExecuteAgentAction?: (plan: WorkspaceAgentPlan) => Promise<{ summary?: string } | void>;
     agentContext?: { characterCount: number; storyboardGroupCount: number; hasSynopsis: boolean };
@@ -742,14 +739,9 @@ const ZopiaChatPanel = forwardRef<
       },
     ]);
     try {
-      const storyboardVideoRequest =
-        stage === "storyboard" ? parseStoryboardVideoRequest(userMsg.text) : null;
-      if (storyboardVideoRequest && onRequestStoryboardVideo) {
-        const result = await onRequestStoryboardVideo(
-          storyboardVideoRequest.groupIndex,
-          userMsg.text,
-          storyboardVideoRequest.method,
-        );
+      // 视频 Agent 会读取各分镜组的真实素材状态，再选择分镜图或故事板流程。
+      if (isStoryboardVideoRequest(userMsg.text) && onRequestStoryboardVideo) {
+        const result = await awaitAgentRequest(onRequestStoryboardVideo(userMsg.text));
         setMessages((prev) =>
           prev.map((message) =>
             message.id === thoughtId && message.kind === "agent_thought"
@@ -764,20 +756,22 @@ const ZopiaChatPanel = forwardRef<
         return;
       }
       const availableActions = collectAvailablePageActions();
-      const responsePlan = await callPlanAgentAction({
-        data: {
-          instruction: userMsg.text,
-          stage,
-          selectedEpisodeIndex,
-          context: {
-            episodeCount: episodeCount ?? 0,
-            characterCount: agentContext?.characterCount ?? 0,
-            storyboardGroupCount: agentContext?.storyboardGroupCount ?? 0,
-            hasSynopsis: agentContext?.hasSynopsis ?? false,
+      const responsePlan = await awaitAgentRequest(
+        callPlanAgentAction({
+          data: {
+            instruction: userMsg.text,
+            stage,
+            selectedEpisodeIndex,
+            context: {
+              episodeCount: episodeCount ?? 0,
+              characterCount: agentContext?.characterCount ?? 0,
+              storyboardGroupCount: agentContext?.storyboardGroupCount ?? 0,
+              hasSynopsis: agentContext?.hasSynopsis ?? false,
+            },
+            availableActions,
           },
-          availableActions,
-        },
-      });
+        }),
+      );
       const selectedButton = availableActions.find(
         (action) => action.id === responsePlan.uiActionId,
       );

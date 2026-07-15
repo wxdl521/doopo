@@ -271,10 +271,13 @@ export const planWorkspaceAgentAction = createServerFn({ method: "POST" })
     const fallback = fallbackPlan(data);
     const apiKey = arkTextApiKey();
     if (!apiKey) return fallback;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
     try {
       const response = await fetch(arkTextEndpoint(), {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        signal: controller.signal,
         body: JSON.stringify({
           model: ARK_TEXT_MODEL,
           thinking: ARK_TEXT_THINKING_DISABLED,
@@ -316,5 +319,7 @@ export const planWorkspaceAgentAction = createServerFn({ method: "POST" })
       };
     } catch {
       return fallback;
+    } finally {
+      clearTimeout(timeout);
     }
   });

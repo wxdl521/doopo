@@ -30,10 +30,13 @@ export const refineStoryboardVideoPrompt = createServerFn({ method: "POST" })
       return { prompt: data.previewPrompt, refined: false };
     }
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
     try {
       const response = await fetch(arkTextEndpoint(), {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        signal: controller.signal,
         body: JSON.stringify({
           model: ARK_TEXT_MODEL,
           thinking: ARK_TEXT_THINKING_DISABLED,
@@ -67,5 +70,7 @@ You receive the full base prompt so you can respect its hard constraints. Return
     } catch {
       // 洗词不可阻断原有视频确认流程，DeepSeek 异常时继续使用原始提示词。
       return { prompt: data.previewPrompt, refined: false };
+    } finally {
+      clearTimeout(timeout);
     }
   });
