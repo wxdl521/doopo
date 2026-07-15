@@ -2147,7 +2147,7 @@ const ZopiaChatPanel = forwardRef<
                               m.selectedAudioUrl,
                             )
                           }
-                          className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold hover:opacity-90 inline-flex items-center gap-1"
+                          className="px-[18px] py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold hover:opacity-90 inline-flex items-center gap-1"
                         >
                           <Sparkles size={12} /> {t.zp_video_confirm_gen}
                         </button>

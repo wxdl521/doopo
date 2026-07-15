@@ -4933,6 +4933,13 @@ function WorkspacePage() {
    */
   // 镜头分解:Shot N [起-止s] [景别] 动作 (camera: X) -> Shot 2 ... (与视频提示词同格式)
   function buildShotBreakdown(g: StoryboardGroup): string {
+    // 分镜描述按组内相对时间展示；底层 startSec/endSec 仍保留整集时间轴的绝对值。
+    const firstShotStart = g.shots.reduce<number | null>((min, shot) => {
+      if (shot.startSec == null) return min;
+      return min == null ? shot.startSec : Math.min(min, shot.startSec);
+    }, null);
+    const groupStart = g.startSec ?? firstShotStart ?? 0;
+
     return g.shots
       .map((s, i) => {
         const cam = s.camera ? ` (camera: ${s.camera})` : "";
@@ -4942,11 +4949,11 @@ function WorkspacePage() {
         const blk = s.characterBlocking ? ` | 走位: ${s.characterBlocking}` : "";
         const time =
           s.startSec != null && s.endSec != null
-            ? ` [${s.startSec.toFixed(0)}-${s.endSec.toFixed(0)}s]`
+            ? ` [${(s.startSec - groupStart).toFixed(0)}-${(s.endSec - groupStart).toFixed(0)}s]`
             : "";
         return `Shot ${i + 1}${time} [${s.shotTypeLabel}] ${s.action}${cam}${mov}${blk}`;
       })
-      .join(" → ");
+      .join("\n");
   }
   // 分镜描述默认值 = 镜头分解 + plotText(含台词)。镜头分解拼在 plotText 前面。
   function buildShotBreakdownDisplay(g: StoryboardGroup): string {
