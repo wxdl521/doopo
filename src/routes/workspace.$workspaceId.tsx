@@ -4289,7 +4289,7 @@ function WorkspacePage() {
 
   /**
    * 场景图重生(2026/06 新增) —— 对称 doRegen。
-   * 模式 'modify' / 'multi-view'。多视图固定为正面→左侧→背面→右侧，
+   * 模式 'modify' / 'multi-view'。多视图固定为锁定场景的横向 2×3 摄影机矩阵，
    * 具体空间关系与纯环境约束在 seedream.functions.ts 的 buildScenePrompts。
    */
   async function doSceneRegen(
@@ -4378,12 +4378,12 @@ function WorkspacePage() {
     }
   }
 
-  /** 场景"多视图"按钮:无 user input,按正面→左侧→背面→右侧生成。 */
+  /** 场景"多视图"按钮:无 user input,生成锁定场景的横向 2×3 摄影机矩阵。 */
   async function runScenePresetRegen(s: GenScene) {
     await doSceneRegen(
       s,
       "multi-view",
-      "基于图1按正面→左侧→背面→右侧生成同一场景的四方向多视图；左侧参考正面左侧结构，背面做镜头反打并参考左侧结构，右侧参考背面与正面右侧结构；保持空间逻辑，纯环境无人物。",
+      "基于图1生成锁定场景的横向 2×3 六宫格；建筑、环境、材质和光照保持一致，仅允许摄影机移动；纯环境无人物。",
     );
   }
 
@@ -9568,7 +9568,7 @@ function WorkspacePage() {
                                     >
                                       <button
                                         type="button"
-                                        title="生成正面、左侧、背面、右侧四方向多视图"
+                                        title="生成锁定场景的横向六宫格摄影机矩阵"
                                         disabled={!hasImg || isRegening}
                                         onClick={() => void runScenePresetRegen(s)}
                                         className="px-1 py-1.5 rounded border border-border bg-bg-surface text-text-secondary text-[11px] leading-none hover:border-accent hover:text-accent disabled:opacity-40 disabled:cursor-not-allowed transition flex flex-col items-center justify-center gap-0.5"
