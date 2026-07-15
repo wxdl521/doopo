@@ -2758,17 +2758,37 @@ export const regenerateStoryboardPitchDeck = createServerFn({ method: "POST" })
 // 重生 / 分镜 / 故事板保持同一段风格指纹。
 // ====================================================================
 
+const normalizeSceneText = (value: unknown, fallback = "") =>
+  value == null ? fallback : typeof value === "string" ? value : String(value);
+
 const RegenerateSceneInput = z.object({
-  referenceImageUrl: z.string().url(), // 当前场景主视图作 I2I anchor
-  userInstruction: z.string().min(1).max(2000), // modify 模式必填;multi-view 模式由内置模板约束
-  sceneSlug: z.string().min(1).max(200), // e.g. "INT. CAFE - DAY"
-  sceneLocation: z.string().max(200).default(""),
-  sceneTimeOfDay: z.string().max(50).default(""),
-  sceneAction: z.string().max(2000).default(""),
+  // 旧工作区记录中可能有 null / 非字符串字段；在入口统一归一化，避免 I2I 请求被 Zod
+  // 的 invalid_type 中断。参考图是否可用仍由后续供应商请求返回明确错误。
+  referenceImageUrl: z.preprocess(
+    (value) => normalizeSceneText(value),
+    z.string().min(1).max(10_000_000),
+  ),
+  userInstruction: z.preprocess(
+    (value) => normalizeSceneText(value, "生成场景多视图"),
+    z.string().min(1).max(2000),
+  ),
+  sceneSlug: z.preprocess(
+    (value) => normalizeSceneText(value, "未命名场景").trim() || "未命名场景",
+    z.string().max(200),
+  ),
+  sceneLocation: z.preprocess((value) => normalizeSceneText(value), z.string().max(200)),
+  sceneTimeOfDay: z.preprocess((value) => normalizeSceneText(value), z.string().max(50)),
+  sceneAction: z.preprocess((value) => normalizeSceneText(value), z.string().max(2000)),
   /** 道具复用同一 I2I 入口，但必须使用单一道具的专用约束。 */
   assetKind: z.enum(["scene", "prop"]).default("scene"),
-  projectStyle: z.string().max(50).nullish(),
-  model: z.string().max(100).nullish(),
+  projectStyle: z.preprocess(
+    (value) => (value == null ? undefined : normalizeSceneText(value)),
+    z.string().max(50).optional(),
+  ),
+  model: z.preprocess(
+    (value) => (value == null ? undefined : normalizeSceneText(value)),
+    z.string().max(100).optional(),
+  ),
   // three-view / directional-views 保留用于旧请求兼容;场景 UI 统一使用 multi-view。
   mode: z.enum(["modify", "three-view", "directional-views", "multi-view"]).default("modify"),
   // 2026/06:查看提示词模式
@@ -2776,6 +2796,18 @@ const RegenerateSceneInput = z.object({
 });
 
 export type RegenerateSceneInputType = z.infer<typeof RegenerateSceneInput>;
+
+function validateRegenerateSceneInput(data: unknown) {
+  const parsed = RegenerateSceneInput.safeParse(data);
+  if (!parsed.success) {
+    const detail = parsed.error.issues
+      .map((issue) => `${issue.path.join(".") || "input"}: ${issue.message}`)
+      .join("; ");
+    console.warn(`[scene regen×] invalid request: ${detail}`);
+    throw new Error(`场景多视图参数错误: ${detail}`);
+  }
+  return parsed.data;
+}
 
 function buildScenePrompts(
   data: RegenerateSceneInputType,
@@ -3103,7 +3135,7 @@ function buildScenePrompts(
 }
 
 export const regenerateSceneImage = createServerFn({ method: "POST" })
-  .inputValidator((d: unknown) => RegenerateSceneInput.parse(d))
+  .inputValidator(validateRegenerateSceneInput)
   .handler(async ({ data }) => {
     const { resolveProjectStyle } = await import("./visualStyles");
     const styleSpec = resolveProjectStyle(data.projectStyle);
