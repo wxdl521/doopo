@@ -175,6 +175,48 @@ export type Database = {
           },
         ]
       }
+      generation_error_logs: {
+        Row: {
+          created_at: string
+          duration_ms: number | null
+          error_message: string | null
+          id: string
+          kind: string
+          model: string | null
+          provider: string
+          request_payload: Json | null
+          response_body: string | null
+          status: number | null
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          duration_ms?: number | null
+          error_message?: string | null
+          id?: string
+          kind: string
+          model?: string | null
+          provider: string
+          request_payload?: Json | null
+          response_body?: string | null
+          status?: number | null
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          duration_ms?: number | null
+          error_message?: string | null
+          id?: string
+          kind?: string
+          model?: string | null
+          provider?: string
+          request_payload?: Json | null
+          response_body?: string | null
+          status?: number | null
+          user_id?: string | null
+        }
+        Relationships: []
+      }
       password_audit_log: {
         Row: {
           action: string
