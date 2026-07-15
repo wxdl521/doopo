@@ -251,6 +251,32 @@ function validateGenerateImageInput(data: unknown) {
 export const generateImage = createServerFn({ method: "POST" })
   .inputValidator(validateGenerateImageInput)
   .handler(async ({ data }) => {
+    const __t0 = Date.now();
+    const __logPayload = {
+      prompt: data.prompt,
+      model: data.model,
+      size: data.size,
+      negativePrompt: data.negativePrompt,
+    };
+    const __afterCall = <T extends { url?: string; error?: string | null; model?: string }>(
+      provider: string,
+      r: T,
+    ): T => {
+      if (r && r.error && !r.url) {
+        import("./errorLogs.functions").then(({ logGenerationError }) =>
+          logGenerationError({
+            kind: "image",
+            provider,
+            model: r.model ?? data.model ?? null,
+            durationMs: Date.now() - __t0,
+            requestPayload: __logPayload,
+            responseBody: r.error ?? null,
+            errorMessage: r.error ?? null,
+          }),
+        );
+      }
+      return r;
+    };
     const requested = normalizeImageModelForRouting(data.model);
     console.log(
       `[image→] model=${requested || "default"} promptChars=${data.prompt.length} refs=0 size=${data.size || "default"}`,
@@ -265,7 +291,7 @@ export const generateImage = createServerFn({ method: "POST" })
           model: requested,
           size: data.size,
         });
-        return { url: r.url, error: r.error, model: r.model };
+        return __afterCall("lovable", { url: r.url, error: r.error, model: r.model });
       }
     }
     // 委托给 Pixflow(OpenAI 兼容的 gpt-image-2 / gemini 系列)
@@ -276,7 +302,7 @@ export const generateImage = createServerFn({ method: "POST" })
         model: requested,
         size: data.size,
       });
-      return { url: r.url, error: r.error, model: r.model };
+      return __afterCall("pixflow", { url: r.url, error: r.error, model: r.model });
     }
     // 委托给 Claude360(OpenAI 兼容,claude360.xyz)
     if (requested.toLowerCase().startsWith("claude360/")) {
@@ -286,7 +312,7 @@ export const generateImage = createServerFn({ method: "POST" })
         model: requested,
         size: data.size,
       });
-      return { url: r.url, error: r.error, model: r.model };
+      return __afterCall("claude360", { url: r.url, error: r.error, model: r.model });
     }
     // 委托给 Tokenflash(OpenAI 兼容,tokenflash.cn)
     if (requested.toLowerCase().startsWith("tokenflash/")) {
@@ -296,7 +322,7 @@ export const generateImage = createServerFn({ method: "POST" })
         model: requested,
         size: data.size,
       });
-      return { url: r.url, error: r.error, model: r.model };
+      return __afterCall("tokenflash", { url: r.url, error: r.error, model: r.model });
     }
     // 委托给 Revora(OpenAI 兼容,revora.vip)
     if (requested.toLowerCase().startsWith("revora/")) {
@@ -306,7 +332,7 @@ export const generateImage = createServerFn({ method: "POST" })
         model: requested,
         size: data.size,
       });
-      return { url: r.url, error: r.error, model: r.model };
+      return __afterCall("revora", { url: r.url, error: r.error, model: r.model });
     }
     if (requested.toLowerCase().startsWith("aigcfamily/")) {
       const { callAigcfamilyImage } = await import("./aigcfamilyImage.functions");
@@ -315,7 +341,7 @@ export const generateImage = createServerFn({ method: "POST" })
         model: requested,
         size: data.size,
       });
-      return { url: r.url, error: r.error, model: r.model };
+      return __afterCall("aigcfamily", { url: r.url, error: r.error, model: r.model });
     }
     if (requested.toLowerCase().startsWith("shuci/")) {
       const { callShuanciyuanImage } = await import("./shuanciyuan.functions");
@@ -324,7 +350,7 @@ export const generateImage = createServerFn({ method: "POST" })
         model: requested,
         size: data.size,
       });
-      return { url: r.url, error: r.error, model: r.model };
+      return __afterCall("shuci", { url: r.url, error: r.error, model: r.model });
     }
     if (
       requested.toLowerCase().startsWith("azure/") ||
@@ -337,7 +363,7 @@ export const generateImage = createServerFn({ method: "POST" })
         model: requested,
         size: data.size,
       });
-      return { url: r.url, error: r.error, model: r.model, meta: r.meta };
+      return __afterCall("azure", { url: r.url, error: r.error, model: r.model, meta: r.meta } as any);
     }
     // 委托给 OneToken(OpenAI 兼容,api.onetoken.one)
     if (requested.toLowerCase().startsWith("onetoken/")) {
@@ -347,7 +373,7 @@ export const generateImage = createServerFn({ method: "POST" })
         model: requested,
         size: data.size,
       });
-      return { url: r.url, error: r.error, model: r.model };
+      return __afterCall("onetoken", { url: r.url, error: r.error, model: r.model });
     }
     // 委托给 OTU(OpenAI 兼容)
     if (requested.toLowerCase().startsWith("otu/")) {
@@ -357,7 +383,7 @@ export const generateImage = createServerFn({ method: "POST" })
         model: requested,
         size: data.size,
       });
-      return { url: r.url, error: r.error, model: r.model };
+      return __afterCall("otu", { url: r.url, error: r.error, model: r.model });
     }
     // 委托给 AI Tokenvibe(OpenAI 兼容)
     if (requested.toLowerCase().startsWith("aitokenvibe/")) {
@@ -367,7 +393,7 @@ export const generateImage = createServerFn({ method: "POST" })
         model: requested,
         size: data.size,
       });
-      return { url: r.url, error: r.error, model: r.model };
+      return __afterCall("aitokenvibe", { url: r.url, error: r.error, model: r.model });
     }
     // 委托给天鸿智算(OpenAI 兼容)
     if (requested.toLowerCase().startsWith("thhtcloud/")) {
@@ -377,7 +403,7 @@ export const generateImage = createServerFn({ method: "POST" })
         model: requested,
         size: data.size,
       });
-      return { url: r.url, error: r.error, model: r.model };
+      return __afterCall("thhtcloud", { url: r.url, error: r.error, model: r.model });
     }
     // 委托给 ailinzi(OpenAI 兼容)
     if (requested.toLowerCase().startsWith("ailinzi/")) {
@@ -387,7 +413,7 @@ export const generateImage = createServerFn({ method: "POST" })
         model: requested,
         size: data.size,
       });
-      return { url: r.url, error: r.error, model: r.model };
+      return __afterCall("ailinzi", { url: r.url, error: r.error, model: r.model });
     }
     // 委托给 vapeur(OpenAI 兼容)
     if (requested.toLowerCase().startsWith("vapeur/")) {
@@ -397,7 +423,7 @@ export const generateImage = createServerFn({ method: "POST" })
         model: requested,
         size: data.size,
       });
-      return { url: r.url, error: r.error, model: r.model };
+      return __afterCall("vapeur", { url: r.url, error: r.error, model: r.model });
     }
     // 委托给 TokenHub(OpenAI 兼容,tokenhub.linkstor.com)
     if (requested.toLowerCase().startsWith("tokenhub/")) {
@@ -407,7 +433,7 @@ export const generateImage = createServerFn({ method: "POST" })
         model: requested,
         size: data.size,
       });
-      return { url: r.url, error: r.error, model: r.model };
+      return __afterCall("tokenhub", { url: r.url, error: r.error, model: r.model });
     }
     // 委托给 nagora.ai(Azure 渠道 OpenAI 官方)
     if (requested.toLowerCase().startsWith("nagora/")) {
@@ -417,7 +443,7 @@ export const generateImage = createServerFn({ method: "POST" })
         model: requested,
         size: data.size,
       });
-      return { url: r.url, error: r.error, model: r.model };
+      return __afterCall("nagora", { url: r.url, error: r.error, model: r.model });
     }
     // 委托给 MeridianAI(OpenAI 兼容,www.meridiangolf.xyz)
     if (requested.toLowerCase().startsWith("meridian/")) {
@@ -427,7 +453,7 @@ export const generateImage = createServerFn({ method: "POST" })
         model: requested,
         size: data.size,
       });
-      return { url: r.url, error: r.error, model: r.model };
+      return __afterCall("meridian", { url: r.url, error: r.error, model: r.model });
     }
     // 委托给汇流 Confluo(OpenAI 兼容,models.iystd.com)
     if (requested.toLowerCase().startsWith("confluo/")) {
@@ -437,13 +463,13 @@ export const generateImage = createServerFn({ method: "POST" })
         model: requested,
         size: data.size,
       });
-      return { url: r.url, error: r.error, model: r.model };
+      return __afterCall("confluo", { url: r.url, error: r.error, model: r.model });
     }
     // 委托给 legacy(老 Qwen / OpenRouter 路径)
     if (requested && !isSeedreamModel(requested)) {
       // 动态 import 避免循环引用
       const { generateImage: legacy } = await import("./openrouterImage.functions");
-      return legacy({
+      const r = await legacy({
         data: {
           prompt: data.prompt,
           model: data.model,
@@ -452,6 +478,7 @@ export const generateImage = createServerFn({ method: "POST" })
           noFallback: data.noFallback,
         },
       } as any);
+      return __afterCall("legacy", r as any);
     }
 
     // Seedream 路径
@@ -476,11 +503,12 @@ export const generateImage = createServerFn({ method: "POST" })
       } as any;
     }
 
-    return callSeedreamImages(
+    const r = await callSeedreamImages(
       { model, prompt, size, output_format: "png", watermark: false },
       apiKey,
       baseUrl,
     );
+    return __afterCall("seedream", r as any);
   });
 
 // ====================================================================
