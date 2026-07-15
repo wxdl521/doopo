@@ -14,6 +14,7 @@
 // ====================================================================
 
 import "./loadEnv";
+import { isValidHighResImageSize } from "./imageSize";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
@@ -42,6 +43,7 @@ type AitokenvibeImageInput = {
   model: string;
   size?: string;
   n?: number;
+  quality?: "auto" | "low" | "high";
   /** I2I 参考图 URL 列表 */
   referenceImages?: string[];
 };
@@ -60,6 +62,7 @@ const AITOKENVIBE_GPT_IMAGE2_SIZES = new Set(["1024x1024", "1024x1792", "1792x10
 function normalizeAitokenvibeSize(size: string | undefined, model: string): string {
   const s = (size || "").trim().toLowerCase().replace(/\*/g, "x");
   if (/^gpt-image-2$/i.test(model)) {
+    if (isValidHighResImageSize(s)) return s;
     if (AITOKENVIBE_GPT_IMAGE2_SIZES.has(s)) return s;
     const m = s.match(/^(\d+)x(\d+)$/);
     if (m) {
@@ -102,6 +105,7 @@ export async function callAitokenvibeImage(
       prompt: input.prompt,
       n: input.n ?? 1,
       size,
+      quality: input.quality ?? "auto",
     };
 
     // I2I: 有参考图时传入 image 字段(OpenAI 兼容格式)

@@ -22,6 +22,8 @@ const ParseInput = z.object({
 });
 
 export type ImportedScriptResult = {
+  /** 从剧本文本中识别出的剧名；客户端还会用文件名/剧情简介兜底。 */
+  title?: string;
   /** 一句话故事简介，≤ 200 字 */
   synopsis: string;
   /** 按 epIndex 升序排列 */
@@ -181,6 +183,11 @@ const SYS_ZH = `你是一位资深的剧本结构化助手。你的唯一任务�
 - 不要分点、不要 Markdown、不要 emoji
 - 例："小职员意外获得预知未来的能力，靠一次次精准踩点逆袭成商界大佬，但每一次预言都在消耗身边人的寿命。"
 
+【剧名提取】
+- 从剧本文本中提取正式剧名，优先识别《剧名》、"剧名："、标题行等明确标记
+- 如果没有明确剧名，根据主角、核心冲突和故事设定拟一个简洁、有辨识度的中文剧名
+- 只返回剧名本身，不要加书名号、"剧名："或其他解释
+
 【剧本文本保留】
 - 每集 text 必须**完整保留原文内容**（含场景描写、对白、动作指示），不要改写、删减、提炼
 - 保留原文的换行、缩进、对白格式
@@ -212,6 +219,11 @@ Use the first match by priority:
 - No bullets, no Markdown, no emoji
 - Example: "An overlooked office worker gains the power to glimpse the future, but every prophecy drains a year from someone he loves."
 
+【Title extraction】
+- Extract the formal title from the script, prioritizing 《title》, "Title:", and standalone title lines.
+- If no explicit title exists, invent a concise, distinctive title from the protagonist, conflict, and premise.
+- Return only the title itself, without quotation marks, a "Title:" prefix, or explanation.
+
 【Episode text preservation】
 - Each episode's text must preserve the **complete original content** (scenes, dialogue, action lines); do NOT rewrite, summarize, or trim
 - Preserve original line breaks, indentation, and dialogue formatting
@@ -231,6 +243,7 @@ const IMPORT_TOOL = {
   parameters: {
     type: "object",
     properties: {
+      title: { type: "string", maxLength: 100 },
       synopsis: { type: "string", maxLength: 400 },
       episodes: {
         type: "array",
@@ -246,7 +259,7 @@ const IMPORT_TOOL = {
         },
       },
     },
-    required: ["synopsis", "episodes"],
+    required: ["title", "synopsis", "episodes"],
   },
 };
 
@@ -359,6 +372,7 @@ export const parseImportedScript = createServerFn({ method: "POST" })
       return;
     }
 
+    const rawTitle = typeof parsed?.title === "string" ? parsed.title.trim() : "";
     const rawSynopsis = typeof parsed?.synopsis === "string" ? parsed.synopsis.trim() : "";
     const rawEpisodes = Array.isArray(parsed?.episodes) ? parsed.episodes : [];
     if (rawEpisodes.length === 0) {
@@ -401,5 +415,12 @@ export const parseImportedScript = createServerFn({ method: "POST" })
           ? `已识别 ${deduped.length} 集，正在写入…`
           : `Identified ${deduped.length} episodes, writing…`,
     };
-    yield { kind: "done", result: { synopsis, episodes: deduped } };
+    yield {
+      kind: "done",
+      result: {
+        title: rawTitle ? rawTitle.replace(/^《|》$/g, "").slice(0, 100) : undefined,
+        synopsis,
+        episodes: deduped,
+      },
+    };
   });

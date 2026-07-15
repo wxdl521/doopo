@@ -100,6 +100,8 @@ import {
   RefreshCw,
   Target,
   ChevronDown,
+  MoreHorizontal,
+  Trash2,
   BookmarkPlus,
   Plus,
   Upload,
@@ -892,6 +894,7 @@ function WorkspacePage() {
   // 2026/06:plot 下方圆圈点击弹出的"选形象下拉"打开状态。
   // key = `${groupId}::${characterId}`,null = 全部关闭
   const [openLookMenu, setOpenLookMenu] = useState<string | null>(null);
+  const [assetMenuKey, setAssetMenuKey] = useState<string | null>(null);
   const [modInput, setModInput] = useState("");
   const [modError, setModError] = useState<string | null>(null);
   const [characterAttributesExpanded, setCharacterAttributesExpanded] = useState(false);
@@ -3331,6 +3334,29 @@ function WorkspacePage() {
     );
     closeModPanel();
     toast.success("已删除角色");
+  }
+
+  function removeCharacterImage(imageKey: string, index: number, cardTitle: string) {
+    const generations = charImagesRef.current[imageKey] ?? [];
+    const target = generations[index];
+    if (!target) return;
+    if (!window.confirm(`确定删除「${cardTitle}」的第 ${index + 1} 张角色图吗？`)) return;
+
+    const nextGenerations = generations.filter((_, i) => i !== index);
+    updateCharImages((images) => ({ ...images, [imageKey]: nextGenerations }));
+    updateCharImagePrompts((prompts) => ({
+      ...prompts,
+      [imageKey]: (prompts[imageKey] ?? []).filter((_, i) => i !== index),
+    }));
+    setSelectedCharImages((selected) => {
+      if (selected[imageKey] !== target) return selected;
+      const next = { ...selected };
+      if (nextGenerations.length > 0) next[imageKey] = nextGenerations.at(-1)!;
+      else delete next[imageKey];
+      return next;
+    });
+    setSelectedGenIdx((current) => Math.min(current, Math.max(0, nextGenerations.length - 1)));
+    toast.success("已删除角色图");
   }
 
   function removeScene(s: GenScene) {
@@ -6866,9 +6892,44 @@ function WorkspacePage() {
   // Wired to the ZopiaChatPanel "导入剧本" CTA. Writes the parsed synopsis + episode
   // list to the workspace state, then jumps to the per-episode view. Overwrites any
   // existing episodes (matches the "import" semantics).
-  function handleImportScript(result: ImportedScriptResult) {
+  function deriveImportedProjectName(result: ImportedScriptResult, fileName?: string | null) {
+    const clean = (value: string | undefined | null) =>
+      (value ?? "")
+        .replace(/^\s*(剧名|片名|标题|title|name)\s*[:：]\s*/i, "")
+        .replace(/^《|》$/g, "")
+        .replace(/[\\/:*?"<>|]/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 80);
+    const isUsable = (value: string) =>
+      value.length > 0 &&
+      !/^(未命名|无标题|剧本|script|screenplay|document|文档|untitled)$/i.test(value);
+
+    const aiTitle = clean(result.title);
+    if (isUsable(aiTitle)) return aiTitle;
+
+    const fileTitle = clean(fileName?.replace(/\.[^.]+$/, ""));
+    if (isUsable(fileTitle)) return fileTitle;
+
+    const firstText = result.episodes[0]?.text ?? "";
+    const explicitTitle = clean(
+      firstText.match(/(?:剧名|片名|标题|作品名|title)\s*[:：]\s*([^\n]+)/i)?.[1] ??
+        firstText.match(/《([^》]+)》/)?.[1],
+    );
+    if (isUsable(explicitTitle)) return explicitTitle;
+
+    const synopsisTitle = clean(result.synopsis);
+    return isUsable(synopsisTitle) ? synopsisTitle.slice(0, 30) : "未命名项目";
+  }
+
+  function handleImportScript(result: ImportedScriptResult, fileName?: string | null) {
     const sortedEps = [...result.episodes].sort((a, b) => a.epIndex - b.epIndex);
     const firstEp = sortedEps[0]?.epIndex ?? 1;
+    const projectName = deriveImportedProjectName(result, fileName);
+
+    // 导入剧本后，项目名称跟随识别出的剧名；文件名、剧情简介只在 AI 没有返回剧名时兜底。
+    setProject((current) => (current ? { ...current, name: projectName } : current));
+    void callUpsertProject({ data: { id: workspaceId, name: projectName } }).catch(() => {});
 
     // 1. Synopsis state
     setSynopsisText(result.synopsis);
@@ -9274,6 +9335,49 @@ function WorkspacePage() {
                                 >
                                   {/* Image area — 16:9,跟场景图实际比例对齐 */}
                                   <div className="relative w-full aspect-video bg-bg-base overflow-hidden">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setAssetMenuKey((key) =>
+                                          key === `scene:${s.id}` ? null : `scene:${s.id}`,
+                                        );
+                                      }}
+                                      className="absolute top-1.5 right-1.5 z-30 p-1 rounded-md bg-black/70 text-white hover:bg-black/90 transition"
+                                      aria-label="场景更多操作"
+                                      title="更多操作"
+                                    >
+                                      <MoreHorizontal size={15} />
+                                    </button>
+                                    {assetMenuKey === `scene:${s.id}` && (
+                                      <div
+                                        className="absolute top-9 right-1.5 z-40 min-w-[128px] rounded-lg border border-border bg-bg-surface/95 p-1 shadow-xl backdrop-blur"
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        <button
+                                          type="button"
+                                          disabled={!hasImg}
+                                          onClick={() => {
+                                            setAssetMenuKey(null);
+                                            if (hasImg) void saveSceneToAssets(s, s.id);
+                                          }}
+                                          className="w-full rounded-md px-2.5 py-1.5 text-left text-xs text-text-secondary hover:bg-bg-elevated hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+                                        >
+                                          <BookmarkPlus size={12} className="mr-1.5 inline" />{" "}
+                                          保存到资产
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setAssetMenuKey(null);
+                                            removeScene(s);
+                                          }}
+                                          className="w-full rounded-md px-2.5 py-1.5 text-left text-xs text-rose-400 hover:bg-rose-500/10"
+                                        >
+                                          <Trash2 size={12} className="mr-1.5 inline" /> 删除场景
+                                        </button>
+                                      </div>
+                                    )}
                                     {busyScene === s.id && !hasImg ? (
                                       <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-text-muted">
                                         <Loader2 size={20} className="animate-spin text-accent" />
@@ -9308,7 +9412,7 @@ function WorkspacePage() {
                                     )}
                                     {/* 当前封面已被详情页中的缩略图选中。 */}
                                     {isPinned && (
-                                      <div className="absolute top-1.5 right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent text-accent-foreground text-[10px] font-bold shadow-md">
+                                      <div className="absolute top-1.5 right-14 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent text-accent-foreground text-[10px] font-bold shadow-md">
                                         <Check size={10} /> 选中
                                       </div>
                                     )}
@@ -9342,36 +9446,6 @@ function WorkspacePage() {
                                         title="上传本地图片覆盖"
                                       >
                                         <Upload size={10} /> 上传
-                                      </button>
-                                    )}
-                                    {/* 保存到资产库按钮 */}
-                                    {hasImg && (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          void saveSceneToAssets(s, s.id);
-                                        }}
-                                        title={
-                                          savedAssetKeys.has(s.id)
-                                            ? "已保存到资产库,点击重新保存当前封面图"
-                                            : "把这张场景卡(含主图)保存到你的资产库"
-                                        }
-                                        className={`absolute bottom-1.5 left-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium backdrop-blur-sm transition ${
-                                          savedAssetKeys.has(s.id)
-                                            ? "bg-emerald-500/85 text-white shadow-sm"
-                                            : "bg-black/70 text-white hover:bg-accent hover:text-accent-foreground"
-                                        }`}
-                                      >
-                                        {savedAssetKeys.has(s.id) ? (
-                                          <>
-                                            <Check size={10} /> 已保存
-                                          </>
-                                        ) : (
-                                          <>
-                                            <BookmarkPlus size={10} /> 保存到资产
-                                          </>
-                                        )}
                                       </button>
                                     )}
                                   </div>
@@ -9559,6 +9633,49 @@ function WorkspacePage() {
                                 >
                                   {/* Image area — 4:3 道具图区 */}
                                   <div className="relative w-full aspect-[4/3] bg-bg-base overflow-hidden">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setAssetMenuKey((key) =>
+                                          key === `prop:${p.id}` ? null : `prop:${p.id}`,
+                                        );
+                                      }}
+                                      className="absolute top-1.5 right-1.5 z-30 p-1 rounded-md bg-black/70 text-white hover:bg-black/90 transition"
+                                      aria-label="道具更多操作"
+                                      title="更多操作"
+                                    >
+                                      <MoreHorizontal size={15} />
+                                    </button>
+                                    {assetMenuKey === `prop:${p.id}` && (
+                                      <div
+                                        className="absolute top-9 right-1.5 z-40 min-w-[128px] rounded-lg border border-border bg-bg-surface/95 p-1 shadow-xl backdrop-blur"
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        <button
+                                          type="button"
+                                          disabled={!hasImg}
+                                          onClick={() => {
+                                            setAssetMenuKey(null);
+                                            if (hasImg) void savePropToAssets(p, p.id);
+                                          }}
+                                          className="w-full rounded-md px-2.5 py-1.5 text-left text-xs text-text-secondary hover:bg-bg-elevated hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+                                        >
+                                          <BookmarkPlus size={12} className="mr-1.5 inline" />{" "}
+                                          保存到资产
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setAssetMenuKey(null);
+                                            removeProp(p);
+                                          }}
+                                          className="w-full rounded-md px-2.5 py-1.5 text-left text-xs text-rose-400 hover:bg-rose-500/10"
+                                        >
+                                          <Trash2 size={12} className="mr-1.5 inline" /> 删除道具
+                                        </button>
+                                      </div>
+                                    )}
                                     {busyProp === p.id && !hasImg ? (
                                       <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-text-muted">
                                         <Loader2 size={20} className="animate-spin text-accent" />
@@ -9612,43 +9729,13 @@ function WorkspacePage() {
                                         <Upload size={10} /> 上传
                                       </button>
                                     )}
-                                    {/* 保存到资产库按钮 */}
-                                    {hasImg && (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          void savePropToAssets(p, p.id);
-                                        }}
-                                        title={
-                                          savedAssetKeys.has(p.id)
-                                            ? "已保存到资产库,点击重新保存当前封面图"
-                                            : "把这张道具卡(含主图)保存到你的资产库"
-                                        }
-                                        className={`absolute bottom-1.5 left-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium backdrop-blur-sm transition ${
-                                          savedAssetKeys.has(p.id)
-                                            ? "bg-emerald-500/85 text-white shadow-sm"
-                                            : "bg-black/70 text-white hover:bg-accent hover:text-accent-foreground"
-                                        }`}
-                                      >
-                                        {savedAssetKeys.has(p.id) ? (
-                                          <>
-                                            <Check size={10} /> 已保存
-                                          </>
-                                        ) : (
-                                          <>
-                                            <BookmarkPlus size={10} /> 保存到资产
-                                          </>
-                                        )}
-                                      </button>
-                                    )}
                                     {propImgCount > 1 && (
                                       <span className="absolute top-1.5 left-1.5 text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/60 text-white">
                                         {propImgCount} 张
                                       </span>
                                     )}
                                     {isPinned && (
-                                      <div className="absolute top-1.5 right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent text-accent-foreground text-[10px] font-bold shadow-md">
+                                      <div className="absolute top-1.5 right-14 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent text-accent-foreground text-[10px] font-bold shadow-md">
                                         <Check size={10} /> 选中
                                       </div>
                                     )}
@@ -9926,6 +10013,52 @@ function WorkspacePage() {
                                 >
                                   {/* Image area — portrait aspect, fills card top */}
                                   <div className="relative w-full aspect-[3/4] bg-bg-base overflow-hidden">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setAssetMenuKey((key) =>
+                                          key === `character:${imageKey}`
+                                            ? null
+                                            : `character:${imageKey}`,
+                                        );
+                                      }}
+                                      className="absolute top-1.5 right-1.5 z-30 p-1 rounded-md bg-black/70 text-white hover:bg-black/90 transition"
+                                      aria-label="角色更多操作"
+                                      title="更多操作"
+                                    >
+                                      <MoreHorizontal size={15} />
+                                    </button>
+                                    {assetMenuKey === `character:${imageKey}` && (
+                                      <div
+                                        className="absolute top-9 right-1.5 z-40 min-w-[128px] rounded-lg border border-border bg-bg-surface/95 p-1 shadow-xl backdrop-blur"
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
+                                        <button
+                                          type="button"
+                                          disabled={!hasImg}
+                                          onClick={() => {
+                                            setAssetMenuKey(null);
+                                            if (hasImg)
+                                              void saveCharacterToAssets(c, card.lookId, imageKey);
+                                          }}
+                                          className="w-full rounded-md px-2.5 py-1.5 text-left text-xs text-text-secondary hover:bg-bg-elevated hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
+                                        >
+                                          <BookmarkPlus size={12} className="mr-1.5 inline" />{" "}
+                                          保存到资产
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => {
+                                            setAssetMenuKey(null);
+                                            removeCharacter(c);
+                                          }}
+                                          className="w-full rounded-md px-2.5 py-1.5 text-left text-xs text-rose-400 hover:bg-rose-500/10"
+                                        >
+                                          <Trash2 size={12} className="mr-1.5 inline" /> 删除角色
+                                        </button>
+                                      </div>
+                                    )}
                                     {isActive && !hasImg ? (
                                       // 这张图**正在画**:spinner
                                       <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-text-muted">
@@ -10065,7 +10198,7 @@ function WorkspacePage() {
                                             ? "已选中此图作为该 look 的 reference"
                                             : "选中当前形象作为该 look 在分镜流程里的 reference"
                                         }
-                                        className={`absolute top-1.5 right-1.5 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium backdrop-blur-sm transition ${
+                                        className={`absolute top-1.5 left-1.5 z-20 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium backdrop-blur-sm transition ${
                                           selectedCharImages[imageKey]
                                             ? "bg-accent text-accent-foreground shadow-sm"
                                             : "bg-black/70 text-white hover:bg-black/90"
@@ -10078,39 +10211,6 @@ function WorkspacePage() {
                                         ) : (
                                           <>
                                             <Target size={10} /> 选中
-                                          </>
-                                        )}
-                                      </button>
-                                    )}
-                                    {/* 2026/06:per-item 「保存到资产」按钮 —— 钉在图片右下角,
-                                    已保存状态显示「✓ 已保存」+ 绿色徽章。点击只存这一张卡
-                                    的当前封面图(优先 selectedCharImages[imageKey],否则最新)。
-                                    状态保存在 React state,刷新页面会重置(下次点重新入库)。 */}
-                                    {hasImg && (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          void saveCharacterToAssets(c, card.lookId, imageKey);
-                                        }}
-                                        title={
-                                          savedAssetKeys.has(imageKey)
-                                            ? "已保存到资产库,点击重新保存当前封面图"
-                                            : "把这张角色卡(含主图)保存到你的资产库"
-                                        }
-                                        className={`absolute bottom-1.5 left-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium backdrop-blur-sm transition ${
-                                          savedAssetKeys.has(imageKey)
-                                            ? "bg-emerald-500/85 text-white shadow-sm"
-                                            : "bg-black/70 text-white hover:bg-accent hover:text-accent-foreground"
-                                        }`}
-                                      >
-                                        {savedAssetKeys.has(imageKey) ? (
-                                          <>
-                                            <Check size={10} /> 已保存
-                                          </>
-                                        ) : (
-                                          <>
-                                            <BookmarkPlus size={10} /> 保存到资产
                                           </>
                                         )}
                                       </button>
@@ -11699,13 +11799,6 @@ function WorkspacePage() {
                   <div className="flex items-center gap-1">
                     <button
                       type="button"
-                      onClick={() => removeCharacter(c)}
-                      className="px-2 py-1 rounded-md text-xs text-rose-400 hover:bg-rose-500/10"
-                    >
-                      删除
-                    </button>
-                    <button
-                      type="button"
                       onClick={() => {
                         closeModPanel();
                         setRegenInput("");
@@ -11782,11 +11875,11 @@ function WorkspacePage() {
                               className="absolute inset-0 w-full h-full object-cover"
                             />
                             {i === generations.length - 1 && (
-                              <span className="absolute top-1 left-1 px-1 py-0.5 rounded bg-accent text-accent-foreground text-[9px] font-semibold">
+                              <span className="absolute top-1 left-8 px-1 py-0.5 rounded bg-accent text-accent-foreground text-[9px] font-semibold">
                                 NEW
                               </span>
                             )}
-                            <span className="absolute bottom-1 right-1 px-1 py-0.5 rounded bg-black/60 text-white text-[9px] tabular-nums">
+                            <span className="absolute top-1 left-1 px-1 py-0.5 rounded bg-black/60 text-white text-[9px] tabular-nums">
                               #{i + 1}
                             </span>
                             <span
@@ -11812,6 +11905,17 @@ function WorkspacePage() {
 
                   {/* === Center: large selected image, fills the box === */}
                   <div className="relative bg-bg-base rounded-lg overflow-hidden flex items-center justify-center min-h-0">
+                    {currentUrl && (
+                      <button
+                        type="button"
+                        onClick={() => removeCharacterImage(imageKey, currentIdx, cardTitle)}
+                        className="absolute top-2 right-2 z-10 p-2 rounded-md bg-black/70 text-white hover:bg-rose-500/90 transition"
+                        aria-label="删除当前角色图"
+                        title="删除当前角色图"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    )}
                     {currentUrl ? (
                       <img
                         src={currentUrl}
@@ -12104,13 +12208,6 @@ function WorkspacePage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => removeScene(s)}
-                      className="px-2 py-1 rounded-md text-xs text-rose-400 hover:bg-rose-500/10"
-                    >
-                      删除
-                    </button>
                     <button
                       type="button"
                       onClick={() => setScenePreview(null)}
@@ -12415,13 +12512,6 @@ function WorkspacePage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => removeProp(p)}
-                      className="px-2 py-1 rounded-md text-xs text-rose-400 hover:bg-rose-500/10"
-                    >
-                      删除
-                    </button>
                     <button
                       type="button"
                       onClick={() => setPropPreview(null)}

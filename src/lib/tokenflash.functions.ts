@@ -17,6 +17,7 @@
 // ====================================================================
 
 import "./loadEnv";
+import { isValidHighResImageSize } from "./imageSize";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { getOptionalAuthCtx } from "./authContext";
@@ -67,6 +68,7 @@ const TOKENFLASH_GPT_IMAGE2_SIZES = new Set(["1024x1024", "1024x1792", "1792x102
 function normalizeTokenflashSize(size: string | undefined, model: string): string {
   const s = (size || "").trim().toLowerCase().replace(/\*/g, "x");
   if (/^gpt-image-2$/i.test(model)) {
+    if (isValidHighResImageSize(s)) return s;
     if (TOKENFLASH_GPT_IMAGE2_SIZES.has(s)) return s;
     // 按宽高比就近 fallback
     const m = s.match(/^(\d+)x(\d+)$/);

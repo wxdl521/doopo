@@ -108,17 +108,45 @@ export type AzureImageMeta = {
   retries: number;
 };
 
-const AZURE_GPT_IMAGE2_SIZES = new Set(["1024x1024", "1024x1792", "1792x1024"]);
+const AZURE_LEGACY_IMAGE_SIZES = new Set([
+  "1024x1024",
+  "1024x1536",
+  "1536x1024",
+  "1024x1792",
+  "1792x1024",
+]);
 
-function normalizeAzureSize(size: string | undefined): string {
+function normalizeAzureSize(size: string | undefined, deployment: string): string {
   const s = (size || "").trim().toLowerCase().replace(/\*/g, "x");
-  if (AZURE_GPT_IMAGE2_SIZES.has(s)) return s;
   const m = s.match(/^(\d+)x(\d+)$/);
+  // GPT-image-2 supports custom sizes: both edges are multiples of 16, the
+  // long edge is <= 3840, aspect ratio is <= 3:1, and the area is bounded.
+  // Keep valid requested dimensions intact instead of forcing legacy presets.
+  if (/^gpt-image-2(?:$|[-_])/i.test(deployment) && m) {
+    const w = parseInt(m[1], 10);
+    const h = parseInt(m[2], 10);
+    const pixels = w * h;
+    const ratio = Math.max(w, h) / Math.min(w, h);
+    if (
+      w % 16 === 0 &&
+      h % 16 === 0 &&
+      Math.max(w, h) <= 3840 &&
+      ratio <= 3 &&
+      pixels >= 655_360 &&
+      pixels <= 8_294_400
+    ) {
+      return `${w}x${h}`;
+    }
+  }
+  if (AZURE_LEGACY_IMAGE_SIZES.has(s)) return s;
   if (m) {
     const w = parseInt(m[1], 10),
       h = parseInt(m[2], 10);
     if (w > h * 1.3) return "1792x1024";
     if (h > w * 1.3) return "1024x1792";
+    // Older image deployments offer only preset dimensions. Large square
+    // design sheets need more vertical room than a 1024px square can provide.
+    if (w >= 1536 && h >= 1536) return "1024x1792";
     return "1024x1024";
   }
   return "1024x1024";
@@ -188,14 +216,17 @@ function parseAzureImageItems(rawText: string): AzureImageItem[] {
 
   const eventItems = payloads.map((payload) => ({
     type: String(payload?.type || payload?.event || ""),
-    items: (Array.isArray(payload?.data) && payload.data) ||
+    items:
+      (Array.isArray(payload?.data) && payload.data) ||
       (payload?.b64_json || payload?.url ? [{ b64_json: payload.b64_json, url: payload.url }] : []),
   }));
   // 完成事件优先；若服务端仅发 partial 事件，最后一张仍是当前可用的最佳结果。
-  const completed = eventItems.filter(({ type, items }) =>
-    items.length && /completed|final|result|done/i.test(type),
+  const completed = eventItems.filter(
+    ({ type, items }) => items.length && /completed|final|result|done/i.test(type),
   );
-  const selected = completed.length ? completed.at(-1)!.items : eventItems.filter((x) => x.items.length).at(-1)?.items;
+  const selected = completed.length
+    ? completed.at(-1)!.items
+    : eventItems.filter((x) => x.items.length).at(-1)?.items;
   return (selected ?? []) as AzureImageItem[];
 }
 
@@ -211,7 +242,7 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
     ? `/openai/deployments/${deployment}/images/edits`
     : `/openai/deployments/${deployment}/images/generations`;
   const url = `${baseUrl}${path}?api-version=${apiVersion}`;
-  const size = normalizeAzureSize(input.size);
+  const size = normalizeAzureSize(input.size, deployment);
   const quality = normalizeAzureQuality(input.quality);
   const streamPartialImages = input.stream ?? quality === "high";
   const t0 = Date.now();

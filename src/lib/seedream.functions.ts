@@ -9,7 +9,7 @@
 //   1) generateImage            —— 文生图(T2I)
 //   2) regenerateCharacterLook  —— 单图 I2I(角色重生,3 模式:modify / three-view / multi-asset)
 //                                   multi-asset 模式 = Character Reference Sheet
-//                                   (3 视图 + 6 细节特写, 3x3 网格)
+//                                   (四视图 + 6-8 表情 + 多类细节，宽幅资产页)
 //   3) generateStoryboardShotImage —— 多图融合 I2I(分镜)
 //   4) regenerateStoryboardShot —— 多图融合 I2I(分镜按意见重生,图1 = 当前镜头)
 //
@@ -645,11 +645,12 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
     // ====================================================================
     const positive = [
       `[MISSION] Generate a complete CHARACTER MULTI-ASSET SHEET (角色多维资产图) for "${cardTitle}" — a ${data.characterRoleLabel}, age ${data.characterAge}. ONE large image, PURE WHITE BACKGROUND (#FFFFFF). The image is divided into SIX clearly separated sections, top-to-bottom, with thin neutral dividers between sections. Illustration-grade, clean composition, like a page from an official character design document handed to an animation team or game studio.`,
+      `CANVAS: Use the supplied HIGH-RESOLUTION 2304x3072 portrait design-sheet canvas. Use the full page width for the four-view row and reserve generous vertical space for every full-body pose. Never squeeze, crop, overlap, or replace lower-body anatomy just to fit a narrow page.`,
 
       `You are given TWO sources of truth and BOTH must agree:`,
-      `  (A) the attached REFERENCE IMAGE — the current approved look of "${cardTitle}", and`,
+      `  (A) the attached REFERENCE IMAGE — the current approved look and complete visible anatomy of "${cardTitle}", and`,
       `  (B) the FACE / BODY / OUTFIT text descriptions below.`,
-      `If (A) and (B) ever disagree, follow (B) and treat (A) as a visual hint. The character identity MUST stay consistent across all sub-images.`,
+      `The reference image is the visual anatomy lock: preserve every visible identity-defining body part, paired appendage, silhouette feature, and outfit detail from it. Text descriptions can refine or explicitly change a feature, but a shorter or less detailed text description NEVER authorizes removing anatomy that is visible in the reference image. The character identity MUST stay consistent across all sub-images.`,
 
       // ========== 整体视觉风格 ==========
       `[OVERALL VISUAL TREATMENT — strictly enforced]`,
@@ -685,12 +686,12 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
       `Each view is labeled in Chinese below it: "正视图" / "左侧视图" / "右侧视图" / "背视图".`,
       `CRITICAL — PRESERVE ALL CHARACTER FEATURES across all four views: any special trait (glasses, wings, animal ears, tail, horns, special hair accessory, distinctive eye color, tattoos) MUST appear consistently. Identical proportions, identical outfit, identical physical condition. NO perspective distortion, NO foreshortening, NO 3/4 angles. Standard orthographic.`,
       `CRITICAL — LEFT/RIGHT SIDE IDENTITY MATCH: The left side and right side profiles MUST show the EXACT SAME PERSON — identical face shape, hairstyle, body proportions, outfit details, and physical condition. The ONLY difference is which side faces the camera. Asymmetrical features (eyepatch, scar, etc.) must appear correctly on the appropriate side.`,
-      `IMPORTANT — The body description (bodyDescription) below is the SINGLE SOURCE OF TRUTH for the character's physical condition. If they use a wheelchair, are missing a limb, or have any permanent physical trait, that MUST be shown identically in all four views. Do NOT force "standing A-pose" if the character uses a wheelchair.`,
+      `IMPORTANT — Preserve the complete physical condition shown in the reference image and any explicit body description. If they use a wheelchair, are missing a limb, or have any permanent physical trait, that MUST be shown identically in all four views. Do NOT force "standing A-pose" if the character uses a wheelchair.`,
 
       // ========== Section 3:表情表 ==========
       `[SECTION 3 — 表情表 / EXPRESSIONS]`,
       `Section title: "表情表 / Expressions"`,
-      `Lay out 6-8 FACIAL CLOSE-UPS (大头照, head-and-shoulders, front-facing). Each is the SAME face as in Sections 1-2; ONLY the EXPRESSION changes. Each labeled in Chinese below it.`,
+      `Lay out exactly 6 FACIAL CLOSE-UPS (大头照, head-and-shoulders, front-facing). Each is the SAME face as in Sections 1-2; ONLY the EXPRESSION changes. Each labeled in Chinese below it. Keep this section compact so the pose section has enough room for complete bodies.`,
       `Required emotions (pick at least 6 from this set, all from the list must appear unless the character's nature truly excludes one):`,
       `  • 开心 / 喜悦 (Happy / Joy) — genuine smile, eyes warm`,
       `  • 生气 / 愤怒 (Angry) — brows pulled down and inward, mouth tight or bared`,
@@ -706,7 +707,7 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
       // ========== Section 4:动作姿势 ==========
       `[SECTION 4 — 动作姿势 / POSES (personality-driven, must respect physical condition)]`,
       `Section title: "动作姿势 / Poses"`,
-      `Lay out 4-6 FULL-BODY dynamic poses, each labeled in Chinese below it. **Pick poses that fit THIS character's personality AND physical ability**, drawn from the role label (${data.characterRoleLabel}) and the body description below.`,
+      `Lay out exactly 4 FULL-BODY dynamic poses in a spacious 2×2 layout, each labeled in Chinese below it. **Pick poses that fit THIS character's personality AND physical ability**, drawn from the role label (${data.characterRoleLabel}) and the body description below. Fewer, larger poses are required — never trade away legs, feet, claws, tails, or paired appendages merely to show more poses.`,
       `CRITICAL — If the character uses a wheelchair or has a physical disability, ALL poses MUST be consistent with that condition. A wheelchair user can wave, turn their head, reach for something, interact with objects, etc. — but NOT stand, walk, or run. A one-armed character should NOT use the missing arm.`,
       `Examples (pick what fits; invent better-matching ones freely):`,
       `  • 招手 (Waving) — for friendly characters (sitting or standing as applicable)`,
@@ -717,7 +718,8 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
       `  • 坐姿 (Sitting) — composed or contemplative (natural for wheelchair users)`,
       `  • 交流手势 (Gesturing while talking) — for expressive characters`,
       `  • 阅读 (Reading) — for bookish characters`,
-      `Each pose is head-to-toe full body (including wheelchair/prosthetic if applicable). Outfit / hair / special features (ears, tail, wings, glasses, horns) MUST stay consistent in every pose. Physical condition (wheelchair, missing limb) MUST be identical in every pose.`,
+      `Each pose is head-to-toe full body (including wheelchair/prosthetic if applicable), with a visible safety margin above the head and below the lowest foot, claw, hoof, wheel, or tail tip. Outfit / hair / special features (ears, tail, wings, glasses, horns) MUST stay consistent in every pose. Physical condition (wheelchair, missing limb) MUST be identical in every pose.`,
+      `BILATERAL-APPENDAGE LOCK: If the approved reference has a left/right pair (especially wings, arms, legs, antennae, ears, horns, shoulder armor, or symmetrical accessories), both sides must be rendered in every pose. For a side or three-quarter pose, show both appendages/root attachments clearly; if that is not possible, choose a frontal or near-frontal pose instead. A single wing, missing leg, or one-sided anatomy is a rejection.`,
 
       // ========== Section 5:配饰/道具图标 ==========
       `[SECTION 5 — 配饰 / 道具图标 / ACCESSORIES & PROPS]`,
@@ -735,9 +737,9 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
       `[CRITICAL RULES — output is REJECTED if ANY of these is violated]`,
       `RULE 1 — PURE WHITE BACKGROUND (#FFFFFF) everywhere. NOT gray, NOT cream, NOT textured. No floor, no scenery.`,
       `RULE 2 — IDENTITY LOCK: every face shown across the entire image MUST be the SAME PERSON. Same face shape, eyes, nose, mouth, hairstyle, hair color, skin tone. Different person = REJECT.`,
-      `RULE 3 — FEATURE PRESERVATION: any special trait (glasses, wings, animal ears, tail, horns, special accessories, distinctive markings) MUST appear in: the main portrait, all four views, every expression close-up, every pose. Missing in any one of these = REJECT.`,
+      `RULE 3 — FEATURE & ANATOMY PRESERVATION: any special trait (glasses, wings, animal ears, tail, horns, special accessories, distinctive markings) AND every identity-defining body part from the approved reference MUST appear in the main portrait, all four views, every expression close-up, and every pose. Keep both sides of any paired feature — two wings means two wings, two legs/feet/claws means two legs/feet/claws. Missing, merged, hidden, cropped, or substituted anatomy in any one of these = REJECT.`,
       `RULE 4 — CHINESE TEXT LABELS: every section carries a Chinese title; every sub-image / icon carries a Chinese label. Text must be readable, simplified Chinese, no garbled characters, no English-only labels.`,
-      `RULE 5 — NO RIGID GRID: do not force a fixed grid. Section 1 = one big hero portrait. Sections 2-5 lay items out by content (4 views in Section 2, 6-8 expressions in Section 3, 4-6 poses in Section 4, 4-8 accessory icons in Section 5).`,
+      `RULE 5 — SPACE BUDGET: Section 1 = one big hero portrait. Sections 2-5 use the following maximum content only: 4 views in Section 2, exactly 6 expressions in Section 3, exactly 4 large full-body poses in a 2×2 layout in Section 4, and 4-6 accessory icons in Section 5. Preserve subject size and complete anatomy before adding decorative detail.`,
       `RULE 6 — NO PERSPECTIVE ERRORS in Section 2 (four-view): orthographic only (0° / -90° (left) / +90° (right) / 180°).`,
       `RULE 7 — EXPRESSION ONLY in Section 3: only expression changes between close-ups. Same head size, camera angle, lighting.`,
       `RULE 8 — PERSONALITY-MATCHED POSES in Section 4: pose set should reflect this character's role and temperament. A reserved scholar should NOT get aggressive combat poses; a playful child should NOT get combat-ready poses.`,
@@ -762,7 +764,7 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
       `=== BODY — IDENTICAL across all full-body sub-images (includes physical condition / disabilities / assistive devices) ===`,
       data.bodyDescription ||
         "(no separate body description — use the body shown in the attached reference image)",
-      `NOTE: The body description is the single source of truth for physical condition. If the character uses a wheelchair, missing a limb, or has any permanent physical trait, that MUST be shown identically in every sub-image. Do NOT force standing poses on wheelchair users.`,
+      `NOTE: Preserve all visible anatomy from the reference image, plus every explicit physical condition in this description. If the character uses a wheelchair, is missing a limb, or has any permanent physical trait, that MUST be shown identically in every sub-image. Do NOT force standing poses on wheelchair users.`,
 
       `=== OUTFIT — IDENTICAL across all sub-images, do NOT add/remove clothing or accessories ===`,
       data.clothingDescription ||
@@ -781,10 +783,11 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
       `[ ] Section 0: text-only profile bar (name, role chip, 1-2 Chinese sentences of personality)`,
       `[ ] Section 1: one large hero portrait — the visual centerpiece`,
       `[ ] Section 2: four full-body orthographic views (front/left-side/right-side/back) with Chinese labels`,
-      `[ ] Section 3: 6-8 facial close-ups covering 开心/生气/困倦/惊讶/悲伤/常态 (at minimum) with Chinese labels`,
-      `[ ] Section 4: 4-6 full-body poses matched to character personality, Chinese-labeled`,
-      `[ ] Section 5: 4-8 small accessory/prop icons (isolated objects), Chinese-labeled`,
+      `[ ] Section 3: exactly 6 facial close-ups covering 开心/生气/困倦/惊讶/悲伤/常态 with Chinese labels`,
+      `[ ] Section 4: exactly 4 spacious full-body poses matched to character personality, Chinese-labeled`,
+      `[ ] Section 5: 4-6 small accessory/prop icons (isolated objects), Chinese-labeled`,
       `[ ] Same face, body, outfit, special features across the entire image`,
+      `[ ] Every pose preserves both wings / paired appendages and the complete lower body from the reference`,
       `[ ] All text in simplified Chinese, readable`,
       `[ ] Style matches "${styleSpec.label}"`,
       `[ ] No other characters, no extra limbs, no perspective errors in the four-view`,
@@ -796,9 +799,9 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
     const negative = [
       "different art style, style drift, photorealistic when input is anime, anime when input is realistic, inconsistent rendering between sub-images",
       "different face, different face shape, different eye shape, different eye color, different nose, different mouth, different eyebrows, different skin tone, different hairstyle, different hair color, different hair length, different facial proportions, age change, different body, different body proportions, different height, different gender presentation, different outfit, different clothing color, different clothing style, different accessories, different glasses, different jewelry, different shoes",
-      "missing glasses when source has glasses, missing wings when source has wings, missing tail when source has tail, missing animal ears when source has them, missing horns when source has horns, missing distinctive feature, feature drift, lost accessory",
+      "missing glasses when source has glasses, missing wings when source has wings, one wing when source has a pair of wings, asymmetric wings, missing tail when source has tail, missing animal ears when source has them, missing horns when source has horns, missing distinctive feature, feature drift, lost accessory",
       "perspective distortion in four-view, fish-eye, wide-angle distortion, foreshortening, hero shot, low angle, 3/4 view in front/side/back, diagonal angle, left side and right side showing different face, asymmetric side profiles, inconsistent left vs right side view, different body in left vs right, mirrored incorrectly in side views",
-      "cropped at knees, cropped at waist, cropped at chest, head cut off, feet cut off, body extending beyond frame, missing feet, missing hands, missing legs",
+      "cropped at knees, cropped at calves, cropped at ankles, cropped at waist, cropped at chest, head cut off, feet cut off, claws cut off, hooves cut off, body extending beyond frame, missing feet, missing hands, missing legs, missing lower body, legless, footless, one leg only, incomplete paired anatomy",
       "inconsistent proportions across the four views, taller in one view, shorter in another, scale mismatch between sub-images",
       "extra people, bystander, multiple characters, extra limbs, deformed hands, extra fingers, deformed face, blurred face, low quality",
       "detailed scenery, busy backgrounds, room interior, outdoor landscape, props cluttering the frame, floor, wall, sky, scenery, furniture, ground texture, horizon line, shadow on background, gradient background",
@@ -809,7 +812,7 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
       "main portrait too small, main portrait same size as thumbnails, no clear visual centerpiece, hero portrait demoted to side thumbnail",
       "combat poses for a peaceful character, scholarly poses for a child, mismatched poses for character personality",
     ].join(", ");
-    return { positive, negative, size: "2160x2880" };
+    return { positive, negative, size: "2304x3072" };
   }
 
   // ---- 默认 'modify' ----
@@ -872,6 +875,8 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
     const allImages = [data.referenceImageUrl, ...(data.extraReferenceImageUrls ?? [])];
     // 详情页允许直接编辑并重放当次完整 API prompt；普通入口仍由模板统一构造。
     const prompt = data.rawPrompt?.trim() || appendNegative(positive, negative);
+    const generationSize = data.mode === "multi-asset" ? "2304x3072" : normalizeSeedreamSize(size);
+    const generationQuality = data.mode === "multi-asset" ? ("high" as const) : undefined;
 
     // 2026/06:查看提示词模式 —— 不调 Seedream,直接把 prompt 返回
     if (data.previewOnly) {
@@ -894,7 +899,8 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
       const r = await callPixflowImage({
         prompt,
         model: requested,
-        size: normalizeSeedreamSize(size),
+        size: generationSize,
+        quality: generationQuality,
         referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "Pixflow 未返回图片" };
@@ -905,7 +911,8 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
       const r = await callClaude360Image({
         prompt,
         model: requested,
-        size: normalizeSeedreamSize(size),
+        size: generationSize,
+        quality: generationQuality,
         referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "Claude360 未返回图片" };
@@ -916,7 +923,8 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
       const r = await callTokenflashImage({
         prompt,
         model: requested,
-        size: normalizeSeedreamSize(size),
+        size: generationSize,
+        quality: generationQuality,
         referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "Tokenflash 未返回图片" };
@@ -927,7 +935,8 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
       const r = await callRevoraImage({
         prompt,
         model: requested,
-        size: normalizeSeedreamSize(size),
+        size: generationSize,
+        quality: generationQuality,
         referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "Revora 未返回图片" };
@@ -938,7 +947,8 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
       const r = await callAigcfamilyImage({
         prompt,
         model: requested,
-        size: normalizeSeedreamSize(size),
+        size: generationSize,
+        quality: generationQuality,
         referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "AIGCFamily 未返回图片" };
@@ -950,7 +960,8 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
       const r = await callShuanciyuanImage({
         prompt,
         model: requested,
-        size: normalizeSeedreamSize(size),
+        size: generationSize,
+        quality: generationQuality,
         referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "数安词源 未返回图片" };
@@ -965,8 +976,12 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
       const r = await callAzureImage({
         prompt,
         model: requested,
-        size: normalizeSeedreamSize(size),
+        size: generationSize,
         referenceImages: allImages,
+        // Azure 的大画幅多维资产关闭高质量流式响应，避免长 SSE 响应触发
+        // "Maximum call stack size exceeded"；其他模型仍保持 high。
+        quality: "medium",
+        stream: data.mode === "multi-asset" ? false : undefined,
       });
       if (!r.url) return { ok: false as const, error: r.error || "Azure 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model, meta: r.meta };
@@ -976,7 +991,8 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
       const r = await callOnetokenImage({
         prompt,
         model: requested,
-        size: normalizeSeedreamSize(size),
+        size: generationSize,
+        quality: generationQuality,
       });
       if (!r.url) return { ok: false as const, error: r.error || "OneToken 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -986,7 +1002,8 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
       const r = await callOtuImage({
         prompt,
         model: requested,
-        size: normalizeSeedreamSize(size),
+        size: generationSize,
+        quality: generationQuality,
         referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "OTU 未返回图片" };
@@ -997,7 +1014,8 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
       const r = await callAitokenvibeImage({
         prompt,
         model: requested,
-        size: normalizeSeedreamSize(size),
+        size: generationSize,
+        quality: generationQuality,
         referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "AI Tokenvibe 未返回图片" };
@@ -1008,7 +1026,8 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
       const r = await callThhtcloudImage({
         prompt,
         model: requested,
-        size: normalizeSeedreamSize(size),
+        size: generationSize,
+        quality: generationQuality,
         referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "天鸿智算 未返回图片" };
@@ -1019,7 +1038,8 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
       const r = await callAilinziImage({
         prompt,
         model: requested,
-        size: normalizeSeedreamSize(size),
+        size: generationSize,
+        quality: generationQuality,
         referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "ailinzi 未返回图片" };
@@ -1030,7 +1050,8 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
       const r = await callVapeurImage({
         prompt,
         model: requested,
-        size: normalizeSeedreamSize(size),
+        size: generationSize,
+        quality: generationQuality,
         referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "vapeur 未返回图片" };
@@ -1041,7 +1062,8 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
       const r = await callTokenhubImage({
         prompt,
         model: requested,
-        size: normalizeSeedreamSize(size),
+        size: generationSize,
+        quality: generationQuality,
         referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "tokenhub 未返回图片" };
@@ -1052,7 +1074,8 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
       const r = await callNagoraImage({
         prompt,
         model: requested,
-        size: normalizeSeedreamSize(size),
+        size: generationSize,
+        quality: generationQuality,
         referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "nagora 未返回图片" };
@@ -1063,7 +1086,8 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
       const r = await callMeridianImage({
         prompt,
         model: requested,
-        size: normalizeSeedreamSize(size),
+        size: generationSize,
+        quality: generationQuality,
         referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "meridian 未返回图片" };
@@ -1074,7 +1098,8 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
       const r = await callConfluoImage({
         prompt,
         model: requested,
-        size: normalizeSeedreamSize(size),
+        size: generationSize,
+        quality: generationQuality,
         referenceImages: allImages,
       });
       if (!r.url) return { ok: false as const, error: r.error || "汇流未返回图片" };
@@ -1090,7 +1115,7 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
         model,
         prompt,
         image: allImages.length === 1 ? allImages[0] : allImages,
-        size: normalizeSeedreamSize(size),
+        size: generationSize,
         output_format: "png",
         watermark: false,
       },

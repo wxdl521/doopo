@@ -12,6 +12,7 @@
 // ====================================================================
 
 import "./loadEnv";
+import { isValidHighResImageSize } from "./imageSize";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
@@ -55,6 +56,7 @@ const GPT_IMAGE2_SIZES = new Set(["1024x1024", "1024x1792", "1792x1024"]);
 function normalizeShuanciyuanSize(size: string | undefined, model: string): string {
   const s = (size || "").trim().toLowerCase().replace(/\*/g, "x");
   if (/^gpt-image-2$/i.test(model)) {
+    if (isValidHighResImageSize(s)) return s;
     if (GPT_IMAGE2_SIZES.has(s)) return s;
     const m = s.match(/^(\d+)x(\d+)$/);
     if (m) {
@@ -166,7 +168,9 @@ export async function callShuanciyuanImage(
       if (!transient || attempt === 3) break;
       // 429 用指数退避(3s/6s/12s),其他短暂故障用 1.5s
       const delayMs = is429 ? 3000 * 2 ** attempt : 1500;
-      console.warn(`[shuci⟳] model=${model} status=${res.status} retry ${attempt + 1}/3 in ${delayMs / 1000}s`);
+      console.warn(
+        `[shuci⟳] model=${model} status=${res.status} retry ${attempt + 1}/3 in ${delayMs / 1000}s`,
+      );
       await new Promise((r) => setTimeout(r, delayMs));
     }
     clearTimeout(timeout);

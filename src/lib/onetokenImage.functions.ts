@@ -14,6 +14,7 @@
 // ====================================================================
 
 import "./loadEnv";
+import { isValidHighResImageSize } from "./imageSize";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 
@@ -42,6 +43,7 @@ type OnetokenImageInput = {
   model: string;
   size?: string;
   n?: number;
+  quality?: "auto" | "low" | "high";
 };
 
 type OnetokenImageResult = {
@@ -58,6 +60,7 @@ const ONETOKEN_GPT_IMAGE2_SIZES = new Set(["1024x1024", "1024x1792", "1792x1024"
 function normalizeOnetokenSize(size: string | undefined, model: string): string {
   const s = (size || "").trim().toLowerCase().replace(/\*/g, "x");
   if (/^gpt-image-2$/i.test(model)) {
+    if (isValidHighResImageSize(s)) return s;
     if (ONETOKEN_GPT_IMAGE2_SIZES.has(s)) return s;
     const m = s.match(/^(\d+)x(\d+)$/);
     if (m) {
@@ -96,6 +99,7 @@ export async function callOnetokenImage(input: OnetokenImageInput): Promise<Onet
       prompt: input.prompt,
       n: input.n ?? 1,
       size,
+      quality: input.quality ?? "auto",
     };
 
     const requestInit: RequestInit = {

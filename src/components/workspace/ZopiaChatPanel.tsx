@@ -323,7 +323,7 @@ const ZopiaChatPanel = forwardRef<
     locked?: boolean;
     selectedEpisodeIndex?: number;
     episodeCount?: number;
-    onImportScript?: (result: ImportedScriptResult) => void;
+    onImportScript?: (result: ImportedScriptResult, fileName?: string | null) => void;
     streaming?: boolean;
     onEnterStoryboard?: () => void | Promise<void>;
     enterTimelineSignal?: number;
@@ -391,7 +391,9 @@ const ZopiaChatPanel = forwardRef<
   const [input, setInput] = useState("");
   const [skipCreditConfirmation, setSkipCreditConfirmation] = useState(() => {
     if (typeof window === "undefined") return false;
-    return window.localStorage.getItem(`doopoo:agent-skip-credit-confirm:${workspaceId}`) === "true";
+    return (
+      window.localStorage.getItem(`doopoo:agent-skip-credit-confirm:${workspaceId}`) === "true"
+    );
   });
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [showUpgrade, setShowUpgrade] = useState(true);
@@ -671,7 +673,9 @@ const ZopiaChatPanel = forwardRef<
     const root = document.querySelector("main");
     if (!root) return [];
     const costPattern = /生成|重生|提取|融合|连跑|切分|渲染|写剧本|开始创作/;
-    return Array.from(root.querySelectorAll<HTMLElement>("button, a[href], label[for], [role=button]"))
+    return Array.from(
+      root.querySelectorAll<HTMLElement>("button, a[href], label[for], [role=button]"),
+    )
       .filter((element) => {
         const disabled = element instanceof HTMLButtonElement && element.disabled;
         const hidden = element.getClientRects().length === 0;
@@ -679,7 +683,9 @@ const ZopiaChatPanel = forwardRef<
       })
       .slice(0, 160)
       .map((element, index) => {
-        const label = (element.innerText || element.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim();
+        const label = (element.innerText || element.getAttribute("aria-label") || "")
+          .replace(/\s+/g, " ")
+          .trim();
         const id = `ui-${index}`;
         element.dataset.doopooAgentAction = id;
         return {
@@ -697,7 +703,12 @@ const ZopiaChatPanel = forwardRef<
     setMessages((prev) => [
       ...prev,
       userMsg,
-      { id: thoughtId, kind: "agent_thought", text: "正在理解目标、确认所需页面和执行顺序…", pending: true },
+      {
+        id: thoughtId,
+        kind: "agent_thought",
+        text: "正在理解目标、确认所需页面和执行顺序…",
+        pending: true,
+      },
     ]);
     try {
       const availableActions = collectAvailablePageActions();
@@ -715,7 +726,9 @@ const ZopiaChatPanel = forwardRef<
           availableActions,
         },
       });
-      const selectedButton = availableActions.find((action) => action.id === responsePlan.uiActionId);
+      const selectedButton = availableActions.find(
+        (action) => action.id === responsePlan.uiActionId,
+      );
       const plan: WorkspaceAgentPlan =
         responsePlan.action === "click_ui" &&
         !selectedButton &&
@@ -837,6 +850,7 @@ const ZopiaChatPanel = forwardRef<
   async function onImportSubmit() {
     if (!importModal || importModal.stage !== "paste") return;
     const text = importModal.text.trim();
+    const fileName = importModal.fileName;
     if (text.length < 20) {
       setImportModal({ stage: "error", message: t.zp_import_error_short });
       return;
@@ -855,7 +869,7 @@ const ZopiaChatPanel = forwardRef<
           setImportModal({ stage: "error", message: ev.message });
           return;
         } else if (ev.kind === "done") {
-          onImportScript?.(ev.result);
+          onImportScript?.(ev.result, fileName);
           setImportModal(null);
           setImportDragging(false);
           // toast handled by parent (workspace) so the count can be shown
@@ -1665,8 +1679,12 @@ const ZopiaChatPanel = forwardRef<
       setPendingCta(null);
       const text = buildPrompt(spec, values, tag);
       queueAgentPlan({
-        action: "produce_script", targetStage: "canvas", title: "生成故事梗概", summary: "根据已选参数生成剧本梗概。",
-        executionPrompt: text, requiresCredit: true,
+        action: "produce_script",
+        targetStage: "canvas",
+        title: "生成故事梗概",
+        summary: "根据已选参数生成剧本梗概。",
+        executionPrompt: text,
+        requiresCredit: true,
       });
       return;
     }
@@ -1677,8 +1695,12 @@ const ZopiaChatPanel = forwardRef<
       const sceneCount = values.sceneCount ?? "5";
       const text = `生成本集分镜\n分镜数：${sceneCount}`;
       queueAgentPlan({
-        action: "produce_episode", targetStage: "script", title: "生成下一集剧本", summary: `按 ${sceneCount} 个分镜生成下一集剧本。`,
-        executionPrompt: text, requiresCredit: true,
+        action: "produce_episode",
+        targetStage: "script",
+        title: "生成下一集剧本",
+        summary: `按 ${sceneCount} 个分镜生成下一集剧本。`,
+        executionPrompt: text,
+        requiresCredit: true,
       });
       return;
     }
@@ -1688,8 +1710,12 @@ const ZopiaChatPanel = forwardRef<
       setPendingCta(null);
       const epIdx = (values.episode as string) ?? String(selectedEpisodeIndex ?? 1);
       queueAgentPlan({
-        action: "extract_assets", targetStage: "character", title: `提取第 ${epIdx} 集素材`, summary: "提取角色、场景和道具。",
-        executionPrompt: `从第 ${epIdx} 集提取角色、场景和道具`, requiresCredit: true,
+        action: "extract_assets",
+        targetStage: "character",
+        title: `提取第 ${epIdx} 集素材`,
+        summary: "提取角色、场景和道具。",
+        executionPrompt: `从第 ${epIdx} 集提取角色、场景和道具`,
+        requiresCredit: true,
       });
       return;
     }
@@ -1701,8 +1727,12 @@ const ZopiaChatPanel = forwardRef<
       const sceneCount = values.sceneCount ?? "5";
       const text = `自动连跑多集\n连跑至第 ${targetEp} 集\n分镜数：${sceneCount}`;
       queueAgentPlan({
-        action: "produce_episode", targetStage: "script", title: `连续生成至第 ${targetEp} 集`, summary: `每集按 ${sceneCount} 个分镜生成。`,
-        executionPrompt: text, requiresCredit: true,
+        action: "produce_episode",
+        targetStage: "script",
+        title: `连续生成至第 ${targetEp} 集`,
+        summary: `每集按 ${sceneCount} 个分镜生成。`,
+        executionPrompt: text,
+        requiresCredit: true,
       });
       return;
     }
@@ -1877,7 +1907,11 @@ const ZopiaChatPanel = forwardRef<
             if (m.kind === "agent_thought") {
               return (
                 <div key={m.id} className="flex items-start gap-2 px-1 text-xs text-text-secondary">
-                  {m.pending ? <Loader2 size={13} className="mt-0.5 animate-spin text-accent shrink-0" /> : <Sparkles size={13} className="mt-0.5 text-accent shrink-0" />}
+                  {m.pending ? (
+                    <Loader2 size={13} className="mt-0.5 animate-spin text-accent shrink-0" />
+                  ) : (
+                    <Sparkles size={13} className="mt-0.5 text-accent shrink-0" />
+                  )}
                   <p className="leading-relaxed">{m.text}</p>
                 </div>
               );
@@ -1886,12 +1920,17 @@ const ZopiaChatPanel = forwardRef<
               const needsConfirmation =
                 m.plan.requiresCredit && !skipCreditConfirmation && m.status === "pending";
               return (
-                <div key={m.id} className="rounded-xl border border-accent/30 bg-accent-dim/10 p-3 space-y-2">
+                <div
+                  key={m.id}
+                  className="rounded-xl border border-accent/30 bg-accent-dim/10 p-3 space-y-2"
+                >
                   <div className="flex items-start gap-2">
                     <Sparkles size={15} className="text-accent mt-0.5 shrink-0" />
                     <div className="min-w-0 flex-1">
                       <div className="text-sm font-semibold text-text-primary">{m.plan.title}</div>
-                      <p className="text-xs text-text-secondary leading-relaxed mt-1">{m.plan.summary}</p>
+                      <p className="text-xs text-text-secondary leading-relaxed mt-1">
+                        {m.plan.summary}
+                      </p>
                     </div>
                   </div>
                   {m.plan.action === "clarify" || m.plan.action === "explain_capabilities" ? (
@@ -1907,7 +1946,9 @@ const ZopiaChatPanel = forwardRef<
                         <input
                           type="checkbox"
                           checked={skipCreditConfirmation}
-                          onChange={(event) => setProjectCreditConfirmationPreference(event.target.checked)}
+                          onChange={(event) =>
+                            setProjectCreditConfirmationPreference(event.target.checked)
+                          }
                           className="accent-accent"
                         />
                         本项目后续积分操作不再提醒
@@ -1938,9 +1979,13 @@ const ZopiaChatPanel = forwardRef<
                       </div>
                     </div>
                   ) : m.status === "executing" ? (
-                    <p className="text-xs text-accent inline-flex items-center gap-1"><Loader2 size={12} className="animate-spin" /> 正在执行计划…</p>
+                    <p className="text-xs text-accent inline-flex items-center gap-1">
+                      <Loader2 size={12} className="animate-spin" /> 正在执行计划…
+                    </p>
                   ) : m.status === "done" ? (
-                    <p className="text-xs text-emerald-600 dark:text-emerald-400">✓ {m.result ?? "已完成。"}</p>
+                    <p className="text-xs text-emerald-600 dark:text-emerald-400">
+                      ✓ {m.result ?? "已完成。"}
+                    </p>
                   ) : m.status === "cancelled" ? (
                     <p className="text-xs text-text-muted">已取消，未执行。</p>
                   ) : (
@@ -2593,7 +2638,11 @@ const ZopiaChatPanel = forwardRef<
       </div>
 
       {pendingReferenceCost && (
-        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" role="dialog" aria-modal="true">
+        <div
+          className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+        >
           <div className="bg-bg-surface border border-border rounded-2xl shadow-2xl max-w-sm w-full p-5 space-y-3">
             <div className="flex items-center gap-2 text-amber-600 dark:text-amber-300 font-semibold">
               <AlertTriangle size={18} /> 确认消耗积分
@@ -2620,7 +2669,12 @@ const ZopiaChatPanel = forwardRef<
               </button>
               <button
                 type="button"
-                onClick={() => executeReferenceModification(pendingReferenceCost.ref, pendingReferenceCost.instruction)}
+                onClick={() =>
+                  executeReferenceModification(
+                    pendingReferenceCost.ref,
+                    pendingReferenceCost.instruction,
+                  )
+                }
                 className="px-3 py-1.5 rounded bg-accent text-accent-foreground text-sm font-semibold hover:opacity-90"
               >
                 确认重生成
