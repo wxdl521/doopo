@@ -8,6 +8,7 @@ import {
   Share2,
   ShieldCheck,
   Coins,
+  AlertTriangle,
 } from "lucide-react";
 import SectionSidebar from "../components/SectionSidebar";
 import { useLanguage } from "../i18n/LanguageContext";
@@ -28,6 +29,7 @@ function AccountLayout() {
     { to: "/account/rewards", label: t.account_rewards, icon: Award },
     { to: "/account/notifications", label: t.account_notifications, icon: Bell },
     { to: "/account/security", label: "账户安全", icon: ShieldCheck },
+    { to: "/account/error-logs", label: "调用错误日志", icon: AlertTriangle },
   ];
   return (
     <div className="animate-fade-in flex flex-col md:flex-row gap-6">

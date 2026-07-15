@@ -1,37 +1,59 @@
-## 背景
+# 失败调用日志面板
 
-Lovable Cloud 底层的 Supabase Storage 本身就通过 Cloudflare CDN 边缘节点分发文件——公开 bucket 的 URL（`/storage/v1/object/public/...`）和签名 URL 都会自动经过 CDN 缓存，无需额外接入第三方 CDN。既然腾讯云 COS+CDN 配置遇到问题，可以直接回退到这条内置链路，保留缓存能力、减少一层依赖。
+在图片生成与 Seedance 视频提交失败时，把请求 payload、响应体、时间戳、模型、耗时等信息落库并提供可视化查看面板，方便排查 400/超时等问题。
 
-## 方案
+## 一、数据存储
 
-移除 COS 代码路径，恢复到"生成即写 workspace-media bucket → 直接使用 Supabase 公开/签名 URL"的原始形态；同时补充 `Cache-Control` 上传头，让 Supabase CDN 命中率最大化。历史数据无需迁移（本就在 workspace-media 里）。
+新增表 `public.generation_error_logs`（迁移 SQL 交由老板执行）：
 
-## 具体改动
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| id | uuid PK | |
+| user_id | uuid, FK auth.users | 记录归属 |
+| kind | text | `image` / `video` |
+| provider | text | `ark-seedance` / `pixflow` / `azure` … |
+| model | text | 具体 model id |
+| status | int | HTTP status（0 表示网络异常） |
+| duration_ms | int | 耗时 |
+| request_payload | jsonb | 提交给上游的 body（自动脱敏 key） |
+| response_body | text | 上游返回原文，截断至 4KB |
+| error_message | text | 摘要 |
+| created_at | timestamptz default now() | |
 
-### 代码回退
+- RLS：仅 `user_id = auth.uid()` 可读；`service_role` 可写。
+- GRANT SELECT to authenticated；GRANT ALL to service_role。
+- 索引：`(user_id, created_at desc)`、`(kind, created_at desc)`。
 
-1. **删除** `src/lib/cosClient.ts`
-2. **删除** `scripts/migrate-workspace-media-to-cos.ts`
-3. **删除** `docs/cos-cdn.md`
-4. `**src/lib/workspaceMedia.functions.ts**`：移除 `isCosConfigured` / `uploadToCos` 分支和 `isCosCdnUrl` 判断，只保留 Supabase Storage 上传路径；`isAlreadyPersisted` 恢复为仅识别 supabase URL。
-5. `**src/lib/uploadImage.functions.ts**`：移除 COS 优先分支，直接走 supabase.storage.upload。
-6. `**src/lib/videoGenerate.functions.ts**`：移除参考音频/视频结果的 COS 分支。
-7. `**package.json` / `bun.lock**`：卸载 `cos-nodejs-sdk-v5`（`bun remove cos-nodejs-sdk-v5`）。
-8. **Secrets**：`COS_SECRET_ID / COS_SECRET_KEY / COS_BUCKET / COS_REGION / COS_CDN_HOST` 保留不用即可（不动它们不会影响运行）；如需清理可稍后手工删。
+## 二、写入侧（Server Functions）
 
-### 缓存优化（保留）
+新增 `src/lib/errorLogs.functions.ts`：
+- `logGenerationError(input)`：内部函数，使用 `client.server.ts` 的 `supabaseAdmin`（绕过 RLS）写入。参数含 `userId, kind, provider, model, status, durationMs, requestPayload, responseBody, errorMessage`。
+- `listMyGenerationErrors({ limit, kind })`：`requireSupabaseAuth` 中间件，读当前用户最近 100 条。
 
-- `workspace-media` bucket 保持公开读，上传时统一带 `cacheControl: '31536000'`（Supabase Storage 会转成 `Cache-Control: public, max-age=31536000`，走 Supabase CDN 边缘节点）——目前部分调用点已带，补齐剩余几处。
-- 无需 URL 重写：现有数据库里的 `/storage/v1/object/public/workspace-media/...` URL 本身就命中 CDN。
+在失败分支注入调用：
+1. `src/lib/videoGenerate.functions.ts` 的 `submitVideoTask`（`ark-seedance` 分支）：`submit 400/网络异常` 处调用 `logGenerationError`，payload = 发给 ARK 的 body，response = 上游文本。
+2. `src/lib/seedream.functions.ts` 的 `generateImage` 主流程失败/兜底后仍失败时调用；同样覆盖 pixflow/azure/tokenflash 等分支的失败返回点（统一在 `generateImage` 出口处判断 `error` 后集中记录，避免每个 provider 侧写重复）。
+3. 通过 `getRequest()` 或已存在的鉴权 context 获取 `userId`；无 userId 时也写（`user_id = null`）以便后台观察。
 
-## 影响 & 风险
+脱敏：`request_payload` 序列化前，剔除 `authorization` header 和 `api_key` 字段；保留 prompt/size/model/refs 等。
 
-- **无数据迁移**：所有历史/新生成媒体依旧留在 workspace-media，URL 不变。
-- **性能**：Supabase Storage CDN 全球边缘缓存，图片/视频首帧加载与自建 CDN 基本一致；对国内用户，若未来延迟明显再评估重新接入 COS。
-- **安全**：workspace-media 是公开 bucket，路径含 `userId/workspaceId/uuid`，不可猜——与 COS 公开 URL 策略等价。
+## 三、查看面板
 
-## 你需要确认
+新增页面路由 `src/routes/account.error-logs.tsx`：
+- 使用 TanStack Query + `useServerFn(listMyGenerationErrors)`。
+- 表格列：时间、类型（image/video 徽章）、provider、model、status、耗时、错误摘要。
+- 行展开：显示格式化后的 `request_payload`（JSON pretty）和 `response_body`（monospace，滚动容器，最多 4KB）。
+- 顶部筛选：类型（全部/图片/视频）、复制按钮（复制单条 JSON 便于粘贴报错）。
+- 在 `src/routes/account.tsx` 侧边栏加入「调用错误日志」入口；i18n 键 `account.errorLogs.*` 同步 `zh.ts` / `en.ts`。
 
-1. 是否直接回退（删除 COS 相关文件 + 代码分支）？还是希望**保留 COS 代码但默认走 Supabase**（未来配好 COS 时一键切回）？后者只需保留 `cosClient.ts` 和分支判断，仅需你不配置 `COS_*` Secret 即可——已经是当前行为，不需要任何改动。希望**保留 COS 代码但默认走 Supabase；**
+## 四、验证
 
-如果选"直接回退"，我按上面的清单执行；如果选"保留双通道"，其实**现在什么都不用改**，只要不填 COS Secret，系统已经在走 Supabase CDN。保留双通道
+- 手动触发一次 Seedance 400（用非法 size）→ 检查记录出现并可展开。
+- 手动触发一次 Seedream 尺寸不合法失败 → 同上。
+- 成功调用不写入，避免污染。
+
+## 技术细节
+
+- 写日志使用 fire-and-forget（`.catch(console.warn)`），不阻塞主流程失败返回。
+- `response_body` 使用 `.slice(0, 4096)` 截断，`request_payload` 深拷贝后过滤敏感字段。
+- 迁移 SQL 放在 `supabase/migrations/<timestamp>_generation_error_logs.sql`，产出后由老板执行 `bun run db:push`。

@@ -2595,6 +2595,7 @@ const SubmitServerInput = z.object({
 export const submitVideoTaskFn = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => SubmitServerInput.parse(d))
   .handler(async ({ data }) => {
+    const __t0 = Date.now();
     // 把 ARK 风格的 content 数组转成统一 media + ref 形式
     const media: DashScopeMediaItem[] = [];
     let referenceVideoUrl: string | undefined;
@@ -2623,7 +2624,32 @@ export const submitVideoTaskFn = createServerFn({ method: "POST" })
       referenceVideoUrl,
       referenceAudioUrl,
     });
-    if (!r.ok) return { ok: false as const, error: r.error };
+    if (!r.ok) {
+      const backend = getVideoBackend(model);
+      import("./errorLogs.functions").then(({ logGenerationError }) =>
+        logGenerationError({
+          kind: "video",
+          provider: backend,
+          model,
+          durationMs: Date.now() - __t0,
+          requestPayload: {
+            model,
+            prompt,
+            ratio: data.ratio,
+            resolution: data.resolution,
+            duration: data.duration,
+            generateAudio: data.generateAudio,
+            watermark: data.watermark,
+            media,
+            referenceVideoUrl,
+            referenceAudioUrl,
+          },
+          responseBody: r.error,
+          errorMessage: r.error,
+        }),
+      );
+      return { ok: false as const, error: r.error };
+    }
     return { ok: true as const, taskId: r.taskId, model: r.model, backend: r.backend };
   });
 
