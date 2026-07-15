@@ -394,16 +394,80 @@ async function arkSubmit(input: {
  *  适用于 ARK 官方 + vapeur 中转(都走 Seedance status 协议)。
  *  官方文档只示例了 succeeded,实际可能返回 queued/running/failed/cancelled
  *  以及 pending/processing/canceled(美式)等,统一映射避免非标准值静默卡死轮询 */
-function seedanceStatusToProgress(s: string | undefined): SeedanceProgress {
+export function seedanceStatusToProgress(s: string | undefined): SeedanceProgress {
   const v = (s || "").toLowerCase();
-  if (v === "succeeded") return "succeeded";
+  // 弘梦等 ARK 兼容中转并不总是透传 ARK 的 `succeeded`，常见的完成态还有
+  // completed / success / done。未识别完成态会落入下面的 running，导致前端无限转圈。
+  if (["succeeded", "completed", "complete", "success", "done", "finished"].includes(v)) {
+    return "succeeded";
+  }
   // expired:任务超时过期(TopenRouter / ARK 均可能返回),按失败终态处理,避免空转 deadline
-  if (v === "failed" || v === "expired") return "failed";
-  if (v === "cancelled" || v === "canceled") return "cancelled";
-  if (v === "running" || v === "processing") return "running";
-  if (v === "queued" || v === "pending") return "queued";
+  if (
+    [
+      "failed",
+      "failure",
+      "error",
+      "expired",
+      "rejected",
+      "terminated",
+      "aborted",
+      "timeout",
+    ].includes(v)
+  ) {
+    return "failed";
+  }
+  if (["cancelled", "canceled"].includes(v)) return "cancelled";
+  if (["running", "processing", "in_progress", "generating"].includes(v)) return "running";
+  if (["queued", "pending", "submitted", "created", "waiting"].includes(v)) return "queued";
   // 未知状态默认 running(继续轮询,不命中终态,避免空转 deadline)
   return "running";
+}
+
+type UnknownRecord = Record<string, unknown>;
+
+function asRecord(value: unknown): UnknownRecord | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as UnknownRecord)
+    : undefined;
+}
+
+function firstNonEmptyString(values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) return value;
+  }
+  return null;
+}
+
+/**
+ * 中转服务的任务查询响应有两类：ARK 原生的 `content.video_url`，以及把任务
+ * 包进 `data` / `result` / `output` 的兼容格式。统一提取，避免任务已完成却拿不到
+ * 视频 URL。这里只读取已知的视频字段，不会把任意字符串误当成资源地址。
+ */
+export function extractArkVideoUrl(payload: unknown): string | null {
+  const root = asRecord(payload);
+  if (!root) return null;
+  const nested = [root.content, root.output, root.data, root.result, root.task]
+    .map(asRecord)
+    .filter((value): value is UnknownRecord => Boolean(value));
+  const records = [root, ...nested];
+  const urls: unknown[] = [];
+  for (const record of records) {
+    urls.push(record.video_url, record.videoUrl, record.url);
+    const content = asRecord(record.content);
+    if (content) urls.push(content.video_url, content.videoUrl, content.url);
+    const results = record.results;
+    if (Array.isArray(results)) urls.push(results[0]);
+  }
+  return firstNonEmptyString(urls);
+}
+
+function extractArkTaskStatus(payload: unknown): string | undefined {
+  const root = asRecord(payload);
+  if (!root) return undefined;
+  const nested = [root.data, root.result, root.output, root.task]
+    .map(asRecord)
+    .filter((value): value is UnknownRecord => Boolean(value));
+  return firstNonEmptyString([root.status, ...nested.map((record) => record.status)]) || undefined;
 }
 
 async function arkPoll(input: {
@@ -432,17 +496,12 @@ async function arkPoll(input: {
     const text = await res.text().catch(() => "");
     if (!res.ok) return { ok: false, error: `[${tag}] poll ${res.status}: ${text.slice(0, 300)}` };
     // 2026/06 Bugfix:见 arkSubmit —— 改用 JSON.parse(text) 而不是 res.json()
-    let json: {
-      id?: string;
-      status?: string;
-      content?: { video_url?: string };
-      error?: { code?: string; message?: string };
-    } = {};
+    let json: unknown = {};
     try {
       json = JSON.parse(text);
     } catch {}
-    const status = seedanceStatusToProgress(json.status);
-    const videoUrl = json.content?.video_url || null;
+    const status = seedanceStatusToProgress(extractArkTaskStatus(json));
+    const videoUrl = extractArkVideoUrl(json);
     return { ok: true, status, videoUrl, raw: json };
   } catch (e) {
     clearTimeout(timeout);
