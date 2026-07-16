@@ -1,5 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { Fragment, useState, useEffect, useRef, useCallback, useMemo } from "react";
+import {
+  Fragment,
+  useState,
+  useEffect,
+  useRef,
+  useCallback,
+  useMemo,
+  type ImgHTMLAttributes,
+  type VideoHTMLAttributes,
+} from "react";
 import { useServerFn } from "@tanstack/react-start";
 import ReactMarkdown from "react-markdown";
 import WorkspaceTopbar, { type WorkspaceTab } from "../components/workspace/WorkspaceTopbar";
@@ -46,6 +55,7 @@ import {
   regenerateStoryboardPitchDeck,
 } from "../lib/storyboard.functions";
 import { generateVideo } from "../lib/videoGenerate.functions";
+import { uploadTopenrouterAsset } from "../lib/videoGenerate.functions";
 import { refineStoryboardVideoPrompt } from "../lib/videoPromptRefine.functions";
 import { translateEditablePrompt } from "../lib/promptTranslation.functions";
 import { runStoryboardVideoAgent } from "../lib/storyboardVideoAgent.functions";
@@ -56,6 +66,7 @@ import {
   saveWorkspaceData,
   loadWorkspaceData,
   loadWorkspaceMedia,
+  loadWorkspaceStoryboardStructure,
   type ProjectConfigRow,
 } from "../lib/projects.functions";
 import {
@@ -115,6 +126,10 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import CharacterPortrait from "../components/workspace/CharacterPortrait";
 import StoryboardTimeline from "../components/workspace/StoryboardTimeline";
+import {
+  ImageReviewBadge,
+  type ImageReviewStatus,
+} from "../components/ImageReviewBadge";
 import { toast } from "sonner";
 import type { WorkspaceAgentPlan } from "../lib/workspaceAgent.functions";
 
@@ -122,6 +137,74 @@ export const Route = createFileRoute("/workspace/$workspaceId")({
   head: ({ params }) => ({ meta: [{ title: `Workspace ${params.workspaceId} — Doopoo` }] }),
   component: WorkspacePage,
 });
+
+function WorkspaceMediaImage({
+  src,
+  onLoad,
+  onError,
+  loaderLabel = "正在加载图片…",
+  ...props
+}: ImgHTMLAttributes<HTMLImageElement> & { loaderLabel?: string }) {
+  const [loading, setLoading] = useState(true);
+  useEffect(() => setLoading(true), [src]);
+
+  return (
+    <>
+      {loading && (
+        <div className="absolute inset-0 z-[1] flex flex-col items-center justify-center gap-1.5 bg-bg-base/70 text-text-muted">
+          <Loader2 size={20} className="animate-spin text-accent" />
+          <span className="text-[10px]">{loaderLabel}</span>
+        </div>
+      )}
+      <img
+        {...props}
+        src={src}
+        onLoad={(event) => {
+          setLoading(false);
+          onLoad?.(event);
+        }}
+        onError={(event) => {
+          setLoading(false);
+          onError?.(event);
+        }}
+      />
+    </>
+  );
+}
+
+function WorkspaceMediaVideo({
+  src,
+  onLoadedData,
+  onError,
+  loaderLabel = "正在加载视频…",
+  ...props
+}: VideoHTMLAttributes<HTMLVideoElement> & { loaderLabel?: string }) {
+  const [loading, setLoading] = useState(true);
+  useEffect(() => setLoading(true), [src]);
+
+  return (
+    <>
+      {loading && (
+        <div className="absolute inset-0 z-[1] flex flex-col items-center justify-center gap-1.5 bg-black/70 text-white">
+          <Loader2 size={20} className="animate-spin text-accent" />
+          <span className="text-[10px]">{loaderLabel}</span>
+        </div>
+      )}
+      <video
+        {...props}
+        src={src}
+        onLoadedData={(event) => {
+          setLoading(false);
+          onLoadedData?.(event);
+        }}
+        onError={(event) => {
+          setLoading(false);
+          onError?.(event);
+        }}
+      />
+    </>
+  );
+}
 
 type WorkspaceData = {
   outline: Outline | null;
@@ -987,11 +1070,62 @@ function WorkspacePage() {
   const callSaveWorkspace = useServerFn(saveWorkspaceData);
   const callLoadWorkspace = useServerFn(loadWorkspaceData);
   const callLoadWorkspaceMedia = useServerFn(loadWorkspaceMedia);
+  const callLoadWorkspaceStoryboardStructure = useServerFn(loadWorkspaceStoryboardStructure);
   const callPersistMedia = useServerFn(persistWorkspaceMedia);
   const callPersistAsset = useServerFn(persistAssetImage);
+  const callTopenrouterImageReview = useServerFn(uploadTopenrouterAsset);
   const callSaveOneStoryboard = useServerFn(saveOneStoryboard);
   const callSaveOneVideo = useServerFn(saveOneVideo);
+  const [imageReviews, setImageReviews] = useState<
+    Record<string, { status: ImageReviewStatus; error?: string }>
+  >({});
+  const [imageReviewAliases, setImageReviewAliases] = useState<Record<string, string>>({});
+  const imageReviewStartedRef = useRef(new Set<string>());
+  const requestImageReview = useCallback(
+    (url: string, name: string) => {
+      if (!user || !/^https?:\/\//i.test(url) || imageReviewStartedRef.current.has(url)) return;
+      imageReviewStartedRef.current.add(url);
+      setImageReviews((current) => ({ ...current, [url]: { status: "pending" } }));
+      void callTopenrouterImageReview({
+        data: {
+          url,
+          assetType: "Image",
+          name: `doopoo-review-${Date.now()}-${name}`.slice(0, 200),
+          model: "topenrouter-doubao-seedance-2-0-mini-260615",
+        },
+      })
+        .then((result) => {
+          setImageReviews((current) => ({
+            ...current,
+            [url]: result.ok
+              ? { status: "approved" }
+              : { status: "rejected", error: result.error || "素材未通过上游审核" },
+          }));
+        })
+        .catch((error) => {
+          setImageReviews((current) => ({
+            ...current,
+            [url]: {
+              status: "error",
+              error: error instanceof Error ? error.message : "审核请求失败",
+            },
+          }));
+        });
+    },
+    [callTopenrouterImageReview, user],
+  );
+  const aliasImageReview = useCallback((sourceUrl: string, displayUrl: string) => {
+    if (sourceUrl === displayUrl) return;
+    setImageReviewAliases((current) => ({ ...current, [displayUrl]: sourceUrl }));
+  }, []);
+  const getImageReview = useCallback(
+    (url?: string) => (url ? imageReviews[url] ?? imageReviews[imageReviewAliases[url]] : undefined),
+    [imageReviewAliases, imageReviews],
+  );
   const promptTranslationRequestRef = useRef<Record<string, number>>({});
+  const [translatingEditablePromptKeys, setTranslatingEditablePromptKeys] = useState<Set<string>>(
+    () => new Set(),
+  );
 
   const isEnglishOnlyPrompt = (text: string) => {
     const chineseCount = (text.match(/[\u3400-\u9fff]/g) ?? []).length;
@@ -1009,12 +1143,35 @@ function WorkspacePage() {
       promptTranslationRequestRef.current[key] = requestId;
       if (!isEnglishOnlyPrompt(text)) {
         setValue(text);
+        setTranslatingEditablePromptKeys((keys) => {
+          if (!keys.has(key)) return keys;
+          const next = new Set(keys);
+          next.delete(key);
+          return next;
+        });
         return;
       }
-      setValue("正在翻译提示词…");
-      const result = await callTranslateEditablePrompt({ data: { text, target: "zh" } });
-      if (promptTranslationRequestRef.current[key] === requestId) {
-        setValue(result.text);
+      setValue("");
+      setTranslatingEditablePromptKeys((keys) => new Set(keys).add(key));
+      try {
+        const result = await callTranslateEditablePrompt({ data: { text, target: "zh" } });
+        if (promptTranslationRequestRef.current[key] === requestId) {
+          setValue(result.text);
+        }
+      } catch {
+        // Translation is only a display convenience. Keep the original prompt editable if it fails.
+        if (promptTranslationRequestRef.current[key] === requestId) {
+          setValue(text);
+        }
+      } finally {
+        if (promptTranslationRequestRef.current[key] === requestId) {
+          setTranslatingEditablePromptKeys((keys) => {
+            if (!keys.has(key)) return keys;
+            const next = new Set(keys);
+            next.delete(key);
+            return next;
+          });
+        }
       }
     },
     [callTranslateEditablePrompt],
@@ -1974,6 +2131,8 @@ function WorkspacePage() {
 
   useEffect(() => {
     let cancelled = false;
+    // 先完成轻量核心内容。大媒体 JSON 查询会在页面打开后再启动，避免多个
+    // 查询同时读取同一条超大 workspace_data 而触发数据库 statement timeout。
     loadProject({ data: { id: workspaceId } })
       .then((r) => {
         if (!cancelled && r.project) setProject(r.project);
@@ -2106,18 +2265,61 @@ function WorkspacePage() {
         if (typeof wd.selectedEpisodeIndex === "number") {
           setSelectedEpisodeIndex(wd.selectedEpisodeIndex);
         }
-        // 核心剧本和角色先展示；大媒体映射随后独立读取，避免一个超大的
-        // workspace_data JSONB 阻断整个项目。
+        // 媒体仍单独读取以规避超大的 workspace_data JSONB。主体内容已经就绪，
+        // 先打开工作区；各素材卡在 workspaceMediaReady 前显示加载动画。
         setDataLoaded(true);
         setWorkspaceMediaReady(false);
         setWorkspaceMediaLoadError(null);
-        void callLoadWorkspaceMedia({ data: { id: workspaceId } })
+        const storyboardStructurePromise = callLoadWorkspaceStoryboardStructure({
+          data: { id: workspaceId },
+        }).catch((error) => ({
+          workspaceData: null,
+          error: error instanceof Error ? error.message : "分镜结构无法加载，请刷新后重试",
+        }));
+        void storyboardStructurePromise.then((structureResult: any) => {
+          if (cancelled) return;
+          if (structureResult.error || !structureResult.workspaceData) {
+            toast.warning(`分镜结构暂未恢复：${structureResult.error || "请刷新后重试"}`);
+            return;
+          }
+          const structure = structureResult.workspaceData as Record<string, unknown>;
+          if (Array.isArray(structure.storyboard) && structure.storyboard.length) {
+            setData((d) => ({ ...d, storyboard: structure.storyboard as StoryboardPanel[] }));
+          }
+          if (Array.isArray(structure.storyboardGroups) && structure.storyboardGroups.length) {
+            const storyboardGroups: StoryboardGroup[] = (structure.storyboardGroups as any[]).map(
+              (g) => ({
+                ...g,
+                episodeIndex: typeof g.episodeIndex === "number" ? g.episodeIndex : 1,
+              }),
+            );
+            setData((d) => ({ ...d, storyboardGroups }));
+            // Keep legacy projects usable when their only shot image is embedded in the group.
+            setShotImages((current) => {
+              if (Object.keys(current).length) return current;
+              const migrated: Record<string, string[]> = {};
+              for (const group of storyboardGroups) {
+                for (const shot of group.shots) {
+                  if (shot.imageUrl) migrated[`${group.id}::${shot.id}`] = [shot.imageUrl];
+                }
+              }
+              return Object.keys(migrated).length ? migrated : current;
+            });
+          }
+        });
+        // 分镜结构请求结束后再读取媒体映射，避免两条大 JSON 查询互相抢占数据库资源。
+        void storyboardStructurePromise
+          .then(() =>
+            callLoadWorkspaceMedia({ data: { id: workspaceId } }).catch((error) => ({
+              workspaceData: null,
+              error: error instanceof Error ? error.message : "项目媒体内容无法加载，请刷新后重试",
+            })),
+          )
           .then((mediaResult: any) => {
             if (cancelled) return;
             if (mediaResult.error || !mediaResult.workspaceData) {
-              setWorkspaceMediaLoadError(
-                mediaResult.error || "项目媒体内容暂时无法加载，已停止自动保存以保护数据",
-              );
+              const message = mediaResult.error || "项目媒体内容无法加载，请刷新后重试";
+              setWorkspaceMediaLoadError(message);
               return;
             }
             const media = mediaResult.workspaceData as Record<string, any>;
@@ -2170,15 +2372,6 @@ function WorkspacePage() {
             setImagesRestored(true);
             setWorkspaceMediaReady(true);
           })
-          .catch((error) => {
-            if (cancelled) return;
-            console.error("[workspace] failed to load workspace media:", error);
-            setWorkspaceMediaLoadError(
-              error instanceof Error
-                ? error.message
-                : "项目媒体内容暂时无法加载，已停止自动保存以保护数据",
-            );
-          });
       })
       .catch((error) => {
         if (cancelled) return;
@@ -2190,7 +2383,13 @@ function WorkspacePage() {
     return () => {
       cancelled = true;
     };
-  }, [workspaceId, loadProject, callLoadWorkspace, callLoadWorkspaceMedia]);
+  }, [
+    workspaceId,
+    loadProject,
+    callLoadWorkspace,
+    callLoadWorkspaceMedia,
+    callLoadWorkspaceStoryboardStructure,
+  ]);
 
   useEffect(() => {
     if (workspaceLoadError) {
@@ -9690,7 +9889,7 @@ function WorkspacePage() {
                                         <span className="text-[10px]">生成中…</span>
                                       </div>
                                     ) : hasImg ? (
-                                      <img
+                                      <WorkspaceMediaImage
                                         src={coverUrl!}
                                         alt={s.slug}
                                         loading="lazy"
@@ -9976,7 +10175,7 @@ function WorkspacePage() {
                                         <span className="text-[10px]">生成中…</span>
                                       </div>
                                     ) : hasImg ? (
-                                      <img
+                                      <WorkspaceMediaImage
                                         src={coverUrl!}
                                         alt={p.name}
                                         loading="lazy"
@@ -10381,7 +10580,7 @@ function WorkspacePage() {
                                             selectedCharImages[imageKey] ||
                                             charImages[imageKey]!.at(-1)!;
                                           return (
-                                            <img
+                                            <WorkspaceMediaImage
                                               src={coverUrl}
                                               alt={cardTitle}
                                               loading="lazy"
@@ -11460,7 +11659,7 @@ function WorkspacePage() {
                                     <div className="relative aspect-[2/1] bg-bg-base group">
                                       {currentUrl ? (
                                         // eslint-disable-next-line @next/next/no-img-element
-                                        <img
+                                        <WorkspaceMediaImage
                                           src={currentUrl}
                                           alt={s.action}
                                           // 2026/06:追踪图片实际加载状态。Seedream TOS 签名 URL
@@ -11608,7 +11807,7 @@ function WorkspacePage() {
                             getActiveStoryboard(g.id)?.url ? (
                               <div className="relative group rounded border border-accent/30 overflow-hidden bg-bg-base flex items-center justify-center">
                                 {/* eslint-disable-next-line @next/next/no-img-element */}
-                                <img
+                                <WorkspaceMediaImage
                                   src={getActiveStoryboard(g.id)!.url}
                                   alt="故事板"
                                   onLoad={() => clearStoryboardBroken(g.id)}
@@ -11788,7 +11987,7 @@ function WorkspacePage() {
                                   {/* 视频区 */}
                                   {videoEntry?.status === "succeeded" && videoEntry?.url ? (
                                     <div className="relative group w-full max-w-[520px] rounded border border-accent/30 overflow-hidden bg-black aspect-video mx-auto">
-                                      <video
+                                      <WorkspaceMediaVideo
                                         src={videoEntry.url}
                                         controls
                                         loop
@@ -12397,15 +12596,26 @@ function WorkspacePage() {
                       const busyKey =
                         previewTarget.lookId == null ? c.id : `${c.id}::${previewTarget.lookId}`;
                       const thisBusy = regenBusyKeys.has(busyKey);
+                      const isPromptTranslating = translatingEditablePromptKeys.has(
+                        `character:${imageKey}`,
+                      );
                       return (
                         <div className="shrink-0 flex flex-col rounded-lg border border-border bg-bg-elevated/40 p-3 space-y-2">
                           <div className="flex items-center justify-between">
                             <div className="text-xs text-text-secondary font-semibold">
                               角色提示词（可编辑）
                             </div>
-                            <span className="text-[10px] text-text-muted">
-                              编辑后会同步更新角色属性
-                            </span>
+                            {isPromptTranslating ? (
+                              <Loader2
+                                size={14}
+                                className="animate-spin text-accent"
+                                aria-label="正在加载提示词"
+                              />
+                            ) : (
+                              <span className="text-[10px] text-text-muted">
+                                编辑后会同步更新角色属性
+                              </span>
+                            )}
                           </div>
                           <p className="text-[10px] text-text-muted leading-relaxed">
                             风格与角色描述均可修改；四视图、多维资产仍保留各自的构图约束，真实 API
@@ -12467,7 +12677,7 @@ function WorkspacePage() {
                             }}
                             placeholder="编辑风格、面部特征、身材体型或服装配饰…"
                             rows={8}
-                            disabled={thisBusy}
+                            disabled={thisBusy || isPromptTranslating}
                             className="w-full flex-1 min-h-64 max-h-[55vh] rounded-md bg-bg-base border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-y placeholder:text-text-muted disabled:opacity-50 leading-relaxed"
                           />
                           {modError && (
@@ -12477,7 +12687,9 @@ function WorkspacePage() {
                           )}
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-[10px] text-text-muted">
-                              {thisBusy
+                              {isPromptTranslating ? (
+                                <Loader2 size={12} className="animate-spin text-accent" />
+                              ) : thisBusy
                                 ? "生成中…"
                                 : `主视图:第 ${currentIdx + 1} / ${generations.length} 张${charModUploadedRefs.length ? ` + 额外 ${charModUploadedRefs.length} 张` : ""}`}
                             </span>
@@ -12487,6 +12699,7 @@ function WorkspacePage() {
                                 onClick={() => void submitModPanel()}
                                 disabled={
                                   thisBusy ||
+                                  isPromptTranslating ||
                                   !modInput.trim() ||
                                   (generations.filter(Boolean).length > 0 && !currentUrl)
                                 }
@@ -12503,7 +12716,7 @@ function WorkspacePage() {
                               <button
                                 type="button"
                                 onClick={() => void submitCharacterDetailT2I()}
-                                disabled={thisBusy || !modInput.trim()}
+                                disabled={thisBusy || isPromptTranslating || !modInput.trim()}
                                 title="不使用任何参考图，按当前提示词重新生成一张角色图"
                                 className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
                               >
@@ -12548,6 +12761,7 @@ function WorkspacePage() {
           const pinnedUrl = selectedSceneImages[s.id];
           const currentUrl = pinnedUrl && history.includes(pinnedUrl) ? pinnedUrl : history.at(-1);
           const currentIdx = currentUrl ? Math.max(0, history.indexOf(currentUrl)) : -1;
+          const isPromptTranslating = translatingEditablePromptKeys.has(`scene:${s.id}`);
           return (
             <div
               className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-6"
@@ -12756,7 +12970,15 @@ function WorkspacePage() {
                         <div className="text-xs text-text-secondary font-semibold">
                           场景提示词（可编辑）
                         </div>
-                        <span className="text-[10px] text-text-muted">点击按钮发送</span>
+                        {isPromptTranslating ? (
+                          <Loader2
+                            size={14}
+                            className="animate-spin text-accent"
+                            aria-label="正在加载提示词"
+                          />
+                        ) : (
+                          <span className="text-[10px] text-text-muted">点击按钮发送</span>
+                        )}
                       </div>
                       <div className="flex items-center gap-2 mb-2">
                         <button
@@ -12793,7 +13015,7 @@ function WorkspacePage() {
                         onChange={(e) => setSceneModInput(e.target.value)}
                         placeholder="编辑场景名称、地点、时段或场景描述…"
                         rows={12}
-                        disabled={regenBusyKeys.has(s.id)}
+                        disabled={regenBusyKeys.has(s.id) || isPromptTranslating}
                         className="w-full min-h-64 max-h-[55vh] rounded-md bg-bg-base border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-y placeholder:text-text-muted disabled:opacity-50"
                       />
                       {sceneModError && (
@@ -12803,7 +13025,9 @@ function WorkspacePage() {
                       )}
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-[10px] text-text-muted">
-                          {regenBusyKeys.has(s.id)
+                          {isPromptTranslating ? (
+                            <Loader2 size={12} className="animate-spin text-accent" />
+                          ) : regenBusyKeys.has(s.id)
                             ? "生成中…"
                             : `参考图:第 ${currentIdx + 1} / ${history.length} 张`}
                         </span>
@@ -12812,7 +13036,10 @@ function WorkspacePage() {
                             type="button"
                             onClick={() => void submitSceneDetailRegen(s)}
                             disabled={
-                              regenBusyKeys.has(s.id) || !sceneModInput.trim() || !currentUrl
+                              regenBusyKeys.has(s.id) ||
+                              isPromptTranslating ||
+                              !sceneModInput.trim() ||
+                              !currentUrl
                             }
                             title="使用当前选中的场景图作为参考，只修改提示词中变更的部分"
                             className="whitespace-nowrap px-3 py-1.5 rounded-md border border-accent text-accent text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-accent-dim/40 inline-flex items-center gap-1.5"
@@ -12827,7 +13054,11 @@ function WorkspacePage() {
                           <button
                             type="button"
                             onClick={() => void submitSceneDetailT2I(s)}
-                            disabled={regenBusyKeys.has(s.id) || !sceneModInput.trim()}
+                            disabled={
+                              regenBusyKeys.has(s.id) ||
+                              isPromptTranslating ||
+                              !sceneModInput.trim()
+                            }
                             title="不使用任何参考图，按当前提示词重新生成场景图"
                             className="whitespace-nowrap px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
                           >
@@ -12856,6 +13087,7 @@ function WorkspacePage() {
           const pinnedUrl = selectedPropImages[p.id];
           const currentUrl = pinnedUrl && history.includes(pinnedUrl) ? pinnedUrl : history.at(-1);
           const currentIdx = currentUrl ? Math.max(0, history.indexOf(currentUrl)) : -1;
+          const isPromptTranslating = translatingEditablePromptKeys.has(`prop:${p.id}`);
           return (
             <div
               className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-6"
@@ -13049,7 +13281,15 @@ function WorkspacePage() {
                         <div className="text-xs text-text-secondary font-semibold">
                           道具提示词（可编辑）
                         </div>
-                        <span className="text-[10px] text-text-muted">点击按钮发送</span>
+                        {isPromptTranslating ? (
+                          <Loader2
+                            size={14}
+                            className="animate-spin text-accent"
+                            aria-label="正在加载提示词"
+                          />
+                        ) : (
+                          <span className="text-[10px] text-text-muted">点击按钮发送</span>
+                        )}
                       </div>
                       <div className="flex items-center gap-2 mb-2">
                         <button
@@ -13085,7 +13325,7 @@ function WorkspacePage() {
                         onChange={(e) => setPropModInput(e.target.value)}
                         placeholder="编辑道具名称、描述、剧情运动或关键节点…"
                         rows={7}
-                        disabled={regenBusyKeys.has(p.id)}
+                        disabled={regenBusyKeys.has(p.id) || isPromptTranslating}
                         className="w-full min-h-40 rounded-md bg-bg-base border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-y placeholder:text-text-muted disabled:opacity-50"
                       />
                       {propModError && (
@@ -13095,7 +13335,9 @@ function WorkspacePage() {
                       )}
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-[10px] text-text-muted">
-                          {regenBusyKeys.has(p.id)
+                          {isPromptTranslating ? (
+                            <Loader2 size={12} className="animate-spin text-accent" />
+                          ) : regenBusyKeys.has(p.id)
                             ? "生成中…"
                             : `参考图:第 ${currentIdx + 1} / ${history.length} 张`}
                         </span>
@@ -13104,7 +13346,10 @@ function WorkspacePage() {
                             type="button"
                             onClick={() => void submitPropDetailRegen(p)}
                             disabled={
-                              regenBusyKeys.has(p.id) || !propModInput.trim() || !currentUrl
+                              regenBusyKeys.has(p.id) ||
+                              isPromptTranslating ||
+                              !propModInput.trim() ||
+                              !currentUrl
                             }
                             title="使用当前选中的道具图作为参考，只修改提示词中变更的部分"
                             className="whitespace-nowrap px-3 py-1.5 rounded-md border border-accent text-accent text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:bg-accent-dim/40 inline-flex items-center gap-1.5"
@@ -13119,7 +13364,9 @@ function WorkspacePage() {
                           <button
                             type="button"
                             onClick={() => void submitPropDetailT2I(p)}
-                            disabled={regenBusyKeys.has(p.id) || !propModInput.trim()}
+                            disabled={
+                              regenBusyKeys.has(p.id) || isPromptTranslating || !propModInput.trim()
+                            }
                             title="不使用任何参考图，按当前提示词重新生成道具图"
                             className="whitespace-nowrap px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
                           >
@@ -13606,6 +13853,9 @@ function WorkspacePage() {
           const currentUrl = generations[currentIdx];
           const editableShot = applyShotEditablePrompt(group, shot, shotModInput);
           const cardTitle = `${shot.shotTypeLabel} · ${shot.action.slice(0, 24)}${shot.action.length > 24 ? "…" : ""}`;
+          const isPromptTranslating = translatingEditablePromptKeys.has(
+            `shot:${groupId}:${shotId}`,
+          );
           return (
             <div
               className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
@@ -13826,7 +14076,11 @@ function WorkspacePage() {
                         onChange={(e) => setShotModInput(e.target.value)}
                         placeholder="填写这张分镜图的生成提示词…"
                         rows={8}
-                        disabled={shotModBusy || (!currentUrl && !shotModUploadedRef)}
+                        disabled={
+                          shotModBusy ||
+                          isPromptTranslating ||
+                          (!currentUrl && !shotModUploadedRef)
+                        }
                         className="w-full min-h-44 rounded-md bg-bg-elevated border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-y placeholder:text-text-muted disabled:opacity-50"
                       />
                       <div className="flex items-center justify-between gap-2">
@@ -13836,6 +14090,7 @@ function WorkspacePage() {
                           onClick={() => void handleRegenShot()}
                           disabled={
                             shotModBusy ||
+                            isPromptTranslating ||
                             !shotModInput.trim() ||
                             (!currentUrl && !shotModUploadedRef)
                           }
@@ -13878,6 +14133,9 @@ function WorkspacePage() {
           const title = group ? `第 ${group.index} 组 · 故事板` : "故事板";
           const isRunning = activeEntry?.status === "running";
           const isModifying = storyboardModBusyGroupId === storyboardPreview.groupId;
+          const isPromptTranslating = translatingEditablePromptKeys.has(
+            `storyboard:${storyboardPreview.groupId}`,
+          );
           const storyboardLivePlot = group
             ? readEditablePromptField(storyboardModInput, "剧情", [
                 "故事板",
@@ -14180,7 +14438,7 @@ function WorkspacePage() {
                       )}
                       <div
                         ref={storyboardPromptEditorRef}
-                        contentEditable={!isModifying && !isRunning && !!url}
+                        contentEditable={!isModifying && !isRunning && !isPromptTranslating && !!url}
                         suppressContentEditableWarning
                         role="textbox"
                         aria-multiline="true"
@@ -14202,12 +14460,22 @@ function WorkspacePage() {
                       />
                       <div className="shrink-0 flex items-center justify-between gap-2">
                         <span className="text-[10px] text-text-muted">
-                          输入 @ 引用素材 · ⌘/Ctrl + Enter 发送
+                          {isPromptTranslating ? (
+                            <Loader2 size={12} className="animate-spin text-accent" aria-label="正在加载提示词" />
+                          ) : (
+                            "输入 @ 引用素材 · ⌘/Ctrl + Enter 发送"
+                          )}
                         </span>
                         <button
                           type="button"
                           onClick={() => void handleRegenStoryboard()}
-                          disabled={isModifying || isRunning || !storyboardModInput.trim() || !url}
+                          disabled={
+                            isModifying ||
+                            isRunning ||
+                            isPromptTranslating ||
+                            !storyboardModInput.trim() ||
+                            !url
+                          }
                           className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
                         >
                           {isModifying ? (

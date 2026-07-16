@@ -124,7 +124,7 @@ export default function WorkspaceTopbar({
   };
 
   return (
-    <header className="h-14 border-b border-border bg-bg-surface/90 backdrop-blur flex items-center px-4 gap-3 shrink-0">
+    <header className="relative z-[60] h-14 border-b border-border bg-bg-surface/90 backdrop-blur flex items-center px-4 gap-3 shrink-0">
       <div className="shrink-0">
         <Logo size="sm" />
       </div>
