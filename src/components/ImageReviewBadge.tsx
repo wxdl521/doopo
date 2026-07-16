@@ -6,10 +6,12 @@ export function ImageReviewBadge({
   status,
   error,
   onRequestReview,
+  position = "bottom-left",
 }: {
   status?: ImageReviewStatus;
   error?: string;
   onRequestReview?: () => void;
+  position?: "bottom-left" | "bottom-right";
 }) {
   const content =
     !status
@@ -47,7 +49,9 @@ export function ImageReviewBadge({
               canRequest: false,
             };
 
-  const className = `absolute bottom-1.5 left-1.5 z-20 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium shadow-sm backdrop-blur-sm ${content.className}`;
+  const positionClassName =
+    position === "bottom-right" ? "bottom-1.5 right-1.5" : "bottom-1.5 left-1.5";
+  const className = `absolute ${positionClassName} z-20 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium shadow-sm backdrop-blur-sm ${content.className}`;
   const title = content.canRequest && onRequestReview ? "点击上传审核" : error || content.label;
 
   if (content.canRequest && onRequestReview) {

@@ -116,7 +116,6 @@ import {
   RefreshCw,
   Target,
   ChevronDown,
-  MoreHorizontal,
   Trash2,
   BookmarkPlus,
   Plus,
@@ -1029,7 +1028,6 @@ function WorkspacePage() {
   // 2026/06:plot 下方圆圈点击弹出的"选形象下拉"打开状态。
   // key = `${groupId}::${characterId}`,null = 全部关闭
   const [openLookMenu, setOpenLookMenu] = useState<string | null>(null);
-  const [assetMenuKey, setAssetMenuKey] = useState<string | null>(null);
   const [modInput, setModInput] = useState("");
   const [modError, setModError] = useState<string | null>(null);
   const [characterAttributesExpanded, setCharacterAttributesExpanded] = useState(false);
@@ -9922,7 +9920,7 @@ function WorkspacePage() {
                               <Plus size={12} /> 添加场景
                             </button>
                           </div>
-                          <div className="px-6 py-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                          <div className="px-6 py-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 gap-5">
                             {epScenes.map((s) => {
                               const history = sceneImages[s.id] ?? [];
                               const hasImg = history.length > 0;
@@ -9940,7 +9938,10 @@ function WorkspacePage() {
                                   key={s.id}
                                   role="button"
                                   tabIndex={0}
-                                  onClick={() => openScenePreview(s)}
+                                  onClick={(event) => {
+                                    if ((event.target as HTMLElement).closest("button")) return;
+                                    openScenePreview(s);
+                                  }}
                                   onKeyDown={(e) => {
                                     if (e.key === "Enter" || e.key === " ") {
                                       e.preventDefault();
@@ -9957,47 +9958,16 @@ function WorkspacePage() {
                                   <div className="relative w-full aspect-video bg-bg-base overflow-hidden">
                                     <button
                                       type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setAssetMenuKey((key) =>
-                                          key === `scene:${s.id}` ? null : `scene:${s.id}`,
-                                        );
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        removeScene(s);
                                       }}
-                                      className="absolute top-1.5 right-1.5 z-30 p-1 rounded-md bg-black/70 text-white hover:bg-black/90 transition"
-                                      aria-label="场景更多操作"
-                                      title="更多操作"
+                                      className="absolute top-1.5 right-1.5 z-30 rounded-md bg-black/70 p-1.5 text-white transition hover:bg-rose-500/90"
+                                      aria-label="删除场景"
+                                      title="删除场景"
                                     >
-                                      <MoreHorizontal size={15} />
+                                      <Trash2 size={14} />
                                     </button>
-                                    {assetMenuKey === `scene:${s.id}` && (
-                                      <div
-                                        className="absolute top-9 right-1.5 z-40 min-w-[128px] rounded-lg border border-border bg-bg-surface/95 p-1 shadow-xl backdrop-blur"
-                                        onClick={(e) => e.stopPropagation()}
-                                      >
-                                        <button
-                                          type="button"
-                                          disabled={!hasImg}
-                                          onClick={() => {
-                                            setAssetMenuKey(null);
-                                            if (hasImg) void saveSceneToAssets(s, s.id);
-                                          }}
-                                          className="w-full rounded-md px-2.5 py-1.5 text-left text-xs text-text-secondary hover:bg-bg-elevated hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
-                                        >
-                                          <BookmarkPlus size={12} className="mr-1.5 inline" />{" "}
-                                          保存到资产
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setAssetMenuKey(null);
-                                            removeScene(s);
-                                          }}
-                                          className="w-full rounded-md px-2.5 py-1.5 text-left text-xs text-rose-400 hover:bg-rose-500/10"
-                                        >
-                                          <Trash2 size={12} className="mr-1.5 inline" /> 删除场景
-                                        </button>
-                                      </div>
-                                    )}
                                     {busyScene === s.id && !hasImg ? (
                                       <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-text-muted">
                                         <Loader2 size={20} className="animate-spin text-accent" />
@@ -10014,6 +9984,7 @@ function WorkspacePage() {
                                         <ImageReviewBadge
                                           status={getImageReview(coverUrl)?.status}
                                           error={getImageReview(coverUrl)?.error}
+                                          position="bottom-right"
                                           onRequestReview={() => {
                                             if (coverUrl) requestImageReview(coverUrl, `scene-${s.id}`);
                                           }}
@@ -10051,6 +10022,18 @@ function WorkspacePage() {
                                         <span className="text-[10px]">上传中…</span>
                                       </div>
                                     )}
+                                    <button
+                                      type="button"
+                                      disabled={!hasImg}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        if (hasImg) void saveSceneToAssets(s, s.id);
+                                      }}
+                                      className="absolute bottom-1.5 left-1.5 z-20 inline-flex items-center gap-1 rounded-full bg-black/70 px-2 py-0.5 text-[10px] text-white backdrop-blur-sm transition hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                                      title="保存到资产"
+                                    >
+                                      <BookmarkPlus size={10} /> 保存到资产
+                                    </button>
                                     {/* 上传本地图片按钮 */}
                                     {!hasImg ? (
                                       <button
@@ -10071,7 +10054,7 @@ function WorkspacePage() {
                                           e.stopPropagation();
                                           handleUploadImage("scene", s.id, s.id);
                                         }}
-                                        className="absolute bottom-1.5 right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] hover:bg-accent hover:text-accent-foreground transition backdrop-blur-sm"
+                                        className="absolute bottom-8 right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] hover:bg-accent hover:text-accent-foreground transition backdrop-blur-sm"
                                         title="上传本地图片覆盖"
                                       >
                                         <Upload size={10} /> 上传
@@ -10218,7 +10201,7 @@ function WorkspacePage() {
                               <Plus size={12} /> 添加道具
                             </button>
                           </div>
-                          <div className="px-6 py-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                          <div className="px-6 py-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 gap-5">
                             {epProps.map((p) => {
                               const history = propImages[p.id] ?? [];
                               const hasImg = history.length > 0;
@@ -10235,7 +10218,10 @@ function WorkspacePage() {
                                   key={p.id}
                                   role="button"
                                   tabIndex={0}
-                                  onClick={() => openPropPreview(p)}
+                                  onClick={(event) => {
+                                    if ((event.target as HTMLElement).closest("button")) return;
+                                    openPropPreview(p);
+                                  }}
                                   onKeyDown={(e) => {
                                     if (e.key === "Enter" || e.key === " ") {
                                       e.preventDefault();
@@ -10252,47 +10238,16 @@ function WorkspacePage() {
                                   <div className="relative w-full aspect-[4/3] bg-bg-base overflow-hidden">
                                     <button
                                       type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setAssetMenuKey((key) =>
-                                          key === `prop:${p.id}` ? null : `prop:${p.id}`,
-                                        );
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        removeProp(p);
                                       }}
-                                      className="absolute top-1.5 right-1.5 z-30 p-1 rounded-md bg-black/70 text-white hover:bg-black/90 transition"
-                                      aria-label="道具更多操作"
-                                      title="更多操作"
+                                      className="absolute top-1.5 right-1.5 z-30 rounded-md bg-black/70 p-1.5 text-white transition hover:bg-rose-500/90"
+                                      aria-label="删除道具"
+                                      title="删除道具"
                                     >
-                                      <MoreHorizontal size={15} />
+                                      <Trash2 size={14} />
                                     </button>
-                                    {assetMenuKey === `prop:${p.id}` && (
-                                      <div
-                                        className="absolute top-9 right-1.5 z-40 min-w-[128px] rounded-lg border border-border bg-bg-surface/95 p-1 shadow-xl backdrop-blur"
-                                        onClick={(e) => e.stopPropagation()}
-                                      >
-                                        <button
-                                          type="button"
-                                          disabled={!hasImg}
-                                          onClick={() => {
-                                            setAssetMenuKey(null);
-                                            if (hasImg) void savePropToAssets(p, p.id);
-                                          }}
-                                          className="w-full rounded-md px-2.5 py-1.5 text-left text-xs text-text-secondary hover:bg-bg-elevated hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
-                                        >
-                                          <BookmarkPlus size={12} className="mr-1.5 inline" />{" "}
-                                          保存到资产
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setAssetMenuKey(null);
-                                            removeProp(p);
-                                          }}
-                                          className="w-full rounded-md px-2.5 py-1.5 text-left text-xs text-rose-400 hover:bg-rose-500/10"
-                                        >
-                                          <Trash2 size={12} className="mr-1.5 inline" /> 删除道具
-                                        </button>
-                                      </div>
-                                    )}
                                     {busyProp === p.id && !hasImg ? (
                                       <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-text-muted">
                                         <Loader2 size={20} className="animate-spin text-accent" />
@@ -10309,6 +10264,7 @@ function WorkspacePage() {
                                         <ImageReviewBadge
                                           status={getImageReview(coverUrl)?.status}
                                           error={getImageReview(coverUrl)?.error}
+                                          position="bottom-right"
                                           onRequestReview={() => {
                                             if (coverUrl) requestImageReview(coverUrl, `prop-${p.id}`);
                                           }}
@@ -10329,6 +10285,18 @@ function WorkspacePage() {
                                         <span className="text-[10px]">点击生成道具图</span>
                                       </button>
                                     )}
+                                    <button
+                                      type="button"
+                                      disabled={!hasImg}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        if (hasImg) void savePropToAssets(p, p.id);
+                                      }}
+                                      className="absolute bottom-1.5 left-1.5 z-20 inline-flex items-center gap-1 rounded-full bg-black/70 px-2 py-0.5 text-[10px] text-white backdrop-blur-sm transition hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                                      title="保存到资产"
+                                    >
+                                      <BookmarkPlus size={10} /> 保存到资产
+                                    </button>
                                     {/* 上传本地图片按钮 */}
                                     {!hasImg ? (
                                       <button
@@ -10349,7 +10317,7 @@ function WorkspacePage() {
                                           e.stopPropagation();
                                           handleUploadImage("prop", p.id, p.id);
                                         }}
-                                        className="absolute bottom-1.5 right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] hover:bg-accent hover:text-accent-foreground transition backdrop-blur-sm"
+                                        className="absolute bottom-8 right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] hover:bg-accent hover:text-accent-foreground transition backdrop-blur-sm"
                                         title="上传本地图片覆盖"
                                       >
                                         <Upload size={10} /> 上传
@@ -10641,50 +10609,16 @@ function WorkspacePage() {
                                   <div className="relative w-full aspect-[3/4] bg-bg-base overflow-hidden">
                                     <button
                                       type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setAssetMenuKey((key) =>
-                                          key === `character:${imageKey}`
-                                            ? null
-                                            : `character:${imageKey}`,
-                                        );
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        removeCharacter(c);
                                       }}
-                                      className="absolute top-1.5 right-1.5 z-30 p-1 rounded-md bg-black/70 text-white hover:bg-black/90 transition"
-                                      aria-label="角色更多操作"
-                                      title="更多操作"
+                                      className="absolute top-1.5 right-1.5 z-30 rounded-md bg-black/70 p-1.5 text-white transition hover:bg-rose-500/90"
+                                      aria-label="删除角色"
+                                      title="删除角色"
                                     >
-                                      <MoreHorizontal size={15} />
+                                      <Trash2 size={14} />
                                     </button>
-                                    {assetMenuKey === `character:${imageKey}` && (
-                                      <div
-                                        className="absolute top-9 right-1.5 z-40 min-w-[128px] rounded-lg border border-border bg-bg-surface/95 p-1 shadow-xl backdrop-blur"
-                                        onClick={(e) => e.stopPropagation()}
-                                      >
-                                        <button
-                                          type="button"
-                                          disabled={!hasImg}
-                                          onClick={() => {
-                                            setAssetMenuKey(null);
-                                            if (hasImg)
-                                              void saveCharacterToAssets(c, card.lookId, imageKey);
-                                          }}
-                                          className="w-full rounded-md px-2.5 py-1.5 text-left text-xs text-text-secondary hover:bg-bg-elevated hover:text-accent disabled:cursor-not-allowed disabled:opacity-40"
-                                        >
-                                          <BookmarkPlus size={12} className="mr-1.5 inline" />{" "}
-                                          保存到资产
-                                        </button>
-                                        <button
-                                          type="button"
-                                          onClick={() => {
-                                            setAssetMenuKey(null);
-                                            removeCharacter(c);
-                                          }}
-                                          className="w-full rounded-md px-2.5 py-1.5 text-left text-xs text-rose-400 hover:bg-rose-500/10"
-                                        >
-                                          <Trash2 size={12} className="mr-1.5 inline" /> 删除角色
-                                        </button>
-                                      </div>
-                                    )}
                                     {isActive && !hasImg ? (
                                       // 这张图**正在画**:spinner
                                       <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-text-muted">
@@ -10743,6 +10677,7 @@ function WorkspacePage() {
                                                 charImages[imageKey]!.at(-1),
                                             )?.error
                                           }
+                                          position="bottom-right"
                                           onRequestReview={() => {
                                             const coverUrl =
                                               selectedCharImages[imageKey] ||
@@ -10789,6 +10724,19 @@ function WorkspacePage() {
                                         </span>
                                       </button>
                                     )}
+                                    <button
+                                      type="button"
+                                      disabled={!hasImg}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        if (hasImg)
+                                          void saveCharacterToAssets(c, card.lookId, imageKey);
+                                      }}
+                                      className="absolute bottom-1.5 left-1.5 z-20 inline-flex items-center gap-1 rounded-full bg-black/70 px-2 py-0.5 text-[10px] text-white backdrop-blur-sm transition hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                                      title="保存到资产"
+                                    >
+                                      <BookmarkPlus size={10} /> 保存到资产
+                                    </button>
                                     {/* 上传按钮:没图时显示在生成按钮下方,有图时显示在右下角 */}
                                     {!hasImg ? (
                                       <button
@@ -10809,7 +10757,7 @@ function WorkspacePage() {
                                           e.stopPropagation();
                                           handleUploadImage("character", c.id, imageKey);
                                         }}
-                                        className="absolute bottom-1.5 right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] hover:bg-accent hover:text-accent-foreground transition backdrop-blur-sm"
+                                        className="absolute bottom-8 right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] hover:bg-accent hover:text-accent-foreground transition backdrop-blur-sm"
                                         title="上传本地图片覆盖"
                                       >
                                         <Upload size={10} /> 上传
