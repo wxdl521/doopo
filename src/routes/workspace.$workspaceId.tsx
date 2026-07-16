@@ -181,35 +181,94 @@ function toEnvironmentOnlySceneText(value: unknown, fallback = "", characterName
   return environmentOnly || fallback;
 }
 
-function readSavedImageReviews(value: unknown): Record<string, { status: ImageReviewStatus; error?: string }> {
+const IMAGE_ASSET_KEY_SEPARATOR = "\n";
+type ImageAssetRecord = {
+  status: ImageReviewStatus;
+  error?: string;
+  /** 对应视频渠道返回的稳定素材引用；仅在已入库时写入。 */
+  assetUrl?: string;
+};
+
+function imageAssetKey(model: string | undefined, url: string): string | null {
+  const normalizedModel = model?.trim();
+  return normalizedModel && isHttpImageUrl(url)
+    ? `${normalizedModel}${IMAGE_ASSET_KEY_SEPARATOR}${url}`
+    : null;
+}
+
+function imageAssetUrlFromKey(key: string): string | null {
+  const separatorIndex = key.indexOf(IMAGE_ASSET_KEY_SEPARATOR);
+  if (separatorIndex <= 0) return null;
+  const model = key.slice(0, separatorIndex).trim();
+  const url = key.slice(separatorIndex + IMAGE_ASSET_KEY_SEPARATOR.length);
+  return model && isHttpImageUrl(url) ? url : null;
+}
+
+function savedImageAssetKey(key: string): string | null {
+  // 旧版本只保存 URL + 状态，未保存 asset_id；无法保证该状态能被当前视频任务复用，
+  // 因此恢复为“未入库”，避免把过期或未知归属的素材错误标为可用。
+  if (isHttpImageUrl(key)) return null;
+  return imageAssetUrlFromKey(key) ? key : null;
+}
+
+function getVideoAssetLibrarySupport(model: string | undefined): {
+  supported: boolean;
+  message: string;
+} {
+  if (!model?.trim()) {
+    return { supported: false, message: "请先在项目设置中选择视频模型。" };
+  }
+  if (model.startsWith("topenrouter-doubao-seedance-")) {
+    return { supported: true, message: "" };
+  }
+  return {
+    supported: false,
+    message: `${model} 暂未接入可查询的素材库，暂不支持上传素材。`,
+  };
+}
+
+function readSavedImageReviews(value: unknown): Record<string, ImageAssetRecord> {
   if (!value || typeof value !== "object") return {};
   return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>).flatMap(([url, item]) => {
-      if (!isHttpImageUrl(url) || !item || typeof item !== "object") return [];
-      const review = item as { status?: unknown; error?: unknown };
-      // `pending` 请求在刷新后无法可靠续接，恢复为“未审核”，让用户可重新提交。
+    Object.entries(value as Record<string, unknown>).flatMap(([storedKey, item]) => {
+      const key = savedImageAssetKey(storedKey);
+      if (!key || !item || typeof item !== "object") return [];
+      const review = item as { status?: unknown; error?: unknown; assetUrl?: unknown };
+      const assetUrl =
+        typeof review.assetUrl === "string" && /^asset:\/\/[a-zA-Z0-9_-]+$/.test(review.assetUrl)
+          ? review.assetUrl
+          : undefined;
+      // `pending` 请求在刷新后无法可靠续接，恢复为“未入库”，让用户可重新提交。
       if (review.status !== "approved" && review.status !== "rejected" && review.status !== "error") {
         return [];
       }
+      // “已入库”必须能提供同渠道 asset:// 给视频任务；旧状态或残缺数据一律恢复未入库。
+      if (review.status === "approved" && !assetUrl) return [];
       return [
         [
-          url,
+          key,
           {
             status: review.status,
             ...(typeof review.error === "string" ? { error: review.error } : {}),
+            ...(assetUrl ? { assetUrl } : {}),
           },
         ],
       ];
     }),
-  ) as Record<string, { status: ImageReviewStatus; error?: string }>;
+  ) as Record<string, ImageAssetRecord>;
 }
 
 function readSavedImageReviewAliases(value: unknown): Record<string, string> {
   if (!value || typeof value !== "object") return {};
   return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>).filter(
-      ([displayUrl, sourceUrl]) => isHttpImageUrl(displayUrl) && isHttpImageUrl(sourceUrl),
-    ),
+    Object.entries(value as Record<string, unknown>).flatMap(([displayKey, sourceKey]) => {
+      if (typeof sourceKey !== "string") return [];
+      const normalizedDisplayKey = savedImageAssetKey(displayKey);
+      const normalizedSourceKey = savedImageAssetKey(sourceKey);
+      return normalizedDisplayKey && normalizedSourceKey
+        ? [[normalizedDisplayKey, normalizedSourceKey]]
+        : [];
+    }),
   ) as Record<string, string>;
 }
 
@@ -1158,57 +1217,84 @@ function WorkspacePage() {
   const callTopenrouterImageReview = useServerFn(uploadTopenrouterAsset);
   const callSaveOneStoryboard = useServerFn(saveOneStoryboard);
   const callSaveOneVideo = useServerFn(saveOneVideo);
-  const [imageReviews, setImageReviews] = useState<
-    Record<string, { status: ImageReviewStatus; error?: string }>
-  >({});
+  const [project, setProject] = useState<ProjectConfigRow | null>(null);
+  const [imageReviews, setImageReviews] = useState<Record<string, ImageAssetRecord>>({});
   const [imageReviewAliases, setImageReviewAliases] = useState<Record<string, string>>({});
   const imageReviewStartedRef = useRef(new Set<string>());
   const requestImageReview = useCallback(
-    (url: string, name: string) => {
-      if (!user || !/^https?:\/\//i.test(url) || imageReviewStartedRef.current.has(url)) return;
-      imageReviewStartedRef.current.add(url);
-      setImageReviews((current) => ({ ...current, [url]: { status: "pending" } }));
+    (url: string, name: string, interactive = false) => {
+      const videoModel = project?.videoModel;
+      const support = getVideoAssetLibrarySupport(videoModel);
+      if (!support.supported || !videoModel) {
+        if (interactive) toast.info(support.message);
+        return;
+      }
+      const key = imageAssetKey(videoModel, url);
+      if (!user || !key || imageReviewStartedRef.current.has(key)) return;
+      imageReviewStartedRef.current.add(key);
+      setImageReviews((current) => ({ ...current, [key]: { status: "pending" } }));
       void callTopenrouterImageReview({
         data: {
           url,
           assetType: "Image",
-          name: `doopoo-review-${Date.now()}-${name}`.slice(0, 200),
-          model: "topenrouter-doubao-seedance-2-0-mini-260615",
+          name: `doopoo-asset-${Date.now()}-${name}`.slice(0, 200),
+          model: videoModel,
         },
       })
         .then((result) => {
-          const error = result.ok ? undefined : result.error || "素材审核未通过";
+          const error = result.ok ? undefined : result.error || "素材入库失败";
           const status: ImageReviewStatus = result.ok
             ? "approved"
-            : /status\s*=\s*failed|审核未通过|sensitive/i.test(error || "")
+            : /status\s*=\s*failed|入库失败|sensitive/i.test(error || "")
               ? "rejected"
               : "error";
-          if (status === "error") imageReviewStartedRef.current.delete(url);
+          if (status === "error") imageReviewStartedRef.current.delete(key);
           setImageReviews((current) => ({
             ...current,
-            [url]: { status, ...(error ? { error } : {}) },
+            [key]: {
+              status,
+              ...(error ? { error } : {}),
+              ...(result.ok ? { assetUrl: result.assetUrl } : {}),
+            },
           }));
         })
         .catch((error) => {
-          imageReviewStartedRef.current.delete(url);
+          imageReviewStartedRef.current.delete(key);
           setImageReviews((current) => ({
             ...current,
-            [url]: {
+            [key]: {
               status: "error",
-              error: error instanceof Error ? error.message : "审核请求失败",
+              error: error instanceof Error ? error.message : "素材入库请求失败",
             },
           }));
         });
     },
-    [callTopenrouterImageReview, user],
+    [callTopenrouterImageReview, project?.videoModel, user],
   );
-  const aliasImageReview = useCallback((sourceUrl: string, displayUrl: string) => {
-    if (sourceUrl === displayUrl) return;
-    setImageReviewAliases((current) => ({ ...current, [displayUrl]: sourceUrl }));
-  }, []);
+  const aliasImageReview = useCallback(
+    (sourceUrl: string, displayUrl: string) => {
+      if (sourceUrl === displayUrl) return;
+      const sourceKey = imageAssetKey(project?.videoModel, sourceUrl);
+      const displayKey = imageAssetKey(project?.videoModel, displayUrl);
+      if (!sourceKey || !displayKey) return;
+      setImageReviewAliases((current) => ({ ...current, [displayKey]: sourceKey }));
+    },
+    [project?.videoModel],
+  );
   const getImageReview = useCallback(
-    (url?: string) => (url ? imageReviews[url] ?? imageReviews[imageReviewAliases[url]] : undefined),
-    [imageReviewAliases, imageReviews],
+    (url?: string) => {
+      const key = url ? imageAssetKey(project?.videoModel, url) : null;
+      return key ? imageReviews[key] ?? imageReviews[imageReviewAliases[key]] : undefined;
+    },
+    [imageReviewAliases, imageReviews, project?.videoModel],
+  );
+  const getVideoImageReference = useCallback(
+    (url: string | undefined) => {
+      if (!url || !getVideoAssetLibrarySupport(project?.videoModel).supported) return url;
+      const asset = getImageReview(url);
+      return asset?.status === "approved" && asset.assetUrl ? asset.assetUrl : url;
+    },
+    [getImageReview, project?.videoModel],
   );
   const promptTranslationRequestRef = useRef<Record<string, number>>({});
   const [translatingEditablePromptKeys, setTranslatingEditablePromptKeys] = useState<Set<string>>(
@@ -1273,10 +1359,10 @@ function WorkspacePage() {
     },
     [callTranslateEditablePrompt],
   );
-  const [project, setProject] = useState<ProjectConfigRow | null>(null);
   const projectVisualStyle =
     project?.style === "custom" ? `custom:${project.customStyle ?? ""}` : project?.style;
   const characterNationality = project?.characterNationality ?? "中国";
+  const videoAssetLibrarySupport = getVideoAssetLibrarySupport(project?.videoModel);
   const [savingWorkspace, setSavingWorkspace] = useState(false);
   const [savedWorkspace, setSavedWorkspace] = useState(false);
   const [dataLoaded, setDataLoaded] = useState(false);
@@ -6701,7 +6787,11 @@ function WorkspacePage() {
     try {
       const commonData = {
         prompt: finalPrompt,
-        referenceImageUrls: payload.referenceUrls.length ? payload.referenceUrls : undefined,
+        // 仅当素材与当前视频模型属于同一渠道时，复用它返回的 asset:// 引用；
+        // 其他渠道继续使用原始公网 URL，避免跨渠道 asset_id 导致任务失败。
+        referenceImageUrls: payload.referenceUrls.length
+          ? payload.referenceUrls.map((url) => getVideoImageReference(url) ?? url)
+          : undefined,
         referenceAudioUrl: selectedAudioUrl || undefined,
         model: project?.videoModel || "happyhorse-1.0-r2v",
         ratio: project?.aspect === "9:16" ? "9:16" : project?.aspect === "1:1" ? "1:1" : "16:9",
@@ -6714,8 +6804,8 @@ function WorkspacePage() {
           ? await callGenVideo({
               data: {
                 ...commonData,
-                imageUrl: payload.firstFrame,
-                lastFrameImageUrl: payload.lastFrame,
+                imageUrl: getVideoImageReference(payload.firstFrame),
+                lastFrameImageUrl: getVideoImageReference(payload.lastFrame),
                 duration: groupVideoDurationSec(group),
               },
             })
@@ -8104,15 +8194,15 @@ function WorkspacePage() {
         const filtered = arr.map(keepNonEmpty).filter((u): u is string => !!u);
         return filtered.length > 0 ? filtered : undefined;
       };
-      // 审核状态只保存 HTTP(S) URL，严禁把 base64 / data: 图片再写进 workspace_data。
+      // 素材入库状态按视频模型 + HTTP(S) URL 保存，严禁把 base64 / data: 图片写进 workspace_data。
       const persistedImageReviews = Object.fromEntries(
-        Object.entries(imageReviews).filter(([url, review]) =>
-          isHttpImageUrl(url) && review.status !== "pending",
+        Object.entries(imageReviews).filter(([key, review]) =>
+          !!imageAssetUrlFromKey(key) && review.status !== "pending",
         ),
       );
       const persistedImageReviewAliases = Object.fromEntries(
-        Object.entries(imageReviewAliases).filter(([displayUrl, sourceUrl]) =>
-          isHttpImageUrl(displayUrl) && isHttpImageUrl(sourceUrl),
+        Object.entries(imageReviewAliases).filter(([displayKey, sourceKey]) =>
+          !!imageAssetUrlFromKey(displayKey) && !!imageAssetUrlFromKey(sourceKey),
         ),
       );
       const workspaceData: Record<string, unknown> = {
@@ -8292,13 +8382,15 @@ function WorkspacePage() {
       .map(([k, arr]) => `${k}:${(arr ?? []).map((v) => v.status).join(",")}`)
       .join("|"),
     imageReviews: Object.entries(imageReviews)
-      .filter(([url]) => isHttpImageUrl(url))
-      .map(([url, review]) => `${url}:${review.status}:${review.error ?? ""}`)
+      .filter(([key]) => !!imageAssetUrlFromKey(key))
+      .map(([key, review]) => `${key}:${review.status}:${review.error ?? ""}`)
       .sort()
       .join("|"),
     imageReviewAliases: Object.entries(imageReviewAliases)
-      .filter(([displayUrl, sourceUrl]) => isHttpImageUrl(displayUrl) && isHttpImageUrl(sourceUrl))
-      .map(([displayUrl, sourceUrl]) => `${displayUrl}:${sourceUrl}`)
+      .filter(([displayKey, sourceKey]) =>
+        !!imageAssetUrlFromKey(displayKey) && !!imageAssetUrlFromKey(sourceKey),
+      )
+      .map(([displayKey, sourceKey]) => `${displayKey}:${sourceKey}`)
       .sort()
       .join("|"),
   });
@@ -10059,9 +10151,11 @@ function WorkspacePage() {
                                         <ImageReviewBadge
                                           status={getImageReview(coverUrl)?.status}
                                           error={getImageReview(coverUrl)?.error}
+                                          unsupported={!videoAssetLibrarySupport.supported}
+                                          unsupportedMessage={videoAssetLibrarySupport.message}
                                           position="bottom-right"
                                           onRequestReview={() => {
-                                            if (coverUrl) requestImageReview(coverUrl, `scene-${s.id}`);
+                                            if (coverUrl) requestImageReview(coverUrl, `scene-${s.id}`, true);
                                           }}
                                         />
                                       </>
@@ -10339,9 +10433,11 @@ function WorkspacePage() {
                                         <ImageReviewBadge
                                           status={getImageReview(coverUrl)?.status}
                                           error={getImageReview(coverUrl)?.error}
+                                          unsupported={!videoAssetLibrarySupport.supported}
+                                          unsupportedMessage={videoAssetLibrarySupport.message}
                                           position="bottom-right"
                                           onRequestReview={() => {
-                                            if (coverUrl) requestImageReview(coverUrl, `prop-${p.id}`);
+                                            if (coverUrl) requestImageReview(coverUrl, `prop-${p.id}`, true);
                                           }}
                                         />
                                       </>
@@ -10752,13 +10848,15 @@ function WorkspacePage() {
                                                 charImages[imageKey]!.at(-1),
                                             )?.error
                                           }
+                                          unsupported={!videoAssetLibrarySupport.supported}
+                                          unsupportedMessage={videoAssetLibrarySupport.message}
                                           position="bottom-right"
                                           onRequestReview={() => {
                                             const coverUrl =
                                               selectedCharImages[imageKey] ||
                                               charImages[imageKey]!.at(-1);
                                             if (coverUrl)
-                                              requestImageReview(coverUrl, `character-${c.id}`);
+                                              requestImageReview(coverUrl, `character-${c.id}`, true);
                                           }}
                                         />
                                       </>
@@ -11853,10 +11951,13 @@ function WorkspacePage() {
                                           <ImageReviewBadge
                                             status={getImageReview(currentUrl)?.status}
                                             error={getImageReview(currentUrl)?.error}
+                                            unsupported={!videoAssetLibrarySupport.supported}
+                                            unsupportedMessage={videoAssetLibrarySupport.message}
                                             onRequestReview={() =>
                                               requestImageReview(
                                                 currentUrl,
                                                 `shot-${g.id}-${s.id}`,
+                                                true,
                                               )
                                             }
                                           />
@@ -12026,10 +12127,13 @@ function WorkspacePage() {
                                 <ImageReviewBadge
                                   status={getImageReview(getActiveStoryboard(g.id)!.url)?.status}
                                   error={getImageReview(getActiveStoryboard(g.id)!.url)?.error}
+                                  unsupported={!videoAssetLibrarySupport.supported}
+                                  unsupportedMessage={videoAssetLibrarySupport.message}
                                   onRequestReview={() =>
                                     requestImageReview(
                                       getActiveStoryboard(g.id)!.url,
                                       `storyboard-${g.id}`,
+                                      true,
                                     )
                                   }
                                 />

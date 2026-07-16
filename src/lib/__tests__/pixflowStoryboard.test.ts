@@ -19,6 +19,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 
 import { callPixflowImage } from "../pixflow.functions";
+import { callLingmengImage } from "../lingmengImage.functions";
 import { IMAGE_MODELS } from "../imageModels";
 
 const ARK_HOST = "ark.cn-beijing.volces.com";
@@ -94,6 +95,7 @@ function installFetchSpy(opts: {
 
 beforeEach(() => {
   process.env.PIXFLOW_API_KEY = "test-pixflow-key";
+  process.env.LINGMENG_API_KEY = "test-lingmeng-key";
   // 确保 seedream.functions.ts 里的 getArkConfig 看到 key,
   // 否则路由失败会以 "ARK_API_KEY not configured" 提前 short-circuit,
   // 掩盖真正想验证的"绝不打 ARK"语义。
@@ -180,12 +182,31 @@ describe("UI 模型清单 —— 不允许裸 openai/gpt-image-2", () => {
     //   2) 凡是 pixflow 提供的图像模型,key 必须带 pixflow/ 前缀
     const pixflowEntries = IMAGE_MODELS.filter((m) => /gemini-.*image|gpt-image/i.test(m.key));
     for (const m of pixflowEntries) {
-      // 允许两种合法形态:legacy(openai/* 或 google/*)+ pixflow/ 前缀
+      // 允许已注册供应商前缀，避免无前缀模型误路由到 ARK。
       const isLegacyVendor = m.key.startsWith("openai/") || m.key.startsWith("google/");
       const isPixflow = m.key.startsWith("pixflow/");
+      const isRegisteredGateway = [
+        "claude360/",
+        "revora/",
+        "tokenflash/",
+        "aigcfamily/",
+        "shuci/",
+        "aitokenvibe/",
+        "thhtcloud/",
+        "ailinzi/",
+        "tokenhub/",
+        "agentearth/",
+        "nagora/",
+        "meridian/",
+        "confluo/",
+        "lingmeng/",
+        "vapeur/",
+        "azure/",
+        "azure2/",
+      ].some((prefix) => m.key.startsWith(prefix));
       expect(
-        isLegacyVendor || isPixflow,
-        `图像模型 id 必须是 legacy(openai/google) 或 pixflow/ 前缀,但得到: ${m.key}`,
+        isLegacyVendor || isPixflow || isRegisteredGateway,
+        `图像模型 id 必须是 legacy 或已注册供应商前缀,但得到: ${m.key}`,
       ).toBe(true);
     }
     expect(IMAGE_MODELS.some((m) => m.key === "pixflow/gpt-image-2")).toBe(true);
@@ -218,6 +239,49 @@ describe("UI 模型清单 —— 不允许裸 openai/gpt-image-2", () => {
       expect(arkIdx, `${handler} 仍保留 ARK 兜底`).toBeGreaterThan(0);
       expect(normalizeIdx).toBeLessThan(arkIdx);
     }
+  });
+});
+
+describe("callLingmengImage — 文生图路由", () => {
+  it("命中灵梦 generations、携带 Bearer 鉴权并解析 b64_json", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ data: [{ b64_json: FAKE_PNG_B64 }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    const result = await callLingmengImage({
+      prompt: "a tiny red apple",
+      model: "lingmeng/gpt-image-2",
+      size: "3840x2160",
+    });
+
+    expect(result.error).toBeNull();
+    expect(result.url).toBe(`data:image/png;base64,${FAKE_PNG_B64}`);
+    expect(fetchSpy).toHaveBeenCalledOnce();
+    const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("https://1189.xin/v1/images/generations");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer test-lingmeng-key");
+    expect(JSON.parse(init.body as string)).toMatchObject({
+      model: "gpt-image-2",
+      prompt: "a tiny red apple",
+      size: "1536x1024",
+      quality: "auto",
+      n: 1,
+    });
+  });
+
+  it("携带参考图时明确拒绝，不发起会丢失参考图的文生图请求", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const result = await callLingmengImage({
+      prompt: "keep the subject",
+      model: "lingmeng/gpt-image-2",
+      referenceImages: ["https://cdn.example.com/ref.png"],
+    });
+
+    expect(result.error).toContain("不支持参考图编辑");
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
 

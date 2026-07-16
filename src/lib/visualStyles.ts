@@ -562,6 +562,8 @@ const VALID_T2I_MODELS = new Set<string>([
   "revora/gpt-image-2-low",
   // 汇流 Confluo gateway
   "confluo/gpt-image-2",
+  // 灵梦 Lingmeng gateway（仅文生图）
+  "lingmeng/gpt-image-2",
   // AIGCFamily gateway 前缀
   "aigcfamily/gpt-image-2",
   // Azure OpenAI 直连

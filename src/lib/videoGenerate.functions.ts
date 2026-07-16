@@ -3301,13 +3301,21 @@ async function persistAudioUrl(
   }
 }
 
+const VideoMediaUrl = z
+  .string()
+  .max(4_000)
+  .refine(
+    (value) => /^asset:\/\/[a-zA-Z0-9_-]+$/.test(value) || z.string().url().safeParse(value).success,
+    "素材 URL 必须为公网 URL 或 asset://asset_id",
+  );
+
 const GenerateVideoInput = z.object({
   prompt: z.string().min(1).max(10000),
   // 单张图生视频(图作为首帧 / 参考图)
-  imageUrl: z.string().url().optional(),
+  imageUrl: VideoMediaUrl.optional(),
   // 尾帧图(仅 2 张分镜图生成时使用,首帧+尾帧模式)
-  lastFrameImageUrl: z.string().url().optional(),
-  referenceImageUrls: z.array(z.string().url()).max(8).optional(),
+  lastFrameImageUrl: VideoMediaUrl.optional(),
+  referenceImageUrls: z.array(VideoMediaUrl).max(8).optional(),
   referenceVideoUrl: z.string().url().optional(),
   referenceAudioUrl: z.string().url().optional(),
   model: z.string().max(200).optional(),
@@ -3337,13 +3345,22 @@ export const generateVideo = createServerFn({ method: "POST" })
 
     // data: URI → 签名 URL:生图函数常返回 base64 data URI(单条数 MB),直接发给后端
     // 会撑爆请求体(kuaizi 落库 22001)或被后端拒绝。并行上传后替换成 https URL。
-    const persistResults = await Promise.all(
-      media.map((m) =>
-        persistDataUriUrl(m.url, supabase, userId, backend === "sdreal").then((r) => ({ m, r })),
-      ),
-    );
     const persistedMedia: DashScopeMediaItem[] = [];
-    for (const { m, r } of persistResults) {
+    for (const m of media) {
+      // asset:// 是同一渠道素材库的稳定引用，不能再下载或转存；也绝不允许跨渠道复用。
+      if (m.url.startsWith("asset://")) {
+        if (backend !== "topenrouter") {
+          return {
+            ok: false as const,
+            error: `[${backend}] 不能使用其他渠道的 asset:// 素材引用`,
+            taskId: undefined,
+            backend,
+          };
+        }
+        persistedMedia.push(m);
+        continue;
+      }
+      const r = await persistDataUriUrl(m.url, supabase, userId, backend === "sdreal");
       if (!r.ok) return { ok: false as const, error: r.error, taskId: undefined, backend };
       persistedMedia.push({ type: m.type, url: r.url });
     }

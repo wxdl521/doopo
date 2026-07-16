@@ -475,6 +475,16 @@ export const generateImage = createServerFn({ method: "POST" })
       });
       return __afterCall("confluo", { url: r.url, error: r.error, model: r.model });
     }
+    // 委托给灵梦 Lingmeng(OpenAI Images 兼容，仅 /v1/images/generations)
+    if (requested.toLowerCase().startsWith("lingmeng/")) {
+      const { callLingmengImage } = await import("./lingmengImage.functions");
+      const r = await callLingmengImage({
+        prompt: appendNegative(data.prompt, data.negativePrompt),
+        model: requested,
+        size: data.size,
+      });
+      return __afterCall("lingmeng", { url: r.url, error: r.error, model: r.model });
+    }
     // 委托给 legacy(老 Qwen / OpenRouter 路径)
     if (requested && !isSeedreamModel(requested)) {
       // 动态 import 避免循环引用

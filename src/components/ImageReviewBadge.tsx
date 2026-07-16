@@ -6,44 +6,56 @@ export function ImageReviewBadge({
   status,
   error,
   onRequestReview,
+  unsupported,
+  unsupportedMessage,
   position = "bottom-left",
 }: {
   status?: ImageReviewStatus;
   error?: string;
   onRequestReview?: () => void;
+  /** 当前视频渠道未接入可查询的素材库时，仍允许点击说明原因。 */
+  unsupported?: boolean;
+  unsupportedMessage?: string;
   position?: "bottom-left" | "bottom-right";
 }) {
   const content =
-    !status
+    unsupported
       ? {
-          label: "未审核",
+          label: "暂不支持入库",
+          className: "border-slate-300/40 bg-black/70 text-white hover:bg-black/85",
+          icon: <Upload size={11} />,
+          canRequest: true,
+        }
+      : !status
+      ? {
+          label: "未入库",
           className: "border-slate-300/40 bg-black/70 text-white hover:bg-black/85",
           icon: <Upload size={11} />,
           canRequest: true,
         }
       : status === "approved"
       ? {
-          label: "审核通过",
+          label: "已入库",
           className: "border-emerald-400/40 bg-emerald-500/90 text-white",
           icon: <CheckCircle2 size={11} />,
           canRequest: false,
         }
       : status === "rejected"
         ? {
-            label: "审核未通过",
+            label: "入库失败",
             className: "border-rose-400/40 bg-rose-500/90 text-white",
             icon: <XCircle size={11} />,
             canRequest: false,
           }
         : status === "error"
           ? {
-              label: "检测失败",
+              label: "入库失败",
               className: "border-amber-400/40 bg-amber-500/90 text-white hover:bg-amber-500",
               icon: <XCircle size={11} />,
               canRequest: true,
             }
           : {
-              label: "审核中",
+              label: "入库中",
               className: "border-slate-300/40 bg-black/70 text-white",
               icon: <Clock3 size={11} className="animate-pulse" />,
               canRequest: false,
@@ -52,7 +64,10 @@ export function ImageReviewBadge({
   const positionClassName =
     position === "bottom-right" ? "bottom-1.5 right-1.5" : "bottom-1.5 left-1.5";
   const className = `absolute ${positionClassName} z-20 inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium shadow-sm backdrop-blur-sm ${content.className}`;
-  const title = content.canRequest && onRequestReview ? "点击上传审核" : error || content.label;
+  const title =
+    content.canRequest && onRequestReview
+      ? unsupportedMessage || "点击上传入库"
+      : error || content.label;
 
   if (content.canRequest && onRequestReview) {
     return (
