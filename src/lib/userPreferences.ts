@@ -19,6 +19,10 @@
 const KEY_PREFIX = "doopoo.userPrefs.";
 
 export type UserPrefs = {
+  /** 最近一次保存时选择的画幅 */
+  lastAspect?: string;
+  /** 最近一次保存时选择的分镜图模型 */
+  lastStoryboardModel?: string;
   /** 最近一次选的分镜图模型(sceneModel / storyboardModel) */
   lastSceneModel?: string;
   /** 最近一次选的图像模型(目前和 sceneModel 同源,留作未来拆分) */
@@ -33,6 +37,10 @@ export type UserPrefs = {
   lastWorkflow?: string;
   /** 最近一次选的音频策略 */
   lastAudio?: "on" | "off";
+  /** 最近一次保存时选择的角色国籍 */
+  lastCharacterNationality?: string;
+  /** 最近一次保存的自定义风格描述 */
+  lastCustomStyle?: string;
   /** 上次更新 ISO 时间(用于审计 / 后续可能的"过期清理") */
   updatedAt?: string;
 };
@@ -51,6 +59,10 @@ export function loadUserPrefs(userId: string | null | undefined): UserPrefs {
     const parsed = JSON.parse(raw) as UserPrefs;
     // 防御:只挑合法字段返回,防止 localStorage 被外部污染
     return {
+      ...(typeof parsed.lastAspect === "string" ? { lastAspect: parsed.lastAspect } : {}),
+      ...(typeof parsed.lastStoryboardModel === "string"
+        ? { lastStoryboardModel: parsed.lastStoryboardModel }
+        : {}),
       ...(typeof parsed.lastSceneModel === "string"
         ? { lastSceneModel: parsed.lastSceneModel }
         : {}),
@@ -67,6 +79,12 @@ export function loadUserPrefs(userId: string | null | undefined): UserPrefs {
       ...(typeof parsed.lastWorkflow === "string" ? { lastWorkflow: parsed.lastWorkflow } : {}),
       ...(parsed.lastAudio === "on" || parsed.lastAudio === "off"
         ? { lastAudio: parsed.lastAudio }
+        : {}),
+      ...(typeof parsed.lastCharacterNationality === "string"
+        ? { lastCharacterNationality: parsed.lastCharacterNationality }
+        : {}),
+      ...(typeof parsed.lastCustomStyle === "string"
+        ? { lastCustomStyle: parsed.lastCustomStyle }
         : {}),
     };
   } catch {

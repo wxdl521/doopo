@@ -1,17 +1,7 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import {
-  Sparkles,
-  Grid3x3,
-  GitBranch,
-  Zap,
-  Video,
-  X,
-  Check,
-  Flame,
-  Clock,
-} from "lucide-react";
+import { Sparkles, Grid3x3, GitBranch, Zap, Video, X, Check, Flame, Clock } from "lucide-react";
 import { Dialog, DialogContent, DialogTrigger } from "./ui/dialog";
 import { useLanguage } from "../i18n/LanguageContext";
 import { IMAGE_MODELS } from "../lib/imageModels";
@@ -466,9 +456,10 @@ const styles = [
 ];
 
 // ISO 3166-1 全部国家/地区；借助浏览器的本地化名称避免手工维护翻译表。
-const countryCodes = `AF AX AL DZ AS AD AO AI AQ AG AR AM AW AU AT AZ BS BH BD BB BY BE BZ BJ BM BT BO BQ BA BW BV BR IO BN BG BF BI CV KH CM CA KY CF TD CL CN CX CC CO KM CG CD CK CR CI HR CU CW CY CZ DK DJ DM DO EC EG SV GQ ER EE SZ ET FK FO FJ FI FR GF PF TF GA GM GE DE GH GI GR GL GD GP GU GT GG GN GW GY HT HM VA HN HK HU IS IN ID IR IQ IE IM IL IT JM JP JE JO KZ KE KI KP KR KW KG LA LV LB LS LR LY LI LT LU MO MG MW MY MV ML MT MH MQ MR MU YT MX FM MD MC MN ME MS MA MZ MM NA NR NP NL NC NZ NI NE NG NU NF MK MP NO OM PK PW PS PA PG PY PE PH PN PL PT PR QA RE RO RU RW BL SH KN LC MF PM VC WS SM ST SA SN RS SC SL SG SX SK SI SB SO ZA GS SS ES LK SD SR SJ SE CH SY TW TJ TZ TH TL TG TK TO TT TN TR TM TC TV UG UA AE GB US UM UY UZ VU VE VN VG VI WF EH YE ZM ZW`.split(
-  " ",
-);
+const countryCodes =
+  `AF AX AL DZ AS AD AO AI AQ AG AR AM AW AU AT AZ BS BH BD BB BY BE BZ BJ BM BT BO BQ BA BW BV BR IO BN BG BF BI CV KH CM CA KY CF TD CL CN CX CC CO KM CG CD CK CR CI HR CU CW CY CZ DK DJ DM DO EC EG SV GQ ER EE SZ ET FK FO FJ FI FR GF PF TF GA GM GE DE GH GI GR GL GD GP GU GT GG GN GW GY HT HM VA HN HK HU IS IN ID IR IQ IE IM IL IT JM JP JE JO KZ KE KI KP KR KW KG LA LV LB LS LR LY LI LT LU MO MG MW MY MV ML MT MH MQ MR MU YT MX FM MD MC MN ME MS MA MZ MM NA NR NP NL NC NZ NI NE NG NU NF MK MP NO OM PK PW PS PA PG PY PE PH PN PL PT PR QA RE RO RU RW BL SH KN LC MF PM VC WS SM ST SA SN RS SC SL SG SX SK SI SB SO ZA GS SS ES LK SD SR SJ SE CH SY TW TJ TZ TH TL TG TK TO TT TN TR TM TC TV UG UA AE GB US UM UY UZ VU VE VN VG VI WF EH YE ZM ZW`.split(
+    " ",
+  );
 const countryNames = new Intl.DisplayNames(["zh-CN"], { type: "region" });
 const characterNationalities = countryCodes
   .map((code) => countryNames.of(code) ?? code)
@@ -505,10 +496,8 @@ export function NewProjectDialog({
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
   /**
-   * 2026/06:从父组件传入的"当前值"。
-   *   - 用于编辑现有项目(基础设置按钮打开)—— state 初值用项目当前设置
-   *     而不是 userPrefs,避免用户看到"我一开始选的 pixflow"被覆盖成"上次选的"
-   *   - 不传 = 新建模式,初值走 userPrefs → 硬编码 fallback
+   * 从父组件传入的项目当前值。仅在用户还没有保存过个人偏好时作为 fallback；
+   * 基础设置所有字段默认优先使用用户上一次成功保存的设置。
    *   - 传了 initial.id = 编辑模式,confirm 时 upsert 同 id,不 navigate
    */
   initial?: Partial<ProjectConfig> & { id?: string };
@@ -530,16 +519,15 @@ export function NewProjectDialog({
     onOpenChange?.(v);
   };
 
-  // 2026/06:per-user 上次选择 —— 打开弹窗瞬间从 localStorage 读出来作为默认。
-  // 没登录 / 没历史 → 用硬编码默认。避免每次建项目都从 Seedream 重新选。
-  // 编辑现有项目时,initial 优先级 > userPrefs,确保用户看到的是项目当前设置。
+  // 每个用户的最近一次「成功保存」设置。没有历史时才回退到当前项目或硬编码默认。
   const initialPrefs = useMemo(() => loadUserPrefs(userId), [userId]);
   const pickScene = () => {
     const candidates = [
+      initialPrefs.lastSceneModel,
+      initialPrefs.lastStoryboardModel,
+      initialPrefs.lastImageModel,
       initial?.sceneModel,
       initial?.storyboardModel,
-      initialPrefs.lastSceneModel,
-      initialPrefs.lastImageModel,
       "doubao-seedream-5-0-260128",
     ];
     for (const c of candidates) {
@@ -549,8 +537,8 @@ export function NewProjectDialog({
   };
   const pickVideo = () => {
     const candidates = [
-      initial?.videoModel,
       initialPrefs.lastVideoModel,
+      initial?.videoModel,
       "doubao-seedance-2-0-260128",
     ];
     for (const c of candidates) {
@@ -558,11 +546,49 @@ export function NewProjectDialog({
     }
     return realVideoModels[0]?.id ?? "doubao-seedance-2-0-260128";
   };
-  const [aspect, setAspect] = useState(() => initial?.aspect ?? "16:9");
+  const pickStoryboard = () => {
+    const candidates = [
+      initialPrefs.lastStoryboardModel,
+      initialPrefs.lastSceneModel,
+      initialPrefs.lastImageModel,
+      initial?.storyboardModel,
+      initial?.sceneModel,
+      "doubao-seedream-5-0-260128",
+    ];
+    for (const c of candidates) {
+      if (c && isVisibleImage(c)) return c;
+    }
+    return realImageModelOptions[0]?.id ?? "doubao-seedream-5-0-260128";
+  };
+  const pickAspect = () => {
+    const candidates = [initialPrefs.lastAspect, initial?.aspect, "16:9"];
+    return candidates.find((candidate) => aspects.some((aspect) => aspect.id === candidate))!;
+  };
+  const pickNationality = () => {
+    const candidates = [
+      initialPrefs.lastCharacterNationality,
+      initial?.characterNationality,
+      "中国",
+    ];
+    return candidates.find((candidate) => orderedCharacterNationalities.includes(candidate!))!;
+  };
+  const pickWorkflow = () => {
+    const candidates = [initialPrefs.lastWorkflow, initial?.workflow, "grid"];
+    return candidates.find((candidate) => workflows.some((workflow) => workflow.id === candidate))!;
+  };
+  const pickStyle = () => {
+    const candidates = [initialPrefs.lastStyle, initial?.style, "3d-cg"];
+    return candidates.find(
+      (candidate) => candidate === "custom" || styles.some((style) => style.id === candidate),
+    )!;
+  };
+  const [aspect, setAspect] = useState(pickAspect);
   const [customCover] = useState<string | null>(() => initial?.customCover ?? null);
-  const [customStyle, setCustomStyle] = useState(() => initial?.customStyle ?? "");
+  const [customStyle, setCustomStyle] = useState(
+    () => initialPrefs.lastCustomStyle ?? initial?.customStyle ?? "",
+  );
   // 2026 重构:默认全走火山方舟 Seedream(图像) + 阿里 HappyHorse(视频,实测可用)
-  const [storyboardModel, setStoryboardModel] = useState(pickScene);
+  const [storyboardModel, setStoryboardModel] = useState(pickStoryboard);
   // Seedream 统一支持 T2I + I2I,没有 qwen-image-2.0-pro 那样的"I2I-only"坑
   const [sceneModel, setSceneModel] = useState(pickScene);
   // 2026/06:视频默认走火山方舟 Seedance 2.0 —— ARK 账户已开通,cURL 已验证
@@ -570,29 +596,18 @@ export function NewProjectDialog({
   const [videoModel, setVideoModel] = useState(pickVideo);
   // 视频输出分辨率(480P/720P/1080P) -- 仅丽帧 / Seedance 2.0 系列可选,默认 720P
   const [resolution, setResolution] = useState(
-    () => initial?.resolution ?? initialPrefs.lastResolution ?? "720P",
+    () => initialPrefs.lastResolution ?? initial?.resolution ?? "720P",
   );
   const [audio, setAudio] = useState<"on" | "off">(
-    () => initial?.audio ?? initialPrefs.lastAudio ?? "on",
+    () => initialPrefs.lastAudio ?? initial?.audio ?? "on",
   );
-  const [characterNationality, setCharacterNationality] = useState(
-    () => initial?.characterNationality ?? "中国",
-  );
-  const [workflow, setWorkflow] = useState(
-    () => initial?.workflow ?? initialPrefs.lastWorkflow ?? "grid",
-  );
-  const [style, setStyle] = useState(() => initial?.style ?? initialPrefs.lastStyle ?? "3d-cg");
+  const [characterNationality, setCharacterNationality] = useState(pickNationality);
+  const [workflow, setWorkflow] = useState(pickWorkflow);
+  const [style, setStyle] = useState(pickStyle);
 
-  // 用户改任何一个字段 → 写回 localStorage(per-user key)。
-  // 这样下次开弹窗,无论换浏览器还是换账号,都能恢复到对应用户的偏好。
-  useEffect(() => {
-    if (!userId) return;
-    saveUserPrefs(userId, { lastSceneModel: sceneModel });
-  }, [sceneModel, userId]);
-  useEffect(() => {
-    if (!userId) return;
-    saveUserPrefs(userId, { lastVideoModel: videoModel });
-  }, [videoModel, userId]);
+  // 弹窗本身常在页面首屏就挂载，此时认证信息可能尚未恢复。每次打开后再读取
+  // 偏好，既能避开这个 race，也让用户每次都看到最近一次成功保存的完整配置。
+  const initializedForOpenRef = useRef(false);
   // 切换视频模型时,若当前 resolution 不在新模型支持的档位内,回落到 720P。
   // 避免存了 1080P 后切到 fast/mini 触发后端"不支持该分辨率"报错。
   useEffect(() => {
@@ -602,21 +617,64 @@ export function NewProjectDialog({
     }
   }, [videoModel, resolution]);
   useEffect(() => {
-    if (!userId) return;
-    saveUserPrefs(userId, { lastResolution: resolution });
-  }, [resolution, userId]);
-  useEffect(() => {
-    if (!userId) return;
-    saveUserPrefs(userId, { lastAudio: audio });
-  }, [audio, userId]);
-  useEffect(() => {
-    if (!userId) return;
-    saveUserPrefs(userId, { lastWorkflow: workflow });
-  }, [workflow, userId]);
-  useEffect(() => {
-    if (!userId) return;
-    saveUserPrefs(userId, { lastStyle: style });
-  }, [style, userId]);
+    if (!open) {
+      initializedForOpenRef.current = false;
+      return;
+    }
+    if (authLoading || initializedForOpenRef.current) return;
+    initializedForOpenRef.current = true;
+    const prefs = loadUserPrefs(userId);
+    const chooseImage = (...candidates: Array<string | undefined>) =>
+      candidates.find((candidate) => candidate && isVisibleImage(candidate)) ??
+      realImageModelOptions[0]?.id ??
+      "doubao-seedream-5-0-260128";
+    const chooseVideo = (...candidates: Array<string | undefined>) =>
+      candidates.find((candidate) => candidate && isVisibleVideo(candidate)) ??
+      realVideoModels[0]?.id ??
+      "doubao-seedance-2-0-260128";
+    setAspect(
+      [prefs.lastAspect, initial?.aspect, "16:9"].find((value) =>
+        aspects.some((item) => item.id === value),
+      )!,
+    );
+    setStoryboardModel(
+      chooseImage(
+        prefs.lastStoryboardModel,
+        prefs.lastSceneModel,
+        prefs.lastImageModel,
+        initial?.storyboardModel,
+        initial?.sceneModel,
+      ),
+    );
+    setSceneModel(
+      chooseImage(
+        prefs.lastSceneModel,
+        prefs.lastStoryboardModel,
+        prefs.lastImageModel,
+        initial?.sceneModel,
+        initial?.storyboardModel,
+      ),
+    );
+    setVideoModel(chooseVideo(prefs.lastVideoModel, initial?.videoModel));
+    setResolution(prefs.lastResolution ?? initial?.resolution ?? "720P");
+    setAudio(prefs.lastAudio ?? initial?.audio ?? "on");
+    setCharacterNationality(
+      [prefs.lastCharacterNationality, initial?.characterNationality, "中国"].find((value) =>
+        orderedCharacterNationalities.includes(value!),
+      )!,
+    );
+    setWorkflow(
+      [prefs.lastWorkflow, initial?.workflow, "grid"].find((value) =>
+        workflows.some((item) => item.id === value),
+      )!,
+    );
+    setStyle(
+      [prefs.lastStyle, initial?.style, "3d-cg"].find(
+        (value) => value === "custom" || styles.some((item) => item.id === value),
+      )!,
+    );
+    setCustomStyle(prefs.lastCustomStyle ?? initial?.customStyle ?? "");
+  }, [authLoading, initial, open, userId]);
 
   const estimate = aspects.find((a) => a.id === aspect)?.cost ?? 11;
   // 分辨率档位标签(480P/720P/1080P -> i18n) + 当前模型可选档位
@@ -752,9 +810,23 @@ export function NewProjectDialog({
       toast.error(`保存项目配置失败${message ? `: ${message}` : "，请稍后重试"}`);
       return;
     }
+    // 只在服务端持久化成功后更新默认值；取消弹窗、保存失败或仅试选都不会影响
+    // 用户下次打开「基础设置」时看到的选择。
+    saveUserPrefs(userId, {
+      lastAspect: aspect,
+      lastStoryboardModel: storyboardModel,
+      lastSceneModel: sceneModel,
+      lastImageModel: sceneModel,
+      lastVideoModel: videoModel,
+      lastResolution: resolution,
+      lastAudio: audio,
+      lastCharacterNationality: characterNationality,
+      lastWorkflow: workflow,
+      lastStyle: style,
+      lastCustomStyle: customStyle,
+    });
     if (isEdit) {
       // 编辑模式:仅关闭弹窗,把保存后的结果回传给父组件(刷新 project state)。
-      // 不要写 userPrefs —— 上次选择语义不变,避免覆盖另一个项目的设置。
       onSaved?.({
         id,
         aspect,
@@ -964,7 +1036,10 @@ export function NewProjectDialog({
               onClick={() => setStyle("custom")}
               className={`col-span-2 sm:col-span-4 flex cursor-text items-center gap-2 rounded-xl border-2 bg-bg-elevated px-3 py-2 transition ${style === "custom" ? "border-accent shadow-glow" : "border-dashed border-border hover:border-accent/60"}`}
             >
-              <Sparkles size={15} className={style === "custom" ? "text-accent" : "text-text-muted"} />
+              <Sparkles
+                size={15}
+                className={style === "custom" ? "text-accent" : "text-text-muted"}
+              />
               <input
                 value={customStyle}
                 onFocus={() => setStyle("custom")}
@@ -1025,9 +1100,7 @@ function FieldSelect({
   return (
     <div>
       <div className="text-sm font-semibold">{label}</div>
-      <div
-        className={`${hintClassName ?? "min-h-[2.75rem]"} mb-1 text-[11px] text-text-muted`}
-      >
+      <div className={`${hintClassName ?? "min-h-[2.75rem]"} mb-1 text-[11px] text-text-muted`}>
         {hint}
       </div>
       <div className="relative">
