@@ -355,7 +355,8 @@ export const generateImage = createServerFn({ method: "POST" })
     if (
       requested.toLowerCase().startsWith("azure/") ||
       requested.toLowerCase().startsWith("azure2/") ||
-      requested.toLowerCase().startsWith("azure3/")
+      requested.toLowerCase().startsWith("azure3/") ||
+      requested.toLowerCase().startsWith("azure0716/")
     ) {
       const { callAzureImage } = await import("./azureImage.functions");
       const r = await callAzureImage({
@@ -363,7 +364,12 @@ export const generateImage = createServerFn({ method: "POST" })
         model: requested,
         size: data.size,
       });
-      return __afterCall("azure", { url: r.url, error: r.error, model: r.model, meta: r.meta } as any);
+      return __afterCall("azure", {
+        url: r.url,
+        error: r.error,
+        model: r.model,
+        meta: r.meta,
+      } as any);
     }
     // 委托给 OneToken(OpenAI 兼容,api.onetoken.one)
     if (requested.toLowerCase().startsWith("onetoken/")) {
@@ -1023,7 +1029,8 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
     if (
       requested.toLowerCase().startsWith("azure/") ||
       requested.toLowerCase().startsWith("azure2/") ||
-      requested.toLowerCase().startsWith("azure3/")
+      requested.toLowerCase().startsWith("azure3/") ||
+      requested.toLowerCase().startsWith("azure0716/")
     ) {
       const { callAzureImage } = await import("./azureImage.functions");
       const r = await callAzureImage({
@@ -1462,7 +1469,8 @@ export const generateStoryboardShotImage = createServerFn({ method: "POST" })
     if (
       requested.toLowerCase().startsWith("azure/") ||
       requested.toLowerCase().startsWith("azure2/") ||
-      requested.toLowerCase().startsWith("azure3/")
+      requested.toLowerCase().startsWith("azure3/") ||
+      requested.toLowerCase().startsWith("azure0716/")
     ) {
       const { callAzureImage } = await import("./azureImage.functions");
       const r = await callAzureImage({
@@ -1837,7 +1845,8 @@ export const regenerateStoryboardShot = createServerFn({ method: "POST" })
     if (
       requested.toLowerCase().startsWith("azure/") ||
       requested.toLowerCase().startsWith("azure2/") ||
-      requested.toLowerCase().startsWith("azure3/")
+      requested.toLowerCase().startsWith("azure3/") ||
+      requested.toLowerCase().startsWith("azure0716/")
     ) {
       const { callAzureImage } = await import("./azureImage.functions");
       const r = await callAzureImage({
@@ -2424,7 +2433,8 @@ export const generateStoryboardPitchDeck = createServerFn({ method: "POST" })
     if (
       requested.toLowerCase().startsWith("azure/") ||
       requested.toLowerCase().startsWith("azure2/") ||
-      requested.toLowerCase().startsWith("azure3/")
+      requested.toLowerCase().startsWith("azure3/") ||
+      requested.toLowerCase().startsWith("azure0716/")
     ) {
       const { callAzureImage } = await import("./azureImage.functions");
       const r = await callAzureImage({
@@ -2839,37 +2849,44 @@ export const regenerateStoryboardPitchDeck = createServerFn({ method: "POST" })
                               ? await (
                                   await import("./ailinziImage.functions")
                                 ).callAilinziImage(providerInput)
-                                : modulePath === "./vapeurImage.functions"
+                              : modulePath === "./vapeurImage.functions"
+                                ? await (
+                                    await import("./vapeurImage.functions")
+                                  ).callVapeurImage(providerInput)
+                                : modulePath === "./agentearthImage.functions"
                                   ? await (
-                                      await import("./vapeurImage.functions")
-                                    ).callVapeurImage(providerInput)
-                                  : modulePath === "./agentearthImage.functions"
-                                    ? await (
-                                        await import("./agentearthImage.functions")
-                                      ).callAgentEarthImage(providerInput)
+                                      await import("./agentearthImage.functions")
+                                    ).callAgentEarthImage(providerInput)
                                   : modulePath === "./tokenhubImage.functions"
-                                  ? await (
-                                      await import("./tokenhubImage.functions")
-                                    ).callTokenhubImage(providerInput)
-                                  : modulePath === "./nagoraImage.functions"
                                     ? await (
-                                        await import("./nagoraImage.functions")
-                                      ).callNagoraImage(providerInput)
-                                    : modulePath === "./meridianImage.functions"
+                                        await import("./tokenhubImage.functions")
+                                      ).callTokenhubImage(providerInput)
+                                    : modulePath === "./nagoraImage.functions"
                                       ? await (
-                                          await import("./meridianImage.functions")
-                                        ).callMeridianImage(providerInput)
-                                      : modulePath === "./confluoImage.functions"
+                                          await import("./nagoraImage.functions")
+                                        ).callNagoraImage(providerInput)
+                                      : modulePath === "./meridianImage.functions"
                                         ? await (
-                                            await import("./confluoImage.functions")
-                                          ).callConfluoImage(providerInput)
-                                        : null;
+                                            await import("./meridianImage.functions")
+                                          ).callMeridianImage(providerInput)
+                                        : modulePath === "./confluoImage.functions"
+                                          ? await (
+                                              await import("./confluoImage.functions")
+                                            ).callConfluoImage(providerInput)
+                                          : null;
       if (!result) return { ok: false as const, error: `${functionName} 路由未找到` };
       if (!result.url) return { ok: false as const, error: result.error || `${label} 未返回图片` };
-      return { ok: true as const, url: result.url, model: result.model, meta: (result as any).meta };
+      return {
+        ok: true as const,
+        url: result.url,
+        model: result.model,
+        meta: (result as any).meta,
+      };
     }
     if (
-      ["azure/", "azure2/", "azure3/"].some((prefix) => requested.toLowerCase().startsWith(prefix))
+      ["azure/", "azure2/", "azure3/", "azure0716/"].some((prefix) =>
+        requested.toLowerCase().startsWith(prefix),
+      )
     ) {
       const { callAzureImage } = await import("./azureImage.functions");
       const result = await callAzureImage({
@@ -3423,7 +3440,8 @@ export const regenerateSceneImage = createServerFn({ method: "POST" })
     if (
       requested.toLowerCase().startsWith("azure/") ||
       requested.toLowerCase().startsWith("azure2/") ||
-      requested.toLowerCase().startsWith("azure3/")
+      requested.toLowerCase().startsWith("azure3/") ||
+      requested.toLowerCase().startsWith("azure0716/")
     ) {
       const { callAzureImage } = await import("./azureImage.functions");
       const r = await callAzureImage({

@@ -15,6 +15,7 @@ const IMAGE_CREDITS: { prefix: string; cost: number }[] = [
   { prefix: "azure/", cost: 9 },
   { prefix: "azure2/", cost: 9 },
   { prefix: "azure3/", cost: 9 },
+  { prefix: "azure0716/", cost: 9 },
 ];
 
 // 视频:模型 id -> { 分辨率 -> 每10秒单价 }

@@ -203,6 +203,11 @@ const imageModelOptions = [
     label: "Azure-gpt-image-2 (终结点)",
     sub: "9积分/张",
   },
+  {
+    id: "azure0716/gpt-image-2",
+    label: "Azure0716-gpt-image-2",
+    sub: "9积分/张",
+  },
 ];
 // 2026/07:图下拉只保留指定供应商(星标 + AIGC Family + 汇流 + Azure + 数安词源),
 // 其余(qwen/wan/pixflow/claude360/onetoken/otu 等)不显示。
@@ -211,6 +216,7 @@ const VISIBLE_IMAGE_PREFIXES = [
   "tokenflash/",
   "revora/",
   "azure2/",
+  "azure0716/",
   "tokenhub/", // 星标
   "agentearth/",
   "aigcfamily/",
@@ -724,6 +730,7 @@ export function NewProjectDialog({
     "tokenflash/",
     "revora/",
     "azure2/",
+    "azure0716/",
     "tokenhub/",
     "agentearth/",
   ];

@@ -570,6 +570,7 @@ const VALID_T2I_MODELS = new Set<string>([
   "azure/gpt-image-2",
   "azure2/gpt-image-2",
   "azure3/gpt-image-2",
+  "azure0716/gpt-image-2",
   // OneToken gateway
   "onetoken/gpt-image-2",
   // OTU gateway
@@ -622,6 +623,7 @@ const VALID_I2I_MODELS = new Set<string>([
   "azure/gpt-image-2",
   "azure2/gpt-image-2",
   "azure3/gpt-image-2",
+  "azure0716/gpt-image-2",
   "onetoken/gpt-image-2",
   "otu/gpt-image-2",
   "aitokenvibe/gpt-image-2",
@@ -649,6 +651,7 @@ const KNOWN_MODEL_PREFIXES = [
   "azure/",
   "azure2/",
   "azure3/",
+  "azure0716/",
   "onetoken/",
   "otu/",
   "aitokenvibe/",

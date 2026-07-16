@@ -204,6 +204,7 @@ describe("UI 模型清单 —— 不允许裸 openai/gpt-image-2", () => {
         "vapeur/",
         "azure/",
         "azure2/",
+        "azure0716/",
       ].some((prefix) => m.key.startsWith(prefix));
       expect(
         isLegacyVendor || isPixflow || isRegisteredGateway,

@@ -27,10 +27,15 @@ import { imageCost } from "./creditsCost";
 const DEFAULT_BASE_URL = "https://ywkjpolandcentral.cognitiveservices.azure.com";
 const T2I_API_VERSION = "2025-04-01-preview";
 const I2I_API_VERSION = "2025-04-01-preview";
+// Azure0716 generation is provisioned on the stable API, while Azure exposes
+// the image-edit route on the 2025-04-01-preview surface.
+const AZURE0716_T2I_API_VERSION = "2024-02-01";
+const AZURE0716_I2I_API_VERSION = "2025-04-01-preview";
 const IMAGE_REQUEST_TIMEOUT_MS = 600_000;
 const AZURE_PREFIX = "azure/";
 const AZURE2_PREFIX = "azure2/";
 const AZURE3_PREFIX = "azure3/";
+const AZURE0716_PREFIX = "azure0716/";
 
 export function isAzureModel(modelId: string | null | undefined): boolean {
   if (!modelId) return false;
@@ -38,12 +43,13 @@ export function isAzureModel(modelId: string | null | undefined): boolean {
   return (
     lower.startsWith(AZURE_PREFIX) ||
     lower.startsWith(AZURE2_PREFIX) ||
-    lower.startsWith(AZURE3_PREFIX)
+    lower.startsWith(AZURE3_PREFIX) ||
+    lower.startsWith(AZURE0716_PREFIX)
   );
 }
 
 export function stripAzurePrefix(modelId: string): string {
-  return modelId.replace(/^(azure|azure2|azure3)\//i, "");
+  return modelId.replace(/^(azure|azure2|azure3|azure0716)\//i, "");
 }
 
 function isAzure2Model(modelId: string): boolean {
@@ -54,13 +60,31 @@ function isAzure3Model(modelId: string): boolean {
   return modelId.toLowerCase().startsWith(AZURE3_PREFIX);
 }
 
+function isAzure0716Model(modelId: string): boolean {
+  return modelId.toLowerCase().startsWith(AZURE0716_PREFIX);
+}
+
 function getAzureConfig(modelId?: string) {
+  if (modelId && isAzure0716Model(modelId)) {
+    return {
+      apiKey: process.env.AZURE0716_API_KEY,
+      baseUrl: (process.env.AZURE0716_BASE_URL || "").replace(/\/+$/, ""),
+      auth: "bearer" as const,
+      t2iApiVersion: AZURE0716_T2I_API_VERSION,
+      i2iApiVersion: AZURE0716_I2I_API_VERSION,
+      supportsPartialImages: true,
+      envName: "AZURE0716_API_KEY",
+    };
+  }
   if (modelId && isAzure3Model(modelId)) {
     // azure3 是 services.ai.azure.com 资源,endpoint 与 azure/azure2 不同;
     // 缺 AZURE3_BASE_URL 不能 fallback 到 DEFAULT_BASE_URL(会打到错的资源),留空让调用方报错
     return {
       apiKey: process.env.AZURE3_API_KEY,
       baseUrl: (process.env.AZURE3_BASE_URL || "").replace(/\/+$/, ""),
+      auth: "api-key" as const,
+      supportsPartialImages: true,
+      envName: "AZURE3_API_KEY",
     };
   }
   if (modelId && isAzure2Model(modelId)) {
@@ -68,11 +92,17 @@ function getAzureConfig(modelId?: string) {
     return {
       apiKey: process.env.AZURE2_API_KEY,
       baseUrl: (process.env.AZURE2_BASE_URL || "").replace(/\/+$/, ""),
+      auth: "api-key" as const,
+      supportsPartialImages: true,
+      envName: "AZURE2_API_KEY",
     };
   }
   return {
     apiKey: process.env.AZURE_API_KEY,
     baseUrl: (process.env.AZURE_OPENAI_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, ""),
+    auth: "api-key" as const,
+    supportsPartialImages: true,
+    envName: "AZURE_API_KEY",
   };
 }
 
@@ -171,15 +201,17 @@ function toImageDataUrl(value: unknown): string {
   const raw = value.trim();
   if (!raw) return "";
   if (/^data:image\/[\w.+-]+;base64,/i.test(raw)) return raw;
-  // SSE 代理偶尔会在 base64 中插入换行；浏览器 data URL 不接受这些空白。
-  return `data:image/png;base64,${raw.replace(/\s/g, "")}`;
+  // SSE 代理偶尔会在 base64 中插入换行；没有空白时避免为高分辨率图复制整段 base64。
+  const normalized = /\s/.test(raw) ? raw.replace(/\s/g, "") : raw;
+  return `data:image/png;base64,${normalized}`;
 }
 
 function imageBytesAreValid(dataUrl: string): boolean {
-  const match = dataUrl.match(/^data:image\/[\w.+-]+;base64,([A-Za-z0-9+/=]+)$/i);
-  if (!match) return false;
-  const bytes = Buffer.from(match[1], "base64");
-  if (bytes.length < 12) return false;
+  const prefix = dataUrl.match(/^data:image\/[\w.+-]+;base64,([A-Za-z0-9+/=]{16,32})/i);
+  if (!prefix) return false;
+  // 只解码文件头。此前会把 4K 图片的整段 base64 再解码一次，导致大图 I2I
+  // 在返回阶段出现 RangeError/stack overflow；Azure 已对完整响应做过校验。
+  const bytes = Buffer.from(prefix[1], "base64");
   // GPT Image 的输出是 PNG 或 JPEG；在这里拒绝 HTML/JSON 等误被当作图片的响应。
   const isPng = bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47;
   const isJpeg = bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
@@ -231,20 +263,21 @@ function parseAzureImageItems(rawText: string): AzureImageItem[] {
 }
 
 export async function callAzureImage(input: AzureImageInput): Promise<AzureImageResult> {
-  const { apiKey, baseUrl } = getAzureConfig(input.model);
+  const { apiKey, baseUrl, auth, t2iApiVersion, i2iApiVersion, supportsPartialImages, envName } =
+    getAzureConfig(input.model);
   const deployment = stripAzurePrefix(input.model) || "gpt-image-2";
   const hasRefs = !!input.referenceImages?.length;
   // azure3 与 azure/azure2 一致,走 deployment 路径(/openai/deployments/{dep}/images/...?api-version=)。
   // services.ai.azure.com 虽也支持 /openai/v1/... 新路径,但只有 deployment 路径的调用进 Portal
   // 「Azure OpenAI Requests」指标——对方按该指标对账,v1 路径计量归属另一维度,对方查不到会误以为没调用。
-  const apiVersion = hasRefs ? I2I_API_VERSION : T2I_API_VERSION;
+  const apiVersion = hasRefs ? i2iApiVersion || I2I_API_VERSION : t2iApiVersion || T2I_API_VERSION;
   const path = hasRefs
     ? `/openai/deployments/${deployment}/images/edits`
     : `/openai/deployments/${deployment}/images/generations`;
   const url = `${baseUrl}${path}?api-version=${apiVersion}`;
   const size = normalizeAzureSize(input.size, deployment);
   const quality = normalizeAzureQuality(input.quality);
-  const streamPartialImages = input.stream ?? quality === "high";
+  const streamPartialImages = supportsPartialImages && (input.stream ?? quality === "high");
   const t0 = Date.now();
   const requestId = `azr_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
   const endpoint: "generations" | "edits" = hasRefs ? "edits" : "generations";
@@ -254,11 +287,11 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
   );
 
   if (!apiKey) {
-    console.warn(`[azure×] rid=${requestId} deployment=${deployment} missing AZURE_API_KEY`);
+    console.warn(`[azure×] rid=${requestId} deployment=${deployment} missing ${envName}`);
     return {
       url: "",
       urls: [],
-      error: "AZURE_API_KEY not configured",
+      error: `${envName} not configured`,
       model: deployment,
       meta: { ...baseMeta, durationMs: 0, status: 0, retries: 0 },
     };
@@ -276,6 +309,7 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), IMAGE_REQUEST_TIMEOUT_MS);
+  let stage = hasRefs ? "prepare-edits" : "prepare-generations";
   try {
     let requestInit: RequestInit;
     if (hasRefs) {
@@ -318,7 +352,7 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
       requestInit = {
         method: "POST",
         headers: {
-          "api-key": apiKey,
+          ...(auth === "bearer" ? { Authorization: `Bearer ${apiKey}` } : { "api-key": apiKey }),
           ...(streamPartialImages ? { Accept: "text/event-stream" } : {}),
         },
         body: form,
@@ -336,7 +370,7 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "api-key": apiKey,
+          ...(auth === "bearer" ? { Authorization: `Bearer ${apiKey}` } : { "api-key": apiKey }),
           ...(streamPartialImages ? { Accept: "text/event-stream" } : {}),
         },
         body: JSON.stringify(body),
@@ -348,6 +382,7 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
     let lastText = "";
     let retries = 0;
     for (let attempt = 0; attempt < 3; attempt++) {
+      stage = `request-${endpoint}`;
       res = await fetch(url, requestInit);
       if (res.ok) break;
       lastText = await res.text().catch(() => "");
@@ -397,12 +432,14 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
       };
     }
 
+    stage = "read-response";
     const rawText = await res.text();
     let json: any = {};
     try {
       json = JSON.parse(rawText);
     } catch {}
 
+    stage = "parse-response";
     const items = parseAzureImageItems(rawText);
     const urls = items
       .map((d) => {
@@ -471,12 +508,12 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
     clearTimeout(timeout);
     const dur = Date.now() - t0;
     console.warn(
-      `[azure×] rid=${requestId} deployment=${deployment} network dur=${dur}ms err=${e instanceof Error ? e.message : "fetch failed"}`,
+      `[azure×] rid=${requestId} deployment=${deployment} stage=${stage} dur=${dur}ms err=${e instanceof Error ? e.message : "fetch failed"}`,
     );
     return {
       url: "",
       urls: [],
-      error: `[azure ${deployment}] network: ${e instanceof Error ? e.message : "fetch failed"} (rid=${requestId})`,
+      error: `[azure ${deployment}] ${stage}: ${e instanceof Error ? e.message : "fetch failed"} (rid=${requestId})`,
       model: deployment,
       meta: { ...baseMeta, durationMs: dur, status: 0, retries: 0 },
     };
