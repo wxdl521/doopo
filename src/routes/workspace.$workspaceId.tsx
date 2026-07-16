@@ -1097,9 +1097,7 @@ function WorkspacePage() {
         .then((result) => {
           setImageReviews((current) => ({
             ...current,
-            [url]: result.ok
-              ? { status: "approved" }
-              : { status: "rejected", error: result.error || "素材未通过上游审核" },
+            [url]: { status, ...(error ? { error } : {}) },
           }));
         })
         .catch((error) => {
@@ -1107,6 +1105,12 @@ function WorkspacePage() {
             ...current,
             [url]: {
               status: "error",
+          const error = result.ok ? undefined : result.error || "素材审核未通过";
+          const status: ImageReviewStatus = result.ok
+            ? "approved"
+            : /status\s*=\s*failed|审核未通过|sensitive/i.test(error || "")
+              ? "rejected"
+              : "error";
               error: error instanceof Error ? error.message : "审核请求失败",
             },
           }));
@@ -1358,6 +1362,7 @@ function WorkspacePage() {
             updateCharImages((m) => ({ ...m, [imageKey]: [r.url] }));
           }
           savePrompt();
+      requestImageReview(tempUrl, `${kind}-${id}`);
           return { ok: true as const, url: r.url };
         }
         console.warn("[persist] persistAssetImage failed:", r.error);
@@ -1370,6 +1375,7 @@ function WorkspacePage() {
       updateCharImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), tempUrl] }));
     } else {
       updateCharImages((m) => ({ ...m, [imageKey]: [tempUrl] }));
+          requestImageReview(r.url, `${kind}-${id}`);
     }
     savePrompt();
     return { ok: false as const, url: tempUrl };
@@ -1384,6 +1390,7 @@ function WorkspacePage() {
       mode: "initial",
     },
   ) {
+    requestImageReview(tempUrl, `${kind}-${id}`);
     const append = (url: string) => {
       updateSceneImages((m) => ({ ...m, [s.id]: [...(m[s.id] ?? []), url] }));
       updateSceneImagePrompts((m) => ({
@@ -1405,6 +1412,7 @@ function WorkspacePage() {
           return { ok: true as const, url: r.url };
         }
       } catch {
+      requestImageReview(tempUrl, `scene-${s.id}`);
         /* 持久化失败 */
       }
     }
@@ -1414,6 +1422,7 @@ function WorkspacePage() {
 
   /** 服务端持久化道具图片 */
   async function persistPropImage(
+          requestImageReview(r.url, `scene-${s.id}`);
     p: GenProp,
     tempUrl: string,
     promptRecord: AssetImagePromptRecord = {
@@ -1421,6 +1430,7 @@ function WorkspacePage() {
       mode: "initial",
     },
   ) {
+    requestImageReview(tempUrl, `scene-${s.id}`);
     const append = (url: string) => {
       updatePropImages((m) => ({ ...m, [p.id]: [...(m[p.id] ?? []), url] }));
       updatePropImagePrompts((m) => ({
@@ -1442,6 +1452,7 @@ function WorkspacePage() {
           return { ok: true as const, url: r.url };
         }
       } catch {
+      requestImageReview(tempUrl, `prop-${p.id}`);
         /* 持久化失败 */
       }
     }
@@ -1451,6 +1462,7 @@ function WorkspacePage() {
   // processCharacter 入口 ref 守卫(2026/06):防止 useEffect 多次触发
   // 同一角色并发跑 processCharacter。state 的 busyChars 已经做了同样防御,
   // 但 ref 更可靠(不会因 React batching 漏掉)。
+          requestImageReview(r.url, `prop-${p.id}`);
   const processCharacterInFlightRef = useRef<Set<string>>(new Set());
   const [panelImages, setPanelImages] = useState<Record<string, string>>({});
   const [sceneImages, setSceneImages] = useState<Record<string, string[]>>({});
@@ -1458,6 +1470,7 @@ function WorkspacePage() {
     Record<string, AssetImagePromptRecord[]>
   >({});
   const sceneImagePromptsRef = useRef<Record<string, AssetImagePromptRecord[]>>({});
+    requestImageReview(tempUrl, `prop-${p.id}`);
   const updateSceneImagePrompts = (
     updater: (
       m: Record<string, AssetImagePromptRecord[]>,
@@ -3536,8 +3549,10 @@ function WorkspacePage() {
         toast.error(classifyError(res?.error, "生成失败"));
       }
     } catch {
+        requestImageReview(res.url, `character-${c.id}-${lk.id}`);
       toast.error(classifyError(undefined, "生成失败"));
     } finally {
+        aliasImageReview(res.url, displayUrl);
       setActiveImageKey((cur) => (cur === imageKey ? null : cur));
       setBusyChars((s) => {
         if (!s.has(c.id)) return s;
@@ -3606,8 +3621,10 @@ function WorkspacePage() {
       }
     } catch (e) {
       toast.error("重生失败");
+        requestImageReview(res.url, `character-${c.id}`);
     } finally {
       setRegenBusy(false);
+        aliasImageReview(res.url, displayUrl);
     }
   }
 
@@ -4207,8 +4224,10 @@ function WorkspacePage() {
             ? [{ rawPrompt: apiPrompt, editablePrompt, mode }]
             : [...(m[imageKey] ?? []), { rawPrompt: apiPrompt, editablePrompt, mode }],
         }));
+        requestImageReview(res.url, `character-${c.id}`);
         setSelectedCharImages((m) => ({ ...m, [imageKey]: displayUrl }));
         const modeLabel =
+        aliasImageReview(res.url, displayUrl);
           mode === "modify"
             ? "已按意见重生"
             : mode === "three-view"
@@ -4733,8 +4752,10 @@ function WorkspacePage() {
         return true;
       }
       toast.error(classifyError(res?.error, "生成失败"));
+        requestImageReview(res.url, `scene-${s.id}`);
       return false;
     } catch (e) {
+        aliasImageReview(res.url, displayUrl);
       const message = e instanceof Error ? e.message : String(e);
       console.error("[workspace.scene] regenerate failed", e);
       toast.error(classifyError(message, "生成失败"));
@@ -4828,8 +4849,10 @@ function WorkspacePage() {
         return true;
       }
       toast.error(classifyError(res?.error, "生成失败"));
+        requestImageReview(res.url, `prop-${p.id}`);
       return false;
     } catch (e) {
+        aliasImageReview(res.url, displayUrl);
       const message = e instanceof Error ? e.message : String(e);
       console.error("[workspace.prop] regenerate failed", e);
       toast.error(classifyError(message, "生成失败"));
@@ -5125,7 +5148,9 @@ function WorkspacePage() {
     }
   }
 
+        requestImageReview(res.url, `panel-${p.id}`);
   // ====================================================================
+        if (base64Url) aliasImageReview(res.url, base64Url);
   // 新的分镜流程 —— 两条 server function 入口
   //   1) runEnterStoryboard:把当集剧情发给 AI → 生成多组 StoryboardGroup
   //   2) generateShotImageForGroup:对单个 group 的某个 shot,做多图融合
@@ -5792,6 +5817,7 @@ function WorkspacePage() {
             ? {
                 ...g,
                 shots: g.shots.map((sh) => (sh.id === shotId ? { ...sh, imageUrl: tempUrl } : sh)),
+      requestImageReview(tempUrl, `shot-${groupId}-${shotId}`);
               }
             : g,
         ),
@@ -5807,6 +5833,7 @@ function WorkspacePage() {
                   ? {
                       ...g,
                       shots: g.shots.map((sh) =>
+            aliasImageReview(tempUrl, base64Url);
                         sh.id === shotId ? { ...sh, imageUrl: base64Url } : sh,
                       ),
                     }
@@ -5944,6 +5971,7 @@ function WorkspacePage() {
           storyboardGroups: d.storyboardGroups.map((g) =>
             g.id === groupId
               ? {
+        requestImageReview(tempUrl, `shot-${groupId}-${shotId}`);
                   ...g,
                   shots: g.shots.map((sh) =>
                     sh.id === shotId ? { ...editedShot, imageUrl: tempUrl } : sh,
@@ -5962,6 +5990,7 @@ function WorkspacePage() {
                     ? {
                         ...g,
                         shots: g.shots.map((sh) =>
+              aliasImageReview(tempUrl, base64Url);
                           sh.id === shotId ? { ...editedShot, imageUrl: base64Url } : sh,
                         ),
                       }
@@ -7021,9 +7050,11 @@ function WorkspacePage() {
               // Azure 的临时结果 URL（可能已失效或拒绝第二次访问）。
               data: { workspaceId, groupId, url: base64Url },
             })
+        requestImageReview(res.url, `storyboard-${groupId}`);
               .then((r) => {
                 if (isStale()) return; // 2026/07:轮次检查,异步回调时可能已被覆盖
                 if (r.ok && r.persisted && r.url) {
+        aliasImageReview(res.url, finalUrl);
                   setGroupStoryboards((m) => {
                     const entries = m[groupId];
                     if (!entries) return m;
@@ -7034,6 +7065,7 @@ function WorkspacePage() {
                     return { ...m, [groupId]: next };
                   });
                 }
+                  aliasImageReview(res.url, r.url);
               })
               .catch(() => {});
           }
@@ -7057,6 +7089,7 @@ function WorkspacePage() {
           } else {
             toast.warning("故事板图片保存失败，临时链接 24h 内有效");
           }
+                aliasImageReview(res.url, r.url);
         }
         setGroupStoryboards((m) => {
           const entries = [...(m[groupId] ?? [])];
@@ -7257,8 +7290,10 @@ function WorkspacePage() {
                     const entries = m[groupId];
                     if (!entries) return m;
                     const idx = entries.findIndex((e) => e.url === finalUrl);
+        requestImageReview(res.url, `storyboard-${groupId}`);
                     if (idx < 0) return m;
                     const next = [...entries];
+        aliasImageReview(res.url, finalUrl);
                     next[idx] = { ...next[idx], url: r.url };
                     return { ...m, [groupId]: next };
                   });
@@ -7266,6 +7301,7 @@ function WorkspacePage() {
               })
               .catch(() => {});
           }
+                  aliasImageReview(res.url, r.url);
           toast.success("已按意见重生故事板");
         } else {
           if (user && workspaceId) {
@@ -7288,6 +7324,7 @@ function WorkspacePage() {
         }
         setGroupStoryboards((m) => {
           const entries = [...(m[groupId] ?? [])];
+                aliasImageReview(res.url, r.url);
           const lastIdx = entries.length - 1;
           if (lastIdx >= 0 && entries[lastIdx].status === "running") {
             entries[lastIdx] = { ...entries[lastIdx], url: finalUrl, status: "succeeded" };
@@ -9889,12 +9926,18 @@ function WorkspacePage() {
                                         <span className="text-[10px]">生成中…</span>
                                       </div>
                                     ) : hasImg ? (
-                                      <WorkspaceMediaImage
-                                        src={coverUrl!}
-                                        alt={s.slug}
-                                        loading="lazy"
-                                        className="absolute inset-0 w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-300"
-                                      />
+                                      <>
+                                        <WorkspaceMediaImage
+                                          src={coverUrl!}
+                                          alt={s.slug}
+                                          loading="lazy"
+                                          className="absolute inset-0 w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-300"
+                                        />
+                                        <ImageReviewBadge
+                                          status={getImageReview(coverUrl)?.status}
+                                          error={getImageReview(coverUrl)?.error}
+                                        />
+                                      </>
                                     ) : (
                                       <button
                                         type="button"
@@ -10175,12 +10218,18 @@ function WorkspacePage() {
                                         <span className="text-[10px]">生成中…</span>
                                       </div>
                                     ) : hasImg ? (
-                                      <WorkspaceMediaImage
-                                        src={coverUrl!}
-                                        alt={p.name}
-                                        loading="lazy"
-                                        className="absolute inset-0 w-full h-full object-contain p-4 group-hover:scale-[1.03] transition-transform duration-300"
-                                      />
+                                      <>
+                                        <WorkspaceMediaImage
+                                          src={coverUrl!}
+                                          alt={p.name}
+                                          loading="lazy"
+                                          className="absolute inset-0 w-full h-full object-contain p-4 group-hover:scale-[1.03] transition-transform duration-300"
+                                        />
+                                        <ImageReviewBadge
+                                          status={getImageReview(coverUrl)?.status}
+                                          error={getImageReview(coverUrl)?.error}
+                                        />
+                                      </>
                                     ) : (
                                       <button
                                         type="button"
@@ -10610,6 +10659,20 @@ function WorkspacePage() {
                                       //   变体 look → generateOneCharacterLook → 走 I2I(以默认图为锚)
                                       // 空角色(face/body/clothing 全空)点生成没有描述可发,
                                       // 直接打开编辑面板让用户输入需求
+                                        <ImageReviewBadge
+                                          status={
+                                            getImageReview(
+                                              selectedCharImages[imageKey] ||
+                                                charImages[imageKey]!.at(-1),
+                                            )?.status
+                                          }
+                                          error={
+                                            getImageReview(
+                                              selectedCharImages[imageKey] ||
+                                                charImages[imageKey]!.at(-1),
+                                            )?.error
+                                          }
+                                        />
                                       <button
                                         type="button"
                                         onClick={(e) => {
@@ -11659,18 +11722,24 @@ function WorkspacePage() {
                                     <div className="relative aspect-[2/1] bg-bg-base group">
                                       {currentUrl ? (
                                         // eslint-disable-next-line @next/next/no-img-element
-                                        <WorkspaceMediaImage
-                                          src={currentUrl}
-                                          alt={s.action}
-                                          // 2026/06:追踪图片实际加载状态。Seedream TOS 签名 URL
-                                          // 24h 过期 / 上游 403 时,<img> 会 broken,但 imageUrl
-                                          // state 还在 → allShotsHaveImage / 按钮文案误判为"已生成"。
-                                          // onError 把 key 加进 brokenShotImages,让上层逻辑
-                                          // (按钮 disabled + 文案) 把这个镜头当作未生成。
-                                          onLoad={() => clearShotImageBroken(shotImageKey)}
-                                          onError={() => markShotImageBroken(shotImageKey)}
-                                          className="absolute inset-0 w-full h-full object-cover"
-                                        />
+                                        <>
+                                          <WorkspaceMediaImage
+                                            src={currentUrl}
+                                            alt={s.action}
+                                            // 2026/06:追踪图片实际加载状态。Seedream TOS 签名 URL
+                                            // 24h 过期 / 上游 403 时,<img> 会 broken,但 imageUrl
+                                            // state 还在 → allShotsHaveImage / 按钮文案误判为"已生成"。
+                                            // onError 把 key 加进 brokenShotImages,让上层逻辑
+                                            // (按钮 disabled + 文案) 把这个镜头当作未生成。
+                                            onLoad={() => clearShotImageBroken(shotImageKey)}
+                                            onError={() => markShotImageBroken(shotImageKey)}
+                                            className="absolute inset-0 w-full h-full object-cover"
+                                          />
+                                          <ImageReviewBadge
+                                            status={getImageReview(currentUrl)?.status}
+                                            error={getImageReview(currentUrl)?.error}
+                                          />
+                                        </>
                                       ) : isBusy ? (
                                         <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 text-text-muted">
                                           <Loader2 size={20} className="animate-spin text-accent" />
@@ -11847,6 +11916,10 @@ function WorkspacePage() {
                                 >
                                   <Upload size={12} />
                                 </button>
+                                <ImageReviewBadge
+                                  status={getImageReview(getActiveStoryboard(g.id)!.url)?.status}
+                                  error={getImageReview(getActiveStoryboard(g.id)!.url)?.error}
+                                />
                               </div>
                             ) : getActiveStoryboard(g.id)?.status === "running" ? (
                               <div className="h-64 rounded border border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted">

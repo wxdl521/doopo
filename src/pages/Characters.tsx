@@ -21,8 +21,11 @@ import { useServerFn } from "@tanstack/react-start";
 import { useLanguage } from "../i18n/LanguageContext";
 import { generateScript } from "../lib/openrouter.functions";
 import { generateImage } from "../lib/seedream.functions";
+import { uploadTopenrouterAsset } from "../lib/videoGenerate.functions";
 import { IMAGE_MODELS } from "../lib/imageModels";
 import { logImageMeta } from "../lib/logImageMeta";
+import { useAuth } from "../hooks/useAuth";
+import { ImageReviewBadge, type ImageReviewStatus } from "../components/ImageReviewBadge";
 
 type Tab = "front" | "side-left" | "side-right" | "back" | "expression" | "accessory";
 type Step = "brief" | "profile" | "style" | "hero" | "sheet";
@@ -114,8 +117,10 @@ const VIEW_PROMPTS: Record<Tab, string> = {
 
 export default function Characters() {
   const { t, lang } = useLanguage();
+  const { user } = useAuth();
   const callGenerateText = useServerFn(generateScript);
   const callGenerateImage = useServerFn(generateImage);
+  const callTopenrouterImageReview = useServerFn(uploadTopenrouterAsset);
 
   const [step, setStep] = useState<Step>("brief");
   const [brief, setBrief] = useState("");
@@ -166,6 +171,40 @@ export default function Characters() {
   const [loading, setLoading] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState("");
   const [error, setError] = useState("");
+  const [imageReviews, setImageReviews] = useState<
+    Partial<Record<Tab, { status: ImageReviewStatus; error?: string }>>
+  >({});
+
+  const reviewImage = (view: Tab, url: string) => {
+    if (!user || !/^https?:\/\//i.test(url)) return;
+    setImageReviews((current) => ({ ...current, [view]: { status: "pending" } }));
+    void callTopenrouterImageReview({
+      data: {
+        url,
+        assetType: "Image",
+        name: `doopoo-review-character-${Date.now()}-${view}`,
+        model: "topenrouter-doubao-seedance-2-0-mini-260615",
+      },
+    })
+      .then((result) => {
+        const error = result.ok ? undefined : result.error || "素材审核未通过";
+        const status: ImageReviewStatus = result.ok
+          ? "approved"
+          : /status\s*=\s*failed|审核未通过|sensitive/i.test(error || "")
+            ? "rejected"
+            : "error";
+        setImageReviews((current) => ({ ...current, [view]: { status, ...(error ? { error } : {}) } }));
+      })
+      .catch((reason) => {
+        setImageReviews((current) => ({
+          ...current,
+          [view]: {
+            status: "error",
+            error: reason instanceof Error ? reason.message : "审核请求失败",
+          },
+        }));
+      });
+  };
 
   const buildPrompt = (v: Tab, desc: string) => {
     const styleConf = STYLE_PROMPTS[selectedStyle] || {
@@ -232,6 +271,7 @@ export default function Characters() {
       logImageMeta("characters.hero", r);
       if (r.url) {
         setGeneratedImages((prev) => ({ ...prev, front: r.url }));
+        reviewImage("front", r.url);
         setSelectedImage("front");
         setActiveTab("front");
         setStep("hero");
@@ -273,7 +313,11 @@ export default function Characters() {
       let imgError = "";
       results.forEach((r) => {
         if (r.status === "fulfilled") {
-          if (r.value.url) next[r.value.v as Tab] = r.value.url;
+          if (r.value.url) {
+            const view = r.value.v as Tab;
+            next[view] = r.value.url;
+            reviewImage(view, r.value.url);
+          }
           else if (r.value.error) imgError = r.value.error;
         } else imgError = r.reason?.message || imgError;
       });
@@ -605,11 +649,17 @@ export default function Characters() {
             <div className="relative rounded-2xl overflow-hidden border border-border bg-bg-elevated corner-frame">
               {generatedImages[selectedImage] ? (
                 // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={generatedImages[selectedImage]}
-                  alt={selectedImage}
-                  className="w-full max-h-[480px] object-contain"
-                />
+                <>
+                  <img
+                    src={generatedImages[selectedImage]}
+                    alt={selectedImage}
+                    className="w-full max-h-[480px] object-contain"
+                  />
+                  <ImageReviewBadge
+                    status={imageReviews[selectedImage]?.status}
+                    error={imageReviews[selectedImage]?.error}
+                  />
+                </>
               ) : (
                 <div className="w-full h-64 flex items-center justify-center text-text-muted text-sm">
                   {loading ? t.char_generating : t.char_no_generate}
@@ -633,6 +683,10 @@ export default function Characters() {
                     >
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={generatedImages[v]} alt={v} className="w-20 h-20 object-cover" />
+                      <ImageReviewBadge
+                        status={imageReviews[v]?.status}
+                        error={imageReviews[v]?.error}
+                      />
                     </button>
                   ),
               )}

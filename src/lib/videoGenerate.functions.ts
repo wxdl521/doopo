@@ -2932,7 +2932,7 @@ const TopenrouterAssetUploadInput = z.object({
     .refine((value) => /^https?:\/\//i.test(value), "素材 URL 必须为公网 HTTP(S) 地址"),
   assetType: z.enum(["Image", "Video", "Audio"]),
   name: z.string().trim().min(1).max(200).optional(),
-  model: z.string().trim().min(1).max(200).default("topenrouter-doubao-seedance-2-0-260128"),
+  model: z.string().trim().min(1).max(200).default("topenrouter-doubao-seedance-2-0-mini-260615"),
 });
 
 /**
@@ -2984,7 +2984,7 @@ const TopenrouterAssetGetInput = z.object({
     .string()
     .regex(/^[a-zA-Z0-9_-]+$/, "非法 asset_id")
     .max(200),
-  model: z.string().trim().min(1).max(200).default("topenrouter-doubao-seedance-2-0-260128"),
+  model: z.string().trim().min(1).max(200).default("topenrouter-doubao-seedance-2-0-mini-260615"),
 });
 
 /** 查询已上传素材的入库状态和临时预览 URL。 */
