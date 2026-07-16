@@ -140,6 +140,47 @@ export const Route = createFileRoute("/workspace/$workspaceId")({
 const isHttpImageUrl = (value: unknown): value is string =>
   typeof value === "string" && /^https?:\/\//i.test(value);
 
+/** 场景资产只能是无人空景；角色、动物等应由角色/分镜流程生成。 */
+const EMPTY_SCENE_NEGATIVE_PROMPT = [
+  "person, people, human, character, humanoid, figure, silhouette, shadow person, crowd, portrait, face, body part, hand",
+  "animal, pet, bird, fish, insect, creature, monster, dragon, horse, cat, dog, wildlife, animal silhouette",
+  "rider, driver, passenger, worker, guard, customer, pedestrian, audience, statue of a person",
+].join(", ");
+
+const EMPTY_SCENE_HARD_RULE =
+  "HARD REQUIREMENT: render an entirely unoccupied empty environment. Do not show, imply, or partially show any living being — no people, characters, humanoids, animals, pets, birds, insects, creatures, monsters, dragons, silhouettes, shadows, faces, hands, or body parts. Any characters or living beings mentioned in the scene notes are narrative-only context and must never be rendered. Show only architecture, landscape, weather, lighting, and non-living props.";
+
+const SCENE_DESCRIPTION_LIVING_BEING_CUES =
+  /人物|角色|人群|路人|行人|客人|观众|群众|人影|身影|背影|男(?:人|孩|主|子)|女(?:人|孩|主|子)|老人|孩子|少年|少女|他(?:们)?|她(?:们)?|它(?:们)?|猫|狗|鸟|鱼|虫|动物|宠物|神兽|怪物|妖|龙|马|兽/i;
+const SCENE_DESCRIPTION_PERFORMER_ACTIONS =
+  /走进|走出|走向|站在|坐在|跪在|躺在|跑向|冲向|推开|拉开|抬头|低头|回头|转身|看向|望向|说道|开口|笑了|哭了|拥抱|握住|拿起|放下|进入|离开/i;
+
+/**
+ * LLM 的场景提取以系统提示为主；此处只拦截仍混进来的角色名、生命体或人物动作，
+ * 避免其写入「场景描述」后继续污染空场景图提示词。
+ */
+function toEnvironmentOnlySceneText(value: unknown, fallback = "", characterNames: string[] = []) {
+  const text = typeof value === "string" ? value.trim() : "";
+  if (!text) return fallback;
+  const namePattern = characterNames
+    .map((name) => name.trim())
+    .filter((name) => name.length >= 2)
+    .map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+    .join("|");
+  const characterNamePattern = namePattern ? new RegExp(namePattern, "i") : null;
+  const environmentOnly = text
+    .split(/(?<=[。；;！!？?\n])/u)
+    .filter(
+      (clause) =>
+        !SCENE_DESCRIPTION_LIVING_BEING_CUES.test(clause) &&
+        !SCENE_DESCRIPTION_PERFORMER_ACTIONS.test(clause) &&
+        !characterNamePattern?.test(clause),
+    )
+    .join("")
+    .trim();
+  return environmentOnly || fallback;
+}
+
 function readSavedImageReviews(value: unknown): Record<string, { status: ImageReviewStatus; error?: string }> {
   if (!value || typeof value !== "object") return {};
   return Object.fromEntries(
@@ -2667,19 +2708,32 @@ function WorkspacePage() {
         `Location: ${s.slug}`,
         s.location && `${s.location}`,
         `Time: ${s.timeOfDay === "DAY" ? "daytime" : s.timeOfDay === "NIGHT" ? "nighttime" : s.timeOfDay === "DUSK" ? "dusk, golden hour" : "dawn"}`,
-        // 2026/07:注入场景动作/氛围描述(action)和节拍细节(beats),让生成的场景图
-        // 带有故事感、光影情绪和具体视觉元素,而不是一张通用的空镜。
-        ...(s.action ? [``, `[SCENE ATMOSPHERE & ACTION]`, s.action.trim()] : []),
+        // 场景资料常会叙述角色的行动；它只可用于推断天气、光影等环境线索，
+        // 绝不能把其中的人物/动物/生物绘制进场景资产。
+        ...(s.action
+          ? [
+              ``,
+              `[ENVIRONMENT-ONLY MOOD REFERENCE]`,
+              `Use only non-living environmental clues from this narrative note; never render a named or implied living being: ${s.action.trim()}`,
+            ]
+          : []),
         ...(s.beats?.length
-          ? [``, `[VISUAL DETAILS]`, s.beats.map((b, i) => `  ${i + 1}. ${b}`).join("\n")]
+          ? [
+              ``,
+              `[ENVIRONMENT-ONLY VISUAL DETAILS]`,
+              `Keep only architecture, landscape, weather, lighting, and inert props from these notes; omit every character, animal, creature, or action performer:`,
+              s.beats.map((b, i) => `  ${i + 1}. ${b}`).join("\n"),
+            ]
           : []),
         ``,
-        "Empty scene, no people, no characters, no figures, no silhouettes.",
+        EMPTY_SCENE_HARD_RULE,
         "Cinematic environment photography, wide establishing shot, detailed architecture and props, atmospheric lighting, film still quality.",
       ]
         .filter(Boolean)
         .join("\n");
-      const res = await callImage({ data: { prompt, model: project?.sceneModel } });
+      const res = await callImage({
+        data: { prompt, negativePrompt: EMPTY_SCENE_NEGATIVE_PROMPT, model: project?.sceneModel },
+      });
       logImageMeta("workspace.scene", res);
       if (res.url) {
         // 2026/06 修复:直接持久化到 Storage
@@ -6285,7 +6339,7 @@ function WorkspacePage() {
         text: `${effectiveShotBreakdown(group)}\n\n${buildEditableStyleFingerprint(videoStyleSpec)}`,
       },
       {
-        text: `Render as a single continuous video clip that flows through all ${shotImagesList.length} shots in order.`,
+        text: `Render as a single continuous video clip that flows through exactly ${group.shots.length} source shots in order. Each source shot is one uninterrupted camera setup: do not add a cut, reverse angle, or new shot inside it.`,
         tech: true,
       },
       {
@@ -6488,7 +6542,11 @@ function WorkspacePage() {
       { text: buildStyleLock(videoStyleSpec2, "scene"), tech: true },
       { text: `[CONSTRAINTS]`, tech: true },
       {
-        text: `- Render as ONE continuous video that flows through the storyboard's shot sequence in order`,
+        text: `- Render as ONE continuous video with exactly ${group.shots.length} source shots, in [SHOT BREAKDOWN] order. Every source shot is one uninterrupted camera setup; do not add a cut, reverse angle, or new shot inside it.`,
+        tech: true,
+      },
+      {
+        text: `- The storyboard may contain panels labeled 镜头N-A / 镜头N-B. They are consecutive performance/action states inside source 镜头N, NOT extra shots. Animate their movement as one continuous take under 镜头N's stated camera; never cut between a primary panel and its continuation panel.`,
         tech: true,
       },
       {
@@ -8409,6 +8467,7 @@ function WorkspacePage() {
           const rawScenes: any[] = Array.isArray(p.scenes) ? p.scenes : [];
           // 兜底:AI 偶尔不返回 scenes 字段时不要 wipe 现有数据
           if (rawScenes.length === 0) return { scenes: currentData.scenes };
+          const knownCharacterNames = currentData.characters.map((character) => character.name);
           const scenes: GenScene[] = rawScenes.map((s: any, i: number) => ({
             episodeIndex: typeof s.episodeIndex === "number" ? s.episodeIndex : 1,
             id: `ai-sc-${i + 1}-${Date.now()}`,
@@ -8416,8 +8475,16 @@ function WorkspacePage() {
             slug: s.slug ?? "",
             location: s.location ?? "",
             timeOfDay: s.timeOfDay ?? "DAY",
-            action: s.action ?? "",
-            beats: Array.isArray(s.beats) ? s.beats : [],
+            action: toEnvironmentOnlySceneText(
+              s.action,
+              "建筑、陈设与光影共同构成稳定的场景氛围。",
+              knownCharacterNames,
+            ),
+            beats: Array.isArray(s.beats)
+              ? s.beats
+                  .map((beat) => toEnvironmentOnlySceneText(beat, "", knownCharacterNames))
+                  .filter(Boolean)
+              : [],
             dialogue: [],
           }));
           return { scenes };
@@ -9140,9 +9207,21 @@ function WorkspacePage() {
         ]);
         // 2026/06 跨集一致性:characters 走 mergeExtractedCharacters(在 setData 阶段处理),
         // 这里 aiPatch 直接放 charResult —— episodes 已由 tryAi 打好。
+        const extractedCharacterNames = [
+          ...data.characters.map((character) => character.name),
+          ...(charResult?.characters ?? []).map((character) => character.name),
+        ];
         const scenesWithEp = sceneResult?.scenes?.map((s) => ({
           ...s,
           episodeIndex: extractEpIndex,
+          action: toEnvironmentOnlySceneText(
+            s.action,
+            "建筑、陈设与光影共同构成稳定的场景氛围。",
+            extractedCharacterNames,
+          ),
+          beats: s.beats
+            .map((beat) => toEnvironmentOnlySceneText(beat, "", extractedCharacterNames))
+            .filter(Boolean),
         }));
         const propsWithEp = propResult?.props?.map((p) => ({ ...p, episodeIndex: extractEpIndex }));
         aiPatch = {
@@ -10005,14 +10084,9 @@ function WorkspacePage() {
                                         <span className="text-[10px]">点击生成场景图</span>
                                       </button>
                                     )}
-                                    {sceneImgCount > 1 && (
-                                      <span className="absolute top-1.5 left-1.5 text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/60 text-white">
-                                        {sceneImgCount} 张
-                                      </span>
-                                    )}
                                     {/* 当前封面已被详情页中的缩略图选中。 */}
                                     {isPinned && (
-                                      <div className="absolute top-1.5 right-14 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent text-accent-foreground text-[10px] font-bold shadow-md">
+                                      <div className="absolute top-1.5 left-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent text-accent-foreground text-[10px] font-bold shadow-md">
                                         <Check size={10} /> 选中
                                       </div>
                                     )}
@@ -10034,6 +10108,11 @@ function WorkspacePage() {
                                     >
                                       <BookmarkPlus size={10} /> 保存到资产
                                     </button>
+                                    {sceneImgCount > 1 && (
+                                      <span className="absolute bottom-8 left-1.5 z-20 text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/60 text-white">
+                                        {sceneImgCount} 张
+                                      </span>
+                                    )}
                                     {/* 上传本地图片按钮 */}
                                     {!hasImg ? (
                                       <button
@@ -10297,6 +10376,11 @@ function WorkspacePage() {
                                     >
                                       <BookmarkPlus size={10} /> 保存到资产
                                     </button>
+                                    {propImgCount > 1 && (
+                                      <span className="absolute bottom-8 left-1.5 z-20 text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/60 text-white">
+                                        {propImgCount} 张
+                                      </span>
+                                    )}
                                     {/* 上传本地图片按钮 */}
                                     {!hasImg ? (
                                       <button
@@ -10323,13 +10407,8 @@ function WorkspacePage() {
                                         <Upload size={10} /> 上传
                                       </button>
                                     )}
-                                    {propImgCount > 1 && (
-                                      <span className="absolute top-1.5 left-1.5 text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/60 text-white">
-                                        {propImgCount} 张
-                                      </span>
-                                    )}
                                     {isPinned && (
-                                      <div className="absolute top-1.5 right-14 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent text-accent-foreground text-[10px] font-bold shadow-md">
+                                      <div className="absolute top-1.5 left-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent text-accent-foreground text-[10px] font-bold shadow-md">
                                         <Check size={10} /> 选中
                                       </div>
                                     )}

@@ -134,7 +134,8 @@ function stageSpec(stage: Input["stage"]) {
           "要求：每个场景是物理空间（房间/街道/办公室/餐厅等），不是情节；" +
           'location 用简短中文名（2-6 字），slug 用"INT./EXT. 中文名 — 时间"格式；' +
           "timeOfDay 取 DAY/NIGHT/DUSK/DAWN；" +
-          "action 用 30-60 字描写该场景的环境与氛围（不要重复剧本中的对白/动作）。" +
+          "action 是严格的【无人环境描述】：只写建筑、空间结构、陈设、自然景观、天气、光线、色彩和无生命道具，30-60 字。**严禁出现任何角色名、人名、人物称谓、人群、人物动作、对白、动物、宠物、神兽或其他生物；即使原文正在描写角色，也只能改写为不含生物的环境状态。**" +
+          "beats 可省略；如填写，只能是环境变化或空间细节标签，且同样不得包含角色、人物动作或任何生物。" +
           "同一地点在不同时段出现算 1 个场景；只在文本中真实出现的场景才提取，不要编造。" +
           "若文本完全没有场景描写（例如纯对白），返回空数组。" +
           "仅以工具调用返回结构化结果。",
@@ -151,11 +152,15 @@ function stageSpec(stage: Input["stage"]) {
                   slug: { type: "string", description: '如 "INT. 林家祠堂 — 黄昏"' },
                   location: { type: "string" },
                   timeOfDay: { type: "string", enum: ["DAY", "NIGHT", "DUSK", "DAWN"] },
-                  action: { type: "string", description: "30-60 字的环境/氛围描写" },
+                  action: {
+                    type: "string",
+                    description:
+                      "30-60 字的无人环境描写；只含建筑、空间、陈设、景观、天气、光影和无生命道具，严禁角色名、人物、动作、对白、动物或任何生物",
+                  },
                   beats: {
                     type: "array",
                     items: { type: "string" },
-                    description: "可省略；提取时可填 1-2 个该场景的关键事件标签",
+                    description: "可省略；最多 1-2 个环境变化或空间细节标签，严禁角色、人物动作、动物或其他生物",
                   },
                 },
                 required: ["index", "slug", "location", "timeOfDay", "action"],

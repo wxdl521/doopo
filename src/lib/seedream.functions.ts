@@ -1941,7 +1941,7 @@ export const regenerateStoryboardShot = createServerFn({ method: "POST" })
 //   数据来源(全 T2I,不走 image 字段,让模型在 prompt 引导下画完所有格子):
 //     - plotText            分镜组剧情摘要(模型用来推断缺失的 shot + 整体叙事)
 //     - scene / characters  场景 + 角色档案(face/body/clothing,跨格一致)
-//     - shots               已有的 1-3 个 shot(模型补到 6 或 8 格)
+//     - shots               已有的源 shot；故事板可为动作/移动补连续表演格，但不新增视频镜头
 //
 //   输出 2K(2048x2048)。用户提到"8K"但 Seedream 最大 4K,2K 平衡
 //   清晰度与生成时间/费用。
@@ -2007,10 +2007,12 @@ export type PitchDeckInputType = z.infer<typeof PitchDeckInput>;
  * 把分镜数据翻译成"漫剧故事板"多格分镜 prompt。
  *
  * 设计思路(2026/06 用户重做 —— 从"固定 6/8 格 + 顶部 caption"改成
- * "可变 4-10 格 + 每格首帧 + 首帧下方画面变化描述 + 右下角虚线 caption 框"):
- *   1) 整张图就是一个 manga/漫剧 page,分格数量自适应(根据情节密度 4-10)
- *   2) 每格 = 1 个 shot:
- *      - 主图区:首帧画面(用已提供的人物形象,脸/身/服/饰一致)
+ * "可变多格 + 主镜头/动作补帧 + 右下角虚线 caption 框"):
+ *   1) 整张图就是一个 manga/漫剧 page。每个源 shot 至少有一个主格；动作密集时
+ *      可添加同一 shot 的连续表演补格，因此故事板格数可以多于源 shot 数。
+ *   2) 每格 = 一个源 shot 的主画面或动作补帧:
+ *      - 主图区:关键动作画面(用已提供的人物形象,脸/身/服/饰一致)
+ *      - 补帧只展示同一镜头内的连续动作/移动过程，绝不代表新增切镜
  *      - 主图下方:1-2 行小字,描述"相对于上一格的画面变化"(镜头推近 /
  *        角色由站转坐 / 光照亮转暗 等)
  *      - 右下角或底部右侧:虚线框 / 浅色底区域,内含占位文字
@@ -2030,7 +2032,15 @@ function buildPitchDeckPrompt(opts: {
   const hasChars = chars.length > 0;
   const shots = data.shots || [];
   const shotCount = shots.length;
-  const SUGGESTED_PANELS = Math.min(12, Math.max(1, shotCount || 6));
+  // 故事板是表演设计资料，而不是视频镜头数的逐格复刻：每个源 shot 均需主格，
+  // 再为角色动作/移动预留连续补帧。常规上限为 12 格以免 16:9 单页过密，
+  // 但绝不能因为上限丢掉已有 source shot（高镜头数时优先完整覆盖）。
+  const sourceShotCount = shotCount || 6;
+  const performancePanelCount = Math.min(4, Math.max(1, Math.ceil(sourceShotCount / 2)));
+  const SUGGESTED_PANELS = Math.max(
+    sourceShotCount,
+    Math.min(12, Math.max(4, sourceShotCount + performancePanelCount)),
+  );
 
   const refImgs = data.referenceImages || [];
   const refLabels = data.referenceImageLabels || [];
@@ -2120,11 +2130,11 @@ function buildPitchDeckPrompt(opts: {
       : `- Pure environment/landscape sketches. Simple line backgrounds. NO people, NO characters, NO human figures in any frame.`,
 
     `[LAYOUT — 16:9, one page]`,
-    `- Top: short title bar (episode/group label + frame count ${SUGGESTED_PANELS}).`,
-    `- Main: grid of ${SUGGESTED_PANELS} frames, left-to-right, top-to-bottom. Each frame = a pencil-sketch thumbnail of the shot.`,
+    `- Top: short title bar (episode/group label + ${sourceShotCount} source shots + ${SUGGESTED_PANELS} storyboard panels).`,
+    `- Main: grid of ${SUGGESTED_PANELS} panels, left-to-right, top-to-bottom. Every source shot in [SHOT BREAKDOWN] must appear once as its primary panel (镜头1, 镜头2, ...), in the same order. Use the remaining panels as performance-continuation panels for action-heavy source shots, labeled 镜头N-A / 镜头N-B. A continuation panel is a later beat within the SAME source shot — same shot size, camera side, lens, composition and continuous time; it is NEVER a new shot or a cut.`,
     hasChars
-      ? `- Below each frame: ONE caption line - "镜头N · Ns · 景别 · 动作 · 机位:camera" (e.g. 镜头1 · 4s · 中景 · 陆深推门入场坐下 · 机位:平视50mm讲台左侧). 景别用中文(远景/中景/近景/特写/过肩), 动作写明白但用短句非长段, 机位取自 [SHOT BREAKDOWN] 该镜头的 camera 字段(焦段/角度/位置). Clean printed font, NOT handwritten.`
-      : `- Below each frame: ONE caption line - "镜头N · Ns · 景别 · 环境 · 机位:camera" (e.g. 镜头1 · 4s · 远景 · 晨光穿透树冠洒落斑驳光影 · 机位:平视广角24mm林缘). 景别用中文(远景/中景/近景/特写/过肩), 环境写明白但用短句非长段, 机位取自 [SHOT BREAKDOWN] 该镜头的 camera 字段. Clean printed font, NOT handwritten. **本故事板是纯环境/空镜, 画面中不得出现任何人物.**`,
+      ? `- Below each panel: ONE caption line - "镜头N / 镜头N-A · Ns · 景别 · 动作 · 机位:camera" (e.g. 镜头1 · 4s · 中景 · 陆深推门入场坐下 · 机位:平视50mm讲台左侧; 镜头1-A · 同镜头动作延续 · 他向座位迈步). 景别用中文(远景/中景/近景/特写/过肩), 动作写明白但用短句非长段, 机位取自 [SHOT BREAKDOWN] 该源镜头的 camera 字段(焦段/角度/位置). 镜头N-A/B 必须明确是镜头N内部的连续动作，不得改变景别/机位来制造切镜。Clean printed font, NOT handwritten.`
+      : `- Below each panel: ONE caption line - "镜头N / 镜头N-A · Ns · 景别 · 环境 · 机位:camera" (e.g. 镜头1 · 4s · 远景 · 晨光穿透树冠洒落斑驳光影 · 机位:平视广角24mm林缘). 景别用中文(远景/中景/近景/特写/过肩), 环境写明白但用短句非长段, 机位取自 [SHOT BREAKDOWN] 该源镜头的 camera 字段. 镜头N-A/B 只可表现同一镜头内的连续环境变化，不得新增切镜。Clean printed font, NOT handwritten. **本故事板是纯环境/空镜, 画面中不得出现任何人物.**`,
     `- Bottom-right: top-down diagram (see [TOP-DOWN DIAGRAM]).`,
 
     `[MOTION NOTATION — REQUIRED INSIDE EACH FRAME]`,
@@ -2135,10 +2145,10 @@ function buildPitchDeckPrompt(opts: {
     `- If a character is speaking or briefly still, show one restrained, story-safe micro-action (eye-line shift, breath in chest/shoulders, fingers tightening, weight settling, fabric response) with a subtle graphite/red mark. Do not turn a still beat into walking, fighting, gesturing, or a new plot event.`,
     `- Bottom legend: red = character/body or prop trajectory; blue = camera movement; green = focal point; orange = key light; purple = inner focus.`,
 
-    `[FRAME IS THE SOURCE OF TRUTH — NON-NEGOTIABLE]`,
-    `For every Frame N, first draw exactly what [SHOT BREAKDOWN] says: the action's grammatical subject (who performs it), the gaze/interaction target (what they look at or handle), action stage, shot size, camera height, camera side, lens and viewing direction. The visible frame must prove its own caption. Example: “男主低头审视陷阱和诱饵，低机位仰拍” means the male lead remains the pictured subject, he looks downward toward the trap/bait, and the camera looks upward at him; do NOT misread the gaze target as a replacement for the character subject. Do not swap the composition, subject, camera side, or caption between Frame N and Frame N+1.`,
-    `The top-down diagram is NOT an independent creative design. Draw the finished frames first, then derive every camera marker/path from those exact frame compositions. For each “镜头N” marker, its triangle/camera path must point toward the subject actually visible in Frame N, from the same relative side and height implied by Frame N. If there is any conflict, [SHOT BREAKDOWN] → Frame N is authoritative; correct the diagram, never reinterpret the frame.`,
-    `Camera-group continuity: when adjacent frames are a continuous action/reaction beat, keep their camera markers on the SAME side of the action axis and in neighboring positions; do not scatter them to opposite sides of the set. A change to the reverse side is allowed only when that frame's camera description explicitly calls it a reverse angle. For an OTS/过肩 frame, identify the foreground shoulder character and target character from [SHOT BREAKDOWN]: put the camera marker BEHIND the foreground character, point it THROUGH that character's shoulder toward the target, and never place it behind the target character.`,
+    `[SOURCE SHOT IS THE TRUTH — NON-NEGOTIABLE]`,
+    `For every source 镜头N, first draw exactly what its [SHOT BREAKDOWN] entry says: the action's grammatical subject (who performs it), the gaze/interaction target (what they look at or handle), action stage, shot size, camera height, camera side, lens and viewing direction. The primary panel must prove its caption. Example: “男主低头审视陷阱和诱饵，低机位仰拍” means the male lead remains the pictured subject, he looks downward toward the trap/bait, and the camera looks upward at him; do NOT misread the gaze target as a replacement for the character subject. A 镜头N-A/B panel may only advance that same action in time; do not swap its composition, subject, camera side, lens, or shot size, and do not turn it into a new cut.`,
+    `The top-down diagram is NOT an independent creative design. Draw the finished primary panels first, then derive every source-shot camera marker/path from those exact frame compositions. For each “镜头N” marker, its triangle/camera path must point toward the subject actually visible in the primary 镜头N panel, from the same relative side and height implied by that source shot. Do NOT add separate camera markers for 镜头N-A/B: they inherit 镜头N's same uninterrupted setup. If there is any conflict, [SHOT BREAKDOWN] → primary 镜头N panel is authoritative; correct the diagram, never reinterpret the panel.`,
+    `Camera-group continuity: 镜头N-A/B continuation panels must stay on the SAME side of the action axis and in the same setup as 镜头N. A change to the reverse side is allowed only for the next numbered source shot when that shot's camera description explicitly calls it a reverse angle. For an OTS/过肩 source shot, identify the foreground shoulder character and target character from [SHOT BREAKDOWN]: put the camera marker BEHIND the foreground character, point it THROUGH that character's shoulder toward the target, and never place it behind the target character.`,
     `Conservative scene truth: draw ONLY locations, doors, windows, furniture, props, costumes, and actions explicitly present in [STORY PLOT], [SCENE], [CHARACTERS], [SHOT BREAKDOWN], or reference images. Do NOT add plausible-looking details to decorate the scene. Environmental rain does NOT authorize an indoor character to hold or open an umbrella; an object must be visibly used only when the supplied story/shot explicitly requires it. If a detail is unknown, omit it rather than inventing it.`,
 
     `[CHARACTER CONSISTENCY]`,
@@ -2173,18 +2183,18 @@ function buildPitchDeckPrompt(opts: {
 
     `[OUTPUT RULES]`,
     `1. Pencil line-art only — no color or rendering beyond hatching, EXCEPT the sparse red/blue/green/orange/purple motion-analysis annotations defined in [MOTION NOTATION].`,
-    `2. 16:9 landscape, ${SUGGESTED_PANELS} frames.`,
+    `2. 16:9 landscape, ${SUGGESTED_PANELS} storyboard panels: ${sourceShotCount} numbered source-shot primary panels plus action-continuation panels where useful.`,
     hasChars
       ? `3. Character lock - same face/body/clothes across frames.`
       : `3. No characters - 画面中不得出现任何人物 (空镜/纯环境镜头).`,
     `4. Story faithful — follow [STORY PLOT] and [SHOT BREAKDOWN], no invented content.`,
     `5. Text crisp & legible — Chinese shot types (远景/中景/近景/特写/过肩), no WS/MS/CU; no emoji (📷) or circled numbers (①②③); use plain labels (镜头1, 镜头2) + Arabic numerals.`,
-    `5.5. Mandatory consistency audit before output: check N = 1 to ${SUGGESTED_PANELS} one by one. For each N, the caption, Frame N visual focus/action/camera angle, and the diagram's “镜头N” camera marker/path must describe the SAME shot. A swapped or reversed camera label, subject, view direction, or camera side is an invalid result and must be corrected before output. Then audit scene truth: every door, doorway direction, prop, furniture item, and character-held object visible in a frame or diagram must have an explicit source in the supplied story/scene/shot/reference; remove every invented item.`,
+    `5.5. Mandatory consistency audit before output: check source 镜头N = 1 to ${sourceShotCount} one by one. For each N, the primary 镜头N caption, visual focus/action/camera angle, and the diagram's “镜头N” camera marker/path must describe the SAME source shot. Each 镜头N-A/B must be a continuous performance beat inside 镜头N, never a separate camera setup or cut. A swapped or reversed camera label, subject, view direction, or camera side is an invalid result and must be corrected before output. Then audit scene truth: every door, doorway direction, prop, furniture item, and character-held object visible in a panel or diagram must have an explicit source in the supplied story/scene/shot/reference; remove every invented item.`,
     hasChars
       ? `6. Diagram logic - the diagram covers ALL shots' locations (not just one room); camera paths (dashed) reflect each shot's camera movement described in [SHOT BREAKDOWN] (环绕/推/拉/摇/跟 -> corresponding arcs/lines, may be multiple paths), fixed-camera shots use a ▲ marker at their shooting position; character paths (solid) strictly follow the blocking in [SHOT BREAKDOWN]. 每条镜头动线和每个固定机位▲都必须标注对应的"镜头N",与上方分镜格编号一一对应,让分镜和俯视图动线能明确对上.`
       : `6. Diagram logic - the diagram covers ALL shots' locations (not just one room); camera paths (dashed) reflect each shot's camera movement described in [SHOT BREAKDOWN] (环绕/推/拉/摇/跟 -> corresponding arcs/lines), fixed-camera shots use a ▲ marker at their shooting position. 每条镜头动线和每个固定机位▲都必须标注对应的"镜头N",与上方分镜格编号一一对应. 本故事板无人物, 不画人物动线.`,
 
-    `Begin. Output a 16:9 pencil line-art storyboard with ${SUGGESTED_PANELS} frames.`,
+    `Begin. Output a 16:9 pencil line-art storyboard with ${SUGGESTED_PANELS} panels. Preserve exactly ${sourceShotCount} source shots in video order; use extra panels only as continuous performance/action beats inside those shots.`,
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -2573,12 +2583,12 @@ function buildRegenPitchDeckPrompt(opts: {
     sceneLine,
     `Characters (face/body identical to 图1 unless feedback says otherwise):`,
     charLines,
-    `Shot count: ${shots.length} (keep same count and order unless feedback mentions it)`,
+    `Source shot count: ${shots.length} (keep this video-shot count and order unless feedback mentions it; extra storyboard panels may remain as action-continuation panels inside a source shot)`,
 
     `[PRESERVE from 图1]`,
-    `- Layout: grid of storyboard frames (left-to-right, top-to-bottom), each with caption "镜头N · Ns · 景别(中文) · 动作" (动作短句); bottom-right top-down diagram (scene zones covering all shots' locations + dashed camera path + solid character paths with facing arrows + legend). Do NOT revert to any 6-section pitch-deck layout.`,
+    `- Layout: grid of storyboard panels (left-to-right, top-to-bottom). Each source shot has a primary caption "镜头N · Ns · 景别(中文) · 动作"; optional panels named "镜头N-A/B" show later action beats inside that SAME shot, with the same camera setup and no cut. Bottom-right top-down diagram covers all source shots' locations + dashed camera path + solid character paths with facing arrows + legend. Do NOT revert to any 6-section pitch-deck layout.`,
     `- Style: pencil line-art, 16:9, clean printed font, Chinese shot types (远景/中景/近景/特写/过肩), no emoji/①②③, plain labels + Arabic numerals.`,
-    `- Same frame/camera numbers continuous 1..N, diagram arrows follow shot order.`,
+    `- Source-shot/camera numbers remain continuous 1..N and diagram arrows follow source-shot order; continuation panels inherit their parent source shot number rather than creating a new camera number.`,
 
     `[MODIFICATION RULES]`,
     `1. 图1 is the structural source of truth — preserve its layout, proportions, fonts, line-art style.`,
@@ -2586,7 +2596,7 @@ function buildRegenPitchDeckPrompt(opts: {
     `3. Vague feedback ("好看点") → minimal refinement only.`,
     `4. If feedback contradicts 图1 layout (e.g. "改 4 格"), follow feedback but keep other style consistency.`,
     `5. Don't change faces/outfits/scene unless feedback explicitly says so. Don't introduce new characters/scenes, except that explicitly @-mentioned props must be added/replaced as required.`,
-    `6. Keep 16:9, same shot count and order, frame/camera numbers continuous.`,
+    `6. Keep 16:9 and the same source shot count/order. Preserve existing action-continuation panels where present; they are performance beats inside their parent shot, not additional video shots or cuts.`,
 
     `[REFERENCE IMAGES — 图 2..N are visual anchors]`,
     `图 1 = 当前故事板(画风/布局/文字的真值).\n${referenceLabelLines}`,
@@ -2794,6 +2804,18 @@ export const regenerateStoryboardPitchDeck = createServerFn({ method: "POST" })
 const normalizeSceneText = (value: unknown, fallback = "") =>
   value == null ? fallback : typeof value === "string" ? value : String(value);
 
+/** 场景资产一律是无人空景；角色由角色资产/分镜流程承担。 */
+const EMPTY_SCENE_NEGATIVE = [
+  "person, people, human, character, humanoid, figure, silhouette, shadow person, crowd, portrait, face, body part, hand",
+  "animal, pet, bird, fish, insect, creature, monster, dragon, horse, cat, dog, wildlife, animal silhouette",
+  "rider, driver, passenger, worker, guard, customer, pedestrian, audience, statue of a person",
+].join(", ");
+
+const EMPTY_SCENE_HARD_RULE =
+  "[EMPTY SCENE — NON-NEGOTIABLE] Render an entirely unoccupied environment. Never show, imply, or partially show any living being: no people, characters, humanoids, animals, pets, birds, insects, creatures, monsters, dragons, silhouettes, shadows, faces, hands, or body parts. Remove any living being already visible in 图1. Any such entity mentioned in scene notes, reference images, or the modification request is narrative-only context and must not be rendered. Only architecture, landscape, weather, lighting, and non-living props may appear.";
+
+const withEmptySceneNegative = (...terms: string[]) => [EMPTY_SCENE_NEGATIVE, ...terms].join(", ");
+
 const RegenerateSceneInput = z.object({
   // 旧工作区记录中可能有 null / 非字符串字段；在入口统一归一化，避免 I2I 请求被 Zod
   // 的 invalid_type 中断。参考图是否可用仍由后续供应商请求返回明确错误。
@@ -2903,7 +2925,10 @@ function buildScenePrompts(
       `[地点] ${data.sceneSlug}`,
       data.sceneLocation ? `[具体地点] ${data.sceneLocation}` : "",
       data.sceneTimeOfDay ? `[时段] ${data.sceneTimeOfDay}` : "",
-      data.sceneAction ? `[场景语义] ${data.sceneAction}` : "",
+      data.sceneAction
+        ? `[环境语义] 仅可从以下资料提取建筑、景观、天气、光影和无生命道具；任何角色、动物、生物或其行为均不得绘制：${data.sceneAction}`
+        : "",
+      EMPTY_SCENE_HARD_RULE,
       ``,
       `[画布] 3072×2048 横向画布，严格使用 2 行 × 3 列共六个等大格子；从左到右、从上到下排列。不得输出竖屏、单图、额外格子或空白格。`,
       ``,
@@ -2926,7 +2951,7 @@ function buildScenePrompts(
       .filter(Boolean)
       .join("\n");
     const negative = [
-      "people, person, character, human, animal, animal silhouette, figure, crowd, bystander, shadow person, hand, body part",
+      withEmptySceneNegative(),
       "six unrelated scenes, different location, different room, different architecture, different furniture layout",
       "mirrored front, flipped image, duplicated panel, same angle in all panels, flat 2D collage",
       "missing rear structure, impossible perspective, incorrect aerial view, fisheye distortion",
@@ -2965,7 +2990,10 @@ function buildScenePrompts(
       `[地点] ${data.sceneSlug}`,
       data.sceneLocation ? `[具体地点] ${data.sceneLocation}` : "",
       data.sceneTimeOfDay ? `[时段] ${data.sceneTimeOfDay}` : "",
-      data.sceneAction ? `[场景动作] ${data.sceneAction}` : "",
+      data.sceneAction
+        ? `[环境语义] 仅可使用其中的无生命环境信息；不得画出任何角色、动物、生物或行动者：${data.sceneAction}`
+        : "",
+      EMPTY_SCENE_HARD_RULE,
       ``,
       `[画布] 一张横图,3 个等宽面板(左/中/右),格间干净留白(gutter ~3-5% panel 宽度)。`,
       ``,
@@ -2990,7 +3018,7 @@ function buildScenePrompts(
       .filter(Boolean)
       .join("\n");
     const negative = [
-      "people, character, figure, silhouette, human, bystander",
+      withEmptySceneNegative(),
       "different location, different time of day, different weather between panels",
       "different color palette between panels, color shift between panels, inconsistent lighting between panels",
       "style drift, mixing styles, different art style between panels, photorealistic when input is anime, anime when input is realistic",
@@ -3047,6 +3075,7 @@ function buildScenePrompts(
       data.sceneLocation ? `[具体地点] ${data.sceneLocation}` : "",
       data.sceneTimeOfDay ? `[时段] ${data.sceneTimeOfDay}` : "",
       ``,
+      EMPTY_SCENE_HARD_RULE,
       `[画布格式] 2048×2048 正方形，2×2 四宫格，格子间留极细空白线（~2px），无编号无标签。`,
       ``,
       `────────────────────────────────────────────────`,
@@ -3113,7 +3142,7 @@ function buildScenePrompts(
       .filter(Boolean)
       .join("\n");
     const negative = [
-      "people, character, figure, silhouette, human, animal, bystander",
+      withEmptySceneNegative(),
       "camera not moving, same angle in all 4 panels, no perspective change between panels",
       "left panel and right panel showing the same wall, left and right views identical",
       "right panel showing left-side content, right panel = left panel copy",
@@ -3149,8 +3178,11 @@ function buildScenePrompts(
     `[修改意见] ${data.userInstruction}`,
     ``,
     `[地点 / 时段] ${data.sceneSlug}${data.sceneTimeOfDay ? " / " + data.sceneTimeOfDay : ""}`,
-    data.sceneAction ? `[场景动作参考] ${data.sceneAction}` : "",
+    data.sceneAction
+      ? `[环境资料] 仅可保留建筑、景观、天气、光影和无生命道具；资料中的角色、动物、生物或行为主体一律忽略：${data.sceneAction}`
+      : "",
     ``,
+    EMPTY_SCENE_HARD_RULE,
     `[修改规则 — 必须遵守]`,
     `1. 以图1为基础,在它的构图 / 光照 / 地点 / 时段上修改,**不要重新构图或换地点**。`,
     `2. 只调整"修改意见"里明确提到的元素;没提到的部分(构图、光照、地点、时段、视觉风格)全部保留图1 的样子。`,
@@ -3160,7 +3192,7 @@ function buildScenePrompts(
     .filter(Boolean)
     .join("\n");
   const negative = [
-    "people, character, figure, silhouette, human, crowd",
+    withEmptySceneNegative(),
     "different art style, style drift, photorealistic when input is anime, anime when input is realistic, different medium, different color grading",
     "different location, different time of day, different camera angle, different aspect ratio",
     "watermark, logo, text, signature, label, panel number, caption, annotation, arrow, layout grid lines",
