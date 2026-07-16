@@ -103,6 +103,8 @@ export const CONFLUO_VIDEO_MODELS = {
 } as const;
 
 // TopenRouter(tp-api.chinadatapay.com,中转火山方舟 doubao-seedance)
+// 参考素材会先登记为 TopenRouter asset，待状态变为 Active 后再以
+// asset://<id> 提交。真人图片走此路径可避免直接 URL 触发隐私风控。
 export const TOPENROUTER_VIDEO_MODELS = {
   "topenrouter-doubao-seedance-2-0-260128": "Seedance 2.0 (TopenRouter)",
   "topenrouter-doubao-seedance-2-0-fast-260128": "Seedance 2.0 Fast (TopenRouter)",
@@ -1680,6 +1682,9 @@ const TOPENROUTER_DEFAULT_BASE_URL = "https://tp-api.chinadatapay.com:8000";
 function getTopenrouterConfig() {
   return {
     apiKey: process.env.TOPENROUTER_API_KEY,
+    // Asset 查询要求与上传者使用同一 token。默认复用视频 token；只有服务商
+    // 明确分配了同一账户下的专用 asset token 时才允许单独覆盖。
+    assetApiKey: process.env.TOPENROUTER_ASSET_API_KEY || process.env.TOPENROUTER_API_KEY,
     baseUrl: (process.env.TOPENROUTER_BASE_URL || TOPENROUTER_DEFAULT_BASE_URL).replace(/\/+$/, ""),
   };
 }
@@ -1687,6 +1692,272 @@ function getTopenrouterConfig() {
 /** 从 model id 剥离 `topenrouter-` 前缀,得到上游 model 名 */
 function topenrouterModelToUpstream(modelId: string): string {
   return modelId.replace(/^topenrouter-/i, "");
+}
+
+type TopenrouterAssetType = "Image" | "Video" | "Audio";
+
+type TopenrouterAsset = {
+  id: string;
+  name?: string;
+  assetType?: TopenrouterAssetType;
+  status?: string;
+  url?: string;
+  createTime?: string;
+};
+
+const TOPENROUTER_ASSET_READY_TIMEOUT_MS = 90_000;
+const TOPENROUTER_ASSET_POLL_MS = 1_500;
+
+function topenrouterAssetUrl(assetId: string): string {
+  return `asset://${assetId}`;
+}
+
+function normalizeTopenrouterAsset(raw: unknown): TopenrouterAsset | null {
+  if (!raw || typeof raw !== "object") return null;
+  const value = raw as Record<string, unknown>;
+  const id = value.Id ?? value.id;
+  if (typeof id !== "string" || !id) return null;
+  const assetType = value.AssetType ?? value.asset_type ?? value.assetType;
+  return {
+    id,
+    name:
+      typeof value.Name === "string"
+        ? value.Name
+        : typeof value.name === "string"
+          ? value.name
+          : undefined,
+    assetType:
+      assetType === "Image" || assetType === "Video" || assetType === "Audio"
+        ? assetType
+        : undefined,
+    status:
+      typeof value.Status === "string"
+        ? value.Status
+        : typeof value.status === "string"
+          ? value.status
+          : undefined,
+    url:
+      typeof value.URL === "string"
+        ? value.URL
+        : typeof value.url === "string"
+          ? value.url
+          : undefined,
+    createTime:
+      typeof value.CreateTime === "string"
+        ? value.CreateTime
+        : typeof value.create_time === "string"
+          ? value.create_time
+          : undefined,
+  };
+}
+
+function topenrouterErrorBody(text: string): string {
+  try {
+    const json = JSON.parse(text) as {
+      code?: string | number;
+      error?: { code?: string | number; message?: string };
+      message?: string;
+    };
+    const code = json.error?.code ?? json.code;
+    const message = json.error?.message || json.message;
+    if (code !== undefined && message) return `${code}: ${message}`;
+    return message || (code !== undefined ? String(code) : text.slice(0, 300));
+  } catch {
+    return text.slice(0, 300);
+  }
+}
+
+/** 将一个公网素材 URL 登记到 TopenRouter 上游素材库，返回稳定 asset_id。 */
+async function topenrouterUploadAsset(input: {
+  model: string;
+  url: string;
+  assetType: TopenrouterAssetType;
+  name?: string;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<{ ok: true; asset: TopenrouterAsset } | { ok: false; error: string }> {
+  const upstreamModel = topenrouterModelToUpstream(input.model);
+  console.log(
+    `[topenrouter asset→] model=${upstreamModel} type=${input.assetType} name=${input.name || "unnamed"}`,
+  );
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const res = await fetch(
+      `${input.baseUrl}/v1/api/assets/upload?model=${encodeURIComponent(upstreamModel)}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${input.apiKey}`,
+        },
+        body: JSON.stringify({
+          url: input.url,
+          asset_type: input.assetType,
+          ...(input.name ? { name: input.name } : {}),
+        }),
+        signal: controller.signal,
+      },
+    );
+    clearTimeout(timeout);
+    const text = await res.text().catch(() => "");
+    if (!res.ok) {
+      console.warn(`[topenrouter asset×] upload status=${res.status} body=${topenrouterErrorBody(text)}`);
+      return {
+        ok: false,
+        error: `[topenrouter] asset upload ${res.status}: ${topenrouterErrorBody(text)}`,
+      };
+    }
+    let json: { code?: number | string; message?: string; data?: unknown } = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    if (json.code !== undefined && json.code !== 0 && json.code !== "success") {
+      console.warn(`[topenrouter asset×] upload code=${json.code} message=${json.message || "unknown"}`);
+      return {
+        ok: false,
+        error: `[topenrouter] asset upload failed: ${json.message || text.slice(0, 300)}`,
+      };
+    }
+    const asset = normalizeTopenrouterAsset(json.data);
+    if (!asset) {
+      console.warn("[topenrouter asset×] upload returned no asset id");
+      return {
+        ok: false,
+        error: `[topenrouter] asset upload returned no asset id: ${text.slice(0, 300)}`,
+      };
+    }
+    console.log(`[topenrouter asset created] id=${asset.id} status=${asset.status || "Processing"}`);
+    return { ok: true, asset };
+  } catch (e) {
+    clearTimeout(timeout);
+    const message =
+      e instanceof Error && e.name === "AbortError"
+        ? "upload timeout (30s)"
+        : e instanceof Error
+          ? e.message
+          : "fetch failed";
+    console.warn(`[topenrouter asset×] upload network=${message}`);
+    return { ok: false, error: `[topenrouter] asset upload network: ${message}` };
+  }
+}
+
+/** 查询 TopenRouter 素材状态；临时 URL 仅用于素材库展示，视频生成始终使用 asset://id。 */
+async function topenrouterGetAsset(input: {
+  model: string;
+  assetId: string;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<{ ok: true; asset: TopenrouterAsset } | { ok: false; error: string }> {
+  const upstreamModel = topenrouterModelToUpstream(input.model);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const res = await fetch(
+      `${input.baseUrl}/v1/api/assets/${encodeURIComponent(input.assetId)}?model=${encodeURIComponent(upstreamModel)}`,
+      {
+        headers: { Authorization: `Bearer ${input.apiKey}` },
+        signal: controller.signal,
+      },
+    );
+    clearTimeout(timeout);
+    const text = await res.text().catch(() => "");
+    if (!res.ok)
+      return {
+        ok: false,
+        error: `[topenrouter] asset get ${res.status}: ${topenrouterErrorBody(text)}`,
+      };
+    let json: { code?: number | string; message?: string; data?: unknown } = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    if (json.code !== undefined && json.code !== 0 && json.code !== "success") {
+      return {
+        ok: false,
+        error: `[topenrouter] asset get failed: ${json.message || text.slice(0, 300)}`,
+      };
+    }
+    const asset = normalizeTopenrouterAsset(json.data);
+    if (!asset)
+      return {
+        ok: false,
+        error: `[topenrouter] asset get returned invalid data: ${text.slice(0, 300)}`,
+      };
+    return { ok: true, asset };
+  } catch (e) {
+    clearTimeout(timeout);
+    const message =
+      e instanceof Error && e.name === "AbortError"
+        ? "get timeout (30s)"
+        : e instanceof Error
+          ? e.message
+          : "fetch failed";
+    return { ok: false, error: `[topenrouter] asset get network: ${message}` };
+  }
+}
+
+/** 等待上游素材完成入库校验，只有 Active 的 asset 才可安全传给视频任务。 */
+async function topenrouterWaitForAsset(input: {
+  model: string;
+  assetId: string;
+  apiKey: string;
+  baseUrl: string;
+  timeoutMs?: number;
+}): Promise<{ ok: true; asset: TopenrouterAsset } | { ok: false; error: string }> {
+  const deadline = Date.now() + (input.timeoutMs ?? TOPENROUTER_ASSET_READY_TIMEOUT_MS);
+  let lastStatus = "unknown";
+  while (Date.now() < deadline) {
+    const result = await topenrouterGetAsset(input);
+    if (!result.ok) return result;
+    const status = (result.asset.status || "").toLowerCase();
+    lastStatus = result.asset.status || lastStatus;
+    if (status === "active") {
+      console.log(`[topenrouter asset✓] id=${input.assetId} status=Active`);
+      return result;
+    }
+    if (status === "failed") {
+      console.warn(`[topenrouter asset×] id=${input.assetId} status=Failed`);
+      return { ok: false, error: `[topenrouter] asset ${input.assetId} 入库失败 (Failed)` };
+    }
+    console.log(`[topenrouter asset⟳] id=${input.assetId} status=${result.asset.status || "unknown"}`);
+    await sleep(TOPENROUTER_ASSET_POLL_MS);
+  }
+  return {
+    ok: false,
+    error: `[topenrouter] asset ${input.assetId} 等待入库超时，最后状态: ${lastStatus}`,
+  };
+}
+
+/**
+ * 将参考资源转换为 TopenRouter 的稳定素材引用。
+ * 已是 asset:// 的引用不重复上传，便于调用方复用已审核通过的真人素材。
+ */
+async function topenrouterEnsureAsset(input: {
+  model: string;
+  url?: string;
+  assetType: TopenrouterAssetType;
+  name: string;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<{ ok: true; url?: string } | { ok: false; error: string }> {
+  if (!input.url || input.url.startsWith("asset://")) return { ok: true, url: input.url };
+  const uploaded = await topenrouterUploadAsset({
+    model: input.model,
+    url: input.url,
+    assetType: input.assetType,
+    name: input.name,
+    apiKey: input.apiKey,
+    baseUrl: input.baseUrl,
+  });
+  if (!uploaded.ok) return uploaded;
+  const ready = await topenrouterWaitForAsset({
+    model: input.model,
+    assetId: uploaded.asset.id,
+    apiKey: input.apiKey,
+    baseUrl: input.baseUrl,
+  });
+  if (!ready.ok) return ready;
+  return { ok: true, url: topenrouterAssetUrl(ready.asset.id) };
 }
 
 // ---------- 弘梦 (Hongmeng) 配置 ----------
@@ -1745,6 +2016,9 @@ async function topenrouterSubmit(input: {
   if (typeof input.watermark === "boolean") body.watermark = input.watermark;
   // 任务过期时间(秒),文档示例用 3600;视频生成通常数分钟,留足余量
   body.execution_expires_after = 3600;
+  console.log(
+    `[topenrouter video→] model=${upstreamModel} content=${input.content.length} ratio=${input.ratio || "default"} resolution=${body.resolution || "default"} duration=${input.duration ?? "default"}`,
+  );
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 30_000);
@@ -1760,19 +2034,25 @@ async function topenrouterSubmit(input: {
     });
     clearTimeout(timeout);
     const text = await res.text().catch(() => "");
-    if (!res.ok)
-      return { ok: false, error: `[topenrouter] submit ${res.status}: ${text.slice(0, 300)}` };
+    if (!res.ok) {
+      const upstreamError = topenrouterErrorBody(text);
+      console.warn(`[topenrouter video×] submit status=${res.status} body=${upstreamError}`);
+      // 直接将供应商 code/message 返回给界面，避免包装错误掩盖上游实际原因。
+      return { ok: false, error: upstreamError };
+    }
     // 复用 arkSubmit 同款 bugfix:JSON.parse(text) 而非 res.json()(body 流已消费)
     let json: { id?: string; error?: { code?: string; message?: string }; message?: string } = {};
     try {
       json = JSON.parse(text);
     } catch {}
     if (!json.id) {
+      console.warn(`[topenrouter video×] submit missing task id: ${json.error?.message || json.message || "unknown"}`);
       return {
         ok: false,
         error: `[topenrouter] no task id: ${json.error?.message || json.message || text.slice(0, 200)}`,
       };
     }
+    console.log(`[topenrouter video✓] submitted taskId=${json.id}`);
     return { ok: true, taskId: json.id, model: input.model };
   } catch (e) {
     clearTimeout(timeout);
@@ -1782,6 +2062,7 @@ async function topenrouterSubmit(input: {
           ? "submit timeout (30s)"
           : e.message
         : "fetch failed";
+    console.warn(`[topenrouter video×] submit network=${msg}`);
     return { ok: false, error: `[topenrouter] network: ${msg}` };
   }
 }
@@ -2407,7 +2688,7 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
       : { ok: false, error: r.error };
   }
   if (backend === "topenrouter") {
-    const { apiKey, baseUrl } = getTopenrouterConfig();
+    const { apiKey, assetApiKey, baseUrl } = getTopenrouterConfig();
     if (!apiKey) {
       return {
         ok: false,
@@ -2415,18 +2696,80 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
           "[topenrouter] 缺少 TOPENROUTER_API_KEY,请在 Cloudflare Secrets 或 .env.local 中配置后再试。",
       };
     }
-    // TopenRouter content 结构与 ARK 原生一致,复用 buildArkContent 拼装
+    if (!assetApiKey) {
+      return {
+        ok: false,
+        error:
+          "[topenrouter] 缺少 TOPENROUTER_ASSET_API_KEY / TOPENROUTER_API_KEY,无法上传参考素材。",
+      };
+    }
+    // 参考图/视频/音频先进入 TopenRouter 素材库。真人图片直接给视频接口会触发
+    // InputImageSensitiveContentDetected.PrivacyInformation；使用审核为 Active 的
+    // asset:// 引用是服务商提供的规避路径。
     const firstFrameImageUrl = input.media.find((m) => m.type === "first_frame")?.url;
     const lastFrameImageUrl = input.media.find((m) => m.type === "last_frame")?.url;
     const referenceImageUrls = input.media
       .filter((m) => m.type === "reference_image")
       .map((m) => m.url);
+    const assetPrefix = `doopoo-${Date.now()}`;
+    const firstFrameAsset = await topenrouterEnsureAsset({
+      model: input.model,
+      url: firstFrameImageUrl,
+      assetType: "Image",
+      name: `${assetPrefix}-first-frame`,
+      apiKey: assetApiKey,
+      baseUrl,
+    });
+    if (!firstFrameAsset.ok) return firstFrameAsset;
+    const lastFrameAsset = await topenrouterEnsureAsset({
+      model: input.model,
+      url: lastFrameImageUrl,
+      assetType: "Image",
+      name: `${assetPrefix}-last-frame`,
+      apiKey: assetApiKey,
+      baseUrl,
+    });
+    if (!lastFrameAsset.ok) return lastFrameAsset;
+    const referenceAssets = await Promise.all(
+      referenceImageUrls.map((url, index) =>
+        topenrouterEnsureAsset({
+          model: input.model,
+          url,
+          assetType: "Image",
+          name: `${assetPrefix}-reference-image-${index + 1}`,
+          apiKey: assetApiKey,
+          baseUrl,
+        }),
+      ),
+    );
+    const failedReferenceAsset = referenceAssets.find((result) => !result.ok);
+    if (failedReferenceAsset && !failedReferenceAsset.ok) return failedReferenceAsset;
+    const referenceVideoAsset = await topenrouterEnsureAsset({
+      model: input.model,
+      url: input.referenceVideoUrl,
+      assetType: "Video",
+      name: `${assetPrefix}-reference-video`,
+      apiKey: assetApiKey,
+      baseUrl,
+    });
+    if (!referenceVideoAsset.ok) return referenceVideoAsset;
+    const referenceAudioAsset = await topenrouterEnsureAsset({
+      model: input.model,
+      url: input.referenceAudioUrl,
+      assetType: "Audio",
+      name: `${assetPrefix}-reference-audio`,
+      apiKey: assetApiKey,
+      baseUrl,
+    });
+    if (!referenceAudioAsset.ok) return referenceAudioAsset;
     const content = buildArkContent(input.prompt, {
-      firstFrameImageUrl,
-      lastFrameImageUrl,
-      referenceImageUrls,
-      referenceVideoUrl: input.referenceVideoUrl,
-      referenceAudioUrl: input.referenceAudioUrl,
+      firstFrameImageUrl: firstFrameAsset.url,
+      lastFrameImageUrl: lastFrameAsset.url,
+      referenceImageUrls: referenceAssets.flatMap((result) =>
+        result.ok && result.url ? [result.url] : [],
+      ),
+      referenceVideoUrl: referenceVideoAsset.url,
+      referenceAudioUrl: referenceAudioAsset.url,
     });
     const r = await topenrouterSubmit({
       model: input.model,
@@ -2579,6 +2922,101 @@ async function pollVideoTask(input: PollInput): Promise<PollResult> {
 // ====================================================================
 // 公开 server functions
 // ====================================================================
+
+const TopenrouterAssetUploadInput = z.object({
+  // 文档要求素材必须是上游可下载的公网 HTTP(S) URL，拒绝 data: / 内网地址。
+  url: z
+    .string()
+    .url()
+    .max(4_000)
+    .refine((value) => /^https?:\/\//i.test(value), "素材 URL 必须为公网 HTTP(S) 地址"),
+  assetType: z.enum(["Image", "Video", "Audio"]),
+  name: z.string().trim().min(1).max(200).optional(),
+  model: z.string().trim().min(1).max(200).default("topenrouter-doubao-seedance-2-0-260128"),
+});
+
+/**
+ * 手动上传一项 TopenRouter 素材并等待审核/入库完成。
+ * 返回 Active 才表示可将 `asset://assetId` 放进视频 content；调用者可保存 assetId
+ * 供后续视频反复引用，避免每次生成重复上传。
+ */
+export const uploadTopenrouterAsset = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((d: unknown) => TopenrouterAssetUploadInput.parse(d))
+  .handler(async ({ data }) => {
+    const { assetApiKey, baseUrl } = getTopenrouterConfig();
+    if (!assetApiKey) {
+      return {
+        ok: false as const,
+        error: "[topenrouter] 缺少 TOPENROUTER_ASSET_API_KEY / TOPENROUTER_API_KEY",
+      };
+    }
+    const uploaded = await topenrouterUploadAsset({
+      model: data.model,
+      url: data.url,
+      assetType: data.assetType,
+      name: data.name,
+      apiKey: assetApiKey,
+      baseUrl,
+    });
+    if (!uploaded.ok) return { ok: false as const, error: uploaded.error };
+    const ready = await topenrouterWaitForAsset({
+      model: data.model,
+      assetId: uploaded.asset.id,
+      apiKey: assetApiKey,
+      baseUrl,
+    });
+    if (!ready.ok) return { ok: false as const, error: ready.error, assetId: uploaded.asset.id };
+    return {
+      ok: true as const,
+      assetId: ready.asset.id,
+      assetUrl: topenrouterAssetUrl(ready.asset.id),
+      status: ready.asset.status || "Active",
+      name: ready.asset.name,
+      assetType: ready.asset.assetType,
+      previewUrl: ready.asset.url,
+      createTime: ready.asset.createTime,
+    };
+  });
+
+const TopenrouterAssetGetInput = z.object({
+  assetId: z
+    .string()
+    .regex(/^[a-zA-Z0-9_-]+$/, "非法 asset_id")
+    .max(200),
+  model: z.string().trim().min(1).max(200).default("topenrouter-doubao-seedance-2-0-260128"),
+});
+
+/** 查询已上传素材的入库状态和临时预览 URL。 */
+export const getTopenrouterAsset = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((d: unknown) => TopenrouterAssetGetInput.parse(d))
+  .handler(async ({ data }) => {
+    const { assetApiKey, baseUrl } = getTopenrouterConfig();
+    if (!assetApiKey) {
+      return {
+        ok: false as const,
+        error: "[topenrouter] 缺少 TOPENROUTER_ASSET_API_KEY / TOPENROUTER_API_KEY",
+      };
+    }
+    const result = await topenrouterGetAsset({
+      model: data.model,
+      assetId: data.assetId,
+      apiKey: assetApiKey,
+      baseUrl,
+    });
+    if (!result.ok) return { ok: false as const, error: result.error };
+    return {
+      ok: true as const,
+      assetId: result.asset.id,
+      assetUrl: topenrouterAssetUrl(result.asset.id),
+      status: result.asset.status || "unknown",
+      name: result.asset.name,
+      assetType: result.asset.assetType,
+      previewUrl: result.asset.url,
+      createTime: result.asset.createTime,
+    };
+  });
 
 // ---- 1) submitVideoTaskFn (server fn) ----
 
@@ -2904,6 +3342,9 @@ export const generateVideo = createServerFn({ method: "POST" })
                 ? "hongmeng-seedance2-pro"
                 : "happyhorse-1.0-i2v");
 
+    console.log(
+      `[video→] backend=${backend} model=${model} promptChars=${data.prompt.length} images=${persistedMedia.length} videoRef=${referenceVideoUrl ? 1 : 0} audioRef=${referenceAudioUrl ? 1 : 0} ratio=${data.ratio} resolution=${data.resolution} duration=${data.duration}`,
+    );
     // 1) 提交
     const submit = await submitVideoTask({
       model,
@@ -2918,19 +3359,26 @@ export const generateVideo = createServerFn({ method: "POST" })
       referenceAudioUrl,
     });
     if (!submit.ok) {
+      console.warn(`[video×] backend=${backend} model=${model} submit=${submit.error}`);
       return { ok: false as const, error: submit.error, taskId: undefined, backend };
     }
+    console.log(`[video✓] queued backend=${submit.backend} taskId=${submit.taskId} model=${submit.model}`);
 
     data.onProgress?.("queued", { taskId: submit.taskId, backend });
 
     // 2) 轮询
-    const pollInterval = data.pollMs ?? 5_000;
+    // 视频生成通常需要数分钟，20 秒轮询足够及时且避免无意义地打满供应商查询接口。
+    // 调用方仍可通过 pollMs 覆盖默认值（用于本地诊断或特殊供应商）。
+    const pollInterval = data.pollMs ?? 20_000;
     // 视频任务由供应商异步执行；只要不是明确失败/取消，就持续轮询，
     // 不再用本地 5 分钟 deadline 把仍在生成的任务错误标记为失败。
     while (true) {
       await sleep(pollInterval);
       const poll = await pollVideoTask({ taskId: submit.taskId, backend: submit.backend });
       if (!poll.ok) {
+        console.warn(
+          `[video×] poll backend=${submit.backend} taskId=${submit.taskId} status=${poll.status || "network"} error=${poll.error}`,
+        );
         // 业务错误(poll 带 status: failed/cancelled,如丽帧 code!==0)不可恢复,直接终止;
         // 否则按网络抖动继续轮询
         if (poll.status === "failed" || poll.status === "cancelled") {
@@ -2944,6 +3392,7 @@ export const generateVideo = createServerFn({ method: "POST" })
         }
         continue;
       }
+      console.log(`[video⟳] backend=${submit.backend} taskId=${submit.taskId} status=${poll.status}`);
       if (poll.status === "succeeded") {
         data.onProgress?.("succeeded", {
           taskId: submit.taskId,
@@ -2961,6 +3410,7 @@ export const generateVideo = createServerFn({ method: "POST" })
             description: "视频生成",
           });
         }
+        console.log(`[video✓] completed backend=${submit.backend} taskId=${submit.taskId}`);
         return {
           ok: true as const,
           taskId: submit.taskId,
@@ -2973,6 +3423,9 @@ export const generateVideo = createServerFn({ method: "POST" })
         const raw = (poll as any).raw;
         const errMsg =
           raw?.error?.message || raw?.output?.error_message || `${poll.status} (no error detail)`;
+        console.warn(
+          `[video×] completed backend=${submit.backend} taskId=${submit.taskId} status=${poll.status} error=${errMsg}`,
+        );
         return {
           ok: false as const,
           error: `[${submit.backend}] ${poll.status}: ${errMsg}`,
