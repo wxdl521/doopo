@@ -98,6 +98,12 @@ export const listCommunityPosts = createServerFn({ method: "GET" })
       .parse(input ?? {}),
   )
   .handler(async ({ data }) => {
+    // 社区是首页的非关键内容。未配置管理员密钥时不要触发 Proxy 的建连异常，
+    // 让首页和项目工作区仍然可用；发布、团队管理等需要管理员权限的操作会
+    // 保持各自明确的配置错误。
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      return [];
+    }
     let q = supabaseAdmin
       .from("community_posts")
       .select(

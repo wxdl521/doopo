@@ -353,9 +353,14 @@ export const loadWorkspaceData = createServerFn({ method: "POST" })
   .validator((input: unknown) => z.object({ id: z.string().min(1).max(64) }).parse(input))
   .handler(async ({ data, context }) => {
     const { supabase } = context;
+    // workspace_data may contain years of image/video history. Selecting the
+    // whole JSONB document has timed out in Postgres, so fetch editable project
+    // content first; media is restored by loadWorkspaceMedia below.
     const { data: row, error } = await supabase
       .from("projects")
-      .select("workspace_data,completed_stages")
+      .select(
+        "completed_stages,outline:workspace_data->outline,scenes:workspace_data->scenes,characters:workspace_data->characters,props:workspace_data->props,storyboard:workspace_data->storyboard,storyboardGroups:workspace_data->storyboardGroups,timeline:workspace_data->timeline,synopsisText:workspace_data->synopsisText,episodeTexts:workspace_data->episodeTexts,selectedEpisodeIndex:workspace_data->selectedEpisodeIndex",
+      )
       .eq("id", data.id)
       .maybeSingle();
     if (error)
@@ -370,9 +375,53 @@ export const loadWorkspaceData = createServerFn({ method: "POST" })
         completedStages: null as string[] | null,
         error: null as string | null,
       };
+    const fields = row as unknown as Record<string, unknown>;
     return {
-      workspaceData: (row.workspace_data ?? {}) as unknown as Record<string, string>,
-      completedStages: (row.completed_stages ?? []) as string[],
+      workspaceData: {
+        outline: fields.outline,
+        scenes: fields.scenes,
+        characters: fields.characters,
+        props: fields.props,
+        storyboard: fields.storyboard,
+        storyboardGroups: fields.storyboardGroups,
+        timeline: fields.timeline,
+        synopsisText: fields.synopsisText,
+        episodeTexts: fields.episodeTexts,
+        selectedEpisodeIndex: fields.selectedEpisodeIndex,
+      },
+      completedStages: (fields.completed_stages ?? []) as string[],
+      error: null as string | null,
+    };
+  });
+
+/**
+ * Restore the large media maps separately so a single oversized JSONB value
+ * cannot stop scripts, characters, or scenes from opening.
+ */
+export const loadWorkspaceMedia = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((input: unknown) => z.object({ id: z.string().min(1).max(64) }).parse(input))
+  .handler(async ({ data, context }) => {
+    const { supabase } = context;
+    const { data: row, error } = await supabase
+      .from("projects")
+      .select(
+        "charImages:workspace_data->charImages,charImagePrompts:workspace_data->charImagePrompts,shotImages:workspace_data->shotImages,sceneImages:workspace_data->sceneImages,sceneImagePrompts:workspace_data->sceneImagePrompts,propImages:workspace_data->propImages,propImagePrompts:workspace_data->propImagePrompts,panelImages:workspace_data->panelImages,selectedCharImages:workspace_data->selectedCharImages,selectedSceneImages:workspace_data->selectedSceneImages,selectedPropImages:workspace_data->selectedPropImages,groupVideos:workspace_data->groupVideos,groupStoryboards:workspace_data->groupStoryboards",
+      )
+      .eq("id", data.id)
+      .maybeSingle();
+    if (error) {
+      return { workspaceData: null as Record<string, unknown> | null, error: error.message };
+    }
+    if (!row) {
+      return {
+        workspaceData: null as Record<string, unknown> | null,
+        error: null as string | null,
+      };
+    }
+    const fields = row as unknown as Record<string, unknown>;
+    return {
+      workspaceData: fields,
       error: null as string | null,
     };
   });

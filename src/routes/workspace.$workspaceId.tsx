@@ -54,6 +54,7 @@ import {
   upsertProject,
   saveWorkspaceData,
   loadWorkspaceData,
+  loadWorkspaceMedia,
   type ProjectConfigRow,
 } from "../lib/projects.functions";
 import {
@@ -981,6 +982,7 @@ function WorkspacePage() {
   const loadProject = useServerFn(getProject);
   const callSaveWorkspace = useServerFn(saveWorkspaceData);
   const callLoadWorkspace = useServerFn(loadWorkspaceData);
+  const callLoadWorkspaceMedia = useServerFn(loadWorkspaceMedia);
   const callPersistMedia = useServerFn(persistWorkspaceMedia);
   const callPersistAsset = useServerFn(persistAssetImage);
   const callSaveOneStoryboard = useServerFn(saveOneStoryboard);
@@ -992,6 +994,9 @@ function WorkspacePage() {
   const [savingWorkspace, setSavingWorkspace] = useState(false);
   const [savedWorkspace, setSavedWorkspace] = useState(false);
   const [dataLoaded, setDataLoaded] = useState(false);
+  const [workspaceLoadError, setWorkspaceLoadError] = useState<string | null>(null);
+  const [workspaceMediaReady, setWorkspaceMediaReady] = useState(false);
+  const [workspaceMediaLoadError, setWorkspaceMediaLoadError] = useState<string | null>(null);
   /** 2026/06 修复:所有图片状态(角色/场景/道具/分镜)从 workspace_data 恢复后才为 true,
    * 避免 autoGen useEffect 在 charImages 还没填充时就判定"无图"→ 重新生成。 */
   const [imagesRestored, setImagesRestored] = useState(false);
@@ -1932,11 +1937,20 @@ function WorkspacePage() {
       .then((r) => {
         if (!cancelled && r.project) setProject(r.project);
       })
-      .catch(() => {});
+      .catch((error) => {
+        console.error("[workspace] failed to load project settings:", error);
+      });
     // Load persisted workspace data
     callLoadWorkspace({ data: { id: workspaceId } })
       .then((r: any) => {
-        if (cancelled || r.error || !r.workspaceData) return;
+        if (cancelled) return;
+        if (r.error || !r.workspaceData) {
+          const message = r.error || "项目内容不存在或当前账号没有访问权限";
+          console.error("[workspace] failed to load workspace data:", message);
+          setWorkspaceLoadError(message);
+          return;
+        }
+        setWorkspaceLoadError(null);
         const wd = r.workspaceData as Record<string, any>;
         if (wd.outline) setData((d) => ({ ...d, outline: wd.outline as WorkspaceData["outline"] }));
         // 兼容旧数据:
@@ -2051,18 +2065,103 @@ function WorkspacePage() {
         if (typeof wd.selectedEpisodeIndex === "number") {
           setSelectedEpisodeIndex(wd.selectedEpisodeIndex);
         }
-        // 2026/06 修复:在所有图片状态恢复后再标记,确保 autoGen 能看到完整数据
-        setImagesRestored(true);
+        // 核心剧本和角色先展示；大媒体映射随后独立读取，避免一个超大的
+        // workspace_data JSONB 阻断整个项目。
         setDataLoaded(true);
+        setWorkspaceMediaReady(false);
+        setWorkspaceMediaLoadError(null);
+        void callLoadWorkspaceMedia({ data: { id: workspaceId } })
+          .then((mediaResult: any) => {
+            if (cancelled) return;
+            if (mediaResult.error || !mediaResult.workspaceData) {
+              setWorkspaceMediaLoadError(
+                mediaResult.error || "项目媒体内容暂时无法加载，已停止自动保存以保护数据",
+              );
+              return;
+            }
+            const media = mediaResult.workspaceData as Record<string, any>;
+            if (media.charImages) setCharImages(media.charImages as Record<string, string[]>);
+            if (media.charImagePrompts) {
+              const savedPrompts = media.charImagePrompts as Record<string, unknown[]>;
+              setCharImagePrompts(
+                Object.fromEntries(
+                  Object.entries(savedPrompts).map(([key, entries]) => [
+                    key,
+                    (Array.isArray(entries) ? entries : []).map((entry) =>
+                      typeof entry === "string"
+                        ? { rawPrompt: entry, editablePrompt: "", mode: "initial" as const }
+                        : (entry as CharacterImagePromptRecord),
+                    ),
+                  ]),
+                ),
+              );
+            }
+            if (media.shotImages) setShotImages(media.shotImages as Record<string, string[]>);
+            if (media.selectedCharImages)
+              setSelectedCharImages(media.selectedCharImages as Record<string, string | null>);
+            if (media.panelImages) setPanelImages(media.panelImages as Record<string, string>);
+            if (media.sceneImages) setSceneImages(media.sceneImages as Record<string, string[]>);
+            if (media.sceneImagePrompts) {
+              setSceneImagePrompts(
+                media.sceneImagePrompts as Record<string, AssetImagePromptRecord[]>,
+              );
+            }
+            if (media.selectedSceneImages)
+              setSelectedSceneImages(media.selectedSceneImages as Record<string, string | null>);
+            if (media.propImages) setPropImages(media.propImages as Record<string, string[]>);
+            if (media.propImagePrompts) {
+              setPropImagePrompts(
+                media.propImagePrompts as Record<string, AssetImagePromptRecord[]>,
+              );
+            }
+            if (media.selectedPropImages)
+              setSelectedPropImages(media.selectedPropImages as Record<string, string | null>);
+            if (media.groupVideos && typeof media.groupVideos === "object") {
+              setGroupVideos(
+                migrateGroupVideos(media.groupVideos as Record<string, unknown> | undefined),
+              );
+            }
+            if (media.groupStoryboards && typeof media.groupStoryboards === "object") {
+              setGroupStoryboards(
+                migrateGroupStoryboards(media.groupStoryboards as Record<string, unknown>),
+              );
+            }
+            setImagesRestored(true);
+            setWorkspaceMediaReady(true);
+          })
+          .catch((error) => {
+            if (cancelled) return;
+            console.error("[workspace] failed to load workspace media:", error);
+            setWorkspaceMediaLoadError(
+              error instanceof Error
+                ? error.message
+                : "项目媒体内容暂时无法加载，已停止自动保存以保护数据",
+            );
+          });
       })
-      .catch(() => {
-        setImagesRestored(true);
-        setDataLoaded(true);
+      .catch((error) => {
+        if (cancelled) return;
+        console.error("[workspace] failed to load workspace data:", error);
+        setWorkspaceLoadError(
+          error instanceof Error ? error.message : "项目内容加载失败，请刷新后重试",
+        );
       });
     return () => {
       cancelled = true;
     };
-  }, [workspaceId, loadProject, callLoadWorkspace]);
+  }, [workspaceId, loadProject, callLoadWorkspace, callLoadWorkspaceMedia]);
+
+  useEffect(() => {
+    if (workspaceLoadError) {
+      toast.error(`项目内容加载失败：${workspaceLoadError}`);
+    }
+  }, [workspaceLoadError]);
+
+  useEffect(() => {
+    if (workspaceMediaLoadError) {
+      toast.warning(`图片和视频历史暂未恢复：${workspaceMediaLoadError}`);
+    }
+  }, [workspaceMediaLoadError]);
 
   // 2026/06:首页直传剧本模式 —— 用户输入文本作为剧本直接导入
   useEffect(() => {
@@ -7426,6 +7525,15 @@ function WorkspacePage() {
       if (!silent) toast.error("请先登录");
       return;
     }
+    // 加载失败时 state 仍是空初始值；绝不能把它自动保存回数据库覆盖原内容。
+    if (workspaceLoadError) {
+      if (!silent) toast.error("项目内容尚未加载，已停止保存以保护原有数据");
+      return;
+    }
+    if (!workspaceMediaReady) {
+      if (!silent) toast.error("项目媒体尚未恢复，已停止保存以保护原有数据");
+      return;
+    }
     if (savingWorkspace) {
       pendingSaveRef.current = true;
       return;
@@ -7754,7 +7862,7 @@ function WorkspacePage() {
   });
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (!dataLoaded) return;
+    if (!dataLoaded || workspaceLoadError || !workspaceMediaReady) return;
     if (!user) return;
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     autoSaveTimerRef.current = setTimeout(() => {
@@ -7766,12 +7874,12 @@ function WorkspacePage() {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoSaveSignature, dataLoaded]);
+  }, [autoSaveSignature, dataLoaded, workspaceLoadError, workspaceMediaReady]);
 
   // 2026/06:页面卸载前(刷新 / 关闭 tab)强制 flush 一次保存,
   // 避免用户在 debounce 窗口内就刷新页面导致刚生成的图片丢失。
   useEffect(() => {
-    if (!dataLoaded || !user) return;
+    if (!dataLoaded || !user || workspaceLoadError || !workspaceMediaReady) return;
     const handler = () => {
       if (autoSaveTimerRef.current) {
         clearTimeout(autoSaveTimerRef.current);
@@ -7784,18 +7892,18 @@ function WorkspacePage() {
     };
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
-  }, [dataLoaded, user]);
+  }, [dataLoaded, user, workspaceLoadError, workspaceMediaReady]);
 
   // Auto-save when all stages are complete (only trigger once)
   const completedKey = ALL_STAGES.map((s) => (completedStages.has(s) ? "1" : "0")).join("");
   useEffect(() => {
     if (autoSavedRef.current) return;
-    if (!dataLoaded) return;
+    if (!dataLoaded || workspaceLoadError || !workspaceMediaReady) return;
     if (completedKey === "11111") {
       autoSavedRef.current = true;
       void handleSaveWorkspaceRef.current();
     }
-  }, [completedKey, dataLoaded]);
+  }, [completedKey, dataLoaded, workspaceLoadError, workspaceMediaReady]);
 
   // 2026/06 二次改造:之前 shots 字段一变就调 composePlotText 重写 plotText,
   // 把 AI 写的详细剧情扩写覆盖成机械的 shot 列表。改 prompt 后 plotText 是
@@ -8860,6 +8968,27 @@ function WorkspacePage() {
       produce_workspace_content: "已开始生成工作区内容。",
     };
     return { summary: labels[plan.action] ?? "已开始执行。" };
+  }
+
+  if (!dataLoaded && !workspaceLoadError) {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center gap-3 bg-bg text-text-secondary">
+        <Loader2 size={28} className="animate-spin text-accent" />
+        <p className="text-sm">正在加载项目内容…</p>
+      </div>
+    );
+  }
+
+  if (workspaceLoadError) {
+    return (
+      <div className="flex h-screen flex-col items-center justify-center gap-4 bg-bg px-6 text-center">
+        <p className="text-base font-medium text-text-primary">项目内容加载失败</p>
+        <p className="max-w-xl text-sm text-text-muted">{workspaceLoadError}</p>
+        <button type="button" className="btn-primary" onClick={() => window.location.reload()}>
+          重新加载
+        </button>
+      </div>
+    );
   }
 
   return (
