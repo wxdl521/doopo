@@ -730,6 +730,18 @@ function pickShotSceneId(
   return group?.sceneId;
 }
 
+/**
+ * 分镜描述、分镜图和故事板图都按组内相对时间展示/生成；
+ * 底层 startSec/endSec 仍保留整集时间轴上的绝对时间，供编排使用。
+ */
+function getStoryboardGroupStartSec(group: StoryboardGroup): number {
+  const firstShotStart = group.shots.reduce<number | null>((min, shot) => {
+    if (shot.startSec == null) return min;
+    return min == null ? shot.startSec : Math.min(min, shot.startSec);
+  }, null);
+  return group.startSec ?? firstShotStart ?? 0;
+}
+
 /** 重新编号所有分镜组 index，按当前数组顺序 */
 function reindexGroups(groups: StoryboardGroup[]): StoryboardGroup[] {
   return groups.map((g, i) => ({ ...g, index: i + 1 }));
@@ -1095,6 +1107,12 @@ function WorkspacePage() {
         },
       })
         .then((result) => {
+          const error = result.ok ? undefined : result.error || "素材审核未通过";
+          const status: ImageReviewStatus = result.ok
+            ? "approved"
+            : /status\s*=\s*failed|审核未通过|sensitive/i.test(error || "")
+              ? "rejected"
+              : "error";
           setImageReviews((current) => ({
             ...current,
             [url]: { status, ...(error ? { error } : {}) },
@@ -1105,12 +1123,6 @@ function WorkspacePage() {
             ...current,
             [url]: {
               status: "error",
-          const error = result.ok ? undefined : result.error || "素材审核未通过";
-          const status: ImageReviewStatus = result.ok
-            ? "approved"
-            : /status\s*=\s*failed|审核未通过|sensitive/i.test(error || "")
-              ? "rejected"
-              : "error";
               error: error instanceof Error ? error.message : "审核请求失败",
             },
           }));
@@ -1350,6 +1362,7 @@ function WorkspacePage() {
         updateCharImages((m) => ({ ...m, [imageKey]: [tempUrl] }));
       }
       savePrompt();
+      requestImageReview(tempUrl, `${kind}-${id}`);
       return { ok: true as const, url: tempUrl };
     }
     if (user) {
@@ -1362,7 +1375,7 @@ function WorkspacePage() {
             updateCharImages((m) => ({ ...m, [imageKey]: [r.url] }));
           }
           savePrompt();
-      requestImageReview(tempUrl, `${kind}-${id}`);
+          requestImageReview(r.url, `${kind}-${id}`);
           return { ok: true as const, url: r.url };
         }
         console.warn("[persist] persistAssetImage failed:", r.error);
@@ -1375,9 +1388,9 @@ function WorkspacePage() {
       updateCharImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), tempUrl] }));
     } else {
       updateCharImages((m) => ({ ...m, [imageKey]: [tempUrl] }));
-          requestImageReview(r.url, `${kind}-${id}`);
     }
     savePrompt();
+    requestImageReview(tempUrl, `${kind}-${id}`);
     return { ok: false as const, url: tempUrl };
   }
 
@@ -1390,7 +1403,6 @@ function WorkspacePage() {
       mode: "initial",
     },
   ) {
-    requestImageReview(tempUrl, `${kind}-${id}`);
     const append = (url: string) => {
       updateSceneImages((m) => ({ ...m, [s.id]: [...(m[s.id] ?? []), url] }));
       updateSceneImagePrompts((m) => ({
@@ -1400,6 +1412,7 @@ function WorkspacePage() {
     };
     if (isPersistedUrl(tempUrl)) {
       append(tempUrl);
+      requestImageReview(tempUrl, `scene-${s.id}`);
       return { ok: true as const, url: tempUrl };
     }
     if (user) {
@@ -1409,20 +1422,20 @@ function WorkspacePage() {
         });
         if (r.ok && r.url) {
           append(r.url);
+          requestImageReview(r.url, `scene-${s.id}`);
           return { ok: true as const, url: r.url };
         }
       } catch {
-      requestImageReview(tempUrl, `scene-${s.id}`);
         /* 持久化失败 */
       }
     }
     append(tempUrl);
+    requestImageReview(tempUrl, `scene-${s.id}`);
     return { ok: false as const, url: tempUrl };
   }
 
   /** 服务端持久化道具图片 */
   async function persistPropImage(
-          requestImageReview(r.url, `scene-${s.id}`);
     p: GenProp,
     tempUrl: string,
     promptRecord: AssetImagePromptRecord = {
@@ -1430,7 +1443,6 @@ function WorkspacePage() {
       mode: "initial",
     },
   ) {
-    requestImageReview(tempUrl, `scene-${s.id}`);
     const append = (url: string) => {
       updatePropImages((m) => ({ ...m, [p.id]: [...(m[p.id] ?? []), url] }));
       updatePropImagePrompts((m) => ({
@@ -1440,6 +1452,7 @@ function WorkspacePage() {
     };
     if (isPersistedUrl(tempUrl)) {
       append(tempUrl);
+      requestImageReview(tempUrl, `prop-${p.id}`);
       return { ok: true as const, url: tempUrl };
     }
     if (user) {
@@ -1449,20 +1462,20 @@ function WorkspacePage() {
         });
         if (r.ok && r.url) {
           append(r.url);
+          requestImageReview(r.url, `prop-${p.id}`);
           return { ok: true as const, url: r.url };
         }
       } catch {
-      requestImageReview(tempUrl, `prop-${p.id}`);
         /* 持久化失败 */
       }
     }
     append(tempUrl);
+    requestImageReview(tempUrl, `prop-${p.id}`);
     return { ok: false as const, url: tempUrl };
   }
   // processCharacter 入口 ref 守卫(2026/06):防止 useEffect 多次触发
   // 同一角色并发跑 processCharacter。state 的 busyChars 已经做了同样防御,
   // 但 ref 更可靠(不会因 React batching 漏掉)。
-          requestImageReview(r.url, `prop-${p.id}`);
   const processCharacterInFlightRef = useRef<Set<string>>(new Set());
   const [panelImages, setPanelImages] = useState<Record<string, string>>({});
   const [sceneImages, setSceneImages] = useState<Record<string, string[]>>({});
@@ -1470,7 +1483,6 @@ function WorkspacePage() {
     Record<string, AssetImagePromptRecord[]>
   >({});
   const sceneImagePromptsRef = useRef<Record<string, AssetImagePromptRecord[]>>({});
-    requestImageReview(tempUrl, `prop-${p.id}`);
   const updateSceneImagePrompts = (
     updater: (
       m: Record<string, AssetImagePromptRecord[]>,
@@ -3537,8 +3549,10 @@ function WorkspacePage() {
       });
       if (res?.ok && res.url) {
         // 2026/06 修复:ARK TOS URL <img> 加载失败，先 await 转 base64
+        requestImageReview(res.url, `character-${c.id}-${lk.id}`);
         const base64Url = await toBase64WithFallback(res.url);
         const displayUrl = base64Url ?? res.url;
+        aliasImageReview(res.url, displayUrl);
         updateCharImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), displayUrl] }));
         if (base64Url) {
           toast.success(`已生成 ${c.name} · ${lk.label}`);
@@ -3549,10 +3563,8 @@ function WorkspacePage() {
         toast.error(classifyError(res?.error, "生成失败"));
       }
     } catch {
-        requestImageReview(res.url, `character-${c.id}-${lk.id}`);
       toast.error(classifyError(undefined, "生成失败"));
     } finally {
-        aliasImageReview(res.url, displayUrl);
       setActiveImageKey((cur) => (cur === imageKey ? null : cur));
       setBusyChars((s) => {
         if (!s.has(c.id)) return s;
@@ -3609,8 +3621,10 @@ function WorkspacePage() {
       });
       if (res?.ok && res.url) {
         // 2026/06 修复:ARK TOS URL <img> 加载失败，先 await 转 base64
+        requestImageReview(res.url, `character-${c.id}`);
         const base64Url = await toBase64WithFallback(res.url);
         const displayUrl = base64Url ?? res.url;
+        aliasImageReview(res.url, displayUrl);
         updateCharImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), displayUrl] }));
         // 自动选中新生成的那张
         setSelectedGenIdx(charImages[imageKey]?.length ?? generations.length);
@@ -3621,10 +3635,8 @@ function WorkspacePage() {
       }
     } catch (e) {
       toast.error("重生失败");
-        requestImageReview(res.url, `character-${c.id}`);
     } finally {
       setRegenBusy(false);
-        aliasImageReview(res.url, displayUrl);
     }
   }
 
@@ -4212,8 +4224,10 @@ function WorkspacePage() {
       });
       if (res?.ok && res.url) {
         // 2026/06 修复:ARK TOS URL <img> 加载失败，先 await 转 base64
+        requestImageReview(res.url, `character-${c.id}`);
         const base64Url = await toBase64WithFallback(res.url);
         const displayUrl = base64Url ?? res.url;
+        aliasImageReview(res.url, displayUrl);
         updateCharImages((m) => ({
           ...m,
           [imageKey]: replaceExisting ? [displayUrl] : [...(m[imageKey] ?? []), displayUrl],
@@ -4224,10 +4238,8 @@ function WorkspacePage() {
             ? [{ rawPrompt: apiPrompt, editablePrompt, mode }]
             : [...(m[imageKey] ?? []), { rawPrompt: apiPrompt, editablePrompt, mode }],
         }));
-        requestImageReview(res.url, `character-${c.id}`);
         setSelectedCharImages((m) => ({ ...m, [imageKey]: displayUrl }));
         const modeLabel =
-        aliasImageReview(res.url, displayUrl);
           mode === "modify"
             ? "已按意见重生"
             : mode === "three-view"
@@ -4740,8 +4752,10 @@ function WorkspacePage() {
       }
       if (res?.ok && res.url) {
         // 2026/06 修复:ARK TOS URL <img> 加载失败，先 await 转 base64
+        requestImageReview(res.url, `scene-${s.id}`);
         const base64Url = await toBase64WithFallback(res.url);
         const displayUrl = base64Url ?? res.url;
+        aliasImageReview(res.url, displayUrl);
         updateSceneImages((m) => ({ ...m, [s.id]: [...(m[s.id] ?? []), displayUrl] }));
         updateSceneImagePrompts((m) => ({
           ...m,
@@ -4752,10 +4766,8 @@ function WorkspacePage() {
         return true;
       }
       toast.error(classifyError(res?.error, "生成失败"));
-        requestImageReview(res.url, `scene-${s.id}`);
       return false;
     } catch (e) {
-        aliasImageReview(res.url, displayUrl);
       const message = e instanceof Error ? e.message : String(e);
       console.error("[workspace.scene] regenerate failed", e);
       toast.error(classifyError(message, "生成失败"));
@@ -4837,8 +4849,10 @@ function WorkspacePage() {
       }
       if (res?.ok && res.url) {
         // 2026/06 修复:ARK TOS URL <img> 加载失败，先 await 转 base64
+        requestImageReview(res.url, `prop-${p.id}`);
         const base64Url = await toBase64WithFallback(res.url);
         const displayUrl = base64Url ?? res.url;
+        aliasImageReview(res.url, displayUrl);
         updatePropImages((m) => ({ ...m, [p.id]: [...(m[p.id] ?? []), displayUrl] }));
         updatePropImagePrompts((m) => ({
           ...m,
@@ -4849,10 +4863,8 @@ function WorkspacePage() {
         return true;
       }
       toast.error(classifyError(res?.error, "生成失败"));
-        requestImageReview(res.url, `prop-${p.id}`);
       return false;
     } catch (e) {
-        aliasImageReview(res.url, displayUrl);
       const message = e instanceof Error ? e.message : String(e);
       console.error("[workspace.prop] regenerate failed", e);
       toast.error(classifyError(message, "生成失败"));
@@ -5136,7 +5148,9 @@ function WorkspacePage() {
       logImageMeta("workspace.storyboard", res);
       if (res.url) {
         // 2026/06 修复:ARK TOS URL <img> 加载失败,先 await 转 base64
+        requestImageReview(res.url, `panel-${p.id}`);
         const base64Url = await toBase64WithFallback(res.url);
+        if (base64Url) aliasImageReview(res.url, base64Url);
         setPanelImages((m) => ({ ...m, [p.id]: base64Url ?? res.url! }));
       } else {
         toast.error(classifyError(res.error, "生成失败"));
@@ -5148,9 +5162,7 @@ function WorkspacePage() {
     }
   }
 
-        requestImageReview(res.url, `panel-${p.id}`);
   // ====================================================================
-        if (base64Url) aliasImageReview(res.url, base64Url);
   // 新的分镜流程 —— 两条 server function 入口
   //   1) runEnterStoryboard:把当集剧情发给 AI → 生成多组 StoryboardGroup
   //   2) generateShotImageForGroup:对单个 group 的某个 shot,做多图融合
@@ -5353,12 +5365,7 @@ function WorkspacePage() {
    */
   // 镜头分解:Shot N [起-止s] [景别] 动作 (camera: X) -> Shot 2 ... (与视频提示词同格式)
   function buildShotBreakdown(g: StoryboardGroup): string {
-    // 分镜描述按组内相对时间展示；底层 startSec/endSec 仍保留整集时间轴的绝对值。
-    const firstShotStart = g.shots.reduce<number | null>((min, shot) => {
-      if (shot.startSec == null) return min;
-      return min == null ? shot.startSec : Math.min(min, shot.startSec);
-    }, null);
-    const groupStart = g.startSec ?? firstShotStart ?? 0;
+    const groupStart = getStoryboardGroupStartSec(g);
 
     return g.shots
       .map((s, i) => {
@@ -5810,6 +5817,7 @@ function WorkspacePage() {
       const imageKey = `${groupId}::${shotId}`;
       // 2026/06 修复:立刻显示临时 URL,再后台异步转 base64
       const tempUrl = res.url;
+      requestImageReview(tempUrl, `shot-${groupId}-${shotId}`);
       setData((d) => ({
         ...d,
         storyboardGroups: d.storyboardGroups.map((g) =>
@@ -5817,7 +5825,6 @@ function WorkspacePage() {
             ? {
                 ...g,
                 shots: g.shots.map((sh) => (sh.id === shotId ? { ...sh, imageUrl: tempUrl } : sh)),
-      requestImageReview(tempUrl, `shot-${groupId}-${shotId}`);
               }
             : g,
         ),
@@ -5826,6 +5833,7 @@ function WorkspacePage() {
       if (user) {
         void toBase64WithFallback(tempUrl).then((base64Url) => {
           if (base64Url) {
+            aliasImageReview(tempUrl, base64Url);
             setData((d) => ({
               ...d,
               storyboardGroups: d.storyboardGroups.map((g) =>
@@ -5833,7 +5841,6 @@ function WorkspacePage() {
                   ? {
                       ...g,
                       shots: g.shots.map((sh) =>
-            aliasImageReview(tempUrl, base64Url);
                         sh.id === shotId ? { ...sh, imageUrl: base64Url } : sh,
                       ),
                     }
@@ -5964,6 +5971,7 @@ function WorkspacePage() {
       if (res?.ok && res.url) {
         // 2026/06 修复:立刻显示临时 URL,再后台异步转 base64
         const tempUrl = res.url;
+        requestImageReview(tempUrl, `shot-${groupId}-${shotId}`);
         const newLen = (shotImages[imageKey]?.length ?? 0) + 1;
         setShotImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), tempUrl] }));
         setData((d) => ({
@@ -5971,7 +5979,6 @@ function WorkspacePage() {
           storyboardGroups: d.storyboardGroups.map((g) =>
             g.id === groupId
               ? {
-        requestImageReview(tempUrl, `shot-${groupId}-${shotId}`);
                   ...g,
                   shots: g.shots.map((sh) =>
                     sh.id === shotId ? { ...editedShot, imageUrl: tempUrl } : sh,
@@ -5983,6 +5990,7 @@ function WorkspacePage() {
         if (user) {
           void toBase64WithFallback(tempUrl).then((base64Url) => {
             if (base64Url) {
+              aliasImageReview(tempUrl, base64Url);
               setData((d) => ({
                 ...d,
                 storyboardGroups: d.storyboardGroups.map((g) =>
@@ -5990,7 +5998,6 @@ function WorkspacePage() {
                     ? {
                         ...g,
                         shots: g.shots.map((sh) =>
-              aliasImageReview(tempUrl, base64Url);
                           sh.id === shotId ? { ...editedShot, imageUrl: base64Url } : sh,
                         ),
                       }
@@ -6984,25 +6991,28 @@ function WorkspacePage() {
     // 这里把 startSec/endSec 一起传给 I2I 生成 call,prompt 里用时间范围描述)
     const groupDuration = (group.endSec ?? 0) - (group.startSec ?? 0);
     const perShotSec = group.shots.length > 0 ? groupDuration / group.shots.length : 5;
+    const groupStart = getStoryboardGroupStartSec(group);
     // 2026/07:跳过 action 为空的占位 shot。新建空分镜组默认带 1 个 action=""
     // 的占位 shot,用户只填了组级 plotText 没填 shot 级动作;空 action 会被
     // server 端 PitchDeckShotSchema.action(min 1) 拒绝,报 "minimum 1, too small"。
     // 过滤后若无任何 shot,prompt 走 "(derive from plot)" 让模型按剧情自由分格。
     const shots = group.shots
       .filter((s) => (s.action || "").trim().length > 0)
-      .map((s) => ({
-        shotType: s.shotType,
-        shotTypeLabel: s.shotTypeLabel,
-        action: s.action,
-        camera: s.camera,
-        cameraMovement: s.cameraMovement,
-        characterBlocking: s.characterBlocking,
-        // 优先用真实 startSec/endSec 算时长,fallback perShotSec
-        durationSec: s.startSec != null && s.endSec != null ? s.endSec - s.startSec : perShotSec,
-        // 2026/06:也把 startSec / endSec 透传到 server,prompt 里可用精确时间区间
-        startSec: s.startSec,
-        endSec: s.endSec,
-      }));
+      .map((s) => {
+        return {
+          shotType: s.shotType,
+          shotTypeLabel: s.shotTypeLabel,
+          action: s.action,
+          camera: s.camera,
+          cameraMovement: s.cameraMovement,
+          characterBlocking: s.characterBlocking,
+          // 优先用真实 startSec/endSec 算时长,fallback perShotSec
+          durationSec: s.startSec != null && s.endSec != null ? s.endSec - s.startSec : perShotSec,
+          // 故事板图中的 shot 时间与分镜描述保持一致:每个分镜组从 0s 起算。
+          startSec: s.startSec == null ? undefined : s.startSec - groupStart,
+          endSec: s.endSec == null ? undefined : s.endSec - groupStart,
+        };
+      });
 
     try {
       const res = await callGenStoryboard({
@@ -7040,9 +7050,11 @@ function WorkspacePage() {
       }
       if (res.ok && res.url) {
         // 2026/06:和其他图片一致 —— 先 await 转 base64 确保立即可见,入库 Supabase 作为额外兜底
+        requestImageReview(res.url, `storyboard-${groupId}`);
         const base64Url = await toBase64WithFallback(res.url);
         if (isStale()) return; // 2026/07:轮次检查,toBase64 期间可能被新轮次覆盖
         let finalUrl = base64Url ?? res.url;
+        aliasImageReview(res.url, finalUrl);
         if (base64Url) {
           if (user && workspaceId) {
             callSaveOneStoryboard({
@@ -7050,11 +7062,10 @@ function WorkspacePage() {
               // Azure 的临时结果 URL（可能已失效或拒绝第二次访问）。
               data: { workspaceId, groupId, url: base64Url },
             })
-        requestImageReview(res.url, `storyboard-${groupId}`);
               .then((r) => {
                 if (isStale()) return; // 2026/07:轮次检查,异步回调时可能已被覆盖
                 if (r.ok && r.persisted && r.url) {
-        aliasImageReview(res.url, finalUrl);
+                  aliasImageReview(res.url, r.url);
                   setGroupStoryboards((m) => {
                     const entries = m[groupId];
                     if (!entries) return m;
@@ -7065,7 +7076,6 @@ function WorkspacePage() {
                     return { ...m, [groupId]: next };
                   });
                 }
-                  aliasImageReview(res.url, r.url);
               })
               .catch(() => {});
           }
@@ -7079,6 +7089,7 @@ function WorkspacePage() {
               if (isStale()) return; // 2026/07:轮次检查
               if (r.ok && r.persisted && r.url) {
                 finalUrl = r.url;
+                aliasImageReview(res.url, r.url);
                 toast.success("故事板已生成");
               } else {
                 toast.warning("故事板图片保存失败，临时链接 24h 内有效");
@@ -7089,7 +7100,6 @@ function WorkspacePage() {
           } else {
             toast.warning("故事板图片保存失败，临时链接 24h 内有效");
           }
-                aliasImageReview(res.url, r.url);
         }
         setGroupStoryboards((m) => {
           const entries = [...(m[groupId] ?? [])];
@@ -7188,21 +7198,24 @@ function WorkspacePage() {
 
     const groupDuration = (group.endSec ?? 0) - (group.startSec ?? 0);
     const perShotSec = group.shots.length > 0 ? groupDuration / group.shots.length : 5;
+    const groupStart = getStoryboardGroupStartSec(group);
     // 2026/07:同 generateMangaStoryboardForGroup -- 跳过 action 为空的占位 shot,
     // 否则空分镜组重生故事板也会被 PitchDeckShotSchema.action(min 1) 拒绝。
     const shots = group.shots
       .filter((s) => (s.action || "").trim().length > 0)
-      .map((s) => ({
-        shotType: s.shotType,
-        shotTypeLabel: s.shotTypeLabel,
-        action: s.action,
-        camera: s.camera,
-        cameraMovement: s.cameraMovement,
-        characterBlocking: s.characterBlocking,
-        durationSec: s.startSec != null && s.endSec != null ? s.endSec - s.startSec : perShotSec,
-        startSec: s.startSec,
-        endSec: s.endSec,
-      }));
+      .map((s) => {
+        return {
+          shotType: s.shotType,
+          shotTypeLabel: s.shotTypeLabel,
+          action: s.action,
+          camera: s.camera,
+          cameraMovement: s.cameraMovement,
+          characterBlocking: s.characterBlocking,
+          durationSec: s.startSec != null && s.endSec != null ? s.endSec - s.startSec : perShotSec,
+          startSec: s.startSec == null ? undefined : s.startSec - groupStart,
+          endSec: s.endSec == null ? undefined : s.endSec - groupStart,
+        };
+      });
 
     const referenceImages: string[] = [];
     const referenceImageLabels: string[] = [];
@@ -7277,8 +7290,10 @@ function WorkspacePage() {
         return;
       }
       if (res?.ok && res.url) {
+        requestImageReview(res.url, `storyboard-${groupId}`);
         const base64Url = await toBase64WithFallback(res.url);
         let finalUrl = base64Url ?? res.url;
+        aliasImageReview(res.url, finalUrl);
         if (base64Url) {
           if (user && workspaceId) {
             // 同生成链路：优先使用已验证可显示的图像数据入库，避免二次读取
@@ -7286,14 +7301,13 @@ function WorkspacePage() {
             callSaveOneStoryboard({ data: { workspaceId, groupId, url: base64Url } })
               .then((r) => {
                 if (r.ok && r.persisted && r.url) {
+                  aliasImageReview(res.url, r.url);
                   setGroupStoryboards((m) => {
                     const entries = m[groupId];
                     if (!entries) return m;
                     const idx = entries.findIndex((e) => e.url === finalUrl);
-        requestImageReview(res.url, `storyboard-${groupId}`);
                     if (idx < 0) return m;
                     const next = [...entries];
-        aliasImageReview(res.url, finalUrl);
                     next[idx] = { ...next[idx], url: r.url };
                     return { ...m, [groupId]: next };
                   });
@@ -7301,7 +7315,6 @@ function WorkspacePage() {
               })
               .catch(() => {});
           }
-                  aliasImageReview(res.url, r.url);
           toast.success("已按意见重生故事板");
         } else {
           if (user && workspaceId) {
@@ -7311,6 +7324,7 @@ function WorkspacePage() {
               });
               if (r.ok && r.persisted && r.url) {
                 finalUrl = r.url;
+                aliasImageReview(res.url, r.url);
                 toast.success("已按意见重生故事板");
               } else {
                 toast.warning("故事板图片保存失败，临时链接 24h 内有效");
@@ -7324,7 +7338,6 @@ function WorkspacePage() {
         }
         setGroupStoryboards((m) => {
           const entries = [...(m[groupId] ?? [])];
-                aliasImageReview(res.url, r.url);
           const lastIdx = entries.length - 1;
           if (lastIdx >= 0 && entries[lastIdx].status === "running") {
             entries[lastIdx] = { ...entries[lastIdx], url: finalUrl, status: "succeeded" };
@@ -10646,19 +10659,6 @@ function WorkspacePage() {
                                             />
                                           );
                                         })()}
-                                      </>
-                                    ) : isQueued ? (
-                                      // 同角色下一张在排队(本角色在跑)
-                                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 text-text-muted">
-                                        <Loader2 size={14} className="opacity-50 animate-spin" />
-                                        <span className="text-[10px]">同角色排队中…</span>
-                                      </div>
-                                    ) : (
-                                      // 没图:可点击生成(2026/06)
-                                      //   默认 look → genCharImage → 走 processCharacter
-                                      //   变体 look → generateOneCharacterLook → 走 I2I(以默认图为锚)
-                                      // 空角色(face/body/clothing 全空)点生成没有描述可发,
-                                      // 直接打开编辑面板让用户输入需求
                                         <ImageReviewBadge
                                           status={
                                             getImageReview(
@@ -10673,6 +10673,19 @@ function WorkspacePage() {
                                             )?.error
                                           }
                                         />
+                                      </>
+                                    ) : isQueued ? (
+                                      // 同角色下一张在排队(本角色在跑)
+                                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 text-text-muted">
+                                        <Loader2 size={14} className="opacity-50 animate-spin" />
+                                        <span className="text-[10px]">同角色排队中…</span>
+                                      </div>
+                                    ) : (
+                                      // 没图:可点击生成(2026/06)
+                                      //   默认 look → genCharImage → 走 processCharacter
+                                      //   变体 look → generateOneCharacterLook → 走 I2I(以默认图为锚)
+                                      // 空角色(face/body/clothing 全空)点生成没有描述可发,
+                                      // 直接打开编辑面板让用户输入需求
                                       <button
                                         type="button"
                                         onClick={(e) => {
@@ -11245,6 +11258,7 @@ function WorkspacePage() {
                       return !brokenShotImages.has(key);
                     });
                     const anyBusy = g.shots.some((s) => busyShotImages.has(`${g.id}::${s.id}`));
+                    const groupStartSec = getStoryboardGroupStartSec(g);
                     return (
                       <div key={g.id} className="panel p-4 space-y-3">
                         {/* 行 header:序号 / 起始-结束秒 / 场景 / 角色 / 一键生成 */}
@@ -11756,7 +11770,8 @@ function WorkspacePage() {
                                       </span>
                                       {s.startSec != null && s.endSec != null && (
                                         <span className="absolute top-1.5 right-1.5 text-[9px] font-mono px-1.5 py-0.5 rounded bg-black/60 text-white tabular-nums">
-                                          {s.startSec.toFixed(0)}-{s.endSec.toFixed(0)}s
+                                          {(s.startSec - groupStartSec).toFixed(0)}-
+                                          {(s.endSec - groupStartSec).toFixed(0)}s
                                         </span>
                                       )}
                                       {/* 放大按钮 */}
@@ -11791,7 +11806,8 @@ function WorkspacePage() {
                                         </span>
                                         {s.startSec != null && s.endSec != null && (
                                           <span className="text-text-secondary">
-                                            {s.startSec.toFixed(0)}-{s.endSec.toFixed(0)}s
+                                            {(s.startSec - groupStartSec).toFixed(0)}-
+                                            {(s.endSec - groupStartSec).toFixed(0)}s
                                           </span>
                                         )}
                                         <span className="text-text-muted">{s.shotTypeLabel}</span>
@@ -11900,6 +11916,10 @@ function WorkspacePage() {
                                   }}
                                   className="max-h-[420px] max-w-full w-auto h-auto block cursor-zoom-in object-contain"
                                 />
+                                <ImageReviewBadge
+                                  status={getImageReview(getActiveStoryboard(g.id)!.url)?.status}
+                                  error={getImageReview(getActiveStoryboard(g.id)!.url)?.error}
+                                />
                                 <button
                                   type="button"
                                   onClick={() => void generateMangaStoryboardForGroup(g.id)}
@@ -11916,10 +11936,6 @@ function WorkspacePage() {
                                 >
                                   <Upload size={12} />
                                 </button>
-                                <ImageReviewBadge
-                                  status={getImageReview(getActiveStoryboard(g.id)!.url)?.status}
-                                  error={getImageReview(getActiveStoryboard(g.id)!.url)?.error}
-                                />
                               </div>
                             ) : getActiveStoryboard(g.id)?.status === "running" ? (
                               <div className="h-64 rounded border border-border bg-bg-base flex flex-col items-center justify-center gap-1.5 text-text-muted">
