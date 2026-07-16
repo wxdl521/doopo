@@ -227,10 +227,10 @@ const GenerateImageInput = z.object({
   // 完整的角色/故事板 API prompt（尤其含负面词）很容易超过旧的 8k 上限。
   // 校验在 handler 之前执行，旧上限会导致前端只收到通用“生成失败”、供应商日志
   // 也完全不出现。上游仍会自行限制实际可接受的 prompt 长度。
-  prompt: z.string().min(1).max(64_000),
+  prompt: z.string().min(1),
   model: z.string().max(200).optional(),
   size: z.string().max(50).optional(),
-  negativePrompt: z.string().max(4000).optional(),
+  negativePrompt: z.string().optional(),
   noFallback: z.boolean().optional(),
   // 2026/06:查看提示词模式
   previewOnly: z.boolean().default(false),
@@ -548,9 +548,9 @@ const RegenerateInput = z.object({
   referenceImageUrl: z.string().url(),
   // 2026/07:额外参考图(图2..N),主视图(要改的那张)强制在图1,额外图仅作风格/细节参考。
   extraReferenceImageUrls: z.array(z.string().url()).max(9).optional(),
-  userInstruction: z.string().min(1).max(64_000),
+  userInstruction: z.string().min(1),
   /** 已展开的完整 API prompt，供详情页编辑后直接重放。 */
-  rawPrompt: z.string().min(1).max(64_000).optional(),
+  rawPrompt: z.string().min(1).optional(),
   faceDescription: z.string().max(4000),
   bodyDescription: z.string().max(4000),
   clothingDescription: z.string().max(4000),
@@ -1667,7 +1667,7 @@ export const generateStoryboardShotImage = createServerFn({ method: "POST" })
 
 const RegenShotInput = ShotInput.extend({
   referenceImageUrl: z.string().url(),
-  userInstruction: z.string().min(1).max(500),
+  userInstruction: z.string().min(1),
 });
 
 export type RegenShotInputType = z.infer<typeof RegenShotInput>;
@@ -2646,7 +2646,7 @@ export const generateStoryboardPitchDeck = createServerFn({ method: "POST" })
 
 const RegeneratePitchDeckInput = PitchDeckInput.extend({
   referenceImageUrl: z.string().url(),
-  userInstruction: z.string().min(1).max(64_000),
+  userInstruction: z.string().min(1),
 });
 
 export type RegeneratePitchDeckInputType = z.infer<typeof RegeneratePitchDeckInput>;

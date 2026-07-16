@@ -259,7 +259,7 @@ export async function callMeridianImage(input: MeridianImageInput): Promise<Meri
 // ---------- ServerFn 入口(供前端通过 useServerFn 调用)----------
 
 const MeridianImageFnInput = z.object({
-  prompt: z.string().min(1).max(8000),
+  prompt: z.string().min(1),
   model: z.string().min(1).max(200),
   size: z.string().max(50).optional(),
   n: z.number().int().min(1).max(4).optional(),

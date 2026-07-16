@@ -242,7 +242,7 @@ export async function callShuanciyuanImage(
 // ---------- ServerFn ----------
 
 const ShuanciyuanImageFnInput = z.object({
-  prompt: z.string().min(1).max(8000),
+  prompt: z.string().min(1),
   model: z.string().min(1).max(200),
   size: z.string().max(50).optional(),
   n: z.number().int().min(1).max(4).optional(),

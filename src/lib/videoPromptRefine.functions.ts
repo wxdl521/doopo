@@ -9,11 +9,11 @@ import {
 
 const RefineVideoPromptInput = z.object({
   /** 完整原始视频提示词。模型可据此理解叙事与不可破坏的技术约束。 */
-  basePrompt: z.string().min(1).max(24_000),
+  basePrompt: z.string().min(1),
   /** 确认卡原本展示的可编辑核心提示词，失败时用作安全回退。 */
-  previewPrompt: z.string().min(1).max(12_000),
+  previewPrompt: z.string().min(1),
   /** 用户在 Agent 对话里提出的视频生成要求。 */
-  userRequirements: z.string().min(1).max(4_000),
+  userRequirements: z.string().min(1),
 });
 
 /**
@@ -66,7 +66,7 @@ You receive the full base prompt so you can respect its hard constraints. Return
         ?.replace(/^```(?:text|markdown)?\s*|\s*```$/gi, "")
         .trim();
       if (!prompt) return { prompt: data.previewPrompt, refined: false };
-      return { prompt: prompt.slice(0, 12_000), refined: true };
+      return { prompt, refined: true };
     } catch {
       // 洗词不可阻断原有视频确认流程，DeepSeek 异常时继续使用原始提示词。
       return { prompt: data.previewPrompt, refined: false };

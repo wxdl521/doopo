@@ -585,7 +585,7 @@ export const genCharacters = createServerFn({ method: "POST" })
 const RewriteSceneInput = z.object({
   lang: Lang,
   scene: SceneSchema,
-  instruction: z.string().min(1).max(500),
+  instruction: z.string().min(1),
   model: z.string().optional(),
 });
 

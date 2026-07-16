@@ -880,7 +880,7 @@ const RegenShotInput = z.object({
   // 当前的镜头图(要被改的那张)
   referenceImageUrl: z.string().url(),
   // 用户输入的修改意见
-  userInstruction: z.string().min(1).max(500),
+  userInstruction: z.string().min(1),
   // 上下文(跟 generateStoryboardShotImage 一样)
   plotText: z.string().min(1).max(2000),
   shotType: z.enum(["WS", "MS", "CU", "ECU", "OTS"]),
@@ -964,7 +964,7 @@ const RegenPitchDeckInput = z.object({
   model: z.string().max(1_000).optional(),
   previewOnly: z.boolean().default(false),
   referenceImageUrl: z.string().url(),
-  userInstruction: z.string().min(1).max(64_000),
+  userInstruction: z.string().min(1),
 });
 
 export type RegenerateStoryboardPitchDeckInput = z.infer<typeof RegenPitchDeckInput>;

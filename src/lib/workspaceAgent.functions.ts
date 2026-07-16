@@ -26,7 +26,7 @@ const AgentPlanSchema = z.object({
   targetStage: z.enum(["canvas", "script", "episodes", "character", "storyboard", "timeline"]),
   title: z.string().min(1).max(80),
   summary: z.string().min(1).max(240),
-  executionPrompt: z.string().max(4000),
+  executionPrompt: z.string(),
   requiresCredit: z.boolean(),
   uiActionId: z.string().min(1).max(80).optional(),
   uiActionLabel: z.string().min(1).max(120).optional(),
@@ -48,7 +48,7 @@ const AgentPlanSchema = z.object({
 export type WorkspaceAgentPlan = z.infer<typeof AgentPlanSchema>;
 
 const InputSchema = z.object({
-  instruction: z.string().min(1).max(4000),
+  instruction: z.string().min(1),
   stage: z.enum(["canvas", "script", "episodes", "character", "storyboard", "timeline"]),
   selectedEpisodeIndex: z.number().int().positive().optional(),
   context: z.object({

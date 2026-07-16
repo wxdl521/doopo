@@ -67,7 +67,7 @@ async function klingSubmit(input: KlingSubmitInput): Promise<KlingSubmitResult> 
 
   const body: Record<string, unknown> = {
     model_name: upstreamModel,
-    prompt: input.prompt.slice(0, 2500),
+    prompt: input.prompt,
     duration: String(input.duration ?? 5),
     mode: "pro",
   };
@@ -231,7 +231,7 @@ export async function callKlingVideoPoll(input: {
 // ---------- ServerFn (独立调用) ----------
 
 const KlingVideoInput = z.object({
-  prompt: z.string().min(1).max(2500),
+  prompt: z.string().min(1),
   model: z.string().min(1).max(100).optional(),
   imageUrl: z.string().url().optional(),
   lastFrameImageUrl: z.string().url().optional(),

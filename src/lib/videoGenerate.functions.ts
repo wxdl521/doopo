@@ -3301,23 +3301,56 @@ async function persistAudioUrl(
   }
 }
 
+/**
+ * Video generation accepts media returned by older image providers in the
+ * `data:<mime>;base64,...` form. Do not put a character cap on it: a normal
+ * image data URI is often several MB. `generateVideo` immediately rehosts it
+ * before passing the request on to a video provider.
+ */
+function isBase64MediaDataUri(value: string): boolean {
+  const comma = value.indexOf(",");
+  if (comma <= 5 || comma === value.length - 1) return false;
+  const metadata = value.slice(5, comma);
+  return /^(?:image|video|audio)\/[a-z0-9.+-]+(?:;[^;,=]+=[^;,]+)*;base64$/i.test(metadata);
+}
+
+function isHttpMediaUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
+const ExternalVideoMediaUrl = z
+  .string()
+  .min(1)
+  .refine(
+    (value) => isHttpMediaUrl(value) || isBase64MediaDataUri(value),
+    "素材必须为公网 HTTP(S) URL 或 base64 data URI",
+  );
+
 const VideoMediaUrl = z
   .string()
-  .max(4_000)
+  .min(1)
   .refine(
-    (value) => /^asset:\/\/[a-zA-Z0-9_-]+$/.test(value) || z.string().url().safeParse(value).success,
-    "素材 URL 必须为公网 URL 或 asset://asset_id",
+    (value) =>
+      /^asset:\/\/[a-zA-Z0-9_-]+$/.test(value) ||
+      isHttpMediaUrl(value) ||
+      isBase64MediaDataUri(value),
+    "素材必须为公网 HTTP(S) URL、base64 data URI 或 asset://asset_id",
   );
 
 const GenerateVideoInput = z.object({
-  prompt: z.string().min(1).max(10000),
+  prompt: z.string().min(1),
   // 单张图生视频(图作为首帧 / 参考图)
   imageUrl: VideoMediaUrl.optional(),
   // 尾帧图(仅 2 张分镜图生成时使用,首帧+尾帧模式)
   lastFrameImageUrl: VideoMediaUrl.optional(),
-  referenceImageUrls: z.array(VideoMediaUrl).max(8).optional(),
-  referenceVideoUrl: z.string().url().optional(),
-  referenceAudioUrl: z.string().url().optional(),
+  referenceImageUrls: z.array(VideoMediaUrl).max(9).optional(),
+  referenceVideoUrl: ExternalVideoMediaUrl.optional(),
+  referenceAudioUrl: ExternalVideoMediaUrl.optional(),
   model: z.string().max(200).optional(),
   ratio: z.enum(SUPPORTED_RATIOS).default("16:9"),
   duration: z.number().int().min(1).max(60).default(5), // ARK 示例最大 11s,这里留余量到 60

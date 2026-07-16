@@ -24,12 +24,12 @@ const Input = z.object({
    * 上限 4 张,加主视图总 5 张(Seedream 上限 10)。
    */
   extraReferenceImageUrls: z.array(z.string().url()).max(9).optional(),
-  userInstruction: z.string().min(1).max(64_000),
+  userInstruction: z.string().min(1),
   /**
    * 已完整展开的 API prompt；传入后服务端不再二次包裹编辑模板。
    * 分镜/角色的真实原始 prompt 可能很长，不能在外层 Server Function 提前截断。
    */
-  rawPrompt: z.string().min(1).max(64_000).optional(),
+  rawPrompt: z.string().min(1).optional(),
   faceDescription: z.string().max(4000),
   bodyDescription: z.string().max(4000),
   clothingDescription: z.string().max(4000),

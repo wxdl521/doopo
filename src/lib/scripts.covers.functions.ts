@@ -17,7 +17,7 @@ export const uploadScriptCover = createServerFn({ method: "POST" })
     z
       .object({
         scriptId: z.string().min(1).max(128),
-        prompt: z.string().min(1).max(2000),
+        prompt: z.string().min(1),
       })
       .parse(input),
   )

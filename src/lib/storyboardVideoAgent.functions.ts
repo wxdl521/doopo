@@ -8,7 +8,7 @@ import {
 } from "./arkText";
 
 const StoryboardVideoAgentInput = z.object({
-  instruction: z.string().min(1).max(4_000),
+  instruction: z.string().min(1),
   groups: z
     .array(
       z.object({

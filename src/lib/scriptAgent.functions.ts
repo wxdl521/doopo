@@ -498,7 +498,7 @@ const RefineEpisodeInput = z.object({
   lang: Lang,
   epIndex: z.number().min(1).max(200).default(1),
   currentText: z.string().min(20).max(50000),
-  instruction: z.string().min(1).max(2000),
+  instruction: z.string().min(1),
   synopsisText: z.string().max(20000).optional().default(""),
   previousEpisodesText: z.string().max(50000).optional().default(""),
   model: z.string().optional(),
@@ -554,9 +554,9 @@ export const refineEpisodeScenes = createServerFn({ method: "POST" })
 const RefineInput = z.object({
   lang: Lang,
   currentSynopsis: z.string().min(20).max(20000),
-  instruction: z.string().min(1).max(2000),
+  instruction: z.string().min(1),
   history: z
-    .array(z.object({ role: z.enum(["user", "agent"]), content: z.string().max(4000) }))
+    .array(z.object({ role: z.enum(["user", "agent"]), content: z.string() }))
     .max(12)
     .optional()
     .default([]),
