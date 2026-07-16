@@ -359,7 +359,7 @@ export const loadWorkspaceData = createServerFn({ method: "POST" })
     const { data: row, error } = await supabase
       .from("projects")
       .select(
-        "completed_stages,outline:workspace_data->outline,scenes:workspace_data->scenes,characters:workspace_data->characters,props:workspace_data->props,storyboard:workspace_data->storyboard,storyboardGroups:workspace_data->storyboardGroups,timeline:workspace_data->timeline,synopsisText:workspace_data->synopsisText,episodeTexts:workspace_data->episodeTexts,selectedEpisodeIndex:workspace_data->selectedEpisodeIndex",
+        "completed_stages,outline:workspace_data->outline,scenes:workspace_data->scenes,characters:workspace_data->characters,props:workspace_data->props,timeline:workspace_data->timeline,synopsisText:workspace_data->synopsisText,episodeTexts:workspace_data->episodeTexts,selectedEpisodeIndex:workspace_data->selectedEpisodeIndex",
       )
       .eq("id", data.id)
       .maybeSingle();
@@ -382,14 +382,38 @@ export const loadWorkspaceData = createServerFn({ method: "POST" })
         scenes: fields.scenes,
         characters: fields.characters,
         props: fields.props,
-        storyboard: fields.storyboard,
-        storyboardGroups: fields.storyboardGroups,
         timeline: fields.timeline,
         synopsisText: fields.synopsisText,
         episodeTexts: fields.episodeTexts,
         selectedEpisodeIndex: fields.selectedEpisodeIndex,
       },
       completedStages: (fields.completed_stages ?? []) as string[],
+      error: null as string | null,
+    };
+  });
+
+/**
+ * Storyboard groups can carry historical image URLs and are therefore read
+ * independently. A timeout here must never prevent scripts or assets from
+ * opening in the workspace.
+ */
+export const loadWorkspaceStoryboardStructure = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((input: unknown) => z.object({ id: z.string().min(1).max(64) }).parse(input))
+  .handler(async ({ data, context }) => {
+    const { supabase } = context;
+    const { data: row, error } = await supabase
+      .from("projects")
+      .select(
+        "storyboard:workspace_data->storyboard,storyboardGroups:workspace_data->storyboardGroups",
+      )
+      .eq("id", data.id)
+      .maybeSingle();
+    if (error) {
+      return { workspaceData: null as Record<string, unknown> | null, error: error.message };
+    }
+    return {
+      workspaceData: (row ?? {}) as Record<string, unknown>,
       error: null as string | null,
     };
   });
