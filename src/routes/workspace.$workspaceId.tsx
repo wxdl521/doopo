@@ -47,6 +47,7 @@ import {
 } from "../lib/storyboard.functions";
 import { generateVideo } from "../lib/videoGenerate.functions";
 import { refineStoryboardVideoPrompt } from "../lib/videoPromptRefine.functions";
+import { translateEditablePrompt } from "../lib/promptTranslation.functions";
 import { runStoryboardVideoAgent } from "../lib/storyboardVideoAgent.functions";
 import { generateStoryboardPitchDeck } from "../lib/seedream.functions";
 import {
@@ -902,6 +903,8 @@ function WorkspacePage() {
   const [modInput, setModInput] = useState("");
   const [modError, setModError] = useState<string | null>(null);
   const [characterAttributesExpanded, setCharacterAttributesExpanded] = useState(false);
+  const [editingCharacterNameId, setEditingCharacterNameId] = useState<string | null>(null);
+  const [characterNameDraft, setCharacterNameDraft] = useState("");
   // 场景修改输入弹层(2026/06 跟角色修改对齐体验:打开直接输入,Enter 提交)。
   // 跟 modPanel 解耦:角色 modPanel 走的是"打开预览 + 内嵌输入",场景没
   // selectedGenIdx / 多图 history 概念,只需要"打开输入弹层"即可,不需要
@@ -965,6 +968,7 @@ function WorkspacePage() {
   const callRegenShot = useServerFn(regenerateStoryboardShot);
   const callGenVideo = useServerFn(generateVideo);
   const callRefineVideoPrompt = useServerFn(refineStoryboardVideoPrompt);
+  const callTranslateEditablePrompt = useServerFn(translateEditablePrompt);
   const callStoryboardVideoAgent = useServerFn(runStoryboardVideoAgent);
   const callGenStoryboard = useServerFn(generateStoryboardPitchDeck);
   const callRegenStoryboard = useServerFn(regenerateStoryboardPitchDeck);
@@ -987,6 +991,43 @@ function WorkspacePage() {
   const callPersistAsset = useServerFn(persistAssetImage);
   const callSaveOneStoryboard = useServerFn(saveOneStoryboard);
   const callSaveOneVideo = useServerFn(saveOneVideo);
+  const promptTranslationRequestRef = useRef<Record<string, number>>({});
+
+  const isEnglishOnlyPrompt = (text: string) => {
+    const chineseCount = (text.match(/[\u3400-\u9fff]/g) ?? []).length;
+    const latinCount = (text.match(/[A-Za-z]/g) ?? []).length;
+    // Old records can already have a few Chinese field labels around a long
+    // English prompt. Treat those as English too, but leave normal Chinese
+    // prompts (which often contain model names such as "Seedream") untouched.
+    return latinCount > 0 && latinCount > chineseCount * 1.5;
+  };
+
+  /** English legacy prompts are translated before they ever reach an editable detail field. */
+  const showEditablePromptInChinese = useCallback(
+    async (key: string, text: string, setValue: (value: string) => void) => {
+      const requestId = (promptTranslationRequestRef.current[key] ?? 0) + 1;
+      promptTranslationRequestRef.current[key] = requestId;
+      if (!isEnglishOnlyPrompt(text)) {
+        setValue(text);
+        return;
+      }
+      setValue("正在翻译提示词…");
+      const result = await callTranslateEditablePrompt({ data: { text, target: "zh" } });
+      if (promptTranslationRequestRef.current[key] === requestId) {
+        setValue(result.text);
+      }
+    },
+    [callTranslateEditablePrompt],
+  );
+
+  /** The generation providers receive English, while the saved editable prompt remains Chinese. */
+  const translatePromptForGeneration = useCallback(
+    async (text: string) => {
+      const result = await callTranslateEditablePrompt({ data: { text, target: "en" } });
+      return result.text;
+    },
+    [callTranslateEditablePrompt],
+  );
   const [project, setProject] = useState<ProjectConfigRow | null>(null);
   const projectVisualStyle =
     project?.style === "custom" ? `custom:${project.customStyle ?? ""}` : project?.style;
@@ -3384,8 +3425,10 @@ function WorkspacePage() {
     const currentIndex = currentUrl ? history.indexOf(currentUrl) : -1;
     setScenePreview(s);
     setSceneDetailDraft(null);
-    setSceneModInput(
+    void showEditablePromptInChinese(
+      `scene:${s.id}`,
       sceneImagePromptsRef.current[s.id]?.[currentIndex]?.editablePrompt || sceneEditablePrompt(s),
+      setSceneModInput,
     );
     setSceneModError(null);
   }
@@ -3397,8 +3440,10 @@ function WorkspacePage() {
     const currentIndex = currentUrl ? history.indexOf(currentUrl) : -1;
     setPropPreview(p);
     setPropDetailDraft(null);
-    setPropModInput(
+    void showEditablePromptInChinese(
+      `prop:${p.id}`,
       propImagePromptsRef.current[p.id]?.[currentIndex]?.editablePrompt || propEditablePrompt(p),
+      setPropModInput,
     );
     setPropModError(null);
   }
@@ -3461,6 +3506,28 @@ function WorkspacePage() {
     });
     setSelectedGenIdx((current) => Math.min(current, Math.max(0, nextGenerations.length - 1)));
     toast.success("已删除角色图");
+  }
+
+  function startCharacterNameEdit(c: GenCharacter) {
+    setEditingCharacterNameId(c.id);
+    setCharacterNameDraft(c.name);
+  }
+
+  function saveCharacterName(c: GenCharacter) {
+    const name = characterNameDraft.trim();
+    if (!name) {
+      toast.error("角色名称不能为空");
+      return;
+    }
+    if (name !== c.name) {
+      setData((current) => ({
+        ...current,
+        characters: current.characters.map((item) => (item.id === c.id ? { ...item, name } : item)),
+      }));
+      toast.success("角色名称已保存");
+    }
+    setEditingCharacterNameId(null);
+    setCharacterNameDraft("");
   }
 
   function removeScene(s: GenScene) {
@@ -3808,7 +3875,11 @@ function WorkspacePage() {
     setPreviewTarget({ character: c, lookId });
     setSelectedGenIdx(currentIndex);
     setCharacterAttributesExpanded(false);
-    setModInput(savedEditablePrompt || characterEditablePrompt(c, lookId));
+    void showEditablePromptInChinese(
+      `character:${imageKey}`,
+      savedEditablePrompt || characterEditablePrompt(c, lookId),
+      setModInput,
+    );
     setModError(null);
     setCharModUploadedRefs([]);
   }
@@ -4101,6 +4172,7 @@ function WorkspacePage() {
       setModError("请填写角色提示词");
       return;
     }
+    const englishInstruction = await translatePromptForGeneration(instruction);
     // 无论当前图是普通角色、四视图还是多维资产图，都从同一份中文提示词
     // 解析角色属性；生成模式仍按原图保留，避免丢失四视图/设定稿构图约束。
     const editedCharacter = applyCharacterAttributeDraft(
@@ -4151,7 +4223,7 @@ function WorkspacePage() {
       editedCharacter,
       lookId,
       mode,
-      instruction,
+      englishInstruction,
       currentUrl,
       charModUploadedRefs,
       false,
@@ -4700,12 +4772,13 @@ function WorkspacePage() {
       setSceneModError("请输入修改意见");
       return;
     }
+    const englishInstruction = await translatePromptForGeneration(instruction);
     const editedScene = applySceneEditablePrompt(s, instruction);
     setSceneModError(null);
     const ok = await doSceneRegen(
       editedScene,
       "modify",
-      instruction,
+      englishInstruction,
       sceneModUploadedRef ?? undefined,
       instruction,
     );
@@ -4761,12 +4834,13 @@ function WorkspacePage() {
       setPropModError("请输入修改意见");
       return;
     }
+    const englishInstruction = await translatePromptForGeneration(instruction);
     const editedProp = applyPropEditablePrompt(p, instruction);
     setPropModError(null);
     const ok = await doPropRegen(
       editedProp,
       "modify",
-      instruction,
+      englishInstruction,
       propModUploadedRef ?? undefined,
       instruction,
     );
@@ -5601,6 +5675,7 @@ function WorkspacePage() {
     if (!referenceUrl || !instruction) return;
     const edited = applyShotEditablePrompt(group, shot, instruction);
     const editedShot = edited.shot;
+    const englishInstruction = await translatePromptForGeneration(instruction);
 
     // 2026/06:按 shot 覆盖 > group 默认 取角色 + 场景(同 generateShotImageForGroup)。
     const shotCharIds = pickShotCharacterIds(editedShot, group);
@@ -5626,7 +5701,7 @@ function WorkspacePage() {
       const res = await callRegenShot({
         data: {
           referenceImageUrl: referenceUrl,
-          userInstruction: instruction,
+          userInstruction: englishInstruction,
           // 2026/07:同 generateShotImageForGroup -- action 为空时用 plotText 兜底,
           // 避免 RegenShotInput.action(min 1) 拒绝空分镜占位 shot。
           plotText: edited.plotText || effectivePlotText(group) || "(无剧情摘要)",
@@ -6826,6 +6901,7 @@ function WorkspacePage() {
     const editablePlot =
       readEditablePromptField(instruction, "剧情", ["故事板", "剧情", "场景", "风格"]) ||
       group.plotText;
+    const englishInstruction = await translatePromptForGeneration(instruction);
 
     // 2026/06:跟 generateMangaStoryboardForGroup 一致 —— 用各 shot 有效角色并集 +
     //   第一个 shot 的有效场景,体现 shot 级 override。
@@ -6952,7 +7028,7 @@ function WorkspacePage() {
       const res = await callRegenStoryboard({
         data: {
           referenceImageUrl: current.url,
-          userInstruction: instruction,
+          userInstruction: englishInstruction,
           projectStyle: projectVisualStyle,
           groupLabel: group.plotText?.slice(0, 60),
           plotText: editablePlot || effectivePlotText(group) || "(无剧情摘要)",
@@ -7812,7 +7888,7 @@ function WorkspacePage() {
     charsHash: data.characters
       .map(
         (c) =>
-          `${c.id}:${(c.faceDescription?.length ?? 0) + (c.bodyDescription?.length ?? 0) + (c.clothingDescription?.length ?? 0)}`,
+          `${c.id}:${c.name}:${(c.faceDescription?.length ?? 0) + (c.bodyDescription?.length ?? 0) + (c.clothingDescription?.length ?? 0)}`,
       )
       .join("|"),
     propsN: data.props.length,
@@ -10444,9 +10520,59 @@ function WorkspacePage() {
                                         style={{ background: c.palette[0] ?? "var(--accent)" }}
                                         aria-hidden
                                       />
-                                      <h3 className="font-display text-sm font-bold text-text-primary truncate">
-                                        {cardTitle}
-                                      </h3>
+                                      {card.lookId === null && editingCharacterNameId === c.id ? (
+                                        <div
+                                          className="flex min-w-0 flex-1 items-center gap-1"
+                                          onClick={(event) => event.stopPropagation()}
+                                        >
+                                          <input
+                                            autoFocus
+                                            value={characterNameDraft}
+                                            maxLength={100}
+                                            onChange={(event) =>
+                                              setCharacterNameDraft(event.target.value)
+                                            }
+                                            onKeyDown={(event) => {
+                                              if (event.key === "Enter") saveCharacterName(c);
+                                              if (event.key === "Escape")
+                                                setEditingCharacterNameId(null);
+                                            }}
+                                            onBlur={() => saveCharacterName(c)}
+                                            aria-label="编辑角色名称"
+                                            className="min-w-0 flex-1 rounded border border-accent bg-bg-base px-1.5 py-0.5 text-sm font-bold text-text-primary outline-none"
+                                          />
+                                          <button
+                                            type="button"
+                                            onMouseDown={(event) => event.preventDefault()}
+                                            onClick={() => saveCharacterName(c)}
+                                            className="rounded p-1 text-accent hover:bg-accent-dim"
+                                            aria-label="保存角色名称"
+                                            title="保存角色名称"
+                                          >
+                                            <Check size={13} />
+                                          </button>
+                                        </div>
+                                      ) : (
+                                        <>
+                                          <h3 className="font-display min-w-0 flex-1 text-sm font-bold text-text-primary truncate">
+                                            {cardTitle}
+                                          </h3>
+                                          {card.lookId === null && (
+                                            <button
+                                              type="button"
+                                              onClick={(event) => {
+                                                event.stopPropagation();
+                                                startCharacterNameEdit(c);
+                                              }}
+                                              className="shrink-0 rounded p-1 text-text-muted hover:bg-bg-elevated hover:text-accent"
+                                              aria-label="编辑角色名称"
+                                              title="编辑角色名称"
+                                            >
+                                              <Pencil size={12} />
+                                            </button>
+                                          )}
+                                        </>
+                                      )}
                                       {/* 2026/06 跨集角标:同真人在多集出现时显示 ep1/2/3 等 */}
                                       {c.episodes.length > 1 && (
                                         <span
@@ -11374,7 +11500,11 @@ function WorkspacePage() {
                                             setShotSelectedGenIdx(
                                               generations ? generations.length - 1 : 0,
                                             );
-                                            setShotModInput(shotEditablePrompt(g, s));
+                                            void showEditablePromptInChinese(
+                                              `shot:${g.id}:${s.id}`,
+                                              shotEditablePrompt(g, s),
+                                              setShotModInput,
+                                            );
                                             setShotModUploadedRef(null);
                                             setShotPreview({ groupId: g.id, shotId: s.id });
                                           }}
@@ -11484,7 +11614,16 @@ function WorkspacePage() {
                                   onLoad={() => clearStoryboardBroken(g.id)}
                                   onError={() => markStoryboardBroken(g.id)}
                                   onClick={() => {
-                                    setStoryboardModInput(storyboardEditablePrompt(g));
+                                    void showEditablePromptInChinese(
+                                      `storyboard:${g.id}`,
+                                      storyboardEditablePrompt(g),
+                                      (value) => {
+                                        setStoryboardModInput(value);
+                                        if (storyboardPromptEditorRef.current) {
+                                          storyboardPromptEditorRef.current.innerText = value;
+                                        }
+                                      },
+                                    );
                                     setStoryboardModUploadedRefs([]);
                                     setStoryboardMentionedRefs([]);
                                     setStoryboardMentionedRefLabels({});
@@ -12052,9 +12191,11 @@ function WorkspacePage() {
                           tabIndex={0}
                           onClick={() => {
                             setSelectedGenIdx(i);
-                            setModInput(
+                            void showEditablePromptInChinese(
+                              `character:${imageKey}`,
                               charImagePrompts[imageKey]?.[i]?.editablePrompt ||
                                 characterEditablePrompt(c, previewTarget.lookId),
+                              setModInput,
                             );
                             // 缩略图始终保持一个明确选择；重复点击同一张只维持选中，不能取消。
                             setSelectedCharImages((m) => ({ ...m, [imageKey]: u }));
@@ -12063,9 +12204,11 @@ function WorkspacePage() {
                             if (e.key === "Enter" || e.key === " ") {
                               e.preventDefault();
                               setSelectedGenIdx(i);
-                              setModInput(
+                              void showEditablePromptInChinese(
+                                `character:${imageKey}`,
                                 charImagePrompts[imageKey]?.[i]?.editablePrompt ||
                                   characterEditablePrompt(c, previewTarget.lookId),
+                                setModInput,
                               );
                               setSelectedCharImages((m) => ({ ...m, [imageKey]: u }));
                             }
@@ -12467,9 +12610,11 @@ function WorkspacePage() {
                               onClick={() => {
                                 // 点缩略图即选中；选中后不能通过再次点击取消。
                                 setSelectedSceneImages((m) => ({ ...m, [s.id]: u }));
-                                setSceneModInput(
+                                void showEditablePromptInChinese(
+                                  `scene:${s.id}`,
                                   sceneImagePrompts[s.id]?.[i]?.editablePrompt ||
                                     sceneEditablePrompt(s),
+                                  setSceneModInput,
                                 );
                               }}
                               title="点击选中这张场景图"
@@ -12771,9 +12916,11 @@ function WorkspacePage() {
                               onClick={() => {
                                 // 点缩略图即选中；选中后不能通过再次点击取消。
                                 setSelectedPropImages((m) => ({ ...m, [p.id]: u }));
-                                setPropModInput(
+                                void showEditablePromptInChinese(
+                                  `prop:${p.id}`,
                                   propImagePrompts[p.id]?.[i]?.editablePrompt ||
                                     propEditablePrompt(p),
+                                  setPropModInput,
                                 );
                               }}
                               title="点击选中这张道具图"
