@@ -448,13 +448,22 @@ function firstNonEmptyString(values: unknown[]): string | null {
 export function extractArkVideoUrl(payload: unknown): string | null {
   const root = asRecord(payload);
   if (!root) return null;
-  const nested = [root.content, root.output, root.data, root.result, root.task]
-    .map(asRecord)
-    .filter((value): value is UnknownRecord => Boolean(value));
-  const records = [root, ...nested];
+  // 部分中转（弘梦）会返回 { data: { data: { video_url } } }，且外层还可能
+  // 直接提供 result_url。沿着已知包装字段向下展开，避免成功任务被误判为空视频。
+  const records: UnknownRecord[] = [];
+  const queue: Array<{ record: UnknownRecord; depth: number }> = [{ record: root, depth: 0 }];
+  while (queue.length) {
+    const current = queue.shift()!;
+    records.push(current.record);
+    if (current.depth >= 3) continue;
+    for (const key of ["content", "output", "data", "result", "task"]) {
+      const child = asRecord(current.record[key]);
+      if (child) queue.push({ record: child, depth: current.depth + 1 });
+    }
+  }
   const urls: unknown[] = [];
   for (const record of records) {
-    urls.push(record.video_url, record.videoUrl, record.url);
+    urls.push(record.video_url, record.videoUrl, record.url, record.result_url, record.resultUrl);
     const content = asRecord(record.content);
     if (content) urls.push(content.video_url, content.videoUrl, content.url);
     const results = record.results;

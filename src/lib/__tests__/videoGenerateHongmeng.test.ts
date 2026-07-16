@@ -26,4 +26,18 @@ describe("弘梦 ARK 兼容任务查询", () => {
       expect(extractArkVideoUrl(payload)).toMatch(/^https:\/\/cdn\.example\.com\/.+\.mp4$/);
     }
   });
+
+  it("兼容弘梦的 data.data.video_url 和外层 result_url", () => {
+    const url = "https://cdn.example.com/hongmeng.mp4";
+    expect(
+      extractArkVideoUrl({
+        code: "success",
+        data: {
+          status: "SUCCESS",
+          result_url: url,
+          data: { status: "succeeded", video_url: url },
+        },
+      }),
+    ).toBe(url);
+  });
 });
