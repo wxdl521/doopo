@@ -2315,6 +2315,15 @@ async function sdrealCreateImageAsset(input: {
   apiKey: string;
   baseUrl: string;
 }): Promise<{ ok: true; assetId: string } | { ok: false; error: string }> {
+  // SD Real 的素材表把 URL 设成 varchar(500)。在请求前给出可诊断的错误，
+  // 避免上游只返回无字段名的 SQLSTATE 22001。
+  if (input.url.length > 500) {
+    return {
+      ok: false,
+      error: `[sdreal] asset URL too long (${input.url.length}/500); reference image must be rehosted`,
+    };
+  }
+  console.log(`[sdreal asset→] urlChars=${input.url.length} nameChars=${input.name.length}`);
   try {
     const res = await fetch(`${input.baseUrl}/v1/sd/assets`, {
       method: "POST",
@@ -3137,23 +3146,26 @@ export const pollVideoTaskFn = createServerFn({ method: "POST" })
 // ====================================================================
 
 /**
- * 把单个 data: URI 上传到 Supabase Storage `workspace-media`,返回 10 年签名 URL。
+ * 将参考素材重托管到 Supabase Storage `workspace-media`,返回公开对象 URL。
  *
  * 背景:生图函数(azure/lovable/openrouter/pixflow 等)常返回
  *   data:image/png;base64,... 形式的 URL,单条可达数 MB。前端把这些 data URI
  *   当参考图传给视频生成,会导致请求体过大(kuaizi 落库触发 22001)或被后端拒绝。
  *   在 generateVideo 入口统一转换,所有后端收到干净 https URL。
  *
- *   - data: URI → 上传 Storage → 签名 URL
- *   - http(s) URL / 已入库的 supabase URL → 原样返回(各后端本就支持)
+ *   - data: URI → 上传 Storage → 公开 URL
+ *   - http(s) URL 默认原样返回；SD Real Max 因素材 URL 仅支持 500 字符而强制重托管
  *   - 上传失败 → ok:false,由调用方中止流程(避免继续发大请求体)
  */
 async function persistDataUriUrl(
   url: string,
   supabase: any,
   userId: string,
+  forceRehost = false,
 ): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
-  if (!url || !url.startsWith("data:")) return { ok: true, url };
+  // SD Real Max 将素材 URL 落入 varchar(500)。即使输入本身是 https（例如历史
+  // Supabase 签名 URL 或第三方临时 URL），也必须重新托管为短的公开对象 URL。
+  if (!url || (!url.startsWith("data:") && !forceRehost)) return { ok: true, url };
   try {
     const { buf, contentType } = await fetchMedia(url);
     const ct = (contentType || "image/png").toLowerCase();
@@ -3179,11 +3191,22 @@ async function persistDataUriUrl(
       .from("workspace-media")
       .upload(path, blob, { contentType: mime, upsert: true });
     if (uploadErr) return { ok: false, error: `参考图上传失败: ${uploadErr.message}` };
-    const { data: signed } = await supabase.storage
-      .from("workspace-media")
-      .createSignedUrl(path, 315360000); // 10 年
-    if (!signed?.signedUrl) return { ok: false, error: "参考图上传失败: 未取到签名 URL" };
-    return { ok: true, url: signed.signedUrl };
+    // workspace-media 是公开 bucket。不要返回带 JWT 的长效签名 URL：SD Real Max
+    // 会把素材 URL 落到 varchar(500)，而 Supabase 的签名 URL 可能超过该上限，
+    // 造成素材创建阶段 400 / SQLSTATE 22001。公开对象 URL 更短，也便于供应商拉取。
+    const { data: publicUrl } = supabase.storage.from("workspace-media").getPublicUrl(path);
+    if (!publicUrl?.publicUrl) return { ok: false, error: "参考图上传失败: 未取到公开 URL" };
+    const probe = await fetch(publicUrl.publicUrl, {
+      headers: { Range: "bytes=0-1" },
+      redirect: "follow",
+    });
+    if (!probe.ok) {
+      return {
+        ok: false,
+        error: `参考图转存后仍不可公网读取 (${probe.status})；请联系管理员检查 workspace-media 公开读权限。`,
+      };
+    }
+    return { ok: true, url: publicUrl.publicUrl };
   } catch (e: any) {
     return { ok: false, error: `参考图上传失败: ${e?.message ?? String(e)}` };
   }
@@ -3315,7 +3338,9 @@ export const generateVideo = createServerFn({ method: "POST" })
     // data: URI → 签名 URL:生图函数常返回 base64 data URI(单条数 MB),直接发给后端
     // 会撑爆请求体(kuaizi 落库 22001)或被后端拒绝。并行上传后替换成 https URL。
     const persistResults = await Promise.all(
-      media.map((m) => persistDataUriUrl(m.url, supabase, userId).then((r) => ({ m, r }))),
+      media.map((m) =>
+        persistDataUriUrl(m.url, supabase, userId, backend === "sdreal").then((r) => ({ m, r })),
+      ),
     );
     const persistedMedia: DashScopeMediaItem[] = [];
     for (const { m, r } of persistResults) {
