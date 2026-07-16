@@ -77,7 +77,7 @@ const imageModelOptions = [
   {
     id: "revora/gpt-image-2-medium",
     label: "GPT Image 2 Medium (Revora)",
-    sub: "均衡 · 推荐",
+    sub: "均衡",
   },
   {
     id: "revora/gpt-image-2-low",
@@ -102,44 +102,8 @@ const imageModelOptions = [
   },
   {
     id: "aigcfamily/imagen-3.0-generate-001",
-    label: "AIGC-imagen3",
+    label: "Google imagen3 (AIGC Family)",
     sub: "仅 T2I",
-  },
-
-  // ---- OTU(OpenAI 兼容)----
-  { id: "__sep_otu__", label: "—— OTU(OpenAI 兼容)——", sub: "" },
-  { id: "otu/image2", label: "GPT Image 2 (OTU)", sub: "OTU · OpenAI · Image2 · T2I/I2I" },
-
-  // ---- AI Tokenvibe(OpenAI 兼容)----
-  { id: "__sep_aitokenvibe__", label: "—— AI Tokenvibe(OpenAI 兼容)——", sub: "" },
-  {
-    id: "aitokenvibe/gpt-image-2",
-    label: "GPT Image 2 (AI Tokenvibe)",
-    sub: "AI Tokenvibe · OpenAI · Image2 · T2I/I2I",
-  },
-
-  // ---- 天鸿智算(OpenAI 兼容)----
-  { id: "__sep_thhtcloud__", label: "—— 天鸿智算(OpenAI 兼容)——", sub: "" },
-  {
-    id: "thhtcloud/gpt-image-2",
-    label: "GPT Image 2 (天鸿智算)",
-    sub: "天鸿智算 · OpenAI · Image2 · T2I/I2I",
-  },
-
-  // ---- 数安词源(OpenAI 兼容)----
-  { id: "__sep_shuci__", label: "—— 数安词源(OpenAI 兼容)——", sub: "" },
-  {
-    id: "shuci/gpt-image-2",
-    label: "GPT Image 2 (数安词源)",
-    sub: "数安词源 · OpenAI · Image2 · T2I/I2I",
-  },
-
-  // ---- ailinzi(OpenAI 兼容)----
-  { id: "__sep_ailinzi__", label: "—— ailinzi(OpenAI 兼容)——", sub: "" },
-  {
-    id: "ailinzi/gpt-image-2",
-    label: "GPT Image 2 (ailinzi)",
-    sub: "ailinzi · OpenAI · Image2 · T2I/I2I",
   },
 
   // ---- TokenHub(OpenAI 兼容)----
@@ -150,52 +114,10 @@ const imageModelOptions = [
     sub: "",
   },
 
-  // ---- AgentEarth(OpenAI 兼容)----
-  { id: "__sep_agentearth__", label: "—— AgentEarth(OpenAI 兼容)——", sub: "" },
   {
     id: "agentearth/image2",
-    label: "AgentEarth Image2 (4K)",
-    sub: "GPT Image 2 · 文生图/图生图",
-  },
-
-  // ---- nagora.ai(Azure 渠道 OpenAI 官方)----
-  { id: "__sep_nagora__", label: "—— nagora.ai(Azure 渠道)——", sub: "" },
-  {
-    id: "nagora/gpt-image-2",
-    label: "GPT Image 2 (nagora)",
-    sub: "nagora.ai · Azure 渠道 · OpenAI · Image2 · T2I/I2I",
-  },
-
-  // ---- MeridianAI(OpenAI 兼容)----
-  { id: "__sep_meridian__", label: "—— MeridianAI(OpenAI 兼容)——", sub: "" },
-  {
-    id: "meridian/gpt-image-2",
-    label: "GPT Image 2 (MeridianAI)",
-    sub: "MeridianAI · OpenAI · Image2 · T2I/I2I",
-  },
-
-  // ---- 汇流 Confluo(OpenAI 兼容)----
-  { id: "__sep_confluo__", label: "—— 汇流 Confluo(OpenAI 兼容)——", sub: "" },
-  {
-    id: "confluo/gpt-image-2",
-    label: "GPT Image 2 (汇流)",
+    label: "GPT Image 2 (AgentEarth)",
     sub: "",
-  },
-
-  // ---- 灵梦 Lingmeng(OpenAI 兼容)----
-  { id: "__sep_lingmeng__", label: "—— 灵梦 Lingmeng(OpenAI 兼容)——", sub: "" },
-  {
-    id: "lingmeng/gpt-image-2",
-    label: "GPT Image 2 (灵梦)",
-    sub: "T2I/I2I",
-  },
-
-  // ---- vapeur.ai(OpenAI 兼容)----
-  { id: "__sep_vapeur__", label: "—— vapeur.ai ——", sub: "" },
-  {
-    id: "vapeur/gpt-image-2",
-    label: "GPT Image 2 (vapeur)",
-    sub: "vapeur.ai · OpenAI · Image2 · T2I/I2I",
   },
 
   {
@@ -208,9 +130,9 @@ const imageModelOptions = [
     label: "Azure0716-gpt-image-2",
     sub: "9积分/张",
   },
+
 ];
-// 2026/07:图下拉只保留指定供应商(星标 + AIGC Family + 汇流 + Azure + 数安词源),
-// 其余(qwen/wan/pixflow/claude360/onetoken/otu 等)不显示。
+// 图下拉只保留指定供应商，避免将未启用渠道展示给用户。
 const VISIBLE_IMAGE_PREFIXES = [
   "doubao-seedream/", // 默认主力 Seedream
   "tokenflash/",
@@ -220,9 +142,6 @@ const VISIBLE_IMAGE_PREFIXES = [
   "tokenhub/", // 星标
   "agentearth/",
   "aigcfamily/",
-  "confluo/", // AIGC Family + 汇流
-  "lingmeng/", // 灵梦 · GPT Image 2
-  "shuci/", // 数安词源 · GPT Image 2
 ];
 const isVisibleImage = (id: string) =>
   VISIBLE_IMAGE_PREFIXES.some((p) => id.toLowerCase().startsWith(p));
@@ -714,7 +633,7 @@ export function NewProjectDialog({
   // 个性化模型选择 UX
   //   - 推荐项(命中下方 IMAGE/VIDEO_RECOMMENDED_PREFIXES)排最前,带 ✨ _recommended
   //     · 图片推荐:tokenflash / revora / Azure终结点 / tokenhub
-  //     · 视频推荐:丽帧(kuaizi)/ doubao-seedance
+  //     · 视频推荐:丽帧(kuaizi)/ doubao-seedance / TopenRouter
   //   - "用户上次选的"(lastUsed)带 _pinned 标记(🕐);若不在推荐区,排到推荐区之后
   //   - 非法 id(用户 pref 里残留但当前 catalog 没了)静默忽略
   // ====================================================================
@@ -732,9 +651,8 @@ export function NewProjectDialog({
     "azure2/",
     "azure0716/",
     "tokenhub/",
-    "agentearth/",
   ];
-  const VIDEO_RECOMMENDED_PREFIXES = ["kuaizi-", "doubao-seedance-"];
+  const VIDEO_RECOMMENDED_PREFIXES = ["kuaizi-", "doubao-seedance-", "topenrouter-"];
   const isRecommendedModel = (id: string, prefixes: string[]): boolean =>
     prefixes.some((p) => id.startsWith(p));
   /**
