@@ -658,6 +658,9 @@ export default function Characters() {
                   <ImageReviewBadge
                     status={imageReviews[selectedImage]?.status}
                     error={imageReviews[selectedImage]?.error}
+                    onRequestReview={() =>
+                      reviewImage(selectedImage, generatedImages[selectedImage])
+                    }
                   />
                 </>
               ) : (
@@ -686,6 +689,7 @@ export default function Characters() {
                       <ImageReviewBadge
                         status={imageReviews[v]?.status}
                         error={imageReviews[v]?.error}
+                        onRequestReview={() => reviewImage(v, generatedImages[v])}
                       />
                     </button>
                   ),

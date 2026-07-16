@@ -138,6 +138,41 @@ export const Route = createFileRoute("/workspace/$workspaceId")({
   component: WorkspacePage,
 });
 
+const isHttpImageUrl = (value: unknown): value is string =>
+  typeof value === "string" && /^https?:\/\//i.test(value);
+
+function readSavedImageReviews(value: unknown): Record<string, { status: ImageReviewStatus; error?: string }> {
+  if (!value || typeof value !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).flatMap(([url, item]) => {
+      if (!isHttpImageUrl(url) || !item || typeof item !== "object") return [];
+      const review = item as { status?: unknown; error?: unknown };
+      // `pending` 请求在刷新后无法可靠续接，恢复为“未审核”，让用户可重新提交。
+      if (review.status !== "approved" && review.status !== "rejected" && review.status !== "error") {
+        return [];
+      }
+      return [
+        [
+          url,
+          {
+            status: review.status,
+            ...(typeof review.error === "string" ? { error: review.error } : {}),
+          },
+        ],
+      ];
+    }),
+  ) as Record<string, { status: ImageReviewStatus; error?: string }>;
+}
+
+function readSavedImageReviewAliases(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object") return {};
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).filter(
+      ([displayUrl, sourceUrl]) => isHttpImageUrl(displayUrl) && isHttpImageUrl(sourceUrl),
+    ),
+  ) as Record<string, string>;
+}
+
 function WorkspaceMediaImage({
   src,
   onLoad,
@@ -1113,12 +1148,14 @@ function WorkspacePage() {
             : /status\s*=\s*failed|审核未通过|sensitive/i.test(error || "")
               ? "rejected"
               : "error";
+          if (status === "error") imageReviewStartedRef.current.delete(url);
           setImageReviews((current) => ({
             ...current,
             [url]: { status, ...(error ? { error } : {}) },
           }));
         })
         .catch((error) => {
+          imageReviewStartedRef.current.delete(url);
           setImageReviews((current) => ({
             ...current,
             [url]: {
@@ -2253,6 +2290,8 @@ function WorkspacePage() {
           );
         }
         if (wd.shotImages) setShotImages(wd.shotImages as Record<string, string[]>);
+        setImageReviews(readSavedImageReviews(wd.imageReviews));
+        setImageReviewAliases(readSavedImageReviewAliases(wd.imageReviewAliases));
         if ((wd as any).selectedCharImages)
           setSelectedCharImages((wd as any).selectedCharImages as Record<string, string | null>);
         if (wd.panelImages) setPanelImages(wd.panelImages as Record<string, string>);
@@ -2365,6 +2404,9 @@ function WorkspacePage() {
               );
             }
             if (media.shotImages) setShotImages(media.shotImages as Record<string, string[]>);
+            if (media.imageReviews) setImageReviews(readSavedImageReviews(media.imageReviews));
+            if (media.imageReviewAliases)
+              setImageReviewAliases(readSavedImageReviewAliases(media.imageReviewAliases));
             if (media.selectedCharImages)
               setSelectedCharImages(media.selectedCharImages as Record<string, string | null>);
             if (media.panelImages) setPanelImages(media.panelImages as Record<string, string>);
@@ -8010,6 +8052,17 @@ function WorkspacePage() {
         const filtered = arr.map(keepNonEmpty).filter((u): u is string => !!u);
         return filtered.length > 0 ? filtered : undefined;
       };
+      // 审核状态只保存 HTTP(S) URL，严禁把 base64 / data: 图片再写进 workspace_data。
+      const persistedImageReviews = Object.fromEntries(
+        Object.entries(imageReviews).filter(([url, review]) =>
+          isHttpImageUrl(url) && review.status !== "pending",
+        ),
+      );
+      const persistedImageReviewAliases = Object.fromEntries(
+        Object.entries(imageReviewAliases).filter(([displayUrl, sourceUrl]) =>
+          isHttpImageUrl(displayUrl) && isHttpImageUrl(sourceUrl),
+        ),
+      );
       const workspaceData: Record<string, unknown> = {
         outline: data.outline,
         scenes: data.scenes,
@@ -8038,6 +8091,8 @@ function WorkspacePage() {
         panelImages: Object.fromEntries(
           Object.entries(panelImages).map(([k, v]) => [k, keepNonEmpty(v)]),
         ),
+        imageReviews: persistedImageReviews,
+        imageReviewAliases: persistedImageReviewAliases,
         selectedCharImages,
         selectedSceneImages,
         selectedPropImages,
@@ -8183,6 +8238,16 @@ function WorkspacePage() {
       .join("|"),
     groupSbs: Object.entries(groupStoryboards)
       .map(([k, arr]) => `${k}:${(arr ?? []).map((v) => v.status).join(",")}`)
+      .join("|"),
+    imageReviews: Object.entries(imageReviews)
+      .filter(([url]) => isHttpImageUrl(url))
+      .map(([url, review]) => `${url}:${review.status}:${review.error ?? ""}`)
+      .sort()
+      .join("|"),
+    imageReviewAliases: Object.entries(imageReviewAliases)
+      .filter(([displayUrl, sourceUrl]) => isHttpImageUrl(displayUrl) && isHttpImageUrl(sourceUrl))
+      .map(([displayUrl, sourceUrl]) => `${displayUrl}:${sourceUrl}`)
+      .sort()
       .join("|"),
   });
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -9949,6 +10014,9 @@ function WorkspacePage() {
                                         <ImageReviewBadge
                                           status={getImageReview(coverUrl)?.status}
                                           error={getImageReview(coverUrl)?.error}
+                                          onRequestReview={() => {
+                                            if (coverUrl) requestImageReview(coverUrl, `scene-${s.id}`);
+                                          }}
                                         />
                                       </>
                                     ) : (
@@ -10241,6 +10309,9 @@ function WorkspacePage() {
                                         <ImageReviewBadge
                                           status={getImageReview(coverUrl)?.status}
                                           error={getImageReview(coverUrl)?.error}
+                                          onRequestReview={() => {
+                                            if (coverUrl) requestImageReview(coverUrl, `prop-${p.id}`);
+                                          }}
                                         />
                                       </>
                                     ) : (
@@ -10672,6 +10743,13 @@ function WorkspacePage() {
                                                 charImages[imageKey]!.at(-1),
                                             )?.error
                                           }
+                                          onRequestReview={() => {
+                                            const coverUrl =
+                                              selectedCharImages[imageKey] ||
+                                              charImages[imageKey]!.at(-1);
+                                            if (coverUrl)
+                                              requestImageReview(coverUrl, `character-${c.id}`);
+                                          }}
                                         />
                                       </>
                                     ) : isQueued ? (
@@ -11752,6 +11830,12 @@ function WorkspacePage() {
                                           <ImageReviewBadge
                                             status={getImageReview(currentUrl)?.status}
                                             error={getImageReview(currentUrl)?.error}
+                                            onRequestReview={() =>
+                                              requestImageReview(
+                                                currentUrl,
+                                                `shot-${g.id}-${s.id}`,
+                                              )
+                                            }
                                           />
                                         </>
                                       ) : isBusy ? (
@@ -11919,6 +12003,12 @@ function WorkspacePage() {
                                 <ImageReviewBadge
                                   status={getImageReview(getActiveStoryboard(g.id)!.url)?.status}
                                   error={getImageReview(getActiveStoryboard(g.id)!.url)?.error}
+                                  onRequestReview={() =>
+                                    requestImageReview(
+                                      getActiveStoryboard(g.id)!.url,
+                                      `storyboard-${g.id}`,
+                                    )
+                                  }
                                 />
                                 <button
                                   type="button"
