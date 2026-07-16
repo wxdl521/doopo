@@ -392,15 +392,11 @@ function explainVideoError(raw: string | undefined | null): string {
   if (/ContentPolicyViolation|InvalidParameter\.Prompt|SensitiveWords/i.test(s)) {
     return "内容审核拦截:prompt 或图片可能含敏感信息,已拒绝生成。试试修改剧情 / 重生插画风格分镜图。";
   }
-  // 3) 配额 / 限流
-  if (/429|quota|rate.?limit/i.test(s)) {
-    return "请求过于频繁或配额已用完,请稍后再试。";
-  }
-  // 4) 余额不足
+  // 3) 余额不足
   if (/balance|insufficient.?funds|account.*not enough/i.test(s)) {
     return "账户余额不足,请充值后再试。";
   }
-  // 5) 任务超时（英文 + 中文）
+  // 4) 任务超时（英文 + 中文）
   if (/timed? ?out|超时/i.test(s)) {
     return "任务处理超时,请稍后重试或缩短分镜组时长。";
   }
