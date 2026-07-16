@@ -124,6 +124,14 @@ export const IMAGE_MODELS: ImageModelOption[] = [
   { key: "", label: "—— [TokenHub · OpenAI 兼容] ——", sub: undefined, legacy: true },
   { key: "tokenhub/gpt-image-2", label: "GPT Image 2", sub: "[TokenHub·OpenAI] Image2 · T2I/I2I" },
 
+  // ---- [AgentEarth · OpenAI 兼容] maas.agentearth.ai → /v1/images/generations|edits ----
+  { key: "", label: "—— [AgentEarth · OpenAI 兼容] ——", sub: undefined, legacy: true },
+  {
+    key: "agentearth/image2",
+    label: "AgentEarth Image2 (4K)",
+    sub: "[AgentEarth·OpenAI] GPT Image 2 · T2I/I2I",
+  },
+
   // ---- [nagora.ai · OpenAI 兼容 · Azure 渠道] → /v1/images/generations ----
   { key: "", label: "—— [nagora.ai · OpenAI 兼容 · Azure 渠道] ——", sub: undefined, legacy: true },
   { key: "nagora/gpt-image-2", label: "GPT Image 2", sub: "[nagora·Azure 渠道] Image2 · T2I/I2I" },

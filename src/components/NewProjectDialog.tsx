@@ -150,6 +150,14 @@ const imageModelOptions = [
     sub: "",
   },
 
+  // ---- AgentEarth(OpenAI 兼容)----
+  { id: "__sep_agentearth__", label: "—— AgentEarth(OpenAI 兼容)——", sub: "" },
+  {
+    id: "agentearth/image2",
+    label: "AgentEarth Image2 (4K)",
+    sub: "GPT Image 2 · 文生图/图生图",
+  },
+
   // ---- nagora.ai(Azure 渠道 OpenAI 官方)----
   { id: "__sep_nagora__", label: "—— nagora.ai(Azure 渠道)——", sub: "" },
   {
@@ -196,6 +204,7 @@ const VISIBLE_IMAGE_PREFIXES = [
   "revora/",
   "azure2/",
   "tokenhub/", // 星标
+  "agentearth/",
   "aigcfamily/",
   "confluo/", // AIGC Family + 汇流
   "shuci/", // 数安词源 · GPT Image 2
@@ -702,7 +711,13 @@ export function NewProjectDialog({
     _recommended?: boolean;
   };
   // 推荐名单:匹配这些前缀的模型排最前 + 带 ✨
-  const IMAGE_RECOMMENDED_PREFIXES = ["tokenflash/", "revora/", "azure2/", "tokenhub/"];
+  const IMAGE_RECOMMENDED_PREFIXES = [
+    "tokenflash/",
+    "revora/",
+    "azure2/",
+    "tokenhub/",
+    "agentearth/",
+  ];
   const VIDEO_RECOMMENDED_PREFIXES = ["kuaizi-", "doubao-seedance-"];
   const isRecommendedModel = (id: string, prefixes: string[]): boolean =>
     prefixes.some((p) => id.startsWith(p));

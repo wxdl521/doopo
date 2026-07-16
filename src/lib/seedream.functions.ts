@@ -425,6 +425,16 @@ export const generateImage = createServerFn({ method: "POST" })
       });
       return __afterCall("vapeur", { url: r.url, error: r.error, model: r.model });
     }
+    // 委托给 AgentEarth(OpenAI Images 兼容)
+    if (requested.toLowerCase().startsWith("agentearth/")) {
+      const { callAgentEarthImage } = await import("./agentearthImage.functions");
+      const r = await callAgentEarthImage({
+        prompt: appendNegative(data.prompt, data.negativePrompt),
+        model: requested,
+        size: data.size,
+      });
+      return __afterCall("agentearth", { url: r.url, error: r.error, model: r.model });
+    }
     // 委托给 TokenHub(OpenAI 兼容,tokenhub.linkstor.com)
     if (requested.toLowerCase().startsWith("tokenhub/")) {
       const { callTokenhubImage } = await import("./tokenhubImage.functions");
@@ -1090,6 +1100,18 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
       if (!r.url) return { ok: false as const, error: r.error || "vapeur 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
     }
+    if (requested.toLowerCase().startsWith("agentearth/")) {
+      const { callAgentEarthImage } = await import("./agentearthImage.functions");
+      const r = await callAgentEarthImage({
+        prompt,
+        model: requested,
+        size: generationSize,
+        quality: generationQuality,
+        referenceImages: allImages,
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "AgentEarth 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
+    }
     if (requested.toLowerCase().startsWith("tokenhub/")) {
       const { callTokenhubImage } = await import("./tokenhubImage.functions");
       const r = await callTokenhubImage({
@@ -1498,6 +1520,17 @@ export const generateStoryboardShotImage = createServerFn({ method: "POST" })
       if (!r.url) return { ok: false as const, error: r.error || "vapeur 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
     }
+    if (requested.toLowerCase().startsWith("agentearth/")) {
+      const { callAgentEarthImage } = await import("./agentearthImage.functions");
+      const r = await callAgentEarthImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: "2K",
+        referenceImages: images,
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "AgentEarth 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
+    }
     if (requested.toLowerCase().startsWith("tokenhub/")) {
       const { callTokenhubImage } = await import("./tokenhubImage.functions");
       const r = await callTokenhubImage({
@@ -1846,6 +1879,17 @@ export const regenerateStoryboardShot = createServerFn({ method: "POST" })
         referenceImages: images,
       });
       if (!r.url) return { ok: false as const, error: r.error || "vapeur 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
+    }
+    if (requested.toLowerCase().startsWith("agentearth/")) {
+      const { callAgentEarthImage } = await import("./agentearthImage.functions");
+      const r = await callAgentEarthImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: "2K",
+        referenceImages: images,
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "AgentEarth 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
     }
     if (requested.toLowerCase().startsWith("tokenhub/")) {
@@ -2416,6 +2460,17 @@ export const generateStoryboardPitchDeck = createServerFn({ method: "POST" })
       if (!r.url) return { ok: false as const, error: r.error || "vapeur 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
     }
+    if (requested.toLowerCase().startsWith("agentearth/")) {
+      const { callAgentEarthImage } = await import("./agentearthImage.functions");
+      const r = await callAgentEarthImage({
+        prompt,
+        model: requested,
+        size: "3840x2160",
+        referenceImages: data.referenceImages || [],
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "AgentEarth 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
+    }
     if (requested.toLowerCase().startsWith("tokenhub/")) {
       const { callTokenhubImage } = await import("./tokenhubImage.functions");
       const r = await callTokenhubImage({
@@ -2663,6 +2718,7 @@ export const regenerateStoryboardPitchDeck = createServerFn({ method: "POST" })
       ["thhtcloud/", "./thhtcloudImage.functions", "callThhtcloudImage", "天鸿智算"],
       ["ailinzi/", "./ailinziImage.functions", "callAilinziImage", "ailinzi"],
       ["vapeur/", "./vapeurImage.functions", "callVapeurImage", "vapeur"],
+      ["agentearth/", "./agentearthImage.functions", "callAgentEarthImage", "AgentEarth"],
       ["tokenhub/", "./tokenhubImage.functions", "callTokenhubImage", "Tokenhub"],
       ["nagora/", "./nagoraImage.functions", "callNagoraImage", "Nagora"],
       ["meridian/", "./meridianImage.functions", "callMeridianImage", "Meridian"],
@@ -2716,11 +2772,15 @@ export const regenerateStoryboardPitchDeck = createServerFn({ method: "POST" })
                               ? await (
                                   await import("./ailinziImage.functions")
                                 ).callAilinziImage(providerInput)
-                              : modulePath === "./vapeurImage.functions"
-                                ? await (
-                                    await import("./vapeurImage.functions")
-                                  ).callVapeurImage(providerInput)
-                                : modulePath === "./tokenhubImage.functions"
+                                : modulePath === "./vapeurImage.functions"
+                                  ? await (
+                                      await import("./vapeurImage.functions")
+                                    ).callVapeurImage(providerInput)
+                                  : modulePath === "./agentearthImage.functions"
+                                    ? await (
+                                        await import("./agentearthImage.functions")
+                                      ).callAgentEarthImage(providerInput)
+                                  : modulePath === "./tokenhubImage.functions"
                                   ? await (
                                       await import("./tokenhubImage.functions")
                                     ).callTokenhubImage(providerInput)
@@ -3371,6 +3431,17 @@ export const regenerateSceneImage = createServerFn({ method: "POST" })
         referenceImages: [data.referenceImageUrl],
       });
       if (!r.url) return { ok: false as const, error: r.error || "vapeur 未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
+    }
+    if (requested.toLowerCase().startsWith("agentearth/")) {
+      const { callAgentEarthImage } = await import("./agentearthImage.functions");
+      const r = await callAgentEarthImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "AgentEarth 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
     }
     if (requested.toLowerCase().startsWith("tokenhub/")) {

@@ -316,6 +316,16 @@ const IMAGE_MODELS: ImageModel[] = [
     status: "available",
   },
   {
+    id: "agentearth/image2",
+    name: "AgentEarth Image2 (4K)",
+    nameEn: "AgentEarth Image2 (4K)",
+    vendor: "AgentEarth · OpenAI 兼容",
+    tagline: "GPT Image 2 · T2I/I2I",
+    taglineEn: "GPT Image 2 · T2I/I2I",
+    gradient: "from-sky-500 to-indigo-600",
+    status: "available",
+  },
+  {
     id: "aigcfamily/gpt-image-2",
     name: "aigcfamily-image2",
     nameEn: "aigcfamily-image2",

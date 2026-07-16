@@ -580,6 +580,8 @@ const VALID_T2I_MODELS = new Set<string>([
   "ailinzi/gpt-image-2",
   // TokenHub gateway
   "tokenhub/gpt-image-2",
+  // AgentEarth gateway
+  "agentearth/image2",
   // Nagora gateway (Azure渠道)
   "nagora/gpt-image-2",
   // Lovable gateway 模型
@@ -623,6 +625,7 @@ const VALID_I2I_MODELS = new Set<string>([
   "thhtcloud/gpt-image-2",
   "ailinzi/gpt-image-2",
   "tokenhub/gpt-image-2",
+  "agentearth/image2",
   "nagora/gpt-image-2",
   "lovable/google/gemini-3-flash-preview",
   "lovable/google/gemini-3.1-flash-preview",
@@ -649,6 +652,7 @@ const KNOWN_MODEL_PREFIXES = [
   "thhtcloud/",
   "ailinzi/",
   "tokenhub/",
+  "agentearth/",
   "nagora/",
   "lovable/",
   "openrouter/",
