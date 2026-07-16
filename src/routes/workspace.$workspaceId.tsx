@@ -1344,7 +1344,7 @@ function WorkspacePage() {
             const next = new Set(keys);
             next.delete(key);
             return next;
-          });
+          })
         }
       }
     },
@@ -1719,9 +1719,8 @@ function WorkspacePage() {
   // 角色图片生成状态拆分:
   //   activeImageKey: 当前**正在生成**的那一张图(imageKey = c.id 或 c.id::lk.id)。
   //                   用于卡片显示 spinner(只有这一张是"生成中"状态)。
-  //   busyChars:      任何"有未完成 work 的"角色 ID 集合。Set 用来支持
-  //                   "不同角色并行,同一角色串行":一旦某个角色开始处理,
-  //                   加入 Set;处理完所有 looks 后移出 Set。
+  //   busyChars:      任何"有未完成 work 的"角色 ID 集合。已提交的角色先加入
+  //                   Set；全局生成队列轮到它并完成后再移出。
   //   卡片判定:
   //     activeImageKey === imageKey        → spinner(此刻正在画这张)
   //     busyChars.has(c.id) && !active     -> "同角色排队中..."(同角色下一张在排队)
@@ -1729,8 +1728,47 @@ function WorkspacePage() {
   //     其他                                -> "点击生成形象"(按需生成,用户主动点击触发)
   const [activeImageKey, setActiveImageKey] = useState<string | null>(null);
   const [busyChars, setBusyChars] = useState<Set<string>>(new Set());
+  // 图片供应商实际按请求顺序处理角色图时，不能让后点的卡片抢走“生成中”标识。
+  // 这里把角色首图与变体图统一串行：已提交但未开始的卡片保留在 busyChars 中，
+  // 因而显示“同角色排队中…”，只有队首请求进入 process / I2I 调用后才设为 active。
+  const characterImageQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const queuedCharacterImageKeysRef = useRef(new Set<string>());
+  function enqueueCharacterImageGeneration(
+    imageKey: string,
+    characterId: string,
+    task: () => Promise<void>,
+  ): Promise<void> {
+    if (queuedCharacterImageKeysRef.current.has(imageKey)) return Promise.resolve();
+
+    queuedCharacterImageKeysRef.current.add(imageKey);
+    setBusyChars((current) => new Set([...current, characterId]));
+    const run = async () => {
+      try {
+        await task();
+      } finally {
+        queuedCharacterImageKeysRef.current.delete(imageKey);
+        // task 内部也会在正常完成时清理；这里是兜底，确保异常不会留下假排队状态。
+        setActiveImageKey((current) => (current === imageKey ? null : current));
+        setBusyChars((current) => {
+          if (!current.has(characterId)) return current;
+          const next = new Set(current);
+          next.delete(characterId);
+          return next;
+        });
+      }
+    };
+    const queued = characterImageQueueRef.current.then(run, run);
+    characterImageQueueRef.current = queued.catch(() => undefined);
+    return queued;
+  }
   const [busyPanel, setBusyPanel] = useState<string | null>(null);
   const [busyScene, setBusyScene] = useState<string | null>(null);
+  const [queuedSceneIds, setQueuedSceneIds] = useState<Set<string>>(() => new Set());
+  const sceneImageQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const queuedSceneIdsRef = useRef(new Set<string>());
+  const [queuedPropIds, setQueuedPropIds] = useState<Set<string>>(() => new Set());
+  const propImageQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const queuedPropIdsRef = useRef(new Set<string>());
   // 新的"分镜组"流程:正在生成 StoryboardGroup(整集切分)的标识
   const [busyStoryboardGen, setBusyStoryboardGen] = useState(false);
   // 2026/06:查看提示词模式 —— 开启后所有生成按钮触发后只展示 prompt 不实际生成。
@@ -2559,7 +2597,7 @@ function WorkspacePage() {
             }
             setImagesRestored(true);
             setWorkspaceMediaReady(true);
-          })
+          });
       })
       .catch((error) => {
         if (cancelled) return;
@@ -2777,7 +2815,33 @@ function WorkspacePage() {
   }
 
   async function genSceneImage(s: GenScene, editablePrompt = sceneEditablePrompt(s)) {
-    if (busyScene) return;
+    if (queuedSceneIdsRef.current.has(s.id)) return;
+    queuedSceneIdsRef.current.add(s.id);
+    setQueuedSceneIds((current) => new Set([...current, s.id]));
+    const run = async () => {
+      setQueuedSceneIds((current) => {
+        const next = new Set(current);
+        next.delete(s.id);
+        return next;
+      });
+      try {
+        await genSceneImageNow(s, editablePrompt);
+      } finally {
+        queuedSceneIdsRef.current.delete(s.id);
+        setQueuedSceneIds((current) => {
+          const next = new Set(current);
+          next.delete(s.id);
+          return next;
+        });
+        setBusyScene((current) => (current === s.id ? null : current));
+      }
+    };
+    const queued = sceneImageQueueRef.current.then(run, run);
+    sceneImageQueueRef.current = queued.catch(() => undefined);
+    await queued;
+  }
+
+  async function genSceneImageNow(s: GenScene, editablePrompt = sceneEditablePrompt(s)) {
     setBusyScene(s.id);
     try {
       // 2026/06 修:场景图之前完全没注入项目视觉风格,导致场景 A/B/C
@@ -2844,7 +2908,33 @@ function WorkspacePage() {
    * 生成道具图片(2026/06 新增)——与 genSceneImage 对称。
    */
   async function genPropImage(p: GenProp, editablePrompt = propEditablePrompt(p)) {
-    if (busyProp) return;
+    if (queuedPropIdsRef.current.has(p.id)) return;
+    queuedPropIdsRef.current.add(p.id);
+    setQueuedPropIds((current) => new Set([...current, p.id]));
+    const run = async () => {
+      setQueuedPropIds((current) => {
+        const next = new Set(current);
+        next.delete(p.id);
+        return next;
+      });
+      try {
+        await genPropImageNow(p, editablePrompt);
+      } finally {
+        queuedPropIdsRef.current.delete(p.id);
+        setQueuedPropIds((current) => {
+          const next = new Set(current);
+          next.delete(p.id);
+          return next;
+        });
+        setBusyProp((current) => (current === p.id ? null : current));
+      }
+    };
+    const queued = propImageQueueRef.current.then(run, run);
+    propImageQueueRef.current = queued.catch(() => undefined);
+    await queued;
+  }
+
+  async function genPropImageNow(p: GenProp, editablePrompt = propEditablePrompt(p)) {
     setBusyProp(p.id);
     try {
       const styleSpec = resolveProjectStyle(projectVisualStyle);
@@ -3620,9 +3710,7 @@ function WorkspacePage() {
   // Wrapper for "click on one card to regenerate": just trigger the whole
   // character through processCharacter (which is idempotent — it skips done looks).
   async function genCharImage(c: GenCharacter) {
-    if (busyChars.has(c.id)) return;
-    setBusyChars((s) => new Set([...s, c.id]));
-    await processCharacter(c);
+    await enqueueCharacterImageGeneration(c.id, c.id, () => processCharacter(c));
   }
 
   /**
@@ -3665,18 +3753,34 @@ function WorkspacePage() {
    * 不改 useEffect / processCharacter 行为,纯按用户点击触发的入口。
    */
   async function generateOneCharacterLook(c: GenCharacter, lookId: string) {
+    const look = c.looks?.find((item) => item.id === lookId);
+    if (!look) {
+      toast.error("找不到该 look");
+      return;
+    }
+    const imageKey = `${c.id}::${lookId}`;
+    if (charImages[imageKey]?.length) {
+      toast.success(`${c.name} · ${look.label} 已生成`);
+      return;
+    }
+    await enqueueCharacterImageGeneration(imageKey, c.id, () =>
+      generateOneCharacterLookNow(c, lookId),
+    );
+  }
+
+  async function generateOneCharacterLookNow(c: GenCharacter, lookId: string) {
     const lk = c.looks?.find((x) => x.id === lookId);
     if (!lk) {
       toast.error("找不到该 look");
       return;
     }
-    const referenceUrl = charImages[c.id]?.at(-1);
+    const referenceUrl = charImagesRef.current[c.id]?.at(-1);
     if (!referenceUrl) {
       toast.error("默认 look 还没生成,无法生成变体 look");
       return;
     }
     const imageKey = `${c.id}::${lk.id}`;
-    if (charImages[imageKey]?.length) {
+    if (charImagesRef.current[imageKey]?.length) {
       toast.success(`${c.name} · ${lk.label} 已生成`);
       return; // 已生成过
     }
@@ -10140,6 +10244,11 @@ function WorkspacePage() {
                                         <Loader2 size={20} className="animate-spin text-accent" />
                                         <span className="text-[10px]">生成中…</span>
                                       </div>
+                                    ) : queuedSceneIds.has(s.id) && !hasImg ? (
+                                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-text-muted">
+                                        <Clock size={18} className="opacity-60" />
+                                        <span className="text-[10px]">排队中…</span>
+                                      </div>
                                     ) : hasImg ? (
                                       <>
                                         <WorkspaceMediaImage
@@ -10421,6 +10530,11 @@ function WorkspacePage() {
                                       <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-text-muted">
                                         <Loader2 size={20} className="animate-spin text-accent" />
                                         <span className="text-[10px]">生成中…</span>
+                                      </div>
+                                    ) : queuedPropIds.has(p.id) && !hasImg ? (
+                                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-text-muted">
+                                        <Clock size={18} className="opacity-60" />
+                                        <span className="text-[10px]">排队中…</span>
                                       </div>
                                     ) : hasImg ? (
                                       <>
