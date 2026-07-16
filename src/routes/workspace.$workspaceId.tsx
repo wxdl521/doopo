@@ -56,6 +56,7 @@ import {
 } from "../lib/storyboard.functions";
 import { generateVideo } from "../lib/videoGenerate.functions";
 import { uploadTopenrouterAsset } from "../lib/videoGenerate.functions";
+import { getKuaiziAsset, uploadKuaiziAsset } from "../lib/kuaiziAssets.functions";
 import { refineStoryboardVideoPrompt } from "../lib/videoPromptRefine.functions";
 import { translateEditablePrompt } from "../lib/promptTranslation.functions";
 import { runStoryboardVideoAgent } from "../lib/storyboardVideoAgent.functions";
@@ -187,6 +188,8 @@ type ImageAssetRecord = {
   error?: string;
   /** 对应视频渠道返回的稳定素材引用；仅在已入库时写入。 */
   assetUrl?: string;
+  /** 筷子素材 ID；用于异步查询 sync_status。 */
+  assetId?: string;
 };
 
 function imageAssetKey(model: string | undefined, url: string): string | null {
@@ -204,6 +207,13 @@ function imageAssetUrlFromKey(key: string): string | null {
   return model && isHttpImageUrl(url) ? url : null;
 }
 
+function imageAssetModelFromKey(key: string): string | null {
+  const separatorIndex = key.indexOf(IMAGE_ASSET_KEY_SEPARATOR);
+  if (separatorIndex <= 0) return null;
+  const model = key.slice(0, separatorIndex).trim();
+  return imageAssetUrlFromKey(key) ? model : null;
+}
+
 function savedImageAssetKey(key: string): string | null {
   // 旧版本只保存 URL + 状态，未保存 asset_id；无法保证该状态能被当前视频任务复用，
   // 因此恢复为“未入库”，避免把过期或未知归属的素材错误标为可用。
@@ -218,7 +228,7 @@ function getVideoAssetLibrarySupport(model: string | undefined): {
   if (!model?.trim()) {
     return { supported: false, message: "请先在项目设置中选择视频模型。" };
   }
-  if (model.startsWith("topenrouter-doubao-seedance-")) {
+  if (model.startsWith("topenrouter-doubao-seedance-") || model.startsWith("kuaizi-lizhen-")) {
     return { supported: true, message: "" };
   }
   return {
@@ -233,17 +243,34 @@ function readSavedImageReviews(value: unknown): Record<string, ImageAssetRecord>
     Object.entries(value as Record<string, unknown>).flatMap(([storedKey, item]) => {
       const key = savedImageAssetKey(storedKey);
       if (!key || !item || typeof item !== "object") return [];
-      const review = item as { status?: unknown; error?: unknown; assetUrl?: unknown };
+      const review = item as {
+        status?: unknown;
+        error?: unknown;
+        assetUrl?: unknown;
+        assetId?: unknown;
+      };
+      const model = imageAssetModelFromKey(key);
       const assetUrl =
         typeof review.assetUrl === "string" && /^asset:\/\/[a-zA-Z0-9_-]+$/.test(review.assetUrl)
           ? review.assetUrl
           : undefined;
-      // `pending` 请求在刷新后无法可靠续接，恢复为“未入库”，让用户可重新提交。
-      if (review.status !== "approved" && review.status !== "rejected" && review.status !== "error") {
+      const assetId =
+        model?.startsWith("kuaizi-lizhen-") &&
+        typeof review.assetId === "string" &&
+        /^[1-9]\d{0,19}$/.test(review.assetId)
+          ? review.assetId
+          : undefined;
+      // 筷子的同步是异步的，保留它的 pending + assetId，刷新后仍可继续查询。
+      if (
+        review.status !== "approved" &&
+        review.status !== "rejected" &&
+        review.status !== "error" &&
+        !(review.status === "pending" && assetId)
+      ) {
         return [];
       }
-      // “已入库”必须能提供同渠道 asset:// 给视频任务；旧状态或残缺数据一律恢复未入库。
-      if (review.status === "approved" && !assetUrl) return [];
+      // TopenRouter 的“已入库”必须携带 asset://；筷子以公网 URL 作为视频输入。
+      if (review.status === "approved" && !assetUrl && !assetId) return [];
       return [
         [
           key,
@@ -251,6 +278,7 @@ function readSavedImageReviews(value: unknown): Record<string, ImageAssetRecord>
             status: review.status,
             ...(typeof review.error === "string" ? { error: review.error } : {}),
             ...(assetUrl ? { assetUrl } : {}),
+            ...(assetId ? { assetId } : {}),
           },
         ],
       ];
@@ -1215,6 +1243,8 @@ function WorkspacePage() {
   const callPersistMedia = useServerFn(persistWorkspaceMedia);
   const callPersistAsset = useServerFn(persistAssetImage);
   const callTopenrouterImageReview = useServerFn(uploadTopenrouterAsset);
+  const callKuaiziImageReview = useServerFn(uploadKuaiziAsset);
+  const callGetKuaiziAsset = useServerFn(getKuaiziAsset);
   const callSaveOneStoryboard = useServerFn(saveOneStoryboard);
   const callSaveOneVideo = useServerFn(saveOneVideo);
   const [project, setProject] = useState<ProjectConfigRow | null>(null);
@@ -1233,6 +1263,52 @@ function WorkspacePage() {
       if (!user || !key || imageReviewStartedRef.current.has(key)) return;
       imageReviewStartedRef.current.add(key);
       setImageReviews((current) => ({ ...current, [key]: { status: "pending" } }));
+      if (videoModel.startsWith("kuaizi-lizhen-")) {
+        void callKuaiziImageReview({
+          data: {
+            url,
+            kind: name.startsWith("scene-")
+              ? "scene"
+              : name.startsWith("prop-")
+                ? "prop"
+                : "character",
+            name: `doopoo-${name}-${Date.now()}`.slice(0, 200),
+          },
+        })
+          .then((result) => {
+            const error = result.ok
+              ? result.syncError || undefined
+              : result.error || "素材入库失败";
+            const status: ImageReviewStatus = !result.ok
+              ? "error"
+              : result.syncStatus === 2
+                ? "approved"
+                : result.syncStatus === 3
+                  ? "rejected"
+                  : "pending";
+            if (status === "error" || status === "rejected")
+              imageReviewStartedRef.current.delete(key);
+            setImageReviews((current) => ({
+              ...current,
+              [key]: {
+                status,
+                ...(error ? { error } : {}),
+                ...(result.ok ? { assetId: result.assetId } : {}),
+              },
+            }));
+          })
+          .catch((error) => {
+            imageReviewStartedRef.current.delete(key);
+            setImageReviews((current) => ({
+              ...current,
+              [key]: {
+                status: "error",
+                error: error instanceof Error ? error.message : "素材入库请求失败",
+              },
+            }));
+          });
+        return;
+      }
       void callTopenrouterImageReview({
         data: {
           url,
@@ -1269,8 +1345,66 @@ function WorkspacePage() {
           }));
         });
     },
-    [callTopenrouterImageReview, project?.videoModel, user],
+    [callKuaiziImageReview, callTopenrouterImageReview, project?.videoModel, user],
   );
+  const refreshKuaiziImageReview = useCallback(
+    (key: string, assetId: string) => {
+      void callGetKuaiziAsset({ data: { assetId } })
+        .then((result) => {
+          if (!result.ok) {
+            imageReviewStartedRef.current.delete(key);
+            setImageReviews((current) => ({
+              ...current,
+              [key]: {
+                ...current[key],
+                status: "error",
+                error: result.error || "素材状态查询失败",
+              },
+            }));
+            return;
+          }
+          const status: ImageReviewStatus =
+            result.syncStatus === 2 ? "approved" : result.syncStatus === 3 ? "rejected" : "pending";
+          if (status === "rejected") imageReviewStartedRef.current.delete(key);
+          setImageReviews((current) => ({
+            ...current,
+            [key]: {
+              ...current[key],
+              status,
+              assetId,
+              ...(result.syncError ? { error: result.syncError } : { error: undefined }),
+            },
+          }));
+        })
+        .catch((error) => {
+          imageReviewStartedRef.current.delete(key);
+          setImageReviews((current) => ({
+            ...current,
+            [key]: {
+              ...current[key],
+              status: "error",
+              error: error instanceof Error ? error.message : "素材状态查询失败",
+            },
+          }));
+        });
+    },
+    [callGetKuaiziAsset],
+  );
+  useEffect(() => {
+    const pending = Object.entries(imageReviews).filter(
+      ([key, review]) =>
+        imageAssetModelFromKey(key)?.startsWith("kuaizi-lizhen-") &&
+        review.status === "pending" &&
+        typeof review.assetId === "string",
+    );
+    if (!pending.length) return;
+    const timer = window.setTimeout(() => {
+      for (const [key, review] of pending) {
+        if (typeof review.assetId === "string") refreshKuaiziImageReview(key, review.assetId);
+      }
+    }, 5_000);
+    return () => window.clearTimeout(timer);
+  }, [imageReviews, refreshKuaiziImageReview]);
   const aliasImageReview = useCallback(
     (sourceUrl: string, displayUrl: string) => {
       if (sourceUrl === displayUrl) return;
@@ -8300,8 +8434,11 @@ function WorkspacePage() {
       };
       // 素材入库状态按视频模型 + HTTP(S) URL 保存，严禁把 base64 / data: 图片写进 workspace_data。
       const persistedImageReviews = Object.fromEntries(
-        Object.entries(imageReviews).filter(([key, review]) =>
-          !!imageAssetUrlFromKey(key) && review.status !== "pending",
+        Object.entries(imageReviews).filter(
+          ([key, review]) =>
+            !!imageAssetUrlFromKey(key) &&
+            (review.status !== "pending" ||
+              (imageAssetModelFromKey(key)?.startsWith("kuaizi-lizhen-") && !!review.assetId)),
         ),
       );
       const persistedImageReviewAliases = Object.fromEntries(
