@@ -75,6 +75,7 @@ import {
   resolveT2IModel,
   resolveI2IModel,
   buildStyleLock,
+  buildEditableStyleFingerprint,
 } from "../lib/visualStyles";
 import { hashString } from "../lib/utils";
 import {
@@ -5828,19 +5829,24 @@ function WorkspacePage() {
     const videoStyleSpec = resolveProjectStyle(projectVisualStyle);
     const dialogueInstruction =
       project?.audio === "on" ? buildDialogueDeliveryInstruction(group) : null;
-    // 2026/07:parts 标记 tech 的项是给 AI 的技术指令(风格锁),预览时隐藏
-    // (previewPrompt 只含核心可更改部分),实际生成用完整 prompt。
+    // 2026/07:右侧只展示可编辑的镜头分解和中文风格名；通用生成说明、完整风格锁
+    // 与约束只供模型执行。确认生成时，编辑后的这段文本会直接拼入真实请求。
     const parts: { text: string; tech?: boolean }[] = [
-      { text: `Shot breakdown: ${effectiveShotBreakdown(group)}` },
+      {
+        text: `${effectiveShotBreakdown(group)}\n\n${buildEditableStyleFingerprint(videoStyleSpec)}`,
+      },
       {
         text: `Render as a single continuous video clip that flows through all ${shotImagesList.length} shots in order.`,
+        tech: true,
       },
       {
         text: `Camera transitions, lighting continuity, and character appearance MUST stay consistent across all shots.`,
+        tech: true,
       },
-      { text: `Cinematic motion, smooth camera movement, 24fps.` },
+      { text: `Cinematic motion, smooth camera movement, 24fps.`, tech: true },
       {
         text: `Follow each shot's 运镜 (camera movement) and 走位 (character blocking) exactly as described in the Shot breakdown above: the camera moves as specified (push/pull/pan/track/orbit/fixed), characters move along their described paths, and fixed-camera shots keep the camera still. Do not invent extra camera movement or character motion not in the breakdown.`,
+        tech: true,
       },
       {
         text: `IMAGE-TO-VIDEO STABILITY RULES: Treat each storyboard thumbnail as the visual truth. Preserve faces, hairstyles, body proportions, costumes, props, scene layout, composition, color palette, and visual style throughout. Only animate the action explicitly required by each shot; all uninvolved body parts and objects stay stable. Use subtle secondary motion only when it fits the scene (natural blinking/breathing, slight hair or fabric movement, gentle foliage/water/dust/light movement).`,
@@ -5854,13 +5860,14 @@ function WorkspacePage() {
         text: `NEGATIVE CONSTRAINTS: no face drift, identity change, costume change, prop substitution, object relocation, extra people, extra limbs/fingers, anatomy distortion, warped architecture, scene replacement, style shift, flicker, tearing, frame jitter, morphing, or large unmotivated movement.`,
         tech: true,
       },
-      ...(dialogueInstruction ? [{ text: dialogueInstruction }] : []),
+      ...(dialogueInstruction ? [{ text: dialogueInstruction, tech: true }] : []),
       { text: buildStyleLock(videoStyleSpec, "scene"), tech: true },
       {
         text:
           referenceUrls.length > 0
             ? `[IMPORTANT] The reference images provided are storyboard thumbnails (sketch/line-art), but your output MUST be rendered in the project's visual style described above — NOT in sketch/line-art style. Full color, full rendering, matching the style fingerprint exactly.`
             : `[IMPORTANT] The ${firstFrame && lastFrame ? "first and last frame" : "first frame"} image provided is a storyboard thumbnail (sketch/line-art), but your output MUST be rendered in the project's visual style described above — NOT in sketch/line-art style. Full color, full rendering, matching the style fingerprint exactly.`,
+        tech: true,
       },
     ];
     const prompt = parts
@@ -6013,20 +6020,22 @@ function WorkspacePage() {
     const videoStyleSpec2 = resolveProjectStyle(projectVisualStyle);
     const dialogueInstruction =
       project?.audio === "on" ? buildDialogueDeliveryInstruction(group) : null;
-    // 2026/07:parts 标记 tech 的项是给 AI 的技术指令(模式标记/风格锁/约束),
-    // 预览时隐藏(previewPrompt 只含核心可更改部分),实际生成用完整 prompt。
+    // 2026/07:右侧只展示可编辑的镜头分解和中文风格名；通用故事板生成说明、完整
+    // 风格锁与约束只供模型执行。确认生成时，编辑后的这段文本会直接拼入真实请求。
     const parts: { text: string; tech?: boolean }[] = [
       { text: `[STORYBOARD-DRIVEN VIDEO GENERATION]`, tech: true },
       {
         text: `The attached reference images include: (1) a complete director's storyboard / pitch deck for this scene containing shared creative direction, character & style reference, environment + top-down camera diagram, multiple numbered storyboard frames showing the shot sequence, lighting/mood notes; (2) individual shot thumbnails if available; (3) character / scene / prop reference images for identity and style consistency.`,
+        tech: true,
       },
       {
         text: `Your task: produce a single continuous video clip that **brings the storyboard to life** — following the shot sequence, camera positions, lighting transitions, and overall mood as laid out in the storyboard. Use the storyboard's frame breakdown as the structural guide for what happens when. Use the additional reference images to maintain character identity, environment consistency, and prop accuracy.`,
+        tech: true,
       },
       {
-        text: `[SHOT BREAKDOWN – for additional sequence hints]\n${effectiveShotBreakdown(group)}`,
+        text: `${effectiveShotBreakdown(group)}\n\n${buildEditableStyleFingerprint(videoStyleSpec2)}`,
       },
-      ...(dialogueInstruction ? [{ text: dialogueInstruction }] : []),
+      ...(dialogueInstruction ? [{ text: dialogueInstruction, tech: true }] : []),
       { text: buildStyleLock(videoStyleSpec2, "scene"), tech: true },
       { text: `[CONSTRAINTS]`, tech: true },
       {
@@ -6273,7 +6282,7 @@ function WorkspacePage() {
     const payload = buildVideoGenPayloadForShots(groupId);
     if (!payload) return;
 
-    // 1) 查看提示词模式 → 弹 modal(保留原行为)
+    // 1) 查看提示词模式 → 弹完整原始 prompt；右侧确认卡才使用精简可编辑版。
     if (viewPromptsModeRef.current) {
       setPromptPreview({
         title: `第 ${group.index} 组 · 按分镜图生成视频`,
@@ -6416,7 +6425,7 @@ function WorkspacePage() {
     const payload = buildVideoGenPayloadForStoryboard(groupId);
     if (!payload) return;
 
-    // 1) 查看提示词模式 → 弹 modal(保留原行为)
+    // 1) 查看提示词模式 → 弹完整原始 prompt；右侧确认卡才使用精简可编辑版。
     if (viewPromptsModeRef.current) {
       setPromptPreview({
         title: `第 ${group.index} 组 · 按故事板生成视频`,
