@@ -150,10 +150,9 @@ export const IMAGE_MODELS: ImageModelOption[] = [
   { key: "", label: "—— [汇流 Confluo · OpenAI 兼容] ——", sub: undefined, legacy: true },
   { key: "confluo/gpt-image-2", label: "GPT Image 2", sub: "[汇流·OpenAI] Image2 · T2I/I2I" },
 
-  // ---- [灵梦 Lingmeng · OpenAI 兼容] 1189.xin → /v1/images/generations ----
-  // 文档仅提供文生图接口，参考图编辑不路由到该供应商。
+  // ---- [灵梦 Lingmeng · OpenAI 兼容] 1189.xin → /v1/images/generations|edits ----
   { key: "", label: "—— [灵梦 Lingmeng · OpenAI 兼容] ——", sub: undefined, legacy: true },
-  { key: "lingmeng/gpt-image-2", label: "GPT Image 2", sub: "[灵梦·OpenAI] Image2 · 仅 T2I" },
+  { key: "lingmeng/gpt-image-2", label: "GPT Image 2", sub: "[灵梦·OpenAI] Image2 · T2I/I2I" },
 
   // ---- [vapeur.ai · OpenAI 兼容] → /v1/images/generations ----
   { key: "", label: "—— [vapeur.ai · OpenAI 兼容] ——", sub: undefined, legacy: true },

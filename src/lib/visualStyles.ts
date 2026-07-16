@@ -562,7 +562,7 @@ const VALID_T2I_MODELS = new Set<string>([
   "revora/gpt-image-2-low",
   // 汇流 Confluo gateway
   "confluo/gpt-image-2",
-  // 灵梦 Lingmeng gateway（仅文生图）
+  // 灵梦 Lingmeng gateway
   "lingmeng/gpt-image-2",
   // AIGCFamily gateway 前缀
   "aigcfamily/gpt-image-2",
@@ -617,6 +617,7 @@ const VALID_I2I_MODELS = new Set<string>([
   "revora/gpt-image-2-medium",
   "revora/gpt-image-2-low",
   "confluo/gpt-image-2",
+  "lingmeng/gpt-image-2",
   // AIGC Family 网关仅支持 T2I(无 /v1/images/edits),不列入 I2I
   "azure/gpt-image-2",
   "azure2/gpt-image-2",

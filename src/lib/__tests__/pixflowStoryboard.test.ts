@@ -104,6 +104,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
 });
 
 describe("callPixflowImage — Gemini Native 路由", () => {
@@ -242,7 +243,7 @@ describe("UI 模型清单 —— 不允许裸 openai/gpt-image-2", () => {
   });
 });
 
-describe("callLingmengImage — 文生图路由", () => {
+describe("callLingmengImage — 图像路由", () => {
   it("命中灵梦 generations、携带 Bearer 鉴权并解析 b64_json", async () => {
     const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
       new Response(JSON.stringify({ data: [{ b64_json: FAKE_PNG_B64 }] }), {
@@ -272,16 +273,65 @@ describe("callLingmengImage — 文生图路由", () => {
     });
   });
 
-  it("携带参考图时明确拒绝，不发起会丢失参考图的文生图请求", async () => {
-    const fetchSpy = vi.spyOn(globalThis, "fetch");
+  it("携带参考图时命中 edits，并以 multipart 的 image 字段上传", async () => {
+    class TestFormData {
+      private readonly fields = new Map<string, unknown[]>();
+
+      append(name: string, value: unknown) {
+        this.fields.set(name, [...(this.fields.get(name) || []), value]);
+      }
+
+      getAll(name: string) {
+        return this.fields.get(name) || [];
+      }
+    }
+    // jsdom 的 FormData 与 Node 的 Blob 不共享构造器；这里仅替换测试收集器，
+    // 断言服务端传给 fetch 的 multipart 字段。
+    vi.stubGlobal("FormData", TestFormData);
+    const fetchSpy = vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = typeof input === "string" ? input : input.toString();
+      if (url === "https://cdn.example.com/ref.png") {
+        return new Response(Buffer.from(FAKE_PNG_B64, "base64"), {
+          status: 200,
+          headers: { "Content-Type": "image/png" },
+        });
+      }
+      return new Response(JSON.stringify({ data: [{ url: "https://1189.xin/output.png" }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
     const result = await callLingmengImage({
       prompt: "keep the subject",
       model: "lingmeng/gpt-image-2",
       referenceImages: ["https://cdn.example.com/ref.png"],
     });
 
-    expect(result.error).toContain("不支持参考图编辑");
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(result.error).toBeNull();
+    expect(result.url).toBe("https://1189.xin/output.png");
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const [url, init] = fetchSpy.mock.calls[1] as [string, RequestInit];
+    expect(url).toBe("https://1189.xin/v1/images/edits");
+    expect((init.headers as Record<string, string>).Authorization).toBe("Bearer test-lingmeng-key");
+    expect(init.body).toBeInstanceOf(TestFormData);
+    expect((init.body as TestFormData).getAll("image")).toHaveLength(1);
+  });
+
+  it("工作区图生图路由在 Seedream 兜底前处理灵梦模型", () => {
+    const seedreamSrc = readFileSync(resolve(__dirname, "../seedream.functions.ts"), "utf-8");
+    for (const handler of [
+      "regenerateCharacterLook",
+      "generateStoryboardShotImage",
+      "regenerateStoryboardShot",
+      "generateStoryboardPitchDeck",
+      "regenerateStoryboardPitchDeck",
+    ]) {
+      const start = seedreamSrc.indexOf(`export const ${handler}`);
+      const next = seedreamSrc.indexOf("export const ", start + 1);
+      const block = next > 0 ? seedreamSrc.slice(start, next) : seedreamSrc.slice(start);
+      expect(block).toContain('startsWith("lingmeng/")');
+      expect(block.indexOf('startsWith("lingmeng/")')).toBeLessThan(block.indexOf("getArkConfig()"));
+    }
   });
 });
 

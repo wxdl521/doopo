@@ -475,7 +475,7 @@ export const generateImage = createServerFn({ method: "POST" })
       });
       return __afterCall("confluo", { url: r.url, error: r.error, model: r.model });
     }
-    // 委托给灵梦 Lingmeng(OpenAI Images 兼容，仅 /v1/images/generations)
+    // 委托给灵梦 Lingmeng(OpenAI Images 兼容，支持 generations/edits)
     if (requested.toLowerCase().startsWith("lingmeng/")) {
       const { callLingmengImage } = await import("./lingmengImage.functions");
       const r = await callLingmengImage({
@@ -1170,6 +1170,18 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
       if (!r.url) return { ok: false as const, error: r.error || "汇流未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
     }
+    if (requested.toLowerCase().startsWith("lingmeng/")) {
+      const { callLingmengImage } = await import("./lingmengImage.functions");
+      const r = await callLingmengImage({
+        prompt,
+        model: requested,
+        size: generationSize,
+        quality: generationQuality,
+        referenceImages: allImages,
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "灵梦未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
+    }
 
     const { apiKey, baseUrl, model: defaultModel } = getArkConfig();
     if (!apiKey) return { ok: false as const, error: "ARK_API_KEY not configured" };
@@ -1585,6 +1597,17 @@ export const generateStoryboardShotImage = createServerFn({ method: "POST" })
       if (!r.url) return { ok: false as const, error: r.error || "汇流未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
     }
+    if (requested.toLowerCase().startsWith("lingmeng/")) {
+      const { callLingmengImage } = await import("./lingmengImage.functions");
+      const r = await callLingmengImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: "2K",
+        referenceImages: images,
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "灵梦未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
+    }
     // generateStoryboardShotImage: 委托给 legacy(Qwen / Wan / OpenRouter 等)
     if (
       requested &&
@@ -1944,6 +1967,17 @@ export const regenerateStoryboardShot = createServerFn({ method: "POST" })
         referenceImages: images,
       });
       if (!r.url) return { ok: false as const, error: r.error || "汇流未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
+    }
+    if (requested.toLowerCase().startsWith("lingmeng/")) {
+      const { callLingmengImage } = await import("./lingmengImage.functions");
+      const r = await callLingmengImage({
+        prompt: appendNegative(instruction, negative),
+        model: requested,
+        size: "2K",
+        referenceImages: images,
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "灵梦未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
     }
     if (requested && !isSeedreamModel(requested)) {
@@ -2525,6 +2559,17 @@ export const generateStoryboardPitchDeck = createServerFn({ method: "POST" })
       if (!r.url) return { ok: false as const, error: r.error || "汇流未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
     }
+    if (requested.toLowerCase().startsWith("lingmeng/")) {
+      const { callLingmengImage } = await import("./lingmengImage.functions");
+      const r = await callLingmengImage({
+        prompt,
+        model: requested,
+        size: "3840x2160",
+        referenceImages: data.referenceImages || [],
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "灵梦未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
+    }
 
     const { apiKey, baseUrl, model: defaultModel } = getArkConfig();
     if (!apiKey) return { ok: false as const, error: "ARK_API_KEY not configured" };
@@ -2713,6 +2758,18 @@ export const regenerateStoryboardPitchDeck = createServerFn({ method: "POST" })
           refImages: images.join(" / "),
         },
       } as any;
+    }
+    if (requested.toLowerCase().startsWith("lingmeng/")) {
+      const { callLingmengImage } = await import("./lingmengImage.functions");
+      const result = await callLingmengImage({
+        prompt,
+        model: requested,
+        size: "3840x2160",
+        quality: "high",
+        referenceImages: images,
+      });
+      if (!result.url) return { ok: false as const, error: result.error || "灵梦未返回图片" };
+      return { ok: true as const, url: result.url, model: result.model };
     }
     // 与首次故事板生成使用同一套供应商路由；所有支持参考图的模型均传入图1+补充素材。
     const providerRoutes = [
@@ -3496,6 +3553,17 @@ export const regenerateSceneImage = createServerFn({ method: "POST" })
         referenceImages: [data.referenceImageUrl],
       });
       if (!r.url) return { ok: false as const, error: r.error || "汇流未返回图片" };
+      return { ok: true as const, url: r.url, model: r.model };
+    }
+    if (requested.toLowerCase().startsWith("lingmeng/")) {
+      const { callLingmengImage } = await import("./lingmengImage.functions");
+      const r = await callLingmengImage({
+        prompt,
+        model: requested,
+        size: normalizeSeedreamSize(size),
+        referenceImages: [data.referenceImageUrl],
+      });
+      if (!r.url) return { ok: false as const, error: r.error || "灵梦未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
     }
 

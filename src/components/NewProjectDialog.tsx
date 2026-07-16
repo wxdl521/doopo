@@ -182,6 +182,14 @@ const imageModelOptions = [
     sub: "",
   },
 
+  // ---- 灵梦 Lingmeng(OpenAI 兼容)----
+  { id: "__sep_lingmeng__", label: "—— 灵梦 Lingmeng(OpenAI 兼容)——", sub: "" },
+  {
+    id: "lingmeng/gpt-image-2",
+    label: "GPT Image 2 (灵梦)",
+    sub: "T2I/I2I",
+  },
+
   // ---- vapeur.ai(OpenAI 兼容)----
   { id: "__sep_vapeur__", label: "—— vapeur.ai ——", sub: "" },
   {
@@ -207,6 +215,7 @@ const VISIBLE_IMAGE_PREFIXES = [
   "agentearth/",
   "aigcfamily/",
   "confluo/", // AIGC Family + 汇流
+  "lingmeng/", // 灵梦 · GPT Image 2
   "shuci/", // 数安词源 · GPT Image 2
 ];
 const isVisibleImage = (id: string) =>

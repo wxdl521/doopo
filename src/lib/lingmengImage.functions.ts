@@ -1,12 +1,14 @@
 // ====================================================================
-//  灵梦 Lingmeng —— gpt-image-2 文生图
+//  灵梦 Lingmeng —— gpt-image-2 图像生成
 //
 //  Base URL: https://1189.xin (env: LINGMENG_BASE_URL 可覆盖)
 //  Auth:     Authorization: Bearer ${LINGMENG_API_KEY}
-//  Endpoint: POST /v1/images/generations
+//  Endpoints:
+//    - POST /v1/images/generations  文生图(JSON)
+//    - POST /v1/images/edits        图生图(multipart/form-data)
 //
-//  灵梦当前提供的文档只覆盖 images/generations；没有接入 edits，
-//  因此传入参考图时必须明确失败，不能忽略参考图后改成文生图。
+//  参考图使用 multipart 的重复 `image` 字段上传，和灵梦文档中的
+//  image 数组参数对应；绝不在有参考图时退化为文生图。
 // ====================================================================
 
 import "./loadEnv";
@@ -63,21 +65,13 @@ function normalizeLingmengSize(size: string | undefined): string {
   return "1024x1024";
 }
 
-/** 灵梦 gpt-image-2 文生图。 */
+/** 灵梦 gpt-image-2 文生图/图生图。 */
 export async function callLingmengImage(input: LingmengImageInput): Promise<LingmengImageResult> {
   const { apiKey, baseUrl } = getLingmengConfig();
   const model = stripLingmengPrefix(input.model);
   const size = normalizeLingmengSize(input.size);
   const t0 = Date.now();
 
-  if (input.referenceImages?.length) {
-    return {
-      url: "",
-      urls: [],
-      error: "灵梦当前只接入文生图 /v1/images/generations，不支持参考图编辑",
-      model,
-    };
-  }
   if (!apiKey) {
     console.warn(`[lingmeng×] model=${model} missing LINGMENG_API_KEY`);
     return { url: "", urls: [], error: "LINGMENG_API_KEY not configured", model };
@@ -86,24 +80,60 @@ export async function callLingmengImage(input: LingmengImageInput): Promise<Ling
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), IMAGE_REQUEST_TIMEOUT_MS);
   try {
-    const body = {
-      model,
-      prompt: input.prompt,
-      n: input.n ?? 1,
-      size,
-      quality: input.quality ?? "auto",
-    };
-    console.log(`[lingmeng→] model=${model} size=${size} quality=${body.quality}`);
-    const res = await fetch(`${baseUrl}/v1/images/generations`, {
-      method: "POST",
-      headers: {
-        Accept: "application/json",
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
+    const hasRefs = !!input.referenceImages?.length;
+    const endpoint = hasRefs ? "/v1/images/edits" : "/v1/images/generations";
+    const quality = input.quality ?? "auto";
+    let requestInit: RequestInit;
+
+    if (hasRefs) {
+      const form = new FormData();
+      form.append("model", model);
+      form.append("prompt", input.prompt);
+      form.append("n", String(input.n ?? 1));
+      form.append("size", size);
+      form.append("quality", quality);
+
+      for (let index = 0; index < input.referenceImages!.length; index++) {
+        const referenceImage = input.referenceImages![index];
+        let blob: Blob;
+        let mime = "image/png";
+        if (referenceImage.startsWith("data:")) {
+          const match = referenceImage.match(/^data:([^;]+);base64,(.+)$/);
+          if (!match) throw new Error(`invalid data URL for reference image ${index + 1}`);
+          mime = match[1] || mime;
+          blob = new Blob([Buffer.from(match[2], "base64")], { type: mime });
+        } else {
+          const response = await fetch(referenceImage);
+          if (!response.ok) throw new Error(`fetch reference image ${index + 1} failed: ${response.status}`);
+          mime = response.headers.get("content-type")?.split(";")[0] || mime;
+          blob = await response.blob();
+        }
+        const extension = mime.includes("jpeg") ? "jpg" : mime.includes("webp") ? "webp" : "png";
+        form.append("image", blob, `reference_${index + 1}.${extension}`);
+      }
+      requestInit = {
+        method: "POST",
+        headers: { Accept: "application/json", Authorization: `Bearer ${apiKey}` },
+        body: form,
+        signal: controller.signal,
+      };
+    } else {
+      requestInit = {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({ model, prompt: input.prompt, n: input.n ?? 1, size, quality }),
+        signal: controller.signal,
+      };
+    }
+
+    console.log(
+      `[lingmeng→] model=${model} endpoint=${endpoint} refs=${input.referenceImages?.length ?? 0} size=${size} quality=${quality}`,
+    );
+    const res = await fetch(`${baseUrl}${endpoint}`, requestInit);
     clearTimeout(timeout);
 
     const rawText = await res.text().catch(() => "");
@@ -155,7 +185,7 @@ export async function callLingmengImage(input: LingmengImageInput): Promise<Ling
         ? error.name === "AbortError"
           ? "timed out"
           : error.message
-        : "fetch failed";
+        : String(error || "fetch failed");
     return { url: "", urls: [], error: `[灵梦 ${model}] network: ${message}`, model };
   }
 }
