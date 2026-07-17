@@ -14,6 +14,21 @@ export type Database = {
   }
   public: {
     Tables: {
+      admin_users: {
+        Row: {
+          created_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       characters: {
         Row: {
           age: number | null
@@ -756,6 +771,35 @@ export type Database = {
               error: true
             } & "Could not choose the best candidate function between: public.add_user_credits(p_amount => int4), public.add_user_credits(p_amount => numeric). Try renaming the parameters or the function itself in the database so function overloading can be resolved"
           }
+      admin_grant_credits: {
+        Args: {
+          p_amount: number
+          p_description?: string
+          p_target_id: string
+          p_target_type: string
+        }
+        Returns: {
+          balance_after: number
+        }[]
+      }
+      admin_list_credit_recipients: {
+        Args: {
+          p_kind: string
+          p_page?: number
+          p_page_size?: number
+          p_query?: string
+        }
+        Returns: {
+          balance: number
+          created_at: string
+          email: string
+          name: string
+          target_id: string
+          target_type: string
+          total_count: number
+        }[]
+      }
+      assert_credit_admin: { Args: never; Returns: undefined }
       create_team_as_owner: {
         Args: { p_credits?: number; p_description?: string; p_name: string }
         Returns: string
@@ -799,6 +843,7 @@ export type Database = {
         Args: { p_roles: string[]; p_team_id: string; p_user_id?: string }
         Returns: boolean
       }
+      is_credit_admin: { Args: never; Returns: boolean }
       is_in_same_group: {
         Args: { p_group_id: string; p_user_id?: string }
         Returns: boolean
