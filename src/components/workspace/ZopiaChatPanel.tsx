@@ -18,6 +18,7 @@ import {
   AlertTriangle,
   Video,
   AtSign,
+  Trash2,
 } from "lucide-react";
 import { useLanguage } from "../../i18n/LanguageContext";
 import type { WorkspaceTab } from "./WorkspaceTopbar";
@@ -319,7 +320,7 @@ export type ZopiaChatPanelHandle = {
    * 2026/07:推一条"视频生成确认卡片"到对话框。
    * 分镜阶段点"生成视频"不再直接生成,而是把 prompt + 参考图 + 确认按钮
    * 以卡片形式展示在对话框里,用户点"确认生成"后才真正调用 onConfirmVideoGen。
-   * 卡片只读(prompt/参考图不可编辑),确认时父组件重新 build payload 生成。
+   * 提示词可编辑，参考图可在放大预览中移除；确认时父组件重新 build payload 生成。
    */
   pushVideoConfirmCard: (payload: {
     groupId: string;
@@ -368,6 +369,8 @@ const ZopiaChatPanel = forwardRef<
       method: "shots" | "storyboard",
       editedPreviewPrompt: string,
       selectedAudioUrl?: string,
+      /** 确认卡中保留的参考图；空数组表示本次不使用任何参考图。 */
+      selectedImageUrls?: string[],
     ) => Promise<boolean>;
     /**
      * 2026/07:视频确认卡片 generating 时点"中止生成"调用。
@@ -483,8 +486,10 @@ const ZopiaChatPanel = forwardRef<
   >(null);
   const [importDragging, setImportDragging] = useState(false);
   const importFileInputRef = useRef<HTMLInputElement>(null);
-  // 2026/07:参考图 lightbox —— 点确认卡片缩略图放大查看
-  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+  // 2026/07:参考图 lightbox —— 点确认卡片缩略图放大查看，并可移除本次生成不用的图。
+  const [lightbox, setLightbox] = useState<{ url: string; msgId: string; imageIndex: number } | null>(
+    null,
+  );
   // 2026/07:编辑 prompt 时 @ 参考图 —— mentionPickerFor 是当前展开选择条的卡片 msgId
   const [mentionPickerFor, setMentionPickerFor] = useState<string | null>(null);
   // contentEditable div 的 ref(每条卡片一个),用于 @ 参考图插入光标管理
@@ -1582,6 +1587,7 @@ const ZopiaChatPanel = forwardRef<
     method: "shots" | "storyboard",
     previewPrompt: string,
     selectedAudioUrl?: string,
+    selectedImageUrls?: string[],
   ) {
     setMessages((prev) =>
       prev.map((m) =>
@@ -1590,7 +1596,13 @@ const ZopiaChatPanel = forwardRef<
     );
     try {
       const ok =
-        (await onConfirmVideoGen?.(groupId, method, previewPrompt, selectedAudioUrl)) ?? false;
+        (await onConfirmVideoGen?.(
+          groupId,
+          method,
+          previewPrompt,
+          selectedAudioUrl,
+          selectedImageUrls,
+        )) ?? false;
       setMessages((prev) =>
         prev.map((m) =>
           m.id === msgId && m.kind === "video_confirm"
@@ -2075,7 +2087,7 @@ const ZopiaChatPanel = forwardRef<
                           <button
                             key={i}
                             type="button"
-                            onClick={() => setLightboxUrl(img.url)}
+                            onClick={() => setLightbox({ url: img.url, msgId: m.id, imageIndex: i })}
                             className="relative w-14 h-14 rounded-md overflow-hidden border border-border shrink-0 hover:border-accent transition cursor-zoom-in"
                             title={img.label}
                           >
@@ -2236,6 +2248,7 @@ const ZopiaChatPanel = forwardRef<
                               m.method,
                               m.previewPrompt,
                               m.selectedAudioUrl,
+                              m.images.map((img) => img.url),
                             )
                           }
                           className="px-[18px] py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold hover:opacity-90 inline-flex items-center gap-1"
@@ -2763,25 +2776,46 @@ const ZopiaChatPanel = forwardRef<
         </div>
       )}
 
-      {/* 2026/07:参考图 lightbox —— 点确认卡片缩略图放大,点遮罩 / X 关闭,点图片不关闭 */}
-      {lightboxUrl && (
+      {/* 2026/07:参考图 lightbox —— 点确认卡片缩略图放大，可移除本次生成不用的图。 */}
+      {lightbox && (
         <div
-          className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
-          onClick={() => setLightboxUrl(null)}
+          className="fixed inset-0 z-[200] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setLightbox(null)}
           role="dialog"
           aria-modal="true"
           aria-label="图片预览"
         >
-          <button
-            type="button"
-            onClick={() => setLightboxUrl(null)}
-            className="absolute top-4 right-4 p-2 rounded-md bg-bg-surface/80 border border-border text-text-secondary hover:text-text-primary"
-            title="关闭"
-          >
-            <X size={20} />
-          </button>
+          <div className="absolute top-4 right-4 z-10 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setMessages((prev) =>
+                  prev.map((m) =>
+                    m.id === lightbox.msgId && m.kind === "video_confirm"
+                      ? { ...m, images: m.images.filter((_, index) => index !== lightbox.imageIndex) }
+                      : m,
+                  ),
+                );
+                setLightbox(null);
+              }}
+              className="p-2 rounded-md bg-red-600/90 border border-red-400/40 text-white hover:bg-red-600"
+              title="本次生成不使用此参考图"
+              aria-label="删除本次生成的参考图"
+            >
+              <Trash2 size={20} />
+            </button>
+            <button
+              type="button"
+              onClick={() => setLightbox(null)}
+              className="p-2 rounded-md bg-bg-surface/80 border border-border text-text-secondary hover:text-text-primary"
+              title="关闭"
+              aria-label="关闭"
+            >
+              <X size={20} />
+            </button>
+          </div>
           <img
-            src={lightboxUrl}
+            src={lightbox.url}
             alt="预览"
             className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
             onClick={(e) => e.stopPropagation()}
