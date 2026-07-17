@@ -1,72 +1,55 @@
-## 问题定位
 
-**问题 1：团队积分分配报错 `Could not find the function public.allocate_team_credits(...)`**
+## 目标
 
-- 迁移文件 `supabase/migrations/20260717010000_sync_team_credits_with_personal_wallets.sql` 定义了 `allocate_team_credits / reclaim_team_credits / transfer_team_credits` 三个 RPC，但通过 `supabase--read_query` 核查 `pg_proc`，线上数据库里这三个函数**都不存在**（之前的迁移没有落库成功）。前端 `src/lib/teamCredits.functions.ts` 调用的正是这些 RPC，因此报 schema cache not found。
+`/account/rewards`（积分与奖励）当前全部使用 `mockRewards` 假数据（余额、累计获得、等级、进度条、明细表）。改为读取当前登录用户的真实积分与流水，与顶部导航栏、`/account/credits` 页保持一致、实时同步。
 
-**问题 2：账户积分余额没有下限保护**
+## 现状核对（已核验）
 
-- `chargeCredits`（`src/lib/userCredits.functions.ts`）在生成完成后才扣费，RPC `deduct_user_credits` 允许扣到负数（"欠款"）。
-- `generateImage`（seedream.functions.ts）目前**根本没有扣费/校验**；`submitVideoTaskFn`（videoGenerate.functions.ts）只在成功后扣费。
-- 结果：余额 ≤ 0 的用户仍能无限生成，与产品预期不符。
+- 真实积分余额来源：`public.user_wallets.credits_balance`（`getUserBalance` 已封装）。
+- 真实流水来源：`public.user_credit_transactions`，字段含 `type / amount / balance_after / model / resolution / duration / description / created_at`（`getUserCreditTransactions` 已封装）。
+- 现有 `type` 取值：`consume / recharge / admin_grant / admin_reclaim / team_allocate / team_reclaim`（无 `earn / cashout` 之类奖励语义，产品尚无“获赞奖励 / 提现”功能）。
+- `account.credits.tsx` 已经用这两个 server fn 正确渲染余额 + 明细，可作为参考实现。
+- `account.rewards.tsx` 里的“等级 / 等级进度 / 满 500 分可提现”是纯装饰文案，与后端无对应数据。
 
----
+## 改动方案
 
-## 修复方案
+### 1. 新增一个聚合查询 server fn（`src/lib/userCredits.functions.ts`）
 
-### 一、重新应用团队积分迁移（DB 迁移）
+新增 `getUserCreditSummary`：
+- 用当前用户 token 查 `user_wallets.credits_balance` → `balance`
+- 汇总 `user_credit_transactions` 中该用户 `amount > 0` 的记录 → `lifetimeEarned`（含充值、管理员发放等所有入账）
+- 汇总 `amount < 0` 的绝对值 → `lifetimeSpent`
+- 返回 `{ balance, lifetimeEarned, lifetimeSpent }`
+- 使用现有 `requireSupabaseAuth` 中间件；RLS 已限制只查自己。
 
-重新执行 `20260717010000` 迁移中三个 RPC 的 `CREATE OR REPLACE FUNCTION` + 权限授予部分，确保线上存在：
+### 2. 重写 `src/routes/account.rewards.tsx`
 
-- `allocate_team_credits(p_team_id, p_user_id, p_amount, p_description)`
-- `reclaim_team_credits(...)`
-- `transfer_team_credits(...)`
+- 移除对 `mockRewards` 的所有依赖。
+- 顶部三张 StatCard 改为：
+  - 余额 → `balance`（真实值，加载中显示 `...`）
+  - 累计获得 → `lifetimeEarned`
+  - 累计消耗 → `lifetimeSpent`（替换掉“等级 / 社区前 8%”这类无后端支撑的假指标）
+- 删除“等级进度”卡片（当前没有真实等级体系，保留只会继续误导）。
+- 明细表改为读取 `getUserCreditTransactions`（复用 credits 页的 20 条/页分页交互）：
+  - 列：日期 / 描述（description / model / resolution / duration 组合，与 credits 页一致） / 类型 / 积分变动
+  - 类型显示按真实 `type` 做一次中文映射：`recharge=充值`、`consume=消耗`、`admin_grant=系统发放`、`admin_reclaim=系统回收`、`team_allocate=团队分配`、`team_reclaim=团队回收`、`team_transfer_in/out=团队转账`
+  - 正数绿色、负数橙红，与现有配色一致
+- 页面副标题改为客观描述（例如“查看你的积分余额与全部收支明细”），不再承诺“满 500 可提现”。
 
-以及配套的 `reclaim_leaving_member_credits` 触发器（若缺失）。全部保持 `SECURITY DEFINER` + `search_path=public`，`REVOKE FROM anon`、`GRANT EXECUTE TO authenticated, service_role`（与安全内存一致）。
+### 3. 实时性
 
-迁移完成后前端无需改动，`allocateCredits` server function 立即可用。
+- 页面挂载即拉取；用户在其他页面（充值、生成图）产生变动后，回到此页会重新触发 `useEffect`，与 `/account/credits` 行为一致。
+- 顶部导航栏的余额已由各自的 hook 拉取，不在本次范围内改动。
 
-### 二、生成前积分预校验（代码）
+### 4. 验证
 
-新增共享工具 `src/lib/creditsGuard.ts`（服务端函数内使用）：
+- 用真实账号访问 `/account/rewards`：
+  - 三张卡片值 = SQL 手动核对（`user_wallets.credits_balance`、`SUM(amount) FILTER (WHERE amount>0)`、`SUM(-amount) FILTER (WHERE amount<0)`）。
+  - 明细分页翻页、类型/描述/时间显示正确。
+  - 与 `/account/credits` 的余额、最新一条流水完全一致。
+- 新账号（无流水）：三张卡片显示 0，表格显示空状态文案。
 
-```
-assertEnoughCredits(supabase, userId, requiredCost, meta)
-  → 读 user_wallets.credits_balance
-  → balance < requiredCost 时：
-      • 写入 generation_error_logs（复用现有 logGenerationError，type='insufficient_credits'）
-      • 抛出 Response(402, JSON) 或返回 { ok:false, error:'积分不足' }
-```
+## 不改动
 
-接入两个关键路径（仅在成本可算出、cost>0 时校验；cost=null 的模型保持免费不拦截）：
-
-1. **`src/lib/seedream.functions.ts` › `generateImage.handler`**  
-   在真正分发到各供应商之前，用 `imageCost(model)` 计算成本 × 目标张数（seedream 支持批量），不足则直接返回 `{ ok:false, error, code:'INSUFFICIENT_CREDITS' }`，前端已有错误 toast 展示。生成成功后追加 `chargeCredits`（目前生图路径漏扣，一并补上，与现有 videoGenerate 保持一致的"成功后扣费"逻辑）。
-
-2. **`src/lib/videoGenerate.functions.ts` › `submitVideoTaskFn`**  
-   在向 ARK / kuaizi 等提交任务前，用 `videoCost(model, resolution, duration)` 预校验，不足则拒绝提交（不产生外部调用费用）。
-
-### 三、前端错误提示
-
-`ZopiaChatPanel` 与 `StoryboardTimeline` 已有统一的错误弹窗渲染 `error` 字段，无需改 UI；只需保证服务端返回的 `error` 文案为「当前积分不足，无法继续生成，请充值后再试」，即可自然展示并停止后续动作。
-
----
-
-## 技术细节
-
-- 预校验读的是 `user_wallets.credits_balance`（RLS 只允许自读，安全）。
-- 预校验与扣费之间存在极小竞态窗口：仍依赖 `deduct_user_credits` RPC 的原子扣减做最终一致性，本次不改 RPC 语义（避免影响历史欠款用户）。
-- `imageCost` 目前仅覆盖 tokenflash / revora / azure* 前缀，其它供应商返回 null → 不校验也不扣费，行为与今天一致，避免误伤。
-- 生图批量：以请求里 `n` / `numImages` / 参考图循环次数为准计算 `cost * count`；handler 中已有相应变量，直接乘算。
-- 团队迁移用 supabase migration 工具下发，等你审批后执行。
-
----
-
-## 变更清单
-
-- 迁移 SQL：重建 `allocate_team_credits` / `reclaim_team_credits` / `transfer_team_credits` + 权限
-- 新增 `src/lib/creditsGuard.ts`
-- 修改 `src/lib/seedream.functions.ts`（预校验 + 成功后扣费）
-- 修改 `src/lib/videoGenerate.functions.ts`（提交前预校验）
-
-不动 UI、不动其它业务逻辑。
+- `mockRewards` 数据结构本身保留在 `src/data/mock/index.ts`（其它演示位可能引用），本次仅是页面不再使用。
+- 顶部导航、`/account/credits`、i18n 键、后端 RPC、其它路由均不变。
