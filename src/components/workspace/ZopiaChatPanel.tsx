@@ -2640,16 +2640,12 @@ const ZopiaChatPanel = forwardRef<
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                send(input);
-              }
               if (e.key === "Escape") {
                 if (synopsisEditMode) setSynopsisEditMode(false);
                 if (episodeEditMode != null) setEpisodeEditMode(null);
               }
             }}
-            rows={2}
+            rows={4}
             placeholder={
               locked
                 ? t.zp_input_placeholder_locked
