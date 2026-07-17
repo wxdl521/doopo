@@ -276,6 +276,27 @@ export const generateImage = createServerFn({ method: "POST" })
       size: data.size,
       negativePrompt: data.negativePrompt,
     };
+    // ---- 积分预校验:余额不足直接拒绝,避免空跑外部接口 ----
+    {
+      const { ensureEnoughCredits } = await import("./creditsGuard");
+      const { imageCost } = await import("./creditsCost");
+      const __cost = imageCost(data.model);
+      const __guard = await ensureEnoughCredits(__cost, {
+        kind: "image",
+        model: data.model,
+      });
+      if (!__guard.ok) {
+        console.warn(
+          `[image×] insufficient credits model=${data.model} required=${__guard.required} balance=${__guard.balance}`,
+        );
+        return {
+          url: "",
+          error: __guard.error,
+          model: data.model ?? null,
+          code: "INSUFFICIENT_CREDITS" as const,
+        };
+      }
+    }
     const __afterCall = <T extends { url?: string; error?: string | null; model?: string }>(
       provider: string,
       r: T,
