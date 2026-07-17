@@ -12888,7 +12888,7 @@ function WorkspacePage() {
           const cardTitle = lk ? `${c.name} · ${lk.label}` : c.name;
           return (
             <div
-              className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+              className="fixed inset-0 z-[120] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
               onClick={() => {
                 closeModPanel();
                 setRegenInput("");
@@ -12901,8 +12901,8 @@ function WorkspacePage() {
                 onClick={(e) => e.stopPropagation()}
               >
                 {/* Top bar */}
-                <div className="flex items-center justify-between px-4 py-2.5 border-b border-border shrink-0">
-                  <div className="min-w-0">
+                <div className="relative z-10 flex items-center justify-between px-4 py-2.5 border-b border-border bg-bg-surface shrink-0">
+                  <div className="min-w-0 flex-1">
                     <div className="font-display text-base font-bold text-text-primary truncate">
                       {cardTitle}
                     </div>
@@ -12911,7 +12911,7 @@ function WorkspacePage() {
                       张
                     </div>
                   </div>
-                  <div className="flex items-center gap-1">
+                  <div className="flex shrink-0 items-center gap-1">
                     <button
                       type="button"
                       onClick={() => {
@@ -13322,7 +13322,7 @@ function WorkspacePage() {
           const isPromptTranslating = translatingEditablePromptKeys.has(`scene:${s.id}`);
           return (
             <div
-              className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-6"
+              className="fixed inset-0 z-[120] bg-black/80 backdrop-blur-sm flex items-center justify-center p-6"
               onClick={() => setScenePreview(null)}
               role="dialog"
               aria-modal="true"
@@ -13332,8 +13332,8 @@ function WorkspacePage() {
                 onClick={(e) => e.stopPropagation()}
               >
                 {/* Top bar */}
-                <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
-                  <div className="min-w-0">
+                <div className="relative z-10 flex items-center justify-between px-4 py-3 border-b border-border bg-bg-surface shrink-0">
+                  <div className="min-w-0 flex-1">
                     <div className="text-[10px] font-mono text-text-muted">
                       SC {s.index} · {SCENE_TIME_LABELS[s.timeOfDay] ?? s.timeOfDay}
                     </div>
@@ -13341,7 +13341,7 @@ function WorkspacePage() {
                       {s.slug}
                     </div>
                   </div>
-                  <div className="flex items-center gap-1">
+                  <div className="flex shrink-0 items-center gap-1">
                     <button
                       type="button"
                       onClick={() => setScenePreview(null)}
@@ -13648,7 +13648,7 @@ function WorkspacePage() {
           const isPromptTranslating = translatingEditablePromptKeys.has(`prop:${p.id}`);
           return (
             <div
-              className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-6"
+              className="fixed inset-0 z-[120] bg-black/80 backdrop-blur-sm flex items-center justify-center p-6"
               onClick={() => setPropPreview(null)}
               role="dialog"
               aria-modal="true"
@@ -13658,14 +13658,14 @@ function WorkspacePage() {
                 onClick={(e) => e.stopPropagation()}
               >
                 {/* Top bar */}
-                <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
-                  <div className="min-w-0">
+                <div className="relative z-10 flex items-center justify-between px-4 py-3 border-b border-border bg-bg-surface shrink-0">
+                  <div className="min-w-0 flex-1">
                     <div className="text-[10px] font-mono text-text-muted">PROP</div>
                     <div className="font-display text-base font-bold text-text-primary truncate">
                       {p.name}
                     </div>
                   </div>
-                  <div className="flex items-center gap-1">
+                  <div className="flex shrink-0 items-center gap-1">
                     <button
                       type="button"
                       onClick={() => setPropPreview(null)}
@@ -14307,7 +14307,7 @@ function WorkspacePage() {
       {addEpisodeOpen && (
         <>
           <div
-            className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm"
+            className="fixed inset-0 z-[115] bg-black/50 backdrop-blur-sm"
             onClick={closeAddEpisodeDialog}
             aria-hidden
           />
@@ -14315,7 +14315,7 @@ function WorkspacePage() {
             role="dialog"
             aria-modal="true"
             aria-label="新增集数"
-            className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none"
+            className="fixed inset-0 z-[120] flex items-center justify-center p-4 pointer-events-none"
           >
             <div
               className="pointer-events-auto w-full max-w-md rounded-2xl border border-border bg-bg-surface shadow-2xl overflow-hidden"
@@ -14416,7 +14416,7 @@ function WorkspacePage() {
           );
           return (
             <div
-              className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+              className="fixed inset-0 z-[120] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
               onClick={() => {
                 setShotPreview(null);
                 setShotModInput("");
@@ -14431,8 +14431,8 @@ function WorkspacePage() {
                 onClick={(e) => e.stopPropagation()}
               >
                 {/* Top bar */}
-                <div className="flex items-center justify-between px-4 py-2.5 border-b border-border shrink-0">
-                  <div className="min-w-0">
+                <div className="relative z-10 flex items-center justify-between px-4 py-2.5 border-b border-border bg-bg-surface shrink-0">
+                  <div className="min-w-0 flex-1">
                     <div className="font-display text-base font-bold text-text-primary truncate">
                       {cardTitle}
                     </div>
@@ -14447,7 +14447,7 @@ function WorkspacePage() {
                       setShotModInput("");
                       setShotModUploadedRef(null);
                     }}
-                    className="p-1.5 rounded-md hover:bg-bg-elevated text-text-muted"
+                    className="shrink-0 p-1.5 rounded-md hover:bg-bg-elevated text-text-muted"
                     aria-label="关闭"
                   >
                     <X size={16} />
@@ -14742,7 +14742,7 @@ function WorkspacePage() {
           })();
           return (
             <div
-              className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4"
+              className="fixed inset-0 z-[120] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4"
               onClick={() => {
                 setStoryboardPreview(null);
                 setStoryboardModUploadedRefs([]);
@@ -14759,8 +14759,8 @@ function WorkspacePage() {
                 onClick={(e) => e.stopPropagation()}
               >
                 {/* 顶部 bar:标题 + 关闭 */}
-                <div className="flex items-center justify-between px-1 pb-2 shrink-0">
-                  <div className="text-sm font-display font-semibold text-white/90 truncate">
+                <div className="relative z-10 flex items-center justify-between px-1 pb-2 shrink-0">
+                  <div className="min-w-0 flex-1 text-sm font-display font-semibold text-white/90 truncate">
                     {title}
                   </div>
                   <button
@@ -14772,7 +14772,7 @@ function WorkspacePage() {
                       setStoryboardMentionedRefLabels({});
                       setStoryboardReferencePickerOpen(false);
                     }}
-                    className="p-1.5 rounded-md bg-white/10 hover:bg-white/20 text-white"
+                    className="shrink-0 p-1.5 rounded-md bg-white/10 hover:bg-white/20 text-white"
                     aria-label="关闭"
                   >
                     <X size={16} />
@@ -15055,7 +15055,7 @@ function WorkspacePage() {
       {/* ============= 新建空分镜 — 插入位置选择弹窗 ============= */}
       {showNewGroupModal && (
         <div
-          className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4"
+          className="fixed inset-0 z-[120] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4"
           onClick={() => setShowNewGroupModal(false)}
         >
           <div
@@ -15104,7 +15104,7 @@ function WorkspacePage() {
           把 server fn 返回的 previewPrompt 弹到这个 modal 里展示。带复制按钮。 */}
       {promptPreview && (
         <div
-          className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
+          className="fixed inset-0 z-[120] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
           onClick={() => setPromptPreview(null)}
           role="dialog"
           aria-modal="true"
@@ -15114,11 +15114,11 @@ function WorkspacePage() {
             className="relative w-full max-w-3xl max-h-[85vh] bg-bg-surface border border-accent/40 rounded-2xl shadow-2xl flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-center justify-between px-5 py-3 border-b border-border shrink-0">
-              <h2 className="font-display text-base font-bold inline-flex items-center gap-2">
+            <div className="relative z-10 flex items-center justify-between px-5 py-3 border-b border-border bg-bg-surface shrink-0">
+              <h2 className="min-w-0 flex-1 font-display text-base font-bold inline-flex items-center gap-2 truncate">
                 <Sparkles size={16} className="text-accent" /> 提示词预览 · {promptPreview.title}
               </h2>
-              <div className="flex items-center gap-2">
+              <div className="flex shrink-0 items-center gap-2">
                 <button
                   type="button"
                   onClick={() => {
