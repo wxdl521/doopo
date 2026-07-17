@@ -7,6 +7,7 @@ import { useTheme } from "../context/ThemeContext";
 import { useLanguage } from "../i18n/LanguageContext";
 import { useAuth } from "../hooks/useAuth";
 import { getUserBalance } from "../lib/userCredits.functions";
+import { getAdminAccess } from "../lib/adminCredits.functions";
 
 export default function Header() {
   const { theme, toggleTheme } = useTheme();
@@ -15,8 +16,10 @@ export default function Header() {
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
   const [creditBalance, setCreditBalance] = useState<number | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const callGetBalance = useServerFn(getUserBalance);
+  const callAdminAccess = useServerFn(getAdminAccess);
 
   useEffect(() => {
     if (!isAuthenticated || loading) return;
@@ -24,6 +27,16 @@ export default function Header() {
       .then((r: any) => setCreditBalance(r?.balance ?? 0))
       .catch(() => setCreditBalance(0));
   }, [isAuthenticated, loading]);
+
+  useEffect(() => {
+    if (loading || !isAuthenticated) {
+      setIsAdmin(false);
+      return;
+    }
+    callAdminAccess({ data: undefined })
+      .then((result: any) => setIsAdmin(result?.isAdmin === true))
+      .catch(() => setIsAdmin(false));
+  }, [isAuthenticated, loading, callAdminAccess]);
 
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -44,7 +57,7 @@ export default function Header() {
   const topLinks = [
     { to: "/zoclaw", label: t.nav_openclaw, accent: true },
     { to: "/team", label: t.nav_team },
-    { to: "/admin", label: t.nav_admin },
+    ...(isAdmin ? [{ to: "/admin", label: t.nav_admin }] : []),
     { to: "/community", label: t.nav_community },
     { to: "/showcase", label: t.nav_showcase },
     { to: "/pricing", label: t.nav_pricing },

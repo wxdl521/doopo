@@ -766,6 +766,30 @@ export const zh = {
   admin_failed: "失败",
   admin_col_invoice: "发票编号",
   admin_col_tenant: "租户",
+  admin_credits: "积分分配",
+  admin_checking_access: "正在验证管理权限…",
+  admin_credits_title: "积分分配",
+  admin_credits_sub: "为已注册用户或团队发放积分，所有操作都会写入积分流水。",
+  admin_credits_users: "注册用户",
+  admin_credits_teams: "团队",
+  admin_credits_total: "共 {count} 个",
+  admin_credits_col_target: "用户 / 团队",
+  admin_credits_col_balance: "当前积分",
+  admin_credits_loading: "正在加载…",
+  admin_credits_empty: "暂无可分配的对象",
+  admin_credits_page: "第 {page} 页",
+  admin_credits_grant_title: "发放积分",
+  admin_credits_grant_hint: "选择左侧对象后输入整数积分。",
+  admin_credits_selected: "分配对象",
+  admin_credits_choose_target: "请先选择一个用户或团队",
+  admin_credits_amount: "积分数量",
+  admin_credits_amount_error: "请输入大于 0 的整数积分",
+  admin_credits_note: "备注（可选）",
+  admin_credits_note_placeholder: "例如：活动奖励",
+  admin_credits_grant: "确认发放",
+  admin_credits_granting: "发放中…",
+  admin_credits_grant_success: "已成功发放 {amount} 积分",
+  admin_credits_grant_error: "积分发放失败，请重试",
 
   // ============ Account ============
   account_title: "账户",
@@ -1502,7 +1526,7 @@ export const zh = {
   // ============ Storyboard dialogue budget warning ============
   sb_dialogue_overload: "台词超长约 {{sec}}s，建议拆组或精简",
   sb_dialogue_overload_hint:
-  "该组台词在单个视频(≤15s)内说不完，生成的视频可能漏台词或语序混乱。请拆成更多分镜组，或精简台词。",
+    "该组台词在单个视频(≤15s)内说不完，生成的视频可能漏台词或语序混乱。请拆成更多分镜组，或精简台词。",
 };
 
 export type Translations = typeof zh;

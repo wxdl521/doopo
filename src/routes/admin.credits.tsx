@@ -1,0 +1,265 @@
+import { createFileRoute } from "@tanstack/react-router";
+import { useServerFn } from "@tanstack/react-start";
+import { useCallback, useEffect, useState } from "react";
+import { Coins, Users, Building2, ChevronLeft, ChevronRight } from "lucide-react";
+import { toast } from "sonner";
+import PageHeader from "@/components/PageHeader";
+import { Input } from "@/components/ui/input";
+import {
+  getAdminCreditRecipients,
+  grantAdminCredits,
+  type AdminCreditRecipient,
+} from "@/lib/adminCredits.functions";
+import { useLanguage } from "@/i18n/LanguageContext";
+
+export const Route = createFileRoute("/admin/credits")({
+  component: AdminCredits,
+});
+
+const PAGE_SIZE = 25;
+
+function AdminCredits() {
+  const { t } = useLanguage();
+  const callRecipients = useServerFn(getAdminCreditRecipients);
+  const callGrant = useServerFn(grantAdminCredits);
+  const [kind, setKind] = useState<"user" | "team">("user");
+  const [page, setPage] = useState(1);
+  const [recipients, setRecipients] = useState<AdminCreditRecipient[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [selected, setSelected] = useState<AdminCreditRecipient | null>(null);
+  const [amount, setAmount] = useState("");
+  const [description, setDescription] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const loadRecipients = useCallback(async () => {
+    setLoading(true);
+    const result: any = await callRecipients({ data: { kind, page, pageSize: PAGE_SIZE } });
+    setLoading(false);
+    if (result?.error) {
+      toast.error(result.error);
+      setRecipients([]);
+      setTotal(0);
+      return;
+    }
+    setRecipients(result?.recipients ?? []);
+    setTotal(result?.total ?? 0);
+  }, [callRecipients, kind, page]);
+
+  useEffect(() => {
+    setSelected(null);
+    setAmount("");
+    void loadRecipients();
+  }, [loadRecipients]);
+
+  const switchKind = (nextKind: "user" | "team") => {
+    setKind(nextKind);
+    setPage(1);
+  };
+
+  const grant = async () => {
+    const numericAmount = Number(amount);
+    if (!selected) {
+      toast.error(t.admin_credits_choose_target);
+      return;
+    }
+    if (!Number.isInteger(numericAmount) || numericAmount <= 0) {
+      toast.error(t.admin_credits_amount_error);
+      return;
+    }
+
+    setSubmitting(true);
+    const result: any = await callGrant({
+      data: {
+        kind,
+        targetId: selected.id,
+        amount: numericAmount,
+        description: description.trim() || undefined,
+      },
+    });
+    setSubmitting(false);
+
+    if (!result?.ok) {
+      toast.error(result?.error || t.admin_credits_grant_error);
+      return;
+    }
+
+    toast.success(
+      t.admin_credits_grant_success.replace("{amount}", numericAmount.toLocaleString()),
+    );
+    setAmount("");
+    setDescription("");
+    await loadRecipients();
+  };
+
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const canGoNext = recipients.length === PAGE_SIZE && (total === 0 || page < totalPages);
+
+  return (
+    <div className="space-y-6">
+      <PageHeader title={t.admin_credits_title} subtitle={t.admin_credits_sub} />
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+        <section className="panel overflow-hidden">
+          <div className="flex flex-col gap-3 border-b border-border px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex gap-2">
+              <button
+                onClick={() => switchKind("user")}
+                className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition ${
+                  kind === "user"
+                    ? "bg-accent text-white"
+                    : "bg-bg-elevated text-text-secondary hover:text-text-primary"
+                }`}
+              >
+                <Users size={15} />
+                {t.admin_credits_users}
+              </button>
+              <button
+                onClick={() => switchKind("team")}
+                className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition ${
+                  kind === "team"
+                    ? "bg-accent text-white"
+                    : "bg-bg-elevated text-text-secondary hover:text-text-primary"
+                }`}
+              >
+                <Building2 size={15} />
+                {t.admin_credits_teams}
+              </button>
+            </div>
+            <p className="text-sm text-text-muted">
+              {total > 0 ? t.admin_credits_total.replace("{count}", total.toLocaleString()) : ""}
+            </p>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-bg-elevated/60 text-text-muted">
+                <tr>
+                  <th className="px-5 py-3 text-left font-medium">{t.admin_credits_col_target}</th>
+                  <th className="px-5 py-3 text-right font-medium">
+                    {t.admin_credits_col_balance}
+                  </th>
+                  <th className="px-5 py-3 text-left font-medium">{t.admin_col_created}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr>
+                    <td colSpan={3} className="px-5 py-10 text-center text-text-muted">
+                      {t.admin_credits_loading}
+                    </td>
+                  </tr>
+                ) : recipients.length === 0 ? (
+                  <tr>
+                    <td colSpan={3} className="px-5 py-10 text-center text-text-muted">
+                      {t.admin_credits_empty}
+                    </td>
+                  </tr>
+                ) : (
+                  recipients.map((recipient) => (
+                    <tr
+                      key={recipient.id}
+                      onClick={() => setSelected(recipient)}
+                      className={`cursor-pointer border-t border-border transition-colors hover:bg-bg-elevated/70 ${
+                        selected?.id === recipient.id ? "bg-accent-dim" : ""
+                      }`}
+                    >
+                      <td className="px-5 py-3">
+                        <div className="font-medium text-text-primary">{recipient.name}</div>
+                        {recipient.email && (
+                          <div className="mt-0.5 text-xs text-text-muted">{recipient.email}</div>
+                        )}
+                      </td>
+                      <td className="px-5 py-3 text-right font-mono font-medium">
+                        {recipient.balance.toLocaleString()}
+                      </td>
+                      <td className="whitespace-nowrap px-5 py-3 text-text-muted">
+                        {new Date(recipient.createdAt).toLocaleDateString()}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="flex items-center justify-end gap-3 border-t border-border px-5 py-3">
+            <span className="text-xs text-text-muted">
+              {t.admin_credits_page.replace("{page}", String(page))}
+            </span>
+            <button
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              disabled={page === 1 || loading}
+              className="rounded-md border border-border p-1.5 text-text-secondary disabled:cursor-not-allowed disabled:opacity-40"
+              aria-label={t.acc_credits_prev}
+            >
+              <ChevronLeft size={16} />
+            </button>
+            <button
+              onClick={() => setPage((current) => current + 1)}
+              disabled={!canGoNext || loading}
+              className="rounded-md border border-border p-1.5 text-text-secondary disabled:cursor-not-allowed disabled:opacity-40"
+              aria-label={t.acc_credits_next}
+            >
+              <ChevronRight size={16} />
+            </button>
+          </div>
+        </section>
+
+        <aside className="panel h-fit p-5">
+          <div className="mb-5 flex items-center gap-3">
+            <span className="grid h-10 w-10 place-items-center rounded-full bg-accent-dim text-accent">
+              <Coins size={20} />
+            </span>
+            <div>
+              <h2 className="font-display font-bold">{t.admin_credits_grant_title}</h2>
+              <p className="text-xs text-text-muted">{t.admin_credits_grant_hint}</p>
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <div>
+              <label className="mb-1.5 block text-sm font-medium">{t.admin_credits_selected}</label>
+              <div className="min-h-10 rounded-md border border-border bg-bg-elevated px-3 py-2 text-sm text-text-secondary">
+                {selected ? selected.name : t.admin_credits_choose_target}
+              </div>
+            </div>
+            <div>
+              <label htmlFor="credit-amount" className="mb-1.5 block text-sm font-medium">
+                {t.admin_credits_amount}
+              </label>
+              <Input
+                id="credit-amount"
+                type="number"
+                min="1"
+                step="1"
+                value={amount}
+                onChange={(event) => setAmount(event.target.value)}
+                placeholder="1000"
+              />
+            </div>
+            <div>
+              <label htmlFor="credit-note" className="mb-1.5 block text-sm font-medium">
+                {t.admin_credits_note}
+              </label>
+              <Input
+                id="credit-note"
+                value={description}
+                maxLength={500}
+                onChange={(event) => setDescription(event.target.value)}
+                placeholder={t.admin_credits_note_placeholder}
+              />
+            </div>
+            <button
+              onClick={() => void grant()}
+              disabled={!selected || submitting}
+              className="btn-primary w-full disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {submitting ? t.admin_credits_granting : t.admin_credits_grant}
+            </button>
+          </div>
+        </aside>
+      </div>
+    </div>
+  );
+}

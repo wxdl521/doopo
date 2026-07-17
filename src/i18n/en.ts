@@ -787,6 +787,31 @@ export const en: Translations = {
   admin_failed: "Failed",
   admin_col_invoice: "Invoice",
   admin_col_tenant: "Tenant",
+  admin_credits: "Credit allocation",
+  admin_checking_access: "Verifying administrator access…",
+  admin_credits_title: "Credit allocation",
+  admin_credits_sub:
+    "Grant credits to registered users or teams. Every grant is recorded in the credit ledger.",
+  admin_credits_users: "Registered users",
+  admin_credits_teams: "Teams",
+  admin_credits_total: "{count} total",
+  admin_credits_col_target: "User / team",
+  admin_credits_col_balance: "Current credits",
+  admin_credits_loading: "Loading…",
+  admin_credits_empty: "No recipients found",
+  admin_credits_page: "Page {page}",
+  admin_credits_grant_title: "Grant credits",
+  admin_credits_grant_hint: "Select a recipient and enter a whole-number credit amount.",
+  admin_credits_selected: "Recipient",
+  admin_credits_choose_target: "Select a user or team first",
+  admin_credits_amount: "Credit amount",
+  admin_credits_amount_error: "Enter a whole number greater than 0",
+  admin_credits_note: "Note (optional)",
+  admin_credits_note_placeholder: "For example: campaign reward",
+  admin_credits_grant: "Grant credits",
+  admin_credits_granting: "Granting…",
+  admin_credits_grant_success: "Successfully granted {amount} credits",
+  admin_credits_grant_error: "Could not grant credits. Please try again.",
 
   account_title: "Account",
   account_overview: "Overview",
@@ -1525,5 +1550,5 @@ export const en: Translations = {
   // ============ Storyboard dialogue budget warning ============
   sb_dialogue_overload: "Dialogue ~{{sec}}s over, split or trim",
   sb_dialogue_overload_hint:
-  "The dialogue in this group cannot be spoken clearly within a single video (≤15s). The generated video may omit lines or produce garbled speech. Please split into more storyboard groups or trim the dialogue.",
+    "The dialogue in this group cannot be spoken clearly within a single video (≤15s). The generated video may omit lines or produce garbled speech. Please split into more storyboard groups or trim the dialogue.",
 };

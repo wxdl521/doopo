@@ -44,6 +44,7 @@ import { Route as CharactersRelationsRouteImport } from './routes/characters.rel
 import { Route as CharactersCharacterIdRouteImport } from './routes/characters.$characterId'
 import { Route as AdminTenantsRouteImport } from './routes/admin.tenants'
 import { Route as AdminModelsRouteImport } from './routes/admin.models'
+import { Route as AdminCreditsRouteImport } from './routes/admin.credits'
 import { Route as AdminBillingRouteImport } from './routes/admin.billing'
 import { Route as AccountSubscriptionRouteImport } from './routes/account.subscription'
 import { Route as AccountSecurityRouteImport } from './routes/account.security'
@@ -232,6 +233,11 @@ const AdminModelsRoute = AdminModelsRouteImport.update({
   path: '/models',
   getParentRoute: () => AdminRoute,
 } as any)
+const AdminCreditsRoute = AdminCreditsRouteImport.update({
+  id: '/credits',
+  path: '/credits',
+  getParentRoute: () => AdminRoute,
+} as any)
 const AdminBillingRoute = AdminBillingRouteImport.update({
   id: '/billing',
   path: '/billing',
@@ -324,6 +330,7 @@ export interface FileRoutesByFullPath {
   '/account/security': typeof AccountSecurityRoute
   '/account/subscription': typeof AccountSubscriptionRoute
   '/admin/billing': typeof AdminBillingRoute
+  '/admin/credits': typeof AdminCreditsRoute
   '/admin/models': typeof AdminModelsRoute
   '/admin/tenants': typeof AdminTenantsRoute
   '/characters/$characterId': typeof CharactersCharacterIdRoute
@@ -368,6 +375,7 @@ export interface FileRoutesByTo {
   '/account/security': typeof AccountSecurityRoute
   '/account/subscription': typeof AccountSubscriptionRoute
   '/admin/billing': typeof AdminBillingRoute
+  '/admin/credits': typeof AdminCreditsRoute
   '/admin/models': typeof AdminModelsRoute
   '/admin/tenants': typeof AdminTenantsRoute
   '/characters/$characterId': typeof CharactersCharacterIdRoute
@@ -418,6 +426,7 @@ export interface FileRoutesById {
   '/account/security': typeof AccountSecurityRoute
   '/account/subscription': typeof AccountSubscriptionRoute
   '/admin/billing': typeof AdminBillingRoute
+  '/admin/credits': typeof AdminCreditsRoute
   '/admin/models': typeof AdminModelsRoute
   '/admin/tenants': typeof AdminTenantsRoute
   '/characters/$characterId': typeof CharactersCharacterIdRoute
@@ -469,6 +478,7 @@ export interface FileRouteTypes {
     | '/account/security'
     | '/account/subscription'
     | '/admin/billing'
+    | '/admin/credits'
     | '/admin/models'
     | '/admin/tenants'
     | '/characters/$characterId'
@@ -513,6 +523,7 @@ export interface FileRouteTypes {
     | '/account/security'
     | '/account/subscription'
     | '/admin/billing'
+    | '/admin/credits'
     | '/admin/models'
     | '/admin/tenants'
     | '/characters/$characterId'
@@ -562,6 +573,7 @@ export interface FileRouteTypes {
     | '/account/security'
     | '/account/subscription'
     | '/admin/billing'
+    | '/admin/credits'
     | '/admin/models'
     | '/admin/tenants'
     | '/characters/$characterId'
@@ -855,6 +867,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminModelsRouteImport
       parentRoute: typeof AdminRoute
     }
+    '/admin/credits': {
+      id: '/admin/credits'
+      path: '/credits'
+      fullPath: '/admin/credits'
+      preLoaderRoute: typeof AdminCreditsRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/admin/billing': {
       id: '/admin/billing'
       path: '/billing'
@@ -971,6 +990,7 @@ const AccountRouteWithChildren =
 
 interface AdminRouteChildren {
   AdminBillingRoute: typeof AdminBillingRoute
+  AdminCreditsRoute: typeof AdminCreditsRoute
   AdminModelsRoute: typeof AdminModelsRoute
   AdminTenantsRoute: typeof AdminTenantsRoute
   AdminIndexRoute: typeof AdminIndexRoute
@@ -978,6 +998,7 @@ interface AdminRouteChildren {
 
 const AdminRouteChildren: AdminRouteChildren = {
   AdminBillingRoute: AdminBillingRoute,
+  AdminCreditsRoute: AdminCreditsRoute,
   AdminModelsRoute: AdminModelsRoute,
   AdminTenantsRoute: AdminTenantsRoute,
   AdminIndexRoute: AdminIndexRoute,
