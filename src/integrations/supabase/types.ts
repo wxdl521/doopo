@@ -799,6 +799,15 @@ export type Database = {
           total_count: number
         }[]
       }
+      allocate_team_credits: {
+        Args: {
+          p_amount: number
+          p_description?: string
+          p_team_id: string
+          p_user_id: string
+        }
+        Returns: number
+      }
       assert_credit_admin: { Args: never; Returns: undefined }
       create_team_as_owner: {
         Args: { p_credits?: number; p_description?: string; p_name: string }
@@ -853,6 +862,27 @@ export type Database = {
         Returns: boolean
       }
       join_team_as_self: { Args: { p_team_id: string }; Returns: undefined }
+      reclaim_team_credits: {
+        Args: {
+          p_amount: number
+          p_description?: string
+          p_team_id: string
+          p_user_id: string
+        }
+        Returns: number
+      }
+      transfer_team_credits: {
+        Args: {
+          p_amount: number
+          p_description?: string
+          p_team_id: string
+          p_to_user_id: string
+        }
+        Returns: {
+          from_balance_after: number
+          to_balance_after: number
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never

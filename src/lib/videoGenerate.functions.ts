@@ -3052,6 +3052,22 @@ export const submitVideoTaskFn = createServerFn({ method: "POST" })
   .validator((d: unknown) => SubmitServerInput.parse(d))
   .handler(async ({ data }) => {
     const __t0 = Date.now();
+    // ---- 积分预校验:余额不足直接拒绝,避免向外部服务白扣任务额度 ----
+    {
+      const { ensureEnoughCredits } = await import("./creditsGuard");
+      const __model = data.model || ARK_DEFAULT_MODEL;
+      const __cost = videoCost(__model, data.resolution, data.duration ?? 10);
+      const __guard = await ensureEnoughCredits(__cost, {
+        kind: "video",
+        model: __model,
+      });
+      if (!__guard.ok) {
+        console.warn(
+          `[video×] insufficient credits model=${__model} required=${__guard.required} balance=${__guard.balance}`,
+        );
+        return { ok: false as const, error: __guard.error, code: "INSUFFICIENT_CREDITS" };
+      }
+    }
     // 把 ARK 风格的 content 数组转成统一 media + ref 形式
     const media: DashScopeMediaItem[] = [];
     let referenceVideoUrl: string | undefined;
