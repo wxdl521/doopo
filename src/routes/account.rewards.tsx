@@ -1,61 +1,88 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useServerFn } from "@tanstack/react-start";
+import { useEffect, useState } from "react";
 import PageHeader from "../components/PageHeader";
 import StatCard from "../components/StatCard";
-import { Coins, Award, TrendingUp } from "lucide-react";
-import { mockRewards, type RewardEntry } from "../data/mock";
+import { Button } from "@/components/ui/button";
+import { Coins, TrendingUp, TrendingDown, ChevronLeft, ChevronRight } from "lucide-react";
+import {
+  getUserCreditSummary,
+  getUserCreditTransactions,
+  type UserCreditTransactionRow,
+} from "../lib/userCredits.functions";
 import { useLanguage } from "../i18n/LanguageContext";
 
 export const Route = createFileRoute("/account/rewards")({
   component: Rewards,
 });
 
-const tone: Record<RewardEntry["type"], string> = {
-  earn: "text-emerald-500",
-  spend: "text-rose-500",
-  cashout: "text-amber-500",
+const PAGE_SIZE = 20;
+
+const TYPE_LABEL: Record<string, string> = {
+  recharge: "充值",
+  consume: "消耗",
+  admin_grant: "系统发放",
+  admin_reclaim: "系统回收",
+  team_allocate: "团队分配",
+  team_reclaim: "团队回收",
+  team_transfer_in: "团队转入",
+  team_transfer_out: "团队转出",
+  team_member_reclaim: "成员离队回收",
 };
 
 function Rewards() {
   const { t } = useLanguage();
-  const balance = mockRewards.reduce((s, r) => s + r.points, 0);
-  const earned = mockRewards.filter((r) => r.type === "earn").reduce((s, r) => s + r.points, 0);
-  const typeLabel: Record<RewardEntry["type"], string> = {
-    earn: t.account_reward_earn,
-    spend: t.account_reward_spend,
-    cashout: t.account_reward_cashout,
-  };
+  const callSummary = useServerFn(getUserCreditSummary);
+  const callTx = useServerFn(getUserCreditTransactions);
+
+  const [summary, setSummary] = useState<{
+    balance: number;
+    lifetimeEarned: number;
+    lifetimeSpent: number;
+  } | null>(null);
+  const [transactions, setTransactions] = useState<UserCreditTransactionRow[]>([]);
+  const [page, setPage] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    callSummary({ data: undefined })
+      .then((r: any) =>
+        setSummary({
+          balance: r?.balance ?? 0,
+          lifetimeEarned: r?.lifetimeEarned ?? 0,
+          lifetimeSpent: r?.lifetimeSpent ?? 0,
+        }),
+      )
+      .catch(() => setSummary({ balance: 0, lifetimeEarned: 0, lifetimeSpent: 0 }));
+  }, []);
+
+  useEffect(() => {
+    setLoading(true);
+    callTx({ data: { limit: PAGE_SIZE, offset: page * PAGE_SIZE } })
+      .then((r: any) => setTransactions(r?.transactions ?? []))
+      .catch(() => setTransactions([]))
+      .finally(() => setLoading(false));
+  }, [page]);
+
+  const fmt = (n: number | null) => (n == null ? "..." : n.toLocaleString());
+
   return (
     <>
-      <PageHeader title={t.account_rewards} subtitle={t.account_rewards_sub} />
-      <div className="grid grid-cols-3 gap-4 mb-8">
-        <StatCard icon={Coins} label={t.account_balance} value={balance} />
+      <PageHeader title={t.account_rewards} subtitle="查看你的积分余额与全部收支明细" />
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+        <StatCard icon={Coins} label={t.account_balance} value={fmt(summary?.balance ?? null)} />
         <StatCard
           icon={TrendingUp}
           label={t.account_lifetime_earned}
-          value={earned}
+          value={fmt(summary?.lifetimeEarned ?? null)}
           tone="success"
         />
         <StatCard
-          icon={Award}
-          label={t.account_tier}
-          value={t.account_tier_value}
-          hint={t.account_tier_top}
+          icon={TrendingDown}
+          label="累计消耗"
+          value={fmt(summary?.lifetimeSpent ?? null)}
         />
       </div>
-
-      <section className="panel p-6 mb-6">
-        <h3 className="font-display font-bold mb-3">{t.account_tier_progress}</h3>
-        <div className="text-xs text-text-muted mb-2 flex justify-between">
-          <span>{t.account_tier_l4}</span>
-          <span>{t.account_tier_l5_to_go}</span>
-        </div>
-        <div className="h-3 bg-bg-elevated rounded-full overflow-hidden">
-          <div
-            className="h-full bg-gradient-to-r from-accent to-accent-soft"
-            style={{ width: "64%" }}
-          />
-        </div>
-      </section>
 
       <section className="panel overflow-hidden">
         <table className="w-full text-sm">
@@ -65,23 +92,78 @@ function Rewards() {
               <th className="text-left px-4 py-3 font-medium">{t.account_col_source}</th>
               <th className="text-left px-4 py-3 font-medium">{t.common_type}</th>
               <th className="text-right px-4 py-3 font-medium">{t.account_col_points}</th>
+              <th className="text-right px-4 py-3 font-medium">余额</th>
             </tr>
           </thead>
           <tbody>
-            {mockRewards.map((r) => (
-              <tr key={r.id} className="border-t border-border">
-                <td className="px-4 py-3 text-text-muted">{r.ts}</td>
-                <td className="px-4 py-3">{r.source}</td>
-                <td className={`px-4 py-3 ${tone[r.type]}`}>{typeLabel[r.type]}</td>
-                <td
-                  className={`px-4 py-3 text-right font-mono ${r.points >= 0 ? "text-emerald-500" : "text-rose-500"}`}
-                >
-                  {r.points >= 0 ? `+${r.points}` : r.points}
+            {loading && transactions.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="text-center text-text-muted py-8">
+                  加载中...
                 </td>
               </tr>
-            ))}
+            ) : transactions.length === 0 ? (
+              <tr>
+                <td colSpan={5} className="text-center text-text-muted py-8">
+                  {t.acc_credits_no_records}
+                </td>
+              </tr>
+            ) : (
+              transactions.map((tx) => {
+                const isPositive = tx.amount > 0;
+                const fmtTime = new Date(tx.createdAt).toLocaleString("zh-CN", {
+                  year: "numeric",
+                  month: "2-digit",
+                  day: "2-digit",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                });
+                const source = [tx.description ?? tx.model ?? "-", tx.resolution, tx.duration ? `${tx.duration}s` : null]
+                  .filter(Boolean)
+                  .join(" · ");
+                return (
+                  <tr key={tx.id} className="border-t border-border">
+                    <td className="px-4 py-3 text-text-muted whitespace-nowrap">{fmtTime}</td>
+                    <td className="px-4 py-3">{source}</td>
+                    <td className="px-4 py-3 text-text-muted">
+                      {TYPE_LABEL[tx.type] ?? tx.type}
+                    </td>
+                    <td
+                      className={`px-4 py-3 text-right font-mono ${isPositive ? "text-emerald-500" : "text-rose-500"}`}
+                    >
+                      {isPositive ? "+" : ""}
+                      {Number(tx.amount).toLocaleString()}
+                    </td>
+                    <td className="px-4 py-3 text-right text-text-muted">
+                      {tx.balanceAfter != null ? Number(tx.balanceAfter).toLocaleString() : "-"}
+                    </td>
+                  </tr>
+                );
+              })
+            )}
           </tbody>
         </table>
+        {(page > 0 || transactions.length >= PAGE_SIZE) && (
+          <div className="flex items-center justify-between px-4 py-3 border-t border-border">
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={page === 0}
+              onClick={() => setPage((p) => Math.max(0, p - 1))}
+            >
+              <ChevronLeft className="w-4 h-4 mr-1" /> 上一页
+            </Button>
+            <span className="text-sm text-text-muted">第 {page + 1} 页</span>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={transactions.length < PAGE_SIZE}
+              onClick={() => setPage((p) => p + 1)}
+            >
+              下一页 <ChevronRight className="w-4 h-4 ml-1" />
+            </Button>
+          </div>
+        )}
       </section>
     </>
   );
