@@ -439,11 +439,11 @@ export const loadWorkspaceMedia = createServerFn({ method: "POST" })
     }
     if (!row) {
       return {
-        workspaceData: null as Record<string, unknown> | null,
+        workspaceData: null as Record<string, any> | null,
         error: null as string | null,
       };
     }
-    const fields = row as unknown as Record<string, unknown>;
+    const fields = row as unknown as Record<string, any>;
     return {
       workspaceData: fields,
       error: null as string | null,
