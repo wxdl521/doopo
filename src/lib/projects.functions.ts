@@ -375,7 +375,7 @@ export const loadWorkspaceData = createServerFn({ method: "POST" })
         completedStages: null as string[] | null,
         error: null as string | null,
       };
-    const fields = row as unknown as Record<string, unknown>;
+    const fields = row as unknown as Record<string, any>;
     return {
       workspaceData: {
         outline: fields.outline,
@@ -386,7 +386,7 @@ export const loadWorkspaceData = createServerFn({ method: "POST" })
         synopsisText: fields.synopsisText,
         episodeTexts: fields.episodeTexts,
         selectedEpisodeIndex: fields.selectedEpisodeIndex,
-      },
+      } as Record<string, any>,
       completedStages: (fields.completed_stages ?? []) as string[],
       error: null as string | null,
     };
@@ -410,10 +410,10 @@ export const loadWorkspaceStoryboardStructure = createServerFn({ method: "POST" 
       .eq("id", data.id)
       .maybeSingle();
     if (error) {
-      return { workspaceData: null as Record<string, unknown> | null, error: error.message };
+      return { workspaceData: null as Record<string, any> | null, error: error.message };
     }
     return {
-      workspaceData: (row ?? {}) as Record<string, unknown>,
+      workspaceData: (row ?? {}) as Record<string, any>,
       error: null as string | null,
     };
   });
@@ -435,15 +435,15 @@ export const loadWorkspaceMedia = createServerFn({ method: "POST" })
       .eq("id", data.id)
       .maybeSingle();
     if (error) {
-      return { workspaceData: null as Record<string, unknown> | null, error: error.message };
+      return { workspaceData: null as Record<string, any> | null, error: error.message };
     }
     if (!row) {
       return {
-        workspaceData: null as Record<string, unknown> | null,
+        workspaceData: null as Record<string, any> | null,
         error: null as string | null,
       };
     }
-    const fields = row as unknown as Record<string, unknown>;
+    const fields = row as unknown as Record<string, any>;
     return {
       workspaceData: fields,
       error: null as string | null,

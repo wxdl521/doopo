@@ -249,10 +249,11 @@ export default function AssetsLibrary() {
         id: s.id,
         name: s.name,
         emoji: "🎬",
-        gradient: s.gradient || "from-orange-400/40 via-amber-300/30 to-yellow-200/30",
+        gradient:
+          (s as any).gradient || "from-orange-400/40 via-amber-300/30 to-yellow-200/30",
         cover: s.cover_url || undefined,
         summary: s.action?.slice(0, 100) || s.location || "",
-        tags: [s.time_of_day].filter(Boolean),
+        tags: [s.time_of_day].filter(Boolean) as string[],
         time: s.time_of_day || "",
         mood: "",
         shot: "",
@@ -291,13 +292,14 @@ export default function AssetsLibrary() {
         id: p.id,
         name: p.name,
         emoji: "📦",
-        gradient: p.gradient || "from-teal-400/40 via-cyan-300/30 to-emerald-200/30",
+        gradient:
+          (p as any).gradient || "from-teal-400/40 via-cyan-300/30 to-emerald-200/30",
         cover: p.cover_url || undefined,
         summary: p.description?.slice(0, 100) || "",
         tags: [] as string[],
-        owner: p.owner || "",
+        owner: (p as any).owner || "",
         appearance: p.description || "",
-        symbol: p.key_moments || "",
+        symbol: Array.isArray(p.key_moments) ? p.key_moments.join(", ") : p.key_moments || "",
         fromDb: true,
       }));
       if (!allProps.length) return <Empty />;

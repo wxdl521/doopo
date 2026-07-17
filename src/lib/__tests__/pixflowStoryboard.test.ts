@@ -315,7 +315,7 @@ describe("callLingmengImage — 图像路由", () => {
     expect(url).toBe("https://1189.xin/v1/images/edits");
     expect((init.headers as Record<string, string>).Authorization).toBe("Bearer test-lingmeng-key");
     expect(init.body).toBeInstanceOf(TestFormData);
-    expect((init.body as TestFormData).getAll("image")).toHaveLength(1);
+    expect((init.body as unknown as TestFormData).getAll("image")).toHaveLength(1);
   });
 
   it("工作区图生图路由在 Seedream 兜底前处理灵梦模型", () => {
