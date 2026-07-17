@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useSearch } from "@tanstack/react-router";
 import { ChevronDown, Plus, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -12,9 +12,17 @@ import {
   deleteScene,
   deleteProp,
 } from "../lib/assetsStorage";
+import type { DbCharacter, DbProp, DbScene } from "../lib/assetsStorage";
 
 type Scope = "personal" | "team";
 type AssetTab = "character" | "scene" | "prop";
+type AssetLoadStatus = "idle" | "loading" | "success" | "error";
+
+const initialLoadStatus: Record<AssetTab, AssetLoadStatus> = {
+  character: "idle",
+  scene: "idle",
+  prop: "idle",
+};
 
 export default function AssetsLibrary() {
   const { t } = useLanguage();
@@ -23,29 +31,46 @@ export default function AssetsLibrary() {
   const [tab, setTab] = useState<AssetTab>("character");
   const [scope, setScope] = useState<Scope>("personal");
   const [scopeOpen, setScopeOpen] = useState(false);
-  const [dbCharacters, setDbCharacters] = useState<any[]>([]);
-  const [dbScenes, setDbScenes] = useState<any[]>([]);
-  const [dbProps, setDbProps] = useState<any[]>([]);
+  const [dbCharacters, setDbCharacters] = useState<DbCharacter[]>([]);
+  const [dbScenes, setDbScenes] = useState<DbScene[]>([]);
+  const [dbProps, setDbProps] = useState<DbProp[]>([]);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [loadStatus, setLoadStatus] =
+    useState<Record<AssetTab, AssetLoadStatus>>(initialLoadStatus);
 
   useEffect(() => {
     if (requestedTab) setTab(requestedTab);
   }, [requestedTab]);
 
-  // 2026/06:刷新列表的辅助函数,从资产库移除单条后重新拉
-  async function refresh(kind: "character" | "scene" | "prop") {
-    if (!user) return;
-    if (kind === "character") {
-      const { data } = await loadCharacters(user.id);
-      if (data) setDbCharacters(data);
-    } else if (kind === "scene") {
-      const { data } = await loadScenes(user.id);
-      if (data) setDbScenes(data);
-    } else {
-      const { data } = await loadProps(user.id);
-      if (data) setDbProps(data);
-    }
-  }
+  const refresh = useCallback(
+    async (kind: AssetTab, userId = user?.id) => {
+      if (!userId) return;
+
+      setLoadStatus((current) => ({ ...current, [kind]: "loading" }));
+      try {
+        if (kind === "character") {
+          const { data, error } = await loadCharacters(userId);
+          if (error) throw error;
+          setDbCharacters(data ?? []);
+        } else if (kind === "scene") {
+          const { data, error } = await loadScenes(userId);
+          if (error) throw error;
+          setDbScenes(data ?? []);
+        } else {
+          const { data, error } = await loadProps(userId);
+          if (error) throw error;
+          setDbProps(data ?? []);
+        }
+
+        setLoadStatus((current) => ({ ...current, [kind]: "success" }));
+      } catch (error) {
+        // Includes Supabase query errors and network failures, which both need a retry path.
+        console.warn(`[assets] Failed to load ${kind} assets:`, error);
+        setLoadStatus((current) => ({ ...current, [kind]: "error" }));
+      }
+    },
+    [user?.id],
+  );
 
   async function handleDelete(kind: "character" | "scene" | "prop", id: string, label: string) {
     if (!user) return;
@@ -70,18 +95,14 @@ export default function AssetsLibrary() {
   }
 
   useEffect(() => {
-    if (isAuthenticated && user) {
-      loadCharacters(user.id).then(({ data }) => {
-        if (data) setDbCharacters(data);
-      });
-      loadScenes(user.id).then(({ data }) => {
-        if (data) setDbScenes(data);
-      });
-      loadProps(user.id).then(({ data }) => {
-        if (data) setDbProps(data);
-      });
+    if (isAuthenticated && user?.id) {
+      void Promise.all([
+        refresh("character", user.id),
+        refresh("scene", user.id),
+        refresh("prop", user.id),
+      ]);
     }
-  }, [isAuthenticated, user]);
+  }, [isAuthenticated, user?.id, refresh]);
 
   const tabs: { key: AssetTab; label: string }[] = [
     { key: "character", label: t.assets_tab_character },
@@ -90,18 +111,26 @@ export default function AssetsLibrary() {
   ];
 
   const renderCards = () => {
+    if (loadStatus[tab] === "idle" || loadStatus[tab] === "loading") {
+      return <Loading />;
+    }
+
+    if (loadStatus[tab] === "error") {
+      return <LoadFailed onRetry={() => void refresh(tab)} />;
+    }
+
     if (tab === "character") {
       const allChars = dbCharacters.map((c) => ({
-          id: c.id,
-          name: c.name,
-          emoji: "👤",
-          gradient: c.gradient || "from-blue-400/40 via-purple-300/30 to-pink-200/30",
-          cover: c.cover_url || undefined,
-          summary: `${c.role_label || c.role} · ${c.personality || ""}`,
-          tags: [c.role, c.mbti ? `MBTI ${c.mbti}` : ""].filter(Boolean),
-          role: c.role_label || c.role,
-          age: String(c.age || ""),
-          personality: c.personality || "",
+        id: c.id,
+        name: c.name,
+        emoji: "👤",
+        gradient: c.gradient || "from-blue-400/40 via-purple-300/30 to-pink-200/30",
+        cover: c.cover_url || undefined,
+        summary: `${c.role_label || c.role} · ${c.personality || ""}`,
+        tags: [c.role, c.mbti ? `MBTI ${c.mbti}` : ""].filter(Boolean),
+        role: c.role_label || c.role,
+        age: String(c.age || ""),
+        personality: c.personality || "",
         fromDb: true,
       }));
       if (!allChars.length) return <Empty />;
@@ -131,16 +160,16 @@ export default function AssetsLibrary() {
     }
     if (tab === "scene") {
       const allScenes = dbScenes.map((s) => ({
-          id: s.id,
-          name: s.name,
-          emoji: "🎬",
-          gradient: s.gradient || "from-orange-400/40 via-amber-300/30 to-yellow-200/30",
-          cover: s.cover_url || undefined,
-          summary: s.action?.slice(0, 100) || s.location || "",
-          tags: [s.time_of_day].filter(Boolean),
-          time: s.time_of_day || "",
-          mood: "",
-          shot: "",
+        id: s.id,
+        name: s.name,
+        emoji: "🎬",
+        gradient: s.gradient || "from-orange-400/40 via-amber-300/30 to-yellow-200/30",
+        cover: s.cover_url || undefined,
+        summary: s.action?.slice(0, 100) || s.location || "",
+        tags: [s.time_of_day].filter(Boolean),
+        time: s.time_of_day || "",
+        mood: "",
+        shot: "",
         fromDb: true,
       }));
       if (!allScenes.length) return <Empty />;
@@ -170,13 +199,13 @@ export default function AssetsLibrary() {
     }
     if (tab === "prop") {
       const allProps = dbProps.map((p) => ({
-          id: p.id,
-          name: p.name,
-          emoji: "📦",
-          gradient: p.gradient || "from-teal-400/40 via-cyan-300/30 to-emerald-200/30",
-          cover: p.cover_url || undefined,
-          summary: p.description?.slice(0, 100) || "",
-          tags: [] as string[],
+        id: p.id,
+        name: p.name,
+        emoji: "📦",
+        gradient: p.gradient || "from-teal-400/40 via-cyan-300/30 to-emerald-200/30",
+        cover: p.cover_url || undefined,
+        summary: p.description?.slice(0, 100) || "",
+        tags: [] as string[],
         owner: p.owner || "",
         appearance: p.description || "",
         symbol: p.key_moments || "",
@@ -213,6 +242,33 @@ export default function AssetsLibrary() {
     return (
       <div className="flex-1 flex items-center justify-center min-h-[60vh] text-sm text-text-muted">
         {t.assets_empty}
+      </div>
+    );
+  }
+
+  function Loading() {
+    return (
+      <div
+        className="flex flex-1 min-h-[60vh] flex-col items-center justify-center gap-3 text-sm text-text-muted"
+        role="status"
+        aria-live="polite"
+      >
+        <Loader2 size={28} className="animate-spin text-accent" />
+        <span>{t.assets_loading}</span>
+      </div>
+    );
+  }
+
+  function LoadFailed({ onRetry }: { onRetry: () => void }) {
+    return (
+      <div
+        className="flex flex-1 min-h-[60vh] flex-col items-center justify-center gap-3 text-center text-sm text-text-muted"
+        role="alert"
+      >
+        <span>{t.assets_load_failed}</span>
+        <button type="button" onClick={onRetry} className="btn-ghost text-xs">
+          {t.assets_retry}
+        </button>
       </div>
     );
   }

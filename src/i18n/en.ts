@@ -19,6 +19,9 @@ export const en: Translations = {
   assets_tab_prop: "Props",
   assets_empty:
     "No assets yet. Generate characters, scenes or props, then add them to the library.",
+  assets_loading: "Loading assets…",
+  assets_load_failed: "Unable to load assets. Check your connection and try again.",
+  assets_retry: "Retry",
   assets_add: "Add asset",
   assets_field_role: "Role",
   assets_field_age: "Age",
