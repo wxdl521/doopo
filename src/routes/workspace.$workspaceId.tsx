@@ -5028,7 +5028,8 @@ function WorkspacePage() {
   function shotEditablePrompt(group: StoryboardGroup, shot: StoryboardShot): string {
     return [
       `分镜图：第 ${group.index} 组`,
-      `剧情：${group.plotText}`,
+      // 分镜描述已编辑时，详情页的提示词也必须展示并使用编辑后的版本。
+      `剧情：${effectiveShotBreakdown(group)}`,
       `景别：${shot.shotTypeLabel}`,
       `动作：${shot.action}`,
       shot.camera ? `机位：${shot.camera}` : "",
@@ -5053,7 +5054,8 @@ function WorkspacePage() {
   function storyboardEditablePrompt(group: StoryboardGroup): string {
     return [
       `故事板：第 ${group.index} 组`,
-      `剧情：${group.plotText}`,
+      // 不要绕过分镜描述的用户编辑，故事板详情打开时应以同一份文本初始化。
+      `剧情：${effectiveShotBreakdown(group)}`,
       group.sceneLocation ? `场景：${group.sceneLocation}` : "",
       `风格：${resolveProjectStyle(projectVisualStyle).label}`,
       "[镜头拆解]",
@@ -7082,7 +7084,9 @@ function WorkspacePage() {
           shotType: shot.shotType,
           shotTypeLabel: shot.shotTypeLabel,
           action:
-            (shot.action || "").trim() || (group.plotText || "").slice(0, 400) || "(未填写动作)",
+            (shot.action || "").trim() ||
+            effectivePlotText(group).slice(0, 400) ||
+            "(未填写动作)",
           camera: shot.camera,
           cameraMovement: shot.cameraMovement,
           characterBlocking: shot.characterBlocking,
@@ -8330,7 +8334,7 @@ function WorkspacePage() {
       const res = await callGenStoryboard({
         data: {
           projectStyle: projectVisualStyle,
-          groupLabel: group.plotText?.slice(0, 60),
+          groupLabel: effectivePlotText(group).slice(0, 60),
           plotText: effectivePlotText(group) || "(无剧情摘要)",
           scene,
           characters,
@@ -8454,7 +8458,7 @@ function WorkspacePage() {
     if (!instruction) return;
     const editablePlot =
       readEditablePromptField(instruction, "剧情", ["故事板", "剧情", "场景", "风格"]) ||
-      group.plotText;
+      effectiveShotBreakdown(group);
     const englishInstruction = await translatePromptForGeneration(instruction);
 
     // 2026/06:跟 generateMangaStoryboardForGroup 一致 —— 用各 shot 有效角色并集 +
@@ -8587,8 +8591,9 @@ function WorkspacePage() {
           referenceImageUrl: current.url,
           userInstruction: englishInstruction,
           projectStyle: projectVisualStyle,
-          groupLabel: group.plotText?.slice(0, 60),
-          plotText: editablePlot || effectivePlotText(group) || "(无剧情摘要)",
+          groupLabel: effectivePlotText(group).slice(0, 60),
+          // 服务端字段上限为 2000；界面和工作区仍保留完整的用户描述。
+          plotText: editablePlot.slice(0, 2000) || "(无剧情摘要)",
           scene,
           characters,
           shots,
@@ -8662,7 +8667,15 @@ function WorkspacePage() {
         setData((currentData) => ({
           ...currentData,
           storyboardGroups: currentData.storyboardGroups.map((item) =>
-            item.id === groupId ? { ...item, plotText: editablePlot } : item,
+            item.id === groupId
+              ? {
+                  ...item,
+                  // 详情页改提示词后，同步回分镜描述的唯一优先来源；否则
+                  // shotBreakdownText 会继续覆盖刚更新的 plotText。
+                  plotText: editablePlot,
+                  shotBreakdownText: editablePlot,
+                }
+              : item,
           ),
         }));
         // 不能在成功后重置编辑器，否则 @ mention 会退化为普通文本并丢失高亮。
@@ -15564,7 +15577,7 @@ function WorkspacePage() {
                 "剧情",
                 "场景",
                 "风格",
-              ]) || group.plotText
+              ]) || effectiveShotBreakdown(group)
             : "";
           // 故事板的 @ 引用只允许使用已建立的角色、场景、道具视觉资产；
           // 不再把低清/风格不同的已生成分镜图反哺给故事板。
