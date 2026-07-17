@@ -409,8 +409,8 @@ describe("callPixflowImage — gpt-image-* OpenAI 兼容路由参数策略", () 
 describe("Pixflow 源码常量快照 —— 防止超时/分组策略悄悄被改回", () => {
   const src = readFileSync(resolve(__dirname, "../pixflow.functions.ts"), "utf-8");
 
-  it("图像请求超时常量保持 400_000ms(文档建议 ~400s)", () => {
-    expect(src).toMatch(/IMAGE_REQUEST_TIMEOUT_MS\s*=\s*400_000/);
+  it("图像请求超时常量保持 600_000ms（6 分钟）", () => {
+    expect(src).toMatch(/IMAGE_REQUEST_TIMEOUT_MS\s*=\s*600_000/);
   });
 
   it("gpt-image-* 分支显式下发 quality 与 response_format=url", () => {

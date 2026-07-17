@@ -14,7 +14,7 @@
 //   4) regenerateStoryboardShot —— 多图融合 I2I(分镜按意见重生,图1 = 当前镜头)
 //
 //  所有调用走统一 helper `callSeedreamImages`,带 429 指数退避(1s/2s/4s)
-//  + 50s AbortController timeout。返回 {url, error, model, size}。
+//  + 整个生成任务 6 分钟的 AbortController 截止时间。返回 {url, error, model, size}。
 //
 //  Seedream 没有独立的 negative_prompt 字段,所以把 negative 当作一段
 //  "FORBIDDEN: ..." 块追加到 positive prompt 末尾。
@@ -28,14 +28,12 @@ import { buildStyleLock, type VisualStyleSpec } from "./visualStyles";
 const DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
 const DEFAULT_MODEL = "doubao-seedream-5-0-260128";
 const RETRY_BACKOFF_MS = [1_000, 2_000, 4_000] as const;
-// 2026/06 修复:50_000 经常被 Seedream 5.0 多参考图融合 + 高分辨率 2K
-// 出图流程超时报错。先提到 120s,后又因新 multi-asset(3 区域 + 13 子图概念)
-// 和 16:9 故事板(6 section, ~3500 字 prompt)单图渲染负担更重,
-// **2026/06 二次提到 180s**(3 分钟)给单次重活兜底。
-// 极端情况 3+ 分钟的请求仍可能超,但 retry 1s/2s/4s 退避 + 用户体验上更平滑。
-// 复杂的多参考图/4K 故事板由上游决定完成时间；应用层不再以 180 秒提前中断。
-const REQUEST_TIMEOUT_MS = 600_000;
-const I2I_TIMEOUT_MS = 600_000;
+// 角色四视图、多维资产、局部修改、场景/道具重生等都走这条链路。
+// 限制的是整个任务（含 429/5xx 重试和退避），而不是每一次重试各给 6 分钟。
+export const IMAGE_GENERATION_TIMEOUT_MS = 600_000;
+export const IMAGE_GENERATION_TIMEOUT_ERROR = "生成超时（超过 6 分钟）";
+const REQUEST_TIMEOUT_MS = IMAGE_GENERATION_TIMEOUT_MS;
+const I2I_TIMEOUT_MS = IMAGE_GENERATION_TIMEOUT_MS;
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 // ---------- 工具函数 ----------
@@ -148,68 +146,88 @@ async function callSeedreamImages(
   // 但某处被 string() 强制转了 → 这就是真根因。
   const envDebug = `[env: apiKey=${apiKey ? apiKey.slice(0, 12) + "..." : "UNDEFINED"}, baseUrl=${baseUrl}, model=${body.model}]`;
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   let lastErr: string | null = null;
-  for (let attempt = 0; attempt <= RETRY_BACKOFF_MS.length; attempt++) {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const res = await fetch(`${baseUrl}/images/generations`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify({
-          // Seedream 全部必填默认值
-          sequential_image_generation: "disabled",
-          response_format: "url",
-          stream: false,
-          watermark: true,
-          ...body,
-        }),
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-      if (res.ok) {
-        const json = (await res.json().catch(() => ({}))) as {
-          data?: Array<{ url?: string; size?: string }>;
-          error?: { code?: string; message?: string };
-          message?: string;
+  try {
+    for (let attempt = 0; attempt <= RETRY_BACKOFF_MS.length; attempt++) {
+      if (controller.signal.aborted) {
+        return {
+          url: "",
+          error: `[seedream] ${IMAGE_GENERATION_TIMEOUT_ERROR}`,
+          model: body.model,
         };
-        const first = json.data?.[0];
-        const url = first?.url;
-        if (!url) {
-          return {
-            url: "",
-            error: `[seedream] ${body.model} 未返回 URL: ${json.error?.message || json.message || "no data"}`,
-            model: body.model,
-            size: first?.size,
+      }
+      try {
+        const res = await fetch(`${baseUrl}/images/generations`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            // Seedream 全部必填默认值
+            sequential_image_generation: "disabled",
+            response_format: "url",
+            stream: false,
+            watermark: true,
+            ...body,
+          }),
+          signal: controller.signal,
+        });
+        if (res.ok) {
+          const json = (await res.json().catch(() => ({}))) as {
+            data?: Array<{ url?: string; size?: string }>;
+            error?: { code?: string; message?: string };
+            message?: string;
           };
+          const first = json.data?.[0];
+          const url = first?.url;
+          if (!url) {
+            return {
+              url: "",
+              error: `[seedream] ${body.model} 未返回 URL: ${json.error?.message || json.message || "no data"}`,
+              model: body.model,
+              size: first?.size,
+            };
+          }
+          return { url, error: null, model: body.model, size: first.size };
         }
-        return { url, error: null, model: body.model, size: first.size };
+        const text = await res.text().catch(() => "");
+        lastErr = `[seedream] ${body.model} ${res.status}: ${text.slice(0, 300)} ${envDebug}`;
+        // 429 / 5xx 才重试,其他(400 鉴权 / 401 / 402 计费)立即返回
+        const isRetryable = res.status === 429 || res.status >= 500;
+        if (!isRetryable) {
+          return { url: "", error: lastErr, model: body.model };
+        }
+      } catch (e) {
+        const msg =
+          e instanceof Error
+            ? e.name === "AbortError"
+              ? IMAGE_GENERATION_TIMEOUT_ERROR
+              : e.message
+            : "fetch failed";
+        lastErr = `[seedream] ${body.model} network: ${msg}`;
       }
-      const text = await res.text().catch(() => "");
-      lastErr = `[seedream] ${body.model} ${res.status}: ${text.slice(0, 300)} ${envDebug}`;
-      // 429 / 5xx 才重试,其他(400 鉴权 / 401 / 402 计费)立即返回
-      const isRetryable = res.status === 429 || res.status >= 500;
-      if (!isRetryable) {
-        return { url: "", error: lastErr, model: body.model };
+      if (controller.signal.aborted) {
+        return {
+          url: "",
+          error: `[seedream] ${IMAGE_GENERATION_TIMEOUT_ERROR}`,
+          model: body.model,
+        };
       }
-    } catch (e) {
-      clearTimeout(timeout);
-      const msg =
-        e instanceof Error ? (e.name === "AbortError" ? "timed out" : e.message) : "fetch failed";
-      lastErr = `[seedream] ${body.model} network: ${msg}`;
+      if (attempt < RETRY_BACKOFF_MS.length) {
+        await sleep(RETRY_BACKOFF_MS[attempt] ?? 1_000);
+      }
     }
-    if (attempt < RETRY_BACKOFF_MS.length) {
-      await sleep(RETRY_BACKOFF_MS[attempt] ?? 1_000);
-    }
+    return {
+      url: "",
+      error: (lastErr || `[seedream] ${body.model} failed after retries`) + " " + envDebug,
+      model: body.model,
+    };
+  } finally {
+    clearTimeout(timeout);
   }
-  return {
-    url: "",
-    error: (lastErr || `[seedream] ${body.model} failed after retries`) + " " + envDebug,
-    model: body.model,
-  };
 }
 
 // ====================================================================
@@ -1213,8 +1231,8 @@ export const regenerateCharacterLook = createServerFn({ method: "POST" })
       if (/401/i.test(result.error || ""))
         return { ok: false as const, error: "Seedream auth failed (401)" };
       if (/402/i.test(result.error || "")) return { ok: false as const, error: "no_credits" };
-      if (/timed out/i.test(result.error || ""))
-        return { ok: false as const, error: "AI 处理超时(>180s),请重试或换更简单的修改" };
+      if (/timed out|生成超时/i.test(result.error || ""))
+        return { ok: false as const, error: IMAGE_GENERATION_TIMEOUT_ERROR };
       return { ok: false as const, error: result.error || "Seedream 未返回图片" };
     }
     return { ok: true as const, url: result.url, model: result.model };
@@ -1651,8 +1669,8 @@ export const generateStoryboardShotImage = createServerFn({ method: "POST" })
       if (/401/i.test(result.error || ""))
         return { ok: false as const, error: "Seedream auth failed (401)" };
       if (/402/i.test(result.error || "")) return { ok: false as const, error: "no_credits" };
-      if (/timed out/i.test(result.error || ""))
-        return { ok: false as const, error: "AI 处理超时(>180s)" };
+      if (/timed out|生成超时/i.test(result.error || ""))
+        return { ok: false as const, error: IMAGE_GENERATION_TIMEOUT_ERROR };
       return { ok: false as const, error: result.error || "Seedream 未返回图片" };
     }
     return { ok: true as const, url: result.url, model: result.model };
@@ -2019,8 +2037,8 @@ export const regenerateStoryboardShot = createServerFn({ method: "POST" })
       if (/401/i.test(result.error || ""))
         return { ok: false as const, error: "Seedream auth failed (401)" };
       if (/402/i.test(result.error || "")) return { ok: false as const, error: "no_credits" };
-      if (/timed out/i.test(result.error || ""))
-        return { ok: false as const, error: "AI 处理超时(>180s)" };
+      if (/timed out|生成超时/i.test(result.error || ""))
+        return { ok: false as const, error: IMAGE_GENERATION_TIMEOUT_ERROR };
       return { ok: false as const, error: result.error || "Seedream 未返回图片" };
     }
     return { ok: true as const, url: result.url, model: result.model };
@@ -2614,8 +2632,8 @@ export const generateStoryboardPitchDeck = createServerFn({ method: "POST" })
       if (/401/i.test(result.error || ""))
         return { ok: false as const, error: "Seedream auth failed (401)" };
       if (/402/i.test(result.error || "")) return { ok: false as const, error: "no_credits" };
-      if (/timed out/i.test(result.error || ""))
-        return { ok: false as const, error: "AI 处理超时(>180s),设定稿内容多,建议重试" };
+      if (/timed out|生成超时/i.test(result.error || ""))
+        return { ok: false as const, error: IMAGE_GENERATION_TIMEOUT_ERROR };
       return { ok: false as const, error: result.error || "Seedream 未返回图片" };
     }
     return { ok: true as const, url: result.url, model: result.model };
@@ -2924,8 +2942,8 @@ export const regenerateStoryboardPitchDeck = createServerFn({ method: "POST" })
       if (/401/i.test(result.error || ""))
         return { ok: false as const, error: "Seedream auth failed (401)" };
       if (/402/i.test(result.error || "")) return { ok: false as const, error: "no_credits" };
-      if (/timed out/i.test(result.error || ""))
-        return { ok: false as const, error: "AI 处理超时(>180s)" };
+      if (/timed out|生成超时/i.test(result.error || ""))
+        return { ok: false as const, error: IMAGE_GENERATION_TIMEOUT_ERROR };
       return { ok: false as const, error: result.error || "Seedream 未返回图片" };
     }
     return { ok: true as const, url: result.url, model: result.model };
@@ -3610,8 +3628,8 @@ export const regenerateSceneImage = createServerFn({ method: "POST" })
       if (/401/i.test(result.error || ""))
         return { ok: false as const, error: "Seedream auth failed (401)" };
       if (/402/i.test(result.error || "")) return { ok: false as const, error: "no_credits" };
-      if (/timed out/i.test(result.error || ""))
-        return { ok: false as const, error: "AI 处理超时(>180s),请重试" };
+      if (/timed out|生成超时/i.test(result.error || ""))
+        return { ok: false as const, error: IMAGE_GENERATION_TIMEOUT_ERROR };
       return { ok: false as const, error: result.error || "Seedream 未返回图片" };
     }
     return { ok: true as const, url: result.url, model: result.model };

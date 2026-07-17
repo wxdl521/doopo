@@ -119,6 +119,8 @@ function dashScopeAttempts(requested: string) {
 
 // 429 / 5xx 退避序列(指数退避,3 次后放弃)
 const RETRY_BACKOFF_MS = [1_000, 2_000, 4_000] as const;
+const IMAGE_GENERATION_TIMEOUT_MS = 600_000;
+const IMAGE_GENERATION_TIMEOUT_ERROR = "生成超时（超过 6 分钟）";
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 async function callQwenSync(
@@ -129,7 +131,7 @@ async function callQwenSync(
   negativePrompt?: string,
 ) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 50_000);
+  const timeout = setTimeout(() => controller.abort(), IMAGE_GENERATION_TIMEOUT_MS);
   const res = await fetch(QWEN_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
@@ -193,6 +195,9 @@ async function callQwenAsync(
           ...(negativePrompt ? { negative_prompt: negativePrompt } : {}),
         },
       };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), IMAGE_GENERATION_TIMEOUT_MS);
+  const deadline = Date.now() + IMAGE_GENERATION_TIMEOUT_MS;
 
   // Retry create on 429 (DashScope per-account RPM is very low for qwen-image-max).
   let create: Response | null = null;
@@ -207,9 +212,16 @@ async function callQwenAsync(
           "X-DashScope-Async": "enable",
         },
         body: JSON.stringify(body),
+        signal: controller.signal,
       });
     } catch (e) {
-      lastBody = e instanceof Error ? e.message : "network error";
+      clearTimeout(timeout);
+      lastBody =
+        e instanceof Error && e.name === "AbortError"
+          ? IMAGE_GENERATION_TIMEOUT_ERROR
+          : e instanceof Error
+            ? e.message
+            : "network error";
       return { url: "", error: `[${model}] network: ${lastBody.slice(0, 200)}` };
     }
     if (create.ok) break;
@@ -218,6 +230,7 @@ async function callQwenAsync(
     await new Promise((r) => setTimeout(r, 4000 + attempt * 4000));
   }
   if (!create || !create.ok) {
+    clearTimeout(timeout);
     return {
       url: "",
       error: `[${model}] create ${create?.status ?? 0}: ${lastBody.slice(0, 200)}`,
@@ -225,35 +238,55 @@ async function callQwenAsync(
   }
   const cj = (await create.json()) as { output?: { task_id?: string } };
   const taskId: string = cj.output?.task_id || "";
-  if (!taskId) return { url: "", error: `[${model}] missing task_id` };
-  const deadline = Date.now() + 50_000;
-  await new Promise((r) => setTimeout(r, 2000));
-  while (Date.now() < deadline) {
-    const q = await fetch(QWEN_TASK_GET + taskId, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-    });
-    if (!q.ok) {
-      await new Promise((r) => setTimeout(r, 3000));
-      continue;
-    }
-    const qj = (await q.json()) as {
-      output?: { task_status?: string; results?: Array<{ url?: string }>; message?: string };
-      message?: string;
-    };
-    const status: string = qj.output?.task_status || "";
-    if (status === "SUCCEEDED") {
-      const url: string = qj.output?.results?.[0]?.url || "";
-      return url ? { url, error: null as string | null } : { url: "", error: `[${model}] no url` };
-    }
-    if (status === "FAILED" || status === "CANCELED" || status === "UNKNOWN") {
-      return {
-        url: "",
-        error: `[${model}] ${status}: ${qj.output?.message || qj.message || ""}`,
-      };
-    }
-    await new Promise((r) => setTimeout(r, 3000));
+  if (!taskId) {
+    clearTimeout(timeout);
+    return { url: "", error: `[${model}] missing task_id` };
   }
-  return { url: "", error: `[${model}] timed out (task ${taskId} still running)` };
+  try {
+    await new Promise((r) => setTimeout(r, 2000));
+    while (Date.now() < deadline && !controller.signal.aborted) {
+      const q = await fetch(QWEN_TASK_GET + taskId, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: controller.signal,
+      });
+      if (!q.ok) {
+        await new Promise((r) => setTimeout(r, 3000));
+        continue;
+      }
+      const qj = (await q.json()) as {
+        output?: { task_status?: string; results?: Array<{ url?: string }>; message?: string };
+        message?: string;
+      };
+      const status: string = qj.output?.task_status || "";
+      if (status === "SUCCEEDED") {
+        const url: string = qj.output?.results?.[0]?.url || "";
+        return url
+          ? { url, error: null as string | null }
+          : { url: "", error: `[${model}] no url` };
+      }
+      if (status === "FAILED" || status === "CANCELED" || status === "UNKNOWN") {
+        return {
+          url: "",
+          error: `[${model}] ${status}: ${qj.output?.message || qj.message || ""}`,
+        };
+      }
+      await new Promise((r) => setTimeout(r, 3000));
+    }
+    return {
+      url: "",
+      error: `[${model}] ${IMAGE_GENERATION_TIMEOUT_ERROR} (task ${taskId} still running)`,
+    };
+  } catch (e) {
+    return {
+      url: "",
+      error:
+        e instanceof Error && e.name === "AbortError"
+          ? `[${model}] ${IMAGE_GENERATION_TIMEOUT_ERROR}`
+          : `[${model}] network: ${e instanceof Error ? e.message : "fetch failed"}`,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 // ====================================================================
@@ -286,7 +319,7 @@ async function callQwenI2ISync(
     };
   }
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 180_000);
+  const timeout = setTimeout(() => controller.abort(), IMAGE_GENERATION_TIMEOUT_MS);
   try {
     const res = await fetch(QWEN_ENDPOINT, {
       method: "POST",
@@ -334,7 +367,10 @@ async function callQwenI2ISync(
     clearTimeout(timeout);
     return {
       url: "",
-      error: `[${model}] network: ${e instanceof Error ? e.message : "fetch failed"}`,
+      error:
+        e instanceof Error && e.name === "AbortError"
+          ? `[${model}] ${IMAGE_GENERATION_TIMEOUT_ERROR}`
+          : `[${model}] network: ${e instanceof Error ? e.message : "fetch failed"}`,
     };
   }
 }
@@ -354,7 +390,7 @@ async function callOpenRouterImage(
     return { url: "", error: `[${model}] I2I 至少需要 1 张参考图` };
   }
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 180_000);
+  const timeout = setTimeout(() => controller.abort(), IMAGE_GENERATION_TIMEOUT_MS);
   try {
     const res = await fetch(OPENROUTER_IMAGE_ENDPOINT, {
       method: "POST",
@@ -422,7 +458,10 @@ async function callOpenRouterImage(
     clearTimeout(timeout);
     return {
       url: "",
-      error: `[${model}] network: ${e instanceof Error ? e.message : "fetch failed"}`,
+      error:
+        e instanceof Error && e.name === "AbortError"
+          ? `[${model}] ${IMAGE_GENERATION_TIMEOUT_ERROR}`
+          : `[${model}] network: ${e instanceof Error ? e.message : "fetch failed"}`,
     };
   }
 }
@@ -593,7 +632,11 @@ async function callPixflowImage(
   } catch (e) {
     clearTimeout(timeout);
     const msg =
-      e instanceof Error ? (e.name === "AbortError" ? "timed out" : e.message) : "fetch failed";
+      e instanceof Error
+        ? e.name === "AbortError"
+          ? IMAGE_GENERATION_TIMEOUT_ERROR
+          : e.message
+        : "fetch failed";
     return {
       url: "",
       error: `[${useModel}@pixflow] network: ${msg}`,
@@ -762,7 +805,10 @@ export const generateImage = createServerFn({ method: "POST" })
       } catch (e) {
         return {
           url: "",
-          error: `[${m}] network: ${e instanceof Error ? e.message : "fetch failed"}`,
+          error:
+            e instanceof Error && e.name === "AbortError"
+              ? `[${m}] ${IMAGE_GENERATION_TIMEOUT_ERROR}`
+              : `[${m}] network: ${e instanceof Error ? e.message : "fetch failed"}`,
         };
       }
     };
