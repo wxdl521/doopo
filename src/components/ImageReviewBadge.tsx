@@ -13,20 +13,16 @@ export function ImageReviewBadge({
   status?: ImageReviewStatus;
   error?: string;
   onRequestReview?: () => void;
-  /** 当前视频渠道未接入可查询的素材库时，仍允许点击说明原因。 */
+  /** 当前视频渠道未接入可查询的素材库时，隐藏入库入口。 */
   unsupported?: boolean;
   unsupportedMessage?: string;
   position?: "bottom-left" | "bottom-right";
 }) {
+  // 只有筷子科技和 TopenRouter 接入了图片素材库；其他视频模型不显示入口。
+  if (unsupported) return null;
+
   const content =
-    unsupported
-      ? {
-          label: "暂不支持入库",
-          className: "border-slate-300/40 bg-black/70 text-white hover:bg-black/85",
-          icon: <Upload size={11} />,
-          canRequest: true,
-        }
-      : !status
+    !status
       ? {
           label: "未入库",
           className: "border-slate-300/40 bg-black/70 text-white hover:bg-black/85",

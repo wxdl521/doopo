@@ -10469,7 +10469,7 @@ function WorkspacePage() {
                                           e.stopPropagation();
                                           handleUploadImage("scene", s.id, s.id);
                                         }}
-                                        className="absolute bottom-8 right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] hover:bg-accent hover:text-accent-foreground transition backdrop-blur-sm"
+                                        className={`absolute ${videoAssetLibrarySupport.supported ? "bottom-8" : "bottom-1.5"} right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] hover:bg-accent hover:text-accent-foreground transition backdrop-blur-sm`}
                                         title="上传本地图片覆盖"
                                       >
                                         <Upload size={10} /> 上传
@@ -10744,7 +10744,7 @@ function WorkspacePage() {
                                           e.stopPropagation();
                                           handleUploadImage("prop", p.id, p.id);
                                         }}
-                                        className="absolute bottom-8 right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] hover:bg-accent hover:text-accent-foreground transition backdrop-blur-sm"
+                                        className={`absolute ${videoAssetLibrarySupport.supported ? "bottom-8" : "bottom-1.5"} right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] hover:bg-accent hover:text-accent-foreground transition backdrop-blur-sm`}
                                         title="上传本地图片覆盖"
                                       >
                                         <Upload size={10} /> 上传
@@ -11161,7 +11161,7 @@ function WorkspacePage() {
                                     >
                                       <BookmarkPlus size={10} /> 保存到资产
                                     </button>
-                                    {/* 上传按钮:没图时显示在生成按钮下方,有图时显示在右下角 */}
+                                    {/* 有素材库时，上传位于右下角“入库”按钮上方；否则占右下角。 */}
                                     {!hasImg ? (
                                       <button
                                         type="button"
@@ -11181,7 +11181,7 @@ function WorkspacePage() {
                                           e.stopPropagation();
                                           handleUploadImage("character", c.id, imageKey);
                                         }}
-                                        className="absolute bottom-8 right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] hover:bg-accent hover:text-accent-foreground transition backdrop-blur-sm"
+                                        className={`absolute ${videoAssetLibrarySupport.supported ? "bottom-8" : "bottom-1.5"} right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] hover:bg-accent hover:text-accent-foreground transition backdrop-blur-sm`}
                                         title="上传本地图片覆盖"
                                       >
                                         <Upload size={10} /> 上传
@@ -12380,6 +12380,7 @@ function WorkspacePage() {
                                   error={getImageReview(getActiveStoryboard(g.id)!.url)?.error}
                                   unsupported={!videoAssetLibrarySupport.supported}
                                   unsupportedMessage={videoAssetLibrarySupport.message}
+                                  position="bottom-right"
                                   onRequestReview={() =>
                                     requestImageReview(
                                       getActiveStoryboard(g.id)!.url,
@@ -12399,7 +12400,7 @@ function WorkspacePage() {
                                 <button
                                   type="button"
                                   onClick={() => handleUploadImage("storyboard", g.id, g.id)}
-                                  className="absolute bottom-1.5 right-1.5 p-1 rounded bg-black/60 text-white opacity-0 group-hover:opacity-100 transition hover:bg-black/80"
+                                  className={`absolute ${videoAssetLibrarySupport.supported ? "bottom-8" : "bottom-1.5"} right-1.5 p-1 rounded bg-black/60 text-white opacity-0 group-hover:opacity-100 transition hover:bg-black/80`}
                                   title="上传图片"
                                 >
                                   <Upload size={12} />
