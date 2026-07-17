@@ -700,7 +700,7 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
     // ====================================================================
     const positive = [
       `[MISSION] Generate a complete CHARACTER MULTI-ASSET SHEET (角色多维资产图) for "${cardTitle}" — a ${data.characterRoleLabel}, age ${data.characterAge}. ONE large image, PURE WHITE BACKGROUND (#FFFFFF). The image is divided into SIX clearly separated sections, top-to-bottom, with thin neutral dividers between sections. Illustration-grade, clean composition, like a page from an official character design document handed to an animation team or game studio.`,
-      `CANVAS: Use the supplied HIGH-RESOLUTION 3072x3072 square design-sheet canvas. The wider 3072px canvas is required for four full-body views, six expressions, and four poses to remain legible. Use the full page width and never squeeze, crop, overlap, or replace lower-body anatomy to fit the sheet.`,
+      `CANVAS: Use the supplied HIGH-RESOLUTION 2688x3072 near-portrait design-sheet canvas (7:8). It is slightly narrower than a square sheet while retaining enough width for four full-body views, six expressions, and four poses to remain legible. Use the full page width and never squeeze, crop, overlap, or replace lower-body anatomy to fit the sheet.`,
 
       `You are given TWO sources of truth and BOTH must agree:`,
       `  (A) the attached REFERENCE IMAGE — the current approved look and complete visible anatomy of "${cardTitle}", and`,
@@ -871,7 +871,8 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
       "main portrait too small, main portrait same size as thumbnails, no clear visual centerpiece, hero portrait demoted to side thumbnail",
       "combat poses for a peaceful character, scholarly poses for a child, mismatched poses for character personality",
     ].join(", ");
-    return { positive, negative, size: "3072x3072" };
+    // 略收窄角色设定表，避免正方形画布横向留白过多；2688×3072 仍满足各模型的高分辨率与 16 的倍数要求。
+    return { positive, negative, size: "2688x3072" };
   }
 
   // ---- 默认 'modify' ----

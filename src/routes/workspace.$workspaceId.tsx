@@ -407,7 +407,29 @@ type PromptEditorBlock = {
   id: string;
   label: string;
   source: string;
+  /** 不再包一层【标题】，直接作为紧凑的正文行展示。 */
+  inline?: boolean;
+  /** 翻译服务不可用时使用的中文展示文案；原 source 仍用于回填完整 prompt。 */
+  displayFallback?: string;
 };
+
+const CHARACTER_MULTI_ASSET_SECTIONS_ZH = [
+  "【模块0：简介条】顶部文字栏：角色名称、角色定位与年龄、1—2句中文性格简介；只放文字，不放插图。",
+  "【模块1：大型主肖像】一张大型主视觉肖像，半身至四分之三身，面向镜头；完整呈现脸部、发型、服装、标志性配饰及所有身份特征；纯白背景。",
+  "【模块2：角色四视图】并排展示正视图、左侧视图、右侧视图、背视图；全身正交视图，比例、服装、身体状态和特殊特征完全一致；下方标注中文名称。",
+  "【模块3：表情表】恰好6张正面头肩近景：开心、生气、困倦、惊讶、悲伤、平静；仅表情变化，脸型、发型、肤色、光线和特殊特征保持一致。",
+  "【模块4：动作姿势】恰好4个完整全身动态姿势，采用宽松2×2布局；姿势符合角色个性与身体条件，头顶和最低点保留安全边距。",
+  "【模块5：配饰与道具图标】横向展示4—8个独立小图标；仅展示角色实际携带或穿戴的配饰、武器、工具或伙伴，均使用中文标注。",
+].join("\n");
+
+const STYLE_FINGERPRINT_ZH = [
+  "风格指纹：",
+  "• 渲染：现代动漫主视觉风格，鲜艳的赛璐珞着色配合柔和渐变填充，锐利干净的线条艺术，大而有神的眼睛，光泽感发丝高光",
+  "• 光照：平面动漫风格光照，头发和肩部带有强烈的轮廓光，柔和的赛璐珞式阴影，无照片级真实全局光照",
+  "• 色彩：鲜艳的动漫调色板，饱和但不刺眼，渐变天空背景，头发/眼睛/服装具有明确的色彩分区",
+  "• 镜头：二维构图，平视或微仰视角度，动态但不失真的姿态，干净的负空间，无电影级景深模糊",
+  "• 材质：光滑无毛孔的平面肌肤，带有锐利高光条纹的光泽头发，布料以平面色块配合简单阴影呈现",
+].join("\n");
 
 type SceneDetailDraft = {
   location: string;
@@ -1521,17 +1543,26 @@ function WorkspacePage() {
       {
         id: "sections",
         label: "版块内容",
-        source: promptRange(raw, /^\[SECTION 0\b/m, /^\[PROJECT VISUAL STYLE\b/m),
+        source: promptRange(raw, /^\[SECTION 0\b/m, /^\[CRITICAL RULES\b/m),
+        inline: true,
       },
       {
         id: "nationality",
         label: "角色国籍",
-        source: promptRange(raw, /^角色国籍：.*$/m),
+        // 只能取这一行；不能用 promptRange，否则会把后面的风格/身份块一并带入。
+        source: raw.match(/^角色国籍：.*$/m)?.[0] ?? "",
+        inline: true,
       },
       {
         id: "style",
-        label: "风格名称与风格指纹",
+        label: "风格",
         source: promptRange(raw, /^Style name:[\s\S]*?^【AVOID/m, /^【AVOID/m),
+        inline: true,
+        displayFallback:
+          "风格：" +
+          resolveProjectStyle(projectVisualStyle).label +
+          "\n" +
+          STYLE_FINGERPRINT_ZH,
       },
       {
         id: "identity",
@@ -1541,32 +1572,75 @@ function WorkspacePage() {
       {
         id: "request",
         label: "用户请求",
-        source: promptRange(raw, /^\[USER REQUEST\]/m, /^\[FINAL CHECKLIST\]/m),
+        // 标题由界面固定渲染；只编辑正文，回填时保留完整 prompt 原有的 [USER REQUEST] 标记。
+        source: promptRange(raw, /^\[USER REQUEST\]/m, /^\[FINAL CHECKLIST\]/m).replace(
+          /^\[USER REQUEST\]\s*\n?/,
+          "",
+        ),
       },
     ].filter((block) => block.source);
+  }
+
+  function characterPresetEditorBlocksForDisplay(
+    raw: string,
+    c: GenCharacter,
+    lookId: string | null,
+  ): PromptEditorBlock[] {
+    const look = lookId == null ? null : (c.looks?.find((item) => item.id === lookId) ?? null);
+    const style = resolveProjectStyle(projectVisualStyle).label;
+    return characterPresetEditorBlocks(raw).map((block) => {
+      if (block.id === "sections") {
+        return { ...block, displayFallback: CHARACTER_MULTI_ASSET_SECTIONS_ZH };
+      }
+      if (block.id === "nationality") {
+        return { ...block, displayFallback: "角色国籍：" + characterNationality };
+      }
+      if (block.id === "style") {
+        return {
+          ...block,
+          displayFallback:
+            "风格：" +
+            style +
+            "\n" +
+            STYLE_FINGERPRINT_ZH,
+        };
+      }
+      if (block.id === "identity") {
+        return {
+          ...block,
+          displayFallback: [
+            "角色名称：" + c.name + "（" + (c.roleLabel || "角色") + "，年龄 " + c.age + "）",
+            "面部：" + (look?.faceDescription || c.faceDescription || "以参考图为准"),
+            "身材：" + (look?.bodyDescription || c.bodyDescription || "以参考图为准"),
+            "服装：" + (look?.clothingDescription || c.clothingDescription || "以参考图为准"),
+            "配色：" + (c.palette?.join(", ") || "以参考图为准"),
+          ].join("\n"),
+        };
+      }
+      return {
+        ...block,
+        displayFallback: "按当前选中的参考图、角色身份与以上设定执行；只修改用户明确编辑的内容。",
+      };
+    });
   }
 
   function sceneMultiViewEditorBlocks(raw: string): PromptEditorBlock[] {
     return [
       {
         id: "style",
-        label: "风格名称与风格指纹",
+        label: "风格",
         source: promptRange(raw, /^Style name:[\s\S]*?^【AVOID/m, /^【AVOID/m),
-      },
-      {
-        id: "task",
-        label: "任务",
-        source: promptRange(raw, /^\[任务\][\s\S]*?(?=^\[地点\])/m, /^\[地点\]/m),
+        inline: true,
+        displayFallback:
+          "风格：" +
+          resolveProjectStyle(projectVisualStyle).label +
+          "\n" +
+          STYLE_FINGERPRINT_ZH,
       },
       {
         id: "locationTime",
         label: "地点与时段",
-        source: promptRange(raw, /^\[地点\][\s\S]*?(?=^\[画布\])/m, /^\[画布\]/m),
-      },
-      {
-        id: "canvas",
-        label: "画布",
-        source: promptRange(raw, /^\[画布\][\s\S]*?(?=^【参考图蓝图】)/m, /^【参考图蓝图】/m),
+        source: promptRange(raw, /^\[地点\][\s\S]*?(?=^\[环境语义\])/m, /^\[环境语义\]/m),
       },
       {
         id: "panels",
@@ -1577,9 +1651,43 @@ function WorkspacePage() {
   }
 
   function formatPromptEditorBlocks(blocks: PromptEditorBlock[], values?: string[]): string {
-    return blocks
-      .map((block, index) => "【" + block.label + "】\n" + (values?.[index] ?? block.source))
-      .join("\n\n");
+    const compact = blocks
+      .map((block, index) =>
+        block.inline
+          ? values?.[index] ?? block.source
+          : "【" + block.label + "】\n" + (values?.[index] ?? block.source),
+      )
+      .join("\n")
+      .replace(/\n[ \t]*\n+/g, "\n")
+      .trim();
+    // 历史 prompt 曾被完整模板嵌套，翻译后会出现完全相同的行；展示层只保留第一次。
+    const seen = new Set<string>();
+    return compact
+      .split("\n")
+      .filter((line) => {
+        const key = line.trim();
+        if (!key || /^【.+】$/.test(key)) return true;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .join("\n");
+  }
+
+  /** 展示层绝不泄露内部验收/禁止词；历史上被嵌套的整段 prompt 也在此清理。 */
+  function cleanPromptEditorBlockForDisplay(source: string): string {
+    return source
+      .replace(/^\[CRITICAL RULES\b[\s\S]*?(?=^\[PROJECT VISUAL STYLE\b|^\[CHARACTER IDENTITY\b|^\[USER REQUEST\]|^\[FINAL CHECKLIST\]|^FORBIDDEN\b|$)/gm, "")
+      .replace(/^【AVOID —— 严格禁止[\s\S]*$/gm, "")
+      .replace(/^\[STYLE LOCK[^\]]*\]\s*$/gm, "")
+      .replace(/^\[CHARACTER IDENTITY[^\]]*\]\s*$/gm, "")
+      .replace(/^===.*===\s*$/gm, "")
+      .replace(/^FORBIDDEN \(avoid these\):[\s\S]*$/gm, "")
+      .replace(/^\[FINAL CHECKLIST\][\s\S]*$/gm, "")
+      .replace(/^【HARD CONSTRAINT】[\s\S]*?(?=^【|\[|$)/gm, "")
+      .replace(/^NOTE:\s*.*$/gm, "")
+      .replace(/\n[ \t]*\n+/g, "\n")
+      .trim();
   }
 
   function parsePromptEditorBlocks(input: string, blocks: PromptEditorBlock[]): Record<string, string> {
@@ -1587,6 +1695,27 @@ function WorkspacePage() {
     const heading = new RegExp("^【(" + headings.join("|") + ")】\\s*$", "gm");
     const matches = Array.from(input.matchAll(heading));
     const values: Record<string, string> = {};
+    const inlineBlocks = blocks.filter((block) => block.inline);
+    if (inlineBlocks.length) {
+      const firstHeading = matches[0]?.index ?? input.length;
+      const inlineText = input.slice(0, firstHeading).trim();
+      const nationality = inlineBlocks.find((block) => block.id === "nationality");
+      const sections = inlineBlocks.find((block) => block.id === "sections");
+      const style = inlineBlocks.find((block) => block.id === "style");
+      const nationalityMatch = inlineText.match(/(?:^|\n)(角色国籍：[^\n]*)$/m);
+      const styleIndex = inlineText.search(/(?:^|\n)风格：/m);
+      if (sections) {
+        values[sections.label] = nationalityMatch
+          ? inlineText.slice(0, nationalityMatch.index).trim()
+          : styleIndex >= 0
+            ? inlineText.slice(0, styleIndex).trim()
+            : inlineText;
+      }
+      if (nationality && nationalityMatch) {
+        values[nationality.label] = nationalityMatch[1];
+      }
+      if (style && styleIndex >= 0) values[style.label] = inlineText.slice(styleIndex).trim();
+    }
     for (let index = 0; index < matches.length; index += 1) {
       const match = matches[index];
       const contentStart = (match.index ?? 0) + match[0].length;
@@ -1607,8 +1736,16 @@ function WorkspacePage() {
       try {
         const translated = await Promise.all(
           blocks.map(async (block) => {
-            const result = await callTranslateEditablePrompt({ data: { text: block.source, target: "zh" } });
-            return result.text;
+            const result = await callTranslateEditablePrompt({
+              data: { text: cleanPromptEditorBlockForDisplay(block.source), target: "zh" },
+            });
+            const forceLocalChinese =
+              block.id === "sections" || block.id === "identity" || block.id === "style";
+            return forceLocalChinese && block.displayFallback
+              ? block.displayFallback
+              : result.translated
+                ? result.text
+                : block.displayFallback ?? cleanPromptEditorBlockForDisplay(block.source);
           }),
         );
         if (promptTranslationRequestRef.current[key] === requestId) {
@@ -1616,7 +1753,14 @@ function WorkspacePage() {
         }
       } catch {
         if (promptTranslationRequestRef.current[key] === requestId) {
-          setValue(formatPromptEditorBlocks(blocks));
+          setValue(
+            formatPromptEditorBlocks(
+              blocks,
+              blocks.map(
+                (block) => block.displayFallback ?? cleanPromptEditorBlockForDisplay(block.source),
+              ),
+            ),
+          );
         }
       } finally {
         if (promptTranslationRequestRef.current[key] === requestId) {
@@ -1639,7 +1783,9 @@ function WorkspacePage() {
       const translated = await Promise.all(
         blocks.map(async (block) => {
           const draft = edited[block.label];
-          if (!draft) return block.source;
+          // 只有用户没有保留该版块时才沿用原文；保留标题但清空正文是一次有效编辑，
+          // 必须真实回填为空，不能悄悄把旧内容重新塞回去。
+          if (!Object.prototype.hasOwnProperty.call(edited, block.label)) return block.source;
           const result = await callTranslateEditablePrompt({ data: { text: draft, target: "en" } });
           return result.text;
         }),
@@ -1648,6 +1794,21 @@ function WorkspacePage() {
         (merged, block, index) => merged.replace(block.source, translated[index]),
         rawPrompt,
       );
+    },
+    [callTranslateEditablePrompt],
+  );
+
+  /** 普通资产没有可逐段定位的预设模板时，将最新编辑作为原始 prompt 的最高优先级覆盖项。 */
+  const mergeRawPromptWithLatestEdits = useCallback(
+    async (rawPrompt: string, visiblePrompt: string) => {
+      const result = await callTranslateEditablePrompt({
+        data: { text: visiblePrompt, target: "en" },
+      });
+      // 多次重新生成时只保留最后一次编辑，避免历史编辑不断叠加、互相冲突。
+      const base = rawPrompt
+        .replace(/\n*\[LATEST USER EDITS — T2I\][\s\S]*$/m, "")
+        .trim();
+      return `${base}\n\n[LATEST USER EDITS — T2I]\n${result.text}`;
     },
     [callTranslateEditablePrompt],
   );
@@ -3121,7 +3282,12 @@ function WorkspacePage() {
     return combined;
   }
 
-  async function genSceneImage(s: GenScene, editablePrompt = sceneEditablePrompt(s)) {
+  async function genSceneImage(
+    s: GenScene,
+    editablePrompt = sceneEditablePrompt(s),
+    rawPrompt?: string,
+    promptMode: AssetImagePromptRecord["mode"] = "initial",
+  ) {
     if (queuedSceneIdsRef.current.has(s.id)) return;
     queuedSceneIdsRef.current.add(s.id);
     setQueuedSceneIds((current) => new Set([...current, s.id]));
@@ -3132,7 +3298,7 @@ function WorkspacePage() {
         return next;
       });
       try {
-        await genSceneImageNow(s, editablePrompt);
+        await genSceneImageNow(s, editablePrompt, rawPrompt, promptMode);
       } finally {
         queuedSceneIdsRef.current.delete(s.id);
         setQueuedSceneIds((current) => {
@@ -3148,14 +3314,21 @@ function WorkspacePage() {
     await queued;
   }
 
-  async function genSceneImageNow(s: GenScene, editablePrompt = sceneEditablePrompt(s)) {
+  async function genSceneImageNow(
+    s: GenScene,
+    editablePrompt = sceneEditablePrompt(s),
+    rawPrompt?: string,
+    promptMode: AssetImagePromptRecord["mode"] = "initial",
+  ) {
     setBusyScene(s.id);
     try {
       // 2026/06 修:场景图之前完全没注入项目视觉风格,导致场景 A/B/C
       // 跟角色画风漂移。现在统一走 buildStyleLock,跟角色 / 分镜 /
       // 故事板 / 多维资产共享同一段风格指纹。
       const styleSpec = resolveProjectStyle(projectVisualStyle);
-      const prompt = [
+      // 详情页“重新生成”若来自多视图，则直接重放用户编辑后合并出的完整 prompt；
+      // 这是一条纯 T2I 路径，不携带任何历史图片作为参考。
+      const prompt = rawPrompt?.trim() || [
         buildStyleLock(styleSpec, "scene"),
         `---`,
         `Location: ${s.slug}`,
@@ -3185,14 +3358,21 @@ function WorkspacePage() {
         .filter(Boolean)
         .join("\n");
       const res = await callImage({
-        data: { prompt, negativePrompt: EMPTY_SCENE_NEGATIVE_PROMPT, model: project?.sceneModel },
+        data: {
+          prompt,
+          negativePrompt: rawPrompt?.trim() ? undefined : EMPTY_SCENE_NEGATIVE_PROMPT,
+          model: project?.sceneModel,
+        },
       });
       logImageMeta("workspace.scene", res);
       if (res.url) {
         // 2026/06 修复:直接持久化到 Storage
         const permResult = await persistSceneImage(s, res.url, {
+          // 即使是普通场景，也保存供应商实际收到的文本；详情页下次“重新生成”
+          // 才能以这份文本为底稿，而不是重新拼另一套默认模板。
+          rawPrompt: prompt,
           editablePrompt,
-          mode: "initial",
+          mode: promptMode,
         });
         if (permResult.ok) {
           toast.success(`已生成场景图「${s.slug}」`);
@@ -3608,9 +3788,16 @@ function WorkspacePage() {
 
   async function processCharacter(
     c: GenCharacter,
-    options: { forceT2I?: boolean; targetLookId?: string | null; editablePrompt?: string } = {},
+    options: {
+      forceT2I?: boolean;
+      targetLookId?: string | null;
+      editablePrompt?: string;
+      /** 详情页纯 T2I 重放的完整原始 prompt，不使用任何参考图。 */
+      rawPrompt?: string;
+      promptMode?: CharacterImagePromptRecord["mode"];
+    } = {},
   ) {
-    const { forceT2I = false, targetLookId, editablePrompt } = options;
+    const { forceT2I = false, targetLookId, editablePrompt, rawPrompt, promptMode = "initial" } = options;
     // ===== 入口可观测性 + 防并发(2026/06 排查用)=====
     console.log(
       `[CHAR-AUTOGEN] processCharacter called: id=${c.id} name=${c.name} looks=${(c.looks ?? []).length}`,
@@ -3828,6 +4015,41 @@ function WorkspacePage() {
 
       // ============== 默认 look 走原 T2I 路径(无参考图)==============
       try {
+        // 多维资产 / 四视图在详情页点击“重新生成”时，必须直接使用该图的完整
+        // 原始 prompt（已合并用户本次编辑），而不是退回通用角色首图模板。
+        if (rawPrompt?.trim()) {
+          // 多维资产设定表使用略窄的 7:8 画幅；旧历史 prompt 也在纯 T2I
+          // 重放时同步替换，避免画幅参数与画布文字互相矛盾。
+          const t2iRawPrompt =
+            promptMode === "multi-asset"
+              ? rawPrompt
+                  .trim()
+                  .replace(
+                    /3072x3072 square design-sheet canvas/g,
+                    "2688x3072 near-portrait design-sheet canvas (7:8)",
+                  )
+              : rawPrompt.trim();
+          const res = await callImage({
+            data: {
+              prompt: t2iRawPrompt,
+              model: resolveT2IModel(project?.sceneModel),
+              noFallback: true,
+              size: promptMode === "multi-asset" ? "2688x3072" : undefined,
+            },
+          });
+          logImageMeta("workspace.character", res);
+          if (res.url) {
+            await persistAndSetImage(ls.imageKey, res.url, "character", c.id, "append", {
+              rawPrompt: t2iRawPrompt,
+              editablePrompt: editablePrompt || characterEditablePrompt(c, targetLookId ?? null),
+              mode: promptMode,
+            });
+            toast.success(`已按编辑后的提示词重新生成 ${ls.label === "默认" ? c.name : `${c.name} · ${ls.label}`}`);
+          } else {
+            toast.error(classifyError(res.error, "生成失败"));
+          }
+          continue;
+        }
         // 解析项目视觉风格。每个 look 共享项目风格(项目级美术指导),但只换衣服/身份。
         const styleSpec = resolveProjectStyle(projectVisualStyle);
         const paletteLine = c.palette?.length
@@ -3984,6 +4206,7 @@ function WorkspacePage() {
             c.id,
             forceT2I ? "append" : "overwrite",
             {
+              // 保存实际 T2I prompt，供详情页后续纯文生图重放与编辑覆盖。
               rawPrompt: `${prompt}\n\nFORBIDDEN (avoid these): ${negativePrompt}`,
               editablePrompt: editablePrompt || characterEditablePrompt(c, targetLookId ?? null),
               mode: "initial",
@@ -4473,7 +4696,7 @@ function WorkspacePage() {
     if (isPreset && record?.rawPrompt) {
       await showPromptEditorBlocksInChinese(
         key,
-        characterPresetEditorBlocks(record.rawPrompt),
+        characterPresetEditorBlocksForDisplay(record.rawPrompt, c, lookId),
         setValue,
       );
       return;
@@ -5193,6 +5416,23 @@ function WorkspacePage() {
       return;
     }
     const imageKey = modPanel.imageKey;
+    const history = charImagesRef.current[imageKey] ?? [];
+    const currentUrl = history[selectedGenIdx] ?? history.at(-1);
+    const currentIndex = currentUrl ? history.indexOf(currentUrl) : -1;
+    const record = charImagePromptsRef.current[imageKey]?.[currentIndex];
+    const replayPreset =
+      (record?.mode === "three-view" || record?.mode === "multi-asset") &&
+      !!record.rawPrompt?.trim();
+    const rawApiPrompt =
+      record?.rawPrompt?.trim()
+        ? replayPreset
+          ? await mergePromptEditorBlocksForGeneration(
+              record.rawPrompt,
+              characterPresetEditorBlocks(record.rawPrompt),
+              instruction,
+            )
+          : await mergeRawPromptWithLatestEdits(record.rawPrompt, instruction)
+        : undefined;
     const editedCharacter = applyCharacterAttributeDraft(
       c,
       lookId,
@@ -5206,6 +5446,8 @@ function WorkspacePage() {
         forceT2I: true,
         targetLookId: lookId,
         editablePrompt: instruction,
+        rawPrompt: rawApiPrompt,
+        promptMode: record?.mode ?? "initial",
       });
       const newest = charImagesRef.current[imageKey]?.at(-1);
       if ((charImagesRef.current[imageKey]?.length ?? 0) <= beforeCount || !newest) return;
@@ -5755,12 +5997,14 @@ function WorkspacePage() {
     // 场景多视图只展示可编辑版块；提交时将它们逐段合回完整六宫格模板。
     const replayMultiView = record?.mode === "multi-view" && !!record.rawPrompt?.trim();
     const rawApiPrompt =
-      replayMultiView && record?.rawPrompt
-        ? await mergePromptEditorBlocksForGeneration(
-            record.rawPrompt,
-            sceneMultiViewEditorBlocks(record.rawPrompt),
-            instruction,
-          )
+      record?.rawPrompt?.trim()
+        ? replayMultiView
+          ? await mergePromptEditorBlocksForGeneration(
+              record.rawPrompt,
+              sceneMultiViewEditorBlocks(record.rawPrompt),
+              instruction,
+            )
+          : await mergeRawPromptWithLatestEdits(record.rawPrompt, instruction)
         : undefined;
     const englishInstruction = rawApiPrompt
       ? "Use the supplied raw API prompt exactly."
@@ -5798,11 +6042,30 @@ function WorkspacePage() {
       return;
     }
     const editedScene = applySceneEditablePrompt(s, instruction);
+    const history = sceneImagesRef.current[s.id] ?? [];
+    const selectedUrl = selectedSceneImagesRef.current[s.id];
+    const currentUrl = selectedUrl && history.includes(selectedUrl) ? selectedUrl : history.at(-1);
+    const currentIndex = currentUrl ? history.indexOf(currentUrl) : -1;
+    const record = sceneImagePromptsRef.current[s.id]?.[currentIndex];
+    const replayMultiView = record?.mode === "multi-view" && !!record.rawPrompt?.trim();
+    const rawApiPrompt =
+      replayMultiView && record?.rawPrompt
+        ? await mergePromptEditorBlocksForGeneration(
+            record.rawPrompt,
+            sceneMultiViewEditorBlocks(record.rawPrompt),
+            instruction,
+          )
+        : undefined;
     setSceneModError(null);
     setRegenBusyKeys((m) => new Map(m).set(s.id, "t2i"));
     try {
       const beforeCount = sceneImagesRef.current[s.id]?.length ?? 0;
-      await genSceneImage(editedScene, instruction);
+      await genSceneImage(
+        editedScene,
+        instruction,
+        rawApiPrompt,
+        record?.mode ?? "initial",
+      );
       const newest = sceneImagesRef.current[s.id]?.at(-1);
       if ((sceneImagesRef.current[s.id]?.length ?? 0) <= beforeCount || !newest) return;
       setData((prev) =>
@@ -5811,6 +6074,7 @@ function WorkspacePage() {
           : prev,
       );
       setSelectedSceneImages((m) => ({ ...m, [s.id]: newest }));
+      toast.success(replayMultiView ? "已按编辑后的多视图提示词重新生成" : "已按当前提示词重新生成场景图");
     } finally {
       setRegenBusyKeys((m) => {
         const next = new Map(m);
@@ -13270,7 +13534,7 @@ function WorkspacePage() {
                 </div>
 
                 {/* 3 列布局:左 thumbnails / 中 大图 / 右 描述+输入 */}
-                <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[120px_1fr_360px] gap-3 p-3">
+                <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[120px_minmax(0,1fr)_440px] gap-3 p-3">
                   {/* === Left: thumbnails of the SAME look, all generations === */}
                   <aside className="overflow-y-auto pr-1 space-y-2 min-h-0">
                     <div className="text-[10px] text-text-muted px-1 pb-1 sticky top-0 bg-bg-surface">
@@ -13521,8 +13785,7 @@ function WorkspacePage() {
                             )}
                           </div>
                           <p className="text-[10px] text-text-muted leading-relaxed">
-                            风格与角色描述均可修改；四视图、多维资产仍保留各自的构图约束，真实 API
-                            prompt 会据此重新生成。
+                            多维资产仅展示可编辑的中文分块；隐藏的校验规则仍会随完整提示词提交。
                           </p>
                           <div className="flex items-center gap-2 mb-2 flex-wrap">
                             <button
@@ -13581,7 +13844,7 @@ function WorkspacePage() {
                             placeholder="编辑风格、面部特征、身材体型或服装配饰…"
                             rows={8}
                             disabled={thisBusy || isPromptTranslating}
-                            className="w-full flex-1 min-h-64 max-h-[55vh] rounded-md bg-bg-base border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-y placeholder:text-text-muted disabled:opacity-50 leading-relaxed"
+                            className="w-full flex-1 min-h-64 max-h-[55vh] rounded-md bg-bg-base border border-border font-mono text-[13px] leading-6 text-text-primary p-3 focus:border-accent focus:outline-none resize-y placeholder:text-text-muted disabled:opacity-50"
                           />
                           {modError && (
                             <div className="px-2.5 py-1.5 rounded-md bg-rose-500/10 border border-rose-500/30 text-[11px] text-rose-400">
@@ -13902,7 +14165,7 @@ function WorkspacePage() {
                             <Loader2 size={12} className="animate-spin text-accent" />
                           ) : regenBusyKeys.has(s.id)
                             ? "生成中…"
-                            : `参考图:第 ${currentIdx + 1} / ${history.length} 张`}
+                            : `当前版本:第 ${currentIdx + 1} / ${history.length} 张`}
                         </span>
                         <div className="flex items-center gap-2">
                           <button
