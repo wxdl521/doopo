@@ -213,12 +213,13 @@ export async function deleteProp(id: string, userId: string) {
   return supabase.from("props").delete().eq("id", id).eq("user_id", userId);
 }
 
-export async function loadProps(userId: string) {
+export async function loadProps(userId: string, from = 0, to = 20) {
   return supabase
     .from("props")
     .select("*")
     .eq("user_id", userId)
-    .order("updated_at", { ascending: false });
+    .order("updated_at", { ascending: false })
+    .range(from, to);
 }
 
 /** 从资产库移除单条角色/场景(per-item 删除按钮用) */
@@ -230,18 +231,20 @@ export async function deleteScene(id: string, userId: string) {
   return supabase.from("scenes").delete().eq("id", id).eq("user_id", userId);
 }
 
-export async function loadCharacters(userId: string) {
+export async function loadCharacters(userId: string, from = 0, to = 20) {
   return supabase
     .from("characters")
     .select("*")
     .eq("user_id", userId)
-    .order("updated_at", { ascending: false });
+    .order("updated_at", { ascending: false })
+    .range(from, to);
 }
 
-export async function loadScenes(userId: string) {
+export async function loadScenes(userId: string, from = 0, to = 20) {
   return supabase
     .from("scenes")
     .select("*")
     .eq("user_id", userId)
-    .order("updated_at", { ascending: false });
+    .order("updated_at", { ascending: false })
+    .range(from, to);
 }

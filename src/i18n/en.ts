@@ -20,6 +20,8 @@ export const en: Translations = {
   assets_empty:
     "No assets yet. Generate characters, scenes or props, then add them to the library.",
   assets_loading: "Loading assets…",
+  assets_loading_more: "Loading more assets…",
+  assets_load_more_failed: "Unable to load more assets.",
   assets_load_failed: "Unable to load assets. Check your connection and try again.",
   assets_retry: "Retry",
   assets_add: "Add asset",

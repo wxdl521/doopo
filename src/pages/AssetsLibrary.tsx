@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useSearch } from "@tanstack/react-router";
 import { ChevronDown, Plus, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -18,10 +18,18 @@ type Scope = "personal" | "team";
 type AssetTab = "character" | "scene" | "prop";
 type AssetLoadStatus = "idle" | "loading" | "success" | "error";
 
+const ASSET_PAGE_SIZE = 20;
+
 const initialLoadStatus: Record<AssetTab, AssetLoadStatus> = {
   character: "idle",
   scene: "idle",
   prop: "idle",
+};
+
+const initialLoadMoreStatus: Record<AssetTab, boolean> = {
+  character: false,
+  scene: false,
+  prop: false,
 };
 
 export default function AssetsLibrary() {
@@ -37,6 +45,12 @@ export default function AssetsLibrary() {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [loadStatus, setLoadStatus] =
     useState<Record<AssetTab, AssetLoadStatus>>(initialLoadStatus);
+  const [hasMore, setHasMore] = useState<Record<AssetTab, boolean>>(initialLoadMoreStatus);
+  const [loadingMore, setLoadingMore] = useState<Record<AssetTab, boolean>>(initialLoadMoreStatus);
+  const [loadMoreError, setLoadMoreError] =
+    useState<Record<AssetTab, boolean>>(initialLoadMoreStatus);
+  const loadMoreTriggerRef = useRef<HTMLDivElement>(null);
+  const loadingMoreRef = useRef<Record<AssetTab, boolean>>(initialLoadMoreStatus);
 
   useEffect(() => {
     if (requestedTab) setTab(requestedTab);
@@ -49,17 +63,20 @@ export default function AssetsLibrary() {
       setLoadStatus((current) => ({ ...current, [kind]: "loading" }));
       try {
         if (kind === "character") {
-          const { data, error } = await loadCharacters(userId);
+          const { data, error } = await loadCharacters(userId, 0, ASSET_PAGE_SIZE);
           if (error) throw error;
-          setDbCharacters(data ?? []);
+          setDbCharacters((data ?? []).slice(0, ASSET_PAGE_SIZE));
+          setHasMore((current) => ({ ...current, [kind]: (data?.length ?? 0) > ASSET_PAGE_SIZE }));
         } else if (kind === "scene") {
-          const { data, error } = await loadScenes(userId);
+          const { data, error } = await loadScenes(userId, 0, ASSET_PAGE_SIZE);
           if (error) throw error;
-          setDbScenes(data ?? []);
+          setDbScenes((data ?? []).slice(0, ASSET_PAGE_SIZE));
+          setHasMore((current) => ({ ...current, [kind]: (data?.length ?? 0) > ASSET_PAGE_SIZE }));
         } else {
-          const { data, error } = await loadProps(userId);
+          const { data, error } = await loadProps(userId, 0, ASSET_PAGE_SIZE);
           if (error) throw error;
-          setDbProps(data ?? []);
+          setDbProps((data ?? []).slice(0, ASSET_PAGE_SIZE));
+          setHasMore((current) => ({ ...current, [kind]: (data?.length ?? 0) > ASSET_PAGE_SIZE }));
         }
 
         setLoadStatus((current) => ({ ...current, [kind]: "success" }));
@@ -104,6 +121,72 @@ export default function AssetsLibrary() {
     }
   }, [isAuthenticated, user?.id, refresh]);
 
+  const loadMore = useCallback(
+    async (kind: AssetTab) => {
+      const userId = user?.id;
+      if (!userId || loadingMoreRef.current[kind]) return;
+
+      loadingMoreRef.current[kind] = true;
+      setLoadingMore((current) => ({ ...current, [kind]: true }));
+      setLoadMoreError((current) => ({ ...current, [kind]: false }));
+      try {
+        if (kind === "character") {
+          const { data, error } = await loadCharacters(
+            userId,
+            dbCharacters.length,
+            dbCharacters.length + ASSET_PAGE_SIZE,
+          );
+          if (error) throw error;
+          const next = data ?? [];
+          setDbCharacters((current) => [...current, ...next.slice(0, ASSET_PAGE_SIZE)]);
+          setHasMore((current) => ({ ...current, [kind]: next.length > ASSET_PAGE_SIZE }));
+        } else if (kind === "scene") {
+          const { data, error } = await loadScenes(
+            userId,
+            dbScenes.length,
+            dbScenes.length + ASSET_PAGE_SIZE,
+          );
+          if (error) throw error;
+          const next = data ?? [];
+          setDbScenes((current) => [...current, ...next.slice(0, ASSET_PAGE_SIZE)]);
+          setHasMore((current) => ({ ...current, [kind]: next.length > ASSET_PAGE_SIZE }));
+        } else {
+          const { data, error } = await loadProps(
+            userId,
+            dbProps.length,
+            dbProps.length + ASSET_PAGE_SIZE,
+          );
+          if (error) throw error;
+          const next = data ?? [];
+          setDbProps((current) => [...current, ...next.slice(0, ASSET_PAGE_SIZE)]);
+          setHasMore((current) => ({ ...current, [kind]: next.length > ASSET_PAGE_SIZE }));
+        }
+      } catch (error) {
+        console.warn(`[assets] Failed to load more ${kind} assets:`, error);
+        setLoadMoreError((current) => ({ ...current, [kind]: true }));
+        toast.error(t.assets_load_failed);
+      } finally {
+        loadingMoreRef.current[kind] = false;
+        setLoadingMore((current) => ({ ...current, [kind]: false }));
+      }
+    },
+    [dbCharacters.length, dbProps.length, dbScenes.length, t.assets_load_failed, user?.id],
+  );
+
+  useEffect(() => {
+    const target = loadMoreTriggerRef.current;
+    if (!target || !hasMore[tab] || loadingMore[tab] || loadMoreError[tab]) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) void loadMore(tab);
+      },
+      { rootMargin: "240px" },
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [hasMore, loadMore, loadingMore, loadMoreError, tab]);
+
   const tabs: { key: AssetTab; label: string }[] = [
     { key: "character", label: t.assets_tab_character },
     { key: "scene", label: t.assets_tab_scene },
@@ -135,27 +218,30 @@ export default function AssetsLibrary() {
       }));
       if (!allChars.length) return <Empty />;
       return (
-        <Grid>
-          {allChars.map((c) => (
-            <Card
-              key={c.id}
-              tab="character"
-              id={c.id}
-              title={c.name}
-              emoji={c.emoji}
-              gradient={c.gradient}
-              cover={c.cover}
-              summary={c.summary}
-              tags={c.tags}
-              onDelete={c.fromDb ? () => handleDelete("character", c.id, c.name) : undefined}
-              deleting={deletingId === c.id}
-            >
-              <Field label={t.assets_field_role} value={c.role} />
-              <Field label={t.assets_field_age} value={c.age} />
-              <Field label={t.assets_field_personality} value={c.personality} />
-            </Card>
-          ))}
-        </Grid>
+        <>
+          <Grid>
+            {allChars.map((c) => (
+              <Card
+                key={c.id}
+                tab="character"
+                id={c.id}
+                title={c.name}
+                emoji={c.emoji}
+                gradient={c.gradient}
+                cover={c.cover}
+                summary={c.summary}
+                tags={c.tags}
+                onDelete={c.fromDb ? () => handleDelete("character", c.id, c.name) : undefined}
+                deleting={deletingId === c.id}
+              >
+                <Field label={t.assets_field_role} value={c.role} />
+                <Field label={t.assets_field_age} value={c.age} />
+                <Field label={t.assets_field_personality} value={c.personality} />
+              </Card>
+            ))}
+          </Grid>
+          <LoadMore />
+        </>
       );
     }
     if (tab === "scene") {
@@ -174,27 +260,30 @@ export default function AssetsLibrary() {
       }));
       if (!allScenes.length) return <Empty />;
       return (
-        <Grid>
-          {allScenes.map((s) => (
-            <Card
-              key={s.id}
-              tab="scene"
-              id={s.id}
-              title={s.name}
-              emoji={s.emoji}
-              gradient={s.gradient}
-              cover={s.cover}
-              summary={s.summary}
-              tags={s.tags}
-              onDelete={s.fromDb ? () => handleDelete("scene", s.id, s.name) : undefined}
-              deleting={deletingId === s.id}
-            >
-              <Field label={t.assets_field_time} value={s.time} />
-              <Field label={t.assets_field_mood} value={s.mood} />
-              <Field label={t.assets_field_shot} value={s.shot} />
-            </Card>
-          ))}
-        </Grid>
+        <>
+          <Grid>
+            {allScenes.map((s) => (
+              <Card
+                key={s.id}
+                tab="scene"
+                id={s.id}
+                title={s.name}
+                emoji={s.emoji}
+                gradient={s.gradient}
+                cover={s.cover}
+                summary={s.summary}
+                tags={s.tags}
+                onDelete={s.fromDb ? () => handleDelete("scene", s.id, s.name) : undefined}
+                deleting={deletingId === s.id}
+              >
+                <Field label={t.assets_field_time} value={s.time} />
+                <Field label={t.assets_field_mood} value={s.mood} />
+                <Field label={t.assets_field_shot} value={s.shot} />
+              </Card>
+            ))}
+          </Grid>
+          <LoadMore />
+        </>
       );
     }
     if (tab === "prop") {
@@ -213,27 +302,30 @@ export default function AssetsLibrary() {
       }));
       if (!allProps.length) return <Empty />;
       return (
-        <Grid>
-          {allProps.map((p) => (
-            <Card
-              key={p.id}
-              tab="prop"
-              id={p.id}
-              title={p.name}
-              emoji={p.emoji}
-              gradient={p.gradient}
-              cover={p.cover}
-              summary={p.summary}
-              tags={p.tags}
-              onDelete={p.fromDb ? () => handleDelete("prop", p.id, p.name) : undefined}
-              deleting={deletingId === p.id}
-            >
-              <Field label={t.assets_field_owner} value={p.owner} />
-              <Field label={t.assets_field_appearance} value={p.appearance} />
-              <Field label={t.assets_field_symbol} value={p.symbol} />
-            </Card>
-          ))}
-        </Grid>
+        <>
+          <Grid>
+            {allProps.map((p) => (
+              <Card
+                key={p.id}
+                tab="prop"
+                id={p.id}
+                title={p.name}
+                emoji={p.emoji}
+                gradient={p.gradient}
+                cover={p.cover}
+                summary={p.summary}
+                tags={p.tags}
+                onDelete={p.fromDb ? () => handleDelete("prop", p.id, p.name) : undefined}
+                deleting={deletingId === p.id}
+              >
+                <Field label={t.assets_field_owner} value={p.owner} />
+                <Field label={t.assets_field_appearance} value={p.appearance} />
+                <Field label={t.assets_field_symbol} value={p.symbol} />
+              </Card>
+            ))}
+          </Grid>
+          <LoadMore />
+        </>
       );
     }
   };
@@ -269,6 +361,31 @@ export default function AssetsLibrary() {
         <button type="button" onClick={onRetry} className="btn-ghost text-xs">
           {t.assets_retry}
         </button>
+      </div>
+    );
+  }
+
+  function LoadMore() {
+    if (!hasMore[tab] && !loadingMore[tab] && !loadMoreError[tab]) return null;
+
+    return (
+      <div
+        ref={loadMoreError[tab] ? undefined : loadMoreTriggerRef}
+        className="flex min-h-12 items-center justify-center text-xs text-text-muted"
+        role="status"
+        aria-live="polite"
+      >
+        {loadingMore[tab] && (
+          <span className="flex items-center gap-2">
+            <Loader2 size={14} className="animate-spin text-accent" />
+            {t.assets_loading_more}
+          </span>
+        )}
+        {loadMoreError[tab] && !loadingMore[tab] && (
+          <button type="button" onClick={() => void loadMore(tab)} className="btn-ghost text-xs">
+            {t.assets_load_more_failed} {t.assets_retry}
+          </button>
+        )}
       </div>
     );
   }

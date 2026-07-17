@@ -17,6 +17,8 @@ export const zh = {
   assets_tab_prop: "道具",
   assets_empty: "暂无资产。生成角色、场景或道具后，点击添加到资产。",
   assets_loading: "正在加载资产…",
+  assets_loading_more: "正在加载更多资产…",
+  assets_load_more_failed: "更多资产加载失败，",
   assets_load_failed: "资产加载失败，请检查网络后重试。",
   assets_retry: "重新加载",
   assets_add: "添加资产",
