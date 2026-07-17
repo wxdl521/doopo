@@ -31,8 +31,6 @@ BEGIN
     RAISE EXCEPTION 'Invalid page';
   END IF;
 
-  p_query := trim(COALESCE(p_query, ''));
-
   IF p_kind = 'user' THEN
     RETURN QUERY
     WITH recipients AS (
@@ -60,9 +58,9 @@ BEGIN
       recipients.created_at,
       COUNT(*) OVER ()
     FROM recipients
-    WHERE p_query = ''
-      OR COALESCE(recipients.name, '') ILIKE '%' || p_query || '%'
-      OR COALESCE(recipients.email, '') ILIKE '%' || p_query || '%'
+    WHERE trim(COALESCE(p_query, '')) = ''
+      OR COALESCE(recipients.name, '') ILIKE '%' || trim(COALESCE(p_query, '')) || '%'
+      OR COALESCE(recipients.email, '') ILIKE '%' || trim(COALESCE(p_query, '')) || '%'
     ORDER BY recipients.created_at DESC
     OFFSET (p_page - 1) * p_page_size LIMIT p_page_size;
   ELSE
@@ -90,9 +88,9 @@ BEGIN
       recipients.created_at,
       COUNT(*) OVER ()
     FROM recipients
-    WHERE p_query = ''
-      OR COALESCE(recipients.name, '') ILIKE '%' || p_query || '%'
-      OR COALESCE(recipients.email, '') ILIKE '%' || p_query || '%'
+    WHERE trim(COALESCE(p_query, '')) = ''
+      OR COALESCE(recipients.name, '') ILIKE '%' || trim(COALESCE(p_query, '')) || '%'
+      OR COALESCE(recipients.email, '') ILIKE '%' || trim(COALESCE(p_query, '')) || '%'
     ORDER BY recipients.created_at DESC
     OFFSET (p_page - 1) * p_page_size LIMIT p_page_size;
   END IF;

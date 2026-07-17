@@ -1,13 +1,8 @@
--- 一次性执行：启用积分分配搜索，并将 2801260735@qq.com 添加为管理员。
+-- 在 Supabase SQL Editor 的空白查询中完整执行。
+-- 不使用显式 BEGIN/COMMIT，以避开 SQL Editor 将后续文本拼接到 COMMIT 后的问题。
 -- 前置条件：已执行 20260717000000_add_credit_admin_rpc.sql。
--- 请在 Supabase SQL Editor 中以项目数据库管理员身份运行。
 
-BEGIN;
-
--- 积分分配列表新增 p_query 搜索参数。
-DROP FUNCTION IF EXISTS public.admin_list_credit_recipients(text, integer, integer);
-
-CREATE FUNCTION public.admin_list_credit_recipients(
+CREATE OR REPLACE FUNCTION public.admin_list_credit_recipients(
   p_kind text,
   p_page integer DEFAULT 1,
   p_page_size integer DEFAULT 10,
@@ -104,7 +99,6 @@ $$;
 REVOKE ALL ON FUNCTION public.admin_list_credit_recipients(text, integer, integer, text) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.admin_list_credit_recipients(text, integer, integer, text) TO authenticated;
 
--- 新管理员必须已注册；账号不存在时抛错并回滚整个事务。
 DO $$
 DECLARE
   v_user_id uuid;
@@ -122,5 +116,3 @@ BEGIN
   ON CONFLICT (user_id) DO NOTHING;
 END;
 $$;
-
-COMMIT;
