@@ -44,6 +44,41 @@ export const getUserBalance = createServerFn({ method: "POST" })
   });
 
 // ====================================================================
+// getUserCreditSummary — 余额 + 累计入账 + 累计消耗
+// ====================================================================
+
+export const getUserCreditSummary = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .handler(async ({ context }) => {
+    const { supabase, userId } = context;
+
+    const { data: wallet } = await supabase
+      .from("user_wallets")
+      .select("credits_balance")
+      .eq("user_id", userId)
+      .maybeSingle();
+
+    const { data: rows } = await supabase
+      .from("user_credit_transactions")
+      .select("amount")
+      .eq("user_id", userId);
+
+    let earned = 0;
+    let spent = 0;
+    for (const r of rows ?? []) {
+      const a = Number((r as any).amount) || 0;
+      if (a > 0) earned += a;
+      else if (a < 0) spent += -a;
+    }
+
+    return {
+      balance: Number(wallet?.credits_balance ?? 0),
+      lifetimeEarned: earned,
+      lifetimeSpent: spent,
+    };
+  });
+
+// ====================================================================
 // rechargeCredits — 充值积分（调用 SECURITY DEFINER RPC 安全加余额）
 // ====================================================================
 
