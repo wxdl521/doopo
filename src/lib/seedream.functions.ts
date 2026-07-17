@@ -898,18 +898,19 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
     `[EDIT REQUEST — what to change in the attached image]`,
     data.userInstruction,
     ``,
+    `[PRIORITY] The EDIT REQUEST is mandatory and overrides every preservation rule below for attributes it explicitly names. Preserve only attributes the EDIT REQUEST does not ask to change.`,
+    ``,
     `[REFERENCE IMAGES - ${1 + (data.extraReferenceImageUrls?.length ?? 0)} 张视觉锚点,用于人物/场景身份锁定]`,
     `图1 = 角色主视图(要被修改的那张),脸/身材/构图/风格/背景以此为准,是修改的基础`,
     (data.extraReferenceImageUrls?.length ?? 0) > 0
       ? `图2..${1 + (data.extraReferenceImageUrls?.length ?? 0)} = 额外参考图(风格/细节/配饰参考),仅当 EDIT REQUEST 涉及时参考,严禁用来替换图1 的角色身份(脸/身材/发型)`
       : `（无额外参考图,仅以图1 为基础修改）`,
     ``,
-    `[LOCK — neutral structure MUST stay 100% identical to the source image]`,
-    `• 脸型、脸轮廓、五官比例、肤色、骨骼结构 100% 继承图1`,
-    `• 体型、身高、胖瘦、体态 100% 继承图1`,
-    `• 发型轮廓(短/长/卷/直、刘海/鬓角)100% 继承图1`,
-    `  ↳ 发色默认继承,但若用户 EDIT REQUEST 明确要换发色则按 EDIT`,
-    `• 整体画面构图、视角、画幅、风格、光照、背景 100% 继承图1`,
+    `[PRESERVE UNLESS EDITED — keep the source image unchanged only when the EDIT REQUEST does not mention it]`,
+    `• 脸型、脸轮廓、五官比例、肤色、骨骼结构默认继承图1；若 EDIT 明确要求，必须按 EDIT 修改相应项目`,
+    `• 体型、身高、胖瘦、体态默认继承图1；若 EDIT 明确要求，必须按 EDIT 修改相应项目`,
+    `• 发型轮廓、发色默认继承图1；若 EDIT 明确要求，必须按 EDIT 修改相应项目`,
+    `• 整体画面构图、视角、画幅、风格、光照、背景默认继承图1；若 EDIT 明确要求，必须按 EDIT 修改相应项目`,
     ``,
     `[LOCK — accessories / makeup / expression follow EDIT REQUEST only]`,
     `• 妆容(眼妆、唇色、腮红)默认继承;若 EDIT 提到妆容则按 EDIT`,
@@ -917,7 +918,7 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
     `• 配饰(口罩/帽子/墨镜/项链/手套等)默认继承;若 EDIT 提到配饰则按 EDIT,否则保持图1 原样`,
     `• 整体服装默认继承;若 EDIT 提到服装则按 EDIT 改`,
     ``,
-    `[HARD CONSTRAINT — 任何"中性结构"没在 EDIT 里明确说改的,一律按 LOCK 段保持]`,
+    `[HARD CONSTRAINT — 任何属性没在 EDIT 里明确说改的,一律按上方保留规则保持；已明确说改的属性必须服从 EDIT]`,
     `If the user's EDIT REQUEST is vague (e.g. "好看点" / "年轻些" / "加个眼镜"),interpret minimally:
   • "好看点" / "完美些" → DO NOT change anything, return source image essentially unchanged
   • "年轻些" / "老一些" → change only the age cue, keep face shape / body 100%
@@ -931,9 +932,7 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
     "different art style, style drift, photorealistic when input is anime, anime when input is realistic, different medium, different line treatment, different color grading",
     "3/4 view, side view, profile, back view, tilted head, looking up, looking down, top-down, bottom-up, hero shot, low angle, high angle, camera pan, camera tilt",
     "cropped at knees, cropped at waist, cropped at chest, cropped at thighs, head cut off, feet cut off, close-up, medium shot, half body",
-    "smile, smirk, grin, frown, scowl, angry eyes, sad eyes, laughing, crying, pouting, raised eyebrow, eyes closed, eyes squinting, teeth showing, emotional expression",
     "off-white background, cream background, ivory background, beige background, light grey background, gradient background, vignette, scenery, furniture, props, ground texture, horizon line, floor, wall, sky, shadow on background, floor reflection, color cast",
-    "different face, different face shape, different eye shape, different eye color, different nose, different mouth, different eyebrows, different skin tone, different hairstyle, different hair color, different hair length, different facial proportions, age change",
     "watermark, logo, text, signature, extra limbs, deformed hands, extra fingers, extra people, blurred face, low quality",
   ].join(", ");
   return { positive, negative, size: "2K" };
@@ -3343,6 +3342,8 @@ function buildScenePrompts(
     ``,
     `[修改意见] ${data.userInstruction}`,
     ``,
+    `[优先级] 修改意见高于下方所有保留规则：明确要求改变的地点、时段、光照、构图或环境元素必须改变；未提及的内容才保持图1。`,
+    ``,
     `[地点 / 时段] ${data.sceneSlug}${data.sceneTimeOfDay ? " / " + data.sceneTimeOfDay : ""}`,
     data.sceneAction
       ? `[环境资料] 仅可保留建筑、景观、天气、光影和无生命道具；资料中的角色、动物、生物或行为主体一律忽略：${data.sceneAction}`
@@ -3360,7 +3361,6 @@ function buildScenePrompts(
   const negative = [
     withEmptySceneNegative(),
     "different art style, style drift, photorealistic when input is anime, anime when input is realistic, different medium, different color grading",
-    "different location, different time of day, different camera angle, different aspect ratio",
     "watermark, logo, text, signature, label, panel number, caption, annotation, arrow, layout grid lines",
     "blurry, low quality, low resolution, jpeg artifacts",
   ].join(", ");

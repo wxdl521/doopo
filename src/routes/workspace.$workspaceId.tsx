@@ -2293,6 +2293,33 @@ function WorkspacePage() {
   const [regenBusyKeys, setRegenBusyKeys] = useState<
     Map<string, "modify" | "three-view" | "multi-asset" | "multi-view" | "t2i">
   >(new Map());
+  // state 需要等 React 下一次渲染才会禁用按钮；详情页的提示词翻译/合并又会
+  // 在真正发请求前等待数秒。这个 ref 是同步锁，确保用户连点时只会进入一次生成。
+  const regenBusyKeysRef = useRef<Set<string>>(new Set());
+  function runDetailRegen(
+    key: string,
+    mode: "modify" | "t2i",
+    task: () => Promise<void>,
+  ) {
+    if (regenBusyKeysRef.current.has(key)) return;
+    regenBusyKeysRef.current.add(key);
+    // 先更新可视状态，再执行可能需要翻译/拼接提示词的异步流程。
+    setRegenBusyKeys((current) => new Map(current).set(key, mode));
+    void task()
+      .catch((error) => {
+        console.error("[workspace.detail] regenerate failed", error);
+        toast.error("生成失败，请重试");
+      })
+      .finally(() => {
+        regenBusyKeysRef.current.delete(key);
+        setRegenBusyKeys((current) => {
+          if (!current.has(key)) return current;
+          const next = new Map(current);
+          next.delete(key);
+          return next;
+        });
+      });
+  }
   // 用户在角色卡片右上角点"选中"后,该 look(imageKey)被钉住指向哪张 url。
   // 用 url 而不是 index 引用,避免新增图后被偏移。
   // 没设 → fallback 用 charImages[imageKey] 的最新一张(.at(-1))
@@ -5049,7 +5076,11 @@ function WorkspacePage() {
     const selectedUrl = selectedCharImagesRef.current[imageKey];
     const selectedIndex = selectedUrl ? generations.indexOf(selectedUrl) : -1;
     const currentIndex = selectedIndex >= 0 ? selectedIndex : Math.max(0, generations.length - 1);
+    const currentUrl = generations[currentIndex];
     const savedPromptRecord = charImagePromptsRef.current[imageKey]?.[currentIndex];
+    // 打开详情页时，把中间正在展示的图片显式设为默认选中，避免用户还没选图
+    // 就直接点击“局部修改”而没有明确的图1参考。
+    if (currentUrl) setSelectedCharImages((images) => ({ ...images, [imageKey]: currentUrl }));
     setModPanel({ character: c, lookId, imageKey });
     setPreviewTarget({ character: c, lookId });
     setSelectedGenIdx(currentIndex);
@@ -6032,15 +6063,16 @@ function WorkspacePage() {
     const record = sceneImagePromptsRef.current[s.id]?.[currentIndex];
     // 场景多视图只展示可编辑版块；提交时将它们逐段合回完整六宫格模板。
     const replayMultiView = record?.mode === "multi-view" && !!record.rawPrompt?.trim();
+    // 普通场景的局部修改必须走 I2I 的 modify 模板：它会把本次意见置于最高优先级，
+    // 并锁住未提及的内容。此前把旧 T2I 完整 prompt 直接重放、仅在末尾追加编辑，
+    // 供应商常会把新意见当作弱补充而忽略。
     const rawApiPrompt =
-      record?.rawPrompt?.trim()
-        ? replayMultiView
-          ? await mergePromptEditorBlocksForGeneration(
-              record.rawPrompt,
-              sceneMultiViewEditorBlocks(record.rawPrompt),
-              instruction,
-            )
-          : await mergeRawPromptWithLatestEdits(record.rawPrompt, instruction)
+      replayMultiView && record?.rawPrompt
+        ? await mergePromptEditorBlocksForGeneration(
+            record.rawPrompt,
+            sceneMultiViewEditorBlocks(record.rawPrompt),
+            instruction,
+          )
         : undefined;
     const englishInstruction = rawApiPrompt
       ? "Use the supplied raw API prompt exactly."
@@ -13872,7 +13904,7 @@ function WorkspacePage() {
                             <div className="flex items-center gap-2">
                               <button
                                 type="button"
-                                onClick={() => void submitModPanel()}
+                                onClick={() => runDetailRegen(busyKey, "modify", submitModPanel)}
                                 disabled={
                                   thisBusy ||
                                   isPromptTranslating ||
@@ -13891,7 +13923,9 @@ function WorkspacePage() {
                               </button>
                               <button
                                 type="button"
-                                onClick={() => void submitCharacterDetailT2I()}
+                                onClick={() =>
+                                  runDetailRegen(busyKey, "t2i", submitCharacterDetailT2I)
+                                }
                                 disabled={thisBusy || isPromptTranslating || !modInput.trim()}
                                 title="不使用任何参考图，按当前提示词重新生成一张角色图"
                                 className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
@@ -14195,7 +14229,9 @@ function WorkspacePage() {
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
-                            onClick={() => void submitSceneDetailRegen(s)}
+                            onClick={() =>
+                              runDetailRegen(s.id, "modify", () => submitSceneDetailRegen(s))
+                            }
                             disabled={
                               regenBusyKeys.has(s.id) ||
                               isPromptTranslating ||
@@ -14214,7 +14250,9 @@ function WorkspacePage() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => void submitSceneDetailT2I(s)}
+                            onClick={() =>
+                              runDetailRegen(s.id, "t2i", () => submitSceneDetailT2I(s))
+                            }
                             disabled={
                               regenBusyKeys.has(s.id) ||
                               isPromptTranslating ||
@@ -14491,7 +14529,9 @@ function WorkspacePage() {
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
-                            onClick={() => void submitPropDetailRegen(p)}
+                            onClick={() =>
+                              runDetailRegen(p.id, "modify", () => submitPropDetailRegen(p))
+                            }
                             disabled={
                               regenBusyKeys.has(p.id) ||
                               isPromptTranslating ||
@@ -14510,7 +14550,9 @@ function WorkspacePage() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => void submitPropDetailT2I(p)}
+                            onClick={() =>
+                              runDetailRegen(p.id, "t2i", () => submitPropDetailT2I(p))
+                            }
                             disabled={
                               regenBusyKeys.has(p.id) || isPromptTranslating || !propModInput.trim()
                             }
