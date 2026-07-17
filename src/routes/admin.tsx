@@ -2,7 +2,7 @@ import { createFileRoute, Outlet } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { LayoutDashboard, Cpu, Building2, Receipt, Coins } from "lucide-react";
+import { Coins } from "lucide-react";
 import SectionSidebar from "../components/SectionSidebar";
 import { useLanguage } from "../i18n/LanguageContext";
 import { useAuth } from "../hooks/useAuth";
@@ -44,20 +44,14 @@ function AdminLayout() {
       });
   }, [loading, isAuthenticated, callAdminAccess, navigate]);
 
-  const items = [
-    { to: "/admin", label: t.admin_overview, icon: LayoutDashboard },
-    { to: "/admin/credits", label: t.admin_credits, icon: Coins },
-    { to: "/admin/models", label: t.admin_models, icon: Cpu },
-    { to: "/admin/tenants", label: t.admin_tenants, icon: Building2 },
-    { to: "/admin/billing", label: t.admin_billing, icon: Receipt },
-  ];
+  const items = [{ to: "/admin/credits", label: t.admin_credits, icon: Coins }];
   if (loading || hasAccess !== true) {
     return <div className="py-16 text-center text-text-muted">{t.admin_checking_access}</div>;
   }
 
   return (
     <div className="animate-fade-in flex flex-col md:flex-row gap-6">
-      <SectionSidebar title={t.admin_ops} items={items} />
+      <SectionSidebar title={t.nav_admin} items={items} />
       <div className="flex-1 min-w-0">
         <Outlet />
       </div>

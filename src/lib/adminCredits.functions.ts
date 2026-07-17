@@ -5,7 +5,8 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 const RecipientInput = z.object({
   kind: z.enum(["user", "team"]),
   page: z.number().int().min(1).default(1),
-  pageSize: z.number().int().min(1).max(100).default(25),
+  pageSize: z.number().int().min(1).max(100).default(10),
+  query: z.string().trim().max(100).default(""),
 });
 
 const GrantInput = z.object({
@@ -55,6 +56,7 @@ export const getAdminCreditRecipients = createServerFn({ method: "POST" })
         p_kind: data.kind,
         p_page: data.page,
         p_page_size: data.pageSize,
+        p_query: data.query,
       },
     );
 

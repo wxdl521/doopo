@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useCallback, useEffect, useState } from "react";
-import { Coins, Users, Building2, ChevronLeft, ChevronRight } from "lucide-react";
+import { Coins, Users, Building2, ChevronLeft, ChevronRight, Search } from "lucide-react";
 import { toast } from "sonner";
 import PageHeader from "@/components/PageHeader";
 import { Input } from "@/components/ui/input";
@@ -16,7 +16,7 @@ export const Route = createFileRoute("/admin/credits")({
   component: AdminCredits,
 });
 
-const PAGE_SIZE = 25;
+const PAGE_SIZE = 10;
 
 function AdminCredits() {
   const { t } = useLanguage();
@@ -31,10 +31,14 @@ function AdminCredits() {
   const [amount, setAmount] = useState("");
   const [description, setDescription] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [searchInput, setSearchInput] = useState("");
+  const [query, setQuery] = useState("");
 
   const loadRecipients = useCallback(async () => {
     setLoading(true);
-    const result: any = await callRecipients({ data: { kind, page, pageSize: PAGE_SIZE } });
+    const result: any = await callRecipients({
+      data: { kind, page, pageSize: PAGE_SIZE, query },
+    });
     setLoading(false);
     if (result?.error) {
       toast.error(result.error);
@@ -44,7 +48,7 @@ function AdminCredits() {
     }
     setRecipients(result?.recipients ?? []);
     setTotal(result?.total ?? 0);
-  }, [callRecipients, kind, page]);
+  }, [callRecipients, kind, page, query]);
 
   useEffect(() => {
     setSelected(null);
@@ -55,6 +59,11 @@ function AdminCredits() {
   const switchKind = (nextKind: "user" | "team") => {
     setKind(nextKind);
     setPage(1);
+  };
+
+  const submitSearch = () => {
+    setPage(1);
+    setQuery(searchInput.trim());
   };
 
   const grant = async () => {
@@ -102,29 +111,47 @@ function AdminCredits() {
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
         <section className="panel overflow-hidden">
           <div className="flex flex-col gap-3 border-b border-border px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex gap-2">
-              <button
-                onClick={() => switchKind("user")}
-                className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition ${
-                  kind === "user"
-                    ? "bg-accent text-white"
-                    : "bg-bg-elevated text-text-secondary hover:text-text-primary"
-                }`}
-              >
-                <Users size={15} />
-                {t.admin_credits_users}
-              </button>
-              <button
-                onClick={() => switchKind("team")}
-                className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition ${
-                  kind === "team"
-                    ? "bg-accent text-white"
-                    : "bg-bg-elevated text-text-secondary hover:text-text-primary"
-                }`}
-              >
-                <Building2 size={15} />
-                {t.admin_credits_teams}
-              </button>
+            <div className="flex flex-wrap gap-2">
+              <div className="flex gap-2">
+                <button
+                  onClick={() => switchKind("user")}
+                  className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition ${
+                    kind === "user"
+                      ? "bg-accent text-white"
+                      : "bg-bg-elevated text-text-secondary hover:text-text-primary"
+                  }`}
+                >
+                  <Users size={15} />
+                  {t.admin_credits_users}
+                </button>
+                <button
+                  onClick={() => switchKind("team")}
+                  className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition ${
+                    kind === "team"
+                      ? "bg-accent text-white"
+                      : "bg-bg-elevated text-text-secondary hover:text-text-primary"
+                  }`}
+                >
+                  <Building2 size={15} />
+                  {t.admin_credits_teams}
+                </button>
+              </div>
+              <div className="flex min-w-[220px] flex-1 gap-2">
+                <Input
+                  value={searchInput}
+                  onChange={(event) => setSearchInput(event.target.value)}
+                  onKeyDown={(event) => event.key === "Enter" && submitSearch()}
+                  placeholder={t.admin_credits_search_placeholder}
+                  aria-label={t.admin_credits_search}
+                />
+                <button
+                  onClick={submitSearch}
+                  className="btn-ghost shrink-0 !px-3"
+                  aria-label={t.admin_credits_search}
+                >
+                  <Search size={16} />
+                </button>
+              </div>
             </div>
             <p className="text-sm text-text-muted">
               {total > 0 ? t.admin_credits_total.replace("{count}", total.toLocaleString()) : ""}
@@ -185,7 +212,9 @@ function AdminCredits() {
 
           <div className="flex items-center justify-end gap-3 border-t border-border px-5 py-3">
             <span className="text-xs text-text-muted">
-              {t.admin_credits_page.replace("{page}", String(page))}
+              {t.admin_credits_page
+                .replace("{page}", String(page))
+                .replace("{total}", String(totalPages))}
             </span>
             <button
               onClick={() => setPage((current) => Math.max(1, current - 1))}
@@ -221,7 +250,20 @@ function AdminCredits() {
             <div>
               <label className="mb-1.5 block text-sm font-medium">{t.admin_credits_selected}</label>
               <div className="min-h-10 rounded-md border border-border bg-bg-elevated px-3 py-2 text-sm text-text-secondary">
-                {selected ? selected.name : t.admin_credits_choose_target}
+                {selected ? (
+                  <>
+                    <div>{selected.name}</div>
+                    <div className="mt-0.5 text-xs text-text-muted">
+                      {selected.email
+                        ? selected.kind === "team"
+                          ? t.admin_credits_team_owner.replace("{email}", selected.email)
+                          : t.admin_credits_email.replace("{email}", selected.email)
+                        : t.admin_credits_no_email}
+                    </div>
+                  </>
+                ) : (
+                  t.admin_credits_choose_target
+                )}
               </div>
             </div>
             <div>

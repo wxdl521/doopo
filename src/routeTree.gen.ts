@@ -42,10 +42,7 @@ import { Route as ProjectsProjectIdRouteImport } from './routes/projects.$projec
 import { Route as CommunityPostIdRouteImport } from './routes/community.$postId'
 import { Route as CharactersRelationsRouteImport } from './routes/characters.relations'
 import { Route as CharactersCharacterIdRouteImport } from './routes/characters.$characterId'
-import { Route as AdminTenantsRouteImport } from './routes/admin.tenants'
-import { Route as AdminModelsRouteImport } from './routes/admin.models'
 import { Route as AdminCreditsRouteImport } from './routes/admin.credits'
-import { Route as AdminBillingRouteImport } from './routes/admin.billing'
 import { Route as AccountSubscriptionRouteImport } from './routes/account.subscription'
 import { Route as AccountSecurityRouteImport } from './routes/account.security'
 import { Route as AccountRewardsRouteImport } from './routes/account.rewards'
@@ -223,24 +220,9 @@ const CharactersCharacterIdRoute = CharactersCharacterIdRouteImport.update({
   path: '/$characterId',
   getParentRoute: () => CharactersRoute,
 } as any)
-const AdminTenantsRoute = AdminTenantsRouteImport.update({
-  id: '/tenants',
-  path: '/tenants',
-  getParentRoute: () => AdminRoute,
-} as any)
-const AdminModelsRoute = AdminModelsRouteImport.update({
-  id: '/models',
-  path: '/models',
-  getParentRoute: () => AdminRoute,
-} as any)
 const AdminCreditsRoute = AdminCreditsRouteImport.update({
   id: '/credits',
   path: '/credits',
-  getParentRoute: () => AdminRoute,
-} as any)
-const AdminBillingRoute = AdminBillingRouteImport.update({
-  id: '/billing',
-  path: '/billing',
   getParentRoute: () => AdminRoute,
 } as any)
 const AccountSubscriptionRoute = AccountSubscriptionRouteImport.update({
@@ -329,10 +311,7 @@ export interface FileRoutesByFullPath {
   '/account/rewards': typeof AccountRewardsRoute
   '/account/security': typeof AccountSecurityRoute
   '/account/subscription': typeof AccountSubscriptionRoute
-  '/admin/billing': typeof AdminBillingRoute
   '/admin/credits': typeof AdminCreditsRoute
-  '/admin/models': typeof AdminModelsRoute
-  '/admin/tenants': typeof AdminTenantsRoute
   '/characters/$characterId': typeof CharactersCharacterIdRoute
   '/characters/relations': typeof CharactersRelationsRoute
   '/community/$postId': typeof CommunityPostIdRoute
@@ -374,10 +353,7 @@ export interface FileRoutesByTo {
   '/account/rewards': typeof AccountRewardsRoute
   '/account/security': typeof AccountSecurityRoute
   '/account/subscription': typeof AccountSubscriptionRoute
-  '/admin/billing': typeof AdminBillingRoute
   '/admin/credits': typeof AdminCreditsRoute
-  '/admin/models': typeof AdminModelsRoute
-  '/admin/tenants': typeof AdminTenantsRoute
   '/characters/$characterId': typeof CharactersCharacterIdRoute
   '/characters/relations': typeof CharactersRelationsRoute
   '/community/$postId': typeof CommunityPostIdRoute
@@ -425,10 +401,7 @@ export interface FileRoutesById {
   '/account/rewards': typeof AccountRewardsRoute
   '/account/security': typeof AccountSecurityRoute
   '/account/subscription': typeof AccountSubscriptionRoute
-  '/admin/billing': typeof AdminBillingRoute
   '/admin/credits': typeof AdminCreditsRoute
-  '/admin/models': typeof AdminModelsRoute
-  '/admin/tenants': typeof AdminTenantsRoute
   '/characters/$characterId': typeof CharactersCharacterIdRoute
   '/characters/relations': typeof CharactersRelationsRoute
   '/community/$postId': typeof CommunityPostIdRoute
@@ -477,10 +450,7 @@ export interface FileRouteTypes {
     | '/account/rewards'
     | '/account/security'
     | '/account/subscription'
-    | '/admin/billing'
     | '/admin/credits'
-    | '/admin/models'
-    | '/admin/tenants'
     | '/characters/$characterId'
     | '/characters/relations'
     | '/community/$postId'
@@ -522,10 +492,7 @@ export interface FileRouteTypes {
     | '/account/rewards'
     | '/account/security'
     | '/account/subscription'
-    | '/admin/billing'
     | '/admin/credits'
-    | '/admin/models'
-    | '/admin/tenants'
     | '/characters/$characterId'
     | '/characters/relations'
     | '/community/$postId'
@@ -572,10 +539,7 @@ export interface FileRouteTypes {
     | '/account/rewards'
     | '/account/security'
     | '/account/subscription'
-    | '/admin/billing'
     | '/admin/credits'
-    | '/admin/models'
-    | '/admin/tenants'
     | '/characters/$characterId'
     | '/characters/relations'
     | '/community/$postId'
@@ -853,32 +817,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CharactersCharacterIdRouteImport
       parentRoute: typeof CharactersRoute
     }
-    '/admin/tenants': {
-      id: '/admin/tenants'
-      path: '/tenants'
-      fullPath: '/admin/tenants'
-      preLoaderRoute: typeof AdminTenantsRouteImport
-      parentRoute: typeof AdminRoute
-    }
-    '/admin/models': {
-      id: '/admin/models'
-      path: '/models'
-      fullPath: '/admin/models'
-      preLoaderRoute: typeof AdminModelsRouteImport
-      parentRoute: typeof AdminRoute
-    }
     '/admin/credits': {
       id: '/admin/credits'
       path: '/credits'
       fullPath: '/admin/credits'
       preLoaderRoute: typeof AdminCreditsRouteImport
-      parentRoute: typeof AdminRoute
-    }
-    '/admin/billing': {
-      id: '/admin/billing'
-      path: '/billing'
-      fullPath: '/admin/billing'
-      preLoaderRoute: typeof AdminBillingRouteImport
       parentRoute: typeof AdminRoute
     }
     '/account/subscription': {
@@ -989,18 +932,12 @@ const AccountRouteWithChildren =
   AccountRoute._addFileChildren(AccountRouteChildren)
 
 interface AdminRouteChildren {
-  AdminBillingRoute: typeof AdminBillingRoute
   AdminCreditsRoute: typeof AdminCreditsRoute
-  AdminModelsRoute: typeof AdminModelsRoute
-  AdminTenantsRoute: typeof AdminTenantsRoute
   AdminIndexRoute: typeof AdminIndexRoute
 }
 
 const AdminRouteChildren: AdminRouteChildren = {
-  AdminBillingRoute: AdminBillingRoute,
   AdminCreditsRoute: AdminCreditsRoute,
-  AdminModelsRoute: AdminModelsRoute,
-  AdminTenantsRoute: AdminTenantsRoute,
   AdminIndexRoute: AdminIndexRoute,
 }
 
