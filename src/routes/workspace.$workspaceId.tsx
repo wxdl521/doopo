@@ -1149,6 +1149,7 @@ function GroupSceneEditor({
 }
 
 function WorkspacePage() {
+  const workspaceId = Route.useParams().workspaceId;
   const { t } = useLanguage();
   const { user } = useAuth();
   const [tab, setTab] = useState<WorkspaceTab>("script");
@@ -2459,6 +2460,8 @@ function WorkspacePage() {
     durationSec?: number;
   };
   const [groupVideos, setGroupVideos] = useState<Record<string, VideoGenEntry[]>>({});
+  // 仅记录用户主动点击的单条视频入库状态，用于视频栏按钮的加载反馈。
+  const [persistingVideoKey, setPersistingVideoKey] = useState<string | null>(null);
   // 失败状态只在当前会话保留，用于提示和重试；不会进入生成历史或持久化数据。
   const [groupVideoFailures, setGroupVideoFailures] = useState<Record<string, number>>({});
   const markVideoFailed = useCallback((groupId: string) => {
@@ -2492,6 +2495,40 @@ function WorkspacePage() {
       return entries[Math.min(idx, entries.length - 1)];
     },
     [groupVideoFailures, groupVideos, selectedVideoIndex],
+  );
+  const persistVideoEntry = useCallback(
+    async (groupId: string, entryIndex: number) => {
+      const entry = groupVideos[groupId]?.[entryIndex];
+      if (!entry || entry.status !== "succeeded" || !entry.url || isPersistedUrl(entry.url)) return;
+
+      const sourceUrl = entry.url;
+      const key = `${groupId}:${entryIndex}`;
+      setPersistingVideoKey(key);
+      try {
+        const result = await callSaveOneVideo({
+          data: { workspaceId, groupId, fileId: `${groupId}-${entryIndex}`, url: sourceUrl },
+        });
+        if (!result.ok || !result.url) {
+          toast.error(`视频入库失败：${result.error || "请稍后重试"}`);
+          return;
+        }
+        setGroupVideos((current) => {
+          const entries = current[groupId];
+          // 只替换仍指向本次临时链接的版本，避免覆盖重新生成结果。
+          if (!entries || entries[entryIndex]?.url !== sourceUrl) return current;
+          const next = [...entries];
+          next[entryIndex] = { ...next[entryIndex], url: result.url };
+          return { ...current, [groupId]: next };
+        });
+        toast.success("视频已存储，可长期访问");
+      } catch (error) {
+        console.warn(`[video persist] ${groupId}[${entryIndex}] 失败:`, error);
+        toast.error("视频入库失败，请稍后重试");
+      } finally {
+        setPersistingVideoKey((current) => (current === key ? null : current));
+      }
+    },
+    [callSaveOneVideo, groupVideos, isPersistedUrl, workspaceId],
   );
   const migrateGroupVideos = useCallback(
     (raw: Record<string, unknown> | undefined | null): Record<string, VideoGenEntry[]> => {
@@ -2773,7 +2810,6 @@ function WorkspacePage() {
   const [shotSelectedGenIdx, setShotSelectedGenIdx] = useState(0);
   const [shotModInput, setShotModInput] = useState("");
   const [shotModBusy, setShotModBusy] = useState(false);
-  const workspaceId = Route.useParams().workspaceId;
 
   // 每次打开另一张故事板时，把该故事板已有提示词放入富文本编辑器。
   useEffect(() => {
@@ -11057,32 +11093,6 @@ function WorkspacePage() {
                                         {sceneImgCount} 张
                                       </span>
                                     )}
-                                    {/* 上传本地图片按钮 */}
-                                    {!hasImg ? (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleUploadImage("scene", s.id, s.id);
-                                        }}
-                                        className="absolute bottom-1.5 right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] hover:bg-accent hover:text-accent-foreground transition backdrop-blur-sm"
-                                        title="上传本地图片"
-                                      >
-                                        <Upload size={10} /> 上传
-                                      </button>
-                                    ) : (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleUploadImage("scene", s.id, s.id);
-                                        }}
-                                        className={`absolute ${videoAssetLibrarySupport.supported ? "bottom-8" : "bottom-1.5"} right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] hover:bg-accent hover:text-accent-foreground transition backdrop-blur-sm`}
-                                        title="上传本地图片覆盖"
-                                      >
-                                        <Upload size={10} /> 上传
-                                      </button>
-                                    )}
                                   </div>
 
                                   {/* Text area — 标题 + 时段 badge + action brief + 2 按钮 */}
@@ -11331,32 +11341,6 @@ function WorkspacePage() {
                                       <span className="absolute bottom-8 left-1.5 z-20 text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/60 text-white">
                                         {propImgCount} 张
                                       </span>
-                                    )}
-                                    {/* 上传本地图片按钮 */}
-                                    {!hasImg ? (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleUploadImage("prop", p.id, p.id);
-                                        }}
-                                        className="absolute bottom-1.5 right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] hover:bg-accent hover:text-accent-foreground transition backdrop-blur-sm"
-                                        title="上传本地图片"
-                                      >
-                                        <Upload size={10} /> 上传
-                                      </button>
-                                    ) : (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleUploadImage("prop", p.id, p.id);
-                                        }}
-                                        className={`absolute ${videoAssetLibrarySupport.supported ? "bottom-8" : "bottom-1.5"} right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] hover:bg-accent hover:text-accent-foreground transition backdrop-blur-sm`}
-                                        title="上传本地图片覆盖"
-                                      >
-                                        <Upload size={10} /> 上传
-                                      </button>
                                     )}
                                     {isPinned && (
                                       <div className="absolute top-1.5 left-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-accent text-accent-foreground text-[10px] font-bold shadow-md">
@@ -11769,32 +11753,6 @@ function WorkspacePage() {
                                     >
                                       <BookmarkPlus size={10} /> 保存到资产
                                     </button>
-                                    {/* 有素材库时，上传位于右下角“入库”按钮上方；否则占右下角。 */}
-                                    {!hasImg ? (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleUploadImage("character", c.id, imageKey);
-                                        }}
-                                        className="absolute bottom-1.5 right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] hover:bg-accent hover:text-accent-foreground transition backdrop-blur-sm"
-                                        title="上传本地图片"
-                                      >
-                                        <Upload size={10} /> 上传
-                                      </button>
-                                    ) : (
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleUploadImage("character", c.id, imageKey);
-                                        }}
-                                        className={`absolute ${videoAssetLibrarySupport.supported ? "bottom-8" : "bottom-1.5"} right-1.5 z-10 inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/60 text-white text-[10px] hover:bg-accent hover:text-accent-foreground transition backdrop-blur-sm`}
-                                        title="上传本地图片覆盖"
-                                      >
-                                        <Upload size={10} /> 上传
-                                      </button>
-                                    )}
                                     {isUploading && (
                                       <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-black/55 text-white backdrop-blur-sm">
                                         <Loader2 size={22} className="animate-spin" />
@@ -13125,6 +13083,9 @@ function WorkspacePage() {
                                 ? vidEntries[vidEntries.length - 1]
                                 : undefined;
                               const activeIdx = selectedVideoIndex[g.id] ?? vidEntries.length - 1;
+                              const activeVideoPersisted = isPersistedUrl(videoEntry?.url);
+                              const activeVideoPersisting =
+                                persistingVideoKey === `${g.id}:${activeIdx}`;
                               return (
                                 <>
                                   <div className="flex items-center justify-between">
@@ -13132,9 +13093,41 @@ function WorkspacePage() {
                                       视频 · Video
                                     </div>
                                     {videoEntry?.status === "succeeded" ? (
-                                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-accent/15 text-accent border border-accent/30">
-                                        已生成
-                                      </span>
+                                      <div className="inline-flex items-center gap-1.5">
+                                        <span
+                                          className={`inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded border ${
+                                            activeVideoPersisted
+                                              ? "bg-emerald-500/15 text-emerald-500 border-emerald-500/30"
+                                              : "bg-amber-500/15 text-amber-500 border-amber-500/30"
+                                          }`}
+                                          title={
+                                            activeVideoPersisted
+                                              ? "已存储，可长期访问"
+                                              : "供应商临时链接，24h 后过期"
+                                          }
+                                        >
+                                          {activeVideoPersisted ? (
+                                            <CheckCircle2 size={10} />
+                                          ) : (
+                                            <Clock size={10} />
+                                          )}
+                                          {activeVideoPersisted ? "已存储" : "临时 · 24h 后过期"}
+                                        </span>
+                                        {!activeVideoPersisted && (
+                                          <button
+                                            type="button"
+                                            onClick={() => void persistVideoEntry(g.id, activeIdx)}
+                                            disabled={activeVideoPersisting}
+                                            className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded border border-accent/50 bg-accent-dim/20 text-accent hover:border-accent hover:bg-accent-dim/40 transition disabled:cursor-not-allowed disabled:opacity-50"
+                                            title="立即转存视频，避免 24 小时后失效"
+                                          >
+                                            {activeVideoPersisting && (
+                                              <Loader2 size={10} className="animate-spin" />
+                                            )}
+                                            {activeVideoPersisting ? "入库中…" : "入库"}
+                                          </button>
+                                        )}
+                                      </div>
                                     ) : videoEntry?.status === "running" ? (
                                       <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-elevated border border-border text-text-muted">
                                         生成中…
@@ -13493,6 +13486,7 @@ function WorkspacePage() {
           const currentUrl = generations[currentIdx];
           const currentPromptRecord = charImagePrompts[imageKey]?.[currentIdx];
           const cardTitle = lk ? `${c.name} · ${lk.label}` : c.name;
+          const isUploading = uploadingImageKeys.has(`character:${imageKey}`);
           return (
             <div
               className="fixed inset-0 z-[120] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4"
@@ -13537,8 +13531,24 @@ function WorkspacePage() {
                 <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[120px_minmax(0,1fr)_440px] gap-3 p-3">
                   {/* === Left: thumbnails of the SAME look, all generations === */}
                   <aside className="overflow-y-auto pr-1 space-y-2 min-h-0">
-                    <div className="text-[10px] text-text-muted px-1 pb-1 sticky top-0 bg-bg-surface">
-                      历史生成（{generations.length}）
+                    <div className="flex flex-col items-start gap-1 px-1 pb-1 sticky top-0 bg-bg-surface">
+                      <button
+                        type="button"
+                        onClick={() => handleUploadImage("character", c.id, imageKey)}
+                        disabled={isUploading}
+                        title="上传本地图片"
+                        className="w-11 h-11 rounded-md border border-dashed border-border bg-bg-elevated/60 text-text-muted hover:border-accent hover:bg-accent-dim/30 hover:text-accent disabled:cursor-not-allowed disabled:opacity-60 transition flex flex-col items-center justify-center gap-0"
+                      >
+                        {isUploading ? (
+                          <Loader2 size={16} className="animate-spin" />
+                        ) : (
+                          <Upload size={16} strokeWidth={1.8} />
+                        )}
+                        <span className="text-[9px] font-medium">{isUploading ? "上传中" : "上传"}</span>
+                      </button>
+                      <div className="text-[10px] text-text-muted">
+                        历史生成（{generations.length}）
+                      </div>
                     </div>
                     {generations.length === 0 ? (
                       <div className="aspect-[3/4] rounded border border-dashed border-border flex items-center justify-center text-[10px] text-text-muted text-center px-1">
@@ -13928,6 +13938,7 @@ function WorkspacePage() {
           const currentUrl = pinnedUrl && history.includes(pinnedUrl) ? pinnedUrl : history.at(-1);
           const currentIdx = currentUrl ? Math.max(0, history.indexOf(currentUrl)) : -1;
           const isPromptTranslating = translatingEditablePromptKeys.has(`scene:${s.id}`);
+          const isUploading = uploadingImageKeys.has(`scene:${s.id}`);
           return (
             <div
               className="fixed inset-0 z-[120] bg-black/80 backdrop-blur-sm flex items-center justify-center p-6"
@@ -13976,11 +13987,26 @@ function WorkspacePage() {
                       </div>
                     )}
                     {/* 历史缩略图条:贴着大图底部,跟角色 preview 的左栏对齐 */}
-                    {history.length > 0 && (
-                      <div className="absolute bottom-2 left-2 right-2 flex items-center gap-1.5 overflow-x-auto py-1 px-1 rounded bg-black/50 backdrop-blur-sm">
-                        <span className="text-[9px] font-mono text-white/70 shrink-0 pr-1">
-                          历史 ({history.length})
-                        </span>
+                    <div className="absolute bottom-2 left-2 right-2 flex items-center gap-1.5 overflow-x-auto py-1 px-1 rounded bg-black/50 backdrop-blur-sm">
+                        <div className="flex flex-col items-start gap-0.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleUploadImage("scene", s.id, s.id)}
+                            disabled={isUploading}
+                            title="上传本地图片"
+                            className="w-11 h-11 rounded-md border border-dashed border-white/30 bg-black/40 text-white/80 hover:border-accent hover:bg-accent-dim/30 hover:text-accent disabled:cursor-not-allowed disabled:opacity-60 transition flex flex-col items-center justify-center gap-0"
+                          >
+                            {isUploading ? (
+                              <Loader2 size={16} className="animate-spin" />
+                            ) : (
+                              <Upload size={16} strokeWidth={1.8} />
+                            )}
+                            <span className="text-[9px] font-medium">{isUploading ? "上传中" : "上传"}</span>
+                          </button>
+                          <span className="text-[9px] font-mono text-white/70 whitespace-nowrap">
+                            历史生成（{history.length}）
+                          </span>
+                        </div>
                         {history.map((u, i) => {
                           const isPinned = selectedSceneImages[s.id] === u;
                           return (
@@ -14026,8 +14052,7 @@ function WorkspacePage() {
                             </button>
                           );
                         })}
-                      </div>
-                    )}
+                    </div>
                   </div>
                   <div className="overflow-y-auto p-4 space-y-3 bg-bg-surface min-h-0">
                     <div className="text-[10px] uppercase tracking-wide text-accent font-semibold">
@@ -14224,6 +14249,7 @@ function WorkspacePage() {
           const currentUrl = pinnedUrl && history.includes(pinnedUrl) ? pinnedUrl : history.at(-1);
           const currentIdx = currentUrl ? Math.max(0, history.indexOf(currentUrl)) : -1;
           const isPromptTranslating = translatingEditablePromptKeys.has(`prop:${p.id}`);
+          const isUploading = uploadingImageKeys.has(`prop:${p.id}`);
           return (
             <div
               className="fixed inset-0 z-[120] bg-black/80 backdrop-blur-sm flex items-center justify-center p-6"
@@ -14270,11 +14296,26 @@ function WorkspacePage() {
                       </div>
                     )}
                     {/* History thumbnails bar */}
-                    {history.length > 0 && (
-                      <div className="absolute bottom-2 left-2 right-2 flex items-center gap-1.5 overflow-x-auto py-1 px-1 rounded bg-black/50 backdrop-blur-sm">
-                        <span className="text-[9px] font-mono text-white/70 shrink-0 pr-1">
-                          历史 ({history.length})
-                        </span>
+                    <div className="absolute bottom-2 left-2 right-2 flex items-center gap-1.5 overflow-x-auto py-1 px-1 rounded bg-black/50 backdrop-blur-sm">
+                        <div className="flex flex-col items-start gap-0.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleUploadImage("prop", p.id, p.id)}
+                            disabled={isUploading}
+                            title="上传本地图片"
+                            className="w-11 h-11 rounded-md border border-dashed border-white/30 bg-black/40 text-white/80 hover:border-accent hover:bg-accent-dim/30 hover:text-accent disabled:cursor-not-allowed disabled:opacity-60 transition flex flex-col items-center justify-center gap-0"
+                          >
+                            {isUploading ? (
+                              <Loader2 size={16} className="animate-spin" />
+                            ) : (
+                              <Upload size={16} strokeWidth={1.8} />
+                            )}
+                            <span className="text-[9px] font-medium">{isUploading ? "上传中" : "上传"}</span>
+                          </button>
+                          <span className="text-[9px] font-mono text-white/70 whitespace-nowrap">
+                            历史生成（{history.length}）
+                          </span>
+                        </div>
                         {history.map((u, i) => {
                           const isPinned = selectedPropImages[p.id] === u;
                           return (
@@ -14319,8 +14360,7 @@ function WorkspacePage() {
                             </button>
                           );
                         })}
-                      </div>
-                    )}
+                    </div>
                   </div>
                   <div className="overflow-y-auto p-4 space-y-3 bg-bg-surface min-h-0">
                     <div className="text-[10px] uppercase tracking-wide text-accent font-semibold">
