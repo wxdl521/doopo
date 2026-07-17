@@ -61,12 +61,29 @@ type ConfluoImageResult = {
 
 /** gpt-image-2 支持的尺寸白名单 */
 const GPT_IMAGE2_SIZES = new Set(["1024x1024", "1024x1792", "1792x1024"]);
+const CONFLUO_GPT_IMAGE2_MAX_EDGE = 2048;
+
+/**
+ * 汇流的 gpt-image-2 在 4K 图生图（尤其是多参考图）时容易由上游返回 524。
+ * 将长边限制为 2K，并按 16 的倍数向下取整以保留原有画幅。
+ */
+function capConfluoGptImage2Size(width: number, height: number): string {
+  const longEdge = Math.max(width, height);
+  if (longEdge <= CONFLUO_GPT_IMAGE2_MAX_EDGE) return `${width}x${height}`;
+
+  const scale = CONFLUO_GPT_IMAGE2_MAX_EDGE / longEdge;
+  const normalizeEdge = (edge: number) => Math.max(16, Math.floor((edge * scale) / 16) * 16);
+  return `${normalizeEdge(width)}x${normalizeEdge(height)}`;
+}
 
 /** 把任意 size 字符串(WxH / 2K / 1328*1328)折算成 gpt-image-2 接受的尺寸 */
 function normalizeConfluoSize(size: string | undefined, model: string): string {
   const s = (size || "").trim().toLowerCase().replace(/\*/g, "x");
   if (/^gpt-image/i.test(model)) {
-    if (isValidHighResImageSize(s)) return s;
+    if (isValidHighResImageSize(s)) {
+      const [, width, height] = s.match(/^(\d+)x(\d+)$/)!;
+      return capConfluoGptImage2Size(Number(width), Number(height));
+    }
     if (GPT_IMAGE2_SIZES.has(s)) return s;
     // 按宽高比就近 fallback
     const m = s.match(/^(\d+)x(\d+)$/);

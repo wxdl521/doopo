@@ -119,6 +119,11 @@ const imageModelOptions = [
     label: "GPT Image 2 (AgentEarth)",
     sub: "",
   },
+  {
+    id: "confluo/gpt-image-2",
+    label: "GPT Image 2 (汇流)",
+    sub: "",
+  },
 
   {
     id: "azure2/gpt-image-2",
@@ -141,6 +146,7 @@ const VISIBLE_IMAGE_PREFIXES = [
   "azure0716/",
   "tokenhub/", // 星标
   "agentearth/",
+  "confluo/",
   "aigcfamily/",
 ];
 const isVisibleImage = (id: string) =>
