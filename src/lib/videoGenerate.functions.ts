@@ -3056,7 +3056,7 @@ export const submitVideoTaskFn = createServerFn({ method: "POST" })
     {
       const { ensureEnoughCredits } = await import("./creditsGuard");
       const __model = data.model || ARK_DEFAULT_MODEL;
-      const __cost = videoCost(__model, data.resolution, data.duration);
+      const __cost = videoCost(__model, data.resolution, data.duration ?? 10);
       const __guard = await ensureEnoughCredits(__cost, {
         kind: "video",
         model: __model,
