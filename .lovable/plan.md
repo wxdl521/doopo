@@ -1,59 +1,72 @@
-# 失败调用日志面板
+## 问题定位
 
-在图片生成与 Seedance 视频提交失败时，把请求 payload、响应体、时间戳、模型、耗时等信息落库并提供可视化查看面板，方便排查 400/超时等问题。
+**问题 1：团队积分分配报错 `Could not find the function public.allocate_team_credits(...)`**
 
-## 一、数据存储
+- 迁移文件 `supabase/migrations/20260717010000_sync_team_credits_with_personal_wallets.sql` 定义了 `allocate_team_credits / reclaim_team_credits / transfer_team_credits` 三个 RPC，但通过 `supabase--read_query` 核查 `pg_proc`，线上数据库里这三个函数**都不存在**（之前的迁移没有落库成功）。前端 `src/lib/teamCredits.functions.ts` 调用的正是这些 RPC，因此报 schema cache not found。
 
-新增表 `public.generation_error_logs`（迁移 SQL 交由老板执行）：
+**问题 2：账户积分余额没有下限保护**
 
-| 字段 | 类型 | 说明 |
-|---|---|---|
-| id | uuid PK | |
-| user_id | uuid, FK auth.users | 记录归属 |
-| kind | text | `image` / `video` |
-| provider | text | `ark-seedance` / `pixflow` / `azure` … |
-| model | text | 具体 model id |
-| status | int | HTTP status（0 表示网络异常） |
-| duration_ms | int | 耗时 |
-| request_payload | jsonb | 提交给上游的 body（自动脱敏 key） |
-| response_body | text | 上游返回原文，截断至 4KB |
-| error_message | text | 摘要 |
-| created_at | timestamptz default now() | |
+- `chargeCredits`（`src/lib/userCredits.functions.ts`）在生成完成后才扣费，RPC `deduct_user_credits` 允许扣到负数（"欠款"）。
+- `generateImage`（seedream.functions.ts）目前**根本没有扣费/校验**；`submitVideoTaskFn`（videoGenerate.functions.ts）只在成功后扣费。
+- 结果：余额 ≤ 0 的用户仍能无限生成，与产品预期不符。
 
-- RLS：仅 `user_id = auth.uid()` 可读；`service_role` 可写。
-- GRANT SELECT to authenticated；GRANT ALL to service_role。
-- 索引：`(user_id, created_at desc)`、`(kind, created_at desc)`。
+---
 
-## 二、写入侧（Server Functions）
+## 修复方案
 
-新增 `src/lib/errorLogs.functions.ts`：
-- `logGenerationError(input)`：内部函数，使用 `client.server.ts` 的 `supabaseAdmin`（绕过 RLS）写入。参数含 `userId, kind, provider, model, status, durationMs, requestPayload, responseBody, errorMessage`。
-- `listMyGenerationErrors({ limit, kind })`：`requireSupabaseAuth` 中间件，读当前用户最近 100 条。
+### 一、重新应用团队积分迁移（DB 迁移）
 
-在失败分支注入调用：
-1. `src/lib/videoGenerate.functions.ts` 的 `submitVideoTask`（`ark-seedance` 分支）：`submit 400/网络异常` 处调用 `logGenerationError`，payload = 发给 ARK 的 body，response = 上游文本。
-2. `src/lib/seedream.functions.ts` 的 `generateImage` 主流程失败/兜底后仍失败时调用；同样覆盖 pixflow/azure/tokenflash 等分支的失败返回点（统一在 `generateImage` 出口处判断 `error` 后集中记录，避免每个 provider 侧写重复）。
-3. 通过 `getRequest()` 或已存在的鉴权 context 获取 `userId`；无 userId 时也写（`user_id = null`）以便后台观察。
+重新执行 `20260717010000` 迁移中三个 RPC 的 `CREATE OR REPLACE FUNCTION` + 权限授予部分，确保线上存在：
 
-脱敏：`request_payload` 序列化前，剔除 `authorization` header 和 `api_key` 字段；保留 prompt/size/model/refs 等。
+- `allocate_team_credits(p_team_id, p_user_id, p_amount, p_description)`
+- `reclaim_team_credits(...)`
+- `transfer_team_credits(...)`
 
-## 三、查看面板
+以及配套的 `reclaim_leaving_member_credits` 触发器（若缺失）。全部保持 `SECURITY DEFINER` + `search_path=public`，`REVOKE FROM anon`、`GRANT EXECUTE TO authenticated, service_role`（与安全内存一致）。
 
-新增页面路由 `src/routes/account.error-logs.tsx`：
-- 使用 TanStack Query + `useServerFn(listMyGenerationErrors)`。
-- 表格列：时间、类型（image/video 徽章）、provider、model、status、耗时、错误摘要。
-- 行展开：显示格式化后的 `request_payload`（JSON pretty）和 `response_body`（monospace，滚动容器，最多 4KB）。
-- 顶部筛选：类型（全部/图片/视频）、复制按钮（复制单条 JSON 便于粘贴报错）。
-- 在 `src/routes/account.tsx` 侧边栏加入「调用错误日志」入口；i18n 键 `account.errorLogs.*` 同步 `zh.ts` / `en.ts`。
+迁移完成后前端无需改动，`allocateCredits` server function 立即可用。
 
-## 四、验证
+### 二、生成前积分预校验（代码）
 
-- 手动触发一次 Seedance 400（用非法 size）→ 检查记录出现并可展开。
-- 手动触发一次 Seedream 尺寸不合法失败 → 同上。
-- 成功调用不写入，避免污染。
+新增共享工具 `src/lib/creditsGuard.ts`（服务端函数内使用）：
+
+```
+assertEnoughCredits(supabase, userId, requiredCost, meta)
+  → 读 user_wallets.credits_balance
+  → balance < requiredCost 时：
+      • 写入 generation_error_logs（复用现有 logGenerationError，type='insufficient_credits'）
+      • 抛出 Response(402, JSON) 或返回 { ok:false, error:'积分不足' }
+```
+
+接入两个关键路径（仅在成本可算出、cost>0 时校验；cost=null 的模型保持免费不拦截）：
+
+1. **`src/lib/seedream.functions.ts` › `generateImage.handler`**  
+   在真正分发到各供应商之前，用 `imageCost(model)` 计算成本 × 目标张数（seedream 支持批量），不足则直接返回 `{ ok:false, error, code:'INSUFFICIENT_CREDITS' }`，前端已有错误 toast 展示。生成成功后追加 `chargeCredits`（目前生图路径漏扣，一并补上，与现有 videoGenerate 保持一致的"成功后扣费"逻辑）。
+
+2. **`src/lib/videoGenerate.functions.ts` › `submitVideoTaskFn`**  
+   在向 ARK / kuaizi 等提交任务前，用 `videoCost(model, resolution, duration)` 预校验，不足则拒绝提交（不产生外部调用费用）。
+
+### 三、前端错误提示
+
+`ZopiaChatPanel` 与 `StoryboardTimeline` 已有统一的错误弹窗渲染 `error` 字段，无需改 UI；只需保证服务端返回的 `error` 文案为「当前积分不足，无法继续生成，请充值后再试」，即可自然展示并停止后续动作。
+
+---
 
 ## 技术细节
 
-- 写日志使用 fire-and-forget（`.catch(console.warn)`），不阻塞主流程失败返回。
-- `response_body` 使用 `.slice(0, 4096)` 截断，`request_payload` 深拷贝后过滤敏感字段。
-- 迁移 SQL 放在 `supabase/migrations/<timestamp>_generation_error_logs.sql`，产出后由老板执行 `bun run db:push`。
+- 预校验读的是 `user_wallets.credits_balance`（RLS 只允许自读，安全）。
+- 预校验与扣费之间存在极小竞态窗口：仍依赖 `deduct_user_credits` RPC 的原子扣减做最终一致性，本次不改 RPC 语义（避免影响历史欠款用户）。
+- `imageCost` 目前仅覆盖 tokenflash / revora / azure* 前缀，其它供应商返回 null → 不校验也不扣费，行为与今天一致，避免误伤。
+- 生图批量：以请求里 `n` / `numImages` / 参考图循环次数为准计算 `cost * count`；handler 中已有相应变量，直接乘算。
+- 团队迁移用 supabase migration 工具下发，等你审批后执行。
+
+---
+
+## 变更清单
+
+- 迁移 SQL：重建 `allocate_team_credits` / `reclaim_team_credits` / `transfer_team_credits` + 权限
+- 新增 `src/lib/creditsGuard.ts`
+- 修改 `src/lib/seedream.functions.ts`（预校验 + 成功后扣费）
+- 修改 `src/lib/videoGenerate.functions.ts`（提交前预校验）
+
+不动 UI、不动其它业务逻辑。
