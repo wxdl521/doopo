@@ -1046,22 +1046,26 @@ function GroupMembershipEditor({
     .filter((c) => c.episodes.includes(group.episodeIndex))
     .filter((c) => !group.characterIds.includes(c.id));
   return (
-    <div className="relative inline-block">
-      <button
-        type="button"
-        // 不 stopPropagation:让点击冒泡到父级 look-menu close handler,
-        // 自动关掉可能还开着的 look 菜单,避免两个 popover 同时浮着。
-        onClick={() => setAddOpen((v) => !v)}
-        disabled={addable.length === 0}
-        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-dashed border-border text-[10px] text-text-secondary hover:border-accent hover:text-accent hover:bg-accent-dim/30 transition disabled:opacity-40 disabled:cursor-not-allowed"
-        title={addable.length === 0 ? "本集角色已全部加入" : "从本集角色库挑选一个加进来"}
-      >
-        <Plus size={9} /> 加角色
-      </button>
-      {addOpen && addable.length > 0 && (
-        <div
-          onClick={(e) => e.stopPropagation()}
-          className="absolute z-30 left-0 top-full mt-1 min-w-[200px] max-h-[260px] overflow-y-auto rounded-lg border border-border bg-bg-surface shadow-xl py-1"
+    <Popover open={addOpen} onOpenChange={setAddOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          // 不 stopPropagation:让点击冒泡到父级 look-menu close handler,
+          // 自动关掉可能还开着的 look 菜单,避免两个 popover 同时浮着。
+          disabled={addable.length === 0}
+          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-dashed border-border text-[10px] text-text-secondary hover:border-accent hover:text-accent hover:bg-accent-dim/30 transition disabled:opacity-40 disabled:cursor-not-allowed"
+          title={addable.length === 0 ? "本集角色已全部加入" : "从本集角色库挑选一个加进来"}
+        >
+          <Plus size={9} /> 加角色
+        </button>
+      </PopoverTrigger>
+      {addable.length > 0 && (
+        <PopoverContent
+          side="bottom"
+          align="start"
+          avoidCollisions={false}
+          onOpenAutoFocus={(e) => e.preventDefault()}
+          className="z-[70] min-w-[200px] max-h-[260px] overflow-y-auto rounded-lg border-border bg-bg-surface p-1 shadow-xl"
         >
           {addable.map((c) => (
             <button
@@ -1081,9 +1085,9 @@ function GroupMembershipEditor({
               )}
             </button>
           ))}
-        </div>
+        </PopoverContent>
       )}
-    </div>
+    </Popover>
   );
 }
 
@@ -1105,20 +1109,24 @@ function GroupPropEditor({
     .filter((p) => p.episodeIndex === group.episodeIndex)
     .filter((p) => !(group.propIds ?? []).includes(p.id));
   return (
-    <div className="relative inline-block">
-      <button
-        type="button"
-        onClick={() => setAddOpen((v) => !v)}
-        disabled={addable.length === 0}
-        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-dashed border-border text-[10px] text-text-secondary hover:border-accent hover:text-accent hover:bg-accent-dim/30 transition disabled:opacity-40 disabled:cursor-not-allowed"
-        title={addable.length === 0 ? "本集道具已全部加入" : "从本集道具库挑选一个加进来"}
-      >
-        <Plus size={9} /> 加道具
-      </button>
-      {addOpen && addable.length > 0 && (
-        <div
-          onClick={(e) => e.stopPropagation()}
-          className="absolute z-30 left-0 top-full mt-1 min-w-[180px] max-h-[260px] overflow-y-auto rounded-lg border border-border bg-bg-surface shadow-xl py-1"
+    <Popover open={addOpen} onOpenChange={setAddOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          disabled={addable.length === 0}
+          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-dashed border-border text-[10px] text-text-secondary hover:border-accent hover:text-accent hover:bg-accent-dim/30 transition disabled:opacity-40 disabled:cursor-not-allowed"
+          title={addable.length === 0 ? "本集道具已全部加入" : "从本集道具库挑选一个加进来"}
+        >
+          <Plus size={9} /> 加道具
+        </button>
+      </PopoverTrigger>
+      {addable.length > 0 && (
+        <PopoverContent
+          side="bottom"
+          align="start"
+          avoidCollisions={false}
+          onOpenAutoFocus={(e) => e.preventDefault()}
+          className="z-[70] min-w-[180px] max-h-[260px] overflow-y-auto rounded-lg border-border bg-bg-surface p-1 shadow-xl"
         >
           {addable.map((p) => (
             <button
@@ -1140,9 +1148,9 @@ function GroupPropEditor({
               )}
             </button>
           ))}
-        </div>
+        </PopoverContent>
       )}
-    </div>
+    </Popover>
   );
 }
 
@@ -1166,20 +1174,24 @@ function GroupSceneEditor({
   const epScenes = scenes.filter((s) => s.episodeIndex === group.episodeIndex);
   const addable = epScenes.filter((s) => !(group.sceneIds ?? []).includes(s.id));
   return (
-    <div className="relative inline-block">
-      <button
-        type="button"
-        onClick={() => setAddOpen((v) => !v)}
-        disabled={addable.length === 0}
-        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-dashed border-border text-[10px] text-text-secondary hover:border-accent hover:text-accent hover:bg-accent-dim/30 transition disabled:opacity-40 disabled:cursor-not-allowed"
-        title={addable.length === 0 ? "本集场景已全部加入" : "从本集场景库挑选一个加进来"}
-      >
-        <Plus size={9} /> 加场景
-      </button>
-      {addOpen && addable.length > 0 && (
-        <div
-          onClick={(e) => e.stopPropagation()}
-          className="absolute z-30 left-0 top-full mt-1 min-w-[180px] max-h-[260px] overflow-y-auto rounded-lg border border-border bg-bg-surface shadow-xl py-1"
+    <Popover open={addOpen} onOpenChange={setAddOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          disabled={addable.length === 0}
+          className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded border border-dashed border-border text-[10px] text-text-secondary hover:border-accent hover:text-accent hover:bg-accent-dim/30 transition disabled:opacity-40 disabled:cursor-not-allowed"
+          title={addable.length === 0 ? "本集场景已全部加入" : "从本集场景库挑选一个加进来"}
+        >
+          <Plus size={9} /> 加场景
+        </button>
+      </PopoverTrigger>
+      {addable.length > 0 && (
+        <PopoverContent
+          side="bottom"
+          align="start"
+          avoidCollisions={false}
+          onOpenAutoFocus={(e) => e.preventDefault()}
+          className="z-[70] min-w-[180px] max-h-[260px] overflow-y-auto rounded-lg border-border bg-bg-surface p-1 shadow-xl"
         >
           {addable.map((s) => {
             const label = s.location || s.slug || s.id;
@@ -1200,9 +1212,9 @@ function GroupSceneEditor({
               </button>
             );
           })}
-        </div>
+        </PopoverContent>
       )}
-    </div>
+    </Popover>
   );
 }
 
@@ -12825,48 +12837,113 @@ function WorkspacePage() {
                                       const menuKey = `${g.id}::${cid}`;
                                       const menuOpen = openLookMenu === menuKey;
                                       return (
-                                        <div key={cid} className="relative">
+                                        <div key={cid}>
                                           <div className="flex items-center gap-0.5">
-                                            <button
-                                              type="button"
-                                              data-look-trigger
-                                              onClick={() => {
-                                                if (!hasVariants) return;
-                                                setOpenLookMenu(menuOpen ? null : menuKey);
-                                              }}
-                                              disabled={!hasVariants}
-                                              className={`flex items-center gap-1 px-1.5 py-0.5 rounded border transition ${
-                                                hasVariants
-                                                  ? "bg-bg-elevated border-border hover:border-accent cursor-pointer"
-                                                  : "bg-bg-elevated/50 border-border/40 cursor-default"
-                                              }`}
-                                              title={
-                                                hasVariants
-                                                  ? `切换形象 (${variantIdx + 1}/${variants.length})`
-                                                  : baseName
+                                            <Popover
+                                              open={hasVariants && menuOpen}
+                                              onOpenChange={(open) =>
+                                                setOpenLookMenu(open ? menuKey : null)
                                               }
                                             >
-                                              <div className="w-4 h-4 rounded-full overflow-hidden bg-bg-base shrink-0">
-                                                {img ? (
-                                                  <img
-                                                    src={img}
-                                                    alt={selectedCh.name}
-                                                    className="w-full h-full object-cover"
-                                                    onError={(e) => {
-                                                      (e.target as HTMLImageElement).style.display =
-                                                        "none";
-                                                    }}
-                                                  />
-                                                ) : (
-                                                  <div className="w-full h-full flex items-center justify-center text-[7px] text-text-muted">
-                                                    N/A
+                                              <PopoverTrigger asChild>
+                                                <button
+                                                  type="button"
+                                                  data-look-trigger
+                                                  disabled={!hasVariants}
+                                                  className={`flex items-center gap-1 px-1.5 py-0.5 rounded border transition ${
+                                                    hasVariants
+                                                      ? "bg-bg-elevated border-border hover:border-accent cursor-pointer"
+                                                      : "bg-bg-elevated/50 border-border/40 cursor-default"
+                                                  }`}
+                                                  title={
+                                                    hasVariants
+                                                      ? `切换形象 (${variantIdx + 1}/${variants.length})`
+                                                      : baseName
+                                                  }
+                                                >
+                                                  <div className="w-4 h-4 rounded-full overflow-hidden bg-bg-base shrink-0">
+                                                    {img ? (
+                                                      <img
+                                                        src={img}
+                                                        alt={selectedCh.name}
+                                                        className="w-full h-full object-cover"
+                                                        onError={(e) => {
+                                                          (
+                                                            e.target as HTMLImageElement
+                                                          ).style.display = "none";
+                                                        }}
+                                                      />
+                                                    ) : (
+                                                      <div className="w-full h-full flex items-center justify-center text-[7px] text-text-muted">
+                                                        N/A
+                                                      </div>
+                                                    )}
                                                   </div>
-                                                )}
-                                              </div>
-                                              <span className="text-[10px] text-text-primary truncate max-w-[50px]">
-                                                {baseName}
-                                              </span>
-                                            </button>
+                                                  <span className="text-[10px] text-text-primary truncate max-w-[50px]">
+                                                    {baseName}
+                                                  </span>
+                                                </button>
+                                              </PopoverTrigger>
+                                              {hasVariants && (
+                                                <PopoverContent
+                                                  data-look-menu
+                                                  side="bottom"
+                                                  align="start"
+                                                  avoidCollisions={false}
+                                                  onOpenAutoFocus={(e) => e.preventDefault()}
+                                                  className="z-[70] min-w-[150px] rounded-lg border-border bg-bg-surface p-1 shadow-xl"
+                                                >
+                                                  {variants.map((v) => {
+                                                    const vImg =
+                                                      charImages[v.id]?.[charImages[v.id].length - 1];
+                                                    const isSelected = v.id === selectedCh.id;
+                                                    return (
+                                                      <button
+                                                        key={v.id}
+                                                        type="button"
+                                                        onClick={() => {
+                                                          setCharacterLookInGroup(g.id, cid, v.id);
+                                                          setOpenLookMenu(null);
+                                                        }}
+                                                        className={`w-full flex items-center gap-2 px-2 py-1 text-left text-[10px] transition ${
+                                                          isSelected
+                                                            ? "bg-accent/15 text-accent"
+                                                            : "hover:bg-bg-elevated text-text-primary"
+                                                        }`}
+                                                      >
+                                                        <div className="w-5 h-5 rounded-full overflow-hidden bg-bg-base shrink-0">
+                                                          {vImg ? (
+                                                            <img
+                                                              src={vImg}
+                                                              alt={v.name}
+                                                              className="w-full h-full object-cover"
+                                                              onError={(e) => {
+                                                                (
+                                                                  e.target as HTMLImageElement
+                                                                ).style.display = "none";
+                                                              }}
+                                                            />
+                                                          ) : (
+                                                            <div className="w-full h-full flex items-center justify-center text-[8px] text-text-muted">
+                                                              N/A
+                                                            </div>
+                                                          )}
+                                                        </div>
+                                                        <span className="flex-1 truncate">
+                                                          {v.name}
+                                                        </span>
+                                                        {isSelected && (
+                                                          <Check
+                                                            size={10}
+                                                            className="text-accent shrink-0"
+                                                          />
+                                                        )}
+                                                      </button>
+                                                    );
+                                                  })}
+                                                </PopoverContent>
+                                              )}
+                                            </Popover>
                                             <button
                                               type="button"
                                               onClick={(e) => {
@@ -12879,61 +12956,6 @@ function WorkspacePage() {
                                               <X size={8} />
                                             </button>
                                           </div>
-                                          {menuOpen && hasVariants && (
-                                            <div
-                                              data-look-menu
-                                              className="absolute z-30 left-0 top-full mt-1 min-w-[150px] rounded-lg border border-border bg-bg-surface shadow-xl py-1"
-                                            >
-                                              {variants.map((v) => {
-                                                const vImg =
-                                                  charImages[v.id]?.[charImages[v.id].length - 1];
-                                                const isSelected = v.id === selectedCh.id;
-                                                return (
-                                                  <button
-                                                    key={v.id}
-                                                    type="button"
-                                                    onClick={() => {
-                                                      setCharacterLookInGroup(g.id, cid, v.id);
-                                                      setOpenLookMenu(null);
-                                                    }}
-                                                    className={`w-full flex items-center gap-2 px-2 py-1 text-left text-[10px] transition ${
-                                                      isSelected
-                                                        ? "bg-accent/15 text-accent"
-                                                        : "hover:bg-bg-elevated text-text-primary"
-                                                    }`}
-                                                  >
-                                                    <div className="w-5 h-5 rounded-full overflow-hidden bg-bg-base shrink-0">
-                                                      {vImg ? (
-                                                        <img
-                                                          src={vImg}
-                                                          alt={v.name}
-                                                          className="w-full h-full object-cover"
-                                                          onError={(e) => {
-                                                            (
-                                                              e.target as HTMLImageElement
-                                                            ).style.display = "none";
-                                                          }}
-                                                        />
-                                                      ) : (
-                                                        <div className="w-full h-full flex items-center justify-center text-[8px] text-text-muted">
-                                                          N/A
-                                                        </div>
-                                                      )}
-                                                    </div>
-                                                    <span className="flex-1 truncate">
-                                                      {v.name}
-                                                    </span>
-                                                    {isSelected && (
-                                                      <Check
-                                                        size={10}
-                                                        className="text-accent shrink-0"
-                                                      />
-                                                    )}
-                                                  </button>
-                                                );
-                                              })}
-                                            </div>
-                                          )}
                                         </div>
                                       );
                                     })}
