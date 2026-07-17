@@ -70,6 +70,7 @@ export type TransferRow = {
 export type TeamBalance = {
   teamId: string;
   totalCredits: number;
+  ownerCredits: number;
   memberBalances: Array<{
     userId: string;
     creditsBalance: number;
@@ -78,119 +79,23 @@ export type TeamBalance = {
 };
 
 // ====================================================================
-// Helper: 计算团队剩余积分（owner 的 credits_balance）
-// ====================================================================
-
-async function getTeamRemainingCredits(supabase: any, teamId: string): Promise<number> {
-  // 团队剩余积分 = owner 的 credits_balance
-  const { data: owner } = await supabase
-    .from("team_members")
-    .select("credits_balance")
-    .eq("team_id", teamId)
-    .eq("role", "owner")
-    .maybeSingle();
-
-  return owner?.credits_balance ?? 0;
-}
-
-// ====================================================================
 // allocateCredits — 分配积分给成员（owner/admin）
-// 从团队剩余积分（owner balance）扣减，加到目标成员
+// 从所有者的个人积分转给目标成员；数据库 RPC 会同步两人的团队余额。
 // ====================================================================
 
 export const allocateCredits = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator(AllocateCreditsInput)
   .handler(async ({ data, context }) => {
-    const { supabase, userId } = context;
-
-    // 权限检查
-    const { data: self } = await supabase
-      .from("team_members")
-      .select("role")
-      .eq("team_id", data.teamId)
-      .eq("user_id", userId)
-      .maybeSingle();
-
-    if (!self || (self.role !== "owner" && self.role !== "admin")) {
-      return { ok: false as const, error: "You do not have permission to allocate credits" };
-    }
-
-    // 获取目标成员
-    const { data: target } = await supabase
-      .from("team_members")
-      .select("role, credits_balance")
-      .eq("team_id", data.teamId)
-      .eq("user_id", data.userId)
-      .maybeSingle();
-
-    if (!target) {
-      return { ok: false as const, error: "Target member not found" };
-    }
-
-    // admin 只能给 member 分配
-    if (self.role === "admin" && target.role !== "member") {
-      return { ok: false as const, error: "Admin can only allocate credits to members" };
-    }
-
-    // 获取 owner 的可用积分（团队池）
-    const { data: owner } = await supabase
-      .from("team_members")
-      .select("credits_balance, user_id")
-      .eq("team_id", data.teamId)
-      .eq("role", "owner")
-      .maybeSingle();
-
-    if (!owner) {
-      return { ok: false as const, error: "Team owner not found" };
-    }
-
-    if (owner.credits_balance < data.amount) {
-      return { ok: false as const, error: "Insufficient team credits" };
-    }
-
-    // 原子操作：扣减 owner 积分
-    const { error: deductError } = await supabase
-      .from("team_members")
-      .update({ credits_balance: owner.credits_balance - data.amount })
-      .eq("team_id", data.teamId)
-      .eq("user_id", owner.user_id);
-
-    if (deductError) {
-      return { ok: false as const, error: deductError.message };
-    }
-
-    // 增加目标成员积分
-    const newBalance = target.credits_balance + data.amount;
-    const { error: addError } = await supabase
-      .from("team_members")
-      .update({ credits_balance: newBalance })
-      .eq("team_id", data.teamId)
-      .eq("user_id", data.userId);
-
-    if (addError) {
-      // 回滚 owner
-      await supabase
-        .from("team_members")
-        .update({ credits_balance: owner.credits_balance })
-        .eq("team_id", data.teamId)
-        .eq("user_id", owner.user_id);
-      return { ok: false as const, error: addError.message };
-    }
-
-    // 写流水
-    await supabase.from("credit_transactions").insert({
-      team_id: data.teamId,
-      user_id: data.userId,
-      type: "allocate",
-      amount: data.amount,
-      balance_after: newBalance,
-      operator_id: userId,
-      source_type: "recharge",
-      description: data.description ?? "积分分配",
+    const { data: result, error } = await (context.supabase.rpc as any)("allocate_team_credits", {
+      p_team_id: data.teamId,
+      p_user_id: data.userId,
+      p_amount: data.amount,
+      p_description: data.description ?? null,
     });
 
-    return { ok: true as const, newBalance };
+    if (error) return { ok: false as const, error: error.message };
+    return { ok: true as const, newBalance: Number(result ?? 0) };
   });
 
 // ====================================================================
@@ -201,95 +106,15 @@ export const reclaimCredits = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator(ReclaimCreditsInput)
   .handler(async ({ data, context }) => {
-    const { supabase, userId } = context;
-
-    // 权限检查
-    const { data: self } = await supabase
-      .from("team_members")
-      .select("role")
-      .eq("team_id", data.teamId)
-      .eq("user_id", userId)
-      .maybeSingle();
-
-    if (!self || (self.role !== "owner" && self.role !== "admin")) {
-      return { ok: false as const, error: "You do not have permission to reclaim credits" };
-    }
-
-    // 获取目标成员
-    const { data: target } = await supabase
-      .from("team_members")
-      .select("role, credits_balance")
-      .eq("team_id", data.teamId)
-      .eq("user_id", data.userId)
-      .maybeSingle();
-
-    if (!target) {
-      return { ok: false as const, error: "Target member not found" };
-    }
-
-    if (self.role === "admin" && target.role !== "member") {
-      return { ok: false as const, error: "Admin can only reclaim credits from members" };
-    }
-
-    if (target.credits_balance < data.amount) {
-      return { ok: false as const, error: "Member has insufficient credits to reclaim" };
-    }
-
-    // 获取 owner
-    const { data: owner } = await supabase
-      .from("team_members")
-      .select("credits_balance, user_id")
-      .eq("team_id", data.teamId)
-      .eq("role", "owner")
-      .maybeSingle();
-
-    if (!owner) {
-      return { ok: false as const, error: "Team owner not found" };
-    }
-
-    // 扣减目标成员积分
-    const newMemberBalance = target.credits_balance - data.amount;
-    const { error: deductError } = await supabase
-      .from("team_members")
-      .update({ credits_balance: newMemberBalance })
-      .eq("team_id", data.teamId)
-      .eq("user_id", data.userId);
-
-    if (deductError) {
-      return { ok: false as const, error: deductError.message };
-    }
-
-    // 归还到 owner
-    const newOwnerBalance = owner.credits_balance + data.amount;
-    const { error: addError } = await supabase
-      .from("team_members")
-      .update({ credits_balance: newOwnerBalance })
-      .eq("team_id", data.teamId)
-      .eq("user_id", owner.user_id);
-
-    if (addError) {
-      // 回滚
-      await supabase
-        .from("team_members")
-        .update({ credits_balance: target.credits_balance })
-        .eq("team_id", data.teamId)
-        .eq("user_id", data.userId);
-      return { ok: false as const, error: addError.message };
-    }
-
-    // 写流水
-    await supabase.from("credit_transactions").insert({
-      team_id: data.teamId,
-      user_id: data.userId,
-      type: "reclaim",
-      amount: -data.amount,
-      balance_after: newMemberBalance,
-      operator_id: userId,
-      source_type: "recharge",
-      description: data.description ?? "积分回收",
+    const { data: result, error } = await (context.supabase.rpc as any)("reclaim_team_credits", {
+      p_team_id: data.teamId,
+      p_user_id: data.userId,
+      p_amount: data.amount,
+      p_description: data.description ?? null,
     });
 
-    return { ok: true as const, newBalance: newMemberBalance };
+    if (error) return { ok: false as const, error: error.message };
+    return { ok: true as const, newBalance: Number(result ?? 0) };
   });
 
 // ====================================================================
@@ -300,107 +125,20 @@ export const transferCredits = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator(TransferCreditsInput)
   .handler(async ({ data, context }) => {
-    const { supabase, userId } = context;
-
-    if (data.toUserId === userId) {
-      return { ok: false as const, error: "Cannot transfer credits to yourself" };
-    }
-
-    // 获取转出方
-    const { data: fromMember } = await supabase
-      .from("team_members")
-      .select("credits_balance")
-      .eq("team_id", data.teamId)
-      .eq("user_id", userId)
-      .maybeSingle();
-
-    if (!fromMember) {
-      return { ok: false as const, error: "You are not a member of this team" };
-    }
-
-    if (fromMember.credits_balance < data.amount) {
-      return { ok: false as const, error: "Insufficient credits" };
-    }
-
-    // 获取转入方
-    const { data: toMember } = await supabase
-      .from("team_members")
-      .select("credits_balance")
-      .eq("team_id", data.teamId)
-      .eq("user_id", data.toUserId)
-      .maybeSingle();
-
-    if (!toMember) {
-      return { ok: false as const, error: "Target member not found in this team" };
-    }
-
-    const fromNewBalance = fromMember.credits_balance - data.amount;
-    const toNewBalance = toMember.credits_balance + data.amount;
-
-    // 扣减转出方
-    const { error: fromError } = await supabase
-      .from("team_members")
-      .update({ credits_balance: fromNewBalance })
-      .eq("team_id", data.teamId)
-      .eq("user_id", userId);
-
-    if (fromError) {
-      return { ok: false as const, error: fromError.message };
-    }
-
-    // 增加转入方
-    const { error: toError } = await supabase
-      .from("team_members")
-      .update({ credits_balance: toNewBalance })
-      .eq("team_id", data.teamId)
-      .eq("user_id", data.toUserId);
-
-    if (toError) {
-      // 回滚
-      await supabase
-        .from("team_members")
-        .update({ credits_balance: fromMember.credits_balance })
-        .eq("team_id", data.teamId)
-        .eq("user_id", userId);
-      return { ok: false as const, error: toError.message };
-    }
-
-    // 写两条 transaction
-    await supabase.from("credit_transactions").insert([
-      {
-        team_id: data.teamId,
-        user_id: userId,
-        type: "transfer_out",
-        amount: -data.amount,
-        balance_after: fromNewBalance,
-        operator_id: userId,
-        source_type: "recharge",
-        description: data.description ?? `转账给成员`,
-      },
-      {
-        team_id: data.teamId,
-        user_id: data.toUserId,
-        type: "transfer_in",
-        amount: data.amount,
-        balance_after: toNewBalance,
-        operator_id: userId,
-        source_type: "recharge",
-        description: data.description ?? `收到转账`,
-      },
-    ]);
-
-    // 写 transfer_record
-    await supabase.from("transfer_records").insert({
-      team_id: data.teamId,
-      from_user_id: userId,
-      to_user_id: data.toUserId,
-      amount: data.amount,
-      from_balance_after: fromNewBalance,
-      to_balance_after: toNewBalance,
-      operator_id: userId,
+    const { data: result, error } = await (context.supabase.rpc as any)("transfer_team_credits", {
+      p_team_id: data.teamId,
+      p_to_user_id: data.toUserId,
+      p_amount: data.amount,
+      p_description: data.description ?? null,
     });
 
-    return { ok: true as const, fromNewBalance, toNewBalance };
+    if (error) return { ok: false as const, error: error.message };
+    const row = Array.isArray(result) ? result[0] : result;
+    return {
+      ok: true as const,
+      fromNewBalance: Number(row?.from_new_balance ?? 0),
+      toNewBalance: Number(row?.to_new_balance ?? 0),
+    };
   });
 
 // ====================================================================
@@ -483,58 +221,7 @@ export const getTransferRecords = createServerFn({ method: "POST" })
   });
 
 // ====================================================================
-// depositCredits — 转入团队池（owner/admin 从个人余额扣除）
-// ====================================================================
-
-export const depositCredits = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
-  .validator(
-    z.object({
-      teamId: z.string().uuid(),
-      amount: z.number().int().min(1),
-    }),
-  )
-  .handler(async ({ data, context }) => {
-    const { supabase, userId } = context;
-    const { teamId, amount } = data;
-
-    const { data: member, error: memberError } = await supabase
-      .from("team_members")
-      .select("role, credits_balance")
-      .eq("team_id", teamId)
-      .eq("user_id", userId)
-      .single();
-
-    if (memberError || !member) return { ok: false as const, error: "您不是该团队的成员" };
-    if (member.role !== "owner" && member.role !== "admin")
-      return { ok: false as const, error: "仅所有者和管理员可转入积分" };
-    if (member.credits_balance < amount) return { ok: false as const, error: "积分不足" };
-
-    const newBalance = member.credits_balance - amount;
-    const { error: updateError } = await supabase
-      .from("team_members")
-      .update({ credits_balance: newBalance })
-      .eq("team_id", teamId)
-      .eq("user_id", userId);
-
-    if (updateError) return { ok: false as const, error: updateError.message };
-
-    await supabase.from("credit_transactions").insert({
-      team_id: teamId,
-      user_id: userId,
-      type: "deposit",
-      amount: -amount,
-      balance_after: newBalance,
-      operator_id: userId,
-      source_type: "recharge",
-      description: `转入团队池 ${amount} 积分`,
-    });
-
-    return { ok: true as const, newBalance };
-  });
-
-// ====================================================================
-// getTeamBalance — 查询团队余额（剩余积分 + 各成员余额）
+// getTeamBalance — 团队剩余积分为所有在籍成员个人可用积分之和。
 // ====================================================================
 
 export const getTeamBalance = createServerFn({ method: "POST" })
@@ -553,18 +240,22 @@ export const getTeamBalance = createServerFn({ method: "POST" })
     }
 
     const owner = (members ?? []).find((m: any) => m.role === "owner");
-    const totalCredits = owner?.credits_balance ?? 0;
+    const totalCredits = (members ?? []).reduce(
+      (total: number, member: any) => total + Number(member.credits_balance ?? 0),
+      0,
+    );
 
     const memberBalances = (members ?? []).map((m: any) => ({
       userId: m.user_id,
-      creditsBalance: m.credits_balance,
-      subscriptionCredits: m.subscription_credits,
+      creditsBalance: Number(m.credits_balance ?? 0),
+      subscriptionCredits: Number(m.subscription_credits ?? 0),
     }));
 
     return {
       balance: {
         teamId: data.teamId,
         totalCredits,
+        ownerCredits: Number(owner?.credits_balance ?? 0),
         memberBalances,
       },
       error: null as string | null,

@@ -560,9 +560,9 @@ export const en: Translations = {
   my_team_rule_1_title: "Collaborative Creation",
   my_team_rule_1_desc:
     "Team members can share projects, characters and assets for efficient collaboration.",
-  my_team_rule_2_title: "Credit Pool Management",
+  my_team_rule_2_title: "Credit Sync Management",
   my_team_rule_2_desc:
-    "Team credits are centrally managed by the owner and can be allocated to members as needed.",
+    "Member credits stay in sync with personal accounts; team remaining credits are the sum of every member's available credits.",
   my_team_rule_3_title: "Flexible Permissions",
   my_team_rule_3_desc: "Three roles — Owner, Admin and Member — with fine-grained access control.",
   my_team_empty_title: "Not in any team yet",
@@ -574,7 +574,7 @@ export const en: Translations = {
   my_team_leave: "Leave Team",
   my_team_leave_confirm_title: "Confirm leaving team",
   my_team_leave_confirm_desc:
-    "After leaving, you will lose access to team projects. Your unused credits will be returned to the team pool. This action cannot be undone.",
+    "After leaving, you will lose access to team projects. Your available personal credits will be automatically reclaimed to the team owner's account. This action cannot be undone.",
   my_team_leave_confirm_btn: "Confirm Leave",
   my_team_leave_cancel: "Cancel",
   my_team_owner_cannot_leave:
@@ -615,7 +615,7 @@ export const en: Translations = {
   team_manage_remove_confirm_btn: "Confirm Remove",
   team_manage_subscription_credits: "sub",
   team_manage_remove_credits_warning:
-    "This member still has {credits} credits, which will be returned to the team pool.",
+    "This member still has {credits} credits, which will be reclaimed to the team owner's account.",
 
   // ============ Team Groups ============
   team_groups_tab: "Groups",
@@ -677,9 +677,9 @@ export const en: Translations = {
   credit_dialog_processing: "Processing...",
   credit_dialog_over_limit: "Exceeds limit ({max})",
   credit_dialog_hint_allocate:
-    "Deduct from team credits and add to this member. Max allocatable: {max}.",
+    "Transfer from the team owner's personal credits to this member. Max allocatable: {max}.",
   credit_dialog_hint_reclaim:
-    "Deduct from this member and return to team pool. Max reclaimable: {max}.",
+    "Reclaim this member's personal credits to the team owner. Max reclaimable: {max}.",
 
   // ============ Credits History ============
   history_team_credits: "Team Remaining Credits",

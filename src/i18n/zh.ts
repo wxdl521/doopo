@@ -542,8 +542,8 @@ export const zh = {
   my_team_rules: "团队规则",
   my_team_rule_1_title: "协作创作",
   my_team_rule_1_desc: "团队成员可以共享项目、角色和素材，实现高效协作。",
-  my_team_rule_2_title: "积分池管理",
-  my_team_rule_2_desc: "团队积分由所有者统一管理，可按需分配给成员使用。",
+  my_team_rule_2_title: "积分同步管理",
+  my_team_rule_2_desc: "成员可用积分与个人账户同步，团队剩余积分为所有成员可用积分之和。",
   my_team_rule_3_title: "灵活权限",
   my_team_rule_3_desc: "支持所有者、管理员和成员三种角色，精细控制操作权限。",
   my_team_empty_title: "尚未加入任何团队",
@@ -555,7 +555,7 @@ export const zh = {
   my_team_leave: "离开团队",
   my_team_leave_confirm_title: "确认离开团队",
   my_team_leave_confirm_desc:
-    "离开团队后，您将失去对团队项目的访问权限。您的未消耗积分将被退回团队池。此操作不可撤销。",
+    "离开团队后，您将失去对团队项目的访问权限。您的个人可用积分将自动回收至团队所有者账户。此操作不可撤销。",
   my_team_leave_confirm_btn: "确认离开",
   my_team_leave_cancel: "取消",
   my_team_owner_cannot_leave:
@@ -595,7 +595,7 @@ export const zh = {
   team_manage_remove_confirm_desc: "确定要将 {name} 移出团队吗？",
   team_manage_remove_confirm_btn: "确认移除",
   team_manage_subscription_credits: "订阅",
-  team_manage_remove_credits_warning: "该成员还有 {credits} 可用积分，将被退回团队池。",
+  team_manage_remove_credits_warning: "该成员还有 {credits} 可用积分，将被回收至团队所有者账户。",
 
   // ============ Team Groups(分组) ============
   team_groups_tab: "分组",
@@ -656,8 +656,8 @@ export const zh = {
   credit_dialog_confirm: "确认",
   credit_dialog_processing: "处理中...",
   credit_dialog_over_limit: "超过可用上限（{max}）",
-  credit_dialog_hint_allocate: "从团队剩余积分中划出，加到该成员的可用积分。当前最多可分配 {max}。",
-  credit_dialog_hint_reclaim: "从该成员可用积分中收回，返回团队积分池。当前最多可回收 {max}。",
+  credit_dialog_hint_allocate: "从团队所有者的个人可用积分转给该成员。当前最多可分配 {max}。",
+  credit_dialog_hint_reclaim: "从该成员个人可用积分中收回，转给团队所有者。当前最多可回收 {max}。",
 
   // ============ Credits History ============
   history_team_credits: "团队剩余积分",

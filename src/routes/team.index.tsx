@@ -232,7 +232,7 @@ function TeamPage() {
           />
         )}
         {activeTab === "groups" && <GroupsTab teamId={teamId} myRole={myRole} />}
-        {activeTab === "history" && <CreditsHistoryTab teamId={teamId} myRole={myRole} />}
+        {activeTab === "history" && <CreditsHistoryTab teamId={teamId} />}
         {activeTab === "settings" && (
           <SettingsTab
             teamId={teamId}

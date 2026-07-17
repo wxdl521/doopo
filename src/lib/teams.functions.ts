@@ -125,8 +125,8 @@ export const getMyTeams = createServerFn({ method: "POST" })
         createdAt: m.team.created_at,
         updatedAt: m.team.updated_at,
         role: m.role,
-        creditsBalance: m.credits_balance,
-        subscriptionCredits: m.subscription_credits,
+        creditsBalance: Number(m.credits_balance ?? 0),
+        subscriptionCredits: Number(m.subscription_credits ?? 0),
         joinedAt: m.joined_at,
       }));
 
@@ -174,7 +174,7 @@ export const getTeamDetail = createServerFn({ method: "POST" })
         deletedAt: team.deleted_at,
       },
       myRole: (membership?.role ?? null) as "owner" | "admin" | "member" | null,
-      myCreditsBalance: membership?.credits_balance ?? 0,
+      myCreditsBalance: Number(membership?.credits_balance ?? 0),
       error: null as string | null,
     };
   });

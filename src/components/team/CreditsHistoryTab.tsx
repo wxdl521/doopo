@@ -1,16 +1,6 @@
 import { useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import {
   Table,
   TableBody,
@@ -21,7 +11,6 @@ import {
 } from "@/components/ui/table";
 import {
   Coins,
-  ArrowRightLeft,
   ArrowDownToLine,
   ArrowUpFromLine,
   RotateCcw,
@@ -34,7 +23,6 @@ import {
   getCreditTransactions,
   getTransferRecords,
   getTeamBalance,
-  depositCredits,
 } from "@/lib/teamCredits.functions";
 import { useLanguage } from "@/i18n/LanguageContext";
 import type { TransactionRow, TransferRow } from "@/lib/teamCredits.functions";
@@ -55,25 +43,19 @@ const TYPE_CONFIG: Record<
 
 type CreditsHistoryTabProps = {
   teamId: string;
-  myRole: string;
 };
 
-export default function CreditsHistoryTab({ teamId, myRole }: CreditsHistoryTabProps) {
+export default function CreditsHistoryTab({ teamId }: CreditsHistoryTabProps) {
   const { t } = useLanguage();
   const callTransactions = useServerFn(getCreditTransactions);
   const callTransfers = useServerFn(getTransferRecords);
   const callBalance = useServerFn(getTeamBalance);
-  const callDeposit = useServerFn(depositCredits);
 
   const [transactions, setTransactions] = useState<TransactionRow[]>([]);
   const [transfers, setTransfers] = useState<TransferRow[]>([]);
   const [teamCredits, setTeamCredits] = useState(0);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState(0);
-  const [showDeposit, setShowDeposit] = useState(false);
-  const [depositAmount, setDepositAmount] = useState("");
-  const [depositing, setDepositing] = useState(false);
-  const [depositError, setDepositError] = useState<string | null>(null);
 
   const loadData = () => {
     setLoading(true);
@@ -95,24 +77,6 @@ export default function CreditsHistoryTab({ teamId, myRole }: CreditsHistoryTabP
     loadData();
   }, [teamId, page]);
 
-  const handleDeposit = async () => {
-    const amount = parseInt(depositAmount, 10);
-    if (!amount || amount <= 0) return;
-    setDepositing(true);
-    setDepositError(null);
-
-    const r: any = await callDeposit({ data: { teamId, amount } });
-
-    setDepositing(false);
-    if (r?.ok) {
-      setShowDeposit(false);
-      setDepositAmount("");
-      loadData();
-    } else {
-      setDepositError(r?.error ?? t.common_save_error);
-    }
-  };
-
   const formatTime = (iso: string) => {
     const d = new Date(iso);
     return d.toLocaleString("zh-CN", {
@@ -122,8 +86,6 @@ export default function CreditsHistoryTab({ teamId, myRole }: CreditsHistoryTabP
       minute: "2-digit",
     });
   };
-
-  const canTransfer = myRole === "owner" || myRole === "admin";
 
   if (loading) {
     return (
@@ -144,20 +106,6 @@ export default function CreditsHistoryTab({ teamId, myRole }: CreditsHistoryTabP
             <p className="text-2xl font-bold text-amber-500">{teamCredits.toLocaleString()}</p>
           </div>
         </div>
-        {canTransfer && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              setShowDeposit(true);
-              setDepositAmount("");
-              setDepositError(null);
-            }}
-          >
-            <ArrowRightLeft className="w-4 h-4 mr-2" />
-            {t.history_transfer_in}
-          </Button>
-        )}
       </section>
 
       {/* 积分记录 */}
@@ -286,49 +234,6 @@ export default function CreditsHistoryTab({ teamId, myRole }: CreditsHistoryTabP
           </TableBody>
         </Table>
       </section>
-
-      {/* 转入弹窗 */}
-      <Dialog open={showDeposit} onOpenChange={(open) => !open && setShowDeposit(false)}>
-        <DialogContent className="max-w-sm">
-          <DialogHeader>
-            <DialogTitle>{t.history_transfer_in}</DialogTitle>
-            <DialogDescription>
-              从您的个人余额转入团队积分池，转入后可由您统一管理分配。
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-3">
-            <div className="space-y-1.5">
-              <Label>转入数量</Label>
-              <Input
-                type="number"
-                min={1}
-                value={depositAmount}
-                onChange={(e) => setDepositAmount(e.target.value)}
-                placeholder="输入积分数量"
-              />
-            </div>
-
-            {depositError && (
-              <p className="text-sm text-destructive bg-destructive/10 p-2 rounded">
-                {depositError}
-              </p>
-            )}
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setShowDeposit(false)}>
-              {t.common_cancel}
-            </Button>
-            <Button
-              onClick={handleDeposit}
-              disabled={depositing || !depositAmount || parseInt(depositAmount, 10) <= 0}
-            >
-              {depositing ? t.settings_saving : t.common_confirm}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

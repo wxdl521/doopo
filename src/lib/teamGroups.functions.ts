@@ -404,7 +404,7 @@ export const getGroupDetail = createServerFn({ method: "POST" })
       id: m.id,
       userId: m.user_id,
       role: m.role,
-      creditsBalance: m.credits_balance,
+      creditsBalance: Number(m.credits_balance ?? 0),
       joinedAt: m.joined_at,
       email: profiles.get(m.user_id)?.email ?? null,
       displayName: profiles.get(m.user_id)?.displayName ?? null,

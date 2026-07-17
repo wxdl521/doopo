@@ -41,6 +41,7 @@ export default function CreditManageDialog({
   const [mode, setMode] = useState<"allocate" | "reclaim">(initialMode);
   const [amount, setAmount] = useState("");
   const [teamCredits, setTeamCredits] = useState(0);
+  const [ownerCredits, setOwnerCredits] = useState(0);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -51,7 +52,10 @@ export default function CreditManageDialog({
       setError(null);
       callBalance({ data: { teamId } })
         .then((r: any) => {
-          if (r?.balance) setTeamCredits(r.balance.totalCredits);
+          if (r?.balance) {
+            setTeamCredits(r.balance.totalCredits);
+            setOwnerCredits(r.balance.ownerCredits);
+          }
         })
         .catch(() => {});
     }
@@ -62,7 +66,7 @@ export default function CreditManageDialog({
   const numAmount = parseInt(amount, 10);
   const isValidAmount = !isNaN(numAmount) && numAmount > 0;
 
-  const maxAllocate = teamCredits;
+  const maxAllocate = ownerCredits;
   const maxReclaim = member.creditsBalance;
   const maxAmount = mode === "allocate" ? maxAllocate : maxReclaim;
   const overMax = isValidAmount && numAmount > maxAmount;

@@ -133,8 +133,8 @@ export const getTeamMembers = createServerFn({ method: "POST" })
         teamId: m.team_id,
         userId: m.user_id,
         role: m.role,
-        creditsBalance: m.credits_balance,
-        subscriptionCredits: m.subscription_credits,
+        creditsBalance: Number(m.credits_balance ?? 0),
+        subscriptionCredits: Number(m.subscription_credits ?? 0),
         joinedAt: m.joined_at,
         invitedBy: m.invited_by,
         groupId: m.group_id ?? null,
@@ -249,21 +249,8 @@ export const removeMember = createServerFn({ method: "POST" })
       return { ok: false as const, error: "You do not have permission to remove members" };
     }
 
-    // 如果被移除的成员还有积分，先回收
-    if (target.credits_balance > 0) {
-      await supabase.from("credit_transactions").insert({
-        team_id: data.teamId,
-        user_id: data.userId,
-        type: "reclaim",
-        amount: -target.credits_balance,
-        balance_after: 0,
-        operator_id: userId,
-        source_type: "recharge",
-        description: "成员被移出团队，积分回收",
-      });
-    }
-
-    // 移除成员
+    // 删除触发器会在同一事务中将该成员的个人积分回收到所有者，
+    // 并同步余额与积分流水。
     const { error } = await supabase
       .from("team_members")
       .delete()
@@ -303,20 +290,7 @@ export const leaveTeam = createServerFn({ method: "POST" })
       };
     }
 
-    // 如果还有积分，回收
-    if (self.credits_balance > 0) {
-      await supabase.from("credit_transactions").insert({
-        team_id: data.teamId,
-        user_id: userId,
-        type: "reclaim",
-        amount: -self.credits_balance,
-        balance_after: 0,
-        operator_id: userId,
-        source_type: "recharge",
-        description: "成员离开团队，积分回收",
-      });
-    }
-
+    // 删除触发器会在同一事务中将该成员的个人积分回收到所有者。
     const { error } = await supabase
       .from("team_members")
       .delete()
