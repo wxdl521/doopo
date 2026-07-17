@@ -9778,7 +9778,7 @@ function WorkspacePage() {
             ),
             beats: Array.isArray(s.beats)
               ? s.beats
-                  .map((beat) => toEnvironmentOnlySceneText(beat, "", knownCharacterNames))
+                  .map((beat: any) => toEnvironmentOnlySceneText(beat, "", knownCharacterNames))
                   .filter(Boolean)
               : [],
             dialogue: [],
