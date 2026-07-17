@@ -29,8 +29,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import {
-  ArrowDownToLine,
-  ArrowUpFromLine,
   Trash2,
   UserPlus,
   Crown,
@@ -65,7 +63,7 @@ const ROLE_BADGES: Record<
 type MembersTabProps = {
   teamId: string;
   myRole: string;
-  onManageCredits: (member: MemberRow, mode: "allocate" | "reclaim") => void;
+  onManageCredits: (member: MemberRow) => void;
 };
 
 export default function MembersTab({ teamId, myRole, onManageCredits }: MembersTabProps) {
@@ -290,26 +288,14 @@ export default function MembersTab({ teamId, myRole, onManageCredits }: MembersT
                       {showActions(member) && (
                         <div className="flex items-center justify-end gap-1">
                           {canManageCredits(member) && (
-                            <>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                                title={t.team_manage_allocate}
-                                onClick={() => onManageCredits(member, "allocate")}
-                              >
-                                <ArrowDownToLine className="w-4 h-4" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-8 w-8"
-                                title={t.team_manage_reclaim}
-                                onClick={() => onManageCredits(member, "reclaim")}
-                              >
-                                <ArrowUpFromLine className="w-4 h-4" />
-                              </Button>
-                            </>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8"
+                              onClick={() => onManageCredits(member)}
+                            >
+                              {t.team_manage_allocate}
+                            </Button>
                           )}
                           {canDelete(member) && (
                             <Button

@@ -228,7 +228,7 @@ function TeamPage() {
             key={refreshKey}
             teamId={teamId}
             myRole={myRole}
-            onManageCredits={(member, mode) => setCreditTarget({ member, mode })}
+            onManageCredits={(member) => setCreditTarget({ member, mode: "allocate" })}
           />
         )}
         {activeTab === "groups" && <GroupsTab teamId={teamId} myRole={myRole} />}
