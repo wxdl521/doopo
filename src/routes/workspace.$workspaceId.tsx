@@ -396,8 +396,17 @@ type CharacterImagePromptRecord = {
 
 /** 每张场景/道具图自己的可编辑提示词快照，必须与图片历史按下标对应。 */
 type AssetImagePromptRecord = {
+  /** 实际提交给供应商的完整提示词；多视图资产在详情页展示该版本。 */
+  rawPrompt?: string;
   editablePrompt: string;
   mode: "initial" | "modify" | "multi-view" | "t2i" | "upload";
+};
+
+/** 用户可见提示词由若干可编辑块组成；未展示的内部约束仍保留在原始 prompt 中。 */
+type PromptEditorBlock = {
+  id: string;
+  label: string;
+  source: string;
 };
 
 type SceneDetailDraft = {
@@ -1449,7 +1458,11 @@ function WorkspacePage() {
     async (key: string, text: string, setValue: (value: string) => void) => {
       const requestId = (promptTranslationRequestRef.current[key] ?? 0) + 1;
       promptTranslationRequestRef.current[key] = requestId;
-      if (!isEnglishOnlyPrompt(text)) {
+      // 四视图/多维资产模板含有大量中文标签，不能只依赖中英文字符占比判断。
+      // 这两类模板必须完整翻成中文后再进入详情提示词框。
+      const isCharacterPresetTemplate =
+        /PANEL 1 \(leftmost\)|\[SECTION 1\s*—/i.test(text);
+      if (!isEnglishOnlyPrompt(text) && !isCharacterPresetTemplate) {
         setValue(text);
         setTranslatingEditablePromptKeys((keys) => {
           if (!keys.has(key)) return keys;
@@ -1490,6 +1503,151 @@ function WorkspacePage() {
     async (text: string) => {
       const result = await callTranslateEditablePrompt({ data: { text, target: "en" } });
       return result.text;
+    },
+    [callTranslateEditablePrompt],
+  );
+
+  /** 从完整 API 提示词中截出一个可编辑范围；找不到时返回空，避免误删内部约束。 */
+  function promptRange(raw: string, start: RegExp, end?: RegExp): string {
+    const startIndex = raw.search(start);
+    if (startIndex < 0) return "";
+    const afterStart = raw.slice(startIndex);
+    const endIndex = end ? afterStart.search(end) : -1;
+    return (endIndex < 0 ? afterStart : afterStart.slice(0, endIndex)).trim();
+  }
+
+  function characterPresetEditorBlocks(raw: string): PromptEditorBlock[] {
+    return [
+      {
+        id: "sections",
+        label: "版块内容",
+        source: promptRange(raw, /^\[SECTION 0\b/m, /^\[PROJECT VISUAL STYLE\b/m),
+      },
+      {
+        id: "nationality",
+        label: "角色国籍",
+        source: promptRange(raw, /^角色国籍：.*$/m),
+      },
+      {
+        id: "style",
+        label: "风格名称与风格指纹",
+        source: promptRange(raw, /^Style name:[\s\S]*?^【AVOID/m, /^【AVOID/m),
+      },
+      {
+        id: "identity",
+        label: "角色身份",
+        source: promptRange(raw, /^\[CHARACTER IDENTITY\b/m, /^\[USER REQUEST\]/m),
+      },
+      {
+        id: "request",
+        label: "用户请求",
+        source: promptRange(raw, /^\[USER REQUEST\]/m, /^\[FINAL CHECKLIST\]/m),
+      },
+    ].filter((block) => block.source);
+  }
+
+  function sceneMultiViewEditorBlocks(raw: string): PromptEditorBlock[] {
+    return [
+      {
+        id: "style",
+        label: "风格名称与风格指纹",
+        source: promptRange(raw, /^Style name:[\s\S]*?^【AVOID/m, /^【AVOID/m),
+      },
+      {
+        id: "task",
+        label: "任务",
+        source: promptRange(raw, /^\[任务\][\s\S]*?(?=^\[地点\])/m, /^\[地点\]/m),
+      },
+      {
+        id: "locationTime",
+        label: "地点与时段",
+        source: promptRange(raw, /^\[地点\][\s\S]*?(?=^\[画布\])/m, /^\[画布\]/m),
+      },
+      {
+        id: "canvas",
+        label: "画布",
+        source: promptRange(raw, /^\[画布\][\s\S]*?(?=^【参考图蓝图】)/m, /^【参考图蓝图】/m),
+      },
+      {
+        id: "panels",
+        label: "六宫格机位",
+        source: promptRange(raw, /^【格子1：[\s\S]*?(?=^\[提交前检查\])/m, /^\[提交前检查\]/m),
+      },
+    ].filter((block) => block.source);
+  }
+
+  function formatPromptEditorBlocks(blocks: PromptEditorBlock[], values?: string[]): string {
+    return blocks
+      .map((block, index) => "【" + block.label + "】\n" + (values?.[index] ?? block.source))
+      .join("\n\n");
+  }
+
+  function parsePromptEditorBlocks(input: string, blocks: PromptEditorBlock[]): Record<string, string> {
+    const headings = blocks.map((block) => block.label.replace(/[\\^$.*+?()[\]|]/g, "\\$&"));
+    const heading = new RegExp("^【(" + headings.join("|") + ")】\\s*$", "gm");
+    const matches = Array.from(input.matchAll(heading));
+    const values: Record<string, string> = {};
+    for (let index = 0; index < matches.length; index += 1) {
+      const match = matches[index];
+      const contentStart = (match.index ?? 0) + match[0].length;
+      const contentEnd = matches[index + 1]?.index ?? input.length;
+      values[match[1]] = input.slice(contentStart, contentEnd).trim();
+    }
+    return values;
+  }
+
+  /** 将指定的少量可见段落译为中文；固定中文标题不交给模型翻译，确保可回填。 */
+  const showPromptEditorBlocksInChinese = useCallback(
+    async (key: string, blocks: PromptEditorBlock[], setValue: (value: string) => void) => {
+      if (!blocks.length) return;
+      const requestId = (promptTranslationRequestRef.current[key] ?? 0) + 1;
+      promptTranslationRequestRef.current[key] = requestId;
+      setValue("");
+      setTranslatingEditablePromptKeys((keys) => new Set(keys).add(key));
+      try {
+        const translated = await Promise.all(
+          blocks.map(async (block) => {
+            const result = await callTranslateEditablePrompt({ data: { text: block.source, target: "zh" } });
+            return result.text;
+          }),
+        );
+        if (promptTranslationRequestRef.current[key] === requestId) {
+          setValue(formatPromptEditorBlocks(blocks, translated));
+        }
+      } catch {
+        if (promptTranslationRequestRef.current[key] === requestId) {
+          setValue(formatPromptEditorBlocks(blocks));
+        }
+      } finally {
+        if (promptTranslationRequestRef.current[key] === requestId) {
+          setTranslatingEditablePromptKeys((keys) => {
+            if (!keys.has(key)) return keys;
+            const next = new Set(keys);
+            next.delete(key);
+            return next;
+          });
+        }
+      }
+    },
+    [callTranslateEditablePrompt],
+  );
+
+  /** 用户只编辑可见版块；提交时逐段翻回英文并覆盖到原始完整 prompt。 */
+  const mergePromptEditorBlocksForGeneration = useCallback(
+    async (rawPrompt: string, blocks: PromptEditorBlock[], visiblePrompt: string) => {
+      const edited = parsePromptEditorBlocks(visiblePrompt, blocks);
+      const translated = await Promise.all(
+        blocks.map(async (block) => {
+          const draft = edited[block.label];
+          if (!draft) return block.source;
+          const result = await callTranslateEditablePrompt({ data: { text: draft, target: "en" } });
+          return result.text;
+        }),
+      );
+      return blocks.reduce(
+        (merged, block, index) => merged.replace(block.source, translated[index]),
+        rawPrompt,
+      );
     },
     [callTranslateEditablePrompt],
   );
@@ -1553,10 +1711,8 @@ function WorkspacePage() {
   useEffect(() => {
     charImagePromptsRef.current = charImagePrompts;
   }, [charImagePrompts]);
-  // 角色/场景/道具修改面板的 I2I 参考图上传(用户上传本地图片作为图生图参考,不上传到服务端)
+  // 角色局部修改允许追加辅助参考；场景/道具局部修改固定以界面中选中的历史图作为图1。
   const [charModUploadedRefs, setCharModUploadedRefs] = useState<string[]>([]);
-  const [sceneModUploadedRef, setSceneModUploadedRef] = useState<string | null>(null);
-  const [propModUploadedRef, setPropModUploadedRef] = useState<string | null>(null);
 
   /** 打开本地文件选择器,读取图片为 base64 data URL,供 I2I 参考图使用。不上传到服务端。 */
   function pickLocalImageAsDataUrl(
@@ -1944,6 +2100,24 @@ function WorkspacePage() {
       size: r.promptSize,
       extra: r.promptExtra,
     });
+    // 查看提示词模式同样面向中文用户；原始英文提示词仍只用于服务端生成。
+    const isCharacterPresetTemplate =
+      /PANEL 1 \(leftmost\)|\[SECTION 1\s*—/i.test(r.previewPrompt);
+    if (isEnglishOnlyPrompt(r.previewPrompt) || isCharacterPresetTemplate) {
+      const sourcePrompt = r.previewPrompt;
+      void callTranslateEditablePrompt({ data: { text: sourcePrompt, target: "zh" } })
+        .then((result) => {
+          if (!result.translated) return;
+          setPromptPreview((current) =>
+            current?.title === title && current.prompt === sourcePrompt
+              ? { ...current, prompt: result.text }
+              : current,
+          );
+        })
+        .catch(() => {
+          // 翻译失败时保留原始提示词，不能阻断预览。
+        });
+    }
     return true;
   }
   // 正在跑"对某个分镜组的某张分镜图做多图融合"的 key,格式 `${groupId}::${shotId}`
@@ -2438,7 +2612,6 @@ function WorkspacePage() {
   const [shotSelectedGenIdx, setShotSelectedGenIdx] = useState(0);
   const [shotModInput, setShotModInput] = useState("");
   const [shotModBusy, setShotModBusy] = useState(false);
-  const [shotModUploadedRef, setShotModUploadedRef] = useState<string | null>(null);
   const workspaceId = Route.useParams().workspaceId;
 
   // 每次打开另一张故事板时，把该故事板已有提示词放入富文本编辑器。
@@ -4065,11 +4238,15 @@ function WorkspacePage() {
     const selected = selectedSceneImagesRef.current[s.id];
     const currentUrl = selected && history.includes(selected) ? selected : history.at(-1);
     const currentIndex = currentUrl ? history.indexOf(currentUrl) : -1;
+    // 打开详情时将正在展示的历史图明确设为选中图。之后的“局部修改”始终以它
+    // 作为图1上传，绝不能在提交时另行回退到最新图。
+    if (currentUrl) setSelectedSceneImages((m) => ({ ...m, [s.id]: currentUrl }));
     setScenePreview(s);
     setSceneDetailDraft(null);
-    void showEditablePromptInChinese(
-      `scene:${s.id}`,
-      sceneImagePromptsRef.current[s.id]?.[currentIndex]?.editablePrompt || sceneEditablePrompt(s),
+    void showScenePromptInDetail(
+      s,
+      sceneImagePromptsRef.current[s.id]?.[currentIndex],
+      currentUrl,
       setSceneModInput,
     );
     setSceneModError(null);
@@ -4080,6 +4257,7 @@ function WorkspacePage() {
     const selected = selectedPropImagesRef.current[p.id];
     const currentUrl = selected && history.includes(selected) ? selected : history.at(-1);
     const currentIndex = currentUrl ? history.indexOf(currentUrl) : -1;
+    if (currentUrl) setSelectedPropImages((m) => ({ ...m, [p.id]: currentUrl }));
     setPropPreview(p);
     setPropDetailDraft(null);
     void showEditablePromptInChinese(
@@ -4267,6 +4445,42 @@ function WorkspacePage() {
       .join("\n");
   }
 
+  /** 四视图/多维资产需展示完整模板；普通角色图仍展示精简的可编辑资料。 */
+  function characterPromptForDetail(
+    c: GenCharacter,
+    lookId: string | null,
+    record?: CharacterImagePromptRecord,
+  ): string {
+    if (
+      (record?.mode === "three-view" || record?.mode === "multi-asset") &&
+      record.rawPrompt?.trim()
+    ) {
+      return record.rawPrompt;
+    }
+    return record?.editablePrompt || characterEditablePrompt(c, lookId);
+  }
+
+  async function showCharacterPromptInDetail(
+    key: string,
+    c: GenCharacter,
+    lookId: string | null,
+    record: CharacterImagePromptRecord | undefined,
+    setValue: (value: string) => void,
+  ) {
+    const isPreset =
+      (record?.mode === "three-view" || record?.mode === "multi-asset") &&
+      !!record.rawPrompt?.trim();
+    if (isPreset && record?.rawPrompt) {
+      await showPromptEditorBlocksInChinese(
+        key,
+        characterPresetEditorBlocks(record.rawPrompt),
+        setValue,
+      );
+      return;
+    }
+    await showEditablePromptInChinese(key, characterPromptForDetail(c, lookId, record), setValue);
+  }
+
   /** 从中文编辑提示词中取回真正可持久化的角色属性。 */
   function parseCharacterEditablePrompt(
     input: string,
@@ -4321,6 +4535,71 @@ function WorkspacePage() {
     ]
       .filter(Boolean)
       .join("\n");
+  }
+
+  /** 场景多视图展示完整六宫格模板；其他场景图维持简洁的资料编辑提示词。 */
+  function scenePromptForDetail(s: GenScene, record?: AssetImagePromptRecord): string {
+    if (record?.mode === "multi-view" && record.rawPrompt?.trim()) {
+      return record.rawPrompt;
+    }
+    return record?.editablePrompt || sceneEditablePrompt(s);
+  }
+
+  /** 兼容旧的多视图历史：旧记录未保存完整模板时，按当前模板补取一次预览。 */
+  async function showScenePromptInDetail(
+    s: GenScene,
+    record: AssetImagePromptRecord | undefined,
+    referenceImageUrl: string | undefined,
+    setValue: (value: string) => void,
+  ) {
+    let prompt = scenePromptForDetail(s, record);
+    if (record?.mode === "multi-view" && !record.rawPrompt?.trim() && referenceImageUrl) {
+      try {
+        const preview = await callRegenScene({
+          data: {
+            referenceImageUrl,
+            userInstruction:
+              "基于图1生成锁定场景的横向 2×3 六宫格；建筑、环境、材质和光照保持一致，仅允许摄影机移动；纯环境无人物。",
+            mode: "multi-view",
+            sceneSlug:
+              String(s.slug ?? "").trim() ||
+              String(s.location ?? "").trim() ||
+              `SCENE ${s.index}`,
+            sceneLocation: String(s.location ?? ""),
+            sceneTimeOfDay: String(s.timeOfDay ?? ""),
+            sceneAction: String(s.action ?? ""),
+            projectStyle: projectVisualStyle ?? undefined,
+            model: resolveI2IModel(project?.sceneModel),
+            previewOnly: true,
+          },
+        });
+        prompt = preview?.previewPrompt || prompt;
+        if (preview?.previewPrompt) {
+          const history = sceneImagesRef.current[s.id] ?? [];
+          const index = history.indexOf(referenceImageUrl);
+          if (index >= 0) {
+            updateSceneImagePrompts((allPrompts) => {
+              const entries = [...(allPrompts[s.id] ?? [])];
+              const current = entries[index];
+              if (!current || current.rawPrompt === preview.previewPrompt) return allPrompts;
+              entries[index] = { ...current, rawPrompt: preview.previewPrompt };
+              return { ...allPrompts, [s.id]: entries };
+            });
+          }
+        }
+      } catch {
+        // 旧记录预览失败时仍可查看原有的可编辑资料。
+      }
+    }
+    if (record?.mode === "multi-view" && prompt) {
+      await showPromptEditorBlocksInChinese(
+        "scene:" + s.id,
+        sceneMultiViewEditorBlocks(prompt),
+        setValue,
+      );
+      return;
+    }
+    await showEditablePromptInChinese("scene:" + s.id, prompt, setValue);
   }
 
   function applySceneEditablePrompt(s: GenScene, input: string): GenScene {
@@ -4511,15 +4790,16 @@ function WorkspacePage() {
     const selectedUrl = selectedCharImagesRef.current[imageKey];
     const selectedIndex = selectedUrl ? generations.indexOf(selectedUrl) : -1;
     const currentIndex = selectedIndex >= 0 ? selectedIndex : Math.max(0, generations.length - 1);
-    const savedEditablePrompt =
-      charImagePromptsRef.current[imageKey]?.[currentIndex]?.editablePrompt;
+    const savedPromptRecord = charImagePromptsRef.current[imageKey]?.[currentIndex];
     setModPanel({ character: c, lookId, imageKey });
     setPreviewTarget({ character: c, lookId });
     setSelectedGenIdx(currentIndex);
     setCharacterAttributesExpanded(false);
-    void showEditablePromptInChinese(
-      `character:${imageKey}`,
-      savedEditablePrompt || characterEditablePrompt(c, lookId),
+    void showCharacterPromptInDetail(
+      "character:" + imageKey,
+      c,
+      lookId,
+      savedPromptRecord,
       setModInput,
     );
     setModError(null);
@@ -4550,7 +4830,7 @@ function WorkspacePage() {
      * - 场景1(对话修改):pendingRef.imageUrl(selectedCharImages || 最新)
      * - 场景2(角色页修改):generations[currentIdx](用户在预览里选中的那张)
      * - processCharacter:siblingAnchor.url / 默认 look 图
-     * 缺省则回退 selectedCharImages ?? 最新(兼容 runPresetRegen 旧调用)。
+     * 局部修改缺省时只使用 selectedCharImages；预设生成才可回退到最新图。
      */
     mainViewUrl?: string,
     /**
@@ -4580,11 +4860,16 @@ function WorkspacePage() {
     //   3) 最新一张 generations[length-1]
     // 这样点"三视图"/"多维资产" 按用户选中的形象去 I2I,而不是机械地用最新。
     const pinned = selectedCharImagesRef.current[imageKey];
+    const selectedReference = pinned && generations.includes(pinned) ? pinned : undefined;
     const fallback = generations[generations.length - 1];
     const resolvedMainView =
-      mainViewUrl ?? (pinned && generations.includes(pinned) ? pinned : fallback);
+      mainViewUrl ?? selectedReference ?? (mode === "modify" ? undefined : fallback);
     if (!resolvedMainView) {
-      toast.error("该形象还没生成,无法重生");
+      toast.error(
+        mode === "modify"
+          ? "请先在历史记录中选中一张角色图，再进行局部修改"
+          : "该形象还没生成,无法重生",
+      );
       return;
     }
     // 把这张卡标记为 regen 中,UI 那边会显示黑屏遮罩。结束时(成功/失败)一定清掉。
@@ -4816,7 +5101,6 @@ function WorkspacePage() {
       setModError("请填写角色提示词");
       return;
     }
-    const englishInstruction = await translatePromptForGeneration(instruction);
     // 无论当前图是普通角色、四视图还是多维资产图，都从同一份中文提示词
     // 解析角色属性；生成模式仍按原图保留，避免丢失四视图/设定稿构图约束。
     const editedCharacter = applyCharacterAttributeDraft(
@@ -4826,6 +5110,21 @@ function WorkspacePage() {
     );
     const mode =
       record?.mode === "multi-asset" || record?.mode === "three-view" ? record.mode : "modify";
+    // 四视图/多维资产只展示可编辑版块；提交时把版块逐段合回原始完整模板。
+    const hasPresetRawPrompt =
+      (record?.mode === "three-view" || record?.mode === "multi-asset") &&
+      !!record.rawPrompt?.trim();
+    const rawApiPrompt =
+      hasPresetRawPrompt && record?.rawPrompt
+        ? await mergePromptEditorBlocksForGeneration(
+            record.rawPrompt,
+            characterPresetEditorBlocks(record.rawPrompt),
+            instruction,
+          )
+        : undefined;
+    const englishInstruction = rawApiPrompt
+      ? "Use the supplied raw API prompt exactly."
+      : await translatePromptForGeneration(instruction);
 
     // 手动添加的空角色:还没有图片,把用户输入解析为结构化描述走 T2I 首次生成
     if (existingImages.length === 0) {
@@ -4871,7 +5170,7 @@ function WorkspacePage() {
       currentUrl,
       charModUploadedRefs,
       false,
-      undefined,
+      rawApiPrompt,
       instruction,
     );
     if (ok) {
@@ -4942,8 +5241,11 @@ function WorkspacePage() {
     mainViewUrl?: string,
   ) {
     const imageKey = lookId == null ? c.id : `${c.id}::${lookId}`;
-    // 主视图优先用调用方传入的"要改的那张",否则回退最新一张
-    const coverUrl = mainViewUrl ?? charImages[imageKey]?.at(-1);
+    // 局部修改只能使用当前选中的历史图；对话入口传入的 mainViewUrl 也必须是
+    // 它在界面中明确选定的那张，禁止静默回退到最新图。
+    const pinned = selectedCharImagesRef.current[imageKey];
+    const coverUrl =
+      mainViewUrl ?? (pinned && charImagesRef.current[imageKey]?.includes(pinned) ? pinned : undefined);
     if (!coverUrl) {
       toast.error("该角色还没有图片");
       return;
@@ -5013,12 +5315,14 @@ function WorkspacePage() {
    * 2026/06:从右侧对话框引用消息提交场景修改(不打开 modal)。
    */
   async function submitSceneModPanelRef(s: GenScene, instruction: string) {
-    const coverUrl = sceneImages[s.id]?.at(-1);
+    const history = sceneImagesRef.current[s.id] ?? [];
+    const pinned = selectedSceneImagesRef.current[s.id];
+    const coverUrl = pinned && history.includes(pinned) ? pinned : undefined;
     if (!coverUrl) {
       toast.error("该场景还没有图片");
       return;
     }
-    const ok = await doSceneRegen(s, "modify", instruction, sceneModUploadedRef ?? undefined);
+    const ok = await doSceneRegen(s, "modify", instruction);
     if (ok) {
       setData((prev) => {
         if (!prev) return prev;
@@ -5112,22 +5416,29 @@ function WorkspacePage() {
     s: GenScene,
     mode: "modify" | "multi-view",
     instruction: string,
-    /** 可选:用户手动上传的参考图,优先于 history 里的图片 */
+    /** 非局部修改可显式指定参考图；局部修改始终固定使用当前选中的历史图。 */
     referenceOverride?: string,
     /** 只归档到本次新图，不能改写当前参考图已有的提示词。 */
     editablePrompt = sceneEditablePrompt(s),
+    /** 场景多视图详情页编辑完整模板后，直接把该版本重放给供应商。 */
+    rawApiPrompt?: string,
   ) {
     const history = sceneImages[s.id] ?? [];
-    // 2026/07:reference 优先级(对齐 doRegen 角色)
-    //   1) referenceOverride(用户上传的参考图)
-    //   2) selectedSceneImages —— 用户"选中"的那张
-    //   3) 最新一张 history
+    // “局部修改”必须将用户当前选中的历史图作为图1上传。上传的额外参考图和
+    // 最新图均不得替换它；只有预设多视图才允许在未选中时回退到最新一张。
     const pinned = selectedSceneImagesRef.current[s.id];
     const fallback = history.at(-1);
-    const referenceUrl =
-      referenceOverride ?? (pinned && history.includes(pinned) ? pinned : fallback);
+    const selectedReference = pinned && history.includes(pinned) ? pinned : undefined;
+    const requiresSelectedReference = mode === "modify" || !!rawApiPrompt;
+    const referenceUrl = requiresSelectedReference
+      ? selectedReference
+      : referenceOverride ?? selectedReference ?? fallback;
     if (!referenceUrl) {
-      toast.error("该场景还没生成,无法重生");
+      toast.error(
+        requiresSelectedReference
+          ? "请先在历史记录中选中一张场景图，再进行局部修改"
+          : "该场景还没生成,无法重生",
+      );
       return false;
     }
     if (mode === "modify" && !instruction.trim()) {
@@ -5144,26 +5455,35 @@ function WorkspacePage() {
       return n;
     });
     try {
-      const res = await callRegenScene({
-        data: {
-          referenceImageUrl: referenceUrl,
-          userInstruction: instruction,
-          mode,
-          sceneSlug,
-          sceneLocation: String(s.location ?? ""),
-          sceneTimeOfDay: String(s.timeOfDay ?? ""),
-          sceneAction: String(s.action ?? ""),
-          projectStyle: projectVisualStyle ?? undefined,
-          model: resolveI2IModel(project?.sceneModel),
-          previewOnly: viewPromptsModeRef.current,
-        },
-      });
-      // 2026/06:查看提示词模式拦截
-      if (
-        interceptPromptPreview(`场景 ${s.slug} · ${mode === "multi-view" ? "多视图" : "修改"}`, res)
-      ) {
+      const requestData = {
+        referenceImageUrl: referenceUrl,
+        userInstruction: rawApiPrompt ? "Use the supplied raw API prompt exactly." : instruction,
+        mode,
+        sceneSlug,
+        sceneLocation: String(s.location ?? ""),
+        sceneTimeOfDay: String(s.timeOfDay ?? ""),
+        sceneAction: String(s.action ?? ""),
+        projectStyle: projectVisualStyle ?? undefined,
+        model: resolveI2IModel(project?.sceneModel),
+        rawPrompt: rawApiPrompt?.trim() || undefined,
+      };
+      if (viewPromptsModeRef.current) {
+        const preview = await callRegenScene({ data: { ...requestData, previewOnly: true } });
+        interceptPromptPreview(
+          `场景 ${s.slug} · ${mode === "multi-view" ? "多视图" : "修改"}`,
+          preview,
+        );
         return true;
       }
+      // 多视图的完整六宫格约束需要随生成图归档，供用户选中图片时查看。
+      let apiPrompt = rawApiPrompt?.trim() || "";
+      if (mode === "multi-view" && !apiPrompt) {
+        const preview = await callRegenScene({ data: { ...requestData, previewOnly: true } });
+        apiPrompt = preview?.previewPrompt || "";
+      }
+      const res = await callRegenScene({
+        data: { ...requestData, rawPrompt: apiPrompt || undefined, previewOnly: false },
+      });
       if (res?.ok && res.url) {
         // 2026/06 修复:ARK TOS URL <img> 加载失败，先 await 转 base64
         requestImageReview(res.url, `scene-${s.id}`);
@@ -5173,7 +5493,7 @@ function WorkspacePage() {
         updateSceneImages((m) => ({ ...m, [s.id]: [...(m[s.id] ?? []), displayUrl] }));
         updateSceneImagePrompts((m) => ({
           ...m,
-          [s.id]: [...(m[s.id] ?? []), { editablePrompt, mode }],
+          [s.id]: [...(m[s.id] ?? []), { rawPrompt: apiPrompt || undefined, editablePrompt, mode }],
         }));
         setSelectedSceneImages((m) => ({ ...m, [s.id]: displayUrl }));
         toast.success(mode === "multi-view" ? "已生成场景多视图" : "已按意见重生");
@@ -5219,10 +5539,16 @@ function WorkspacePage() {
   ) {
     const history = propImages[p.id] ?? [];
     const pinned = selectedPropImagesRef.current[p.id];
+    const selectedReference = pinned && history.includes(pinned) ? pinned : undefined;
+    // 道具局部修改同样固定把选中的历史图作为图1上传；三视图预设才可用最新图兜底。
     const referenceUrl =
-      referenceOverride ?? (pinned && history.includes(pinned) ? pinned : history.at(-1));
+      mode === "modify" ? selectedReference : referenceOverride ?? selectedReference ?? history.at(-1);
     if (!referenceUrl) {
-      toast.error("该道具还没生成,无法重生");
+      toast.error(
+        mode === "modify"
+          ? "请先在历史记录中选中一张道具图，再进行局部修改"
+          : "该道具还没生成,无法重生",
+      );
       return false;
     }
     if (mode === "modify" && !instruction.trim()) {
@@ -5405,7 +5731,7 @@ function WorkspacePage() {
     }
     setSceneModBusy(true);
     setSceneModError(null);
-    const ok = await doSceneRegen(s, "modify", instruction, sceneModUploadedRef ?? undefined);
+    const ok = await doSceneRegen(s, "modify", instruction);
     setSceneModBusy(false);
     if (ok) {
       closeSceneModPanel();
@@ -5420,15 +5746,33 @@ function WorkspacePage() {
       setSceneModError("请输入修改意见");
       return;
     }
-    const englishInstruction = await translatePromptForGeneration(instruction);
     const editedScene = applySceneEditablePrompt(s, instruction);
+    const history = sceneImagesRef.current[s.id] ?? [];
+    const selectedUrl = selectedSceneImagesRef.current[s.id];
+    const currentUrl = selectedUrl && history.includes(selectedUrl) ? selectedUrl : history.at(-1);
+    const currentIndex = currentUrl ? history.indexOf(currentUrl) : -1;
+    const record = sceneImagePromptsRef.current[s.id]?.[currentIndex];
+    // 场景多视图只展示可编辑版块；提交时将它们逐段合回完整六宫格模板。
+    const replayMultiView = record?.mode === "multi-view" && !!record.rawPrompt?.trim();
+    const rawApiPrompt =
+      replayMultiView && record?.rawPrompt
+        ? await mergePromptEditorBlocksForGeneration(
+            record.rawPrompt,
+            sceneMultiViewEditorBlocks(record.rawPrompt),
+            instruction,
+          )
+        : undefined;
+    const englishInstruction = rawApiPrompt
+      ? "Use the supplied raw API prompt exactly."
+      : await translatePromptForGeneration(instruction);
     setSceneModError(null);
     const ok = await doSceneRegen(
       editedScene,
-      "modify",
+      replayMultiView ? "multi-view" : "modify",
       englishInstruction,
-      sceneModUploadedRef ?? undefined,
+      undefined,
       instruction,
+      rawApiPrompt,
     );
     if (!ok) {
       setSceneModError("生成失败,请重试或换更简单的修改");
@@ -5443,7 +5787,7 @@ function WorkspacePage() {
         : prev,
     );
     setSceneModInput("");
-    toast.success("已按资料和修改意见重生场景图");
+    toast.success(replayMultiView ? "已按编辑后的多视图提示词生成" : "已按资料和修改意见重生场景图");
   }
 
   /** 场景详情页“重新生成”：不使用现有图片，按当前编辑后的资料走初始 T2I。 */
@@ -5489,7 +5833,7 @@ function WorkspacePage() {
       editedProp,
       "modify",
       englishInstruction,
-      propModUploadedRef ?? undefined,
+      undefined,
       instruction,
     );
     if (!ok) {
@@ -6302,7 +6646,7 @@ function WorkspacePage() {
 
   /**
    * 按用户意见重生分镜图(和 regenerateCharacterLook 同语义)。
-   *  1) 取 group / shot,以及当前要修改的 referenceImageUrl(从 shotImages 取最新一张)
+   *  1) 取 group / shot，以及预览中当前选中的那张 referenceImageUrl
    *  2) 拼角色 / 场景参考(server 端再按 qwen 3 张上限截断)
    *  3) 调 callRegenShot,新图 push 到 shotImages 历史 + 写回 g.shots[i].imageUrl
    *  4) 自动选中新生成的那张,关闭 modInput
@@ -6315,9 +6659,10 @@ function WorkspacePage() {
     const shot = group.shots.find((s) => s.id === shotId);
     if (!shot) return;
     const imageKey = `${groupId}::${shotId}`;
-    const generations = shotImages[imageKey] ?? [];
+    // 预览中选中的这一代就是局部修改上传的图1。不要让用户上传的附加图覆盖它。
+    const generations = shotImages[imageKey] ?? (shot.imageUrl ? [shot.imageUrl] : []);
     const currentIdx = Math.min(shotSelectedGenIdx, Math.max(0, generations.length - 1));
-    const referenceUrl = shotModUploadedRef ?? generations[currentIdx] ?? shot.imageUrl;
+    const referenceUrl = generations[currentIdx];
     const instruction = shotModInput.trim();
     if (!referenceUrl || !instruction) return;
     const edited = applyShotEditablePrompt(group, shot, instruction);
@@ -6432,7 +6777,6 @@ function WorkspacePage() {
         }
         setShotSelectedGenIdx(newLen - 1);
         setShotModInput(shotEditablePrompt({ ...group, plotText: edited.plotText }, editedShot));
-        setShotModUploadedRef(null);
         toast.success("已按意见重生");
       } else {
         toast.error(res?.error || "重生失败");
@@ -12247,7 +12591,6 @@ function WorkspacePage() {
                                               shotEditablePrompt(g, s),
                                               setShotModInput,
                                             );
-                                            setShotModUploadedRef(null);
                                             setShotPreview({ groupId: g.id, shotId: s.id });
                                           }}
                                           className="absolute bottom-1.5 right-1.5 p-1 rounded bg-black/60 text-white opacity-0 group-hover:opacity-100 transition hover:bg-black/80"
@@ -12948,10 +13291,11 @@ function WorkspacePage() {
                           tabIndex={0}
                           onClick={() => {
                             setSelectedGenIdx(i);
-                            void showEditablePromptInChinese(
-                              `character:${imageKey}`,
-                              charImagePrompts[imageKey]?.[i]?.editablePrompt ||
-                                characterEditablePrompt(c, previewTarget.lookId),
+                            void showCharacterPromptInDetail(
+                              "character:" + imageKey,
+                              c,
+                              previewTarget.lookId,
+                              charImagePrompts[imageKey]?.[i],
                               setModInput,
                             );
                             // 缩略图始终保持一个明确选择；重复点击同一张只维持选中，不能取消。
@@ -12961,10 +13305,11 @@ function WorkspacePage() {
                             if (e.key === "Enter" || e.key === " ") {
                               e.preventDefault();
                               setSelectedGenIdx(i);
-                              void showEditablePromptInChinese(
-                                `character:${imageKey}`,
-                                charImagePrompts[imageKey]?.[i]?.editablePrompt ||
-                                  characterEditablePrompt(c, previewTarget.lookId),
+                              void showCharacterPromptInDetail(
+                                "character:" + imageKey,
+                                c,
+                                previewTarget.lookId,
+                                charImagePrompts[imageKey]?.[i],
                                 setModInput,
                               );
                               setSelectedCharImages((m) => ({ ...m, [imageKey]: u }));
@@ -13382,10 +13727,10 @@ function WorkspacePage() {
                               onClick={() => {
                                 // 点缩略图即选中；选中后不能通过再次点击取消。
                                 setSelectedSceneImages((m) => ({ ...m, [s.id]: u }));
-                                void showEditablePromptInChinese(
-                                  `scene:${s.id}`,
-                                  sceneImagePrompts[s.id]?.[i]?.editablePrompt ||
-                                    sceneEditablePrompt(s),
+                                void showScenePromptInDetail(
+                                  s,
+                                  sceneImagePrompts[s.id]?.[i],
+                                  u,
                                   setSceneModInput,
                                 );
                               }}
@@ -13538,36 +13883,6 @@ function WorkspacePage() {
                           <span className="text-[10px] text-text-muted">点击按钮发送</span>
                         )}
                       </div>
-                      <div className="flex items-center gap-2 mb-2">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            pickLocalImageAsDataUrl((url) => setSceneModUploadedRef(url))
-                          }
-                          className="btn-ghost text-xs flex items-center gap-1"
-                          title="上传本地图片作为 I2I 参考"
-                        >
-                          <ImageUp size={12} />
-                          <span>上传参考图</span>
-                        </button>
-                        {sceneModUploadedRef && (
-                          <div className="relative shrink-0 w-10 h-10 rounded border border-accent overflow-hidden">
-                            <img
-                              src={sceneModUploadedRef}
-                              alt="参考图"
-                              className="w-full h-full object-cover"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setSceneModUploadedRef(null)}
-                              className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"
-                            >
-                              <X size={10} />
-                            </button>
-                          </div>
-                        )}
-                      </div>
-
                       <textarea
                         value={sceneModInput}
                         onChange={(e) => setSceneModInput(e.target.value)}
@@ -13849,35 +14164,6 @@ function WorkspacePage() {
                           <span className="text-[10px] text-text-muted">点击按钮发送</span>
                         )}
                       </div>
-                      <div className="flex items-center gap-2 mb-2">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            pickLocalImageAsDataUrl((url) => setPropModUploadedRef(url))
-                          }
-                          className="btn-ghost text-xs flex items-center gap-1"
-                          title="上传本地图片作为 I2I 参考"
-                        >
-                          <ImageUp size={12} />
-                          <span>上传参考图</span>
-                        </button>
-                        {propModUploadedRef && (
-                          <div className="relative shrink-0 w-10 h-10 rounded border border-accent overflow-hidden">
-                            <img
-                              src={propModUploadedRef}
-                              alt="参考图"
-                              className="w-full h-full object-cover"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setPropModUploadedRef(null)}
-                              className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"
-                            >
-                              <X size={10} />
-                            </button>
-                          </div>
-                        )}
-                      </div>
                       <textarea
                         value={propModInput}
                         onChange={(e) => setPropModInput(e.target.value)}
@@ -14053,33 +14339,6 @@ function WorkspacePage() {
                       </div>
                     </div>
                   )}
-                  <div className="flex items-center gap-2 mb-2">
-                    <button
-                      type="button"
-                      onClick={() => pickLocalImageAsDataUrl((url) => setPropModUploadedRef(url))}
-                      className="btn-ghost text-xs flex items-center gap-1"
-                      title="上传本地图片作为 I2I 参考"
-                    >
-                      <ImageUp size={12} />
-                      <span>上传参考图</span>
-                    </button>
-                    {propModUploadedRef && (
-                      <div className="relative shrink-0 w-10 h-10 rounded border border-accent overflow-hidden">
-                        <img
-                          src={propModUploadedRef}
-                          alt="参考图"
-                          className="w-full h-full object-cover"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setPropModUploadedRef(null)}
-                          className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"
-                        >
-                          <X size={10} />
-                        </button>
-                      </div>
-                    )}
-                  </div>
                   <div>
                     <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1.5">
                       修改意见
@@ -14196,9 +14455,11 @@ function WorkspacePage() {
                               type="button"
                               onClick={() => {
                                 setSelectedSceneImages((m) => ({ ...m, [s.id]: u }));
-                                setSceneModInput(
-                                  sceneImagePrompts[s.id]?.[i]?.editablePrompt ||
-                                    sceneEditablePrompt(s),
+                                void showScenePromptInDetail(
+                                  s,
+                                  sceneImagePrompts[s.id]?.[i],
+                                  u,
+                                  setSceneModInput,
                                 );
                               }}
                               title="点击选中这张场景图"
@@ -14233,33 +14494,6 @@ function WorkspacePage() {
                       </div>
                     </div>
                   )}
-                  <div className="flex items-center gap-2 mb-2">
-                    <button
-                      type="button"
-                      onClick={() => pickLocalImageAsDataUrl((url) => setSceneModUploadedRef(url))}
-                      className="btn-ghost text-xs flex items-center gap-1"
-                      title="上传本地图片作为 I2I 参考"
-                    >
-                      <ImageUp size={12} />
-                      <span>上传参考图</span>
-                    </button>
-                    {sceneModUploadedRef && (
-                      <div className="relative shrink-0 w-10 h-10 rounded border border-accent overflow-hidden">
-                        <img
-                          src={sceneModUploadedRef}
-                          alt="参考图"
-                          className="w-full h-full object-cover"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setSceneModUploadedRef(null)}
-                          className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"
-                        >
-                          <X size={10} />
-                        </button>
-                      </div>
-                    )}
-                  </div>
                   <div>
                     <div className="text-[10px] uppercase tracking-wide text-text-muted mb-1.5">
                       修改意见
@@ -14420,7 +14654,6 @@ function WorkspacePage() {
               onClick={() => {
                 setShotPreview(null);
                 setShotModInput("");
-                setShotModUploadedRef(null);
               }}
               role="dialog"
               aria-modal="true"
@@ -14445,7 +14678,6 @@ function WorkspacePage() {
                     onClick={() => {
                       setShotPreview(null);
                       setShotModInput("");
-                      setShotModUploadedRef(null);
                     }}
                     className="shrink-0 p-1.5 rounded-md hover:bg-bg-elevated text-text-muted"
                     aria-label="关闭"
@@ -14599,36 +14831,6 @@ function WorkspacePage() {
                       <p className="text-[10px] text-text-muted leading-relaxed">
                         这段指令会原样传入生成流程；系统会自动补充当前分镜、参考图和风格一致性约束。
                       </p>
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            pickLocalImageAsDataUrl((url) => setShotModUploadedRef(url))
-                          }
-                          className="btn-ghost text-xs inline-flex items-center gap-1"
-                        >
-                          <ImageUp size={12} /> 上传参考图
-                        </button>
-                        {shotModUploadedRef && (
-                          <div
-                            key={shotModUploadedRef}
-                            className="relative w-10 h-10 rounded border border-accent overflow-hidden"
-                          >
-                            <img
-                              src={shotModUploadedRef}
-                              alt="参考图"
-                              className="w-full h-full object-cover"
-                            />
-                            <button
-                              type="button"
-                              onClick={() => setShotModUploadedRef(null)}
-                              className="absolute -top-1.5 -right-1.5 w-4 h-4 rounded-full bg-black/70 text-white flex items-center justify-center"
-                            >
-                              <X size={10} />
-                            </button>
-                          </div>
-                        )}
-                      </div>
                       <textarea
                         value={shotModInput}
                         onChange={(e) => setShotModInput(e.target.value)}
@@ -14637,7 +14839,7 @@ function WorkspacePage() {
                         disabled={
                           shotModBusy ||
                           isPromptTranslating ||
-                          (!currentUrl && !shotModUploadedRef)
+                          !currentUrl
                         }
                         className="w-full min-h-44 rounded-md bg-bg-elevated border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-y placeholder:text-text-muted disabled:opacity-50"
                       />
@@ -14650,7 +14852,7 @@ function WorkspacePage() {
                             shotModBusy ||
                             isPromptTranslating ||
                             !shotModInput.trim() ||
-                            (!currentUrl && !shotModUploadedRef)
+                            !currentUrl
                           }
                           className="px-3 py-1.5 rounded-md bg-accent text-accent-foreground text-xs font-semibold disabled:opacity-40 disabled:cursor-not-allowed hover:opacity-90 inline-flex items-center gap-1.5"
                         >

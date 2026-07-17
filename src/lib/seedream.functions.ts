@@ -2971,6 +2971,8 @@ const RegenerateSceneInput = z.object({
     (value) => normalizeSceneText(value, "生成场景多视图"),
     z.string().min(1).max(2000),
   ),
+  /** 已展开的完整 API 提示词，供场景多视图详情编辑后原样重放。 */
+  rawPrompt: z.string().min(1).max(24_000).optional(),
   sceneSlug: z.preprocess(
     (value) => normalizeSceneText(value, "未命名场景").trim() || "未命名场景",
     z.string().max(200),
@@ -3065,7 +3067,7 @@ function buildScenePrompts(
       `[STYLE LOCK — 场景多视图,适用对象:scene]`,
       buildStyleLock(styleSpec, "scene"),
       ``,
-      `[任务] 基于图1生成同一个场景的横向六宫格摄影机视图，不是六个新场景。图1是唯一的场景参考真值。`,
+      `[任务] 基于图1生成同一个场景的横向六宫格摄影机视图，不是六个新场景。上传的参考图是此场景的唯一空间蓝图与参考真值。`,
       `[地点] ${data.sceneSlug}`,
       data.sceneLocation ? `[具体地点] ${data.sceneLocation}` : "",
       data.sceneTimeOfDay ? `[时段] ${data.sceneTimeOfDay}` : "",
@@ -3076,30 +3078,31 @@ function buildScenePrompts(
       ``,
       `[画布] 3072×2048 横向画布，严格使用 2 行 × 3 列共六个等大格子；从左到右、从上到下排列。不得输出竖屏、单图、额外格子或空白格。`,
       ``,
-      `【场景锁定 — 图1是唯一真值】六格必须是图1同一空间在同一时刻的不同摄影机视角。严格继承图1已出现的场景主体、室内/室外属性、空间边界、结构比例、布局、出入口与开口位置、陈设/无生命道具、材质、色彩、光照方向、阴影、天气与时间。图1未出现的建筑、房间、门窗、道路、植被、山体、天空、天花、屋顶、家具或装饰一律不得补充；图1已有元素也不得删除、移动、替换或重新设计。仅允许摄影机位置、朝向和取景范围变化。`,
+      `【参考图蓝图】AI必须提取并严格沿用参考图中的核心参数：建筑主体轮廓比例、屋顶形式（平/坡）、主要开窗节奏、主入口位置、道路转弯半径、景观植被分布密度。禁止重绘、禁止风格迁移、禁止改变体块关系。`,
+      `【场景锁定】以下所有图像共享完全相同的建筑设计、结构、比例、场地规划、空间布局、景观系统、道路系统、背景山体、天空云层、材质表现、色彩体系、光照方向、阴影方向、体积光、天气、时间段。禁止重新设计、禁止增减任何建筑构件、禁止改变环境布局。仅允许摄影机按坐标移动。`,
       ``,
-      `【画面质量】电影级场景摄影表现，真实且一致的材质与环境光效，8K超高清，HDR，极致锐度，空间层次丰富；不得把室内改成室外，也不得把室外改成室内。`,
+      `【画面质量】建筑摄影级表现，建筑可视化，电影级光效，基于物理渲染的真实材质，8K高动态范围，极致锐度，空间层次丰富。`,
       ``,
-      `【摄影机参数】`,
-      `统一50mm焦段，统一曝光，统一白平衡，统一动态范围，统一景深，统一色彩风格。`,
+      `【摄影机统一参数】`,
+      `统一50毫米焦段，统一曝光，统一白平衡，统一动态范围，统一景深（F8），统一色彩风格（中性柔和对比）。`,
       ``,
-      `【格子1：场景前景（第1行第1列）】按图1定义的主视觉方向，以约1.6米人眼高度从正前方近景拍摄。镜头靠近图1已有的主入口、核心空间或主要场景主体，重点展示其近景细节、表面材质、地面关系及前景元素。场景主体占画面60%以上；前景清晰，背景可适度虚化但不得丢失图1已有的关键空间信息。若图1是室内，只展示图1已有的室内结构与陈设；若图1是室外，只展示图1已有的环境元素。`,
-      `【格子2：场景后景（第1行第2列）】从与图1主视觉方向相对的一侧，以约1.6米人眼高度拍摄后方远景。完整展示图1已有的背向空间结构、空间纵深以及可见的后方环境或室内延伸；这是用于建立整体空间关系的远景，不得与格子3重复。只呈现图1已经存在的结构、陈设和环境元素，保持与前景完全一致的光影方向、材质和色彩体系。`,
-      `【格子3：背面全景（第1行第3列）】从图1主视觉方向的相对一侧，朝向场景背面拍摄一张背面全景。画面以背面主体与可见细节为重点，清楚呈现图1已有的背向结构、布局和材质；取景比格子2更接近、更聚焦背面细节，但不得改变空间关系。保持与正面、左右侧完全一致的结构比例、材质、光照与阴影。`,
-      `【格子4：左侧视图（第2行第1列）】以图1主视觉方向为基准，机位位于场景左侧约90°方向、约1.6米人眼高度。展示图1已有的左侧空间边界、侧向结构、可见开口、陈设或环境元素及左向空间纵深；室内外属性必须与图1一致。强调侧向空间层次，确保与正面视图的结构比例、材质、光照和物件位置完全吻合。`,
-      `【格子5：右侧视图（第2行第2列）】以图1主视觉方向为基准，机位位于场景右侧约90°方向、约1.6米人眼高度。展示图1已有的右侧空间边界、侧向结构、可见开口、陈设或环境元素及右向空间纵深；室内外属性必须与图1一致。与左侧视图及其余格子保持同一场景的真实结构关系、材质表现、光照和阴影，不得强行镜像或对称化。`,
-      `【格子6：俯视鸟瞰（第2行第3列）】从图1可成立的最高机位俯视同一场景，清楚呈现图1已有的整体布局、空间关系、无生命道具和动线。室外场景可展示图1可见的场地与顶部结构；室内场景只展示图1原本可见或可由同一空间自然看见的布局。不得移除天花、屋顶或墙体，不得做剖切图、爆炸图、平面图，也不得为获得俯视效果新增房间、道路或景观。保持真实摄影机视角，避免透视穿帮。`,
+      `【格子1：前侧方经典透视图（第1行第1列）】坐标定位：相机位于场景东南方向45°，距离主体30米，仰角10°。构图要求：同时展现主入口立面，场景占画面70%，前景保留细节。`,
+      `【格子2：正立面入口特写（第1行第2列）】坐标定位：相机位于场景正南方向（Z轴正方向），距离主体15米，高度1.6米（人眼水平）。构图要求：正对主入口，展示场景细节、入口铺装及景观。背景轻微虚化。`,
+      `【格子3：正背面全景（第1行第3列）】坐标定位：相机位于场景正北方向（Z轴负方向），距离主体35米，高度1.6米。构图要求：完整展示场景背立面，重点体现与正面完全一致的材质及分割。光影方向必须与正面完全镜像一致：左侧光依然从左侧打来，背面右侧产生拖影；相当于镜头反打。`,
+      `【格子4：正左侧视图（第2行第1列）】坐标定位：相机位于场景正西方向（X轴负方向），距离主体30米，高度1.6米。构图要求：正交感强烈的侧立面，展示左侧场景的体量层次、侧翼结构与侧方线形景观带。`,
+      `【格子5：正右侧视图（第2行第2列）】坐标定位：相机位于场景正东方向（X轴正方向），距离主体30米，高度1.6米。构图要求：与格子4完全对称的右侧立面，确保分割、间距、景观与左侧对称或逻辑正确。`,
+      `【格子6：垂直俯视总平面（第2行第3列）】坐标定位：相机位于场景正上方（Y轴垂直），距离地面60米，镜头完全垂直于地面（0°倾斜）。构图要求：无透视畸变的正交投影，清晰展示场景顶部结构、轮廓线、道路网格环形动线、入口景观分区及平面布局。`,
       ``,
-      `[提交前检查] 严格输出横向 2×3 六宫格；六格均为图1同一场景、同一时刻，仅摄影机位置、朝向和取景范围变化；格子1至格子6均为指定机位且不得重复；室内外属性、空间布局、结构比例、材质、陈设、环境、色彩和光影必须与图1一致；不得新增、删除、移动、改造任何元素，不得做剖切图、爆炸图或平面图；无人物、动物或手；无水印、logo或无关文字。`,
+      `[提交前检查] 严格输出横向 2×3 六宫格；六格均为图1同一场景、同一时刻，仅允许摄影机按指定坐标移动；建筑轮廓、体块关系、开窗、入口、道路、景观、山体、天空、材质、色彩和光影必须与图1一致；不得重新设计、增减建筑构件或改变环境布局；格子6必须为正交俯视总平面；无人物、动物或手；无水印、logo或无关文字。`,
     ]
       .filter(Boolean)
       .join("\n");
     const negative = [
       withEmptySceneNegative(),
-      "six unrelated scenes, different location, different room, indoor changed to outdoor, outdoor changed to indoor, different architecture, different spatial layout, different furniture layout",
+      "six unrelated scenes, different location, different architecture, different building massing, different facade, different window rhythm, different entrance position, different road layout, different landscape layout",
       "mirrored front, flipped image, duplicated panel, same angle in all panels, flat 2D collage",
       "missing rear structure, impossible perspective, incorrect aerial view, fisheye distortion",
-      "invented building, invented room, invented door, invented window, invented road, invented landscape, invented ceiling, invented roof, invented furniture, invented decoration, extra objects, removed objects, cutaway view, exploded view, floor plan",
+      "invented building, invented door, invented window, invented road, invented landscape, invented roof, invented decoration, extra objects, removed objects, cutaway view, exploded view",
       "different time of day, different weather, different lighting, different color palette, style drift",
       "portrait orientation, vertical canvas, portrait layout, single image, extra panel, empty panel",
       "watermark, logo, unreadable text, garbled text, random text",
@@ -3352,7 +3355,7 @@ export const regenerateSceneImage = createServerFn({ method: "POST" })
     const styleSpec = resolveProjectStyle(data.projectStyle);
     const { positive, negative, size } = buildScenePrompts(data, styleSpec);
     const requested = normalizeImageModelForRouting(data.model);
-    const prompt = appendNegative(positive, negative);
+    const prompt = data.rawPrompt?.trim() || appendNegative(positive, negative);
 
     // 2026/06:查看提示词模式
     if (data.previewOnly) {
