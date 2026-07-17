@@ -15,7 +15,17 @@ import WorkspaceTopbar, { type WorkspaceTab } from "../components/workspace/Work
 import ZopiaChatPanel, { type ZopiaChatPanelHandle } from "../components/workspace/ZopiaChatPanel";
 import { useLanguage } from "../i18n/LanguageContext";
 import { useAuth } from "../hooks/useAuth";
-import { saveOneCharacter, saveOneScene, saveOneProp } from "../lib/assetsStorage";
+import {
+  saveOneCharacter,
+  saveOneScene,
+  saveOneProp,
+  loadCharacters,
+  loadScenes,
+  loadProps,
+  type DbCharacter,
+  type DbScene,
+  type DbProp,
+} from "../lib/assetsStorage";
 import {
   generateOutline,
   generateScript,
@@ -140,6 +150,57 @@ export const Route = createFileRoute("/workspace/$workspaceId")({
 
 const isHttpImageUrl = (value: unknown): value is string =>
   typeof value === "string" && /^https?:\/\//i.test(value);
+
+type AssetPickerKind = "character" | "scene" | "prop";
+type AssetPickerItem = {
+  id: string;
+  name: string;
+  detail: string;
+  imageUrls: string[];
+  source: DbCharacter | DbScene | DbProp;
+};
+type AssetPickerState = {
+  kind: AssetPickerKind;
+  status: "loading" | "ready" | "error";
+  items: AssetPickerItem[];
+};
+
+function assetPickerImageUrls(images: unknown, coverUrl: string | null): string[] {
+  const urls = Array.isArray(images)
+    ? images.flatMap((item) =>
+        item && typeof item === "object" && isHttpImageUrl((item as { url?: unknown }).url)
+          ? [(item as { url: string }).url]
+          : [],
+      )
+    : [];
+  const uniqueUrls = [...new Set(urls)];
+  // 工作区默认取最后一张作为参考图，故封面（主图）必须置于末尾。
+  return isHttpImageUrl(coverUrl)
+    ? [...uniqueUrls.filter((url) => url !== coverUrl), coverUrl]
+    : uniqueUrls;
+}
+
+function assetPickerSceneTime(value: string | null): GenScene["timeOfDay"] {
+  return value === "NIGHT" || value === "DUSK" || value === "DAWN" || value === "DAY"
+    ? value
+    : "DAY";
+}
+
+function assetPickerDialogue(value: unknown): GenScene["dialogue"] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    if (!item || typeof item !== "object") return [];
+    const row = item as { role?: unknown; line?: unknown; parenthetical?: unknown };
+    if (typeof row.role !== "string" || typeof row.line !== "string") return [];
+    return [
+      {
+        role: row.role,
+        line: row.line,
+        ...(typeof row.parenthetical === "string" ? { parenthetical: row.parenthetical } : {}),
+      },
+    ];
+  });
+}
 
 /** 场景资产只能是无人空景；角色、动物等应由角色/分镜流程生成。 */
 const EMPTY_SCENE_NEGATIVE_PROMPT = [
@@ -1157,6 +1218,9 @@ function WorkspacePage() {
   const [collapsed, setCollapsed] = useState(false);
   const [data, setData] = useState<WorkspaceData>(emptyData);
   const [flash, setFlash] = useState<WorkspaceTab | null>(null);
+  const [assetPicker, setAssetPicker] = useState<AssetPickerState | null>(null);
+  const [assetPickerSearch, setAssetPickerSearch] = useState("");
+  const assetPickerRequestRef = useRef(0);
   // 预览态:记录角色 + 当前选中的 look(null 表示默认)。每个 look 是独立卡片,
   // 预览时也要展示对应 look 的图和服装描述。
   const [previewTarget, setPreviewTarget] = useState<{
@@ -6735,6 +6799,156 @@ function WorkspacePage() {
     });
   }
 
+  async function openAssetPicker(kind: AssetPickerKind) {
+    if (!user) {
+      toast.error("请先登录后从资产库选择");
+      return;
+    }
+    const requestId = ++assetPickerRequestRef.current;
+    setAssetPickerSearch("");
+    setAssetPicker({ kind, status: "loading", items: [] });
+    try {
+      const result =
+        kind === "character"
+          ? await loadCharacters(user.id, 0, 999)
+          : kind === "scene"
+            ? await loadScenes(user.id, 0, 999)
+            : await loadProps(user.id, 0, 999);
+      if (result.error) throw result.error;
+      if (requestId !== assetPickerRequestRef.current) return;
+      const items: AssetPickerItem[] =
+        kind === "character"
+          ? ((result.data ?? []) as DbCharacter[]).map((asset) => ({
+              id: asset.id,
+              name: asset.name,
+              detail: [asset.role_label || asset.role, asset.personality].filter(Boolean).join(" · "),
+              imageUrls: assetPickerImageUrls(asset.images, asset.cover_url),
+              source: asset,
+            }))
+          : kind === "scene"
+            ? ((result.data ?? []) as DbScene[]).map((asset) => ({
+                id: asset.id,
+                name: asset.name || asset.location || "未命名场景",
+                detail: [asset.location, asset.time_of_day, asset.action].filter(Boolean).join(" · "),
+                imageUrls: assetPickerImageUrls(asset.images, asset.cover_url),
+                source: asset,
+              }))
+            : ((result.data ?? []) as DbProp[]).map((asset) => ({
+                id: asset.id,
+                name: asset.name,
+                detail: [asset.description, asset.movement_description].filter(Boolean).join(" · "),
+                imageUrls: assetPickerImageUrls(asset.images, asset.cover_url),
+                source: asset,
+              }));
+      setAssetPicker({ kind, status: "ready", items });
+    } catch (error) {
+      console.warn("[workspace] Failed to load asset picker:", error);
+      if (requestId === assetPickerRequestRef.current) {
+        setAssetPicker({ kind, status: "error", items: [] });
+      }
+    }
+  }
+
+  function addAssetPickerItem(item: AssetPickerItem) {
+    const picker = assetPicker;
+    if (!picker) return;
+    const episodeIndex = selectedEpisodeIndex;
+    if (picker.kind === "character") {
+      const source = item.source as DbCharacter;
+      const id = `library-character-${item.id}`;
+      const role =
+        source.role === "lead" || source.role === "villain" || source.role === "supporting"
+          ? source.role
+          : "supporting";
+      const character: GenCharacter = {
+        id,
+        episodes: [episodeIndex],
+        name: source.name,
+        role,
+        roleLabel: source.role_label ?? "",
+        age: source.age ?? 20,
+        gender: "",
+        faceDescription: source.look ?? "",
+        bodyDescription: "",
+        clothingDescription: "",
+        personality: source.personality ?? "",
+        palette: source.palette ?? ["#6b7280", "#9ca3af", "#d1d5db"],
+        swatch: source.gradient ?? "linear-gradient(135deg, #6b7280, #d1d5db)",
+        matchKey: id,
+        ...(source.mbti ? { mbti: source.mbti } : {}),
+        ...(source.key_prop ? { keyProp: source.key_prop } : {}),
+        ...(source.reference_audio_url ? { referenceAudioUrl: source.reference_audio_url } : {}),
+      };
+      setData((current) => ({
+        ...current,
+        characters: current.characters.some((asset) => asset.id === id)
+          ? current.characters.map((asset) =>
+              asset.id === id && !asset.episodes.includes(episodeIndex)
+                ? { ...asset, episodes: [...asset.episodes, episodeIndex] }
+                : asset,
+            )
+          : [...current.characters, character],
+      }));
+      if (item.imageUrls.length) {
+        updateCharImages((images) =>
+          images[id]?.length ? images : { ...images, [id]: item.imageUrls },
+        );
+        setSelectedCharImages((images) => ({ ...images, [id]: item.imageUrls.at(-1)! }));
+      }
+    } else if (picker.kind === "scene") {
+      const source = item.source as DbScene;
+      const id = `library-scene-${item.id}-${episodeIndex}`;
+      const scene: GenScene = {
+        id,
+        episodeIndex,
+        index: 0,
+        slug: source.name || source.location || "未命名场景",
+        location: source.location || source.name || "",
+        timeOfDay: assetPickerSceneTime(source.time_of_day),
+        action: source.action ?? "",
+        beats: source.beats ?? [],
+        dialogue: assetPickerDialogue(source.dialogue),
+      };
+      setData((current) => ({
+        ...current,
+        scenes: current.scenes.some((asset) => asset.id === id)
+          ? current.scenes
+          : [...current.scenes, scene],
+      }));
+      if (item.imageUrls.length) {
+        updateSceneImages((images) =>
+          images[id]?.length ? images : { ...images, [id]: item.imageUrls },
+        );
+        setSelectedSceneImages((images) => ({ ...images, [id]: item.imageUrls.at(-1)! }));
+      }
+    } else {
+      const source = item.source as DbProp;
+      const id = `library-prop-${item.id}-${episodeIndex}`;
+      const prop: GenProp = {
+        id,
+        episodeIndex,
+        name: source.name,
+        description: source.description ?? "",
+        movementDescription: source.movement_description ?? "",
+        keyMoments: source.key_moments ?? [],
+        palette: source.palette ?? ["#6b7280", "#9ca3af", "#d1d5db"],
+        swatch: "linear-gradient(135deg, #6b7280, #d1d5db)",
+      };
+      setData((current) => ({
+        ...current,
+        props: current.props.some((asset) => asset.id === id) ? current.props : [...current.props, prop],
+      }));
+      if (item.imageUrls.length) {
+        updatePropImages((images) =>
+          images[id]?.length ? images : { ...images, [id]: item.imageUrls },
+        );
+        setSelectedPropImages((images) => ({ ...images, [id]: item.imageUrls.at(-1)! }));
+      }
+    }
+    setAssetPicker(null);
+    toast.success(`已将「${item.name}」添加到当前项目`);
+  }
+
   /**
    * 2026/06:设置 group 层级场景 id。同步把 sceneLocation 写成该场景的
    * location/slug,跟 runEnterStoryboard 行 2204 的格式保持一致,这样 header
@@ -10991,18 +11205,27 @@ function WorkspacePage() {
                             <span className="text-xs text-text-muted">
                               {epScenes.length} 个场景
                             </span>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setData((d) => ({
-                                  ...d,
-                                  scenes: [...d.scenes, createEmptyScene(selectedEpisodeIndex)],
-                                }))
-                              }
-                              className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-dashed border-border text-text-muted text-xs hover:border-accent hover:text-accent hover:bg-accent-dim transition"
-                            >
-                              <Plus size={12} /> 添加场景
-                            </button>
+                            <div className="ml-auto flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void openAssetPicker("scene")}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-border text-text-secondary text-xs hover:border-accent hover:text-accent hover:bg-accent-dim transition"
+                              >
+                                <BookmarkPlus size={12} /> 从资产库选择
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setData((d) => ({
+                                    ...d,
+                                    scenes: [...d.scenes, createEmptyScene(selectedEpisodeIndex)],
+                                  }))
+                                }
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-dashed border-border text-text-muted text-xs hover:border-accent hover:text-accent hover:bg-accent-dim transition"
+                              >
+                                <Plus size={12} /> 添加新场景
+                              </button>
+                            </div>
                           </div>
                           <div className="px-6 py-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 gap-5">
                             {epScenes.map((s) => {
@@ -11246,6 +11469,13 @@ function WorkspacePage() {
                             )}
                             <button
                               type="button"
+                              onClick={() => void openAssetPicker("scene")}
+                              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-border text-text-secondary text-xs hover:border-accent hover:text-accent hover:bg-accent-dim transition"
+                            >
+                              <BookmarkPlus size={11} /> 从资产库选择
+                            </button>
+                            <button
+                              type="button"
                               onClick={() =>
                                 setData((d) => ({
                                   ...d,
@@ -11254,7 +11484,7 @@ function WorkspacePage() {
                               }
                               className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-dashed border-border text-text-muted text-xs hover:border-accent hover:text-accent hover:bg-accent-dim transition"
                             >
-                              <Plus size={11} /> 添加空场景
+                              <Plus size={11} /> 添加新场景
                             </button>
                           </div>
                         </div>
@@ -11265,18 +11495,27 @@ function WorkspacePage() {
                         <>
                           <div className="px-6 py-3 flex items-center gap-2 border-b border-border/40">
                             <span className="text-xs text-text-muted">{epProps.length} 个道具</span>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setData((d) => ({
-                                  ...d,
-                                  props: [...d.props, createEmptyProp(selectedEpisodeIndex)],
-                                }))
-                              }
-                              className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-dashed border-border text-text-muted text-xs hover:border-accent hover:text-accent hover:bg-accent-dim transition"
-                            >
-                              <Plus size={12} /> 添加道具
-                            </button>
+                            <div className="ml-auto flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void openAssetPicker("prop")}
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-border text-text-secondary text-xs hover:border-accent hover:text-accent hover:bg-accent-dim transition"
+                              >
+                                <BookmarkPlus size={12} /> 从资产库选择
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setData((d) => ({
+                                    ...d,
+                                    props: [...d.props, createEmptyProp(selectedEpisodeIndex)],
+                                  }))
+                                }
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-dashed border-border text-text-muted text-xs hover:border-accent hover:text-accent hover:bg-accent-dim transition"
+                              >
+                                <Plus size={12} /> 添加新道具
+                              </button>
+                            </div>
                           </div>
                           <div className="px-6 py-4 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-4 gap-5">
                             {epProps.map((p) => {
@@ -11516,6 +11755,13 @@ function WorkspacePage() {
                             )}
                             <button
                               type="button"
+                              onClick={() => void openAssetPicker("prop")}
+                              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-border text-text-secondary text-xs hover:border-accent hover:text-accent hover:bg-accent-dim transition"
+                            >
+                              <BookmarkPlus size={11} /> 从资产库选择
+                            </button>
+                            <button
+                              type="button"
                               onClick={() =>
                                 setData((d) => ({
                                   ...d,
@@ -11524,7 +11770,7 @@ function WorkspacePage() {
                               }
                               className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-dashed border-border text-text-muted text-xs hover:border-accent hover:text-accent hover:bg-accent-dim transition"
                             >
-                              <Plus size={11} /> 添加空道具
+                              <Plus size={11} /> 添加新道具
                             </button>
                           </div>
                         </div>
@@ -11533,21 +11779,30 @@ function WorkspacePage() {
                       <>
                         <div className="px-6 py-3 flex items-center gap-2 border-b border-border/40">
                           <span className="text-xs text-text-muted">{epChars.length} 个角色</span>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setData((d) => ({
-                                ...d,
-                                characters: [
-                                  ...d.characters,
-                                  createEmptyCharacter(selectedEpisodeIndex),
-                                ],
-                              }))
-                            }
-                            className="ml-auto inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-dashed border-border text-text-muted text-xs hover:border-accent hover:text-accent hover:bg-accent-dim transition"
-                          >
-                            <Plus size={12} /> 添加角色
-                          </button>
+                          <div className="ml-auto flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => void openAssetPicker("character")}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-border text-text-secondary text-xs hover:border-accent hover:text-accent hover:bg-accent-dim transition"
+                            >
+                              <BookmarkPlus size={12} /> 从资产库选择
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setData((d) => ({
+                                  ...d,
+                                  characters: [
+                                    ...d.characters,
+                                    createEmptyCharacter(selectedEpisodeIndex),
+                                  ],
+                                }))
+                              }
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-dashed border-border text-text-muted text-xs hover:border-accent hover:text-accent hover:bg-accent-dim transition"
+                            >
+                              <Plus size={12} /> 添加新角色
+                            </button>
+                          </div>
                         </div>
                         <div className="px-6 py-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
                           {(() => {
@@ -12183,21 +12438,45 @@ function WorkspacePage() {
                         <p className="text-text-muted text-sm">
                           第 {selectedEpisodeIndex} 集 暂无角色数据
                         </p>
-                        {hasAnyEp && (
+                        <div className="flex items-center gap-2">
+                          {hasAnyEp && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                chatPanelRef.current?.triggerWorkflow(
+                                  "character",
+                                  () => produce("character", extractPrompt),
+                                  { jumpAfter: true, userMsg: extractPrompt },
+                                );
+                              }}
+                              className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-accent-dim text-accent text-xs font-semibold hover:bg-accent hover:text-white transition"
+                            >
+                              <Sparkles size={11} /> 提取本集角色
+                            </button>
+                          )}
                           <button
                             type="button"
-                            onClick={() => {
-                              chatPanelRef.current?.triggerWorkflow(
-                                "character",
-                                () => produce("character", extractPrompt),
-                                { jumpAfter: true, userMsg: extractPrompt },
-                              );
-                            }}
-                            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-accent-dim text-accent text-xs font-semibold hover:bg-accent hover:text-white transition"
+                            onClick={() => void openAssetPicker("character")}
+                            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-border text-text-secondary text-xs hover:border-accent hover:text-accent hover:bg-accent-dim transition"
                           >
-                            <Sparkles size={11} /> 提取本集角色
+                            <BookmarkPlus size={11} /> 从资产库选择
                           </button>
-                        )}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setData((d) => ({
+                                ...d,
+                                characters: [
+                                  ...d.characters,
+                                  createEmptyCharacter(selectedEpisodeIndex),
+                                ],
+                              }))
+                            }
+                            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full border border-dashed border-border text-text-muted text-xs hover:border-accent hover:text-accent hover:bg-accent-dim transition"
+                          >
+                            <Plus size={11} /> 添加新角色
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -15636,6 +15915,127 @@ function WorkspacePage() {
             </div>
           );
         })()}
+
+      {/* ============= 角色阶段：从资产库选择 ============= */}
+      {assetPicker && (
+        <div
+          className="fixed inset-0 z-[120] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="从资产库选择"
+          onClick={() => {
+            assetPickerRequestRef.current++;
+            setAssetPicker(null);
+          }}
+        >
+          <div
+            className="w-full max-w-xl max-h-[78vh] rounded-2xl border border-border bg-bg-surface shadow-2xl flex flex-col overflow-hidden"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-center justify-between gap-3 px-5 py-4 border-b border-border">
+              <div>
+                <h2 className="font-display text-base font-bold">从资产库选择</h2>
+                <p className="text-[11px] text-text-muted mt-0.5">
+                  选中后会作为当前项目的新素材加入，并优先使用资产主图作为参考图。
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  assetPickerRequestRef.current++;
+                  setAssetPicker(null);
+                }}
+                className="p-1.5 rounded-md text-text-muted hover:bg-bg-elevated hover:text-text-primary"
+                aria-label="关闭"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            {assetPicker.status === "loading" ? (
+              <div className="min-h-52 flex flex-col items-center justify-center gap-3 text-sm text-text-muted">
+                <Loader2 size={24} className="animate-spin text-accent" />
+                正在读取资产库…
+              </div>
+            ) : assetPicker.status === "error" ? (
+              <div className="min-h-52 flex flex-col items-center justify-center gap-3 text-sm text-text-muted">
+                <span>资产库读取失败</span>
+                <button
+                  type="button"
+                  onClick={() => void openAssetPicker(assetPicker.kind)}
+                  className="px-3 py-1.5 rounded-md border border-accent text-accent text-xs hover:bg-accent-dim"
+                >
+                  重试
+                </button>
+              </div>
+            ) : (
+              (() => {
+                const query = assetPickerSearch.trim().toLowerCase();
+                const items = assetPicker.items.filter(
+                  (item) => !query || `${item.name} ${item.detail}`.toLowerCase().includes(query),
+                );
+                const kindLabel =
+                  assetPicker.kind === "character"
+                    ? "角色"
+                    : assetPicker.kind === "scene"
+                      ? "场景"
+                      : "道具";
+                return (
+                  <>
+                    <div className="px-5 py-3 border-b border-border/60">
+                      <input
+                        value={assetPickerSearch}
+                        onChange={(event) => setAssetPickerSearch(event.target.value)}
+                        autoFocus
+                        placeholder={`搜索${kindLabel}…`}
+                        className="w-full rounded-lg border border-border bg-bg-base px-3 py-2 text-sm text-text-primary outline-none placeholder:text-text-muted focus:border-accent"
+                      />
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                      {items.map((item) => {
+                        const coverUrl = item.imageUrls.at(-1);
+                        return (
+                          <button
+                            key={item.id}
+                            type="button"
+                            onClick={() => addAssetPickerItem(item)}
+                            className="w-full flex items-center gap-3 rounded-xl border border-border bg-bg-base/60 p-2.5 text-left hover:border-accent hover:bg-accent-dim/20 transition"
+                          >
+                            <div className="w-12 h-12 shrink-0 rounded-lg overflow-hidden bg-bg-elevated border border-border">
+                              {coverUrl ? (
+                                <img src={coverUrl} alt={item.name} className="w-full h-full object-cover" />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center text-lg">
+                                  {assetPicker.kind === "character"
+                                    ? "👤"
+                                    : assetPicker.kind === "scene"
+                                      ? "🎬"
+                                      : "📦"}
+                                </div>
+                              )}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-sm font-medium text-text-primary truncate">{item.name}</div>
+                              {item.detail && (
+                                <div className="text-[11px] text-text-muted line-clamp-2 mt-0.5">{item.detail}</div>
+                              )}
+                            </div>
+                            <Plus size={15} className="shrink-0 text-accent" />
+                          </button>
+                        );
+                      })}
+                      {items.length === 0 && (
+                        <div className="min-h-36 flex items-center justify-center text-sm text-text-muted">
+                          {assetPickerSearch ? "没有匹配的资产" : `资产库里还没有${kindLabel}`}
+                        </div>
+                      )}
+                    </div>
+                  </>
+                );
+              })()
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ============= 新建空分镜 — 插入位置选择弹窗 ============= */}
       {showNewGroupModal && (
