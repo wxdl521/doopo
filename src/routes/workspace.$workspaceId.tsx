@@ -136,10 +136,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import CharacterPortrait from "../components/workspace/CharacterPortrait";
 import StoryboardTimeline from "../components/workspace/StoryboardTimeline";
-import {
-  ImageReviewBadge,
-  type ImageReviewStatus,
-} from "../components/ImageReviewBadge";
+import { type ImageReviewStatus } from "../components/ImageReviewBadge";
 import { toast } from "sonner";
 import type { WorkspaceAgentPlan } from "../lib/workspaceAgent.functions";
 
@@ -1881,6 +1878,49 @@ function WorkspacePage() {
     project?.style === "custom" ? `custom:${project.customStyle ?? ""}` : project?.style;
   const characterNationality = project?.characterNationality ?? "中国";
   const videoAssetLibrarySupport = getVideoAssetLibrarySupport(project?.videoModel);
+  /**
+   * 真实人脸审核仅适用于角色、场景和道具。入口放在详情页顶栏，避免把分镜图、
+   * 故事板等不可作为视频素材引用的图片也误提交到素材库。
+   */
+  const renderFaceReviewAction = (url: string | undefined, name: string) => {
+    if (!url) return null;
+    const review = getImageReview(url);
+    const isReviewing = review?.status === "pending";
+    const isApproved = review?.status === "approved";
+    const isFailed = review?.status === "rejected" || review?.status === "error";
+    const label = isReviewing
+      ? "审核中"
+      : isApproved
+        ? "真实人脸审核通过"
+        : isFailed
+          ? "真实人脸审核失败"
+          : "提交真实人脸审核";
+
+    return (
+      <button
+        type="button"
+        onClick={() => requestImageReview(url, name, true)}
+        disabled={isReviewing || isApproved}
+        title={
+          isFailed
+            ? review?.error || "审核失败，点击重新提交"
+            : !videoAssetLibrarySupport.supported
+              ? videoAssetLibrarySupport.message
+              : label
+        }
+        className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-70 ${
+          isApproved
+            ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-500"
+            : isFailed
+              ? "border-rose-500/40 bg-rose-500/10 text-rose-500 hover:bg-rose-500/15"
+              : "border-accent/50 bg-accent-dim/20 text-accent hover:bg-accent-dim/40"
+        }`}
+      >
+        {isReviewing && <Loader2 size={13} className="animate-spin" />}
+        {label}
+      </button>
+    );
+  };
   const [savingWorkspace, setSavingWorkspace] = useState(false);
   const [savedWorkspace, setSavedWorkspace] = useState(false);
   const [dataLoaded, setDataLoaded] = useState(false);
@@ -7858,6 +7898,8 @@ function WorkspacePage() {
     editedPreviewPrompt?: string,
     /** 2026/07:确认卡片上用户手选的角色参考音频 URL;空串/undefined = 不使用 */
     selectedAudioUrl?: string,
+    /** 确认卡中保留的参考图；空数组表示本次不使用任何参考图。 */
+    selectedImageUrls?: string[],
   ): Promise<boolean> {
     const group = data.storyboardGroups.find((g) => g.id === groupId);
     if (!group) return false;
@@ -7895,6 +7937,12 @@ function WorkspacePage() {
       editedPreviewPrompt != null && editedPreviewPrompt !== payload.previewPrompt
         ? `${editedPreviewPrompt.trim()}\n\n${payload.techPrompt}`
         : payload.prompt;
+    // 确认卡上的删除只影响本次请求：重新构建 payload 后按卡片中仍保留的图片过滤，
+    // 不修改工作区的分镜、故事板或资产数据。
+    const selectedImageUrlSet = new Set(selectedImageUrls ?? payload.images.map((image) => image.url));
+    const isSelectedImage = (url: string | undefined): url is string =>
+      Boolean(url && selectedImageUrlSet.has(url));
+    const selectedReferenceUrls = payload.referenceUrls.filter(isSelectedImage);
 
     const myRound = (videoGenRoundRef.current[groupId] ?? 0) + 1;
     videoGenRoundRef.current[groupId] = myRound; // 本轮重新生成,使任何旧轮次的 callGenVideo 结果失效
@@ -7921,8 +7969,8 @@ function WorkspacePage() {
         prompt: finalPrompt,
         // 仅当素材与当前视频模型属于同一渠道时，复用它返回的 asset:// 引用；
         // 其他渠道继续使用原始公网 URL，避免跨渠道 asset_id 导致任务失败。
-        referenceImageUrls: payload.referenceUrls.length
-          ? payload.referenceUrls.map((url) => getVideoImageReference(url) ?? url)
+        referenceImageUrls: selectedReferenceUrls.length
+          ? selectedReferenceUrls.map((url) => getVideoImageReference(url) ?? url)
           : undefined,
         referenceAudioUrl: selectedAudioUrl || undefined,
         model: project?.videoModel || "happyhorse-1.0-r2v",
@@ -7936,8 +7984,12 @@ function WorkspacePage() {
           ? await callGenVideo({
               data: {
                 ...commonData,
-                imageUrl: getVideoImageReference(payload.firstFrame),
-                lastFrameImageUrl: getVideoImageReference(payload.lastFrame),
+                imageUrl: isSelectedImage(payload.firstFrame)
+                  ? getVideoImageReference(payload.firstFrame)
+                  : undefined,
+                lastFrameImageUrl: isSelectedImage(payload.lastFrame)
+                  ? getVideoImageReference(payload.lastFrame)
+                  : undefined,
                 duration: groupVideoDurationSec(group),
               },
             })
@@ -11306,16 +11358,6 @@ function WorkspacePage() {
                                           loading="lazy"
                                           className="absolute inset-0 w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-300"
                                         />
-                                        <ImageReviewBadge
-                                          status={getImageReview(coverUrl)?.status}
-                                          error={getImageReview(coverUrl)?.error}
-                                          unsupported={!videoAssetLibrarySupport.supported}
-                                          unsupportedMessage={videoAssetLibrarySupport.message}
-                                          position="bottom-right"
-                                          onRequestReview={() => {
-                                            if (coverUrl) requestImageReview(coverUrl, `scene-${s.id}`, true);
-                                          }}
-                                        />
                                       </>
                                     ) : (
                                       <button
@@ -11594,16 +11636,6 @@ function WorkspacePage() {
                                           alt={p.name}
                                           loading="lazy"
                                           className="absolute inset-0 w-full h-full object-contain p-4 group-hover:scale-[1.03] transition-transform duration-300"
-                                        />
-                                        <ImageReviewBadge
-                                          status={getImageReview(coverUrl)?.status}
-                                          error={getImageReview(coverUrl)?.error}
-                                          unsupported={!videoAssetLibrarySupport.supported}
-                                          unsupportedMessage={videoAssetLibrarySupport.message}
-                                          position="bottom-right"
-                                          onRequestReview={() => {
-                                            if (coverUrl) requestImageReview(coverUrl, `prop-${p.id}`, true);
-                                          }}
                                         />
                                       </>
                                     ) : (
@@ -12002,30 +12034,6 @@ function WorkspacePage() {
                                             />
                                           );
                                         })()}
-                                        <ImageReviewBadge
-                                          status={
-                                            getImageReview(
-                                              selectedCharImages[imageKey] ||
-                                                charImages[imageKey]!.at(-1),
-                                            )?.status
-                                          }
-                                          error={
-                                            getImageReview(
-                                              selectedCharImages[imageKey] ||
-                                                charImages[imageKey]!.at(-1),
-                                            )?.error
-                                          }
-                                          unsupported={!videoAssetLibrarySupport.supported}
-                                          unsupportedMessage={videoAssetLibrarySupport.message}
-                                          position="bottom-right"
-                                          onRequestReview={() => {
-                                            const coverUrl =
-                                              selectedCharImages[imageKey] ||
-                                              charImages[imageKey]!.at(-1);
-                                            if (coverUrl)
-                                              requestImageReview(coverUrl, `character-${c.id}`, true);
-                                          }}
-                                        />
                                       </>
                                     ) : isQueued ? (
                                       // 同角色下一张在排队(本角色在跑)
@@ -13127,19 +13135,6 @@ function WorkspacePage() {
                                             onError={() => markShotImageBroken(shotImageKey)}
                                             className="absolute inset-0 w-full h-full object-cover"
                                           />
-                                          <ImageReviewBadge
-                                            status={getImageReview(currentUrl)?.status}
-                                            error={getImageReview(currentUrl)?.error}
-                                            unsupported={!videoAssetLibrarySupport.supported}
-                                            unsupportedMessage={videoAssetLibrarySupport.message}
-                                            onRequestReview={() =>
-                                              requestImageReview(
-                                                currentUrl,
-                                                `shot-${g.id}-${s.id}`,
-                                                true,
-                                              )
-                                            }
-                                          />
                                         </>
                                       ) : isBusy ? (
                                         <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 text-text-muted">
@@ -13302,20 +13297,6 @@ function WorkspacePage() {
                                   }}
                                   className="max-h-[420px] max-w-full w-auto h-auto block cursor-zoom-in object-contain"
                                 />
-                                <ImageReviewBadge
-                                  status={getImageReview(getActiveStoryboard(g.id)!.url)?.status}
-                                  error={getImageReview(getActiveStoryboard(g.id)!.url)?.error}
-                                  unsupported={!videoAssetLibrarySupport.supported}
-                                  unsupportedMessage={videoAssetLibrarySupport.message}
-                                  position="bottom-right"
-                                  onRequestReview={() =>
-                                    requestImageReview(
-                                      getActiveStoryboard(g.id)!.url,
-                                      `storyboard-${g.id}`,
-                                      true,
-                                    )
-                                  }
-                                />
                                 <button
                                   type="button"
                                   onClick={() => void generateMangaStoryboardForGroup(g.id)}
@@ -13327,7 +13308,7 @@ function WorkspacePage() {
                                 <button
                                   type="button"
                                   onClick={() => handleUploadImage("storyboard", g.id, g.id)}
-                                  className={`absolute ${videoAssetLibrarySupport.supported ? "bottom-8" : "bottom-1.5"} right-1.5 p-1 rounded bg-black/60 text-white opacity-0 group-hover:opacity-100 transition hover:bg-black/80`}
+                                  className="absolute bottom-1.5 right-1.5 p-1 rounded bg-black/60 text-white opacity-0 group-hover:opacity-100 transition hover:bg-black/80"
                                   title="上传图片"
                                 >
                                   <Upload size={12} />
@@ -13822,8 +13803,20 @@ function WorkspacePage() {
               if (p) void doPropRegen(p, "modify", instruction);
             }
           }}
-          onConfirmVideoGen={async (groupId, method, editedPreviewPrompt, selectedAudioUrl) => {
-            return await executeVideoGen(groupId, method, editedPreviewPrompt, selectedAudioUrl);
+          onConfirmVideoGen={async (
+            groupId,
+            method,
+            editedPreviewPrompt,
+            selectedAudioUrl,
+            selectedImageUrls,
+          ) => {
+            return await executeVideoGen(
+              groupId,
+              method,
+              editedPreviewPrompt,
+              selectedAudioUrl,
+              selectedImageUrls,
+            );
           }}
           onCancelVideoGen={(groupId) => cancelVideoGen(groupId)}
           onRequestStoryboardVideo={requestStoryboardVideoWithAgent}
@@ -13865,14 +13858,17 @@ function WorkspacePage() {
               >
                 {/* Top bar */}
                 <div className="relative z-10 flex items-center justify-between px-4 py-2.5 border-b border-border bg-bg-surface shrink-0">
-                  <div className="min-w-0 flex-1">
-                    <div className="font-display text-base font-bold text-text-primary truncate">
-                      {cardTitle}
+                  <div className="min-w-0 flex flex-1 items-center gap-3">
+                    <div className="min-w-0">
+                      <div className="font-display text-base font-bold text-text-primary truncate">
+                        {cardTitle}
+                      </div>
+                      <div className="text-xs text-text-muted">
+                        {c.roleLabel} · {c.age} 岁 · {characterNationality} · 共 {generations.length}{" "}
+                        张
+                      </div>
                     </div>
-                    <div className="text-xs text-text-muted">
-                      {c.roleLabel} · {c.age} 岁 · {characterNationality} · 共 {generations.length}{" "}
-                      张
-                    </div>
+                    {renderFaceReviewAction(currentUrl, `character-${c.id}`)}
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
                     <button
@@ -14316,13 +14312,16 @@ function WorkspacePage() {
               >
                 {/* Top bar */}
                 <div className="relative z-10 flex items-center justify-between px-4 py-3 border-b border-border bg-bg-surface shrink-0">
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[10px] font-mono text-text-muted">
-                      SC {s.index} · {SCENE_TIME_LABELS[s.timeOfDay] ?? s.timeOfDay}
+                  <div className="min-w-0 flex flex-1 items-center gap-3">
+                    <div className="min-w-0">
+                      <div className="text-[10px] font-mono text-text-muted">
+                        SC {s.index} · {SCENE_TIME_LABELS[s.timeOfDay] ?? s.timeOfDay}
+                      </div>
+                      <div className="font-display text-base font-bold text-text-primary truncate">
+                        {s.slug}
+                      </div>
                     </div>
-                    <div className="font-display text-base font-bold text-text-primary truncate">
-                      {s.slug}
-                    </div>
+                    {renderFaceReviewAction(currentUrl, `scene-${s.id}`)}
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
                     <button
@@ -14631,11 +14630,14 @@ function WorkspacePage() {
               >
                 {/* Top bar */}
                 <div className="relative z-10 flex items-center justify-between px-4 py-3 border-b border-border bg-bg-surface shrink-0">
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[10px] font-mono text-text-muted">PROP</div>
-                    <div className="font-display text-base font-bold text-text-primary truncate">
-                      {p.name}
+                  <div className="min-w-0 flex flex-1 items-center gap-3">
+                    <div className="min-w-0">
+                      <div className="text-[10px] font-mono text-text-muted">PROP</div>
+                      <div className="font-display text-base font-bold text-text-primary truncate">
+                        {p.name}
+                      </div>
                     </div>
+                    {renderFaceReviewAction(currentUrl, `prop-${p.id}`)}
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
                     <button
