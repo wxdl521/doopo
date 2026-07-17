@@ -11110,15 +11110,27 @@ function WorkspacePage() {
                                     )}
                                     <button
                                       type="button"
-                                      disabled={!hasImg}
+                                      disabled={!hasImg || savedAssetKeys.has(s.id)}
                                       onClick={(event) => {
                                         event.stopPropagation();
                                         if (hasImg) void saveSceneToAssets(s, s.id);
                                       }}
-                                      className="absolute bottom-1.5 left-1.5 z-20 inline-flex items-center gap-1 rounded-full bg-black/70 px-2 py-0.5 text-[10px] text-white backdrop-blur-sm transition hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
-                                      title="保存到资产"
+                                      className={`absolute bottom-1.5 left-1.5 z-20 inline-flex items-center gap-1 rounded-full bg-black/70 px-2 py-0.5 text-[10px] text-white backdrop-blur-sm transition ${
+                                        savedAssetKeys.has(s.id)
+                                          ? "cursor-default opacity-100"
+                                          : "hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                                      }`}
+                                      title={savedAssetKeys.has(s.id) ? "已存入资产" : "保存到资产"}
                                     >
-                                      <BookmarkPlus size={10} /> 保存到资产
+                                      {savedAssetKeys.has(s.id) ? (
+                                        <>
+                                          <Check size={10} /> 已存入资产
+                                        </>
+                                      ) : (
+                                        <>
+                                          <BookmarkPlus size={10} /> 保存到资产
+                                        </>
+                                      )}
                                     </button>
                                     {sceneImgCount > 1 && (
                                       <span className="absolute bottom-8 left-1.5 z-20 text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/60 text-white">
@@ -11359,15 +11371,27 @@ function WorkspacePage() {
                                     )}
                                     <button
                                       type="button"
-                                      disabled={!hasImg}
+                                      disabled={!hasImg || savedAssetKeys.has(p.id)}
                                       onClick={(event) => {
                                         event.stopPropagation();
                                         if (hasImg) void savePropToAssets(p, p.id);
                                       }}
-                                      className="absolute bottom-1.5 left-1.5 z-20 inline-flex items-center gap-1 rounded-full bg-black/70 px-2 py-0.5 text-[10px] text-white backdrop-blur-sm transition hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
-                                      title="保存到资产"
+                                      className={`absolute bottom-1.5 left-1.5 z-20 inline-flex items-center gap-1 rounded-full bg-black/70 px-2 py-0.5 text-[10px] text-white backdrop-blur-sm transition ${
+                                        savedAssetKeys.has(p.id)
+                                          ? "cursor-default opacity-100"
+                                          : "hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                                      }`}
+                                      title={savedAssetKeys.has(p.id) ? "已存入资产" : "保存到资产"}
                                     >
-                                      <BookmarkPlus size={10} /> 保存到资产
+                                      {savedAssetKeys.has(p.id) ? (
+                                        <>
+                                          <Check size={10} /> 已存入资产
+                                        </>
+                                      ) : (
+                                        <>
+                                          <BookmarkPlus size={10} /> 保存到资产
+                                        </>
+                                      )}
                                     </button>
                                     {propImgCount > 1 && (
                                       <span className="absolute bottom-8 left-1.5 z-20 text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/60 text-white">
@@ -11774,16 +11798,30 @@ function WorkspacePage() {
                                     )}
                                     <button
                                       type="button"
-                                      disabled={!hasImg}
+                                      disabled={!hasImg || savedAssetKeys.has(imageKey)}
                                       onClick={(event) => {
                                         event.stopPropagation();
                                         if (hasImg)
                                           void saveCharacterToAssets(c, card.lookId, imageKey);
                                       }}
-                                      className="absolute bottom-1.5 left-1.5 z-20 inline-flex items-center gap-1 rounded-full bg-black/70 px-2 py-0.5 text-[10px] text-white backdrop-blur-sm transition hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
-                                      title="保存到资产"
+                                      className={`absolute bottom-1.5 left-1.5 z-20 inline-flex items-center gap-1 rounded-full bg-black/70 px-2 py-0.5 text-[10px] text-white backdrop-blur-sm transition ${
+                                        savedAssetKeys.has(imageKey)
+                                          ? "cursor-default opacity-100"
+                                          : "hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                                      }`}
+                                      title={
+                                        savedAssetKeys.has(imageKey) ? "已存入资产" : "保存到资产"
+                                      }
                                     >
-                                      <BookmarkPlus size={10} /> 保存到资产
+                                      {savedAssetKeys.has(imageKey) ? (
+                                        <>
+                                          <Check size={10} /> 已存入资产
+                                        </>
+                                      ) : (
+                                        <>
+                                          <BookmarkPlus size={10} /> 保存到资产
+                                        </>
+                                      )}
                                     </button>
                                     {isUploading && (
                                       <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-black/55 text-white backdrop-blur-sm">
