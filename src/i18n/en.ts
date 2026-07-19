@@ -1001,7 +1001,7 @@ export const en: Translations = {
   ws_episode_suffix: "",
   ws_episode_new: "Add episode",
   ws_no_episodes: "No episodes",
-  ws_settings: "Base settings",
+  ws_settings: "Reset base settings",
   ws_export: "Export",
   ws_save: "Save",
   ws_saving: "Saving…",

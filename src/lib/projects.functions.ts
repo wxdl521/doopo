@@ -359,7 +359,7 @@ export const loadWorkspaceData = createServerFn({ method: "POST" })
     const { data: row, error } = await supabase
       .from("projects")
       .select(
-        "completed_stages,outline:workspace_data->outline,scenes:workspace_data->scenes,characters:workspace_data->characters,props:workspace_data->props,timeline:workspace_data->timeline,synopsisText:workspace_data->synopsisText,episodeTexts:workspace_data->episodeTexts,selectedEpisodeIndex:workspace_data->selectedEpisodeIndex",
+        "completed_stages,outline:workspace_data->outline,scenes:workspace_data->scenes,characters:workspace_data->characters,props:workspace_data->props,timeline:workspace_data->timeline,synopsisText:workspace_data->synopsisText,episodeTexts:workspace_data->episodeTexts,savedAssetKeys:workspace_data->savedAssetKeys,selectedEpisodeIndex:workspace_data->selectedEpisodeIndex",
       )
       .eq("id", data.id)
       .maybeSingle();
@@ -385,6 +385,7 @@ export const loadWorkspaceData = createServerFn({ method: "POST" })
         timeline: fields.timeline,
         synopsisText: fields.synopsisText,
         episodeTexts: fields.episodeTexts,
+        savedAssetKeys: fields.savedAssetKeys,
         selectedEpisodeIndex: fields.selectedEpisodeIndex,
       } as Record<string, any>,
       completedStages: (fields.completed_stages ?? []) as string[],

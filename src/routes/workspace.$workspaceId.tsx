@@ -1523,7 +1523,7 @@ function WorkspacePage() {
   const getImageReview = useCallback(
     (url?: string) => {
       const key = url ? imageAssetKey(project?.videoModel, url) : null;
-      return key ? imageReviews[key] ?? imageReviews[imageReviewAliases[key]] : undefined;
+      return key ? (imageReviews[key] ?? imageReviews[imageReviewAliases[key]]) : undefined;
     },
     [imageReviewAliases, imageReviews, project?.videoModel],
   );
@@ -1556,8 +1556,7 @@ function WorkspacePage() {
       promptTranslationRequestRef.current[key] = requestId;
       // 四视图/多维资产模板含有大量中文标签，不能只依赖中英文字符占比判断。
       // 这两类模板必须完整翻成中文后再进入详情提示词框。
-      const isCharacterPresetTemplate =
-        /PANEL 1 \(leftmost\)|\[SECTION 1\s*—/i.test(text);
+      const isCharacterPresetTemplate = /PANEL 1 \(leftmost\)|\[SECTION 1\s*—/i.test(text);
       if (!isEnglishOnlyPrompt(text) && !isCharacterPresetTemplate) {
         setValue(text);
         setTranslatingEditablePromptKeys((keys) => {
@@ -1587,7 +1586,7 @@ function WorkspacePage() {
             const next = new Set(keys);
             next.delete(key);
             return next;
-          })
+          });
         }
       }
     },
@@ -1633,10 +1632,7 @@ function WorkspacePage() {
         source: promptRange(raw, /^Style name:[\s\S]*?^【AVOID/m, /^【AVOID/m),
         inline: true,
         displayFallback:
-          "风格：" +
-          resolveProjectStyle(projectVisualStyle).label +
-          "\n" +
-          STYLE_FINGERPRINT_ZH,
+          "风格：" + resolveProjectStyle(projectVisualStyle).label + "\n" + STYLE_FINGERPRINT_ZH,
       },
       {
         id: "identity",
@@ -1672,11 +1668,7 @@ function WorkspacePage() {
       if (block.id === "style") {
         return {
           ...block,
-          displayFallback:
-            "风格：" +
-            style +
-            "\n" +
-            STYLE_FINGERPRINT_ZH,
+          displayFallback: "风格：" + style + "\n" + STYLE_FINGERPRINT_ZH,
         };
       }
       if (block.id === "identity") {
@@ -1706,10 +1698,7 @@ function WorkspacePage() {
         source: promptRange(raw, /^Style name:[\s\S]*?^【AVOID/m, /^【AVOID/m),
         inline: true,
         displayFallback:
-          "风格：" +
-          resolveProjectStyle(projectVisualStyle).label +
-          "\n" +
-          STYLE_FINGERPRINT_ZH,
+          "风格：" + resolveProjectStyle(projectVisualStyle).label + "\n" + STYLE_FINGERPRINT_ZH,
       },
       {
         id: "locationTime",
@@ -1728,7 +1717,7 @@ function WorkspacePage() {
     const compact = blocks
       .map((block, index) =>
         block.inline
-          ? values?.[index] ?? block.source
+          ? (values?.[index] ?? block.source)
           : "【" + block.label + "】\n" + (values?.[index] ?? block.source),
       )
       .join("\n")
@@ -1751,7 +1740,10 @@ function WorkspacePage() {
   /** 展示层绝不泄露内部验收/禁止词；历史上被嵌套的整段 prompt 也在此清理。 */
   function cleanPromptEditorBlockForDisplay(source: string): string {
     return source
-      .replace(/^\[CRITICAL RULES\b[\s\S]*?(?=^\[PROJECT VISUAL STYLE\b|^\[CHARACTER IDENTITY\b|^\[USER REQUEST\]|^\[FINAL CHECKLIST\]|^FORBIDDEN\b|$)/gm, "")
+      .replace(
+        /^\[CRITICAL RULES\b[\s\S]*?(?=^\[PROJECT VISUAL STYLE\b|^\[CHARACTER IDENTITY\b|^\[USER REQUEST\]|^\[FINAL CHECKLIST\]|^FORBIDDEN\b|$)/gm,
+        "",
+      )
       .replace(/^【AVOID —— 严格禁止[\s\S]*$/gm, "")
       .replace(/^\[STYLE LOCK[^\]]*\]\s*$/gm, "")
       .replace(/^\[CHARACTER IDENTITY[^\]]*\]\s*$/gm, "")
@@ -1764,7 +1756,10 @@ function WorkspacePage() {
       .trim();
   }
 
-  function parsePromptEditorBlocks(input: string, blocks: PromptEditorBlock[]): Record<string, string> {
+  function parsePromptEditorBlocks(
+    input: string,
+    blocks: PromptEditorBlock[],
+  ): Record<string, string> {
     const headings = blocks.map((block) => block.label.replace(/[\\^$.*+?()[\]|]/g, "\\$&"));
     const heading = new RegExp("^【(" + headings.join("|") + ")】\\s*$", "gm");
     const matches = Array.from(input.matchAll(heading));
@@ -1819,7 +1814,7 @@ function WorkspacePage() {
               ? block.displayFallback
               : result.translated
                 ? result.text
-                : block.displayFallback ?? cleanPromptEditorBlockForDisplay(block.source);
+                : (block.displayFallback ?? cleanPromptEditorBlockForDisplay(block.source));
           }),
         );
         if (promptTranslationRequestRef.current[key] === requestId) {
@@ -1879,9 +1874,7 @@ function WorkspacePage() {
         data: { text: visiblePrompt, target: "en" },
       });
       // 多次重新生成时只保留最后一次编辑，避免历史编辑不断叠加、互相冲突。
-      const base = rawPrompt
-        .replace(/\n*\[LATEST USER EDITS — T2I\][\s\S]*$/m, "")
-        .trim();
+      const base = rawPrompt.replace(/\n*\[LATEST USER EDITS — T2I\][\s\S]*$/m, "").trim();
       return `${base}\n\n[LATEST USER EDITS — T2I]\n${result.text}`;
     },
     [callTranslateEditablePrompt],
@@ -1939,6 +1932,9 @@ function WorkspacePage() {
   const [workspaceLoadError, setWorkspaceLoadError] = useState<string | null>(null);
   const [workspaceMediaReady, setWorkspaceMediaReady] = useState(false);
   const [workspaceMediaLoadError, setWorkspaceMediaLoadError] = useState<string | null>(null);
+  // 已入资产状态需要随工作区保存。仅用内存 Set 会在刷新后把卡片重新显示为“保存到资产”。
+  const [savedAssetKeys, setSavedAssetKeys] = useState<Set<string>>(new Set());
+  const savedAssetKeysRef = useRef<Set<string>>(new Set());
   /** 2026/06 修复:所有图片状态(角色/场景/道具/分镜)从 workspace_data 恢复后才为 true,
    * 避免 autoGen useEffect 在 charImages 还没填充时就判定"无图"→ 重新生成。 */
   const [imagesRestored, setImagesRestored] = useState(false);
@@ -2379,8 +2375,7 @@ function WorkspacePage() {
       extra: r.promptExtra,
     });
     // 查看提示词模式同样面向中文用户；原始英文提示词仍只用于服务端生成。
-    const isCharacterPresetTemplate =
-      /PANEL 1 \(leftmost\)|\[SECTION 1\s*—/i.test(r.previewPrompt);
+    const isCharacterPresetTemplate = /PANEL 1 \(leftmost\)|\[SECTION 1\s*—/i.test(r.previewPrompt);
     if (isEnglishOnlyPrompt(r.previewPrompt) || isCharacterPresetTemplate) {
       const sourcePrompt = r.previewPrompt;
       void callTranslateEditablePrompt({ data: { text: sourcePrompt, target: "zh" } })
@@ -2412,11 +2407,7 @@ function WorkspacePage() {
   // state 需要等 React 下一次渲染才会禁用按钮；详情页的提示词翻译/合并又会
   // 在真正发请求前等待数秒。这个 ref 是同步锁，确保用户连点时只会进入一次生成。
   const regenBusyKeysRef = useRef<Set<string>>(new Set());
-  function runDetailRegen(
-    key: string,
-    mode: "modify" | "t2i",
-    task: () => Promise<void>,
-  ) {
+  function runDetailRegen(key: string, mode: "modify" | "t2i", task: () => Promise<void>) {
     if (regenBusyKeysRef.current.has(key)) return;
     regenBusyKeysRef.current.add(key);
     // 先更新可视状态，再执行可能需要翻译/拼接提示词的异步流程。
@@ -3020,6 +3011,13 @@ function WorkspacePage() {
         }
         setWorkspaceLoadError(null);
         const wd = r.workspaceData as Record<string, any>;
+        if (Array.isArray(wd.savedAssetKeys)) {
+          const keys = new Set(
+            wd.savedAssetKeys.filter((key: unknown): key is string => typeof key === "string"),
+          );
+          savedAssetKeysRef.current = keys;
+          setSavedAssetKeys(keys);
+        }
         if (wd.outline) setData((d) => ({ ...d, outline: wd.outline as WorkspaceData["outline"] }));
         // 兼容旧数据:
         //   - scenes/storyboardGroups 仍单集,episodeIndex 字段保留
@@ -3507,35 +3505,37 @@ function WorkspacePage() {
       const styleSpec = resolveProjectStyle(projectVisualStyle);
       // 详情页“重新生成”若来自多视图，则直接重放用户编辑后合并出的完整 prompt；
       // 这是一条纯 T2I 路径，不携带任何历史图片作为参考。
-      const prompt = rawPrompt?.trim() || [
-        buildStyleLock(styleSpec, "scene"),
-        `---`,
-        `Location: ${s.slug}`,
-        s.location && `${s.location}`,
-        `Time: ${s.timeOfDay === "DAY" ? "daytime" : s.timeOfDay === "NIGHT" ? "nighttime" : s.timeOfDay === "DUSK" ? "dusk, golden hour" : "dawn"}`,
-        // 场景资料常会叙述角色的行动；它只可用于推断天气、光影等环境线索，
-        // 绝不能把其中的人物/动物/生物绘制进场景资产。
-        ...(s.action
-          ? [
-              ``,
-              `[ENVIRONMENT-ONLY MOOD REFERENCE]`,
-              `Use only non-living environmental clues from this narrative note; never render a named or implied living being: ${s.action.trim()}`,
-            ]
-          : []),
-        ...(s.beats?.length
-          ? [
-              ``,
-              `[ENVIRONMENT-ONLY VISUAL DETAILS]`,
-              `Keep only architecture, landscape, weather, lighting, and inert props from these notes; omit every character, animal, creature, or action performer:`,
-              s.beats.map((b, i) => `  ${i + 1}. ${b}`).join("\n"),
-            ]
-          : []),
-        ``,
-        EMPTY_SCENE_HARD_RULE,
-        "Cinematic environment photography, wide establishing shot, detailed architecture and props, atmospheric lighting, film still quality.",
-      ]
-        .filter(Boolean)
-        .join("\n");
+      const prompt =
+        rawPrompt?.trim() ||
+        [
+          buildStyleLock(styleSpec, "scene"),
+          `---`,
+          `Location: ${s.slug}`,
+          s.location && `${s.location}`,
+          `Time: ${s.timeOfDay === "DAY" ? "daytime" : s.timeOfDay === "NIGHT" ? "nighttime" : s.timeOfDay === "DUSK" ? "dusk, golden hour" : "dawn"}`,
+          // 场景资料常会叙述角色的行动；它只可用于推断天气、光影等环境线索，
+          // 绝不能把其中的人物/动物/生物绘制进场景资产。
+          ...(s.action
+            ? [
+                ``,
+                `[ENVIRONMENT-ONLY MOOD REFERENCE]`,
+                `Use only non-living environmental clues from this narrative note; never render a named or implied living being: ${s.action.trim()}`,
+              ]
+            : []),
+          ...(s.beats?.length
+            ? [
+                ``,
+                `[ENVIRONMENT-ONLY VISUAL DETAILS]`,
+                `Keep only architecture, landscape, weather, lighting, and inert props from these notes; omit every character, animal, creature, or action performer:`,
+                s.beats.map((b, i) => `  ${i + 1}. ${b}`).join("\n"),
+              ]
+            : []),
+          ``,
+          EMPTY_SCENE_HARD_RULE,
+          "Cinematic environment photography, wide establishing shot, detailed architecture and props, atmospheric lighting, film still quality.",
+        ]
+          .filter(Boolean)
+          .join("\n");
       const res = await callImage({
         data: {
           prompt,
@@ -3976,7 +3976,13 @@ function WorkspacePage() {
       promptMode?: CharacterImagePromptRecord["mode"];
     } = {},
   ) {
-    const { forceT2I = false, targetLookId, editablePrompt, rawPrompt, promptMode = "initial" } = options;
+    const {
+      forceT2I = false,
+      targetLookId,
+      editablePrompt,
+      rawPrompt,
+      promptMode = "initial",
+    } = options;
     // ===== 入口可观测性 + 防并发(2026/06 排查用)=====
     console.log(
       `[CHAR-AUTOGEN] processCharacter called: id=${c.id} name=${c.name} looks=${(c.looks ?? []).length}`,
@@ -4223,7 +4229,9 @@ function WorkspacePage() {
               editablePrompt: editablePrompt || characterEditablePrompt(c, targetLookId ?? null),
               mode: promptMode,
             });
-            toast.success(`已按编辑后的提示词重新生成 ${ls.label === "默认" ? c.name : `${c.name} · ${ls.label}`}`);
+            toast.success(
+              `已按编辑后的提示词重新生成 ${ls.label === "默认" ? c.name : `${c.name} · ${ls.label}`}`,
+            );
           } else {
             toast.error(classifyError(res.error, "生成失败"));
           }
@@ -4964,9 +4972,7 @@ function WorkspacePage() {
               "基于图1生成锁定场景的横向 2×3 六宫格；建筑、环境、材质和光照保持一致，仅允许摄影机移动；纯环境无人物。",
             mode: "multi-view",
             sceneSlug:
-              String(s.slug ?? "").trim() ||
-              String(s.location ?? "").trim() ||
-              `SCENE ${s.index}`,
+              String(s.slug ?? "").trim() || String(s.location ?? "").trim() || `SCENE ${s.index}`,
             sceneLocation: String(s.location ?? ""),
             sceneTimeOfDay: String(s.timeOfDay ?? ""),
             sceneAction: String(s.action ?? ""),
@@ -5608,16 +5614,15 @@ function WorkspacePage() {
     const replayPreset =
       (record?.mode === "three-view" || record?.mode === "multi-asset") &&
       !!record.rawPrompt?.trim();
-    const rawApiPrompt =
-      record?.rawPrompt?.trim()
-        ? replayPreset
-          ? await mergePromptEditorBlocksForGeneration(
-              record.rawPrompt,
-              characterPresetEditorBlocks(record.rawPrompt),
-              instruction,
-            )
-          : await mergeRawPromptWithLatestEdits(record.rawPrompt, instruction)
-        : undefined;
+    const rawApiPrompt = record?.rawPrompt?.trim()
+      ? replayPreset
+        ? await mergePromptEditorBlocksForGeneration(
+            record.rawPrompt,
+            characterPresetEditorBlocks(record.rawPrompt),
+            instruction,
+          )
+        : await mergeRawPromptWithLatestEdits(record.rawPrompt, instruction)
+      : undefined;
     const editedCharacter = applyCharacterAttributeDraft(
       c,
       lookId,
@@ -5672,7 +5677,8 @@ function WorkspacePage() {
     // 它在界面中明确选定的那张，禁止静默回退到最新图。
     const pinned = selectedCharImagesRef.current[imageKey];
     const coverUrl =
-      mainViewUrl ?? (pinned && charImagesRef.current[imageKey]?.includes(pinned) ? pinned : undefined);
+      mainViewUrl ??
+      (pinned && charImagesRef.current[imageKey]?.includes(pinned) ? pinned : undefined);
     if (!coverUrl) {
       toast.error("该角色还没有图片");
       return;
@@ -5859,7 +5865,7 @@ function WorkspacePage() {
     const requiresSelectedReference = mode === "modify" || !!rawApiPrompt;
     const referenceUrl = requiresSelectedReference
       ? selectedReference
-      : referenceOverride ?? selectedReference ?? fallback;
+      : (referenceOverride ?? selectedReference ?? fallback);
     if (!referenceUrl) {
       toast.error(
         requiresSelectedReference
@@ -5969,7 +5975,9 @@ function WorkspacePage() {
     const selectedReference = pinned && history.includes(pinned) ? pinned : undefined;
     // 道具局部修改同样固定把选中的历史图作为图1上传；三视图预设才可用最新图兜底。
     const referenceUrl =
-      mode === "modify" ? selectedReference : referenceOverride ?? selectedReference ?? history.at(-1);
+      mode === "modify"
+        ? selectedReference
+        : (referenceOverride ?? selectedReference ?? history.at(-1));
     if (!referenceUrl) {
       toast.error(
         mode === "modify"
@@ -6217,7 +6225,9 @@ function WorkspacePage() {
         : prev,
     );
     setSceneModInput("");
-    toast.success(replayMultiView ? "已按编辑后的多视图提示词生成" : "已按资料和修改意见重生场景图");
+    toast.success(
+      replayMultiView ? "已按编辑后的多视图提示词生成" : "已按资料和修改意见重生场景图",
+    );
   }
 
   /** 场景详情页“重新生成”：不使用现有图片，按当前编辑后的资料走初始 T2I。 */
@@ -6246,12 +6256,7 @@ function WorkspacePage() {
     setRegenBusyKeys((m) => new Map(m).set(s.id, "t2i"));
     try {
       const beforeCount = sceneImagesRef.current[s.id]?.length ?? 0;
-      await genSceneImage(
-        editedScene,
-        instruction,
-        rawApiPrompt,
-        record?.mode ?? "initial",
-      );
+      await genSceneImage(editedScene, instruction, rawApiPrompt, record?.mode ?? "initial");
       const newest = sceneImagesRef.current[s.id]?.at(-1);
       if ((sceneImagesRef.current[s.id]?.length ?? 0) <= beforeCount || !newest) return;
       setData((prev) =>
@@ -6260,7 +6265,9 @@ function WorkspacePage() {
           : prev,
       );
       setSelectedSceneImages((m) => ({ ...m, [s.id]: newest }));
-      toast.success(replayMultiView ? "已按编辑后的多视图提示词重新生成" : "已按当前提示词重新生成场景图");
+      toast.success(
+        replayMultiView ? "已按编辑后的多视图提示词重新生成" : "已按当前提示词重新生成场景图",
+      );
     } finally {
       setRegenBusyKeys((m) => {
         const next = new Map(m);
@@ -6279,13 +6286,7 @@ function WorkspacePage() {
     const englishInstruction = await translatePromptForGeneration(instruction);
     const editedProp = applyPropEditablePrompt(p, instruction);
     setPropModError(null);
-    const ok = await doPropRegen(
-      editedProp,
-      "modify",
-      englishInstruction,
-      undefined,
-      instruction,
-    );
+    const ok = await doPropRegen(editedProp, "modify", englishInstruction, undefined, instruction);
     if (!ok) {
       setPropModError("生成失败,请重试或换更简单的修改");
       return;
@@ -6875,7 +6876,9 @@ function WorkspacePage() {
           ? ((result.data ?? []) as DbCharacter[]).map((asset) => ({
               id: asset.id,
               name: asset.name,
-              detail: [asset.role_label || asset.role, asset.personality].filter(Boolean).join(" · "),
+              detail: [asset.role_label || asset.role, asset.personality]
+                .filter(Boolean)
+                .join(" · "),
               imageUrls: assetPickerImageUrls(asset.images, asset.cover_url),
               source: asset,
             }))
@@ -6883,7 +6886,9 @@ function WorkspacePage() {
             ? ((result.data ?? []) as DbScene[]).map((asset) => ({
                 id: asset.id,
                 name: asset.name || asset.location || "未命名场景",
-                detail: [asset.location, asset.time_of_day, asset.action].filter(Boolean).join(" · "),
+                detail: [asset.location, asset.time_of_day, asset.action]
+                  .filter(Boolean)
+                  .join(" · "),
                 imageUrls: assetPickerImageUrls(asset.images, asset.cover_url),
                 source: asset,
               }))
@@ -6990,7 +6995,9 @@ function WorkspacePage() {
       };
       setData((current) => ({
         ...current,
-        props: current.props.some((asset) => asset.id === id) ? current.props : [...current.props, prop],
+        props: current.props.some((asset) => asset.id === id)
+          ? current.props
+          : [...current.props, prop],
       }));
       if (item.imageUrls.length) {
         updatePropImages((images) =>
@@ -7136,9 +7143,7 @@ function WorkspacePage() {
           shotType: shot.shotType,
           shotTypeLabel: shot.shotTypeLabel,
           action:
-            (shot.action || "").trim() ||
-            effectivePlotText(group).slice(0, 400) ||
-            "(未填写动作)",
+            (shot.action || "").trim() || effectivePlotText(group).slice(0, 400) || "(未填写动作)",
           camera: shot.camera,
           cameraMovement: shot.cameraMovement,
           characterBlocking: shot.characterBlocking,
@@ -7951,7 +7956,9 @@ function WorkspacePage() {
         : payload.prompt;
     // 确认卡上的删除只影响本次请求：重新构建 payload 后按卡片中仍保留的图片过滤，
     // 不修改工作区的分镜、故事板或资产数据。
-    const selectedImageUrlSet = new Set(selectedImageUrls ?? payload.images.map((image) => image.url));
+    const selectedImageUrlSet = new Set(
+      selectedImageUrls ?? payload.images.map((image) => image.url),
+    );
     const isSelectedImage = (url: string | undefined): url is string =>
       Boolean(url && selectedImageUrlSet.has(url));
     const selectedReferenceUrls = payload.referenceUrls.filter(isSelectedImage);
@@ -9034,7 +9041,9 @@ function WorkspacePage() {
       toast.error(`保存角色失败:${r.error}`);
       return;
     }
-    setSavedAssetKeys((prev) => new Set(prev).add(imageKey));
+    const nextSavedKeys = new Set(savedAssetKeysRef.current).add(imageKey);
+    savedAssetKeysRef.current = nextSavedKeys;
+    setSavedAssetKeys(nextSavedKeys);
     toast.success(
       `「${c.name}${lookId ? ` · ${c.looks?.find((l) => l.id === lookId)?.label ?? ""}` : ""}」已保存到资产库`,
     );
@@ -9069,7 +9078,9 @@ function WorkspacePage() {
       toast.error(`保存道具失败:${r.error}`);
       return;
     }
-    setSavedAssetKeys((prev) => new Set(prev).add(imageKey));
+    const nextSavedKeys = new Set(savedAssetKeysRef.current).add(imageKey);
+    savedAssetKeysRef.current = nextSavedKeys;
+    setSavedAssetKeys(nextSavedKeys);
     toast.success(`「${p.name}」已保存到资产库`);
   }
 
@@ -9102,12 +9113,11 @@ function WorkspacePage() {
       toast.error(`保存场景失败:${r.error}`);
       return;
     }
-    setSavedAssetKeys((prev) => new Set(prev).add(imageKey));
+    const nextSavedKeys = new Set(savedAssetKeysRef.current).add(imageKey);
+    savedAssetKeysRef.current = nextSavedKeys;
+    setSavedAssetKeys(nextSavedKeys);
     toast.success(`「${s.slug}」已保存到资产库`);
   }
-
-  // 追踪哪些资产已保存(用于按钮显示"已保存"反馈)
-  const [savedAssetKeys, setSavedAssetKeys] = useState<Set<string>>(new Set());
 
   // ===== Workspace data persistence =====
   const completedStages = (() => {
@@ -9409,8 +9419,9 @@ function WorkspacePage() {
         ),
       );
       const persistedImageReviewAliases = Object.fromEntries(
-        Object.entries(imageReviewAliases).filter(([displayKey, sourceKey]) =>
-          !!imageAssetUrlFromKey(displayKey) && !!imageAssetUrlFromKey(sourceKey),
+        Object.entries(imageReviewAliases).filter(
+          ([displayKey, sourceKey]) =>
+            !!imageAssetUrlFromKey(displayKey) && !!imageAssetUrlFromKey(sourceKey),
         ),
       );
       const workspaceData: Record<string, unknown> = {
@@ -9446,6 +9457,7 @@ function WorkspacePage() {
         selectedCharImages,
         selectedSceneImages,
         selectedPropImages,
+        savedAssetKeys: Array.from(savedAssetKeysRef.current),
         selectedEpisodeIndex,
         groupVideos: Object.fromEntries(
           Object.entries(persistGroupVideos).map(([k, arr]) => [
@@ -9595,12 +9607,14 @@ function WorkspacePage() {
       .sort()
       .join("|"),
     imageReviewAliases: Object.entries(imageReviewAliases)
-      .filter(([displayKey, sourceKey]) =>
-        !!imageAssetUrlFromKey(displayKey) && !!imageAssetUrlFromKey(sourceKey),
+      .filter(
+        ([displayKey, sourceKey]) =>
+          !!imageAssetUrlFromKey(displayKey) && !!imageAssetUrlFromKey(sourceKey),
       )
       .map(([displayKey, sourceKey]) => `${displayKey}:${sourceKey}`)
       .sort()
       .join("|"),
+    savedAssetKeys: Array.from(savedAssetKeys).sort().join("|"),
   });
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -11405,10 +11419,10 @@ function WorkspacePage() {
                                         event.stopPropagation();
                                         if (hasImg) void saveSceneToAssets(s, s.id);
                                       }}
-                                      className={`absolute bottom-1.5 left-1.5 z-20 inline-flex items-center gap-1 rounded-full bg-black/70 px-2 py-0.5 text-[10px] text-white backdrop-blur-sm transition ${
+                                      className={`absolute bottom-1.5 left-1.5 z-20 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] backdrop-blur-sm transition ${
                                         savedAssetKeys.has(s.id)
-                                          ? "cursor-default opacity-100"
-                                          : "hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                                          ? "cursor-default bg-accent font-bold text-accent-foreground shadow-md"
+                                          : "bg-black/70 text-white hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
                                       }`}
                                       title={savedAssetKeys.has(s.id) ? "已存入资产" : "保存到资产"}
                                     >
@@ -11672,10 +11686,10 @@ function WorkspacePage() {
                                         event.stopPropagation();
                                         if (hasImg) void savePropToAssets(p, p.id);
                                       }}
-                                      className={`absolute bottom-1.5 left-1.5 z-20 inline-flex items-center gap-1 rounded-full bg-black/70 px-2 py-0.5 text-[10px] text-white backdrop-blur-sm transition ${
+                                      className={`absolute bottom-1.5 left-1.5 z-20 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] backdrop-blur-sm transition ${
                                         savedAssetKeys.has(p.id)
-                                          ? "cursor-default opacity-100"
-                                          : "hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                                          ? "cursor-default bg-accent font-bold text-accent-foreground shadow-md"
+                                          : "bg-black/70 text-white hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
                                       }`}
                                       title={savedAssetKeys.has(p.id) ? "已存入资产" : "保存到资产"}
                                     >
@@ -12092,10 +12106,10 @@ function WorkspacePage() {
                                         if (hasImg)
                                           void saveCharacterToAssets(c, card.lookId, imageKey);
                                       }}
-                                      className={`absolute bottom-1.5 left-1.5 z-20 inline-flex items-center gap-1 rounded-full bg-black/70 px-2 py-0.5 text-[10px] text-white backdrop-blur-sm transition ${
+                                      className={`absolute bottom-1.5 left-1.5 z-20 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] backdrop-blur-sm transition ${
                                         savedAssetKeys.has(imageKey)
-                                          ? "cursor-default opacity-100"
-                                          : "hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
+                                          ? "cursor-default bg-accent font-bold text-accent-foreground shadow-md"
+                                          : "bg-black/70 text-white hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-40"
                                       }`}
                                       title={
                                         savedAssetKeys.has(imageKey) ? "已存入资产" : "保存到资产"
@@ -12895,7 +12909,9 @@ function WorkspacePage() {
                                                 >
                                                   {variants.map((v) => {
                                                     const vImg =
-                                                      charImages[v.id]?.[charImages[v.id].length - 1];
+                                                      charImages[v.id]?.[
+                                                        charImages[v.id].length - 1
+                                                      ];
                                                     const isSelected = v.id === selectedCh.id;
                                                     return (
                                                       <button
@@ -13886,8 +13902,8 @@ function WorkspacePage() {
                         {cardTitle}
                       </div>
                       <div className="text-xs text-text-muted">
-                        {c.roleLabel} · {c.age} 岁 · {characterNationality} · 共 {generations.length}{" "}
-                        张
+                        {c.roleLabel} · {c.age} 岁 · {characterNationality} · 共{" "}
+                        {generations.length} 张
                       </div>
                     </div>
                     {renderFaceReviewAction(currentUrl, `character-${c.id}`)}
@@ -13924,7 +13940,9 @@ function WorkspacePage() {
                         ) : (
                           <Upload size={16} strokeWidth={1.8} />
                         )}
-                        <span className="text-[9px] font-medium">{isUploading ? "上传中" : "上传"}</span>
+                        <span className="text-[9px] font-medium">
+                          {isUploading ? "上传中" : "上传"}
+                        </span>
                       </button>
                       <div className="text-[10px] text-text-muted">
                         历史生成（{generations.length}）
@@ -14245,9 +14263,11 @@ function WorkspacePage() {
                             <span className="text-[10px] text-text-muted">
                               {isPromptTranslating ? (
                                 <Loader2 size={12} className="animate-spin text-accent" />
-                              ) : thisBusy
-                                ? "生成中…"
-                                : `主视图:第 ${currentIdx + 1} / ${generations.length} 张${charModUploadedRefs.length ? ` + 额外 ${charModUploadedRefs.length} 张` : ""}`}
+                              ) : thisBusy ? (
+                                "生成中…"
+                              ) : (
+                                `主视图:第 ${currentIdx + 1} / ${generations.length} 张${charModUploadedRefs.length ? ` + 额外 ${charModUploadedRefs.length} 张` : ""}`
+                              )}
                             </span>
                             <div className="flex items-center gap-2">
                               <button
@@ -14373,70 +14393,72 @@ function WorkspacePage() {
                     )}
                     {/* 历史缩略图条:贴着大图底部,跟角色 preview 的左栏对齐 */}
                     <div className="absolute bottom-2 left-2 right-2 flex items-center gap-1.5 overflow-x-auto py-1 px-1 rounded bg-black/50 backdrop-blur-sm">
-                        <div className="flex flex-col items-start gap-0.5 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => handleUploadImage("scene", s.id, s.id)}
-                            disabled={isUploading}
-                            title="上传本地图片"
-                            className="w-11 h-11 rounded-md border border-dashed border-white/30 bg-black/40 text-white/80 hover:border-accent hover:bg-accent-dim/30 hover:text-accent disabled:cursor-not-allowed disabled:opacity-60 transition flex flex-col items-center justify-center gap-0"
-                          >
-                            {isUploading ? (
-                              <Loader2 size={16} className="animate-spin" />
-                            ) : (
-                              <Upload size={16} strokeWidth={1.8} />
-                            )}
-                            <span className="text-[9px] font-medium">{isUploading ? "上传中" : "上传"}</span>
-                          </button>
-                          <span className="text-[9px] font-mono text-white/70 whitespace-nowrap">
-                            历史生成（{history.length}）
+                      <div className="flex flex-col items-start gap-0.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleUploadImage("scene", s.id, s.id)}
+                          disabled={isUploading}
+                          title="上传本地图片"
+                          className="w-11 h-11 rounded-md border border-dashed border-white/30 bg-black/40 text-white/80 hover:border-accent hover:bg-accent-dim/30 hover:text-accent disabled:cursor-not-allowed disabled:opacity-60 transition flex flex-col items-center justify-center gap-0"
+                        >
+                          {isUploading ? (
+                            <Loader2 size={16} className="animate-spin" />
+                          ) : (
+                            <Upload size={16} strokeWidth={1.8} />
+                          )}
+                          <span className="text-[9px] font-medium">
+                            {isUploading ? "上传中" : "上传"}
                           </span>
-                        </div>
-                        {history.map((u, i) => {
-                          const isPinned = selectedSceneImages[s.id] === u;
-                          return (
-                            <button
-                              key={`${u}-${i}`}
-                              type="button"
-                              onClick={() => {
-                                // 点缩略图即选中；选中后不能通过再次点击取消。
-                                setSelectedSceneImages((m) => ({ ...m, [s.id]: u }));
-                                void showScenePromptInDetail(
-                                  s,
-                                  sceneImagePrompts[s.id]?.[i],
-                                  u,
-                                  setSceneModInput,
-                                );
-                              }}
-                              title="点击选中这张场景图"
-                              className={`relative shrink-0 w-12 h-9 rounded overflow-hidden border-2 transition ${
-                                i === currentIdx
-                                  ? "border-accent"
-                                  : isPinned
-                                    ? "border-emerald-400/70"
-                                    : "border-white/30 hover:border-white/70"
-                              }`}
-                            >
-                              {/* eslint-disable-next-line @next/next/no-img-element */}
-                              <img
-                                src={u}
-                                alt={`历史 #${i + 1}`}
-                                loading="lazy"
-                                className="absolute inset-0 w-full h-full object-cover"
-                              />
-                              {i === history.length - 1 && (
-                                <span className="absolute top-0 left-0 px-1 text-[8px] font-bold bg-accent text-accent-foreground rounded-br">
-                                  NEW
-                                </span>
-                              )}
-                              {isPinned && (
-                                <span className="absolute bottom-0 right-0 px-1 text-[8px] font-bold bg-emerald-500 text-white rounded-tl inline-flex items-center gap-0.5">
-                                  <Target size={7} /> 选中
-                                </span>
-                              )}
-                            </button>
-                          );
-                        })}
+                        </button>
+                        <span className="text-[9px] font-mono text-white/70 whitespace-nowrap">
+                          历史生成（{history.length}）
+                        </span>
+                      </div>
+                      {history.map((u, i) => {
+                        const isPinned = selectedSceneImages[s.id] === u;
+                        return (
+                          <button
+                            key={`${u}-${i}`}
+                            type="button"
+                            onClick={() => {
+                              // 点缩略图即选中；选中后不能通过再次点击取消。
+                              setSelectedSceneImages((m) => ({ ...m, [s.id]: u }));
+                              void showScenePromptInDetail(
+                                s,
+                                sceneImagePrompts[s.id]?.[i],
+                                u,
+                                setSceneModInput,
+                              );
+                            }}
+                            title="点击选中这张场景图"
+                            className={`relative shrink-0 w-12 h-9 rounded overflow-hidden border-2 transition ${
+                              i === currentIdx
+                                ? "border-accent"
+                                : isPinned
+                                  ? "border-emerald-400/70"
+                                  : "border-white/30 hover:border-white/70"
+                            }`}
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={u}
+                              alt={`历史 #${i + 1}`}
+                              loading="lazy"
+                              className="absolute inset-0 w-full h-full object-cover"
+                            />
+                            {i === history.length - 1 && (
+                              <span className="absolute top-0 left-0 px-1 text-[8px] font-bold bg-accent text-accent-foreground rounded-br">
+                                NEW
+                              </span>
+                            )}
+                            {isPinned && (
+                              <span className="absolute bottom-0 right-0 px-1 text-[8px] font-bold bg-emerald-500 text-white rounded-tl inline-flex items-center gap-0.5">
+                                <Target size={7} /> 选中
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                   <div className="overflow-y-auto p-4 space-y-3 bg-bg-surface min-h-0">
@@ -14573,9 +14595,11 @@ function WorkspacePage() {
                         <span className="text-[10px] text-text-muted">
                           {isPromptTranslating ? (
                             <Loader2 size={12} className="animate-spin text-accent" />
-                          ) : regenBusyKeys.has(s.id)
-                            ? "生成中…"
-                            : `当前版本:第 ${currentIdx + 1} / ${history.length} 张`}
+                          ) : regenBusyKeys.has(s.id) ? (
+                            "生成中…"
+                          ) : (
+                            `当前版本:第 ${currentIdx + 1} / ${history.length} 张`
+                          )}
                         </span>
                         <div className="flex items-center gap-2">
                           <button
@@ -14689,69 +14713,71 @@ function WorkspacePage() {
                     )}
                     {/* History thumbnails bar */}
                     <div className="absolute bottom-2 left-2 right-2 flex items-center gap-1.5 overflow-x-auto py-1 px-1 rounded bg-black/50 backdrop-blur-sm">
-                        <div className="flex flex-col items-start gap-0.5 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => handleUploadImage("prop", p.id, p.id)}
-                            disabled={isUploading}
-                            title="上传本地图片"
-                            className="w-11 h-11 rounded-md border border-dashed border-white/30 bg-black/40 text-white/80 hover:border-accent hover:bg-accent-dim/30 hover:text-accent disabled:cursor-not-allowed disabled:opacity-60 transition flex flex-col items-center justify-center gap-0"
-                          >
-                            {isUploading ? (
-                              <Loader2 size={16} className="animate-spin" />
-                            ) : (
-                              <Upload size={16} strokeWidth={1.8} />
-                            )}
-                            <span className="text-[9px] font-medium">{isUploading ? "上传中" : "上传"}</span>
-                          </button>
-                          <span className="text-[9px] font-mono text-white/70 whitespace-nowrap">
-                            历史生成（{history.length}）
+                      <div className="flex flex-col items-start gap-0.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleUploadImage("prop", p.id, p.id)}
+                          disabled={isUploading}
+                          title="上传本地图片"
+                          className="w-11 h-11 rounded-md border border-dashed border-white/30 bg-black/40 text-white/80 hover:border-accent hover:bg-accent-dim/30 hover:text-accent disabled:cursor-not-allowed disabled:opacity-60 transition flex flex-col items-center justify-center gap-0"
+                        >
+                          {isUploading ? (
+                            <Loader2 size={16} className="animate-spin" />
+                          ) : (
+                            <Upload size={16} strokeWidth={1.8} />
+                          )}
+                          <span className="text-[9px] font-medium">
+                            {isUploading ? "上传中" : "上传"}
                           </span>
-                        </div>
-                        {history.map((u, i) => {
-                          const isPinned = selectedPropImages[p.id] === u;
-                          return (
-                            <button
-                              key={`${u}-${i}`}
-                              type="button"
-                              onClick={() => {
-                                // 点缩略图即选中；选中后不能通过再次点击取消。
-                                setSelectedPropImages((m) => ({ ...m, [p.id]: u }));
-                                void showEditablePromptInChinese(
-                                  `prop:${p.id}`,
-                                  propImagePrompts[p.id]?.[i]?.editablePrompt ||
-                                    propEditablePrompt(p),
-                                  setPropModInput,
-                                );
-                              }}
-                              title="点击选中这张道具图"
-                              className={`relative shrink-0 w-12 h-9 rounded overflow-hidden border-2 transition ${
-                                i === currentIdx
-                                  ? "border-accent"
-                                  : isPinned
-                                    ? "border-emerald-400/70"
-                                    : "border-white/30 hover:border-white/70"
-                              }`}
-                            >
-                              <img
-                                src={u}
-                                alt={`历史 #${i + 1}`}
-                                loading="lazy"
-                                className="absolute inset-0 w-full h-full object-cover"
-                              />
-                              {i === history.length - 1 && (
-                                <span className="absolute top-0 left-0 px-1 text-[8px] font-bold bg-accent text-accent-foreground rounded-br">
-                                  NEW
-                                </span>
-                              )}
-                              {isPinned && (
-                                <span className="absolute bottom-0 right-0 px-1 text-[8px] font-bold bg-emerald-500 text-white rounded-tl inline-flex items-center gap-0.5">
-                                  <Target size={7} /> 选中
-                                </span>
-                              )}
-                            </button>
-                          );
-                        })}
+                        </button>
+                        <span className="text-[9px] font-mono text-white/70 whitespace-nowrap">
+                          历史生成（{history.length}）
+                        </span>
+                      </div>
+                      {history.map((u, i) => {
+                        const isPinned = selectedPropImages[p.id] === u;
+                        return (
+                          <button
+                            key={`${u}-${i}`}
+                            type="button"
+                            onClick={() => {
+                              // 点缩略图即选中；选中后不能通过再次点击取消。
+                              setSelectedPropImages((m) => ({ ...m, [p.id]: u }));
+                              void showEditablePromptInChinese(
+                                `prop:${p.id}`,
+                                propImagePrompts[p.id]?.[i]?.editablePrompt ||
+                                  propEditablePrompt(p),
+                                setPropModInput,
+                              );
+                            }}
+                            title="点击选中这张道具图"
+                            className={`relative shrink-0 w-12 h-9 rounded overflow-hidden border-2 transition ${
+                              i === currentIdx
+                                ? "border-accent"
+                                : isPinned
+                                  ? "border-emerald-400/70"
+                                  : "border-white/30 hover:border-white/70"
+                            }`}
+                          >
+                            <img
+                              src={u}
+                              alt={`历史 #${i + 1}`}
+                              loading="lazy"
+                              className="absolute inset-0 w-full h-full object-cover"
+                            />
+                            {i === history.length - 1 && (
+                              <span className="absolute top-0 left-0 px-1 text-[8px] font-bold bg-accent text-accent-foreground rounded-br">
+                                NEW
+                              </span>
+                            )}
+                            {isPinned && (
+                              <span className="absolute bottom-0 right-0 px-1 text-[8px] font-bold bg-emerald-500 text-white rounded-tl inline-flex items-center gap-0.5">
+                                <Target size={7} /> 选中
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                   <div className="overflow-y-auto p-4 space-y-3 bg-bg-surface min-h-0">
@@ -14876,9 +14902,11 @@ function WorkspacePage() {
                         <span className="text-[10px] text-text-muted">
                           {isPromptTranslating ? (
                             <Loader2 size={12} className="animate-spin text-accent" />
-                          ) : regenBusyKeys.has(p.id)
-                            ? "生成中…"
-                            : `参考图:第 ${currentIdx + 1} / ${history.length} 张`}
+                          ) : regenBusyKeys.has(p.id) ? (
+                            "生成中…"
+                          ) : (
+                            `参考图:第 ${currentIdx + 1} / ${history.length} 张`
+                          )}
                         </span>
                         <div className="flex items-center gap-2">
                           <button
@@ -15535,11 +15563,7 @@ function WorkspacePage() {
                         onChange={(e) => setShotModInput(e.target.value)}
                         placeholder="填写这张分镜图的生成提示词…"
                         rows={8}
-                        disabled={
-                          shotModBusy ||
-                          isPromptTranslating ||
-                          !currentUrl
-                        }
+                        disabled={shotModBusy || isPromptTranslating || !currentUrl}
                         className="w-full min-h-44 rounded-md bg-bg-elevated border border-border text-sm text-text-primary p-2 focus:border-accent focus:outline-none resize-y placeholder:text-text-muted disabled:opacity-50"
                       />
                       <div className="flex items-center justify-between gap-2">
@@ -15897,7 +15921,9 @@ function WorkspacePage() {
                       )}
                       <div
                         ref={storyboardPromptEditorRef}
-                        contentEditable={!isModifying && !isRunning && !isPromptTranslating && !!url}
+                        contentEditable={
+                          !isModifying && !isRunning && !isPromptTranslating && !!url
+                        }
                         suppressContentEditableWarning
                         role="textbox"
                         aria-multiline="true"
@@ -15920,7 +15946,11 @@ function WorkspacePage() {
                       <div className="shrink-0 flex items-center justify-between gap-2">
                         <span className="text-[10px] text-text-muted">
                           {isPromptTranslating ? (
-                            <Loader2 size={12} className="animate-spin text-accent" aria-label="正在加载提示词" />
+                            <Loader2
+                              size={12}
+                              className="animate-spin text-accent"
+                              aria-label="正在加载提示词"
+                            />
                           ) : (
                             "输入 @ 引用素材 · ⌘/Ctrl + Enter 发送"
                           )}
@@ -16039,7 +16069,11 @@ function WorkspacePage() {
                           >
                             <div className="w-12 h-12 shrink-0 rounded-lg overflow-hidden bg-bg-elevated border border-border">
                               {coverUrl ? (
-                                <img src={coverUrl} alt={item.name} className="w-full h-full object-cover" />
+                                <img
+                                  src={coverUrl}
+                                  alt={item.name}
+                                  className="w-full h-full object-cover"
+                                />
                               ) : (
                                 <div className="w-full h-full flex items-center justify-center text-lg">
                                   {assetPicker.kind === "character"
@@ -16051,9 +16085,13 @@ function WorkspacePage() {
                               )}
                             </div>
                             <div className="flex-1 min-w-0">
-                              <div className="text-sm font-medium text-text-primary truncate">{item.name}</div>
+                              <div className="text-sm font-medium text-text-primary truncate">
+                                {item.name}
+                              </div>
                               {item.detail && (
-                                <div className="text-[11px] text-text-muted line-clamp-2 mt-0.5">{item.detail}</div>
+                                <div className="text-[11px] text-text-muted line-clamp-2 mt-0.5">
+                                  {item.detail}
+                                </div>
                               )}
                             </div>
                             <Plus size={15} className="shrink-0 text-accent" />

@@ -984,7 +984,7 @@ export const zh = {
   ws_episode_suffix: "集",
   ws_episode_new: "新增集数",
   ws_no_episodes: "暂无集数",
-  ws_settings: "基础设置",
+  ws_settings: "基础设置重设",
   ws_export: "导出",
   ws_save: "保存",
   ws_saving: "保存中…",

@@ -265,7 +265,7 @@ export const createGroup = createServerFn({ method: "POST" })
       // owner 可经 RLS 更新 team_members,无需 service role
       await supabase
         .from("team_members")
-        .update({ group_id: group.id })
+        .update({ group_id: group.id, role: "admin" })
         .eq("team_id", data.teamId)
         .eq("user_id", data.adminId);
     }
@@ -332,7 +332,7 @@ export const updateGroup = createServerFn({ method: "POST" })
       // owner 可经 RLS 更新 team_members,无需 service role
       await supabase
         .from("team_members")
-        .update({ group_id: data.groupId })
+        .update({ group_id: data.groupId, role: "admin" })
         .eq("team_id", group.team_id)
         .eq("user_id", data.adminId);
     }

@@ -183,14 +183,11 @@ export const updateMemberRole = createServerFn({ method: "POST" })
     }
 
     // 权限检查
-    if (self.role !== "owner" && self.role !== "admin") {
+    if (self.role !== "owner") {
       return { ok: false as const, error: "You do not have permission to change roles" };
     }
     if (target.role === "owner") {
       return { ok: false as const, error: "Cannot change the owner role" };
-    }
-    if (self.role === "admin" && target.role === "admin") {
-      return { ok: false as const, error: "Admin cannot change another admin role" };
     }
 
     const { error } = await supabase
@@ -204,7 +201,7 @@ export const updateMemberRole = createServerFn({ method: "POST" })
   });
 
 // ====================================================================
-// removeMember — 移除成员（owner 可移任何人，admin 只可移 member）
+// removeMember — 移除成员（仅 owner；管理员只能分配积分）
 // ====================================================================
 
 export const removeMember = createServerFn({ method: "POST" })
@@ -241,11 +238,7 @@ export const removeMember = createServerFn({ method: "POST" })
       return { ok: false as const, error: "You are not a member of this team" };
     }
 
-    // admin 只能移除 member
-    if (self.role === "admin" && target.role !== "member") {
-      return { ok: false as const, error: "Admin can only remove members" };
-    }
-    if (self.role === "member") {
+    if (self.role !== "owner") {
       return { ok: false as const, error: "You do not have permission to remove members" };
     }
 

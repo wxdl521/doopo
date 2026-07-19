@@ -17,28 +17,10 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
-import {
-  Trash2,
-  UserPlus,
-  Crown,
-  UserCog,
-  User,
-  Check,
-  Loader2,
-} from "lucide-react";
+import { UserPlus, Crown, UserCog, User, Check, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { getTeamMembers, updateMemberRole, removeMember } from "@/lib/teamMembers.functions";
+import { getTeamMembers, updateMemberRole } from "@/lib/teamMembers.functions";
 import { useLanguage } from "@/i18n/LanguageContext";
 import type { MemberRow } from "@/lib/teamMembers.functions";
 
@@ -70,11 +52,9 @@ export default function MembersTab({ teamId, myRole, onManageCredits }: MembersT
   const { t } = useLanguage();
   const callGetMembers = useServerFn(getTeamMembers);
   const callUpdateRole = useServerFn(updateMemberRole);
-  const callRemoveMember = useServerFn(removeMember);
 
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [deleteTarget, setDeleteTarget] = useState<MemberRow | null>(null);
   const [inviteCopied, setInviteCopied] = useState(false);
   const [changingUserId, setChangingUserId] = useState<string | null>(null);
 
@@ -111,15 +91,6 @@ export default function MembersTab({ teamId, myRole, onManageCredits }: MembersT
     }
   };
 
-  const handleRemove = async () => {
-    if (!deleteTarget) return;
-    const r: any = await callRemoveMember({ data: { teamId, userId: deleteTarget.userId } });
-    if (r?.ok) {
-      setMembers((prev) => prev.filter((m) => m.userId !== deleteTarget.userId));
-    }
-    setDeleteTarget(null);
-  };
-
   const handleInvite = () => {
     const url = `${window.location.origin}/team/${teamId}/join`;
     navigator.clipboard
@@ -132,9 +103,7 @@ export default function MembersTab({ teamId, myRole, onManageCredits }: MembersT
   };
 
   const canChangeRole = (target: MemberRow) => {
-    if (myRole === "owner") return target.role !== "owner";
-    if (myRole === "admin") return target.role === "member";
-    return false;
+    return myRole === "owner" && target.role !== "owner";
   };
 
   const canManageCredits = (target: MemberRow) => {
@@ -143,15 +112,8 @@ export default function MembersTab({ teamId, myRole, onManageCredits }: MembersT
     return false;
   };
 
-  const canDelete = (target: MemberRow) => {
-    if (target.role === "owner") return false;
-    if (myRole === "owner") return true;
-    if (myRole === "admin") return target.role === "member";
-    return false;
-  };
-
   const showActions = (target: MemberRow) => {
-    return canManageCredits(target) || canDelete(target);
+    return canManageCredits(target);
   };
 
   if (loading) {
@@ -297,17 +259,6 @@ export default function MembersTab({ teamId, myRole, onManageCredits }: MembersT
                               {t.team_manage_allocate}
                             </Button>
                           )}
-                          {canDelete(member) && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 text-destructive hover:text-destructive"
-                              title={t.team_manage_remove}
-                              onClick={() => setDeleteTarget(member)}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          )}
                         </div>
                       )}
                     </TableCell>
@@ -318,40 +269,6 @@ export default function MembersTab({ teamId, myRole, onManageCredits }: MembersT
           </TableBody>
         </Table>
       </section>
-
-      {/* 删除确认弹窗 */}
-      <AlertDialog open={!!deleteTarget} onOpenChange={(open) => !open && setDeleteTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{t.team_manage_remove_confirm_title}</AlertDialogTitle>
-            <AlertDialogDescription>
-              <span>
-                {t.team_manage_remove_confirm_desc.replace(
-                  "{name}",
-                  deleteTarget?.displayName ?? deleteTarget?.email ?? "",
-                )}
-              </span>
-              {deleteTarget && deleteTarget.creditsBalance > 0 && (
-                <span className="block mt-2 text-destructive">
-                  {t.team_manage_remove_credits_warning.replace(
-                    "{credits}",
-                    deleteTarget.creditsBalance.toString(),
-                  )}
-                </span>
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t.common_cancel}</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleRemove}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {t.team_manage_remove_confirm_btn}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }
