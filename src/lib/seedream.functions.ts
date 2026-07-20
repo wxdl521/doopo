@@ -2265,13 +2265,14 @@ function buildPitchDeckPrompt(opts: {
       ? `- Realistic character proportions (not chibi/cartoon). Simple line backgrounds.`
       : `- Pure environment/landscape sketches. Simple line backgrounds. NO people, NO characters, NO human figures in any frame.`,
 
-    `[LAYOUT — 16:9, one page]`,
+    `[LAYOUT — 16:9, one complete page]`,
+    `- HARD PAGE BUDGET: keep a 3% blank safety margin on ALL four edges. Top title bar = at most 7% of page height; main storyboard grid = at most 68%; bottom full-width diagram strip = 20%; use the remaining space only as gutters. Nothing may touch, run past, or be cropped by the image edge.`,
     `- Top: short title bar (episode/group label + ${sourceShotCount} source shots + ${SUGGESTED_PANELS} storyboard panels).`,
-    `- Main: grid of ${SUGGESTED_PANELS} panels, left-to-right, top-to-bottom. Every source shot in [SHOT BREAKDOWN] must appear once as its primary panel (镜头1, 镜头2, ...), in the same order. Use the remaining panels as performance-continuation panels for action-heavy source shots, labeled 镜头N-A / 镜头N-B. A continuation panel is a later beat within the SAME source shot — same shot size, camera side, lens, composition and continuous time; it is NEVER a new shot or a cut.`,
+    `- Main: grid of ${SUGGESTED_PANELS} panels, left-to-right, top-to-bottom, fully contained inside the main grid area. Every source shot in [SHOT BREAKDOWN] must appear once as its primary panel (镜头1, 镜头2, ...), in the same order. Use the remaining panels as performance-continuation panels for action-heavy source shots, labeled 镜头N-A / 镜头N-B. A continuation panel is a later beat within the SAME source shot — same shot size, camera side, lens, composition and continuous time; it is NEVER a new shot or a cut.`,
     hasChars
       ? `- Below each panel: ONE caption line - "镜头N / 镜头N-A · Ns · 景别 · 动作 · 机位:camera" (e.g. 镜头1 · 4s · 中景 · 陆深推门入场坐下 · 机位:平视50mm讲台左侧; 镜头1-A · 同镜头动作延续 · 他向座位迈步). 景别用中文(远景/中景/近景/特写/过肩), 动作写明白但用短句非长段, 机位取自 [SHOT BREAKDOWN] 该源镜头的 camera 字段(焦段/角度/位置). 镜头N-A/B 必须明确是镜头N内部的连续动作，不得改变景别/机位来制造切镜。Clean printed font, NOT handwritten.`
       : `- Below each panel: ONE caption line - "镜头N / 镜头N-A · Ns · 景别 · 环境 · 机位:camera" (e.g. 镜头1 · 4s · 远景 · 晨光穿透树冠洒落斑驳光影 · 机位:平视广角24mm林缘). 景别用中文(远景/中景/近景/特写/过肩), 环境写明白但用短句非长段, 机位取自 [SHOT BREAKDOWN] 该源镜头的 camera 字段. 镜头N-A/B 只可表现同一镜头内的连续环境变化，不得新增切镜。Clean printed font, NOT handwritten. **本故事板是纯环境/空镜, 画面中不得出现任何人物.**`,
-    `- Bottom-right: top-down diagram (see [TOP-DOWN DIAGRAM]).`,
+    `- Bottom: one simple, full-width top-down diagram strip (see [TOP-DOWN DIAGRAM]). This strip is mandatory and must be completely visible, including its legend. If space is tight, simplify drawing detail and labels; NEVER shrink, crop, or omit the bottom strip.`,
 
     `[MOTION NOTATION — REQUIRED INSIDE EACH FRAME]`,
     hasChars
@@ -2292,8 +2293,8 @@ function buildPitchDeckPrompt(opts: {
       ? `- Same character across ALL frames: identical face, hairstyle, body, clothing. No drift.`
       : `- 本故事板无角色 (空镜/纯环境镜头). 画面中严禁出现任何人物、人影、人体、面部、手脚. 所有帧只画环境、光影、植被、道具.`,
 
-    `[TOP-DOWN DIAGRAM — bottom-right, ~25% of page, labels LARGE and FEW]`,
-    `Overhead floor-plan in pencil linework. Keep it simple — too many tiny labels cause garbled text. The diagram MUST cover the FULL spatial scope of ALL shots in [SHOT BREAKDOWN] — every shot's location and movement must appear, none skipped.`,
+    `[TOP-DOWN DIAGRAM — bottom full-width strip, 20% of page, labels LARGE and FEW]`,
+    `Overhead floor-plan in pencil linework. Keep it simple — too many tiny labels cause garbled text. The diagram MUST cover the FULL spatial scope of ALL shots in [SHOT BREAKDOWN] — every shot's location and movement must appear, none skipped. It must remain entirely inside its reserved bottom strip, with a visible border and all labels/legend inside the page.`,
     `- Scene area: draw ALL locations the story spans, not just one room. If shots happen across multiple areas (e.g. street outside → doorway → shop interior), draw each as a labeled zone side by side. Do NOT cram everything into a single room outline. Use a MINIMAL floor plan: draw only room boundaries and spatial anchors explicitly established by [SCENE], [STORY PLOT], [SHOT BREAKDOWN], or reference images. **Never invent an extra door, window, corridor, furniture item, or room to make the plan look complete.** Draw a door only if it is explicitly established or used in a shot; its opening/swing direction and open/closed state must match every matching frame. If that direction is not supplied, use a simple doorway gap with no swing arc rather than guessing.`,
     `- 镜头运动路线 (camera paths): DASHED lines with arrowheads, tracing each shot's camera movement based on its camera / camMovement description in [SHOT BREAKDOWN] and the already-drawn matching Frame N. Draw as many paths as the shots describe — a shot may have more than one movement (e.g. "镜头环绕林缺身体并拉远带出店铺外观" = a circular arc around the character + a pull-back line toward the shop exterior). Paths MUST be spatially correct: 环绕=circular arc, 推/拉=line in/out, 摇=arc sweep, 跟=follow path. Paths span all areas the shots cover. **每条镜头动线必须用小字标注它对应的"镜头N"，且只对应上方同编号的分镜格；不得把镜头1的机位/视线/主体画到镜头2，反之亦然。** If a shot's camMovement is 「固定机位」/「无运镜」 or absent (the shot has NO camera movement), do NOT draw a dashed path -- instead draw a FIXED CAMERA MARKER: a triangle ▲ at the shooting position (tip pointing toward the SAME subject visible in Frame N), with a small "镜头N" label next to it. 严禁无中生有编造运镜; 但固定机位也必须画▲标记+镜头N, 不能留空.`,
     hasChars
@@ -2325,6 +2326,7 @@ function buildPitchDeckPrompt(opts: {
       : `3. No characters - 画面中不得出现任何人物 (空镜/纯环境镜头).`,
     `4. Story faithful — follow [STORY PLOT] and [SHOT BREAKDOWN], no invented content.`,
     `5. Text crisp & legible — Chinese shot types (远景/中景/近景/特写/过肩), no WS/MS/CU; no emoji (📷) or circled numbers (①②③); use plain labels (镜头1, 镜头2) + Arabic numerals.`,
+    `5.25. Page-completeness audit: before output, verify the title bar, every storyboard panel, every caption, the entire bottom diagram, and its legend are all inside the 16:9 canvas with blank margin around them. A diagram, label, panel, or border cut off by any canvas edge is invalid; simplify internal drawing detail instead.`,
     `5.5. Mandatory consistency audit before output: check source 镜头N = 1 to ${sourceShotCount} one by one. For each N, the primary 镜头N caption, visual focus/action/camera angle, and the diagram's “镜头N” camera marker/path must describe the SAME source shot. Each 镜头N-A/B must be a continuous performance beat inside 镜头N, never a separate camera setup or cut. A swapped or reversed camera label, subject, view direction, or camera side is an invalid result and must be corrected before output. Then audit scene truth: every door, doorway direction, prop, furniture item, and character-held object visible in a panel or diagram must have an explicit source in the supplied story/scene/shot/reference; remove every invented item.`,
     hasChars
       ? `6. Diagram logic - the diagram covers ALL shots' locations (not just one room); camera paths (dashed) reflect each shot's camera movement described in [SHOT BREAKDOWN] (环绕/推/拉/摇/跟 -> corresponding arcs/lines, may be multiple paths), fixed-camera shots use a ▲ marker at their shooting position; character paths (solid) strictly follow the blocking in [SHOT BREAKDOWN]. 每条镜头动线和每个固定机位▲都必须标注对应的"镜头N",与上方分镜格编号一一对应,让分镜和俯视图动线能明确对上.`
@@ -2347,7 +2349,7 @@ function buildPitchDeckNegative(hasCharacters: boolean): string {
     "emoji icons, camera emoji 📷, circled numbers ①②③, unicode symbols as labels, emoji in diagram, emoji in captions",
     "skipped frame numbers, duplicated numbers, out-of-order sequence labels, missing frame numbers",
     "colored characters, colored costumes, colored environments, colored rendering beyond sparse motion-analysis arrows/boxes, full color, cel-shading, watercolor, oil painting, airbrush, gradient, photorealistic, 3D render, CGI, anime style, digital painting, thick paint, impasto, gouache, pastel, digital art",
-    "cluttered layout, overlapping sections, missing dividers, off-grid placement, no white space, busy decorative borders, ornate frames, gold filigree",
+    "cluttered layout, overlapping sections, missing dividers, off-grid placement, no white space, busy decorative borders, ornate frames, gold filigree, cropped page, cut-off layout, partial bottom diagram, diagram extending beyond canvas, text cut off by image edge, panels touching image edge",
     "wrong aspect ratio, vertical 9:16, square 1:1, 4:3, portrait orientation",
     "extra characters not in [CHARACTERS], scenery not in [SCENE], invented plot, frames unrelated to [SHOT BREAKDOWN]",
     "low resolution, blurry, pixelated, JPEG artifacts, low quality, soft focus",

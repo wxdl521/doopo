@@ -13417,36 +13417,52 @@ function WorkspacePage() {
                           </div>
                           {/* 中右:故事板 */}
                           <div className="md:col-span-3 rounded-lg border border-border bg-bg-base/40 p-3 space-y-2 overflow-y-auto">
-                            <div className="flex items-center justify-between">
+                            <div className="flex items-center justify-between gap-2">
                               <div className="text-[10px] tracking-widest uppercase text-text-muted">
                                 故事板 · Storyboard
                               </div>
-                              {getActiveStoryboard(g.id)?.status === "succeeded" ? (
-                                brokenStoryboards.has(g.id) ? (
-                                  <span
-                                    className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 border border-amber-500/30"
-                                    title="故事板图 URL 已过期 / 加载失败,点击重新生成或保存入库"
-                                  >
-                                    已过期 · 需重生成
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleUploadImage("storyboard", g.id, g.id)}
+                                  disabled={uploadingImageKeys.has(`storyboard:${g.id}`)}
+                                  className="text-[10px] px-1.5 py-0.5 rounded border border-border bg-bg-surface text-text-secondary hover:border-accent hover:text-accent transition inline-flex items-center gap-1 disabled:cursor-wait disabled:opacity-60"
+                                  title="直接上传一张故事板；上传后会作为新的故事板版本保存"
+                                >
+                                  {uploadingImageKeys.has(`storyboard:${g.id}`) ? (
+                                    <Loader2 size={10} className="animate-spin" />
+                                  ) : (
+                                    <Upload size={10} />
+                                  )}
+                                  上传故事板
+                                </button>
+                                {getActiveStoryboard(g.id)?.status === "succeeded" ? (
+                                  brokenStoryboards.has(g.id) ? (
+                                    <span
+                                      className="text-[9px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-500 border border-amber-500/30"
+                                      title="故事板图 URL 已过期 / 加载失败,点击重新生成或保存入库"
+                                    >
+                                      已过期 · 需重生成
+                                    </span>
+                                  ) : (
+                                    <span className="text-[9px] px-1.5 py-0.5 rounded bg-accent/15 text-accent border border-accent/30">
+                                      已生成
+                                    </span>
+                                  )
+                                ) : getActiveStoryboard(g.id)?.status === "running" ? (
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-elevated border border-border text-text-muted">
+                                    生成中…
+                                  </span>
+                                ) : getActiveStoryboard(g.id)?.status === "failed" ? (
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-500 border border-rose-500/30">
+                                    失败
                                   </span>
                                 ) : (
-                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-accent/15 text-accent border border-accent/30">
-                                    已生成
+                                  <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-elevated border border-border text-text-muted">
+                                    未生成
                                   </span>
-                                )
-                              ) : getActiveStoryboard(g.id)?.status === "running" ? (
-                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-elevated border border-border text-text-muted">
-                                  生成中…
-                                </span>
-                              ) : getActiveStoryboard(g.id)?.status === "failed" ? (
-                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-500 border border-rose-500/30">
-                                  失败
-                                </span>
-                              ) : (
-                                <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-elevated border border-border text-text-muted">
-                                  未生成
-                                </span>
-                              )}
+                                )}
+                              </div>
                             </div>
                             {getActiveStoryboard(g.id)?.status === "succeeded" &&
                             getActiveStoryboard(g.id)?.url ? (
@@ -15961,6 +15977,28 @@ function WorkspacePage() {
                     <div className="flex flex-1 min-h-0 flex-col rounded-lg border border-border bg-bg-surface/95 text-text-primary p-3 space-y-2">
                       <div className="text-xs font-semibold">创作指令（可编辑）</div>
                       <div className="shrink-0 flex items-center gap-2 flex-wrap max-h-24 overflow-y-auto">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            handleUploadImage(
+                              "storyboard",
+                              storyboardPreview.groupId,
+                              storyboardPreview.groupId,
+                            )
+                          }
+                          disabled={uploadingImageKeys.has(
+                            `storyboard:${storyboardPreview.groupId}`,
+                          )}
+                          className="btn-ghost text-xs inline-flex items-center gap-1 disabled:cursor-wait disabled:opacity-60"
+                          title="直接上传一张故事板；不会作为按提示词生成的参考图"
+                        >
+                          {uploadingImageKeys.has(`storyboard:${storyboardPreview.groupId}`) ? (
+                            <Loader2 size={12} className="animate-spin" />
+                          ) : (
+                            <Upload size={12} />
+                          )}
+                          上传故事板
+                        </button>
                         <button
                           type="button"
                           onClick={() =>
