@@ -1689,11 +1689,22 @@ async function confluoPoll(input: {
 const TOPENROUTER_DEFAULT_BASE_URL = "https://tp-api.chinadatapay.com:8000";
 
 function getTopenrouterConfig() {
+  const topenrouterAssetApiKey = process.env.TOPENROUTER_ASSET_API_KEY;
+  const arkAssetApiKey = process.env.ARK_API_KEY;
+  const topenrouterApiKey = process.env.TOPENROUTER_API_KEY;
   return {
-    apiKey: process.env.TOPENROUTER_API_KEY,
-    // Asset 查询要求与上传者使用同一 token。默认复用视频 token；只有服务商
-    // 明确分配了同一账户下的专用 asset token 时才允许单独覆盖。
-    assetApiKey: process.env.TOPENROUTER_ASSET_API_KEY || process.env.TOPENROUTER_API_KEY,
+    apiKey: topenrouterApiKey,
+    // TopenRouter 的视频任务使用自己的 Bearer Key，但素材上传接口要求具备
+    // 火山方舟素材权限的 ARK Key。若把视频 Key 用于素材接口，上游会返回
+    // 403「无权使用素材」。允许用专用变量显式覆盖，兼容已有 ARK 配置。
+    assetApiKey: topenrouterAssetApiKey || arkAssetApiKey || topenrouterApiKey,
+    assetApiKeySource: topenrouterAssetApiKey
+      ? "TOPENROUTER_ASSET_API_KEY"
+      : arkAssetApiKey
+        ? "ARK_API_KEY"
+        : topenrouterApiKey
+          ? "TOPENROUTER_API_KEY"
+          : undefined,
     baseUrl: (process.env.TOPENROUTER_BASE_URL || TOPENROUTER_DEFAULT_BASE_URL).replace(/\/+$/, ""),
   };
 }
@@ -1776,6 +1787,20 @@ function topenrouterErrorBody(text: string): string {
   }
 }
 
+/** 将供应商的权限错误转成可操作的配置提示，避免把视频 Key 误当成素材 Key。 */
+function topenrouterAssetUploadError(status: number, text: string, apiKeySource?: string): string {
+  const upstreamError = topenrouterErrorBody(text);
+  if (status === 403 && /无权使用素材|asset.*permission|permission.*asset/i.test(upstreamError)) {
+    const configuredKey = apiKeySource ? `当前使用 ${apiKeySource}` : "当前未识别到素材密钥";
+    return (
+      "[topenrouter] 素材上传被拒绝（403：无权使用素材）。" +
+      `${configuredKey}；请在 Cloudflare Secrets 或 .env.local 配置 ` +
+      "TOPENROUTER_ASSET_API_KEY 为已开通火山方舟素材权限的 ARK API Key。"
+    );
+  }
+  return `[topenrouter] asset upload ${status}: ${upstreamError}`;
+}
+
 /** 将一个公网素材 URL 登记到 TopenRouter 上游素材库，返回稳定 asset_id。 */
 async function topenrouterUploadAsset(input: {
   model: string;
@@ -1783,6 +1808,7 @@ async function topenrouterUploadAsset(input: {
   assetType: TopenrouterAssetType;
   name?: string;
   apiKey: string;
+  apiKeySource?: string;
   baseUrl: string;
 }): Promise<{ ok: true; asset: TopenrouterAsset } | { ok: false; error: string }> {
   const upstreamModel = topenrouterModelToUpstream(input.model);
@@ -1814,7 +1840,7 @@ async function topenrouterUploadAsset(input: {
       console.warn(`[topenrouter asset×] upload status=${res.status} body=${topenrouterErrorBody(text)}`);
       return {
         ok: false,
-        error: `[topenrouter] asset upload ${res.status}: ${topenrouterErrorBody(text)}`,
+        error: topenrouterAssetUploadError(res.status, text, input.apiKeySource),
       };
     }
     let json: { code?: number | string; message?: string; data?: unknown } = {};
@@ -1947,6 +1973,7 @@ async function topenrouterEnsureAsset(input: {
   assetType: TopenrouterAssetType;
   name: string;
   apiKey: string;
+  apiKeySource?: string;
   baseUrl: string;
 }): Promise<{ ok: true; url?: string } | { ok: false; error: string }> {
   if (!input.url || input.url.startsWith("asset://")) return { ok: true, url: input.url };
@@ -1956,6 +1983,7 @@ async function topenrouterEnsureAsset(input: {
     assetType: input.assetType,
     name: input.name,
     apiKey: input.apiKey,
+    apiKeySource: input.apiKeySource,
     baseUrl: input.baseUrl,
   });
   if (!uploaded.ok) return uploaded;
@@ -2706,7 +2734,7 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
       : { ok: false, error: r.error };
   }
   if (backend === "topenrouter") {
-    const { apiKey, assetApiKey, baseUrl } = getTopenrouterConfig();
+    const { apiKey, assetApiKey, assetApiKeySource, baseUrl } = getTopenrouterConfig();
     if (!apiKey) {
       return {
         ok: false,
@@ -2717,8 +2745,7 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
     if (!assetApiKey) {
       return {
         ok: false,
-        error:
-          "[topenrouter] 缺少 TOPENROUTER_ASSET_API_KEY / TOPENROUTER_API_KEY,无法上传参考素材。",
+        error: "[topenrouter] 缺少 TOPENROUTER_ASSET_API_KEY / ARK_API_KEY，无法上传参考素材。",
       };
     }
     // 参考图/视频/音频先进入 TopenRouter 素材库。真人图片直接给视频接口会触发
@@ -2736,6 +2763,7 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
       assetType: "Image",
       name: `${assetPrefix}-first-frame`,
       apiKey: assetApiKey,
+      apiKeySource: assetApiKeySource,
       baseUrl,
     });
     if (!firstFrameAsset.ok) return firstFrameAsset;
@@ -2745,6 +2773,7 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
       assetType: "Image",
       name: `${assetPrefix}-last-frame`,
       apiKey: assetApiKey,
+      apiKeySource: assetApiKeySource,
       baseUrl,
     });
     if (!lastFrameAsset.ok) return lastFrameAsset;
@@ -2756,6 +2785,7 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
           assetType: "Image",
           name: `${assetPrefix}-reference-image-${index + 1}`,
           apiKey: assetApiKey,
+          apiKeySource: assetApiKeySource,
           baseUrl,
         }),
       ),
@@ -2768,6 +2798,7 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
       assetType: "Video",
       name: `${assetPrefix}-reference-video`,
       apiKey: assetApiKey,
+      apiKeySource: assetApiKeySource,
       baseUrl,
     });
     if (!referenceVideoAsset.ok) return referenceVideoAsset;
@@ -2777,6 +2808,7 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
       assetType: "Audio",
       name: `${assetPrefix}-reference-audio`,
       apiKey: assetApiKey,
+      apiKeySource: assetApiKeySource,
       baseUrl,
     });
     if (!referenceAudioAsset.ok) return referenceAudioAsset;
@@ -2962,11 +2994,11 @@ export const uploadTopenrouterAsset = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((d: unknown) => TopenrouterAssetUploadInput.parse(d))
   .handler(async ({ data }) => {
-    const { assetApiKey, baseUrl } = getTopenrouterConfig();
+    const { assetApiKey, assetApiKeySource, baseUrl } = getTopenrouterConfig();
     if (!assetApiKey) {
       return {
         ok: false as const,
-        error: "[topenrouter] 缺少 TOPENROUTER_ASSET_API_KEY / TOPENROUTER_API_KEY",
+        error: "[topenrouter] 缺少 TOPENROUTER_ASSET_API_KEY / ARK_API_KEY",
       };
     }
     const uploaded = await topenrouterUploadAsset({
@@ -2975,6 +3007,7 @@ export const uploadTopenrouterAsset = createServerFn({ method: "POST" })
       assetType: data.assetType,
       name: data.name,
       apiKey: assetApiKey,
+      apiKeySource: assetApiKeySource,
       baseUrl,
     });
     if (!uploaded.ok) return { ok: false as const, error: uploaded.error };
@@ -3014,7 +3047,7 @@ export const getTopenrouterAsset = createServerFn({ method: "POST" })
     if (!assetApiKey) {
       return {
         ok: false as const,
-        error: "[topenrouter] 缺少 TOPENROUTER_ASSET_API_KEY / TOPENROUTER_API_KEY",
+        error: "[topenrouter] 缺少 TOPENROUTER_ASSET_API_KEY / ARK_API_KEY",
       };
     }
     const result = await topenrouterGetAsset({
