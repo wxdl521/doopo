@@ -1733,9 +1733,9 @@ function WorkspacePage() {
           "风格：" + resolveProjectStyle(projectVisualStyle).label + "\n" + STYLE_FINGERPRINT_ZH,
       },
       {
-        id: "locationTime",
-        label: "地点与时段",
-        source: promptRange(raw, /^\[地点\][\s\S]*?(?=^\[环境语义\])/m, /^\[环境语义\]/m),
+        id: "reconstruction",
+        label: "空间重建规则",
+        source: promptRange(raw, /^\[任务\][\s\S]*?(?=^\[画布\])/m, /^\[画布\]/m),
       },
       {
         id: "panels",
@@ -5889,19 +5889,21 @@ function WorkspacePage() {
     rawApiPrompt?: string,
   ) {
     const history = sceneImages[s.id] ?? [];
-    // “局部修改”必须将用户当前选中的历史图作为图1上传。上传的额外参考图和
-    // 最新图均不得替换它；只有预设多视图才允许在未选中时回退到最新一张。
+    // 局部修改和场景多视图都必须将用户当前选中的历史图作为图1上传；
+    // 上传的额外参考图和最新图均不得替换它。
     const pinned = selectedSceneImagesRef.current[s.id];
     const fallback = history.at(-1);
     const selectedReference = pinned && history.includes(pinned) ? pinned : undefined;
-    const requiresSelectedReference = mode === "modify" || !!rawApiPrompt;
+    const requiresSelectedReference = mode === "modify" || mode === "multi-view" || !!rawApiPrompt;
     const referenceUrl = requiresSelectedReference
       ? selectedReference
       : (referenceOverride ?? selectedReference ?? fallback);
     if (!referenceUrl) {
       toast.error(
         requiresSelectedReference
-          ? "请先在历史记录中选中一张场景图，再进行局部修改"
+          ? mode === "multi-view"
+            ? "请先在历史记录中选中一张场景图，再生成场景多视图"
+            : "请先在历史记录中选中一张场景图，再进行局部修改"
           : "该场景还没生成,无法重生",
       );
       return false;
@@ -5981,12 +5983,12 @@ function WorkspacePage() {
     }
   }
 
-  /** 场景"多视图"按钮:无 user input,生成锁定场景的横向 2×3 摄影机矩阵。 */
+  /** 场景"多视图"按钮：以当前选中的场景图为唯一参考，生成横向 2×3 摄影机矩阵。 */
   async function runScenePresetRegen(s: GenScene) {
     await doSceneRegen(
       s,
       "multi-view",
-      "基于图1生成锁定场景的横向 2×3 六宫格；建筑、环境、材质和光照保持一致，仅允许摄影机移动；纯环境无人物。",
+      "基于当前选中的图1重建同一个一致的虚拟3D场景，并输出横向 2×3 六个摄影机视角。",
     );
   }
 
