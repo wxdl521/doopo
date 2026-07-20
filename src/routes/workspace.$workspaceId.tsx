@@ -348,7 +348,8 @@ function readSavedImageReviews(value: unknown): Record<string, ImageAssetRecord>
       };
       const model = imageAssetModelFromKey(key);
       const assetUrl =
-        typeof review.assetUrl === "string" && /^asset:\/\/[a-zA-Z0-9_-]+$/.test(review.assetUrl)
+        typeof review.assetUrl === "string" &&
+        /^(?:asset|assetId):\/\/[a-zA-Z0-9_-]+$/.test(review.assetUrl)
           ? review.assetUrl
           : undefined;
       const assetId =
@@ -366,7 +367,7 @@ function readSavedImageReviews(value: unknown): Record<string, ImageAssetRecord>
       ) {
         return [];
       }
-      // TopenRouter 的“已入库”必须携带 asset://；筷子以公网 URL 作为视频输入。
+      // TopenRouter / 客易云的“已入库”必须携带各自的 asset 引用；筷子以公网 URL 作为视频输入。
       if (review.status === "approved" && !assetUrl && !assetId) return [];
       return [
         [
