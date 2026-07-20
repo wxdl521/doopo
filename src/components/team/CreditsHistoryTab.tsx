@@ -27,6 +27,12 @@ import {
 import { useLanguage } from "@/i18n/LanguageContext";
 import type { TransactionRow, TransferRow } from "@/lib/teamCredits.functions";
 
+const creditNumberFormatter = new Intl.NumberFormat(undefined, {
+  maximumFractionDigits: 2,
+});
+
+const formatCredits = (credits: number) => creditNumberFormatter.format(credits);
+
 const PAGE_SIZE = 20;
 
 const TYPE_CONFIG: Record<
@@ -103,7 +109,7 @@ export default function CreditsHistoryTab({ teamId }: CreditsHistoryTabProps) {
           <Coins className="w-6 h-6 text-amber-500" />
           <div>
             <p className="text-sm text-muted-foreground">{t.history_team_credits}</p>
-            <p className="text-2xl font-bold text-amber-500">{teamCredits.toLocaleString()}</p>
+            <p className="text-2xl font-bold text-amber-500">{formatCredits(teamCredits)}</p>
           </div>
         </div>
       </section>
@@ -152,11 +158,11 @@ export default function CreditsHistoryTab({ teamId }: CreditsHistoryTabProps) {
                         className={`text-sm font-medium ${isPositive ? "text-green-500" : "text-orange-500"}`}
                       >
                         {isPositive ? "+" : ""}
-                        {tx.amount.toLocaleString()}
+                        {formatCredits(tx.amount)}
                       </span>
                     </TableCell>
                     <TableCell className="text-right text-sm text-muted-foreground">
-                      {tx.balanceAfter != null ? tx.balanceAfter.toLocaleString() : "-"}
+                      {tx.balanceAfter != null ? formatCredits(tx.balanceAfter) : "-"}
                     </TableCell>
                   </TableRow>
                 );
@@ -222,11 +228,11 @@ export default function CreditsHistoryTab({ teamId }: CreditsHistoryTabProps) {
                   </TableCell>
                   <TableCell className="text-right">
                     <span className="text-sm font-medium text-green-500">
-                      +{tr.amount.toLocaleString()}
+                      +{formatCredits(tr.amount)}
                     </span>
                   </TableCell>
                   <TableCell className="text-right text-sm text-muted-foreground">
-                    {tr.toBalanceAfter != null ? tr.toBalanceAfter.toLocaleString() : "-"}
+                    {tr.toBalanceAfter != null ? formatCredits(tr.toBalanceAfter) : "-"}
                   </TableCell>
                 </TableRow>
               ))

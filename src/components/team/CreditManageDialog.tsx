@@ -25,6 +25,12 @@ type CreditManageDialogProps = {
   onSuccess: () => void;
 };
 
+const creditNumberFormatter = new Intl.NumberFormat(undefined, {
+  maximumFractionDigits: 2,
+});
+
+const formatCredits = (credits: number) => creditNumberFormatter.format(credits);
+
 export default function CreditManageDialog({
   open,
   teamId,
@@ -63,7 +69,7 @@ export default function CreditManageDialog({
 
   if (!member) return null;
 
-  const numAmount = parseInt(amount, 10);
+  const numAmount = Number(amount);
   const isValidAmount = !isNaN(numAmount) && numAmount > 0;
 
   const maxAllocate = ownerCredits;
@@ -128,7 +134,7 @@ export default function CreditManageDialog({
             </div>
             <div className="flex items-center gap-2">
               <span className="text-lg font-bold text-amber-500">
-                {teamCredits.toLocaleString()}
+                {formatCredits(teamCredits)}
               </span>
               <Button
                 variant="ghost"
@@ -152,7 +158,7 @@ export default function CreditManageDialog({
             </div>
             <div className="text-right">
               <p className="text-xs text-muted-foreground">{t.credit_dialog_available}</p>
-              <p className="font-bold text-amber-500">{member.creditsBalance}</p>
+              <p className="font-bold text-amber-500">{formatCredits(member.creditsBalance)}</p>
             </div>
           </div>
 
@@ -195,7 +201,8 @@ export default function CreditManageDialog({
               <div className="flex-1 relative">
                 <Input
                   type="number"
-                  min={1}
+                  min={0.01}
+                  step={0.01}
                   max={maxAmount}
                   value={amount}
                   onChange={(e) => {
@@ -207,7 +214,7 @@ export default function CreditManageDialog({
                 />
                 {overMax && (
                   <p className="text-xs text-destructive mt-1">
-                    {t.credit_dialog_over_limit.replace("{max}", maxAmount.toLocaleString())}
+                    {t.credit_dialog_over_limit.replace("{max}", formatCredits(maxAmount))}
                   </p>
                 )}
               </div>
@@ -220,8 +227,8 @@ export default function CreditManageDialog({
           {/* 提示 */}
           <p className="text-xs text-muted-foreground">
             {mode === "allocate"
-              ? t.credit_dialog_hint_allocate.replace("{max}", maxAllocate.toLocaleString())
-              : t.credit_dialog_hint_reclaim.replace("{max}", maxReclaim.toLocaleString())}
+              ? t.credit_dialog_hint_allocate.replace("{max}", formatCredits(maxAllocate))
+              : t.credit_dialog_hint_reclaim.replace("{max}", formatCredits(maxReclaim))}
           </p>
 
           {error && (

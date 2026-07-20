@@ -52,6 +52,12 @@ const ROLE_BADGES: Record<
   member: { labelKey: "team_manage_role_member", icon: User, variant: "outline" },
 };
 
+const creditNumberFormatter = new Intl.NumberFormat(undefined, {
+  maximumFractionDigits: 2,
+});
+
+const formatCredits = (credits: number) => creditNumberFormatter.format(credits);
+
 type MembersTabProps = {
   teamId: string;
   myRole: string;
@@ -273,9 +279,9 @@ export default function MembersTab({ teamId, myRole, onManageCredits }: MembersT
 
                     {/* 可用积分 */}
                     <TableCell className="text-right">
-                      <span className="font-medium">{member.creditsBalance}</span>
+                      <span className="font-medium">{formatCredits(member.creditsBalance)}</span>
                       <span className="text-xs text-muted-foreground ml-1">
-                        (+{member.subscriptionCredits} {t.team_manage_subscription_credits})
+                        (+{formatCredits(member.subscriptionCredits)} {t.team_manage_subscription_credits})
                       </span>
                     </TableCell>
 

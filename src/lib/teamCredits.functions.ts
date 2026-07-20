@@ -9,21 +9,21 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 const AllocateCreditsInput = z.object({
   teamId: z.string().uuid(),
   userId: z.string().uuid(),
-  amount: z.number().int().positive(),
+  amount: z.number().positive(),
   description: z.string().max(500).optional(),
 });
 
 const ReclaimCreditsInput = z.object({
   teamId: z.string().uuid(),
   userId: z.string().uuid(),
-  amount: z.number().int().positive(),
+  amount: z.number().positive(),
   description: z.string().max(500).optional(),
 });
 
 const TransferCreditsInput = z.object({
   teamId: z.string().uuid(),
   toUserId: z.string().uuid(),
-  amount: z.number().int().positive(),
+  amount: z.number().positive(),
   description: z.string().max(500).optional(),
 });
 
