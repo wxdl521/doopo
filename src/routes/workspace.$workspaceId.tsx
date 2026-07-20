@@ -149,6 +149,8 @@ const isHttpImageUrl = (value: unknown): value is string =>
   typeof value === "string" && /^https?:\/\//i.test(value);
 
 type AssetPickerKind = "character" | "scene" | "prop";
+const ASSET_PICKER_PAGE_SIZE = 20;
+
 type AssetPickerItem = {
   id: string;
   name: string;
@@ -160,6 +162,8 @@ type AssetPickerState = {
   kind: AssetPickerKind;
   status: "loading" | "ready" | "error";
   items: AssetPickerItem[];
+  hasMore: boolean;
+  loadingMore?: boolean;
 };
 
 function assetPickerImageUrls(images: unknown, coverUrl: string | null): string[] {
@@ -197,6 +201,34 @@ function assetPickerDialogue(value: unknown): GenScene["dialogue"] {
       },
     ];
   });
+}
+
+function assetPickerItems(kind: AssetPickerKind, rows: unknown[]): AssetPickerItem[] {
+  if (kind === "character") {
+    return (rows as DbCharacter[]).map((asset) => ({
+      id: asset.id,
+      name: asset.name,
+      detail: [asset.role_label || asset.role, asset.personality].filter(Boolean).join(" · "),
+      imageUrls: assetPickerImageUrls(asset.images, asset.cover_url),
+      source: asset,
+    }));
+  }
+  if (kind === "scene") {
+    return (rows as DbScene[]).map((asset) => ({
+      id: asset.id,
+      name: asset.name || asset.location || "未命名场景",
+      detail: [asset.location, asset.time_of_day, asset.action].filter(Boolean).join(" · "),
+      imageUrls: assetPickerImageUrls(asset.images, asset.cover_url),
+      source: asset,
+    }));
+  }
+  return (rows as DbProp[]).map((asset) => ({
+    id: asset.id,
+    name: asset.name,
+    detail: [asset.description, asset.movement_description].filter(Boolean).join(" · "),
+    imageUrls: assetPickerImageUrls(asset.images, asset.cover_url),
+    source: asset,
+  }));
 }
 
 /** 场景资产只能是无人空景；角色、动物等应由角色/分镜流程生成。 */
@@ -1691,7 +1723,7 @@ function WorkspacePage() {
   }
 
   function sceneMultiViewEditorBlocks(raw: string): PromptEditorBlock[] {
-    return [
+    const blocks: PromptEditorBlock[] = [
       {
         id: "style",
         label: "风格",
@@ -1706,11 +1738,47 @@ function WorkspacePage() {
         source: promptRange(raw, /^\[地点\][\s\S]*?(?=^\[环境语义\])/m, /^\[环境语义\]/m),
       },
       {
+        id: "panel1",
+        label: "格子 1",
+        source: promptRange(raw, /^【格子1：[\s\S]*?(?=^【格子2：)/m, /^【格子2：/m),
+      },
+      {
+        id: "panel2",
+        label: "格子 2",
+        source: promptRange(raw, /^【格子2：[\s\S]*?(?=^【格子3：)/m, /^【格子3：/m),
+      },
+      {
+        id: "panel3",
+        label: "格子 3",
+        source: promptRange(raw, /^【格子3：[\s\S]*?(?=^【格子4：)/m, /^【格子4：/m),
+      },
+      {
+        id: "panel4",
+        label: "格子 4",
+        source: promptRange(raw, /^【格子4：[\s\S]*?(?=^【格子5：)/m, /^【格子5：/m),
+      },
+      {
+        id: "panel5",
+        label: "格子 5",
+        source: promptRange(raw, /^【格子5：[\s\S]*?(?=^【格子6：)/m, /^【格子6：/m),
+      },
+      {
+        id: "panel6",
+        label: "格子 6",
+        source: promptRange(raw, /^【格子6：[\s\S]*?(?=^\[提交前检查\])/m, /^\[提交前检查\]/m),
+      },
+    ];
+    // 兼容已生成的旧版建筑多视图：仍在一个“六宫格机位”编辑块中展示，
+    // 以免用户打开旧历史记录时看不到原有的六条提示词。
+    const hasIndividualPanels = blocks.some((block) => block.id === "panel1" && block.source);
+    if (!hasIndividualPanels) {
+      blocks.push({
         id: "panels",
         label: "六宫格机位",
         source: promptRange(raw, /^【格子1：[\s\S]*?(?=^\[提交前检查\])/m, /^\[提交前检查\]/m),
-      },
-    ].filter((block) => block.source);
+      });
+    }
+    return blocks.filter((block) => block.source);
   }
 
   function formatPromptEditorBlocks(blocks: PromptEditorBlock[], values?: string[]): string {
@@ -6861,49 +6929,73 @@ function WorkspacePage() {
     }
     const requestId = ++assetPickerRequestRef.current;
     setAssetPickerSearch("");
-    setAssetPicker({ kind, status: "loading", items: [] });
+    setAssetPicker({ kind, status: "loading", items: [], hasMore: false });
     try {
       const result =
         kind === "character"
-          ? await loadCharacters(user.id, 0, 999)
+          ? await loadCharacters(user.id, 0, ASSET_PICKER_PAGE_SIZE)
           : kind === "scene"
-            ? await loadScenes(user.id, 0, 999)
-            : await loadProps(user.id, 0, 999);
+            ? await loadScenes(user.id, 0, ASSET_PICKER_PAGE_SIZE)
+            : await loadProps(user.id, 0, ASSET_PICKER_PAGE_SIZE);
       if (result.error) throw result.error;
       if (requestId !== assetPickerRequestRef.current) return;
-      const items: AssetPickerItem[] =
-        kind === "character"
-          ? ((result.data ?? []) as DbCharacter[]).map((asset) => ({
-              id: asset.id,
-              name: asset.name,
-              detail: [asset.role_label || asset.role, asset.personality]
-                .filter(Boolean)
-                .join(" · "),
-              imageUrls: assetPickerImageUrls(asset.images, asset.cover_url),
-              source: asset,
-            }))
-          : kind === "scene"
-            ? ((result.data ?? []) as DbScene[]).map((asset) => ({
-                id: asset.id,
-                name: asset.name || asset.location || "未命名场景",
-                detail: [asset.location, asset.time_of_day, asset.action]
-                  .filter(Boolean)
-                  .join(" · "),
-                imageUrls: assetPickerImageUrls(asset.images, asset.cover_url),
-                source: asset,
-              }))
-            : ((result.data ?? []) as DbProp[]).map((asset) => ({
-                id: asset.id,
-                name: asset.name,
-                detail: [asset.description, asset.movement_description].filter(Boolean).join(" · "),
-                imageUrls: assetPickerImageUrls(asset.images, asset.cover_url),
-                source: asset,
-              }));
-      setAssetPicker({ kind, status: "ready", items });
+      const rows = result.data ?? [];
+      setAssetPicker({
+        kind,
+        status: "ready",
+        items: assetPickerItems(kind, rows.slice(0, ASSET_PICKER_PAGE_SIZE)),
+        hasMore: rows.length > ASSET_PICKER_PAGE_SIZE,
+      });
     } catch (error) {
       console.warn("[workspace] Failed to load asset picker:", error);
       if (requestId === assetPickerRequestRef.current) {
-        setAssetPicker({ kind, status: "error", items: [] });
+        setAssetPicker({ kind, status: "error", items: [], hasMore: false });
+      }
+    }
+  }
+
+  async function loadMoreAssetPickerItems() {
+    const picker = assetPicker;
+    if (!user || !picker || picker.status !== "ready" || !picker.hasMore || picker.loadingMore) {
+      return;
+    }
+    const requestId = assetPickerRequestRef.current;
+    const { kind, items } = picker;
+    setAssetPicker((current) =>
+      current && current.kind === kind && current.status === "ready"
+        ? { ...current, loadingMore: true }
+        : current,
+    );
+    try {
+      const result =
+        kind === "character"
+          ? await loadCharacters(user.id, items.length, items.length + ASSET_PICKER_PAGE_SIZE)
+          : kind === "scene"
+            ? await loadScenes(user.id, items.length, items.length + ASSET_PICKER_PAGE_SIZE)
+            : await loadProps(user.id, items.length, items.length + ASSET_PICKER_PAGE_SIZE);
+      if (result.error) throw result.error;
+      if (requestId !== assetPickerRequestRef.current) return;
+      const rows = result.data ?? [];
+      const nextItems = assetPickerItems(kind, rows.slice(0, ASSET_PICKER_PAGE_SIZE));
+      setAssetPicker((current) =>
+        current && current.kind === kind && current.status === "ready"
+          ? {
+              ...current,
+              items: [...current.items, ...nextItems],
+              hasMore: rows.length > ASSET_PICKER_PAGE_SIZE,
+              loadingMore: false,
+            }
+          : current,
+      );
+    } catch (error) {
+      console.warn("[workspace] Failed to load more asset picker items:", error);
+      if (requestId === assetPickerRequestRef.current) {
+        setAssetPicker((current) =>
+          current && current.kind === kind && current.status === "ready"
+            ? { ...current, loadingMore: false }
+            : current,
+        );
+        toast.error("更多资产读取失败，请重试");
       }
     }
   }
@@ -16098,6 +16190,16 @@ function WorkspacePage() {
                           </button>
                         );
                       })}
+                      {assetPicker.hasMore && (
+                        <button
+                          type="button"
+                          onClick={() => void loadMoreAssetPickerItems()}
+                          disabled={assetPicker.loadingMore}
+                          className="w-full rounded-lg border border-border px-3 py-2 text-xs text-text-secondary hover:border-accent hover:text-accent disabled:cursor-wait disabled:opacity-60 transition"
+                        >
+                          {assetPicker.loadingMore ? "正在加载更多…" : "加载更多资产"}
+                        </button>
+                      )}
                       {items.length === 0 && (
                         <div className="min-h-36 flex items-center justify-center text-sm text-text-muted">
                           {assetPickerSearch ? "没有匹配的资产" : `资产库里还没有${kindLabel}`}
