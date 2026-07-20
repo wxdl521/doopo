@@ -703,6 +703,10 @@ export function resolveT2IModel(sceneModel: string | null | undefined): string {
  */
 export function resolveI2IModel(sceneModel: string | null | undefined): string {
   const m = (sceneModel || "").trim();
+  // OneToken 当前仅接入了 /images/generations 文生图接口，不能携带参考图。
+  // 场景多视图、角色修改等 I2I 流程必须回退到已验证支持参考图的 Seedream，
+  // 不能静默生成一张与图1无关的新图。
+  if (m.toLowerCase().startsWith("onetoken/")) return SEEDREAM_I2I_DEFAULT;
   if (VALID_I2I_MODELS.has(m)) return m;
   // 如果有已知前缀，直接返回该模型
   if (hasKnownPrefix(m)) return m;

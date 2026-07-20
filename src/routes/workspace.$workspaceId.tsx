@@ -1723,7 +1723,7 @@ function WorkspacePage() {
   }
 
   function sceneMultiViewEditorBlocks(raw: string): PromptEditorBlock[] {
-    const blocks: PromptEditorBlock[] = [
+    return [
       {
         id: "style",
         label: "风格",
@@ -1738,47 +1738,11 @@ function WorkspacePage() {
         source: promptRange(raw, /^\[地点\][\s\S]*?(?=^\[环境语义\])/m, /^\[环境语义\]/m),
       },
       {
-        id: "panel1",
-        label: "格子 1",
-        source: promptRange(raw, /^【格子1：[\s\S]*?(?=^【格子2：)/m, /^【格子2：/m),
-      },
-      {
-        id: "panel2",
-        label: "格子 2",
-        source: promptRange(raw, /^【格子2：[\s\S]*?(?=^【格子3：)/m, /^【格子3：/m),
-      },
-      {
-        id: "panel3",
-        label: "格子 3",
-        source: promptRange(raw, /^【格子3：[\s\S]*?(?=^【格子4：)/m, /^【格子4：/m),
-      },
-      {
-        id: "panel4",
-        label: "格子 4",
-        source: promptRange(raw, /^【格子4：[\s\S]*?(?=^【格子5：)/m, /^【格子5：/m),
-      },
-      {
-        id: "panel5",
-        label: "格子 5",
-        source: promptRange(raw, /^【格子5：[\s\S]*?(?=^【格子6：)/m, /^【格子6：/m),
-      },
-      {
-        id: "panel6",
-        label: "格子 6",
-        source: promptRange(raw, /^【格子6：[\s\S]*?(?=^\[提交前检查\])/m, /^\[提交前检查\]/m),
-      },
-    ];
-    // 兼容已生成的旧版建筑多视图：仍在一个“六宫格机位”编辑块中展示，
-    // 以免用户打开旧历史记录时看不到原有的六条提示词。
-    const hasIndividualPanels = blocks.some((block) => block.id === "panel1" && block.source);
-    if (!hasIndividualPanels) {
-      blocks.push({
         id: "panels",
         label: "六宫格机位",
         source: promptRange(raw, /^【格子1：[\s\S]*?(?=^\[提交前检查\])/m, /^\[提交前检查\]/m),
-      });
-    }
-    return blocks.filter((block) => block.source);
+      },
+    ].filter((block) => block.source);
   }
 
   function formatPromptEditorBlocks(blocks: PromptEditorBlock[], values?: string[]): string {
