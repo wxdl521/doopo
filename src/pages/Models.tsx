@@ -200,6 +200,16 @@ const VIDEO_MODELS: VideoModel[] = [
     status: "available",
   },
   {
+    id: "keyiyun-sd-2-0-fast-discount-720p",
+    name: "Seedance 2.0 官方折扣版",
+    nameEn: "Seedance 2.0 Official Discount",
+    vendor: "客易云",
+    tagline: "720p 快速版 · 文本和图片参考",
+    taglineEn: "720p Fast · Text and Image References",
+    gradient: "from-amber-500 to-orange-600",
+    status: "available",
+  },
+  {
     id: "jimeng-3.0-pro",
     name: "即梦 3.0 Pro",
     nameEn: "Jimeng 3.0 Pro",

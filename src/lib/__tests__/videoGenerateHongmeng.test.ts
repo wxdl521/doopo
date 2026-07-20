@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { extractArkVideoUrl, seedanceStatusToProgress } from "../videoGenerate.functions";
+import {
+  extractArkVideoUrl,
+  getVideoBackend,
+  seedanceStatusToProgress,
+} from "../videoGenerate.functions";
 
 describe("弘梦 ARK 兼容任务查询", () => {
   it("将中转常用 completed 完成态映射为 succeeded，避免无限轮询", () => {
@@ -39,5 +43,9 @@ describe("弘梦 ARK 兼容任务查询", () => {
         },
       }),
     ).toBe(url);
+  });
+
+  it("将客易云模型路由至其专用创建、素材和查询接口", () => {
+    expect(getVideoBackend("keyiyun-sd-2-0-fast-discount-720p")).toBe("keyiyun");
   });
 });

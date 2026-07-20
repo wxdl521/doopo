@@ -64,8 +64,11 @@ import {
   regenerateStoryboardShot,
   regenerateStoryboardPitchDeck,
 } from "../lib/storyboard.functions";
-import { generateVideo } from "../lib/videoGenerate.functions";
-import { uploadTopenrouterAsset } from "../lib/videoGenerate.functions";
+import {
+  generateVideo,
+  uploadKeyiyunAsset,
+  uploadTopenrouterAsset,
+} from "../lib/videoGenerate.functions";
 import { getKuaiziAsset, uploadKuaiziAsset } from "../lib/kuaiziAssets.functions";
 import { refineStoryboardVideoPrompt } from "../lib/videoPromptRefine.functions";
 import { translateEditablePrompt } from "../lib/promptTranslation.functions";
@@ -318,12 +321,16 @@ function getVideoAssetLibrarySupport(model: string | undefined): {
   if (!model?.trim()) {
     return { supported: false, message: "请先在项目设置中选择视频模型。" };
   }
-  if (model.startsWith("topenrouter-doubao-seedance-") || model.startsWith("kuaizi-lizhen-")) {
+  if (
+    model.startsWith("topenrouter-doubao-seedance-") ||
+    model.startsWith("kuaizi-lizhen-") ||
+    model.startsWith("keyiyun-")
+  ) {
     return { supported: true, message: "" };
   }
   return {
     supported: false,
-    message: `${model} 暂未接入可查询的素材库，暂不支持上传素材。`,
+    message: `${model} 暂不支持真人脸审核。`,
   };
 }
 
@@ -1379,6 +1386,7 @@ function WorkspacePage() {
   const callLoadWorkspaceStoryboardStructure = useServerFn(loadWorkspaceStoryboardStructure);
   const callPersistMedia = useServerFn(persistWorkspaceMedia);
   const callPersistAsset = useServerFn(persistAssetImage);
+  const callKeyiyunImageReview = useServerFn(uploadKeyiyunAsset);
   const callTopenrouterImageReview = useServerFn(uploadTopenrouterAsset);
   const callKuaiziImageReview = useServerFn(uploadKuaiziAsset);
   const callGetKuaiziAsset = useServerFn(getKuaiziAsset);
@@ -1446,6 +1454,39 @@ function WorkspacePage() {
           });
         return;
       }
+      if (videoModel.startsWith("keyiyun-")) {
+        void callKeyiyunImageReview({
+          data: {
+            url,
+            assetType: "Image",
+            name: `doopoo-asset-${Date.now()}-${name}`.slice(0, 200),
+          },
+        })
+          .then((result) => {
+            const error = result.ok ? undefined : result.error || "真人脸审核失败";
+            const status: ImageReviewStatus = result.ok ? "approved" : "error";
+            if (!result.ok) imageReviewStartedRef.current.delete(key);
+            setImageReviews((current) => ({
+              ...current,
+              [key]: {
+                status,
+                ...(error ? { error } : {}),
+                ...(result.ok ? { assetUrl: result.assetUrl } : {}),
+              },
+            }));
+          })
+          .catch((error) => {
+            imageReviewStartedRef.current.delete(key);
+            setImageReviews((current) => ({
+              ...current,
+              [key]: {
+                status: "error",
+                error: error instanceof Error ? error.message : "真人脸审核请求失败",
+              },
+            }));
+          });
+        return;
+      }
       void callTopenrouterImageReview({
         data: {
           url,
@@ -1482,7 +1523,13 @@ function WorkspacePage() {
           }));
         });
     },
-    [callKuaiziImageReview, callTopenrouterImageReview, project?.videoModel, user],
+    [
+      callKeyiyunImageReview,
+      callKuaiziImageReview,
+      callTopenrouterImageReview,
+      project?.videoModel,
+      user,
+    ],
   );
   const refreshKuaiziImageReview = useCallback(
     (key: string, assetId: string) => {
@@ -1920,7 +1967,8 @@ function WorkspacePage() {
    * 故事板等不可作为视频素材引用的图片也误提交到素材库。
    */
   const renderFaceReviewAction = (url: string | undefined, name: string) => {
-    if (!url) return null;
+    // 只对已接入真人脸审核的供应商展示入口，其他模型不留下不可用按钮。
+    if (!url || !videoAssetLibrarySupport.supported) return null;
     const review = getImageReview(url);
     const isReviewing = review?.status === "pending";
     const isApproved = review?.status === "approved";
@@ -1938,13 +1986,7 @@ function WorkspacePage() {
         type="button"
         onClick={() => requestImageReview(url, name, true)}
         disabled={isReviewing || isApproved}
-        title={
-          isFailed
-            ? review?.error || "审核失败，点击重新提交"
-            : !videoAssetLibrarySupport.supported
-              ? videoAssetLibrarySupport.message
-              : label
-        }
+        title={isFailed ? review?.error || "审核失败，点击重新提交" : label}
         className={`inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition disabled:cursor-not-allowed disabled:opacity-70 ${
           isApproved
             ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-500"
@@ -11384,6 +11426,9 @@ function WorkspacePage() {
                               const isRegening = sceneRegenMode !== undefined;
                               const sceneImgCount = history.length;
                               const isUploading = uploadingImageKeys.has(`scene:${s.id}`);
+                              // 媒体映射单独异步恢复；恢复完成前不能把暂时为空误判成未生成。
+                              const isMediaLoading =
+                                !workspaceMediaReady && !workspaceMediaLoadError;
                               // 2026/06:跟角色 selectedCharImages 对称 —— 选中的图作封面
                               const pinned = selectedSceneImages[s.id];
                               const coverUrl =
@@ -11393,18 +11438,20 @@ function WorkspacePage() {
                                 <div
                                   key={s.id}
                                   role="button"
-                                  tabIndex={0}
+                                  tabIndex={isMediaLoading ? -1 : 0}
                                   onClick={(event) => {
+                                    if (isMediaLoading) return;
                                     if ((event.target as HTMLElement).closest("button")) return;
                                     openScenePreview(s);
                                   }}
                                   onKeyDown={(e) => {
+                                    if (isMediaLoading) return;
                                     if (e.key === "Enter" || e.key === " ") {
                                       e.preventDefault();
                                       openScenePreview(s);
                                     }
                                   }}
-                                  className={`group relative text-left rounded-xl border bg-bg-elevated/40 hover:border-accent hover:bg-bg-elevated/70 hover:-translate-y-0.5 transition-all overflow-hidden flex flex-col focus:outline-none focus:ring-2 focus:ring-accent/40 cursor-pointer ${
+                                  className={`group relative text-left rounded-xl border bg-bg-elevated/40 hover:border-accent hover:bg-bg-elevated/70 hover:-translate-y-0.5 transition-all overflow-hidden flex flex-col focus:outline-none focus:ring-2 focus:ring-accent/40 ${isMediaLoading ? "cursor-wait" : "cursor-pointer"} ${
                                     isPinned
                                       ? "border-2 border-accent shadow-[0_0_0_3px_rgba(99,102,241,0.25)]"
                                       : "border border-border"
@@ -11424,7 +11471,16 @@ function WorkspacePage() {
                                     >
                                       <Trash2 size={14} />
                                     </button>
-                                    {busyScene === s.id && !hasImg ? (
+                                    {isMediaLoading ? (
+                                      <div
+                                        role="status"
+                                        aria-live="polite"
+                                        className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-bg-base text-text-muted"
+                                      >
+                                        <Loader2 size={20} className="animate-spin text-accent" />
+                                        <span className="text-[10px]">正在加载场景图…</span>
+                                      </div>
+                                    ) : busyScene === s.id && !hasImg ? (
                                       <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-text-muted">
                                         <Loader2 size={20} className="animate-spin text-accent" />
                                         <span className="text-[10px]">生成中…</span>
@@ -11664,6 +11720,8 @@ function WorkspacePage() {
                               const isRegening = propRegenMode !== undefined;
                               const propImgCount = history.length;
                               const isUploading = uploadingImageKeys.has(`prop:${p.id}`);
+                              const isMediaLoading =
+                                !workspaceMediaReady && !workspaceMediaLoadError;
                               const pinned = selectedPropImages[p.id];
                               const coverUrl =
                                 pinned && history.includes(pinned) ? pinned : history.at(-1);
@@ -11672,18 +11730,20 @@ function WorkspacePage() {
                                 <div
                                   key={p.id}
                                   role="button"
-                                  tabIndex={0}
+                                  tabIndex={isMediaLoading ? -1 : 0}
                                   onClick={(event) => {
+                                    if (isMediaLoading) return;
                                     if ((event.target as HTMLElement).closest("button")) return;
                                     openPropPreview(p);
                                   }}
                                   onKeyDown={(e) => {
+                                    if (isMediaLoading) return;
                                     if (e.key === "Enter" || e.key === " ") {
                                       e.preventDefault();
                                       openPropPreview(p);
                                     }
                                   }}
-                                  className={`group relative text-left rounded-xl border bg-bg-elevated/40 hover:border-accent hover:bg-bg-elevated/70 hover:-translate-y-0.5 transition-all overflow-hidden flex flex-col focus:outline-none focus:ring-2 focus:ring-accent/40 cursor-pointer ${
+                                  className={`group relative text-left rounded-xl border bg-bg-elevated/40 hover:border-accent hover:bg-bg-elevated/70 hover:-translate-y-0.5 transition-all overflow-hidden flex flex-col focus:outline-none focus:ring-2 focus:ring-accent/40 ${isMediaLoading ? "cursor-wait" : "cursor-pointer"} ${
                                     isPinned
                                       ? "border-2 border-accent shadow-[0_0_0_3px_rgba(99,102,241,0.25)]"
                                       : "border border-border"
@@ -11703,7 +11763,16 @@ function WorkspacePage() {
                                     >
                                       <Trash2 size={14} />
                                     </button>
-                                    {busyProp === p.id && !hasImg ? (
+                                    {isMediaLoading ? (
+                                      <div
+                                        role="status"
+                                        aria-live="polite"
+                                        className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-bg-base text-text-muted"
+                                      >
+                                        <Loader2 size={20} className="animate-spin text-accent" />
+                                        <span className="text-[10px]">正在加载道具图…</span>
+                                      </div>
+                                    ) : busyProp === p.id && !hasImg ? (
                                       <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-text-muted">
                                         <Loader2 size={20} className="animate-spin text-accent" />
                                         <span className="text-[10px]">生成中…</span>
@@ -11990,6 +12059,8 @@ function WorkspacePage() {
                               const isActive = activeImageKey === imageKey;
                               const isQueued = !isActive && busyChars.has(c.id);
                               const isUploading = uploadingImageKeys.has(`character:${imageKey}`);
+                              const isMediaLoading =
+                                !workspaceMediaReady && !workspaceMediaLoadError;
                               // I2I 重生(按意见 / 三视图 / 多维资产)是否在这张卡上跑,
                               // 跑了就显示黑屏遮罩 + 对应模式的提示文字。
                               const regenMode = regenBusyKeys.get(imageKey);
@@ -12030,21 +12101,23 @@ function WorkspacePage() {
                                 <div
                                   key={imageKey}
                                   role="button"
-                                  tabIndex={0}
+                                  tabIndex={isMediaLoading ? -1 : 0}
                                   onClick={(event) => {
+                                    if (isMediaLoading) return;
                                     // 卡片内的操作按钮（选中、上传、保存等）只执行自身行为，
                                     // 不能冒泡打开详情页并跳到历史图片。
                                     if ((event.target as HTMLElement).closest("button")) return;
                                     openModPanel(c, card.lookId);
                                   }}
                                   onKeyDown={(e) => {
+                                    if (isMediaLoading) return;
                                     // 键盘可达:Enter / Space 等价于点击
                                     if (e.key === "Enter" || e.key === " ") {
                                       e.preventDefault();
                                       openModPanel(c, card.lookId);
                                     }
                                   }}
-                                  className={`group relative text-left rounded-xl border bg-bg-elevated/40 hover:border-accent hover:bg-bg-elevated/70 hover:-translate-y-0.5 transition-all overflow-hidden flex flex-col focus:outline-none focus:ring-2 focus:ring-accent/40 cursor-pointer ${
+                                  className={`group relative text-left rounded-xl border bg-bg-elevated/40 hover:border-accent hover:bg-bg-elevated/70 hover:-translate-y-0.5 transition-all overflow-hidden flex flex-col focus:outline-none focus:ring-2 focus:ring-accent/40 ${isMediaLoading ? "cursor-wait" : "cursor-pointer"} ${
                                     // 2026/06:已选中时(封面 === 选中图)整张卡片高亮。
                                     // 边框变 accent + 略放大 + 暖色阴影,让"互斥选中"在
                                     // 卡片层面即可见。同 imageKey 只能有 1 个 url 钉在
@@ -12073,7 +12146,16 @@ function WorkspacePage() {
                                     >
                                       <Trash2 size={14} />
                                     </button>
-                                    {isActive && !hasImg ? (
+                                    {isMediaLoading ? (
+                                      <div
+                                        role="status"
+                                        aria-live="polite"
+                                        className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-2 bg-bg-base text-text-muted"
+                                      >
+                                        <Loader2 size={22} className="animate-spin text-accent" />
+                                        <span className="text-[10px]">正在加载角色图…</span>
+                                      </div>
+                                    ) : isActive && !hasImg ? (
                                       // 这张图**正在画**:spinner
                                       <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-text-muted">
                                         <Loader2 size={22} className="animate-spin text-accent" />
@@ -14436,21 +14518,23 @@ function WorkspacePage() {
                 </div>
                 {/* Body: 大图 + 描述,深色背景让大图更显质感 */}
                 <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[minmax(0,1.7fr)_minmax(420px,1fr)]">
-                  <div className="relative bg-black flex items-center justify-center min-h-[300px] max-h-[calc(90vh-180px)]">
-                    {currentUrl ? (
-                      <img
-                        src={currentUrl}
-                        alt={s.slug}
-                        className="max-w-full max-h-full object-contain"
-                      />
-                    ) : (
-                      <div className="flex flex-col items-center gap-2 text-text-muted p-8">
-                        <ImageIcon size={40} className="opacity-50" />
-                        <p className="text-sm">还没有生成场景图</p>
-                      </div>
-                    )}
-                    {/* 历史缩略图条:贴着大图底部,跟角色 preview 的左栏对齐 */}
-                    <div className="absolute bottom-2 left-2 right-2 flex items-center gap-1.5 overflow-x-auto py-1 px-1 rounded bg-black/50 backdrop-blur-sm">
+                  <div className="bg-black min-h-[300px] max-h-[calc(90vh-180px)] flex flex-col">
+                    <div className="relative flex-1 min-h-0 flex items-center justify-center">
+                      {currentUrl ? (
+                        <img
+                          src={currentUrl}
+                          alt={s.slug}
+                          className="max-w-full max-h-full object-contain"
+                        />
+                      ) : (
+                        <div className="flex flex-col items-center gap-2 text-text-muted p-8">
+                          <ImageIcon size={40} className="opacity-50" />
+                          <p className="text-sm">还没有生成场景图</p>
+                        </div>
+                      )}
+                    </div>
+                    {/* 历史缩略图条固定在左侧图片区的底部，不占用右侧详情空间。 */}
+                    <div className="shrink-0 flex items-center gap-1.5 overflow-x-auto border-t border-white/10 bg-black/90 py-2 px-2">
                       <div className="flex flex-col items-start gap-0.5 shrink-0">
                         <button
                           type="button"
@@ -14756,21 +14840,23 @@ function WorkspacePage() {
                 </div>
                 {/* Body: large image + description */}
                 <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-[minmax(0,1.7fr)_minmax(420px,1fr)]">
-                  <div className="relative bg-black flex items-center justify-center min-h-[300px] max-h-[calc(90vh-180px)]">
-                    {currentUrl ? (
-                      <img
-                        src={currentUrl}
-                        alt={p.name}
-                        className="max-w-full max-h-full object-contain"
-                      />
-                    ) : (
-                      <div className="flex flex-col items-center gap-2 text-text-muted p-8">
-                        <ImageIcon size={40} className="opacity-50" />
-                        <p className="text-sm">还没有生成道具图</p>
-                      </div>
-                    )}
-                    {/* History thumbnails bar */}
-                    <div className="absolute bottom-2 left-2 right-2 flex items-center gap-1.5 overflow-x-auto py-1 px-1 rounded bg-black/50 backdrop-blur-sm">
+                  <div className="bg-black min-h-[300px] max-h-[calc(90vh-180px)] flex flex-col">
+                    <div className="relative flex-1 min-h-0 flex items-center justify-center">
+                      {currentUrl ? (
+                        <img
+                          src={currentUrl}
+                          alt={p.name}
+                          className="max-w-full max-h-full object-contain"
+                        />
+                      ) : (
+                        <div className="flex flex-col items-center gap-2 text-text-muted p-8">
+                          <ImageIcon size={40} className="opacity-50" />
+                          <p className="text-sm">还没有生成道具图</p>
+                        </div>
+                      )}
+                    </div>
+                    {/* 历史缩略图条放在图片下方底栏，始终不遮挡画面。 */}
+                    <div className="shrink-0 flex items-center gap-1.5 overflow-x-auto border-t border-white/10 bg-black/90 py-2 px-2">
                       <div className="flex flex-col items-start gap-0.5 shrink-0">
                         <button
                           type="button"

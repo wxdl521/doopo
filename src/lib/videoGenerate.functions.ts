@@ -72,7 +72,8 @@ export function getVideoBackend(
   | "confluo"
   | "topenrouter"
   | "hongmeng"
-  | "sdreal" {
+  | "sdreal"
+  | "keyiyun" {
   const m = (modelId || "").trim().toLowerCase();
   if (m.startsWith("dreamina-seedance-")) return "sdreal";
   if (m.startsWith("doubao-seedance-") || m.startsWith("seedance-")) return "ark";
@@ -86,6 +87,7 @@ export function getVideoBackend(
   if (m.startsWith("confluo-")) return "confluo";
   if (m.startsWith("topenrouter-")) return "topenrouter";
   if (m.startsWith("hongmeng-")) return "hongmeng";
+  if (m.startsWith("keyiyun-")) return "keyiyun";
   return "dashscope";
 }
 
@@ -126,6 +128,11 @@ export const SDREAL_VIDEO_MODELS = {
   "dreamina-seedance-2-0-mini-hc": "Dreamina Seedance 2.0 Mini (SD Real Max)",
 } as const;
 
+// 客易云 Seedance 2.0 特价版。模型编码由上游完整指定，包含分辨率和套餐类型。
+export const KEYYIYUN_VIDEO_MODELS = {
+  "keyiyun-sd-2-0-fast-discount-720p": "Seedance 2.0 官方折扣版（客易云 · 720p）",
+} as const;
+
 export const SEEDANCE_MODELS = {
   "doubao-seedance-2-0-260128": "Doubao Seedance 2.0",
   "doubao-seedance-2-0-fast-260128": "Doubao Seedance 2.0 Fast (720p)",
@@ -136,6 +143,7 @@ export const SEEDANCE_MODELS = {
   ...TOPENROUTER_VIDEO_MODELS,
   ...HONGMENG_VIDEO_MODELS,
   ...SDREAL_VIDEO_MODELS,
+  ...KEYYIYUN_VIDEO_MODELS,
   ...KLING_VIDEO_MODELS,
 } as const;
 
@@ -241,14 +249,27 @@ async function shuciSubmit(input: {
       body: JSON.stringify(body),
     });
     const text = await response.text().catch(() => "");
-    if (!response.ok) return { ok: false, error: `[shuci] submit ${response.status}: ${text.slice(0, 300)}` };
-    const json = JSON.parse(text) as { id?: string; task_id?: string; data?: { id?: string; task_id?: string }; error?: { message?: string }; message?: string };
+    if (!response.ok)
+      return { ok: false, error: `[shuci] submit ${response.status}: ${text.slice(0, 300)}` };
+    const json = JSON.parse(text) as {
+      id?: string;
+      task_id?: string;
+      data?: { id?: string; task_id?: string };
+      error?: { message?: string };
+      message?: string;
+    };
     const taskId = json.id || json.task_id || json.data?.id || json.data?.task_id;
     return taskId
       ? { ok: true, taskId, model: input.model }
-      : { ok: false, error: `[shuci] no task id: ${json.error?.message || json.message || text.slice(0, 200)}` };
+      : {
+          ok: false,
+          error: `[shuci] no task id: ${json.error?.message || json.message || text.slice(0, 200)}`,
+        };
   } catch (error) {
-    return { ok: false, error: `[shuci] network: ${error instanceof Error ? error.message : "fetch failed"}` };
+    return {
+      ok: false,
+      error: `[shuci] network: ${error instanceof Error ? error.message : "fetch failed"}`,
+    };
   }
 }
 
@@ -262,19 +283,33 @@ async function shuciPoll(input: {
       headers: { Authorization: `Bearer ${input.apiKey}` },
     });
     const text = await response.text().catch(() => "");
-    if (!response.ok) return { ok: false, error: `[shuci] poll ${response.status}: ${text.slice(0, 300)}` };
+    if (!response.ok)
+      return { ok: false, error: `[shuci] poll ${response.status}: ${text.slice(0, 300)}` };
     const json = JSON.parse(text) as {
-      status?: string; url?: string; video_url?: string; video?: { url?: string };
-      output?: { url?: string; video_url?: string }; error?: { message?: string };
+      status?: string;
+      url?: string;
+      video_url?: string;
+      video?: { url?: string };
+      output?: { url?: string; video_url?: string };
+      error?: { message?: string };
     };
     return {
       ok: true,
       status: shuciStatusToProgress(json.status),
-      videoUrl: json.url || json.video_url || json.video?.url || json.output?.url || json.output?.video_url || null,
+      videoUrl:
+        json.url ||
+        json.video_url ||
+        json.video?.url ||
+        json.output?.url ||
+        json.output?.video_url ||
+        null,
       raw: { error: { message: json.error?.message || "" }, ...json },
     };
   } catch (error) {
-    return { ok: false, error: `[shuci] poll network: ${error instanceof Error ? error.message : "fetch failed"}` };
+    return {
+      ok: false,
+      error: `[shuci] poll network: ${error instanceof Error ? error.message : "fetch failed"}`,
+    };
   }
 }
 
@@ -291,7 +326,11 @@ const JIMENG_VERSION = "2022-08-31";
 
 type ContentItem =
   | { type: "text"; text: string }
-  | { type: "image_url"; image_url: { url: string }; role?: "reference_image" }
+  | {
+      type: "image_url";
+      image_url: { url: string };
+      role?: "first_frame" | "last_frame" | "reference_image";
+    }
   | { type: "video_url"; video_url: { url: string }; role?: "reference_video" }
   | { type: "audio_url"; audio_url: { url: string }; role?: "reference_audio" };
 
@@ -1833,7 +1872,9 @@ async function topenrouterUploadAsset(input: {
     clearTimeout(timeout);
     const text = await res.text().catch(() => "");
     if (!res.ok) {
-      console.warn(`[topenrouter asset×] upload status=${res.status} body=${topenrouterErrorBody(text)}`);
+      console.warn(
+        `[topenrouter asset×] upload status=${res.status} body=${topenrouterErrorBody(text)}`,
+      );
       return {
         ok: false,
         error: topenrouterAssetUploadError(res.status, text, input.apiKeySource),
@@ -1844,7 +1885,9 @@ async function topenrouterUploadAsset(input: {
       json = JSON.parse(text);
     } catch {}
     if (json.code !== undefined && json.code !== 0 && json.code !== "success") {
-      console.warn(`[topenrouter asset×] upload code=${json.code} message=${json.message || "unknown"}`);
+      console.warn(
+        `[topenrouter asset×] upload code=${json.code} message=${json.message || "unknown"}`,
+      );
       return {
         ok: false,
         error: `[topenrouter] asset upload failed: ${json.message || text.slice(0, 300)}`,
@@ -1858,7 +1901,9 @@ async function topenrouterUploadAsset(input: {
         error: `[topenrouter] asset upload returned no asset id: ${text.slice(0, 300)}`,
       };
     }
-    console.log(`[topenrouter asset created] id=${asset.id} status=${asset.status || "Processing"}`);
+    console.log(
+      `[topenrouter asset created] id=${asset.id} status=${asset.status || "Processing"}`,
+    );
     return { ok: true, asset };
   } catch (e) {
     clearTimeout(timeout);
@@ -1950,7 +1995,9 @@ async function topenrouterWaitForAsset(input: {
       console.warn(`[topenrouter asset×] id=${input.assetId} status=Failed`);
       return { ok: false, error: `[topenrouter] asset ${input.assetId} 入库失败 (Failed)` };
     }
-    console.log(`[topenrouter asset⟳] id=${input.assetId} status=${result.asset.status || "unknown"}`);
+    console.log(
+      `[topenrouter asset⟳] id=${input.assetId} status=${result.asset.status || "unknown"}`,
+    );
     await sleep(TOPENROUTER_ASSET_POLL_MS);
   }
   return {
@@ -2079,7 +2126,9 @@ async function topenrouterSubmit(input: {
       json = JSON.parse(text);
     } catch {}
     if (!json.id) {
-      console.warn(`[topenrouter video×] submit missing task id: ${json.error?.message || json.message || "unknown"}`);
+      console.warn(
+        `[topenrouter video×] submit missing task id: ${json.error?.message || json.message || "unknown"}`,
+      );
       return {
         ok: false,
         error: `[topenrouter] no task id: ${json.error?.message || json.message || text.slice(0, 200)}`,
@@ -2180,7 +2229,8 @@ type VideoBackend =
   | "confluo"
   | "topenrouter"
   | "hongmeng"
-  | "sdreal";
+  | "sdreal"
+  | "keyiyun";
 
 // ====================================================================
 // vapeur.ai 端实现 —— 透传火山方舟 ARK Seedance 原生格式
@@ -2333,6 +2383,381 @@ function getSdrealConfig() {
   };
 }
 
+// ====================================================================
+// 客易云（Seedance 2.0 官方折扣版）
+//
+// 协议：先将参考素材登记为 asset，再以 asset://<assetId> 引用；
+// 创建 POST /v1/seedance-special/videos，查询 GET /v1/result/{id}。
+// 该套餐的完整模型编码内已包含 720p，不能再透传 resolution。
+// ====================================================================
+
+const KEYYIYUN_DEFAULT_BASE_URL = "https://zcbservice.aizfw.cn/kyyReactApiServer";
+const KEYYIYUN_UPSTREAM_MODEL = "sd_2.0_fast_discount_720p";
+// 素材提交后由客易云服务端拉取并入库公网资源。Supabase 签名 URL 的首个读取
+// 可能超过一般 API 请求的 30 秒，给单张素材保留两分钟，避免本地过早中止。
+const KEYYIYUN_ASSET_TIMEOUT_MS = 120_000;
+const KEYYIYUN_ASSET_READY_TIMEOUT_MS = 90_000;
+const KEYYIYUN_ASSET_POLL_MS = 2_000;
+
+function getKeyiyunConfig() {
+  return {
+    apiKey: process.env.KEYYIYUN_API_KEY,
+    baseUrl: (process.env.KEYYIYUN_BASE_URL || KEYYIYUN_DEFAULT_BASE_URL).replace(/\/+$/, ""),
+  };
+}
+
+function keyiyunStatusToProgress(status: string | undefined): SeedanceProgress {
+  return seedanceStatusToProgress(status);
+}
+
+type KeyiyunAssetType = "Image" | "Video" | "Audio";
+
+type KeyiyunEnvelope<T> = {
+  code?: number | string;
+  msg?: string | null;
+  message?: string;
+  error?: string | { message?: string };
+  data?: T;
+};
+
+function keyiyunEnvelopeError(envelope: KeyiyunEnvelope<unknown>): string | null {
+  if (envelope.code === undefined || envelope.code === 0 || envelope.code === "0") return null;
+  const error = typeof envelope.error === "string" ? envelope.error : envelope.error?.message || "";
+  return error || envelope.msg || envelope.message || `服务返回错误码 ${envelope.code}`;
+}
+
+function isKeyiyunAssetUrl(url: string | undefined): boolean {
+  return Boolean(url && /^(?:asset|assetId):\/\/[a-zA-Z0-9_-]+$/.test(url));
+}
+
+function extractKeyiyunError(payload: unknown, depth = 0): string | null {
+  if (!payload || depth > 3 || typeof payload !== "object") return null;
+  const record = payload as Record<string, unknown>;
+  if (typeof record.error === "string" && record.error.trim()) return record.error;
+  if (typeof record.message === "string" && record.message.trim()) return record.message;
+  for (const key of ["error", "data", "result", "output"]) {
+    const error = extractKeyiyunError(record[key], depth + 1);
+    if (error) return error;
+  }
+  return null;
+}
+
+type KeyiyunAssetDetail = {
+  assetId?: string;
+  status?: string;
+  error?: string | { message?: string };
+};
+
+async function keyiyunWaitForAsset(input: {
+  assetId: string;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+  const deadline = Date.now() + KEYYIYUN_ASSET_READY_TIMEOUT_MS;
+  let lastStatus = "UNKNOWN";
+  while (Date.now() < deadline) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20_000);
+    try {
+      const res = await fetch(`${input.baseUrl}/asset/seedance2/assetDetail`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${input.apiKey}`,
+        },
+        body: JSON.stringify({ assetId: input.assetId }),
+        signal: controller.signal,
+      });
+      const text = await res.text().catch(() => "");
+      if (!res.ok) {
+        return { ok: false, error: `[keyiyun] 查询素材 ${res.status}: ${text.slice(0, 300)}` };
+      }
+      let json: KeyiyunEnvelope<KeyiyunAssetDetail> & KeyiyunAssetDetail = {};
+      try {
+        json = JSON.parse(text);
+      } catch {}
+      const gatewayError = keyiyunEnvelopeError(json);
+      if (gatewayError) return { ok: false, error: `[keyiyun] 查询素材失败: ${gatewayError}` };
+      const asset = json.data || json;
+      const status = (asset.status || "").toUpperCase();
+      lastStatus = status || lastStatus;
+      if (status === "READY") return { ok: true, url: `assetId://${input.assetId}` };
+      if (["FAILED", "DISABLED"].includes(status)) {
+        return {
+          ok: false,
+          error: `[keyiyun] 素材 ${input.assetId} 入库失败 (${status}): ${extractKeyiyunError(asset) || "无详细原因"}`,
+        };
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "fetch failed";
+      return { ok: false, error: `[keyiyun] 查询素材网络错误: ${message}` };
+    } finally {
+      clearTimeout(timeout);
+    }
+    await sleep(KEYYIYUN_ASSET_POLL_MS);
+  }
+  return {
+    ok: false,
+    error: `[keyiyun] 素材 ${input.assetId} 在 ${KEYYIYUN_ASSET_READY_TIMEOUT_MS / 1_000}s 内未进入 READY 状态（当前 ${lastStatus}）`,
+  };
+}
+
+async function keyiyunEnsureAsset(input: {
+  url: string | undefined;
+  assetType: KeyiyunAssetType;
+  name: string;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<{ ok: true; url?: string } | { ok: false; error: string }> {
+  if (!input.url) return { ok: true };
+  if (isKeyiyunAssetUrl(input.url)) return { ok: true, url: input.url };
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), KEYYIYUN_ASSET_TIMEOUT_MS);
+  try {
+    const res = await fetch(`${input.baseUrl}/asset/seedance2/assetUpload`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${input.apiKey}`,
+      },
+      body: JSON.stringify({ assetType: input.assetType, url: input.url, name: input.name }),
+      signal: controller.signal,
+    });
+    const text = await res.text().catch(() => "");
+    if (!res.ok) {
+      return { ok: false, error: `[keyiyun] 素材提交 ${res.status}: ${text.slice(0, 300)}` };
+    }
+    let json: KeyiyunEnvelope<{ assetId?: string }> & { assetId?: string } = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    const gatewayError = keyiyunEnvelopeError(json);
+    if (gatewayError) return { ok: false, error: `[keyiyun] 素材提交失败: ${gatewayError}` };
+    const assetId = json.data?.assetId || json.assetId;
+    if (!assetId) {
+      return {
+        ok: false,
+        error: `[keyiyun] 素材提交未返回 assetId: ${json.msg || json.message || text.slice(0, 200)}`,
+      };
+    }
+    // 接口文档称两种 scheme 都兼容，但实际 Seedance 上游更稳定地识别
+    // assetId://。上传成功并不代表已同步到上游，必须等详情接口返回 READY。
+    return keyiyunWaitForAsset({ assetId, apiKey: input.apiKey, baseUrl: input.baseUrl });
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.name === "AbortError"
+          ? `素材提交超时 (${KEYYIYUN_ASSET_TIMEOUT_MS / 1_000}s)`
+          : error.message
+        : "fetch failed";
+    return { ok: false, error: `[keyiyun] 素材提交网络错误: ${message}` };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function buildKeyiyunContent(input: {
+  prompt: string;
+  firstFrameImageUrl?: string;
+  lastFrameImageUrl?: string;
+  referenceImageUrls: string[];
+  referenceAudioUrl?: string;
+}): ContentItem[] | { error: string } {
+  const { firstFrameImageUrl, lastFrameImageUrl, referenceImageUrls, referenceAudioUrl } = input;
+  if (
+    (firstFrameImageUrl || lastFrameImageUrl) &&
+    (referenceImageUrls.length || referenceAudioUrl)
+  ) {
+    return { error: "[keyiyun] 首帧/首尾帧场景不能与参考图片或音频混用，请只保留一种素材模式。" };
+  }
+  if (lastFrameImageUrl && !firstFrameImageUrl) {
+    return { error: "[keyiyun] 尾帧图片必须与首帧图片一起使用。" };
+  }
+  if (referenceAudioUrl && !referenceImageUrls.length) {
+    return { error: "[keyiyun] 参考音频不能单独使用，至少还需要一张参考图片。" };
+  }
+  const content: ContentItem[] = [{ type: "text", text: input.prompt }];
+  if (firstFrameImageUrl) {
+    content.push({
+      type: "image_url",
+      role: "first_frame",
+      image_url: { url: firstFrameImageUrl },
+    });
+  }
+  if (lastFrameImageUrl) {
+    content.push({ type: "image_url", role: "last_frame", image_url: { url: lastFrameImageUrl } });
+  }
+  for (const url of referenceImageUrls) {
+    content.push({ type: "image_url", role: "reference_image", image_url: { url } });
+  }
+  if (referenceAudioUrl) {
+    content.push({
+      type: "audio_url",
+      role: "reference_audio",
+      audio_url: { url: referenceAudioUrl },
+    });
+  }
+  return content;
+}
+
+async function keyiyunSubmit(input: {
+  prompt: string;
+  media: DashScopeMediaItem[];
+  ratio?: SeedanceRatio;
+  duration?: number;
+  generateAudio?: boolean;
+  referenceAudioUrl?: string;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<{ ok: true; taskId: string; model: string } | { ok: false; error: string }> {
+  const firstFrameUrl = input.media.find((item) => item.type === "first_frame")?.url;
+  const lastFrameUrl = input.media.find((item) => item.type === "last_frame")?.url;
+  const referenceImageUrls = input.media
+    .filter((item) => item.type === "reference_image")
+    .map((item) => item.url);
+  const assetPrefix = `doopoo-${Date.now()}`;
+  const firstFrameAsset = await keyiyunEnsureAsset({
+    url: firstFrameUrl,
+    assetType: "Image",
+    name: `${assetPrefix}-first-frame`,
+    apiKey: input.apiKey,
+    baseUrl: input.baseUrl,
+  });
+  if (!firstFrameAsset.ok) return firstFrameAsset;
+  const lastFrameAsset = await keyiyunEnsureAsset({
+    url: lastFrameUrl,
+    assetType: "Image",
+    name: `${assetPrefix}-last-frame`,
+    apiKey: input.apiKey,
+    baseUrl: input.baseUrl,
+  });
+  if (!lastFrameAsset.ok) return lastFrameAsset;
+  // 服务端会主动抓取每个公网 URL；并发上传多张大图会让其中一个请求在
+  // 下载队列中饿死。顺序入库更慢一点，但对 3-9 张参考图更稳定。
+  const referenceAssetUrls: string[] = [];
+  for (const [index, url] of referenceImageUrls.entries()) {
+    const asset = await keyiyunEnsureAsset({
+      url,
+      assetType: "Image",
+      name: `${assetPrefix}-reference-image-${index + 1}`,
+      apiKey: input.apiKey,
+      baseUrl: input.baseUrl,
+    });
+    if (!asset.ok) return asset;
+    if (asset.url) referenceAssetUrls.push(asset.url);
+  }
+  const referenceAudioAsset = await keyiyunEnsureAsset({
+    url: input.referenceAudioUrl,
+    assetType: "Audio",
+    name: `${assetPrefix}-reference-audio`,
+    apiKey: input.apiKey,
+    baseUrl: input.baseUrl,
+  });
+  if (!referenceAudioAsset.ok) return referenceAudioAsset;
+  const content = buildKeyiyunContent({
+    prompt: input.prompt,
+    firstFrameImageUrl: firstFrameAsset.url,
+    lastFrameImageUrl: lastFrameAsset.url,
+    referenceImageUrls: referenceAssetUrls,
+    referenceAudioUrl: referenceAudioAsset.url,
+  });
+  if ("error" in content) return { ok: false, error: content.error };
+
+  const body: Record<string, unknown> = { model: KEYYIYUN_UPSTREAM_MODEL, content };
+  if (input.ratio) body.ratio = input.ratio;
+  if (typeof input.duration === "number") body.duration = input.duration;
+  if (typeof input.generateAudio === "boolean") body.generate_audio = input.generateAudio;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const res = await fetch(`${input.baseUrl}/v1/seedance-special/videos`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${input.apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    const text = await res.text().catch(() => "");
+    if (!res.ok)
+      return { ok: false, error: `[keyiyun] 创建任务 ${res.status}: ${text.slice(0, 500)}` };
+    let json: KeyiyunEnvelope<{ id?: string }> & { id?: string } = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    const gatewayError = keyiyunEnvelopeError(json);
+    if (gatewayError) return { ok: false, error: `[keyiyun] 创建任务失败: ${gatewayError}` };
+    const taskId = json.data?.id || json.id;
+    if (!taskId) {
+      return {
+        ok: false,
+        error: `[keyiyun] 创建任务未返回 id: ${json.msg || json.message || text.slice(0, 200)}`,
+      };
+    }
+    return { ok: true, taskId, model: KEYYIYUN_UPSTREAM_MODEL };
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.name === "AbortError"
+          ? "创建任务超时 (30s)"
+          : error.message
+        : "fetch failed";
+    return { ok: false, error: `[keyiyun] 创建任务网络错误: ${message}` };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function keyiyunPoll(input: {
+  taskId: string;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<PollResult> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const res = await fetch(`${input.baseUrl}/v1/result/${encodeURIComponent(input.taskId)}`, {
+      headers: { Authorization: `Bearer ${input.apiKey}` },
+      signal: controller.signal,
+    });
+    const text = await res.text().catch(() => "");
+    if (!res.ok)
+      return { ok: false, error: `[keyiyun] 查询任务 ${res.status}: ${text.slice(0, 300)}` };
+    type KeyiyunResult = {
+      status?: string;
+      video_url?: string;
+      error?: string | { message?: string };
+    };
+    let json: KeyiyunEnvelope<KeyiyunResult> & KeyiyunResult = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    const gatewayError = keyiyunEnvelopeError(json);
+    if (gatewayError) return { ok: false, error: `[keyiyun] 查询任务失败: ${gatewayError}` };
+    const result = json.data || json;
+    const errorMessage = extractKeyiyunError(result) || extractKeyiyunError(json) || "";
+    return {
+      ok: true,
+      status: keyiyunStatusToProgress(result.status),
+      videoUrl: result.video_url || null,
+      raw: { error: { message: errorMessage }, ...result },
+    };
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.name === "AbortError"
+          ? "查询任务超时 (30s)"
+          : error.message
+        : "fetch failed";
+    return { ok: false, error: `[keyiyun] 查询任务网络错误: ${message}` };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function sdrealCreateImageAsset(input: {
   url: string;
   name: string;
@@ -2359,7 +2784,9 @@ async function sdrealCreateImageAsset(input: {
     });
     const text = await res.text().catch(() => "");
     if (!res.ok) return { ok: false, error: `[sdreal] asset ${res.status}: ${text.slice(0, 300)}` };
-    let json: { data?: { Id?: string; base_resp?: { status_code?: number; status_msg?: string } } } = {};
+    let json: {
+      data?: { Id?: string; base_resp?: { status_code?: number; status_msg?: string } };
+    } = {};
     try {
       json = JSON.parse(text);
     } catch {}
@@ -2373,7 +2800,10 @@ async function sdrealCreateImageAsset(input: {
     }
     return { ok: true, assetId };
   } catch (error) {
-    return { ok: false, error: `[sdreal] asset network: ${error instanceof Error ? error.message : "fetch failed"}` };
+    return {
+      ok: false,
+      error: `[sdreal] asset network: ${error instanceof Error ? error.message : "fetch failed"}`,
+    };
   }
 }
 
@@ -2390,7 +2820,8 @@ async function sdrealSubmit(input: {
   baseUrl: string;
 }): Promise<{ ok: true; taskId: string; model: string } | { ok: false; error: string }> {
   const imageMedia = input.media.filter(
-    (item) => item.type === "first_frame" || item.type === "last_frame" || item.type === "reference_image",
+    (item) =>
+      item.type === "first_frame" || item.type === "last_frame" || item.type === "reference_image",
   );
   const assets = await Promise.all(
     imageMedia.map((item, index) =>
@@ -2432,15 +2863,20 @@ async function sdrealSubmit(input: {
       body: JSON.stringify(body),
     });
     const text = await res.text().catch(() => "");
-    if (!res.ok) return { ok: false, error: `[sdreal] submit ${res.status}: ${text.slice(0, 300)}` };
+    if (!res.ok)
+      return { ok: false, error: `[sdreal] submit ${res.status}: ${text.slice(0, 300)}` };
     let json: { task?: { id?: string; error?: string } } = {};
     try {
       json = JSON.parse(text);
     } catch {}
-    if (!json.task?.id) return { ok: false, error: `[sdreal] no task id: ${json.task?.error || text.slice(0, 300)}` };
+    if (!json.task?.id)
+      return { ok: false, error: `[sdreal] no task id: ${json.task?.error || text.slice(0, 300)}` };
     return { ok: true, taskId: json.task.id, model: input.model };
   } catch (error) {
-    return { ok: false, error: `[sdreal] submit network: ${error instanceof Error ? error.message : "fetch failed"}` };
+    return {
+      ok: false,
+      error: `[sdreal] submit network: ${error instanceof Error ? error.message : "fetch failed"}`,
+    };
   }
 }
 
@@ -2468,7 +2904,10 @@ async function sdrealPoll(input: {
       raw: { error: { message: typeof task.error === "string" ? task.error : "" }, ...json },
     };
   } catch (error) {
-    return { ok: false, error: `[sdreal] poll network: ${error instanceof Error ? error.message : "fetch failed"}` };
+    return {
+      ok: false,
+      error: `[sdreal] poll network: ${error instanceof Error ? error.message : "fetch failed"}`,
+    };
   }
 }
 
@@ -2478,12 +2917,45 @@ type SubmitResult =
 
 async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
   const backend = getVideoBackend(input.model);
+  if (backend === "keyiyun") {
+    const { apiKey, baseUrl } = getKeyiyunConfig();
+    if (!apiKey) {
+      return {
+        ok: false,
+        error:
+          "[keyiyun] 缺少 KEYYIYUN_API_KEY，请在 Cloudflare Secrets 或 .env.local 中配置后再试。",
+      };
+    }
+    // 当前接入的是不带 `_with_video_ref` 的折扣模型；参考视频必须改用
+    // 带该后缀的上游模型，避免上游返回难懂的参数错误。参考音频可与参考图搭配。
+    if (input.referenceVideoUrl) {
+      return {
+        ok: false,
+        error:
+          "[keyiyun] 当前 Seedance 2.0 官方折扣版不支持参考视频；请改用带 `_with_video_ref` 的模型。",
+      };
+    }
+    const r = await keyiyunSubmit({
+      prompt: input.prompt,
+      media: input.media,
+      ratio: input.ratio,
+      duration: input.duration,
+      generateAudio: input.generateAudio,
+      referenceAudioUrl: input.referenceAudioUrl,
+      apiKey,
+      baseUrl,
+    });
+    return r.ok
+      ? { ok: true, taskId: r.taskId, model: input.model, backend: "keyiyun" }
+      : { ok: false, error: r.error };
+  }
   if (backend === "sdreal") {
     const { apiKey, baseUrl } = getSdrealConfig();
     if (!apiKey) {
       return {
         ok: false,
-        error: "[sdreal] 缺少 SD_REAL_MAX_API_KEY，请在 Cloudflare Secrets 或 .env.local 中配置后再试。",
+        error:
+          "[sdreal] 缺少 SD_REAL_MAX_API_KEY，请在 Cloudflare Secrets 或 .env.local 中配置后再试。",
       };
     }
     if (input.referenceVideoUrl || input.referenceAudioUrl) {
@@ -2741,7 +3213,8 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
     if (!assetApiKey) {
       return {
         ok: false,
-        error: "[topenrouter] 缺少 TOPENROUTER_ASSET_API_KEY / TOPENROUTER_API_KEY，无法上传参考素材。",
+        error:
+          "[topenrouter] 缺少 TOPENROUTER_ASSET_API_KEY / TOPENROUTER_API_KEY，无法上传参考素材。",
       };
     }
     // 参考图/视频/音频先进入 TopenRouter 素材库。真人图片直接给视频接口会触发
@@ -2894,6 +3367,11 @@ type PollResult =
   | { ok: false; error: string; status?: SeedanceProgress; raw?: any };
 
 async function pollVideoTask(input: PollInput): Promise<PollResult> {
+  if (input.backend === "keyiyun") {
+    const { apiKey, baseUrl } = getKeyiyunConfig();
+    if (!apiKey) return { ok: false, error: "[keyiyun] 缺少 KEYYIYUN_API_KEY" };
+    return keyiyunPoll({ taskId: input.taskId, apiKey, baseUrl });
+  }
   if (input.backend === "sdreal") {
     const { apiKey, baseUrl } = getSdrealConfig();
     if (!apiKey) return { ok: false, error: "[sdreal] 缺少 SD_REAL_MAX_API_KEY" };
@@ -2980,6 +3458,49 @@ const TopenrouterAssetUploadInput = z.object({
   name: z.string().trim().min(1).max(200).optional(),
   model: z.string().trim().min(1).max(200).default("topenrouter-doubao-seedance-2-0-mini-260615"),
 });
+
+const KeyiyunAssetUploadInput = z.object({
+  // 客易云素材接口同样只接受其服务端可拉取的公网 URL。
+  url: z
+    .string()
+    .url()
+    .max(4_000)
+    .refine((value) => /^https?:\/\//i.test(value), "素材 URL 必须为公网 HTTP(S) 地址"),
+  assetType: z.enum(["Image", "Video", "Audio"]),
+  name: z.string().trim().min(1).max(200).optional(),
+});
+
+/**
+ * 将一项素材提交至客易云的 Seedance 素材库。
+ * 客易云在提交成功后直接返回可复用的 asset:// 引用；该步骤也会完成上游的真人脸审核。
+ */
+export const uploadKeyiyunAsset = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((d: unknown) => KeyiyunAssetUploadInput.parse(d))
+  .handler(async ({ data }) => {
+    const { apiKey, baseUrl } = getKeyiyunConfig();
+    if (!apiKey) {
+      return { ok: false as const, error: "[keyiyun] 缺少 KEYYIYUN_API_KEY" };
+    }
+    const uploaded = await keyiyunEnsureAsset({
+      url: data.url,
+      assetType: data.assetType,
+      name: data.name || `doopoo-asset-${Date.now()}`,
+      apiKey,
+      baseUrl,
+    });
+    if (!uploaded.ok || !uploaded.url) {
+      return {
+        ok: false as const,
+        error: uploaded.ok ? "[keyiyun] 素材提交未返回素材引用" : uploaded.error,
+      };
+    }
+    return {
+      ok: true as const,
+      assetUrl: uploaded.url,
+      assetId: uploaded.url.replace(/^(?:asset|assetId):\/\//, ""),
+    };
+  });
 
 /**
  * 手动上传一项 TopenRouter 素材并等待审核/入库完成。
@@ -3103,7 +3624,9 @@ export const submitVideoTaskFn = createServerFn({ method: "POST" })
     let referenceAudioUrl: string | undefined;
     for (const item of data.content as any[]) {
       if (item?.type === "image_url" && item?.image_url?.url) {
-        media.push({ type: "reference_image", url: item.image_url.url });
+        const type =
+          item.role === "first_frame" || item.role === "last_frame" ? item.role : "reference_image";
+        media.push({ type, url: item.image_url.url });
       } else if (item?.type === "video_url" && item?.video_url?.url) {
         referenceVideoUrl = item.video_url.url;
       } else if (item?.type === "audio_url" && item?.audio_url?.url) {
@@ -3172,6 +3695,7 @@ const PollServerInput = z.object({
     "topenrouter",
     "hongmeng",
     "sdreal",
+    "keyiyun",
   ]),
 });
 
@@ -3278,9 +3802,7 @@ async function persistAudioUrl(
   // 部署环境则保持现有公开 URL。两种情况都不应触发转存或数据库迁移提示。
   try {
     const parsed = new URL(url);
-    const isDoopooHost = ["doopoo.ai", "www.doopoo.ai", "test.doopoo.ai"].includes(
-      parsed.hostname,
-    );
+    const isDoopooHost = ["doopoo.ai", "www.doopoo.ai", "test.doopoo.ai"].includes(parsed.hostname);
     const isPresetVoice = /^\/voice-styles\/[\w-]+\.mp3$/i.test(parsed.pathname);
     if (parsed.protocol === "http:" && parsed.hostname === "localhost" && isPresetVoice) {
       return { ok: true, url: `https://test.doopoo.ai${parsed.pathname}` };
@@ -3381,10 +3903,10 @@ const VideoMediaUrl = z
   .min(1)
   .refine(
     (value) =>
-      /^asset:\/\/[a-zA-Z0-9_-]+$/.test(value) ||
+      /^(?:asset|assetId):\/\/[a-zA-Z0-9_-]+$/.test(value) ||
       isHttpMediaUrl(value) ||
       isBase64MediaDataUri(value),
-    "素材必须为公网 HTTP(S) URL、base64 data URI 或 asset://asset_id",
+    "素材必须为公网 HTTP(S) URL、base64 data URI、asset://asset_id 或 assetId://asset_id",
   );
 
 const GenerateVideoInput = z.object({
@@ -3426,11 +3948,19 @@ export const generateVideo = createServerFn({ method: "POST" })
     const persistedMedia: DashScopeMediaItem[] = [];
     for (const m of media) {
       // asset:// 是同一渠道素材库的稳定引用，不能再下载或转存；也绝不允许跨渠道复用。
-      if (m.url.startsWith("asset://")) {
-        if (backend !== "topenrouter") {
+      if (/^(?:asset|assetId):\/\//.test(m.url)) {
+        if (backend !== "topenrouter" && backend !== "keyiyun") {
           return {
             ok: false as const,
             error: `[${backend}] 不能使用其他渠道的 asset:// 素材引用`,
+            taskId: undefined,
+            backend,
+          };
+        }
+        if (backend === "topenrouter" && m.url.startsWith("assetId://")) {
+          return {
+            ok: false as const,
+            error: "[topenrouter] 不能使用客易云的 assetId:// 素材引用",
             taskId: undefined,
             backend,
           };
@@ -3469,7 +3999,9 @@ export const generateVideo = createServerFn({ method: "POST" })
               ? "topenrouter-doubao-seedance-2-0-260128"
               : backend === "hongmeng"
                 ? "hongmeng-seedance2-pro"
-                : "happyhorse-1.0-i2v");
+                : backend === "keyiyun"
+                  ? "keyiyun-sd-2-0-fast-discount-720p"
+                  : "happyhorse-1.0-i2v");
 
     console.log(
       `[video→] backend=${backend} model=${model} promptChars=${data.prompt.length} images=${persistedMedia.length} videoRef=${referenceVideoUrl ? 1 : 0} audioRef=${referenceAudioUrl ? 1 : 0} ratio=${data.ratio} resolution=${data.resolution} duration=${data.duration}`,
@@ -3491,7 +4023,9 @@ export const generateVideo = createServerFn({ method: "POST" })
       console.warn(`[video×] backend=${backend} model=${model} submit=${submit.error}`);
       return { ok: false as const, error: submit.error, taskId: undefined, backend };
     }
-    console.log(`[video✓] queued backend=${submit.backend} taskId=${submit.taskId} model=${submit.model}`);
+    console.log(
+      `[video✓] queued backend=${submit.backend} taskId=${submit.taskId} model=${submit.model}`,
+    );
 
     data.onProgress?.("queued", { taskId: submit.taskId, backend });
 
@@ -3521,7 +4055,9 @@ export const generateVideo = createServerFn({ method: "POST" })
         }
         continue;
       }
-      console.log(`[video⟳] backend=${submit.backend} taskId=${submit.taskId} status=${poll.status}`);
+      console.log(
+        `[video⟳] backend=${submit.backend} taskId=${submit.taskId} status=${poll.status}`,
+      );
       if (poll.status === "succeeded") {
         data.onProgress?.("succeeded", {
           taskId: submit.taskId,

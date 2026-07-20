@@ -135,7 +135,6 @@ const imageModelOptions = [
     label: "Azure0716-gpt-image-2",
     sub: "9积分/张",
   },
-
 ];
 // 图下拉只保留指定供应商，避免将未启用渠道展示给用户。
 const VISIBLE_IMAGE_PREFIXES = [
@@ -195,6 +194,14 @@ const videoModels = [
     id: "dreamina-seedance-2-0-mini-hc",
     label: "Dreamina Seedance 2.0 Mini",
     sub: "SD Real Max · 轻量版",
+  },
+
+  // ---- 客易云（Seedance 2.0 官方折扣版，完整模型编码固定 720p）----
+  { id: "__video_sep_keyiyun__", label: "—— 客易云（Seedance 2.0）——", sub: "" },
+  {
+    id: "keyiyun-sd-2-0-fast-discount-720p",
+    label: "Seedance 2.0 官方折扣版",
+    sub: "客易云 · 快速 · 720p · 文本/图片参考",
   },
 
   // ---- 即梦 3.0 Pro(火山引擎视觉服务,需 AK/SK)----
@@ -351,6 +358,7 @@ const VISIBLE_VIDEO_PREFIXES = [
   "hongmeng-", // 弘梦 中转 Seedance 2
   "shuci-", // 数安词源
   "dreamina-seedance-", // SD Real Max
+  "keyiyun-", // 客易云 Seedance 2.0 官方折扣版
 ];
 const isVisibleVideo = (id: string) =>
   VISIBLE_VIDEO_PREFIXES.some((p) => id.toLowerCase().startsWith(p));
