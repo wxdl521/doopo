@@ -119,6 +119,16 @@ describe("RestyleStudio prototype", () => {
     expect(screen.getAllByText("保留庄园客厅")).toHaveLength(3);
   });
 
+  it("keeps the analysis model next to the composer send action", async () => {
+    const user = userEvent.setup();
+    renderStudio();
+
+    const model = screen.getByLabelText("选择分析模型");
+    expect(model).toHaveValue("ark:deepseek-v4-pro-260425");
+    await user.selectOptions(model, "qwen:qwen3.6-plus");
+    expect(model).toHaveValue("qwen:qwen3.6-plus");
+  });
+
   it("creates multiple conversations under the active project", async () => {
     const user = userEvent.setup();
     renderStudio();

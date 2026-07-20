@@ -16,7 +16,19 @@ export type RestyleMessage = {
   id: string;
   content: string;
   createdAt: string;
+  role?: "user" | "assistant";
   attachments?: RestyleAttachment[];
+};
+
+export type RestyleExtractedAsset = {
+  id: string;
+  kind: "character" | "scene" | "prop";
+  sourceName: string;
+  sourceDescription: string;
+  targetName: string;
+  targetDescription: string;
+  importance: "required" | "optional";
+  shouldRestyle: boolean;
 };
 
 export type RestyleConversation = {
@@ -39,6 +51,8 @@ export type RestyleProject = {
   conversations: RestyleConversation[];
   activeConversationId: string | null;
   planNote: string;
+  extractedAssets: RestyleExtractedAsset[];
+  analysisSummary: string;
 };
 
 function keyFor(userId: string): string {
@@ -88,12 +102,34 @@ function parseMessages(value: unknown): RestyleMessage[] {
     )
     .map((message) => ({
       ...message,
+      role: message.role === "assistant" ? "assistant" : "user",
       attachments: Array.isArray(message.attachments)
         ? message.attachments
             .map(parseAttachment)
             .filter((file): file is RestyleAttachment => Boolean(file))
         : undefined,
     }));
+}
+
+function parseExtractedAssets(value: unknown): RestyleExtractedAsset[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((asset) => {
+    if (!asset || typeof asset !== "object") return [];
+    const item = asset as Partial<RestyleExtractedAsset>;
+    if (
+      typeof item.id !== "string" ||
+      !["character", "scene", "prop"].includes(item.kind ?? "") ||
+      typeof item.sourceName !== "string" ||
+      typeof item.sourceDescription !== "string" ||
+      typeof item.targetName !== "string" ||
+      typeof item.targetDescription !== "string" ||
+      !["required", "optional"].includes(item.importance ?? "") ||
+      typeof item.shouldRestyle !== "boolean"
+    ) {
+      return [];
+    }
+    return [item as RestyleExtractedAsset];
+  });
 }
 
 function parseProject(value: unknown): RestyleProject | null {
@@ -152,6 +188,8 @@ function parseProject(value: unknown): RestyleProject | null {
         ? item.activeConversationId
         : (migratedConversations[0]?.id ?? null),
     planNote: typeof item.planNote === "string" ? item.planNote : "",
+    extractedAssets: parseExtractedAssets(item.extractedAssets),
+    analysisSummary: typeof item.analysisSummary === "string" ? item.analysisSummary : "",
   };
 }
 

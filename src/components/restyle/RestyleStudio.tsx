@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useServerFn } from "@tanstack/react-start";
 import {
   Check,
   ChevronDown,
@@ -6,6 +7,7 @@ import {
   Folder,
   FolderOpen,
   LayoutGrid,
+  Loader2,
   MessageSquare,
   Pencil,
   Plus,
@@ -26,13 +28,24 @@ import {
   saveRestyleProjects,
   type RestyleAttachment,
   type RestyleConversation,
+  type RestyleExtractedAsset,
   type RestyleProject,
 } from "./restyleStorage";
 import type { RestyleAsset, RestyleStage } from "./restyleTypes";
+import { analyzeRestyleAssets } from "../../lib/restyleAnalysis.functions";
 
 type AssetLibraryStatus = "idle" | "loading" | "ready" | "error";
 type RestyleView = "workbench" | "canvas";
 const stageOrder: RestyleStage[] = ["upload", "analysis", "assets", "plan", "render", "review"];
+
+const RESTYLE_MODELS = [
+  { id: "ark:deepseek-v4-pro-260425", label: "DeepSeek V4 Pro" },
+  { id: "qwen:qwen3.6-plus", label: "Qwen 3.6 Plus · 视觉" },
+  { id: "qwen:qwen3.6-flash", label: "Qwen 3.6 Flash · 视觉" },
+  { id: "qwen:qwen3.7-max", label: "Qwen 3.7 Max" },
+] as const;
+
+type RestyleModel = (typeof RESTYLE_MODELS)[number]["id"];
 
 function AssetVisual({ asset, compact = false }: { asset: RestyleAsset; compact?: boolean }) {
   return (
@@ -47,6 +60,63 @@ function AssetVisual({ asset, compact = false }: { asset: RestyleAsset; compact?
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_75%_18%,rgba(255,255,255,.25),transparent_28%),linear-gradient(135deg,transparent_40%,rgba(0,0,0,.34))]" />
     </div>
   );
+}
+
+function waitForVideoEvent(video: HTMLVideoElement, event: "loadedmetadata" | "seeked"): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      cleanup();
+      reject(new Error("读取视频关键帧超时"));
+    }, 12_000);
+    const onSuccess = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = () => {
+      cleanup();
+      reject(new Error("无法读取视频内容"));
+    };
+    const cleanup = () => {
+      window.clearTimeout(timer);
+      video.removeEventListener(event, onSuccess);
+      video.removeEventListener("error", onError);
+    };
+    video.addEventListener(event, onSuccess, { once: true });
+    video.addEventListener("error", onError, { once: true });
+  });
+}
+
+/** Extract up to four lightweight stills locally; the original video is never put in localStorage. */
+async function extractVideoKeyFrames(file: File): Promise<string[]> {
+  const url = URL.createObjectURL(file);
+  const video = document.createElement("video");
+  video.muted = true;
+  video.preload = "metadata";
+  video.src = url;
+  try {
+    await waitForVideoEvent(video, "loadedmetadata");
+    if (!Number.isFinite(video.duration) || video.duration <= 0 || video.videoWidth <= 0) return [];
+    const scale = Math.min(1, 960 / video.videoWidth);
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+    canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+    const context = canvas.getContext("2d");
+    if (!context) return [];
+    const positions = [...new Set([0.02, 0.28, 0.55, 0.82].map((ratio) => Math.max(0.05, video.duration * ratio)))];
+    const frames: string[] = [];
+    for (const position of positions) {
+      video.currentTime = Math.min(position, Math.max(0, video.duration - 0.05));
+      await waitForVideoEvent(video, "seeked");
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const image = canvas.toDataURL("image/jpeg", 0.62);
+      if (image.length <= 1_400_000) frames.push(image);
+    }
+    return frames;
+  } finally {
+    video.removeAttribute("src");
+    video.load();
+    URL.revokeObjectURL(url);
+  }
 }
 
 export default function RestyleStudio() {
@@ -67,8 +137,13 @@ export default function RestyleStudio() {
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const [draftAttachmentIds, setDraftAttachmentIds] = useState<string[]>([]);
   const [filePreviews, setFilePreviews] = useState<Record<string, string>>({});
+  const [selectedModel, setSelectedModel] = useState<RestyleModel>("ark:deepseek-v4-pro-260425");
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisError, setAnalysisError] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+  const fileObjectsRef = useRef<Record<string, File>>({});
+  const callAnalyzeRestyleAssets = useServerFn(analyzeRestyleAssets);
 
   const stageLabels: Record<RestyleStage, string> = {
     upload: t.restyle_stage_upload,
@@ -172,6 +247,8 @@ export default function RestyleStudio() {
       conversations: [conversation],
       activeConversationId: conversation.id,
       planNote: "",
+      extractedAssets: [],
+      analysisSummary: "",
     };
     setProjects((current) => [project, ...current]);
     setActiveProjectId(id);
@@ -236,7 +313,7 @@ export default function RestyleStudio() {
   }
 
   function toggleAssetConfirmation(assetId: string) {
-    if (!activeProject?.assetIds.includes(assetId)) return;
+    if (!activeProject) return;
     updateProject(activeProject.id, (project) => ({
       ...project,
       confirmedAssetIds: project.confirmedAssetIds.includes(assetId)
@@ -275,6 +352,10 @@ export default function RestyleStudio() {
       }
       return current;
     }, {});
+    attachments.forEach((attachment, index) => {
+      const file = selectedFiles[index];
+      if (file && !attachment.isFolder) fileObjectsRef.current[attachment.id] = file;
+    });
     setFilePreviews((current) => ({ ...current, ...previews }));
     updateProject(activeProject.id, (project) => ({
       ...project,
@@ -296,40 +377,104 @@ export default function RestyleStudio() {
       return next;
     });
     setDraftAttachmentIds((current) => current.filter((id) => id !== fileId));
+    delete fileObjectsRef.current[fileId];
     updateProject(activeProject.id, (project) => ({
       ...project,
       files: project.files.filter((file) => file.id !== fileId),
     }));
   }
 
-  function sendChatMessage() {
-    if (!activeProject || !activeConversation) return;
-    const message = chatDraft.trim();
-    const attachments = activeProject.files.filter((file) => draftAttachmentIds.includes(file.id));
-    if (!message && !attachments.length) return;
-    updateProject(activeProject.id, (project) => ({
+  function appendConversationMessage(
+    projectId: string,
+    conversationId: string,
+    message: { content: string; role: "user" | "assistant"; attachments?: RestyleAttachment[] },
+  ) {
+    updateProject(projectId, (project) => ({
       ...project,
       conversations: project.conversations.map((conversation) =>
-        conversation.id === activeConversation.id
+        conversation.id === conversationId
           ? {
               ...conversation,
-              title: conversation.title || message.slice(0, 32) || attachments[0]?.name || "",
+              title:
+                conversation.title || message.content.slice(0, 32) || message.attachments?.[0]?.name || "",
               updatedAt: new Date().toISOString(),
               messages: [
                 ...conversation.messages,
-                {
-                  id: crypto.randomUUID(),
-                  content: message,
-                  createdAt: new Date().toISOString(),
-                  attachments,
-                },
+                { id: crypto.randomUUID(), createdAt: new Date().toISOString(), ...message },
               ],
             }
           : conversation,
       ),
     }));
+  }
+
+  async function sendChatMessage() {
+    if (!activeProject || !activeConversation) return;
+    const message = chatDraft.trim();
+    const attachments = activeProject.files.filter((file) => draftAttachmentIds.includes(file.id));
+    if (!message && !attachments.length) return;
+    const projectId = activeProject.id;
+    const conversationId = activeConversation.id;
+    appendConversationMessage(projectId, conversationId, {
+      content: message,
+      role: "user",
+      attachments,
+    });
     setChatDraft("");
     setDraftAttachmentIds([]);
+
+    const sourceFiles = activeProject.files.filter((file) => file.type.startsWith("video/"));
+    if (!message || !sourceFiles.length) return;
+
+    setIsAnalyzing(true);
+    setAnalysisError("");
+    try {
+      const frameFile = sourceFiles
+        .map((file) => fileObjectsRef.current[file.id])
+        .find((file): file is File => Boolean(file));
+      const frameImages = frameFile ? await extractVideoKeyFrames(frameFile).catch(() => []) : [];
+      const result = await callAnalyzeRestyleAssets({
+        data: {
+          instruction: message,
+          model: selectedModel,
+          sourceFiles: sourceFiles.map(({ name, type, size }) => ({ name, type, size })),
+          frameImages,
+          existingAssets: activeProject.extractedAssets.map(({ id: _id, ...asset }) => asset),
+        },
+      });
+      if (!result.ok) {
+        setAnalysisError(result.error);
+        appendConversationMessage(projectId, conversationId, {
+          role: "assistant",
+          content: `${t.restyle_analysis_failed} ${result.error}`,
+        });
+        return;
+      }
+      const extractedAssets: RestyleExtractedAsset[] = result.assets.map((asset) => ({
+        id: crypto.randomUUID(),
+        ...asset,
+      }));
+      updateProject(projectId, (project) => ({
+        ...project,
+        stage: "assets",
+        extractedAssets,
+        analysisSummary: result.summary,
+        confirmedAssetIds: [],
+      }));
+      appendConversationMessage(projectId, conversationId, {
+        role: "assistant",
+        content: `${result.summary}${result.usedFrames ? ` ${t.restyle_frames_analyzed}` : ""}`,
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : t.restyle_analysis_unknown_error;
+      setAnalysisError(detail);
+      appendConversationMessage(projectId, conversationId, {
+        role: "assistant",
+        content: `${t.restyle_analysis_failed} ${detail}`,
+      });
+    } finally {
+      setIsAnalyzing(false);
+    }
   }
 
   function startNewConversation() {
@@ -586,11 +731,22 @@ export default function RestyleStudio() {
               {(activeConversation?.messages ?? []).map((message) => (
                 <div
                   key={message.id}
-                  className="ml-auto max-w-[80%] rounded-2xl rounded-br-md bg-accent px-4 py-2.5 text-sm leading-6 text-bg"
+                  className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-6 ${message.role === "assistant" ? "rounded-bl-md border border-border bg-bg-surface text-text-secondary" : "ml-auto rounded-br-md bg-accent text-bg"}`}
                 >
                   {message.content}
                 </div>
               ))}
+              {isAnalyzing && (
+                <div className="flex items-center gap-2 text-sm text-text-secondary" role="status">
+                  <Loader2 size={15} className="animate-spin text-accent" />
+                  {t.restyle_analysis_running}
+                </div>
+              )}
+              {analysisError && !isAnalyzing && (
+                <p className="text-xs text-destructive" role="alert">
+                  {analysisError}
+                </p>
+              )}
               <div className="rounded-2xl border border-border bg-bg-surface p-3 shadow-card sm:p-4">
                 <div
                   className="mb-3 flex min-w-0 items-center gap-2 overflow-x-auto"
@@ -619,6 +775,7 @@ export default function RestyleStudio() {
                   selectedAsset={selectedAsset}
                   setSelectedAssetId={setSelectedAssetId}
                   activeProject={activeProject}
+                  extractedAssets={activeProject?.extractedAssets ?? []}
                   onToggleAsset={toggleAsset}
                   onToggleAssetConfirmation={toggleAssetConfirmation}
                   onSetStage={setProjectStage}
@@ -718,14 +875,6 @@ export default function RestyleStudio() {
                   rows={1}
                   className="max-h-24 min-h-8 flex-1 resize-none bg-transparent py-1.5 text-sm text-text-primary outline-none placeholder:text-text-muted"
                 />
-                <button
-                  type="submit"
-                  disabled={!activeConversation}
-                  className="btn-primary !h-8 !w-8 !justify-center !rounded-lg !p-0"
-                  aria-label={t.restyle_send}
-                >
-                  <Send size={15} />
-                </button>
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border/70 pt-2 text-xs">
                 <label className="sr-only" htmlFor="restyle-feature">
@@ -752,7 +901,7 @@ export default function RestyleStudio() {
                     }
                     setActiveProjectId(event.target.value || null);
                   }}
-                  className="max-w-52 rounded-md bg-transparent px-2 py-1 text-text-secondary outline-none hover:bg-bg"
+                  className="max-w-40 rounded-md bg-transparent px-2 py-1 text-text-secondary outline-none hover:bg-bg"
                 >
                   <option value="" disabled>
                     {t.restyle_select_project}
@@ -764,6 +913,28 @@ export default function RestyleStudio() {
                   ))}
                   <option value="__create__">{t.restyle_create_project}</option>
                 </select>
+                <select
+                  id="restyle-model"
+                  value={selectedModel}
+                  onChange={(event) => setSelectedModel(event.target.value as RestyleModel)}
+                  disabled={isAnalyzing}
+                  className="ml-auto max-w-44 rounded-md bg-transparent px-2 py-1 text-xs text-text-secondary outline-none hover:bg-bg disabled:cursor-not-allowed"
+                  aria-label={t.restyle_select_model}
+                >
+                  {RESTYLE_MODELS.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.label}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="submit"
+                  disabled={!activeConversation || isAnalyzing}
+                  className="btn-primary !h-8 !w-8 !justify-center !rounded-lg !p-0"
+                  aria-label={t.restyle_send}
+                >
+                  {isAnalyzing ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
+                </button>
               </div>
             </div>
           </form>
@@ -996,6 +1167,91 @@ function AttachmentFileGroup({
   );
 }
 
+function ExtractedAssetTable({
+  assets,
+  confirmedAssetIds,
+  onToggleConfirmation,
+  t,
+}: {
+  assets: RestyleExtractedAsset[];
+  confirmedAssetIds: string[];
+  onToggleConfirmation: (assetId: string) => void;
+  t: Translations;
+}) {
+  const kindLabel = (kind: RestyleExtractedAsset["kind"]) =>
+    kind === "character"
+      ? t.restyle_assets_characters
+      : kind === "scene"
+        ? t.restyle_assets_scenes
+        : t.restyle_assets_props;
+
+  return (
+    <div className="mt-5 overflow-hidden rounded-xl border border-border">
+      <div className="grid grid-cols-[64px_minmax(110px,1fr)_minmax(150px,1.4fr)_minmax(110px,1fr)_minmax(160px,1.5fr)_56px] gap-3 border-b border-border bg-bg-elevated px-4 py-2 text-[11px] font-medium text-text-muted">
+        <span>{t.restyle_asset_type}</span>
+        <span>{t.restyle_asset_source_name}</span>
+        <span>{t.restyle_asset_source_description}</span>
+        <span>{t.restyle_asset_target_name}</span>
+        <span>{t.restyle_asset_target_description}</span>
+        <span className="text-right">{t.restyle_asset_action}</span>
+      </div>
+      {assets.map((asset) => {
+        const confirmed = confirmedAssetIds.includes(asset.id);
+        return (
+          <div
+            key={asset.id}
+            className="grid grid-cols-[64px_minmax(110px,1fr)_minmax(150px,1.4fr)_minmax(110px,1fr)_minmax(160px,1.5fr)_56px] gap-3 border-b border-border px-4 py-3 text-left last:border-0 hover:bg-bg-elevated/70"
+          >
+            <span className="text-xs text-accent">{kindLabel(asset.kind)}</span>
+            <span className="text-sm font-medium text-text-primary">
+              {asset.sourceName}
+              {asset.importance === "required" && (
+                <span className="ml-1.5 text-[10px] text-orange-400">{t.restyle_asset_required}</span>
+              )}
+            </span>
+            <span className="text-xs leading-5 text-text-secondary">{asset.sourceDescription}</span>
+            <span className="text-sm font-medium text-text-primary">{asset.targetName}</span>
+            <span className="text-xs leading-5 text-text-secondary">
+              {asset.targetDescription}
+              {!asset.shouldRestyle && (
+                <span className="mt-1 block text-[10px] text-text-muted">{t.restyle_asset_keep_original}</span>
+              )}
+            </span>
+            <span className="flex justify-end">
+              <button
+                type="button"
+                onClick={() => onToggleConfirmation(asset.id)}
+                className={`grid h-7 w-7 place-items-center rounded-md ${confirmed ? "bg-emerald-500/15 text-emerald-400" : "bg-bg-elevated text-text-muted hover:text-accent"}`}
+                aria-label={`${t.restyle_asset_confirm}: ${asset.sourceName}`}
+                aria-pressed={confirmed}
+              >
+                <Check size={15} />
+              </button>
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function AssetConfirmationGuide({ t }: { t: Translations }) {
+  return (
+    <div className="mt-4 rounded-xl border border-accent/20 bg-accent-dim/20 p-3 text-sm text-text-secondary">
+      <p className="font-medium text-text-primary">{t.restyle_assets_confirmation_intro}</p>
+      <ul className="mt-2 grid gap-1 pl-4 text-xs leading-5 sm:grid-cols-2">
+        <li>{t.restyle_assets_check_characters}</li>
+        <li>{t.restyle_assets_check_scenes}</li>
+        <li>{t.restyle_assets_check_props}</li>
+        <li>{t.restyle_assets_check_market}</li>
+      </ul>
+      <p className="mt-2 text-xs leading-5">
+        {t.restyle_assets_feedback_hint} <span className="text-text-muted">{t.restyle_assets_feedback_example}</span>
+      </p>
+    </div>
+  );
+}
+
 function StagePanel({
   stage,
   assets,
@@ -1003,6 +1259,7 @@ function StagePanel({
   selectedAsset,
   setSelectedAssetId,
   activeProject,
+  extractedAssets,
   onToggleAsset,
   onToggleAssetConfirmation,
   onSetStage,
@@ -1016,6 +1273,7 @@ function StagePanel({
   selectedAsset?: RestyleAsset;
   setSelectedAssetId: (id: string) => void;
   activeProject?: RestyleProject;
+  extractedAssets: RestyleExtractedAsset[];
   onToggleAsset: (assetId: string) => void;
   onToggleAssetConfirmation: (assetId: string) => void;
   onSetStage: (stage: RestyleStage) => void;
@@ -1056,7 +1314,9 @@ function StagePanel({
         <div className="flex items-center justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold text-text-primary">{t.restyle_stage_assets}</h2>
-            <p className="mt-1 text-sm text-text-secondary">{t.restyle_assets_description}</p>
+            <p className="mt-1 text-sm text-text-secondary">
+              {extractedAssets.length ? activeProject?.analysisSummary || t.restyle_assets_description : t.restyle_assets_description}
+            </p>
           </div>
           <button
             type="button"
@@ -1068,7 +1328,15 @@ function StagePanel({
             {t.restyle_confirm}
           </button>
         </div>
-        {assetLibraryStatus === "loading" ? (
+        {extractedAssets.length > 0 && <AssetConfirmationGuide t={t} />}
+        {extractedAssets.length ? (
+          <ExtractedAssetTable
+            assets={extractedAssets}
+            confirmedAssetIds={activeProject?.confirmedAssetIds ?? []}
+            onToggleConfirmation={onToggleAssetConfirmation}
+            t={t}
+          />
+        ) : assetLibraryStatus === "loading" ? (
           <EmptyState text={t.restyle_assets_syncing} />
         ) : assets.length ? (
           <div className="mt-5 overflow-hidden rounded-xl border border-border">
