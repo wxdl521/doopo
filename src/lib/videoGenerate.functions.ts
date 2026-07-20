@@ -1690,21 +1690,17 @@ const TOPENROUTER_DEFAULT_BASE_URL = "https://tp-api.chinadatapay.com:8000";
 
 function getTopenrouterConfig() {
   const topenrouterAssetApiKey = process.env.TOPENROUTER_ASSET_API_KEY;
-  const arkAssetApiKey = process.env.ARK_API_KEY;
   const topenrouterApiKey = process.env.TOPENROUTER_API_KEY;
   return {
     apiKey: topenrouterApiKey,
-    // TopenRouter 的视频任务使用自己的 Bearer Key，但素材上传接口要求具备
-    // 火山方舟素材权限的 ARK Key。若把视频 Key 用于素材接口，上游会返回
-    // 403「无权使用素材」。允许用专用变量显式覆盖，兼容已有 ARK 配置。
-    assetApiKey: topenrouterAssetApiKey || arkAssetApiKey || topenrouterApiKey,
+    // 素材接口和视频接口均由 TopenRouter 网关鉴权。若供应商分配了具备
+    // 素材权益的专用 Key，可通过 TOPENROUTER_ASSET_API_KEY 显式覆盖。
+    assetApiKey: topenrouterAssetApiKey || topenrouterApiKey,
     assetApiKeySource: topenrouterAssetApiKey
       ? "TOPENROUTER_ASSET_API_KEY"
-      : arkAssetApiKey
-        ? "ARK_API_KEY"
-        : topenrouterApiKey
-          ? "TOPENROUTER_API_KEY"
-          : undefined,
+      : topenrouterApiKey
+        ? "TOPENROUTER_API_KEY"
+        : undefined,
     baseUrl: (process.env.TOPENROUTER_BASE_URL || TOPENROUTER_DEFAULT_BASE_URL).replace(/\/+$/, ""),
   };
 }
@@ -1795,7 +1791,7 @@ function topenrouterAssetUploadError(status: number, text: string, apiKeySource?
     return (
       "[topenrouter] 素材上传被拒绝（403：无权使用素材）。" +
       `${configuredKey}；请在 Cloudflare Secrets 或 .env.local 配置 ` +
-      "TOPENROUTER_ASSET_API_KEY 为已开通火山方舟素材权限的 ARK API Key。"
+      "TOPENROUTER_ASSET_API_KEY 为已开通素材权益的 TopenRouter Key。"
     );
   }
   return `[topenrouter] asset upload ${status}: ${upstreamError}`;
@@ -2745,7 +2741,7 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
     if (!assetApiKey) {
       return {
         ok: false,
-        error: "[topenrouter] 缺少 TOPENROUTER_ASSET_API_KEY / ARK_API_KEY，无法上传参考素材。",
+        error: "[topenrouter] 缺少 TOPENROUTER_ASSET_API_KEY / TOPENROUTER_API_KEY，无法上传参考素材。",
       };
     }
     // 参考图/视频/音频先进入 TopenRouter 素材库。真人图片直接给视频接口会触发
@@ -2998,7 +2994,7 @@ export const uploadTopenrouterAsset = createServerFn({ method: "POST" })
     if (!assetApiKey) {
       return {
         ok: false as const,
-        error: "[topenrouter] 缺少 TOPENROUTER_ASSET_API_KEY / ARK_API_KEY",
+        error: "[topenrouter] 缺少 TOPENROUTER_ASSET_API_KEY / TOPENROUTER_API_KEY",
       };
     }
     const uploaded = await topenrouterUploadAsset({
@@ -3047,7 +3043,7 @@ export const getTopenrouterAsset = createServerFn({ method: "POST" })
     if (!assetApiKey) {
       return {
         ok: false as const,
-        error: "[topenrouter] 缺少 TOPENROUTER_ASSET_API_KEY / ARK_API_KEY",
+        error: "[topenrouter] 缺少 TOPENROUTER_ASSET_API_KEY / TOPENROUTER_API_KEY",
       };
     }
     const result = await topenrouterGetAsset({
