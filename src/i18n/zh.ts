@@ -594,6 +594,8 @@ export const zh = {
   team_manage_remove_confirm_title: "确认移除成员",
   team_manage_remove_confirm_desc: "确定要将 {name} 移出团队吗？",
   team_manage_remove_confirm_btn: "确认移除",
+  team_manage_remove_success: "成员已移除",
+  team_manage_remove_fail: "移除成员失败，请重试",
   team_manage_subscription_credits: "订阅",
   team_manage_remove_credits_warning: "该成员还有 {credits} 可用积分，将被回收至团队所有者账户。",
 

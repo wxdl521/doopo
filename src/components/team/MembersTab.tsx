@@ -18,9 +18,19 @@ import {
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { UserPlus, Crown, UserCog, User, Check, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { getTeamMembers, updateMemberRole } from "@/lib/teamMembers.functions";
+import { getTeamMembers, removeMember, updateMemberRole } from "@/lib/teamMembers.functions";
 import { useLanguage } from "@/i18n/LanguageContext";
 import type { MemberRow } from "@/lib/teamMembers.functions";
 
@@ -52,11 +62,14 @@ export default function MembersTab({ teamId, myRole, onManageCredits }: MembersT
   const { t } = useLanguage();
   const callGetMembers = useServerFn(getTeamMembers);
   const callUpdateRole = useServerFn(updateMemberRole);
+  const callRemoveMember = useServerFn(removeMember);
 
   const [members, setMembers] = useState<MemberRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [inviteCopied, setInviteCopied] = useState(false);
   const [changingUserId, setChangingUserId] = useState<string | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<MemberRow | null>(null);
+  const [removing, setRemoving] = useState(false);
 
   const loadMembers = () => {
     return callGetMembers({ data: { teamId } })
@@ -112,8 +125,34 @@ export default function MembersTab({ teamId, myRole, onManageCredits }: MembersT
     return false;
   };
 
+  const canRemoveMember = (target: MemberRow) => {
+    return myRole === "owner" && target.role !== "owner";
+  };
+
   const showActions = (target: MemberRow) => {
-    return canManageCredits(target);
+    return canManageCredits(target) || canRemoveMember(target);
+  };
+
+  const handleRemoveMember = async () => {
+    if (!removeTarget) return;
+
+    setRemoving(true);
+    try {
+      const r: any = await callRemoveMember({
+        data: { teamId, userId: removeTarget.userId },
+      });
+      if (r?.ok) {
+        toast.success(t.team_manage_remove_success);
+        setRemoveTarget(null);
+        await loadMembers();
+      } else {
+        toast.error(r?.error || t.team_manage_remove_fail);
+      }
+    } catch {
+      toast.error(t.team_manage_remove_fail);
+    } finally {
+      setRemoving(false);
+    }
   };
 
   if (loading) {
@@ -259,6 +298,16 @@ export default function MembersTab({ teamId, myRole, onManageCredits }: MembersT
                               {t.team_manage_allocate}
                             </Button>
                           )}
+                          {canRemoveMember(member) && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="h-8 text-destructive hover:text-destructive"
+                              onClick={() => setRemoveTarget(member)}
+                            >
+                              {t.team_manage_remove}
+                            </Button>
+                          )}
                         </div>
                       )}
                     </TableCell>
@@ -269,6 +318,43 @@ export default function MembersTab({ teamId, myRole, onManageCredits }: MembersT
           </TableBody>
         </Table>
       </section>
+
+      <AlertDialog open={!!removeTarget} onOpenChange={(open) => !open && setRemoveTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-destructive">
+              {t.team_manage_remove_confirm_title}
+            </AlertDialogTitle>
+            <AlertDialogDescription className="space-y-2">
+              <span className="block">
+                {t.team_manage_remove_confirm_desc.replace(
+                  "{name}",
+                  removeTarget?.displayName ?? removeTarget?.email ?? t.team_manage_unknown_user,
+                )}
+              </span>
+              {removeTarget && removeTarget.creditsBalance > 0 && (
+                <span className="block text-destructive">
+                  {t.team_manage_remove_credits_warning.replace(
+                    "{credits}",
+                    removeTarget.creditsBalance.toString(),
+                  )}
+                </span>
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={removing}>{t.common_cancel}</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={removing}
+              onClick={handleRemoveMember}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {removing && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              {t.team_manage_remove_confirm_btn}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

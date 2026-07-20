@@ -613,6 +613,8 @@ export const en: Translations = {
   team_manage_remove_confirm_title: "Confirm removing member",
   team_manage_remove_confirm_desc: "Are you sure you want to remove {name} from the team?",
   team_manage_remove_confirm_btn: "Confirm Remove",
+  team_manage_remove_success: "Member removed",
+  team_manage_remove_fail: "Failed to remove member. Please try again.",
   team_manage_subscription_credits: "sub",
   team_manage_remove_credits_warning:
     "This member still has {credits} credits, which will be reclaimed to the team owner's account.",
