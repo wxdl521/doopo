@@ -10,7 +10,19 @@ import AuthGate from "../components/AuthGate";
 export default function MainLayout({ children }: { children: ReactNode }) {
   const [showPromo, setShowPromo] = useState(true);
   const location = useLocation();
+  const isRestyle = location.pathname.startsWith("/restyle");
   const isWorkspace = location.pathname.startsWith("/workspace/");
+
+  if (isRestyle) {
+    return (
+      <div className="flex min-h-screen bg-bg">
+        <Sidebar fullHeight />
+        <main className="min-w-0 flex-1">
+          <AuthGate>{children}</AuthGate>
+        </main>
+      </div>
+    );
+  }
 
   if (isWorkspace) {
     // Workspace owns its own full-screen chrome (top bar + chat panel).

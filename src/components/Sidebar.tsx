@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import { useLanguage } from "../i18n/LanguageContext";
 
-export default function Sidebar() {
+export default function Sidebar({ fullHeight = false }: { fullHeight?: boolean }) {
   const { t } = useLanguage();
 
   const items = [
@@ -34,10 +34,10 @@ export default function Sidebar() {
 
   return (
     <aside
-      className="hidden md:flex flex-col items-center justify-between gap-4
-                      w-[88px] py-6 border-r border-border bg-bg-soft/50 backdrop-blur-sm
-                      sticky top-[57px] self-start"
-      style={{ height: "calc(100vh - 57px)" }}
+      className={`hidden w-[88px] flex-col items-center justify-between gap-4 border-r border-border bg-bg-soft/50 py-6 backdrop-blur-sm md:flex ${
+        fullHeight ? "sticky top-0 h-screen self-start" : "sticky top-[57px] self-start"
+      }`}
+      style={fullHeight ? undefined : { height: "calc(100vh - 57px)" }}
     >
       <nav className="flex flex-col items-center gap-2">
         {items.map(({ to, label, icon: Icon }, i) => (
