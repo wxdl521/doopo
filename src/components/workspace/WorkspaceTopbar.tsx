@@ -10,7 +10,6 @@ import {
   Grid3x3,
   Clock,
   Settings,
-  Download,
   Loader2,
   CheckCircle2,
   Save,
@@ -237,9 +236,6 @@ export default function WorkspaceTopbar({
                   </button>
                 }
               />
-              <button className="w-full text-left px-3 py-1.5 text-sm hover:bg-bg-elevated inline-flex items-center gap-2">
-                <Download size={14} /> {t.ws_export}
-              </button>
             </div>
           )}
         </div>
