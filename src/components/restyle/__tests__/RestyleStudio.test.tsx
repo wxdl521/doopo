@@ -73,7 +73,8 @@ describe("RestyleStudio prototype", () => {
 
     expect(screen.getByTestId("restyle-workbench")).toBeInTheDocument();
     expect(screen.getByText("项目文件")).toBeInTheDocument();
-    expect(screen.getByRole("tab", { name: "上传原片" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByPlaceholderText("输入你的转绘需求…")).toBeInTheDocument();
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
   });
 
   it("creates a local project without seeded project data", async () => {
@@ -84,18 +85,13 @@ describe("RestyleStudio prototype", () => {
     await user.click(screen.getByRole("button", { name: "新建转绘项目" }));
 
     expect(screen.getByTestId("restyle-workbench")).toBeInTheDocument();
-    expect(screen.getAllByText("未命名转绘项目 1")).toHaveLength(3);
+    expect(screen.getAllByText("未命名转绘项目 1")).toHaveLength(4);
   });
 
-  it("switches stages and exposes the review state", async () => {
-    const user = userEvent.setup();
+  it("uses the conversation as the only task progression surface", async () => {
     renderStudio();
-    await user.click(screen.getByRole("button", { name: "新建转绘项目" }));
-    await user.click(screen.getByRole("tab", { name: "视频生成" }));
-    expect(screen.getByText("确认方案后将在这里展示生成任务。")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("tab", { name: "验收完成" }));
-    expect(screen.getByText("生成完成后将在这里展示验收结果。")).toBeInTheDocument();
+    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    expect(screen.getByPlaceholderText("输入你的转绘需求…")).toBeInTheDocument();
   });
 
   it("opens the canvas and returns to the workbench", async () => {
@@ -124,7 +120,7 @@ describe("RestyleStudio prototype", () => {
     renderStudio();
 
     const model = screen.getByLabelText("选择分析模型");
-    expect(model).toHaveValue("ark:deepseek-v4-pro-260425");
+    expect(model).toHaveValue("qwen:qwen3.6-plus");
     await user.selectOptions(model, "qwen:qwen3.6-plus");
     expect(model).toHaveValue("qwen:qwen3.6-plus");
   });
@@ -144,7 +140,7 @@ describe("RestyleStudio prototype", () => {
 
     await user.selectOptions(screen.getByLabelText("选择项目"), "__create__");
 
-    expect(screen.getAllByText("未命名转绘项目 1")).toHaveLength(3);
+    expect(screen.getAllByText("未命名转绘项目 1")).toHaveLength(4);
   });
 
   it("adds a selected source file to the active conversation without advancing the stage", async () => {
@@ -158,16 +154,46 @@ describe("RestyleStudio prototype", () => {
     );
 
     expect(screen.getAllByText("EP01.mp4")).toHaveLength(2);
-    expect(screen.getByRole("tab", { name: "上传原片" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+  });
+
+  it("keeps uploaded videos visible after sending them into the conversation", async () => {
+    const user = userEvent.setup();
+    renderStudio();
+    await user.click(screen.getByRole("button", { name: "新建转绘项目" }));
+
+    await user.upload(
+      screen.getByTestId("restyle-file-input"),
+      new File(["source"], "EP01.mp4", { type: "video/mp4" }),
+    );
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    expect(screen.getByRole("button", { name: "打开附件：EP01.mp4" })).toBeInTheDocument();
+  });
+
+  it("opens and collapses files from the project file tree", async () => {
+    const user = userEvent.setup();
+    renderStudio();
+    await user.click(screen.getByRole("button", { name: "新建转绘项目" }));
+
+    await user.upload(
+      screen.getByTestId("restyle-file-input"),
+      new File(["source"], "EP01.mp4", { type: "video/mp4" }),
+    );
+    await user.click(screen.getByRole("button", { name: "预览文件：EP01.mp4" }));
+
+    expect(screen.getByText(/本地视频/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "切换文件夹：原片" }));
+    expect(screen.queryByRole("button", { name: "预览文件：EP01.mp4" })).not.toBeInTheDocument();
   });
 
   it("offers files and folders from the attachment menu", async () => {
     const user = userEvent.setup();
     renderStudio();
 
-    await user.click(screen.getAllByRole("button", { name: "附加文件" })[1]!);
+    await user.click(screen.getByRole("button", { name: "附加文件" }));
 
-    expect(screen.getAllByRole("button", { name: "附加文件" })).toHaveLength(3);
+    expect(screen.getAllByRole("button", { name: "附加文件" })).toHaveLength(2);
     expect(screen.getByRole("button", { name: "附加文件夹" })).toBeInTheDocument();
   });
 });

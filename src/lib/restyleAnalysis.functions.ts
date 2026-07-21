@@ -61,7 +61,7 @@ function parseJson(content: string): unknown {
 }
 
 function systemPrompt(hasFrames: boolean, isRevision: boolean): string {
-  return `你是面向短剧出海转绘的资产制片人。根据用户要求、上传源片信息${hasFrames ? "以及抽取的关键帧" : ""}，输出供用户确认的资产表。\n\n${isRevision ? "当前已存在资产表。用户这次是在自然语言中反馈修改；只修改受影响的资产、补上明确遗漏项、删除明确要求删除的项，其余保持一致。" : "这是首次分析。只提取剧情理解、光影、节奏和台词语境中真正影响转绘一致性的角色、主要场景、关键道具。"}\n\n重要规则：\n1. 角色、场景、道具均可出现；角色应覆盖有剧情作用的人物，场景只保留重要且需要转绘的地点，道具只保留叙事或视觉连续性关键物。\n2. 根据用户的目标市场、人种、地域、语言、风格要求，为每条资产填入目标名称与目标说明；未要求改名时可保留原名。\n3. ${hasFrames ? "关键帧是视觉依据。" : "没有可读取的关键帧时不得虚构视频中具体发生的情节；名称或描述不确定时使用“待用户核对”。"}\n4. sourceDescription 写原片中的身份/场景定位/关键视觉信息；targetDescription 写目标市场版的人设、地域风格或转绘保留要求。\n5. importance 只有 required 或 optional；shouldRestyle 表示这条是否需要独立转绘。\n6. 最多 30 条，去重，不输出解释、Markdown 或代码块。\n\n只输出以下 JSON：\n{"summary":"不超过120字的确认提示","assets":[{"kind":"character|scene|prop","sourceName":"","sourceDescription":"","targetName":"","targetDescription":"","importance":"required|optional","shouldRestyle":true}]}`;
+  return `你是面向短剧出海转绘的资产制片人。根据用户要求、上传源片信息${hasFrames ? "以及抽取的关键帧" : ""}，输出供用户确认的资产表。\n\n${isRevision ? "当前已存在资产表。用户这次是在自然语言中反馈修改；只修改受影响的资产、补上明确遗漏项、删除明确要求删除的项，其余保持一致。" : "这是首次分析。只提取剧情理解、光影、节奏和台词语境中真正影响转绘一致性的资产。"}\n\n重要规则：\n1. 角色、场景、道具都不是必选项；某一类不存在时，该类必须输出空，不得为了凑数添加。全部不存在时 assets 必须是空数组。\n2. 角色必须是画面中有明确剧情作用的某一个具体人物，一人一条；不要输出“居民”“市民”“人群”“表演者”“观众”“工作人员”“人物群体”等群体。\n3. 场景必须是一个具体、可定位的地点或空间，例如“街角面馆”“某栋居民楼的客厅”“嵊州古城城门”；不要输出“城市风光”“古城全景”“街景”“环境”“建筑群”等泛称。\n4. 道具必须是一个具体、可单独识别的物件，例如“一盏红灯笼”“一块写有店名的木招牌”“一口铁锅”；不要输出“招牌与灯笼”“器具与食物”等多个对象、类别或概念。\n5. 如果只能确认群体、远景、类别或模糊物件，就不要提取；宁可少提取或返回空数组，也不能猜测。\n6. 根据用户的目标市场、人种、地域、语言、风格要求，为每条具体资产填入目标名称与目标说明；未要求改名时可保留原名。\n7. ${hasFrames ? "关键帧是视觉依据。" : "没有可读取的关键帧时不得虚构视频中具体发生的情节；名称或描述不确定时直接省略该资产。"}\n8. sourceDescription 写该具体人物/地点/物件在原片中的定位；targetDescription 写目标市场版的对应设定。\n9. importance 只有 required 或 optional；shouldRestyle 表示这条是否需要独立转绘。最多 30 条，去重，不输出解释、Markdown 或代码块。\n\n只输出以下 JSON：\n{"summary":"不超过120字的确认提示","assets":[{"kind":"character|scene|prop","sourceName":"","sourceDescription":"","targetName":"","targetDescription":"","importance":"required|optional","shouldRestyle":true}]}`;
 }
 
 function userText(data: z.infer<typeof InputSchema>): string {
@@ -77,7 +77,11 @@ function userText(data: z.infer<typeof InputSchema>): string {
 function normalizeResult(content: string, model: string, usedFrames: boolean): RestyleAnalysisResult {
   try {
     const parsed = parseJson(content) as { summary?: unknown; assets?: unknown };
-    const assets = z.array(AssetSchema).min(1).max(30).parse(parsed.assets);
+    const assets = z
+      .array(AssetSchema)
+      .max(30)
+      .parse(parsed.assets ?? [])
+      .filter((asset) => isConcreteAsset(asset));
     const summary =
       typeof parsed.summary === "string" && parsed.summary.trim()
         ? parsed.summary.trim().slice(0, 240)
@@ -86,6 +90,17 @@ function normalizeResult(content: string, model: string, usedFrames: boolean): R
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "资产表解析失败" };
   }
+}
+
+const GENERIC_ASSET_TERMS = /居民|市民|人群|群众|表演者|观众|工作人员|人物群体|角色群体|城市风光|古城全景|街景|环境|建筑群|物品|道具|食物|场景概念/i;
+
+function isConcreteAsset(asset: RestyleAnalysisAsset): boolean {
+  const sourceName = asset.sourceName.trim();
+  if (!sourceName || GENERIC_ASSET_TERMS.test(sourceName)) return false;
+  // A conjunction or ampersand in a source name usually means the model
+  // merged several people/places/objects into one row.
+  if (/[与和及、/&]/.test(sourceName)) return false;
+  return true;
 }
 
 /**
@@ -119,7 +134,9 @@ export const analyzeRestyleAssets = createServerFn({ method: "POST" })
     }
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 90_000);
+    // Vision requests include several keyframes and can legitimately take longer
+    // than a text-only completion. Keep the client-side request alive for 3 min.
+    const timeout = setTimeout(() => controller.abort(), 180_000);
     try {
       const response = await fetch(isArk ? arkTextEndpoint() : QWEN_ENDPOINT, {
         method: "POST",
@@ -154,6 +171,63 @@ export const analyzeRestyleAssets = createServerFn({ method: "POST" })
             ? "资产分析超时，请稍后重试或切换模型。"
             : `资产分析请求失败：${error instanceof Error ? error.message : "未知错误"}`,
       };
+    } finally {
+      clearTimeout(timeout);
+    }
+  });
+
+const PlanEpisodeSchema = z.object({
+  episode: z.string().regex(/^EP\d{2,}$/),
+  segments: z.array(z.object({ id: z.string().min(1).max(40), prompt: z.string().min(1).max(8_000) })).min(1).max(30),
+});
+
+export type RestylePlanEpisode = z.infer<typeof PlanEpisodeSchema>;
+
+const PlanInputSchema = z.object({
+  model: InputSchema.shape.model,
+  instruction: z.string().max(4_000).default(""),
+  sourceFiles: InputSchema.shape.sourceFiles,
+  assets: z.array(AssetSchema).max(60),
+  episodeCount: z.number().int().min(1).max(100),
+  existingEpisodes: z.array(PlanEpisodeSchema).default([]),
+});
+
+export const generateRestylePlan = createServerFn({ method: "POST" })
+  .validator((input: unknown) => PlanInputSchema.parse(input))
+  .handler(async ({ data }): Promise<{ ok: true; episodes: RestylePlanEpisode[]; model: string } | { ok: false; error: string }> => {
+    const isArk = data.model.startsWith("ark:");
+    const model = isArk ? data.model.slice(4) || ARK_TEXT_MODEL : data.model.slice(5);
+    const apiKey = isArk ? arkTextApiKey() : qwenApiKey();
+    if (!apiKey) return { ok: false, error: isArk ? "DeepSeek V4 Pro 未配置：请设置 ARK_API_KEY。" : "Qwen 未配置：请设置 Qwen、QWEN_API_KEY 或 DASHSCOPE_API_KEY。" };
+    const files = data.sourceFiles.map((file) => `- ${file.name}`).join("\n");
+    const prompt = `用户要求：${data.instruction || "生成转绘方案"}\n集数：${data.episodeCount}\n源视频：\n${files}\n已确认资产：${JSON.stringify(data.assets)}\n已有方案（如有，请只修改用户点名的集数和分段，其余保持不变）：${JSON.stringify(data.existingEpisodes)}\n\n请为每一集生成或修改分段视频提示词。只输出 JSON，不要 Markdown：{"episodes":[{"episode":"EP01","segments":[{"id":"U01","prompt":"..."}]}]}。每段不超过15秒，提示词须包含人物、场景、动作、镜头、光影、节奏和对白/声音要求；不得虚构资产表中不存在的具体人物或地点。`;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 180_000);
+    try {
+      const response = await fetch(isArk ? arkTextEndpoint() : QWEN_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model,
+          ...(isArk ? { thinking: ARK_TEXT_THINKING_DISABLED } : {}),
+          temperature: 0.2,
+          max_tokens: 12_000,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: "你是短剧转绘方案编剧。必须返回可解析的 JSON 对象，不要 Markdown，不要在字符串中使用未转义的双引号或换行。" },
+            { role: "user", content: prompt },
+          ],
+        }),
+      });
+      if (!response.ok) return { ok: false, error: `方案生成请求失败（${response.status}）：${(await response.text()).slice(0, 240)}` };
+      const payload = (await response.json()) as { choices?: Array<{ message?: { content?: unknown } }> };
+      const content = payload.choices?.[0]?.message?.content;
+      if (typeof content !== "string") return { ok: false, error: "模型未返回转绘方案。" };
+      const parsed = parseJson(content) as { episodes?: unknown };
+      return { ok: true, episodes: z.array(PlanEpisodeSchema).parse(parsed.episodes ?? []), model };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error && error.name === "AbortError" ? "方案生成超时，请稍后重试。" : `方案生成失败：${error instanceof Error ? error.message : "未知错误"}` };
     } finally {
       clearTimeout(timeout);
     }

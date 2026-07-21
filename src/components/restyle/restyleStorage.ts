@@ -10,6 +10,10 @@ export type RestyleAttachment = {
   lastModified: number;
   isFolder?: boolean;
   fileCount?: number;
+  url?: string;
+  generatedKind?: "character" | "scene" | "prop";
+  analysisFrame?: boolean;
+  analysisEpisode?: string;
 };
 
 export type RestyleMessage = {
@@ -18,6 +22,9 @@ export type RestyleMessage = {
   createdAt: string;
   role?: "user" | "assistant";
   attachments?: RestyleAttachment[];
+  assetTable?: RestyleExtractedAsset[];
+  assetCategoryLinks?: Array<"character" | "scene" | "prop">;
+  episodeLinks?: string[];
 };
 
 export type RestyleExtractedAsset = {
@@ -29,6 +36,11 @@ export type RestyleExtractedAsset = {
   targetDescription: string;
   importance: "required" | "optional";
   shouldRestyle: boolean;
+};
+
+export type RestylePlanEpisode = {
+  episode: string;
+  segments: Array<{ id: string; prompt: string }>;
 };
 
 export type RestyleConversation = {
@@ -53,6 +65,9 @@ export type RestyleProject = {
   planNote: string;
   extractedAssets: RestyleExtractedAsset[];
   analysisSummary: string;
+  planEpisodes?: RestylePlanEpisode[];
+  imageModel?: string;
+  videoModel?: string;
 };
 
 function keyFor(userId: string): string {
@@ -86,6 +101,12 @@ function parseAttachment(value: unknown): RestyleAttachment | null {
     lastModified: typeof item.lastModified === "number" ? item.lastModified : 0,
     isFolder: item.isFolder === true,
     fileCount: typeof item.fileCount === "number" ? item.fileCount : undefined,
+    url: typeof item.url === "string" ? item.url : undefined,
+    generatedKind: ["character", "scene", "prop"].includes(item.generatedKind ?? "")
+      ? (item.generatedKind as RestyleAttachment["generatedKind"])
+      : undefined,
+    analysisFrame: item.analysisFrame === true,
+    analysisEpisode: typeof item.analysisEpisode === "string" ? item.analysisEpisode : undefined,
   };
 }
 
@@ -107,6 +128,17 @@ function parseMessages(value: unknown): RestyleMessage[] {
         ? message.attachments
             .map(parseAttachment)
             .filter((file): file is RestyleAttachment => Boolean(file))
+        : undefined,
+      assetTable: Array.isArray(message.assetTable)
+        ? parseExtractedAssets(message.assetTable)
+        : undefined,
+      assetCategoryLinks: Array.isArray(message.assetCategoryLinks)
+        ? message.assetCategoryLinks.filter((kind): kind is "character" | "scene" | "prop" =>
+            ["character", "scene", "prop"].includes(kind as string),
+          )
+        : undefined,
+      episodeLinks: Array.isArray(message.episodeLinks)
+        ? message.episodeLinks.filter((episode): episode is string => typeof episode === "string")
         : undefined,
     }));
 }
@@ -149,6 +181,19 @@ function parseProject(value: unknown): RestyleProject | null {
   const files = Array.isArray(item.files)
     ? item.files.map(parseAttachment).filter((file): file is RestyleAttachment => Boolean(file))
     : [];
+  const planEpisodes = Array.isArray(item.planEpisodes)
+    ? item.planEpisodes.flatMap((episode) => {
+        if (!episode || typeof episode !== "object") return [];
+        const item = episode as Partial<RestylePlanEpisode>;
+        if (typeof item.episode !== "string" || !Array.isArray(item.segments)) return [];
+        const segments = item.segments.flatMap((segment) => {
+          if (!segment || typeof segment !== "object") return [];
+          const value = segment as { id?: unknown; prompt?: unknown };
+          return typeof value.id === "string" && typeof value.prompt === "string" ? [{ id: value.id, prompt: value.prompt }] : [];
+        });
+        return [{ episode: item.episode, segments }];
+      })
+    : undefined;
   const conversations = Array.isArray(item.conversations)
     ? item.conversations
         .filter(
@@ -190,6 +235,7 @@ function parseProject(value: unknown): RestyleProject | null {
     planNote: typeof item.planNote === "string" ? item.planNote : "",
     extractedAssets: parseExtractedAssets(item.extractedAssets),
     analysisSummary: typeof item.analysisSummary === "string" ? item.analysisSummary : "",
+    planEpisodes,
   };
 }
 

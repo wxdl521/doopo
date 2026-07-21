@@ -576,6 +576,61 @@ export const generateImage = createServerFn({ method: "POST" })
     return __afterCall("seedream", r as any);
   });
 
+const GenerateReferenceImageInput = z.object({
+  prompt: z.string().min(1),
+  model: z.string().max(200).optional(),
+  referenceImages: z.array(z.string().max(12_000_000)).min(1).max(10),
+  size: z.string().max(50).optional(),
+});
+
+/** Generic I2I entry used by the restyle asset workflow. */
+export const generateImageWithReferences = createServerFn({ method: "POST" })
+  .validator((input: unknown) => GenerateReferenceImageInput.parse(input))
+  .handler(async ({ data }) => {
+    const requested = normalizeImageModelForRouting(data.model);
+    const refs = data.referenceImages;
+    if (isSeedreamModel(requested)) {
+      const config = getArkConfig();
+      if (!config.apiKey) return { url: "", error: "ARK_API_KEY 未配置。", model: requested };
+      const result = await callSeedreamImages(
+        {
+          model: requested || config.model,
+          prompt: data.prompt,
+          image: refs.length === 1 ? refs[0] : refs,
+          size: data.size || "2K",
+        },
+        config.apiKey,
+        config.baseUrl,
+        I2I_TIMEOUT_MS,
+      );
+      return { url: result.url, error: result.error, model: result.model };
+    }
+    const providerInput = {
+      prompt: data.prompt,
+      model: requested,
+      size: data.size || "2K",
+      referenceImages: refs,
+      quality: "high" as const,
+    };
+    if (requested.startsWith("pixflow/")) {
+      const r = await (await import("./pixflow.functions")).callPixflowImage(providerInput);
+      return { url: r.url, error: r.error, model: r.model };
+    }
+    if (requested.startsWith("claude360/")) {
+      const r = await (await import("./claude360Image.functions")).callClaude360Image(providerInput);
+      return { url: r.url, error: r.error, model: r.model };
+    }
+    if (requested.startsWith("tokenflash/")) {
+      const r = await (await import("./tokenflash.functions")).callTokenflashImage(providerInput);
+      return { url: r.url, error: r.error, model: r.model };
+    }
+    if (requested.startsWith("revora/")) {
+      const r = await (await import("./revoraImage.functions")).callRevoraImage(providerInput);
+      return { url: r.url, error: r.error, model: r.model };
+    }
+    return { url: "", error: `当前生图模型暂不支持参考图 I2I：${requested}`, model: requested };
+  });
+
 // ====================================================================
 // 2) regenerateCharacterLook —— 单图 I2I(角色重生,3 模式)
 //

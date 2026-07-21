@@ -151,7 +151,7 @@ const VISIBLE_IMAGE_PREFIXES = [
 const isVisibleImage = (id: string) =>
   VISIBLE_IMAGE_PREFIXES.some((p) => id.toLowerCase().startsWith(p));
 // 过滤掉"分隔符"项 + 非可见模型
-const realImageModelOptions = imageModelOptions.filter(
+export const realImageModelOptions = imageModelOptions.filter(
   (m) => !m.id.startsWith("__sep") && isVisibleImage(m.id),
 );
 void IMAGE_MODELS;
@@ -363,7 +363,7 @@ const VISIBLE_VIDEO_PREFIXES = [
 const isVisibleVideo = (id: string) =>
   VISIBLE_VIDEO_PREFIXES.some((p) => id.toLowerCase().startsWith(p));
 // 过滤掉"分隔符"项 + 非可见模型
-const realVideoModels = videoModels.filter(
+export const realVideoModels = videoModels.filter(
   (m) => !m.id.startsWith("__video_sep") && isVisibleVideo(m.id),
 );
 
