@@ -5,6 +5,7 @@ import RestyleStudio from "../RestyleStudio";
 import { libraryAssetsFromRows } from "../restyleAssetLibrary";
 import type { DbCharacter, DbProp, DbScene } from "../../../lib/assetsStorage";
 import { LanguageProvider } from "../../../i18n/LanguageContext";
+import { loadRestyleProjects, saveRestyleProjects, type RestyleProject } from "../restyleStorage";
 
 function renderStudio() {
   return render(
@@ -195,5 +196,84 @@ describe("RestyleStudio prototype", () => {
 
     expect(screen.getAllByRole("button", { name: "附加文件" })).toHaveLength(2);
     expect(screen.getByRole("button", { name: "附加文件夹" })).toBeInTheDocument();
+  });
+
+  it("keeps rendered final videos and review links when persisted", () => {
+    const project: RestyleProject = {
+      id: "project-1",
+      title: "英文剧集转绘",
+      createdAt: "2026-07-21T00:00:00.000Z",
+      updatedAt: "2026-07-21T00:00:00.000Z",
+      stage: "review",
+      assetIds: [],
+      confirmedAssetIds: [],
+      files: [
+        {
+          id: "source-1",
+          name: "EP01.mp4",
+          size: 1024,
+          type: "video/mp4",
+          lastModified: 0,
+        },
+        {
+          id: "final-1",
+          name: "EP01.mp4",
+          size: 1024,
+          type: "video/mp4",
+          lastModified: 0,
+          generatedKind: "final_video",
+          sourceAttachmentId: "source-1",
+          episode: "EP01",
+        },
+        {
+          id: "clip-1",
+          name: "EP01_U01.mp4",
+          size: 512,
+          type: "video/mp4",
+          lastModified: 0,
+          generatedKind: "video_clip",
+          sourceAttachmentId: "source-1",
+          episode: "EP01",
+          segmentId: "U01",
+        },
+      ],
+      conversations: [
+        {
+          id: "conversation-1",
+          title: "",
+          createdAt: "2026-07-21T00:00:00.000Z",
+          updatedAt: "2026-07-21T00:00:00.000Z",
+          messages: [
+            {
+              id: "message-1",
+              role: "assistant",
+              content: "EP01 英文剧正式生成完成。",
+              createdAt: "2026-07-21T00:00:00.000Z",
+              finalEpisodeLinks: ["EP01"],
+            },
+          ],
+        },
+      ],
+      activeConversationId: "conversation-1",
+      planNote: "",
+      extractedAssets: [],
+      analysisSummary: "",
+      planEpisodes: [{ episode: "EP01", segments: [{ id: "U01", prompt: "prompt" }] }],
+    };
+
+    saveRestyleProjects("restyle-user", [project]);
+
+    expect(loadRestyleProjects("restyle-user")[0]).toMatchObject({
+      files: [
+        expect.objectContaining({ id: "source-1" }),
+        expect.objectContaining({ generatedKind: "final_video", sourceAttachmentId: "source-1" }),
+        expect.objectContaining({ generatedKind: "video_clip", segmentId: "U01" }),
+      ],
+      conversations: [
+        expect.objectContaining({
+          messages: [expect.objectContaining({ finalEpisodeLinks: ["EP01"] })],
+        }),
+      ],
+    });
   });
 });

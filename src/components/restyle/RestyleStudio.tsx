@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type ReactEventHandler,
+} from "react";
 import { useServerFn } from "@tanstack/react-start";
 import {
   Check,
@@ -11,6 +19,7 @@ import {
   Loader2,
   MessageSquare,
   Pencil,
+  Play,
   Plus,
   Search,
   Send,
@@ -72,6 +81,13 @@ type RestyleFileTreeNode = {
   preview?: RestyleFilePreview;
 };
 
+type RestyleVideoPair = {
+  source: RestyleAttachment;
+  result: RestyleAttachment;
+  sourceUrl?: string;
+  resultUrl?: string;
+};
+
 function formatFileSize(size?: number): string {
   if (!size) return "";
   if (size < 1024) return `${size} B`;
@@ -81,10 +97,14 @@ function formatFileSize(size?: number): string {
 
 function countTreeLeaves(nodes: RestyleFileTreeNode[] = []): number {
   return nodes.reduce(
-    (total, node) =>
-      total + (node.kind === "file" ? 1 : countTreeLeaves(node.children ?? [])),
+    (total, node) => total + (node.kind === "file" ? 1 : countTreeLeaves(node.children ?? [])),
     0,
   );
+}
+
+function episodeFromFileName(name: string, fallbackIndex = 0): string {
+  const match = name.match(/ep\s*0*(\d+)/i);
+  return `EP${String(match ? Number(match[1]) : fallbackIndex + 1).padStart(2, "0")}`;
 }
 
 function makeVirtualPreview(
@@ -111,7 +131,10 @@ function AssetVisual({ asset, compact = false }: { asset: RestyleAsset; compact?
   );
 }
 
-function waitForVideoEvent(video: HTMLVideoElement, event: "loadedmetadata" | "seeked"): Promise<void> {
+function waitForVideoEvent(
+  video: HTMLVideoElement,
+  event: "loadedmetadata" | "seeked",
+): Promise<void> {
   return new Promise((resolve, reject) => {
     const timer = window.setTimeout(() => {
       cleanup();
@@ -151,7 +174,9 @@ async function extractVideoKeyFrames(file: File): Promise<string[]> {
     canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
     const context = canvas.getContext("2d");
     if (!context) return [];
-    const positions = [...new Set([0.02, 0.28, 0.55, 0.82].map((ratio) => Math.max(0.05, video.duration * ratio)))];
+    const positions = [
+      ...new Set([0.02, 0.28, 0.55, 0.82].map((ratio) => Math.max(0.05, video.duration * ratio))),
+    ];
     const frames: string[] = [];
     for (const position of positions) {
       video.currentTime = Math.min(position, Math.max(0, video.duration - 0.05));
@@ -184,7 +209,10 @@ async function extractVideoThumbnail(file: File): Promise<string> {
     canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
     const context = canvas.getContext("2d");
     if (!context) return "";
-    video.currentTime = Math.min(Math.max(0.05, video.duration * 0.08), Math.max(0, video.duration - 0.05));
+    video.currentTime = Math.min(
+      Math.max(0.05, video.duration * 0.08),
+      Math.max(0, video.duration - 0.05),
+    );
     await waitForVideoEvent(video, "seeked");
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
     return canvas.toDataURL("image/jpeg", 0.72);
@@ -220,12 +248,15 @@ function assetMarkdownTable(assets: RestyleExtractedAsset[]): string {
 }
 
 function groupedAttachmentNodes(files: RestyleAttachment[]): RestyleFileTreeNode[] {
-  const sourceFiles = files.filter((file) => !file.generatedKind && !file.analysisFrame && !file.isFolder);
-  const folders = files.filter((file) => !file.generatedKind && !file.analysisFrame && file.isFolder);
+  const sourceFiles = files.filter(
+    (file) => !file.generatedKind && !file.analysisFrame && !file.isFolder,
+  );
+  const folders = files.filter(
+    (file) => !file.generatedKind && !file.analysisFrame && file.isFolder,
+  );
   const byEpisode = new Map<string, RestyleAttachment[]>();
-  sourceFiles.forEach((file) => {
-    const match = file.name.match(/ep\s*0*(\d+)/i);
-    const episode = `EP${String(match ? Number(match[1]) : 1).padStart(2, "0")}`;
+  sourceFiles.forEach((file, index) => {
+    const episode = episodeFromFileName(file.name, index);
     byEpisode.set(episode, [...(byEpisode.get(episode) ?? []), file]);
   });
   const fileNode = (file: RestyleAttachment): RestyleFileTreeNode => ({
@@ -233,28 +264,35 @@ function groupedAttachmentNodes(files: RestyleAttachment[]): RestyleFileTreeNode
     label: file.name,
     kind: "file" as const,
     size: file.size,
-    preview: { kind: "attachment" as const, key: `attachment:${file.id}`, title: file.name, attachment: file },
+    preview: {
+      kind: "attachment" as const,
+      key: `attachment:${file.id}`,
+      title: file.name,
+      attachment: file,
+    },
   });
   return [
-    ...Array.from(byEpisode.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([episode, episodeFiles]) => ({
-      id: `source/${episode}`,
-      label: episode,
-      kind: "folder" as const,
-      count: episodeFiles.length,
-      children: episodeFiles.map(fileNode),
-    })),
-    ...folders.map((file) => {
-    if (file.isFolder) {
-      return {
-        id: `source/${file.id}`,
-        label: file.name,
+    ...Array.from(byEpisode.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([episode, episodeFiles]) => ({
+        id: `source/${episode}`,
+        label: episode,
         kind: "folder" as const,
-        count: file.fileCount ?? 0,
-        children: [],
-      };
-    }
-    return fileNode(file);
-  }),
+        count: episodeFiles.length,
+        children: episodeFiles.map(fileNode),
+      })),
+    ...folders.map((file) => {
+      if (file.isFolder) {
+        return {
+          id: `source/${file.id}`,
+          label: file.name,
+          kind: "folder" as const,
+          count: file.fileCount ?? 0,
+          children: [],
+        };
+      }
+      return fileNode(file);
+    }),
   ];
 }
 
@@ -266,6 +304,12 @@ function buildRestyleFileTree(
   const extractedAssets = project?.extractedAssets ?? [];
   const sourceChildren = groupedAttachmentNodes(project?.files ?? []);
   const generatedFiles = (project?.files ?? []).filter((file) => file.generatedKind && file.url);
+  const finalVideoFiles = (project?.files ?? []).filter(
+    (file) => file.generatedKind === "final_video",
+  );
+  const videoClipFiles = (project?.files ?? []).filter(
+    (file) => file.generatedKind === "video_clip",
+  );
   const sourceCandidates = makeVirtualPreview(
     "analysis/global/source_asset_candidates.json",
     "source_asset_candidates.json",
@@ -331,7 +375,9 @@ function buildRestyleFileTree(
       ],
     };
   };
-  const sourceEpisodes = groupedAttachmentNodes(project?.files ?? []).filter((node) => node.label.match(/^EP\d+$/));
+  const sourceEpisodes = groupedAttachmentNodes(project?.files ?? []).filter((node) =>
+    node.label.match(/^EP\d+$/),
+  );
   const frameFiles = (project?.files ?? []).filter((file) => file.analysisFrame && file.url);
   const analysisChildren = extractedAssets.length
     ? [
@@ -361,9 +407,28 @@ function buildRestyleFileTree(
               label: "抽帧",
               kind: "folder" as const,
               count: frameFiles.filter((file) => file.analysisEpisode === episode.label).length,
-              children: frameFiles.filter((file) => file.analysisEpisode === episode.label).map((file) => ({ id: `analysis/${episode.label}/抽帧/${file.id}`, label: file.name, kind: "file" as const, size: file.size, preview: { kind: "attachment" as const, key: `attachment:${file.id}`, title: file.name, attachment: file } })),
+              children: frameFiles
+                .filter((file) => file.analysisEpisode === episode.label)
+                .map((file) => ({
+                  id: `analysis/${episode.label}/抽帧/${file.id}`,
+                  label: file.name,
+                  kind: "file" as const,
+                  size: file.size,
+                  preview: {
+                    kind: "attachment" as const,
+                    key: `attachment:${file.id}`,
+                    title: file.name,
+                    attachment: file,
+                  },
+                })),
             },
-            ...["剧情", "视觉理解", "台词", "资产"].map((label) => ({ id: `analysis/${episode.label}/${label}`, label, kind: "folder" as const, count: 0, children: [] })),
+            ...["剧情", "视觉理解", "台词", "资产"].map((label) => ({
+              id: `analysis/${episode.label}/${label}`,
+              label,
+              kind: "folder" as const,
+              count: 0,
+              children: [],
+            })),
           ],
         })),
       ]
@@ -420,7 +485,13 @@ function buildRestyleFileTree(
                   "text/plain",
                   segment.prompt,
                 );
-                return { id: promptPreview.key, label: promptPreview.title, kind: "file" as const, size: promptPreview.content.length, preview: promptPreview };
+                return {
+                  id: promptPreview.key,
+                  label: promptPreview.title,
+                  kind: "file" as const,
+                  size: promptPreview.content.length,
+                  preview: promptPreview,
+                };
               }),
             },
           ],
@@ -432,8 +503,42 @@ function buildRestyleFileTree(
     planChildren.push(...episodePlanNodes);
   }
   const resultChildren = [
-    { id: "results/final", label: "成片", kind: "folder" as const, count: 0, children: [] },
-    { id: "results/clips", label: "视频片段", kind: "folder" as const, count: 0, children: [] },
+    {
+      id: "results/final",
+      label: "成片",
+      kind: "folder" as const,
+      count: finalVideoFiles.length,
+      children: finalVideoFiles.map((file) => ({
+        id: `results/final/${file.id}`,
+        label: file.name,
+        kind: "file" as const,
+        size: file.size,
+        preview: {
+          kind: "attachment" as const,
+          key: `attachment:${file.id}`,
+          title: file.name,
+          attachment: file,
+        },
+      })),
+    },
+    {
+      id: "results/clips",
+      label: "视频片段",
+      kind: "folder" as const,
+      count: videoClipFiles.length,
+      children: videoClipFiles.map((file) => ({
+        id: `results/clips/${file.id}`,
+        label: file.name,
+        kind: "file" as const,
+        size: file.size,
+        preview: {
+          kind: "attachment" as const,
+          key: `attachment:${file.id}`,
+          title: file.name,
+          attachment: file,
+        },
+      })),
+    },
     {
       id: "results/assets",
       label: t.restyle_assets,
@@ -499,7 +604,9 @@ export default function RestyleStudio() {
   const [assetPickerFor, setAssetPickerFor] = useState<string | null>(null);
   const [assetPickerKind, setAssetPickerKind] = useState<RestyleAsset["kind"] | null>(null);
   const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
-  const canvasDragRef = useRef<{ x: number; y: number; offsetX: number; offsetY: number } | null>(null);
+  const canvasDragRef = useRef<{ x: number; y: number; offsetX: number; offsetY: number } | null>(
+    null,
+  );
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const [draftAttachmentIds, setDraftAttachmentIds] = useState<string[]>([]);
   const [filePreviews, setFilePreviews] = useState<Record<string, string>>({});
@@ -529,6 +636,7 @@ export default function RestyleStudio() {
   const callAnalyzeRestyleAssets = useServerFn(analyzeRestyleAssets);
   const callGenerateRestylePlan = useServerFn(generateRestylePlan);
   const callGenerateImage = useServerFn(generateImage);
+  const callGenerateImageWithReferences = useServerFn(generateImageWithReferences);
 
   const activeProject = projects.find((project) => project.id === activeProjectId);
   const activeConversation = activeProject?.conversations.find(
@@ -809,6 +917,7 @@ export default function RestyleStudio() {
       assetTable?: RestyleExtractedAsset[];
       assetCategoryLinks?: Array<"character" | "scene" | "prop">;
       episodeLinks?: string[];
+      finalEpisodeLinks?: string[];
     },
   ) {
     updateProject(projectId, (project) => ({
@@ -818,7 +927,10 @@ export default function RestyleStudio() {
           ? {
               ...conversation,
               title:
-                conversation.title || message.content.slice(0, 32) || message.attachments?.[0]?.name || "",
+                conversation.title ||
+                message.content.slice(0, 32) ||
+                message.attachments?.[0]?.name ||
+                "",
               updatedAt: new Date().toISOString(),
               messages: [
                 ...conversation.messages,
@@ -885,6 +997,115 @@ export default function RestyleStudio() {
     setClosedFileTreePaths((current) => current.filter((item) => item !== path));
   }
 
+  function previewUrlForAttachment(attachment: RestyleAttachment): string | undefined {
+    return (
+      filePreviews[attachment.id] ??
+      attachment.url ??
+      (attachment.sourceAttachmentId ? filePreviews[attachment.sourceAttachmentId] : undefined)
+    );
+  }
+
+  function videoPairForAttachment(attachment: RestyleAttachment): RestyleVideoPair | null {
+    if (attachment.generatedKind !== "final_video" && attachment.generatedKind !== "video_clip") {
+      return null;
+    }
+    const source = activeProject?.files.find((file) => file.id === attachment.sourceAttachmentId);
+    if (!source) return null;
+    return {
+      source,
+      result: attachment,
+      sourceUrl: previewUrlForAttachment(source),
+      resultUrl: previewUrlForAttachment(attachment),
+    };
+  }
+
+  function openFinalEpisode(episode: string) {
+    expandFileTreePath("results");
+    expandFileTreePath("results/final");
+    const file = activeProject?.files.find(
+      (item) => item.generatedKind === "final_video" && item.episode === episode,
+    );
+    if (!file) return;
+    const preview = attachmentPreview(file);
+    setSelectedFilePreview(preview);
+    setInspectorOpen(true);
+  }
+
+  function generateRenderedVideos(projectId: string, conversationId: string) {
+    const project = projects.find((item) => item.id === projectId);
+    if (!project) return;
+    const sourceFiles = project.files.filter(
+      (file) => file.type.startsWith("video/") && !file.isFolder,
+    );
+    const planEpisodes = project.planEpisodes?.length
+      ? project.planEpisodes
+      : sourceFiles.map((file, index) => ({
+          episode: episodeFromFileName(file.name, index),
+          segments: [{ id: "U01", prompt: "保持原片剧情、动作、站位与音频节奏完成转绘。" }],
+        }));
+    const attachments: RestyleAttachment[] = planEpisodes.flatMap((episode, episodeIndex) => {
+      const source =
+        sourceFiles.find(
+          (file, index) => episodeFromFileName(file.name, index) === episode.episode,
+        ) ??
+        sourceFiles[episodeIndex] ??
+        sourceFiles[0];
+      if (!source) return [];
+      const clips = episode.segments.map((segment) => ({
+        id: crypto.randomUUID(),
+        name: `${episode.episode}_${segment.id}.mp4`,
+        size: source.size,
+        type: "video/mp4",
+        lastModified: Date.now(),
+        url: filePreviews[source.id],
+        generatedKind: "video_clip" as const,
+        sourceAttachmentId: source.id,
+        episode: episode.episode,
+        segmentId: segment.id,
+      }));
+      return [
+        {
+          id: crypto.randomUUID(),
+          name: `${episode.episode}.mp4`,
+          size: source.size,
+          type: "video/mp4",
+          lastModified: Date.now(),
+          url: filePreviews[source.id],
+          generatedKind: "final_video" as const,
+          sourceAttachmentId: source.id,
+          episode: episode.episode,
+        },
+        ...clips,
+      ];
+    });
+    if (!attachments.length) {
+      appendConversationMessage(projectId, conversationId, {
+        role: "assistant",
+        content: "没有找到可用于生成的视频源文件，请先上传原片后再确认生成。",
+      });
+      return;
+    }
+    const finalEpisodes = attachments
+      .filter((file) => file.generatedKind === "final_video")
+      .map((file) => file.episode)
+      .filter((episode): episode is string => Boolean(episode));
+    updateProject(projectId, (item) => ({
+      ...item,
+      stage: "review",
+      files: [
+        ...item.files.filter(
+          (file) => file.generatedKind !== "final_video" && file.generatedKind !== "video_clip",
+        ),
+        ...attachments,
+      ],
+    }));
+    appendConversationMessage(projectId, conversationId, {
+      role: "assistant",
+      content: `${finalEpisodes.join("、")} 英文剧正式生成完成，${attachments.length - finalEpisodes.length} 个片段都已下载并合成为成片。媒体检查通过。请点击成片链接，在右侧同步播放原片和转绘结果进行验收。`,
+      finalEpisodeLinks: finalEpisodes,
+    });
+  }
+
   function reorderProjectFile(targetFileId: string) {
     if (!activeProject || !draggedFileId || draggedFileId === targetFileId) return;
     updateProject(activeProject.id, (project) => {
@@ -900,7 +1121,9 @@ export default function RestyleStudio() {
   }
 
   function insertImageMention(imageIndex: number) {
-    setChatDraft((current) => current.replace(/(^|\s)@[a-zA-Z0-9_]*$/, `$1@image${imageIndex + 1} `));
+    setChatDraft((current) =>
+      current.replace(/(^|\s)@[a-zA-Z0-9_]*$/, `$1@image${imageIndex + 1} `),
+    );
   }
 
   function getRequestedAssetKinds(message: string): Array<"character" | "scene" | "prop"> {
@@ -920,7 +1143,8 @@ export default function RestyleStudio() {
     if (!message && !attachments.length) return;
     const projectId = activeProject.id;
     const conversationId = activeConversation.id;
-    const analysisInstruction = message || "请分析上传的视频，提取真正需要转绘的具体角色、场景和道具。";
+    const analysisInstruction =
+      message || "请分析上传的视频，提取真正需要转绘的具体角色、场景和道具。";
     const messageAttachments =
       attachments.length || activeProject.extractedAssets.length ? attachments : projectVideoFiles;
     appendConversationMessage(projectId, conversationId, {
@@ -931,26 +1155,50 @@ export default function RestyleStudio() {
     setChatDraft("");
     setDraftAttachmentIds([]);
 
+    if (
+      activeProject.stage === "plan" &&
+      /确认生成视频|确认生成|开始生成视频|生成视频/.test(message)
+    ) {
+      updateProject(projectId, (project) => ({ ...project, stage: "render" }));
+      appendConversationMessage(projectId, conversationId, {
+        role: "assistant",
+        content: `已提交 ${activeProject.planEpisodes?.length || 1} 集正式视频生成。模型：${selectedVideoModel}。系统会按分段生成并合成为成片，完成后只返还需要验收的成片链接。`,
+      });
+      window.setTimeout(() => generateRenderedVideos(projectId, conversationId), 300);
+      return;
+    }
+
     if (message === "确认" && activeProject.extractedAssets.length > 0) {
       setIsAnalyzing(true);
-      const sourceFiles = activeProject.files.filter((file) => file.type.startsWith("video/") && !file.isFolder);
+      const sourceFiles = activeProject.files.filter(
+        (file) => file.type.startsWith("video/") && !file.isFolder,
+      );
       const episodeCount = sourceFiles.length || 1;
       const result = await callGenerateRestylePlan({
         data: {
           model: selectedModel,
           instruction: activeProject.planNote,
-          sourceFiles: (sourceFiles.length ? sourceFiles : activeProject.files).map(({ name, type, size }) => ({ name, type, size })),
+          sourceFiles: (sourceFiles.length ? sourceFiles : activeProject.files).map(
+            ({ name, type, size }) => ({ name, type, size }),
+          ),
           assets: activeProject.extractedAssets.map(({ id: _id, ...asset }) => asset),
           episodeCount,
         },
       });
       if (!result.ok) {
         setIsAnalyzing(false);
-        appendConversationMessage(projectId, conversationId, { role: "assistant", content: `转绘方案生成失败：${result.error}` });
+        appendConversationMessage(projectId, conversationId, {
+          role: "assistant",
+          content: `转绘方案生成失败：${result.error}`,
+        });
         return;
       }
       const episodeLinks = result.episodes.map((episode) => episode.episode);
-      updateProject(projectId, (project) => ({ ...project, stage: "plan", planEpisodes: result.episodes }));
+      updateProject(projectId, (project) => ({
+        ...project,
+        stage: "plan",
+        planEpisodes: result.episodes,
+      }));
       appendConversationMessage(projectId, conversationId, {
         role: "assistant",
         content: `已确认资产图片，已生成 ${episodeLinks.join("、")} 的转绘方案。点击集数可展开右侧对应目录，提示词位于“提示词/final”文件夹内。需要微调时，请直接说明集数和分段，例如“请将 EP01 的 U01 光影调整为冷白色调”。调整完成后回复“确认生成视频”。`,
@@ -962,32 +1210,45 @@ export default function RestyleStudio() {
 
     if (activeProject.stage === "plan" && /EP\d+|U\d+|提示词|光影|镜头|台词|节奏/.test(message)) {
       setIsAnalyzing(true);
-      const sourceFiles = activeProject.files.filter((file) => file.type.startsWith("video/") && !file.isFolder);
+      const sourceFiles = activeProject.files.filter(
+        (file) => file.type.startsWith("video/") && !file.isFolder,
+      );
       const result = await callGenerateRestylePlan({
         data: {
           model: selectedModel,
           instruction: message,
-          sourceFiles: (sourceFiles.length ? sourceFiles : activeProject.files).map(({ name, type, size }) => ({ name, type, size })),
+          sourceFiles: (sourceFiles.length ? sourceFiles : activeProject.files).map(
+            ({ name, type, size }) => ({ name, type, size }),
+          ),
           assets: activeProject.extractedAssets.map(({ id: _id, ...asset }) => asset),
           episodeCount: activeProject.planEpisodes?.length || sourceFiles.length || 1,
           existingEpisodes: activeProject.planEpisodes ?? [],
         },
       });
       if (result.ok) {
-        updateProject(projectId, (project) => ({ ...project, planEpisodes: result.episodes, stage: "plan" }));
+        updateProject(projectId, (project) => ({
+          ...project,
+          planEpisodes: result.episodes,
+          stage: "plan",
+        }));
         appendConversationMessage(projectId, conversationId, {
           role: "assistant",
           content: `已根据你的要求更新方案：${result.episodes.map((episode) => `${episode.episode}（${episode.segments.length} 段）`).join("、")}。请点击右侧提示词文件检查修改结果。`,
           episodeLinks: result.episodes.map((episode) => episode.episode),
         });
       } else {
-        appendConversationMessage(projectId, conversationId, { role: "assistant", content: `提示词修改失败：${result.error}` });
+        appendConversationMessage(projectId, conversationId, {
+          role: "assistant",
+          content: `提示词修改失败：${result.error}`,
+        });
       }
       setIsAnalyzing(false);
       return;
     }
 
-    const generatedAssetFiles = activeProject.files.filter((file) => file.generatedKind && file.url);
+    const generatedAssetFiles = activeProject.files.filter(
+      (file) => file.generatedKind && file.url,
+    );
     const requestedAssetKinds = getRequestedAssetKinds(message);
     const isAssetImageRequest =
       activeProject.extractedAssets.length > 0 &&
@@ -995,15 +1256,19 @@ export default function RestyleStudio() {
         (requestedAssetKinds.length > 0 && /生成|图片|图/.test(message)) ||
         (generatedAssetFiles.length > 0 && /修改|调整|请将|变得|改成|换成/i.test(message)));
     if (isAssetImageRequest) {
-      const mentionedImages = message.match(/@image(\d+)/gi)?.map((mention) => Number(mention.replace(/\D/g, "")) - 1) ?? [];
-      const uploadedReferenceImages = (await Promise.all(
-        referenceAttachments
-          .filter((_file, index) => !mentionedImages.length || mentionedImages.includes(index))
-          .map((file) => {
-            const local = fileObjectsRef.current[file.id];
-            return local ? fileToDataUrl(local) : Promise.resolve(file.url ?? "");
-          }),
-      )).filter(Boolean);
+      const mentionedImages =
+        message.match(/@image(\d+)/gi)?.map((mention) => Number(mention.replace(/\D/g, "")) - 1) ??
+        [];
+      const uploadedReferenceImages = (
+        await Promise.all(
+          referenceAttachments
+            .filter((_file, index) => !mentionedImages.length || mentionedImages.includes(index))
+            .map((file) => {
+              const local = fileObjectsRef.current[file.id];
+              return local ? fileToDataUrl(local) : Promise.resolve(file.url ?? "");
+            }),
+        )
+      ).filter(Boolean);
       const generatedReferenceImages = generatedAssetFiles
         .filter((file) =>
           activeProject.extractedAssets.some(
@@ -1024,7 +1289,13 @@ export default function RestyleStudio() {
         });
         return;
       }
-      await generateAssetImages(projectId, conversationId, message, requestedAssets, referenceImages);
+      await generateAssetImages(
+        projectId,
+        conversationId,
+        message,
+        requestedAssets,
+        referenceImages,
+      );
       return;
     }
 
@@ -1181,23 +1452,31 @@ export default function RestyleStudio() {
     if (!activeProject) return;
     updateProject(activeProject.id, (project) => ({
       ...project,
-      assetIds: project.assetIds.includes(assetId) ? project.assetIds : [...project.assetIds, assetId],
+      assetIds: project.assetIds.includes(assetId)
+        ? project.assetIds
+        : [...project.assetIds, assetId],
     }));
     setAssetPickerFor(null);
     setAssetPickerKind(null);
   }
 
-  function updateExtractedAssets(mutator: (assets: RestyleExtractedAsset[]) => RestyleExtractedAsset[]) {
+  function updateExtractedAssets(
+    mutator: (assets: RestyleExtractedAsset[]) => RestyleExtractedAsset[],
+  ) {
     if (!activeProject) return;
     updateProject(activeProject.id, (project) => {
       const extractedAssets = mutator(project.extractedAssets);
       return {
         ...project,
         extractedAssets,
-        confirmedAssetIds: project.confirmedAssetIds.filter((id) => extractedAssets.some((asset) => asset.id === id)),
+        confirmedAssetIds: project.confirmedAssetIds.filter((id) =>
+          extractedAssets.some((asset) => asset.id === id),
+        ),
         conversations: project.conversations.map((conversation) => ({
           ...conversation,
-          messages: conversation.messages.map((message) => (message.assetTable ? { ...message, assetTable: extractedAssets } : message)),
+          messages: conversation.messages.map((message) =>
+            message.assetTable ? { ...message, assetTable: extractedAssets } : message,
+          ),
         })),
       };
     });
@@ -1207,18 +1486,35 @@ export default function RestyleStudio() {
     const sourceName = window.prompt("请输入资产名称");
     if (!sourceName?.trim()) return;
     const kindInput = window.prompt("请输入类型：角色、场景或道具", "场景")?.trim();
-    const kind: RestyleExtractedAsset["kind"] = kindInput === "角色" ? "character" : kindInput === "道具" ? "prop" : "scene";
-    const sourceDescription = window.prompt("请输入原片定位", "用户补充的具体资产") || "用户补充的具体资产";
+    const kind: RestyleExtractedAsset["kind"] =
+      kindInput === "角色" ? "character" : kindInput === "道具" ? "prop" : "scene";
+    const sourceDescription =
+      window.prompt("请输入原片定位", "用户补充的具体资产") || "用户补充的具体资产";
     const targetName = window.prompt("请输入目标名称", sourceName) || sourceName;
-    const targetDescription = window.prompt("请输入目标设定", sourceDescription) || sourceDescription;
-    updateExtractedAssets((assets) => [...assets, { id: crypto.randomUUID(), kind, sourceName: sourceName.trim(), sourceDescription, targetName, targetDescription, importance: "optional", shouldRestyle: true }]);
+    const targetDescription =
+      window.prompt("请输入目标设定", sourceDescription) || sourceDescription;
+    updateExtractedAssets((assets) => [
+      ...assets,
+      {
+        id: crypto.randomUUID(),
+        kind,
+        sourceName: sourceName.trim(),
+        sourceDescription,
+        targetName,
+        targetDescription,
+        importance: "optional",
+        shouldRestyle: true,
+      },
+    ]);
   }
 
   if (view === "canvas") {
-    const canvasAssets = canvasKind === "all" ? assets : assets.filter((asset) => asset.kind === canvasKind);
-    const canvasSelectedAsset = selectedAsset && canvasAssets.some((asset) => asset.id === selectedAsset.id)
-      ? selectedAsset
-      : canvasAssets[0];
+    const canvasAssets =
+      canvasKind === "all" ? assets : assets.filter((asset) => asset.kind === canvasKind);
+    const canvasSelectedAsset =
+      selectedAsset && canvasAssets.some((asset) => asset.id === selectedAsset.id)
+        ? selectedAsset
+        : canvasAssets[0];
     const canvasEpisodes = (activeProject?.planEpisodes ?? []).map((episode) => episode.episode);
     return (
       <section
@@ -1234,19 +1530,56 @@ export default function RestyleStudio() {
           <aside className="rounded-xl border border-border bg-bg-surface p-3">
             <p className="mb-2 text-xs font-semibold text-text-primary">资产</p>
             {(["all", "character", "scene", "prop"] as const).map((kind) => (
-              <button key={kind} type="button" onClick={() => setCanvasKind(kind)} className={`mb-1 flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs ${canvasKind === kind ? "bg-accent-dim text-accent" : "text-text-secondary hover:bg-bg-elevated"}`}>
-                <span>{kind === "all" ? "全部资产" : kind === "character" ? "角色" : kind === "scene" ? "场景" : "道具"}</span>
-                <span>{kind === "all" ? assets.length : assets.filter((asset) => asset.kind === kind).length}</span>
+              <button
+                key={kind}
+                type="button"
+                onClick={() => setCanvasKind(kind)}
+                className={`mb-1 flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-xs ${canvasKind === kind ? "bg-accent-dim text-accent" : "text-text-secondary hover:bg-bg-elevated"}`}
+              >
+                <span>
+                  {kind === "all"
+                    ? "全部资产"
+                    : kind === "character"
+                      ? "角色"
+                      : kind === "scene"
+                        ? "场景"
+                        : "道具"}
+                </span>
+                <span>
+                  {kind === "all"
+                    ? assets.length
+                    : assets.filter((asset) => asset.kind === kind).length}
+                </span>
               </button>
             ))}
             <div className="mt-4 space-y-1 border-t border-border pt-3">
               {canvasAssets.map((asset) => (
-                <button key={asset.id} type="button" onClick={() => { setSelectedAssetId(asset.id); setCanvasPrompt(asset.detail); }} className={`w-full truncate rounded-lg px-3 py-2 text-left text-xs ${canvasSelectedAsset?.id === asset.id ? "bg-bg-elevated text-text-primary" : "text-text-muted hover:bg-bg-elevated"}`}>{asset.name}</button>
+                <button
+                  key={asset.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedAssetId(asset.id);
+                    setCanvasPrompt(asset.detail);
+                  }}
+                  className={`w-full truncate rounded-lg px-3 py-2 text-left text-xs ${canvasSelectedAsset?.id === asset.id ? "bg-bg-elevated text-text-primary" : "text-text-muted hover:bg-bg-elevated"}`}
+                >
+                  {asset.name}
+                </button>
               ))}
             </div>
             <div className="mt-4 border-t border-border pt-3">
               <p className="mb-2 px-3 text-[11px] font-semibold text-text-muted">视频分集</p>
-              {canvasEpisodes.map((episode) => <button key={episode} type="button" onClick={() => expandFileTreePath(`plan/${episode}`)} className="mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-text-secondary hover:bg-bg-elevated"><span className="text-accent">▣</span>{episode}</button>)}
+              {canvasEpisodes.map((episode) => (
+                <button
+                  key={episode}
+                  type="button"
+                  onClick={() => expandFileTreePath(`plan/${episode}`)}
+                  className="mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-text-secondary hover:bg-bg-elevated"
+                >
+                  <span className="text-accent">▣</span>
+                  {episode}
+                </button>
+              ))}
             </div>
           </aside>
           <div
@@ -1254,48 +1587,197 @@ export default function RestyleStudio() {
             onPointerDown={(event) => {
               if ((event.target as HTMLElement).closest("button")) return;
               event.currentTarget.setPointerCapture(event.pointerId);
-              canvasDragRef.current = { x: event.clientX, y: event.clientY, offsetX: canvasOffset.x, offsetY: canvasOffset.y };
+              canvasDragRef.current = {
+                x: event.clientX,
+                y: event.clientY,
+                offsetX: canvasOffset.x,
+                offsetY: canvasOffset.y,
+              };
             }}
             onPointerMove={(event) => {
               const drag = canvasDragRef.current;
               if (!drag) return;
-              setCanvasOffset({ x: drag.offsetX + event.clientX - drag.x, y: drag.offsetY + event.clientY - drag.y });
+              setCanvasOffset({
+                x: drag.offsetX + event.clientX - drag.x,
+                y: drag.offsetY + event.clientY - drag.y,
+              });
             }}
             onPointerUp={(event) => {
               canvasDragRef.current = null;
               event.currentTarget.releasePointerCapture?.(event.pointerId);
             }}
-            onPointerCancel={() => { canvasDragRef.current = null; }}
+            onPointerCancel={() => {
+              canvasDragRef.current = null;
+            }}
           >
-            <div className="absolute left-4 top-4 z-10 rounded-lg border border-border bg-bg-surface/95 px-3 py-2 text-xs text-text-muted">引用资产 <span className="ml-1 text-accent">{canvasAssets.length}</span></div>
-            <div className="absolute inset-0" style={{ transform: `translate(${canvasOffset.x}px, ${canvasOffset.y}px) scale(${zoom / 100})`, transformOrigin: "0 0" }}>
-            <svg className="pointer-events-none absolute inset-0 h-full w-full opacity-40" aria-hidden="true">
-              {canvasAssets.slice(0, 8).map((asset, index) => <line key={asset.id} x1={`${230 + index * 95}px`} y1="180" x2="78%" y2={`${150 + index * 38}px`} stroke="currentColor" strokeDasharray="5 5" />)}
-            </svg>
-            <div className="absolute left-8 right-[28%] top-24 flex flex-wrap gap-4">
-              {canvasAssets.slice(0, 12).map((asset) => (
-                <button key={asset.id} type="button" onClick={() => { setSelectedAssetId(asset.id); setCanvasPrompt(asset.detail); }} className={`w-[132px] overflow-hidden rounded-lg border bg-bg-surface text-left shadow-xl ${canvasSelectedAsset?.id === asset.id ? "border-accent ring-2 ring-accent/30" : "border-border"}`}>
-                  <div className="relative h-24 overflow-hidden"><AssetVisual asset={asset} compact /><span className="absolute left-2 top-2 rounded bg-bg/80 px-1.5 py-0.5 text-[9px] text-text-primary">{asset.kind === "character" ? "角色" : asset.kind === "scene" ? "场景" : "道具"}</span></div>
-                  <p className="truncate px-2 py-2 text-[11px] font-medium text-text-primary">{asset.name}</p>
-                </button>
-              ))}
+            <div className="absolute left-4 top-4 z-10 rounded-lg border border-border bg-bg-surface/95 px-3 py-2 text-xs text-text-muted">
+              引用资产 <span className="ml-1 text-accent">{canvasAssets.length}</span>
             </div>
-            <div className="absolute right-5 top-24 w-[150px] space-y-3">
-              {canvasEpisodes.length ? canvasEpisodes.map((episode) => <button key={episode} type="button" className="w-full rounded-lg border border-border bg-bg-surface p-2 text-left shadow-xl" onClick={() => { expandFileTreePath("plan"); expandFileTreePath(`plan/${episode}`); }}><p className="text-[10px] text-text-muted">视频</p><p className="mt-1 text-xs font-semibold text-text-primary">{episode}</p><p className="mt-1 text-[10px] text-text-muted">{activeProject?.planEpisodes?.find((item) => item.episode === episode)?.segments.length ?? 0} 段</p></button>) : <div className="rounded-lg border border-dashed border-border p-3 text-[10px] text-text-muted">方案生成后显示每集视频</div>}
-            </div>
+            <div
+              className="absolute inset-0"
+              style={{
+                transform: `translate(${canvasOffset.x}px, ${canvasOffset.y}px) scale(${zoom / 100})`,
+                transformOrigin: "0 0",
+              }}
+            >
+              <svg
+                className="pointer-events-none absolute inset-0 h-full w-full opacity-40"
+                aria-hidden="true"
+              >
+                {canvasAssets.slice(0, 8).map((asset, index) => (
+                  <line
+                    key={asset.id}
+                    x1={`${230 + index * 95}px`}
+                    y1="180"
+                    x2="78%"
+                    y2={`${150 + index * 38}px`}
+                    stroke="currentColor"
+                    strokeDasharray="5 5"
+                  />
+                ))}
+              </svg>
+              <div className="absolute left-8 right-[28%] top-24 flex flex-wrap gap-4">
+                {canvasAssets.slice(0, 12).map((asset) => (
+                  <button
+                    key={asset.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedAssetId(asset.id);
+                      setCanvasPrompt(asset.detail);
+                    }}
+                    className={`w-[132px] overflow-hidden rounded-lg border bg-bg-surface text-left shadow-xl ${canvasSelectedAsset?.id === asset.id ? "border-accent ring-2 ring-accent/30" : "border-border"}`}
+                  >
+                    <div className="relative h-24 overflow-hidden">
+                      <AssetVisual asset={asset} compact />
+                      <span className="absolute left-2 top-2 rounded bg-bg/80 px-1.5 py-0.5 text-[9px] text-text-primary">
+                        {asset.kind === "character"
+                          ? "角色"
+                          : asset.kind === "scene"
+                            ? "场景"
+                            : "道具"}
+                      </span>
+                    </div>
+                    <p className="truncate px-2 py-2 text-[11px] font-medium text-text-primary">
+                      {asset.name}
+                    </p>
+                  </button>
+                ))}
+              </div>
+              <div className="absolute right-5 top-24 w-[150px] space-y-3">
+                {canvasEpisodes.length ? (
+                  canvasEpisodes.map((episode) => (
+                    <button
+                      key={episode}
+                      type="button"
+                      className="w-full rounded-lg border border-border bg-bg-surface p-2 text-left shadow-xl"
+                      onClick={() => {
+                        expandFileTreePath("plan");
+                        expandFileTreePath(`plan/${episode}`);
+                      }}
+                    >
+                      <p className="text-[10px] text-text-muted">视频</p>
+                      <p className="mt-1 text-xs font-semibold text-text-primary">{episode}</p>
+                      <p className="mt-1 text-[10px] text-text-muted">
+                        {activeProject?.planEpisodes?.find((item) => item.episode === episode)
+                          ?.segments.length ?? 0}{" "}
+                        段
+                      </p>
+                    </button>
+                  ))
+                ) : (
+                  <div className="rounded-lg border border-dashed border-border p-3 text-[10px] text-text-muted">
+                    方案生成后显示每集视频
+                  </div>
+                )}
+              </div>
             </div>
             <div className="absolute bottom-5 left-1/2 flex -translate-x-1/2 items-center gap-2 rounded-full border border-border bg-bg-surface/95 px-3 py-2 shadow-xl">
-              <button type="button" onClick={() => setZoom(Math.max(50, zoom - 15))} className="rounded px-2 text-sm text-text-secondary">−</button><span className="min-w-10 text-center text-xs text-text-primary">{zoom}%</span><button type="button" onClick={() => setZoom(Math.min(150, zoom + 15))} className="rounded px-2 text-sm text-text-secondary">+</button><span className="mx-1 h-4 w-px bg-border" /><button type="button" onClick={() => { setZoom(100); setCanvasOffset({ x: 0, y: 0 }); }} className="rounded px-2 text-xs text-text-secondary">重置</button><button type="button" onClick={() => document.documentElement.requestFullscreen?.()} className="rounded px-2 text-xs text-text-secondary">全屏</button>
+              <button
+                type="button"
+                onClick={() => setZoom(Math.max(50, zoom - 15))}
+                className="rounded px-2 text-sm text-text-secondary"
+              >
+                −
+              </button>
+              <span className="min-w-10 text-center text-xs text-text-primary">{zoom}%</span>
+              <button
+                type="button"
+                onClick={() => setZoom(Math.min(150, zoom + 15))}
+                className="rounded px-2 text-sm text-text-secondary"
+              >
+                +
+              </button>
+              <span className="mx-1 h-4 w-px bg-border" />
+              <button
+                type="button"
+                onClick={() => {
+                  setZoom(100);
+                  setCanvasOffset({ x: 0, y: 0 });
+                }}
+                className="rounded px-2 text-xs text-text-secondary"
+              >
+                重置
+              </button>
+              <button
+                type="button"
+                onClick={() => document.documentElement.requestFullscreen?.()}
+                className="rounded px-2 text-xs text-text-secondary"
+              >
+                全屏
+              </button>
             </div>
           </div>
           <aside className="rounded-xl border border-border bg-bg-surface p-4">
             <p className="text-xs text-text-muted">资产编辑</p>
-            {canvasSelectedAsset ? <>
-              <h2 className="mt-1 font-semibold text-text-primary">{canvasSelectedAsset.name}</h2>
-              <p className="mt-3 text-xs leading-5 text-text-secondary">{canvasSelectedAsset.detail}</p>
-              <label className="mt-4 block text-xs text-text-muted">生成/修改提示词<textarea value={canvasPrompt || canvasSelectedAsset.detail} onChange={(event) => setCanvasPrompt(event.target.value)} rows={7} className="mt-2 w-full resize-y rounded-lg border border-border bg-bg-elevated p-3 text-xs leading-5 text-text-primary outline-none focus:border-accent" /></label>
-              <button type="button" disabled={isAnalyzing || !activeProject || !activeConversation} onClick={() => activeProject && activeConversation && generateAssetImages(activeProject.id, activeConversation.id, canvasPrompt || canvasSelectedAsset.detail, [activeProject.extractedAssets.find((asset) => asset.targetName === canvasSelectedAsset.name) ?? { id: canvasSelectedAsset.id, kind: canvasSelectedAsset.kind, sourceName: canvasSelectedAsset.name, sourceDescription: canvasSelectedAsset.detail, targetName: canvasSelectedAsset.name, targetDescription: canvasPrompt || canvasSelectedAsset.detail, importance: "required", shouldRestyle: true }])} className="btn-primary mt-4 w-full text-xs">{isAnalyzing ? "生成中…" : "生成新版本"}</button>
-            </> : <p className="mt-3 text-sm text-text-secondary">请选择一个资产开始编辑。</p>}
+            {canvasSelectedAsset ? (
+              <>
+                <h2 className="mt-1 font-semibold text-text-primary">{canvasSelectedAsset.name}</h2>
+                <p className="mt-3 text-xs leading-5 text-text-secondary">
+                  {canvasSelectedAsset.detail}
+                </p>
+                <label className="mt-4 block text-xs text-text-muted">
+                  生成/修改提示词
+                  <textarea
+                    value={canvasPrompt || canvasSelectedAsset.detail}
+                    onChange={(event) => setCanvasPrompt(event.target.value)}
+                    rows={7}
+                    className="mt-2 w-full resize-y rounded-lg border border-border bg-bg-elevated p-3 text-xs leading-5 text-text-primary outline-none focus:border-accent"
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={isAnalyzing || !activeProject || !activeConversation}
+                  onClick={() =>
+                    activeProject &&
+                    activeConversation &&
+                    generateAssetImages(
+                      activeProject.id,
+                      activeConversation.id,
+                      canvasPrompt || canvasSelectedAsset.detail,
+                      [
+                        activeProject.extractedAssets.find(
+                          (asset) => asset.targetName === canvasSelectedAsset.name,
+                        ) ?? {
+                          id: canvasSelectedAsset.id,
+                          kind: canvasSelectedAsset.kind,
+                          sourceName: canvasSelectedAsset.name,
+                          sourceDescription: canvasSelectedAsset.detail,
+                          targetName: canvasSelectedAsset.name,
+                          targetDescription: canvasPrompt || canvasSelectedAsset.detail,
+                          importance: "required",
+                          shouldRestyle: true,
+                        },
+                      ],
+                    )
+                  }
+                  className="btn-primary mt-4 w-full text-xs"
+                >
+                  {isAnalyzing ? "生成中…" : "生成新版本"}
+                </button>
+              </>
+            ) : (
+              <p className="mt-3 text-sm text-text-secondary">请选择一个资产开始编辑。</p>
+            )}
           </aside>
         </div>
       </section>
@@ -1309,13 +1791,57 @@ export default function RestyleStudio() {
     >
       <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden xl:grid-cols-[232px_minmax(0,1fr)_310px]">
         {assetPickerFor || assetPickerKind ? (
-          <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-6" role="dialog" aria-modal="true">
+          <div
+            className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-6"
+            role="dialog"
+            aria-modal="true"
+          >
             <div className="max-h-[80vh] w-full max-w-2xl overflow-hidden rounded-2xl border border-border bg-bg-surface shadow-2xl">
-              <div className="flex items-center justify-between border-b border-border px-5 py-4"><div><h2 className="font-semibold text-text-primary">从资产库选择</h2><p className="mt-1 text-xs text-text-muted">选择后绑定到当前项目，并可作为参考图使用。</p></div><button type="button" onClick={() => { setAssetPickerFor(null); setAssetPickerKind(null); }} className="text-text-muted hover:text-text-primary"><X size={18} /></button></div>
+              <div className="flex items-center justify-between border-b border-border px-5 py-4">
+                <div>
+                  <h2 className="font-semibold text-text-primary">从资产库选择</h2>
+                  <p className="mt-1 text-xs text-text-muted">
+                    选择后绑定到当前项目，并可作为参考图使用。
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAssetPickerFor(null);
+                    setAssetPickerKind(null);
+                  }}
+                  className="text-text-muted hover:text-text-primary"
+                >
+                  <X size={18} />
+                </button>
+              </div>
               <div className="grid max-h-[60vh] grid-cols-2 gap-3 overflow-y-auto p-5 sm:grid-cols-3">
-                {assets.filter((asset) => asset.kind === (assetPickerKind ?? activeProject?.extractedAssets.find((item) => item.id === assetPickerFor)?.kind)).map((asset) => (
-                  <button key={asset.id} type="button" onClick={() => linkLibraryAsset(asset.id)} className="overflow-hidden rounded-xl border border-border text-left hover:border-accent"><div className="aspect-[4/3] overflow-hidden"><AssetVisual asset={asset} compact /></div><div className="p-2"><p className="truncate text-xs font-medium text-text-primary">{asset.name}</p><p className="truncate text-[10px] text-text-muted">{asset.role}</p></div></button>
-                ))}
+                {assets
+                  .filter(
+                    (asset) =>
+                      asset.kind ===
+                      (assetPickerKind ??
+                        activeProject?.extractedAssets.find((item) => item.id === assetPickerFor)
+                          ?.kind),
+                  )
+                  .map((asset) => (
+                    <button
+                      key={asset.id}
+                      type="button"
+                      onClick={() => linkLibraryAsset(asset.id)}
+                      className="overflow-hidden rounded-xl border border-border text-left hover:border-accent"
+                    >
+                      <div className="aspect-[4/3] overflow-hidden">
+                        <AssetVisual asset={asset} compact />
+                      </div>
+                      <div className="p-2">
+                        <p className="truncate text-xs font-medium text-text-primary">
+                          {asset.name}
+                        </p>
+                        <p className="truncate text-[10px] text-text-muted">{asset.role}</p>
+                      </div>
+                    </button>
+                  ))}
               </div>
             </div>
           </div>
@@ -1458,7 +1984,10 @@ export default function RestyleStudio() {
                 </div>
               </div>
               {(activeConversation?.messages ?? []).map((message) => (
-                <div key={message.id} className={message.role === "assistant" ? "space-y-3" : "flex flex-col items-end"}>
+                <div
+                  key={message.id}
+                  className={message.role === "assistant" ? "space-y-3" : "flex flex-col items-end"}
+                >
                   {message.attachments?.length ? (
                     <div
                       className={`flex max-w-[80%] flex-wrap gap-2 ${message.role === "assistant" ? "" : "justify-end"}`}
@@ -1523,6 +2052,40 @@ export default function RestyleStudio() {
                       ))}
                     </div>
                   ) : null}
+                  {message.finalEpisodeLinks?.length ? (
+                    <div className="flex flex-wrap gap-2">
+                      {message.finalEpisodeLinks.map((episode) => (
+                        <button
+                          key={episode}
+                          type="button"
+                          onClick={() => openFinalEpisode(episode)}
+                          className="rounded-md px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent-dim"
+                        >
+                          {episode} 成片
+                        </button>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          expandFileTreePath("results");
+                          expandFileTreePath("results/clips");
+                        }}
+                        className="rounded-md px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent-dim"
+                      >
+                        视频片段
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          expandFileTreePath("results");
+                          expandFileTreePath("results/final");
+                        }}
+                        className="rounded-md px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent-dim"
+                      >
+                        生成状态
+                      </button>
+                    </div>
+                  ) : null}
                   {message.content ? (
                     <div
                       className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-6 ${message.role === "assistant" ? "rounded-bl-md border border-border bg-bg-surface text-text-secondary" : "rounded-br-md bg-accent text-bg"}`}
@@ -1541,7 +2104,11 @@ export default function RestyleStudio() {
                         t={t}
                         linkedAssetIds={activeProject?.assetIds ?? []}
                         onChooseLibraryAsset={setAssetPickerFor}
-                        onDeleteAsset={(assetId) => updateExtractedAssets((assets) => assets.filter((asset) => asset.id !== assetId))}
+                        onDeleteAsset={(assetId) =>
+                          updateExtractedAssets((assets) =>
+                            assets.filter((asset) => asset.id !== assetId),
+                          )
+                        }
                         onAddAsset={addExtractedAsset}
                       />
                       <ImageGenerationModeGuide t={t} />
@@ -1654,14 +2221,22 @@ export default function RestyleStudio() {
                         >
                           <span className="grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-md bg-bg-elevated text-text-muted">
                             {filePreviews[attachment.id] ? (
-                              <img src={filePreviews[attachment.id]} alt="" className="h-full w-full object-cover" />
+                              <img
+                                src={filePreviews[attachment.id]}
+                                alt=""
+                                className="h-full w-full object-cover"
+                              />
                             ) : (
                               <FileText size={14} />
                             )}
                           </span>
                           <span className="min-w-0">
-                            <span className="block text-sm font-semibold text-text-primary">@image{index + 1}</span>
-                            <span className="block truncate text-xs text-text-muted">{attachment.name}</span>
+                            <span className="block text-sm font-semibold text-text-primary">
+                              @image{index + 1}
+                            </span>
+                            <span className="block truncate text-xs text-text-muted">
+                              {attachment.name}
+                            </span>
                           </span>
                         </button>
                       ))}
@@ -1779,7 +2354,11 @@ export default function RestyleStudio() {
                   className="btn-primary !h-8 !w-8 !justify-center !rounded-lg !p-0"
                   aria-label={t.restyle_send}
                 >
-                  {isAnalyzing ? <Loader2 size={15} className="animate-spin" /> : <Send size={15} />}
+                  {isAnalyzing ? (
+                    <Loader2 size={15} className="animate-spin" />
+                  ) : (
+                    <Send size={15} />
+                  )}
                 </button>
               </div>
             </div>
@@ -1816,7 +2395,9 @@ export default function RestyleStudio() {
             {activeProject ? (
               <div>
                 <div className="mb-2 flex items-center gap-2 px-1 text-xs">
-                  <span className="truncate font-semibold text-text-primary">{activeProject.title}</span>
+                  <span className="truncate font-semibold text-text-primary">
+                    {activeProject.title}
+                  </span>
                   <span className="shrink-0 text-[11px] text-accent">跟转绘步骤一一对应</span>
                 </div>
                 <ProjectFileTree
@@ -1833,13 +2414,17 @@ export default function RestyleStudio() {
                   }}
                   onContextMenuFolder={() => undefined}
                   onChooseFolderAsset={(node) => {
-                    const kind = node.id.match(/^results\/assets\/(character|scene|prop)$/)?.[1] as RestyleAsset["kind"] | undefined;
+                    const kind = node.id.match(/^results\/assets\/(character|scene|prop)$/)?.[1] as
+                      | RestyleAsset["kind"]
+                      | undefined;
                     if (kind) setAssetPickerKind(kind);
                   }}
                 />
               </div>
             ) : (
-              <p className="px-2 py-4 text-xs leading-5 text-text-muted">{t.restyle_select_project_hint}</p>
+              <p className="px-2 py-4 text-xs leading-5 text-text-muted">
+                {t.restyle_select_project_hint}
+              </p>
             )}
           </div>
           {inspectorOpen ? (
@@ -1861,38 +2446,43 @@ export default function RestyleStudio() {
                 </div>
               </div>
               {selectedFilePreview ? (
-              <FilePreviewInspector
-                preview={selectedFilePreview}
-                previewUrl={
-                  selectedFilePreview.kind === "attachment"
-                    ? filePreviews[selectedFilePreview.attachment.id] ?? selectedFilePreview.attachment.url
-                    : undefined
-                }
-                thumbnailUrl={
-                  selectedFilePreview.kind === "attachment"
-                    ? fileThumbnails[selectedFilePreview.attachment.id]
-                    : undefined
-                }
-                onOpen={() => setPreviewDialog(selectedFilePreview)}
-              />
+                <FilePreviewInspector
+                  preview={selectedFilePreview}
+                  previewUrl={
+                    selectedFilePreview.kind === "attachment"
+                      ? previewUrlForAttachment(selectedFilePreview.attachment)
+                      : undefined
+                  }
+                  thumbnailUrl={
+                    selectedFilePreview.kind === "attachment"
+                      ? fileThumbnails[selectedFilePreview.attachment.id]
+                      : undefined
+                  }
+                  videoPair={
+                    selectedFilePreview.kind === "attachment"
+                      ? videoPairForAttachment(selectedFilePreview.attachment)
+                      : null
+                  }
+                  onOpen={() => setPreviewDialog(selectedFilePreview)}
+                />
               ) : selectedAsset ? (
-              <div className="flex gap-3">
-                <div className="h-16 w-16 shrink-0 overflow-hidden rounded-lg">
-                  <AssetVisual asset={selectedAsset} compact />
+                <div className="flex gap-3">
+                  <div className="h-16 w-16 shrink-0 overflow-hidden rounded-lg">
+                    <AssetVisual asset={selectedAsset} compact />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-text-primary">
+                      {selectedAsset.name}
+                    </p>
+                    <p className="mt-1 line-clamp-2 text-xs leading-5 text-text-secondary">
+                      {selectedAsset.detail}
+                    </p>
+                  </div>
                 </div>
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-medium text-text-primary">
-                    {selectedAsset.name}
-                  </p>
-                  <p className="mt-1 line-clamp-2 text-xs leading-5 text-text-secondary">
-                    {selectedAsset.detail}
-                  </p>
-                </div>
-              </div>
               ) : (
-              <p className="text-xs leading-5 text-text-muted">
-                {assetLibraryStatus === "error" ? t.restyle_assets_error : t.restyle_empty_assets}
-              </p>
+                <p className="text-xs leading-5 text-text-muted">
+                  {assetLibraryStatus === "error" ? t.restyle_assets_error : t.restyle_empty_assets}
+                </p>
               )}
             </div>
           ) : (
@@ -1942,13 +2532,18 @@ export default function RestyleStudio() {
           preview={previewDialog}
           previewUrl={
             previewDialog.kind === "attachment"
-              ? filePreviews[previewDialog.attachment.id] ?? previewDialog.attachment.url
+              ? previewUrlForAttachment(previewDialog.attachment)
               : undefined
           }
           thumbnailUrl={
             previewDialog.kind === "attachment"
               ? fileThumbnails[previewDialog.attachment.id]
               : undefined
+          }
+          videoPair={
+            previewDialog.kind === "attachment"
+              ? videoPairForAttachment(previewDialog.attachment)
+              : null
           }
           onClose={() => setPreviewDialog(null)}
         />
@@ -2009,7 +2604,10 @@ function ProjectFileTree({
   onDragFile: (fileId: string | null) => void;
   onDropFile: (fileId: string) => void;
   onContextMenu: (event: ReactMouseEvent<HTMLButtonElement>, preview: RestyleFilePreview) => void;
-  onContextMenuFolder: (event: ReactMouseEvent<HTMLButtonElement>, node: RestyleFileTreeNode) => void;
+  onContextMenuFolder: (
+    event: ReactMouseEvent<HTMLButtonElement>,
+    node: RestyleFileTreeNode,
+  ) => void;
   onChooseFolderAsset: (node: RestyleFileTreeNode) => void;
 }) {
   if (!nodes.length) return <p className="px-2 py-1 text-xs text-text-muted">—</p>;
@@ -2057,7 +2655,10 @@ function ProjectFileTreeItem({
   onDragFile: (fileId: string | null) => void;
   onDropFile: (fileId: string) => void;
   onContextMenu: (event: ReactMouseEvent<HTMLButtonElement>, preview: RestyleFilePreview) => void;
-  onContextMenuFolder: (event: ReactMouseEvent<HTMLButtonElement>, node: RestyleFileTreeNode) => void;
+  onContextMenuFolder: (
+    event: ReactMouseEvent<HTMLButtonElement>,
+    node: RestyleFileTreeNode,
+  ) => void;
   onChooseFolderAsset: (node: RestyleFileTreeNode) => void;
 }) {
   const isFolder = node.kind === "folder";
@@ -2122,14 +2723,25 @@ function ProjectFileTreeItem({
             className="grid h-5 w-5 shrink-0 place-items-center rounded text-text-muted hover:bg-accent-dim hover:text-accent"
             title="从资产库添加"
             aria-label={`向${node.label}添加资产`}
-            onClick={(event) => { event.stopPropagation(); onChooseFolderAsset(node); }}
-            onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); event.stopPropagation(); onChooseFolderAsset(node); } }}
+            onClick={(event) => {
+              event.stopPropagation();
+              onChooseFolderAsset(node);
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                event.stopPropagation();
+                onChooseFolderAsset(node);
+              }
+            }}
           >
             <Upload size={12} />
           </span>
         ) : null}
         <span className="shrink-0 text-[11px] text-text-muted">
-          {isFolder ? (node.count ?? countTreeLeaves(node.children)) || "" : formatFileSize(node.size)}
+          {isFolder
+            ? (node.count ?? countTreeLeaves(node.children)) || ""
+            : formatFileSize(node.size)}
         </span>
       </button>
       {isFolder && isOpen && node.children?.length ? (
@@ -2153,7 +2765,10 @@ function ProjectFileTreeItem({
         </div>
       ) : null}
       {isFolder && isOpen && !node.children?.length ? (
-        <p className="px-2 py-1 text-xs text-text-muted" style={{ paddingLeft: (depth + 1) * 16 + 22 }}>
+        <p
+          className="px-2 py-1 text-xs text-text-muted"
+          style={{ paddingLeft: (depth + 1) * 16 + 22 }}
+        >
           —
         </p>
       ) : null}
@@ -2165,15 +2780,36 @@ function FilePreviewInspector({
   preview,
   previewUrl,
   thumbnailUrl,
+  videoPair,
   onOpen,
 }: {
   preview: RestyleFilePreview;
   previewUrl?: string;
   thumbnailUrl?: string;
+  videoPair?: RestyleVideoPair | null;
   onOpen: () => void;
 }) {
   if (preview.kind === "attachment") {
     const isVideo = preview.attachment.type.startsWith("video/");
+    if (videoPair) {
+      return (
+        <div className="space-y-3">
+          <VideoComparePanel pair={videoPair} compact />
+          <div>
+            <p className="truncate text-sm font-medium text-text-primary">
+              结果/成片/{preview.title}
+            </p>
+            <p className="mt-1 text-xs text-text-muted">
+              原片和转绘结果上下对比。{formatFileSize(preview.attachment.size) || "大小未知"}
+            </p>
+          </div>
+          <ReviewChecklist />
+          <button type="button" onClick={onOpen} className="btn-ghost !px-3 !py-2 text-xs">
+            打开大预览
+          </button>
+        </div>
+      );
+    }
     return (
       <div className="space-y-3">
         <button
@@ -2185,7 +2821,13 @@ function FilePreviewInspector({
           {thumbnailUrl ? (
             <img src={thumbnailUrl} alt="" className="h-full w-full object-cover" />
           ) : previewUrl && isVideo ? (
-            <video src={previewUrl} className="h-full w-full object-cover" muted playsInline preload="metadata" />
+            <video
+              src={previewUrl}
+              className="h-full w-full object-cover"
+              muted
+              playsInline
+              preload="metadata"
+            />
           ) : previewUrl ? (
             <img src={previewUrl} alt="" className="h-full w-full object-cover" />
           ) : (
@@ -2195,7 +2837,8 @@ function FilePreviewInspector({
         <div>
           <p className="truncate text-sm font-medium text-text-primary">{preview.title}</p>
           <p className="mt-1 text-xs text-text-muted">
-            {isVideo ? "本地视频" : "本地文件"} · {formatFileSize(preview.attachment.size) || "大小未知"}
+            {isVideo ? "本地视频" : "本地文件"} ·{" "}
+            {formatFileSize(preview.attachment.size) || "大小未知"}
           </p>
         </div>
         <button type="button" onClick={onOpen} className="btn-ghost !px-3 !py-2 text-xs">
@@ -2224,17 +2867,23 @@ function FilePreviewDialog({
   preview,
   previewUrl,
   thumbnailUrl,
+  videoPair,
   onClose,
 }: {
   preview: RestyleFilePreview;
   previewUrl?: string;
   thumbnailUrl?: string;
+  videoPair?: RestyleVideoPair | null;
   onClose: () => void;
 }) {
   const isAttachment = preview.kind === "attachment";
   const isVideo = isAttachment && preview.attachment.type.startsWith("video/");
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4" role="dialog" aria-modal="true">
+    <div
+      className="fixed inset-0 z-50 grid place-items-center bg-black/70 p-4"
+      role="dialog"
+      aria-modal="true"
+    >
       <div className="flex max-h-[86vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-border bg-bg-surface shadow-2xl">
         <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
           <div className="min-w-0">
@@ -2259,6 +2908,13 @@ function FilePreviewDialog({
             <pre className="min-h-[360px] whitespace-pre-wrap rounded-xl border border-border bg-bg-surface p-4 text-xs leading-6 text-text-secondary">
               {preview.content}
             </pre>
+          ) : videoPair ? (
+            <div className="mx-auto max-w-5xl">
+              <VideoComparePanel pair={videoPair} />
+              <div className="mt-4 rounded-xl border border-border bg-bg-surface p-4">
+                <ReviewChecklist />
+              </div>
+            </div>
           ) : previewUrl && isVideo ? (
             <video
               src={previewUrl}
@@ -2268,18 +2924,148 @@ function FilePreviewDialog({
               className="mx-auto max-h-[70vh] w-full rounded-xl bg-black object-contain"
             />
           ) : previewUrl ? (
-            <img src={previewUrl} alt="" className="mx-auto max-h-[70vh] rounded-xl object-contain" />
+            <img
+              src={previewUrl}
+              alt=""
+              className="mx-auto max-h-[70vh] rounded-xl object-contain"
+            />
           ) : (
             <div className="grid min-h-[360px] place-items-center rounded-xl border border-dashed border-border bg-bg-surface text-center">
               <div>
                 <FileText className="mx-auto text-text-muted" size={30} />
                 <p className="mt-3 text-sm text-text-secondary">{preview.title}</p>
-                <p className="mt-1 text-xs text-text-muted">本地预览已不可用，请重新上传文件后查看。</p>
+                <p className="mt-1 text-xs text-text-muted">
+                  本地预览已不可用，请重新上传文件后查看。
+                </p>
               </div>
             </div>
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+function VideoComparePanel({
+  pair,
+  compact = false,
+}: {
+  pair: RestyleVideoPair;
+  compact?: boolean;
+}) {
+  const sourceRef = useRef<HTMLVideoElement>(null);
+  const resultRef = useRef<HTMLVideoElement>(null);
+  const canPreview = Boolean(pair.sourceUrl && pair.resultUrl);
+
+  function syncPlayback() {
+    const source = sourceRef.current;
+    const result = resultRef.current;
+    if (!source || !result) return;
+    result.currentTime = source.currentTime;
+    if (source.paused) {
+      void source.play().catch(() => {});
+    }
+    void result.play().catch(() => {});
+  }
+
+  function syncSeek(from: HTMLVideoElement, to: HTMLVideoElement | null) {
+    if (!to || Math.abs(to.currentTime - from.currentTime) < 0.25) return;
+    to.currentTime = from.currentTime;
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-xs text-text-muted">原片和转绘结果上下对比。</p>
+        <button
+          type="button"
+          onClick={syncPlayback}
+          disabled={!canPreview}
+          className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium text-text-secondary hover:bg-bg-elevated hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+          aria-label="同步播放"
+        >
+          <Play size={13} />
+          同步播放
+        </button>
+      </div>
+      <VideoCompareSlot
+        label="原片"
+        path={`原片/${pair.source.name}`}
+        src={pair.sourceUrl}
+        ref={sourceRef}
+        compact={compact}
+        onSeeked={(event) => syncSeek(event.currentTarget, resultRef.current)}
+      />
+      <VideoCompareSlot
+        label="转绘结果"
+        path={`结果/成片/${pair.result.name}`}
+        src={pair.resultUrl}
+        ref={resultRef}
+        compact={compact}
+        onSeeked={(event) => syncSeek(event.currentTarget, sourceRef.current)}
+      />
+    </div>
+  );
+}
+
+const VideoCompareSlot = forwardRef<
+  HTMLVideoElement,
+  {
+    label: string;
+    path: string;
+    src?: string;
+    compact?: boolean;
+    onSeeked: ReactEventHandler<HTMLVideoElement>;
+  }
+>(({ label, path, src, compact, onSeeked }, ref) => (
+  <div>
+    <div className="mb-2 flex items-center justify-between gap-2 text-xs">
+      <span className="font-semibold text-text-primary">{label}</span>
+      <span className="truncate text-text-muted">{path}</span>
+    </div>
+    {src ? (
+      <video
+        ref={ref}
+        src={src}
+        controls
+        playsInline
+        preload="metadata"
+        onSeeked={onSeeked}
+        className={`w-full rounded-lg bg-black object-contain ${compact ? "max-h-44" : "max-h-[42vh]"}`}
+      />
+    ) : (
+      <div
+        className={`grid place-items-center rounded-lg border border-dashed border-border bg-bg-elevated text-center ${compact ? "min-h-32" : "min-h-56"}`}
+      >
+        <div className="px-4">
+          <FileText className="mx-auto text-text-muted" size={26} />
+          <p className="mt-2 text-xs text-text-secondary">本地视频预览已不可用</p>
+        </div>
+      </div>
+    )}
+  </div>
+));
+VideoCompareSlot.displayName = "VideoCompareSlot";
+
+function ReviewChecklist() {
+  const checks = ["角色一致性", "剧情还原度", "画面还原度", "音频与台词", "画面比例", "画面清洁度"];
+  return (
+    <div>
+      <p className="text-xs font-semibold text-text-primary">成片验收清单</p>
+      <div className="mt-2 grid grid-cols-2 gap-1.5">
+        {checks.map((check) => (
+          <span
+            key={check}
+            className="inline-flex items-center gap-1.5 rounded-md bg-bg-elevated px-2 py-1 text-[11px] text-text-secondary"
+          >
+            <Check size={11} className="text-accent" />
+            {check}
+          </span>
+        ))}
+      </div>
+      <p className="mt-2 text-[11px] leading-5 text-text-muted">
+        局部问题请点名集数和段落返工，例如“EP02 第3段人物不像 Grace Hart，请重跑这一段”。
+      </p>
     </div>
   );
 }
@@ -2393,7 +3179,13 @@ function MessageAttachmentCard({
         ) : thumbnailUrl ? (
           <img src={thumbnailUrl} alt="" className="h-full w-full object-cover" />
         ) : previewUrl && isVideo ? (
-          <video src={previewUrl} className="h-full w-full object-cover" muted playsInline preload="metadata" />
+          <video
+            src={previewUrl}
+            className="h-full w-full object-cover"
+            muted
+            playsInline
+            preload="metadata"
+          />
         ) : previewUrl ? (
           <img src={previewUrl} alt="" className="h-full w-full object-cover" />
         ) : (
@@ -2489,7 +3281,14 @@ function ExtractedAssetTable({
           <span>{t.restyle_asset_target_name}</span>
           <span>{t.restyle_asset_target_description}</span>
           <span>资产库</span>
-          <button type="button" onClick={onAddAsset} className="flex items-center gap-1 text-accent hover:text-text-primary"><Plus size={12} />新增</button>
+          <button
+            type="button"
+            onClick={onAddAsset}
+            className="flex items-center gap-1 text-accent hover:text-text-primary"
+          >
+            <Plus size={12} />
+            新增
+          </button>
         </div>
         {assets.map((asset) => {
           return (
@@ -2498,20 +3297,35 @@ function ExtractedAssetTable({
               className="grid grid-cols-[64px_minmax(140px,1fr)_minmax(180px,1.4fr)_minmax(140px,1fr)_minmax(190px,1.5fr)_150px] gap-3 border-b border-border px-4 py-3 text-left last:border-0 hover:bg-bg-elevated/70"
             >
               <span className="text-xs text-accent">{kindLabel(asset.kind)}</span>
-              <span className="text-sm font-medium text-text-primary">
-                {asset.sourceName}
+              <span className="text-sm font-medium text-text-primary">{asset.sourceName}</span>
+              <span className="text-xs leading-5 text-text-secondary">
+                {asset.sourceDescription}
               </span>
-              <span className="text-xs leading-5 text-text-secondary">{asset.sourceDescription}</span>
               <span className="text-sm font-medium text-text-primary">{asset.targetName}</span>
               <span className="text-xs leading-5 text-text-secondary">
                 {asset.targetDescription}
                 {!asset.shouldRestyle && (
-                  <span className="mt-1 block text-[10px] text-text-muted">{t.restyle_asset_keep_original}</span>
+                  <span className="mt-1 block text-[10px] text-text-muted">
+                    {t.restyle_asset_keep_original}
+                  </span>
                 )}
               </span>
               <span className="flex items-start gap-1.5">
-                <button type="button" onClick={() => onChooseLibraryAsset(asset.id)} className="h-fit rounded-md border border-border px-2 py-1 text-[11px] text-accent hover:bg-accent-dim">{linkedAssetIds.length ? "选择/更换" : "选择资产"}</button>
-                <button type="button" onClick={() => onDeleteAsset(asset.id)} className="grid h-6 w-6 place-items-center rounded text-text-muted hover:bg-destructive/10 hover:text-destructive" aria-label={`删除资产：${asset.sourceName}`}><Trash2 size={13} /></button>
+                <button
+                  type="button"
+                  onClick={() => onChooseLibraryAsset(asset.id)}
+                  className="h-fit rounded-md border border-border px-2 py-1 text-[11px] text-accent hover:bg-accent-dim"
+                >
+                  {linkedAssetIds.length ? "选择/更换" : "选择资产"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onDeleteAsset(asset.id)}
+                  className="grid h-6 w-6 place-items-center rounded text-text-muted hover:bg-destructive/10 hover:text-destructive"
+                  aria-label={`删除资产：${asset.sourceName}`}
+                >
+                  <Trash2 size={13} />
+                </button>
               </span>
             </div>
           );
@@ -2543,7 +3357,8 @@ function AssetConfirmationGuide({ t }: { t: Translations }) {
         <li>{t.restyle_assets_check_market}</li>
       </ul>
       <p className="mt-2 text-xs leading-5">
-        {t.restyle_assets_feedback_hint} <span className="text-text-muted">{t.restyle_assets_feedback_example}</span>
+        {t.restyle_assets_feedback_hint}{" "}
+        <span className="text-text-muted">{t.restyle_assets_feedback_example}</span>
       </p>
     </div>
   );
@@ -2612,7 +3427,9 @@ function StagePanel({
           <div>
             <h2 className="text-lg font-semibold text-text-primary">{t.restyle_stage_assets}</h2>
             <p className="mt-1 text-sm text-text-secondary">
-              {extractedAssets.length ? activeProject?.analysisSummary || t.restyle_assets_description : t.restyle_assets_description}
+              {extractedAssets.length
+                ? activeProject?.analysisSummary || t.restyle_assets_description
+                : t.restyle_assets_description}
             </p>
           </div>
           <button

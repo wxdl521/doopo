@@ -11,7 +11,10 @@ export type RestyleAttachment = {
   isFolder?: boolean;
   fileCount?: number;
   url?: string;
-  generatedKind?: "character" | "scene" | "prop";
+  generatedKind?: "character" | "scene" | "prop" | "video_clip" | "final_video";
+  sourceAttachmentId?: string;
+  episode?: string;
+  segmentId?: string;
   analysisFrame?: boolean;
   analysisEpisode?: string;
 };
@@ -25,6 +28,7 @@ export type RestyleMessage = {
   assetTable?: RestyleExtractedAsset[];
   assetCategoryLinks?: Array<"character" | "scene" | "prop">;
   episodeLinks?: string[];
+  finalEpisodeLinks?: string[];
 };
 
 export type RestyleExtractedAsset = {
@@ -102,9 +106,15 @@ function parseAttachment(value: unknown): RestyleAttachment | null {
     isFolder: item.isFolder === true,
     fileCount: typeof item.fileCount === "number" ? item.fileCount : undefined,
     url: typeof item.url === "string" ? item.url : undefined,
-    generatedKind: ["character", "scene", "prop"].includes(item.generatedKind ?? "")
+    generatedKind: ["character", "scene", "prop", "video_clip", "final_video"].includes(
+      item.generatedKind ?? "",
+    )
       ? (item.generatedKind as RestyleAttachment["generatedKind"])
       : undefined,
+    sourceAttachmentId:
+      typeof item.sourceAttachmentId === "string" ? item.sourceAttachmentId : undefined,
+    episode: typeof item.episode === "string" ? item.episode : undefined,
+    segmentId: typeof item.segmentId === "string" ? item.segmentId : undefined,
     analysisFrame: item.analysisFrame === true,
     analysisEpisode: typeof item.analysisEpisode === "string" ? item.analysisEpisode : undefined,
   };
@@ -139,6 +149,11 @@ function parseMessages(value: unknown): RestyleMessage[] {
         : undefined,
       episodeLinks: Array.isArray(message.episodeLinks)
         ? message.episodeLinks.filter((episode): episode is string => typeof episode === "string")
+        : undefined,
+      finalEpisodeLinks: Array.isArray(message.finalEpisodeLinks)
+        ? message.finalEpisodeLinks.filter(
+            (episode): episode is string => typeof episode === "string",
+          )
         : undefined,
     }));
 }
@@ -189,7 +204,9 @@ function parseProject(value: unknown): RestyleProject | null {
         const segments = item.segments.flatMap((segment) => {
           if (!segment || typeof segment !== "object") return [];
           const value = segment as { id?: unknown; prompt?: unknown };
-          return typeof value.id === "string" && typeof value.prompt === "string" ? [{ id: value.id, prompt: value.prompt }] : [];
+          return typeof value.id === "string" && typeof value.prompt === "string"
+            ? [{ id: value.id, prompt: value.prompt }]
+            : [];
         });
         return [{ episode: item.episode, segments }];
       })
