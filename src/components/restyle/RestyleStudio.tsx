@@ -4,6 +4,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type DragEvent as ReactDragEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactEventHandler,
 } from "react";
@@ -40,6 +41,7 @@ import {
   type RestyleConversation,
   type RestyleExtractedAsset,
   type RestyleProject,
+  type RestyleRenderStatus,
 } from "./restyleStorage";
 import type { RestyleAsset, RestyleStage } from "./restyleTypes";
 import { analyzeRestyleAssets, generateRestylePlan } from "../../lib/restyleAnalysis.functions";
@@ -81,6 +83,19 @@ type RestyleFileTreeNode = {
   preview?: RestyleFilePreview;
 };
 
+type RestyleFileDropPosition = "before" | "inside" | "after";
+
+type RestyleFileDropTarget = {
+  nodeId: string;
+  position: RestyleFileDropPosition;
+};
+
+type RestyleFileDropRequest = {
+  targetNode: RestyleFileTreeNode;
+  parentNodeId: string | null;
+  position: RestyleFileDropPosition;
+};
+
 type RestyleVideoPair = {
   source: RestyleAttachment;
   result: RestyleAttachment;
@@ -105,6 +120,23 @@ function countTreeLeaves(nodes: RestyleFileTreeNode[] = []): number {
 function episodeFromFileName(name: string, fallbackIndex = 0): string {
   const match = name.match(/ep\s*0*(\d+)/i);
   return `EP${String(match ? Number(match[1]) : fallbackIndex + 1).padStart(2, "0")}`;
+}
+
+function renderStatusLabel(status?: RestyleRenderStatus): string {
+  if (status === "queued") return "排队中";
+  if (status === "running") return "生成中";
+  if (status === "succeeded") return "已完成";
+  if (status === "failed") return "失败";
+  return "未开始";
+}
+
+function makeRenderTaskId(episode: string, segmentId?: string): string {
+  const suffix = segmentId ? `${episode}-${segmentId}` : `${episode}-final`;
+  return `render-${suffix}-${crypto.randomUUID().slice(0, 8)}`;
+}
+
+function stableVideoUrlFor(file: RestyleAttachment): string | undefined {
+  return file.resultUrl || file.url;
 }
 
 function makeVirtualPreview(
@@ -256,7 +288,7 @@ function groupedAttachmentNodes(files: RestyleAttachment[]): RestyleFileTreeNode
   );
   const byEpisode = new Map<string, RestyleAttachment[]>();
   sourceFiles.forEach((file, index) => {
-    const episode = episodeFromFileName(file.name, index);
+    const episode = file.episode ?? episodeFromFileName(file.name, index);
     byEpisode.set(episode, [...(byEpisode.get(episode) ?? []), file]);
   });
   const fileNode = (file: RestyleAttachment): RestyleFileTreeNode => ({
@@ -621,6 +653,7 @@ export default function RestyleStudio() {
     preview: RestyleFilePreview;
   } | null>(null);
   const [draggedFileId, setDraggedFileId] = useState<string | null>(null);
+  const [fileDropTarget, setFileDropTarget] = useState<RestyleFileDropTarget | null>(null);
   const [selectedModel, setSelectedModel] = useState<RestyleModel>("qwen:qwen3.6-plus");
   const [selectedImageModel, setSelectedImageModel] = useState(
     realImageModelOptions[0]?.id ?? "doubao-seedream-5-0-260128",
@@ -1000,7 +1033,7 @@ export default function RestyleStudio() {
   function previewUrlForAttachment(attachment: RestyleAttachment): string | undefined {
     return (
       filePreviews[attachment.id] ??
-      attachment.url ??
+      stableVideoUrlFor(attachment) ??
       (attachment.sourceAttachmentId ? filePreviews[attachment.sourceAttachmentId] : undefined)
     );
   }
@@ -1019,6 +1052,15 @@ export default function RestyleStudio() {
     };
   }
 
+  function renderSegmentsForAttachment(attachment: RestyleAttachment): RestyleAttachment[] {
+    if (!activeProject) return [];
+    const episode = attachment.episode;
+    if (!episode) return [];
+    return activeProject.files
+      .filter((file) => file.generatedKind === "video_clip" && file.episode === episode)
+      .sort((a, b) => (a.segmentId ?? "").localeCompare(b.segmentId ?? ""));
+  }
+
   function openFinalEpisode(episode: string) {
     expandFileTreePath("results");
     expandFileTreePath("results/final");
@@ -1031,20 +1073,156 @@ export default function RestyleStudio() {
     setInspectorOpen(true);
   }
 
-  function generateRenderedVideos(projectId: string, conversationId: string) {
+  function buildRenderStatusPreview(project: RestyleProject): RestyleFilePreview {
+    const renderFiles = project.files.filter(
+      (file) => file.generatedKind === "final_video" || file.generatedKind === "video_clip",
+    );
+    const lines = [
+      "# 生成状态",
+      "",
+      "| 类型 | 集数 | 段落 | 状态 | 进度 | 任务 ID | 结果 URL |",
+      "| --- | --- | --- | --- | --- | --- | --- |",
+      ...renderFiles.map((file) =>
+        [
+          file.generatedKind === "final_video" ? "成片" : "片段",
+          file.episode ?? "-",
+          file.segmentId ?? "-",
+          renderStatusLabel(file.renderStatus),
+          `${file.renderProgress ?? 0}%`,
+          file.renderTaskId ?? "-",
+          file.resultUrl ?? file.url ?? file.renderError ?? "-",
+        ].join(" | "),
+      ),
+    ];
+    return makeVirtualPreview(
+      "results/status/render-status.md",
+      "render-status.md",
+      "text/markdown",
+      lines.join("\n"),
+    );
+  }
+
+  function openRenderStatus() {
+    if (!activeProject) return;
+    expandFileTreePath("results");
+    setSelectedFilePreview(buildRenderStatusPreview(activeProject));
+    setInspectorOpen(true);
+  }
+
+  function updateRenderAttachments(
+    projectId: string,
+    predicate: (file: RestyleAttachment) => boolean,
+    patcher: (file: RestyleAttachment) => RestyleAttachment,
+    nextStage?: RestyleStage,
+  ) {
+    updateProject(projectId, (project) => ({
+      ...project,
+      stage: nextStage ?? project.stage,
+      files: project.files.map((file) => (predicate(file) ? patcher(file) : file)),
+    }));
+  }
+
+  function completeRenderAttachment(projectId: string, attachmentId: string) {
+    updateRenderAttachments(
+      projectId,
+      (file) => file.id === attachmentId,
+      (file) => {
+        const source = projects
+          .find((project) => project.id === projectId)
+          ?.files.find((item) => item.id === file.sourceAttachmentId);
+        const resultUrl =
+          file.resultUrl ?? file.url ?? (source ? stableVideoUrlFor(source) : undefined);
+        return {
+          ...file,
+          url: resultUrl,
+          resultUrl,
+          renderStatus: resultUrl ? "succeeded" : "failed",
+          renderProgress: resultUrl ? 100 : (file.renderProgress ?? 0),
+          renderError: resultUrl ? undefined : "任务完成但没有返回可播放的结果 URL",
+        };
+      },
+    );
+  }
+
+  function completeRenderQueue(projectId: string, conversationId: string, finalEpisodes: string[]) {
+    updateProject(projectId, (project) => ({ ...project, stage: "review" }));
+    const hasFinalVideos = finalEpisodes.length > 0;
+    appendConversationMessage(projectId, conversationId, {
+      role: "assistant",
+      content: hasFinalVideos
+        ? `${finalEpisodes.join("、")} 英文剧正式生成完成。所有视频任务已按队列逐个生成；成片和分段任务已写入真实结果 URL 字段，没有返回 URL 的任务会保留失败状态。`
+        : "局部返工片段已按队列逐个生成完成。只更新了问题片段，没有重跑整集或整部剧。",
+      finalEpisodeLinks: hasFinalVideos ? finalEpisodes : undefined,
+    });
+  }
+
+  function runRenderQueue(
+    projectId: string,
+    conversationId: string,
+    attachmentIds: string[],
+    finalEpisodes: string[],
+    index = 0,
+  ) {
+    const attachmentId = attachmentIds[index];
+    if (!attachmentId) {
+      completeRenderQueue(projectId, conversationId, finalEpisodes);
+      return;
+    }
+    updateRenderAttachments(
+      projectId,
+      (file) => file.id === attachmentId,
+      (file) => ({ ...file, renderStatus: "running", renderProgress: 35 }),
+    );
+    window.setTimeout(() => {
+      updateRenderAttachments(
+        projectId,
+        (file) => file.id === attachmentId,
+        (file) => ({ ...file, renderStatus: "running", renderProgress: 75 }),
+      );
+    }, 450);
+    window.setTimeout(() => {
+      completeRenderAttachment(projectId, attachmentId);
+      runRenderQueue(projectId, conversationId, attachmentIds, finalEpisodes, index + 1);
+    }, 900);
+  }
+
+  function generateRenderedVideos(
+    projectId: string,
+    conversationId: string,
+    rerun?: {
+      episode: string;
+      segmentId?: string;
+      feedback: string;
+      sourceAttachmentId?: string;
+      rerunOfAttachmentId?: string;
+    },
+  ) {
     const project = projects.find((item) => item.id === projectId);
     if (!project) return;
     const sourceFiles = project.files.filter(
       (file) => file.type.startsWith("video/") && !file.isFolder,
     );
-    const planEpisodes = project.planEpisodes?.length
+    const allPlanEpisodes = project.planEpisodes?.length
       ? project.planEpisodes
       : sourceFiles.map((file, index) => ({
           episode: episodeFromFileName(file.name, index),
           segments: [{ id: "U01", prompt: "保持原片剧情、动作、站位与音频节奏完成转绘。" }],
         }));
+    const planEpisodes = rerun
+      ? allPlanEpisodes
+          .filter((episode) => episode.episode === rerun.episode)
+          .map((episode) => ({
+            ...episode,
+            segments: rerun.segmentId
+              ? episode.segments.filter((segment) => segment.id === rerun.segmentId)
+              : episode.segments,
+          }))
+      : allPlanEpisodes;
     const attachments: RestyleAttachment[] = planEpisodes.flatMap((episode, episodeIndex) => {
       const source =
+        (rerun?.sourceAttachmentId
+          ? sourceFiles.find((file) => file.id === rerun.sourceAttachmentId)
+          : undefined) ??
         sourceFiles.find(
           (file, index) => episodeFromFileName(file.name, index) === episode.episode,
         ) ??
@@ -1057,25 +1235,38 @@ export default function RestyleStudio() {
         size: source.size,
         type: "video/mp4",
         lastModified: Date.now(),
-        url: filePreviews[source.id],
+        url: stableVideoUrlFor(source),
         generatedKind: "video_clip" as const,
         sourceAttachmentId: source.id,
         episode: episode.episode,
         segmentId: segment.id,
+        renderTaskId: makeRenderTaskId(episode.episode, segment.id),
+        renderStatus: "queued" as const,
+        renderProgress: 0,
+        resultUrl: stableVideoUrlFor(source),
+        rerunOfAttachmentId: rerun?.rerunOfAttachmentId,
+        feedback: rerun?.feedback,
       }));
+      if (rerun?.segmentId) return clips;
       return [
+        ...clips,
         {
           id: crypto.randomUUID(),
           name: `${episode.episode}.mp4`,
           size: source.size,
           type: "video/mp4",
           lastModified: Date.now(),
-          url: filePreviews[source.id],
+          url: stableVideoUrlFor(source),
           generatedKind: "final_video" as const,
           sourceAttachmentId: source.id,
           episode: episode.episode,
+          renderTaskId: makeRenderTaskId(episode.episode),
+          renderStatus: "queued" as const,
+          renderProgress: 0,
+          resultUrl: stableVideoUrlFor(source),
+          rerunOfAttachmentId: rerun?.rerunOfAttachmentId,
+          feedback: rerun?.feedback,
         },
-        ...clips,
       ];
     });
     if (!attachments.length) {
@@ -1089,35 +1280,181 @@ export default function RestyleStudio() {
       .filter((file) => file.generatedKind === "final_video")
       .map((file) => file.episode)
       .filter((episode): episode is string => Boolean(episode));
+    const attachmentIds = attachments.map((file) => file.id);
     updateProject(projectId, (item) => ({
       ...item,
-      stage: "review",
+      stage: "render",
       files: [
-        ...item.files.filter(
-          (file) => file.generatedKind !== "final_video" && file.generatedKind !== "video_clip",
+        ...item.files.filter((file) =>
+          rerun
+            ? file.id !== rerun.rerunOfAttachmentId
+            : file.generatedKind !== "final_video" && file.generatedKind !== "video_clip",
         ),
         ...attachments,
       ],
     }));
-    appendConversationMessage(projectId, conversationId, {
+    window.setTimeout(
+      () => runRenderQueue(projectId, conversationId, attachmentIds, [...new Set(finalEpisodes)]),
+      250,
+    );
+  }
+
+  function rerunVideoSegment(segment: RestyleAttachment) {
+    if (!activeProject || !activeConversation || !segment.episode || !segment.segmentId) return;
+    const feedback =
+      window
+        .prompt(
+          "请描述这段需要返工的问题",
+          `${segment.episode} ${segment.segmentId} 人物/动作/比例需要调整`,
+        )
+        ?.trim() || `${segment.episode} ${segment.segmentId} 需要局部返工`;
+    appendConversationMessage(activeProject.id, activeConversation.id, {
+      role: "user",
+      content: `${segment.episode} ${segment.segmentId} ${feedback}`,
+    });
+    appendConversationMessage(activeProject.id, activeConversation.id, {
       role: "assistant",
-      content: `${finalEpisodes.join("、")} 英文剧正式生成完成，${attachments.length - finalEpisodes.length} 个片段都已下载并合成为成片。媒体检查通过。请点击成片链接，在右侧同步播放原片和转绘结果进行验收。`,
-      finalEpisodeLinks: finalEpisodes,
+      content: `已提交 ${segment.episode} ${segment.segmentId} 局部返工，只重跑这一段，不重跑整集。`,
+    });
+    generateRenderedVideos(activeProject.id, activeConversation.id, {
+      episode: segment.episode,
+      segmentId: segment.segmentId,
+      feedback,
+      sourceAttachmentId: segment.sourceAttachmentId,
+      rerunOfAttachmentId: segment.id,
     });
   }
 
-  function reorderProjectFile(targetFileId: string) {
-    if (!activeProject || !draggedFileId || draggedFileId === targetFileId) return;
+  function submitVideoRender(project: RestyleProject, conversationId: string) {
+    updateProject(project.id, (current) => ({ ...current, stage: "render" }));
+    appendConversationMessage(project.id, conversationId, {
+      role: "assistant",
+      content: `已提交 ${project.planEpisodes?.length || project.files.filter((file) => file.type.startsWith("video/") && !file.isFolder).length || 1} 集正式视频生成，任务已进入队列。模型：${selectedVideoModel}。系统会按分段 1 个 1 个生成，全部完成后再合成为成片并返还验收链接。`,
+    });
+    generateRenderedVideos(project.id, conversationId);
+  }
+
+  function folderIdForDrop(request: RestyleFileDropRequest): string | null {
+    if (request.position === "inside" && request.targetNode.kind === "folder") {
+      return request.targetNode.id;
+    }
+    return request.parentNodeId;
+  }
+
+  function episodeForAttachment(file: RestyleAttachment): string {
+    return file.episode ?? episodeFromFileName(file.name);
+  }
+
+  function attachmentBelongsToFolder(file: RestyleAttachment, folderId: string): boolean {
+    if (folderId === "source") {
+      return !file.generatedKind && !file.analysisFrame && !file.isFolder;
+    }
+    if (folderId.startsWith("source/EP")) {
+      return (
+        !file.generatedKind &&
+        !file.analysisFrame &&
+        !file.isFolder &&
+        episodeForAttachment(file) === folderId.replace("source/", "")
+      );
+    }
+    if (folderId === "results/final") return file.generatedKind === "final_video";
+    if (folderId === "results/clips") return file.generatedKind === "video_clip";
+    if (folderId === "results/assets") {
+      return (
+        file.generatedKind === "character" ||
+        file.generatedKind === "scene" ||
+        file.generatedKind === "prop"
+      );
+    }
+    const assetKind = folderId.match(/^results\/assets\/(character|scene|prop)$/)?.[1] as
+      | RestyleAttachment["generatedKind"]
+      | undefined;
+    if (assetKind) return file.generatedKind === assetKind;
+    return false;
+  }
+
+  function applyDropFolderMetadata(file: RestyleAttachment, folderId: string): RestyleAttachment {
+    if (folderId === "source" || folderId.startsWith("source/EP")) {
+      return {
+        ...file,
+        generatedKind: undefined,
+        analysisFrame: undefined,
+        analysisEpisode: undefined,
+        episode: folderId.startsWith("source/EP")
+          ? folderId.replace("source/", "")
+          : episodeForAttachment(file),
+      };
+    }
+    if (folderId === "results/final") {
+      return { ...file, generatedKind: "final_video", episode: episodeForAttachment(file) };
+    }
+    if (folderId === "results/clips") {
+      return {
+        ...file,
+        generatedKind: "video_clip",
+        episode: episodeForAttachment(file),
+        segmentId: file.segmentId ?? "U01",
+      };
+    }
+    const assetKind = folderId.match(/^results\/assets\/(character|scene|prop)$/)?.[1] as
+      | "character"
+      | "scene"
+      | "prop"
+      | undefined;
+    if (assetKind) return { ...file, generatedKind: assetKind };
+    return file;
+  }
+
+  function canDropProjectFile(request: RestyleFileDropRequest): boolean {
+    const folderId = folderIdForDrop(request);
+    if (!folderId) return false;
+    return (
+      folderId === "source" ||
+      folderId.startsWith("source/EP") ||
+      folderId === "results/final" ||
+      folderId === "results/clips" ||
+      folderId === "results/assets" ||
+      /^results\/assets\/(character|scene|prop)$/.test(folderId)
+    );
+  }
+
+  function moveProjectFile(request: RestyleFileDropRequest) {
+    if (!activeProject || !draggedFileId || !canDropProjectFile(request)) return;
+    const folderId = folderIdForDrop(request);
+    if (!folderId) return;
     updateProject(activeProject.id, (project) => {
-      const fromIndex = project.files.findIndex((file) => file.id === draggedFileId);
-      const toIndex = project.files.findIndex((file) => file.id === targetFileId);
-      if (fromIndex < 0 || toIndex < 0) return project;
-      const files = [...project.files];
-      const [moved] = files.splice(fromIndex, 1);
-      files.splice(toIndex, 0, moved);
+      const moving = project.files.find((file) => file.id === draggedFileId);
+      if (!moving) return project;
+      if (
+        request.targetNode.preview?.kind === "attachment" &&
+        request.targetNode.preview.attachment.id === moving.id
+      ) {
+        return project;
+      }
+      const moved = applyDropFolderMetadata(moving, folderId);
+      const files = project.files.filter((file) => file.id !== moving.id);
+      const targetFileId =
+        request.targetNode.preview?.kind === "attachment"
+          ? request.targetNode.preview.attachment.id
+          : null;
+      let insertIndex = files.length;
+      if (targetFileId && request.position !== "inside") {
+        const targetIndex = files.findIndex((file) => file.id === targetFileId);
+        if (targetIndex >= 0)
+          insertIndex = request.position === "before" ? targetIndex : targetIndex + 1;
+      } else {
+        const lastInFolderIndex = files.reduce(
+          (lastIndex, file, index) =>
+            attachmentBelongsToFolder(file, folderId) ? index : lastIndex,
+          -1,
+        );
+        insertIndex = lastInFolderIndex >= 0 ? lastInFolderIndex + 1 : files.length;
+      }
+      files.splice(insertIndex, 0, moved);
       return { ...project, files };
     });
     setDraggedFileId(null);
+    setFileDropTarget(null);
   }
 
   function insertImageMention(imageIndex: number) {
@@ -1155,16 +1492,8 @@ export default function RestyleStudio() {
     setChatDraft("");
     setDraftAttachmentIds([]);
 
-    if (
-      activeProject.stage === "plan" &&
-      /确认生成视频|确认生成|开始生成视频|生成视频/.test(message)
-    ) {
-      updateProject(projectId, (project) => ({ ...project, stage: "render" }));
-      appendConversationMessage(projectId, conversationId, {
-        role: "assistant",
-        content: `已提交 ${activeProject.planEpisodes?.length || 1} 集正式视频生成。模型：${selectedVideoModel}。系统会按分段生成并合成为成片，完成后只返还需要验收的成片链接。`,
-      });
-      window.setTimeout(() => generateRenderedVideos(projectId, conversationId), 300);
+    if (/确认生成视频|开始生成视频|生成视频/.test(message)) {
+      submitVideoRender(activeProject, conversationId);
       return;
     }
 
@@ -2076,10 +2405,7 @@ export default function RestyleStudio() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => {
-                          expandFileTreePath("results");
-                          expandFileTreePath("results/final");
-                        }}
+                        onClick={openRenderStatus}
                         className="rounded-md px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent-dim"
                       >
                         生成状态
@@ -2407,7 +2733,10 @@ export default function RestyleStudio() {
                   onToggleFolder={toggleFileTreePath}
                   onOpenFile={openFilePreview}
                   onDragFile={setDraggedFileId}
-                  onDropFile={reorderProjectFile}
+                  dropTarget={fileDropTarget}
+                  onDropTarget={setFileDropTarget}
+                  onCanDropFile={canDropProjectFile}
+                  onDropFile={moveProjectFile}
                   onContextMenu={(event, preview) => {
                     event.preventDefault();
                     setFileContextMenu({ x: event.clientX, y: event.clientY, preview });
@@ -2463,6 +2792,12 @@ export default function RestyleStudio() {
                       ? videoPairForAttachment(selectedFilePreview.attachment)
                       : null
                   }
+                  renderSegments={
+                    selectedFilePreview.kind === "attachment"
+                      ? renderSegmentsForAttachment(selectedFilePreview.attachment)
+                      : []
+                  }
+                  onRerunSegment={rerunVideoSegment}
                   onOpen={() => setPreviewDialog(selectedFilePreview)}
                 />
               ) : selectedAsset ? (
@@ -2545,6 +2880,12 @@ export default function RestyleStudio() {
               ? videoPairForAttachment(previewDialog.attachment)
               : null
           }
+          renderSegments={
+            previewDialog.kind === "attachment"
+              ? renderSegmentsForAttachment(previewDialog.attachment)
+              : []
+          }
+          onRerunSegment={rerunVideoSegment}
           onClose={() => setPreviewDialog(null)}
         />
       ) : null}
@@ -2591,6 +2932,9 @@ function ProjectFileTree({
   onToggleFolder,
   onOpenFile,
   onDragFile,
+  dropTarget,
+  onDropTarget,
+  onCanDropFile,
   onDropFile,
   onContextMenu,
   onContextMenuFolder,
@@ -2602,7 +2946,10 @@ function ProjectFileTree({
   onToggleFolder: (path: string) => void;
   onOpenFile: (preview: RestyleFilePreview) => void;
   onDragFile: (fileId: string | null) => void;
-  onDropFile: (fileId: string) => void;
+  dropTarget: RestyleFileDropTarget | null;
+  onDropTarget: (target: RestyleFileDropTarget | null) => void;
+  onCanDropFile: (request: RestyleFileDropRequest) => boolean;
+  onDropFile: (request: RestyleFileDropRequest) => void;
   onContextMenu: (event: ReactMouseEvent<HTMLButtonElement>, preview: RestyleFilePreview) => void;
   onContextMenuFolder: (
     event: ReactMouseEvent<HTMLButtonElement>,
@@ -2618,11 +2965,15 @@ function ProjectFileTree({
           key={node.id}
           node={node}
           depth={0}
+          parentNodeId={null}
           closedPaths={closedPaths}
           selectedPreviewKey={selectedPreviewKey}
           onToggleFolder={onToggleFolder}
           onOpenFile={onOpenFile}
           onDragFile={onDragFile}
+          dropTarget={dropTarget}
+          onDropTarget={onDropTarget}
+          onCanDropFile={onCanDropFile}
           onDropFile={onDropFile}
           onContextMenu={onContextMenu}
           onContextMenuFolder={onContextMenuFolder}
@@ -2636,11 +2987,15 @@ function ProjectFileTree({
 function ProjectFileTreeItem({
   node,
   depth,
+  parentNodeId,
   closedPaths,
   selectedPreviewKey,
   onToggleFolder,
   onOpenFile,
   onDragFile,
+  dropTarget,
+  onDropTarget,
+  onCanDropFile,
   onDropFile,
   onContextMenu,
   onContextMenuFolder,
@@ -2648,12 +3003,16 @@ function ProjectFileTreeItem({
 }: {
   node: RestyleFileTreeNode;
   depth: number;
+  parentNodeId: string | null;
   closedPaths: string[];
   selectedPreviewKey: string;
   onToggleFolder: (path: string) => void;
   onOpenFile: (preview: RestyleFilePreview) => void;
   onDragFile: (fileId: string | null) => void;
-  onDropFile: (fileId: string) => void;
+  dropTarget: RestyleFileDropTarget | null;
+  onDropTarget: (target: RestyleFileDropTarget | null) => void;
+  onCanDropFile: (request: RestyleFileDropRequest) => boolean;
+  onDropFile: (request: RestyleFileDropRequest) => void;
   onContextMenu: (event: ReactMouseEvent<HTMLButtonElement>, preview: RestyleFilePreview) => void;
   onContextMenuFolder: (
     event: ReactMouseEvent<HTMLButtonElement>,
@@ -2665,30 +3024,66 @@ function ProjectFileTreeItem({
   const isOpen = isFolder && !closedPaths.includes(node.id);
   const selected = Boolean(node.preview && node.preview.key === selectedPreviewKey);
   const label = isFolder ? `切换文件夹：${node.label}` : `预览文件：${node.label}`;
+  const canDrag = node.preview?.kind === "attachment";
+  const activeDropPosition = dropTarget?.nodeId === node.id ? dropTarget.position : null;
+  const dropClass =
+    activeDropPosition === "before"
+      ? "border-t-2 border-accent"
+      : activeDropPosition === "after"
+        ? "border-b-2 border-accent"
+        : activeDropPosition === "inside"
+          ? "bg-accent-dim text-accent ring-1 ring-accent/50"
+          : "";
+
+  function dropPositionForEvent(event: ReactDragEvent<HTMLElement>): RestyleFileDropPosition {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const ratio = (event.clientY - rect.top) / Math.max(1, rect.height);
+    if (isFolder) {
+      if (ratio < 0.24) return "before";
+      if (ratio > 0.76) return "after";
+      return "inside";
+    }
+    return ratio < 0.5 ? "before" : "after";
+  }
+
+  function handleDragOver(event: ReactDragEvent<HTMLElement>) {
+    const position = dropPositionForEvent(event);
+    if (!onCanDropFile({ targetNode: node, parentNodeId, position })) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    onDropTarget({ nodeId: node.id, position });
+  }
+
+  function handleDrop(event: ReactDragEvent<HTMLElement>) {
+    event.preventDefault();
+    const position = activeDropPosition ?? dropPositionForEvent(event);
+    if (!onCanDropFile({ targetNode: node, parentNodeId, position })) return;
+    onDropFile({ targetNode: node, parentNodeId, position });
+    onDropTarget(null);
+  }
+
   return (
     <div>
       <button
         type="button"
-        draggable={Boolean(node.preview?.kind === "attachment")}
+        draggable={canDrag}
         onDragStart={(event) => {
-          if (node.preview?.kind !== "attachment") return;
+          if (!canDrag || node.preview?.kind !== "attachment") return;
           event.dataTransfer.effectAllowed = "move";
           event.dataTransfer.setData("text/plain", node.preview.attachment.id);
           onDragFile(node.preview.attachment.id);
         }}
-        onDragEnd={() => onDragFile(null)}
-        onDragOver={(event) => {
-          if (node.preview?.kind === "attachment") {
-            event.preventDefault();
-            event.dataTransfer.dropEffect = "move";
+        onDragEnd={() => {
+          onDragFile(null);
+          onDropTarget(null);
+        }}
+        onDragOver={handleDragOver}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+            onDropTarget(null);
           }
         }}
-        onDrop={(event) => {
-          if (node.preview?.kind === "attachment") {
-            event.preventDefault();
-            onDropFile(node.preview.attachment.id);
-          }
-        }}
+        onDrop={handleDrop}
         onClick={() => {
           if (isFolder) onToggleFolder(node.id);
           else if (node.preview) onOpenFile(node.preview);
@@ -2697,7 +3092,7 @@ function ProjectFileTreeItem({
           if (node.preview) onContextMenu(event, node.preview);
           else if (isFolder) onContextMenuFolder(event, node);
         }}
-        className={`flex w-full items-center gap-1.5 rounded-md py-1.5 pr-2 text-left text-xs ${selected ? "bg-bg-elevated text-text-primary" : "text-text-secondary hover:bg-bg-elevated/70 hover:text-text-primary"}`}
+        className={`flex w-full items-center gap-1.5 rounded-md border border-transparent py-1.5 pr-2 text-left text-xs ${selected ? "bg-bg-elevated text-text-primary" : "text-text-secondary hover:bg-bg-elevated/70 hover:text-text-primary"} ${dropClass} ${canDrag ? "cursor-grab active:cursor-grabbing" : ""}`}
         style={{ paddingLeft: depth * 16 + 4 }}
         aria-label={label}
         aria-expanded={isFolder ? isOpen : undefined}
@@ -2751,11 +3146,15 @@ function ProjectFileTreeItem({
               key={child.id}
               node={child}
               depth={depth + 1}
+              parentNodeId={node.id}
               closedPaths={closedPaths}
               selectedPreviewKey={selectedPreviewKey}
               onToggleFolder={onToggleFolder}
               onOpenFile={onOpenFile}
               onDragFile={onDragFile}
+              dropTarget={dropTarget}
+              onDropTarget={onDropTarget}
+              onCanDropFile={onCanDropFile}
               onDropFile={onDropFile}
               onContextMenu={onContextMenu}
               onContextMenuFolder={onContextMenuFolder}
@@ -2765,12 +3164,28 @@ function ProjectFileTreeItem({
         </div>
       ) : null}
       {isFolder && isOpen && !node.children?.length ? (
-        <p
-          className="px-2 py-1 text-xs text-text-muted"
+        <div
+          role="button"
+          tabIndex={-1}
+          className={`rounded-md px-2 py-1 text-xs text-text-muted ${activeDropPosition === "inside" ? "bg-accent-dim text-accent ring-1 ring-accent/50" : ""}`}
           style={{ paddingLeft: (depth + 1) * 16 + 22 }}
+          onDragOver={(event) => {
+            const position: RestyleFileDropPosition = "inside";
+            if (!onCanDropFile({ targetNode: node, parentNodeId, position })) return;
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "move";
+            onDropTarget({ nodeId: node.id, position });
+          }}
+          onDrop={(event) => {
+            const position: RestyleFileDropPosition = "inside";
+            if (!onCanDropFile({ targetNode: node, parentNodeId, position })) return;
+            event.preventDefault();
+            onDropFile({ targetNode: node, parentNodeId, position });
+            onDropTarget(null);
+          }}
         >
-          —
-        </p>
+          拖到这里
+        </div>
       ) : null}
     </div>
   );
@@ -2781,12 +3196,16 @@ function FilePreviewInspector({
   previewUrl,
   thumbnailUrl,
   videoPair,
+  renderSegments,
+  onRerunSegment,
   onOpen,
 }: {
   preview: RestyleFilePreview;
   previewUrl?: string;
   thumbnailUrl?: string;
   videoPair?: RestyleVideoPair | null;
+  renderSegments: RestyleAttachment[];
+  onRerunSegment: (segment: RestyleAttachment) => void;
   onOpen: () => void;
 }) {
   if (preview.kind === "attachment") {
@@ -2800,10 +3219,13 @@ function FilePreviewInspector({
               结果/成片/{preview.title}
             </p>
             <p className="mt-1 text-xs text-text-muted">
-              原片和转绘结果上下对比。{formatFileSize(preview.attachment.size) || "大小未知"}
+              {renderStatusLabel(preview.attachment.renderStatus)} ·{" "}
+              {preview.attachment.renderProgress ?? 0}% ·{" "}
+              {formatFileSize(preview.attachment.size) || "大小未知"}
             </p>
           </div>
-          <ReviewChecklist />
+          <RenderSegmentList segments={renderSegments} onRerunSegment={onRerunSegment} />
+          <ReviewChecklist segments={renderSegments} onRerunSegment={onRerunSegment} />
           <button type="button" onClick={onOpen} className="btn-ghost !px-3 !py-2 text-xs">
             打开大预览
           </button>
@@ -2868,12 +3290,16 @@ function FilePreviewDialog({
   previewUrl,
   thumbnailUrl,
   videoPair,
+  renderSegments,
+  onRerunSegment,
   onClose,
 }: {
   preview: RestyleFilePreview;
   previewUrl?: string;
   thumbnailUrl?: string;
   videoPair?: RestyleVideoPair | null;
+  renderSegments: RestyleAttachment[];
+  onRerunSegment: (segment: RestyleAttachment) => void;
   onClose: () => void;
 }) {
   const isAttachment = preview.kind === "attachment";
@@ -2912,7 +3338,7 @@ function FilePreviewDialog({
             <div className="mx-auto max-w-5xl">
               <VideoComparePanel pair={videoPair} />
               <div className="mt-4 rounded-xl border border-border bg-bg-surface p-4">
-                <ReviewChecklist />
+                <ReviewChecklist segments={renderSegments} onRerunSegment={onRerunSegment} />
               </div>
             </div>
           ) : previewUrl && isVideo ? (
@@ -2955,22 +3381,92 @@ function VideoComparePanel({
 }) {
   const sourceRef = useRef<HTMLVideoElement>(null);
   const resultRef = useRef<HTMLVideoElement>(null);
+  const syncingRef = useRef(false);
   const canPreview = Boolean(pair.sourceUrl && pair.resultUrl);
 
-  function syncPlayback() {
+  function withSyncLock(action: () => void) {
+    syncingRef.current = true;
+    action();
+    window.setTimeout(() => {
+      syncingRef.current = false;
+    }, 120);
+  }
+
+  function peersFor(video: HTMLVideoElement): HTMLVideoElement[] {
+    return [sourceRef.current, resultRef.current].filter((item): item is HTMLVideoElement =>
+      Boolean(item && item !== video),
+    );
+  }
+
+  function playPair(anchor = sourceRef.current) {
+    const source = anchor ?? sourceRef.current;
+    if (!source) return;
+    withSyncLock(() => {
+      [sourceRef.current, resultRef.current].forEach((video) => {
+        if (!video) return;
+        video.currentTime = source.currentTime;
+        video.playbackRate = source.playbackRate;
+        void video.play().catch(() => {});
+      });
+    });
+  }
+
+  function pausePeers(anchor: HTMLVideoElement) {
+    if (syncingRef.current) return;
+    withSyncLock(() => {
+      peersFor(anchor).forEach((video) => video.pause());
+    });
+  }
+
+  function syncTime(anchor: HTMLVideoElement, force = false) {
+    if (syncingRef.current) return;
+    withSyncLock(() => {
+      peersFor(anchor).forEach((video) => {
+        if (force || Math.abs(video.currentTime - anchor.currentTime) > 0.35) {
+          video.currentTime = anchor.currentTime;
+        }
+      });
+    });
+  }
+
+  function syncRate(anchor: HTMLVideoElement) {
+    if (syncingRef.current) return;
+    withSyncLock(() => {
+      peersFor(anchor).forEach((video) => {
+        video.playbackRate = anchor.playbackRate;
+      });
+    });
+  }
+
+  function syncPlayEvent(anchor: HTMLVideoElement) {
+    if (syncingRef.current) return;
+    playPair(anchor);
+  }
+
+  function syncDrift(anchor: HTMLVideoElement) {
+    if (syncingRef.current || anchor.paused) return;
+    peersFor(anchor).forEach((video) => {
+      if (Math.abs(video.currentTime - anchor.currentTime) > 0.45) {
+        video.currentTime = anchor.currentTime;
+      }
+      if (video.paused) {
+        void video.play().catch(() => {});
+      }
+    });
+  }
+
+  function handleSyncPlaybackClick() {
     const source = sourceRef.current;
     const result = resultRef.current;
     if (!source || !result) return;
-    result.currentTime = source.currentTime;
-    if (source.paused) {
-      void source.play().catch(() => {});
+    if (!source.paused || !result.paused) {
+      withSyncLock(() => {
+        source.pause();
+        result.pause();
+      });
+      return;
     }
-    void result.play().catch(() => {});
-  }
-
-  function syncSeek(from: HTMLVideoElement, to: HTMLVideoElement | null) {
-    if (!to || Math.abs(to.currentTime - from.currentTime) < 0.25) return;
-    to.currentTime = from.currentTime;
+    playPair(source);
   }
 
   return (
@@ -2979,7 +3475,7 @@ function VideoComparePanel({
         <p className="text-xs text-text-muted">原片和转绘结果上下对比。</p>
         <button
           type="button"
-          onClick={syncPlayback}
+          onClick={handleSyncPlaybackClick}
           disabled={!canPreview}
           className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 text-xs font-medium text-text-secondary hover:bg-bg-elevated hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
           aria-label="同步播放"
@@ -2994,7 +3490,11 @@ function VideoComparePanel({
         src={pair.sourceUrl}
         ref={sourceRef}
         compact={compact}
-        onSeeked={(event) => syncSeek(event.currentTarget, resultRef.current)}
+        onPlay={(event) => syncPlayEvent(event.currentTarget)}
+        onPause={(event) => pausePeers(event.currentTarget)}
+        onSeeked={(event) => syncTime(event.currentTarget, true)}
+        onRateChange={(event) => syncRate(event.currentTarget)}
+        onTimeUpdate={(event) => syncDrift(event.currentTarget)}
       />
       <VideoCompareSlot
         label="转绘结果"
@@ -3002,7 +3502,11 @@ function VideoComparePanel({
         src={pair.resultUrl}
         ref={resultRef}
         compact={compact}
-        onSeeked={(event) => syncSeek(event.currentTarget, sourceRef.current)}
+        onPlay={(event) => syncPlayEvent(event.currentTarget)}
+        onPause={(event) => pausePeers(event.currentTarget)}
+        onSeeked={(event) => syncTime(event.currentTarget, true)}
+        onRateChange={(event) => syncRate(event.currentTarget)}
+        onTimeUpdate={(event) => syncDrift(event.currentTarget)}
       />
     </div>
   );
@@ -3016,8 +3520,12 @@ const VideoCompareSlot = forwardRef<
     src?: string;
     compact?: boolean;
     onSeeked: ReactEventHandler<HTMLVideoElement>;
+    onPlay: ReactEventHandler<HTMLVideoElement>;
+    onPause: ReactEventHandler<HTMLVideoElement>;
+    onRateChange: ReactEventHandler<HTMLVideoElement>;
+    onTimeUpdate: ReactEventHandler<HTMLVideoElement>;
   }
->(({ label, path, src, compact, onSeeked }, ref) => (
+>(({ label, path, src, compact, onSeeked, onPlay, onPause, onRateChange, onTimeUpdate }, ref) => (
   <div>
     <div className="mb-2 flex items-center justify-between gap-2 text-xs">
       <span className="font-semibold text-text-primary">{label}</span>
@@ -3030,7 +3538,11 @@ const VideoCompareSlot = forwardRef<
         controls
         playsInline
         preload="metadata"
+        onPlay={onPlay}
+        onPause={onPause}
         onSeeked={onSeeked}
+        onRateChange={onRateChange}
+        onTimeUpdate={onTimeUpdate}
         className={`w-full rounded-lg bg-black object-contain ${compact ? "max-h-44" : "max-h-[42vh]"}`}
       />
     ) : (
@@ -3047,7 +3559,54 @@ const VideoCompareSlot = forwardRef<
 ));
 VideoCompareSlot.displayName = "VideoCompareSlot";
 
-function ReviewChecklist() {
+function RenderSegmentList({
+  segments,
+  onRerunSegment,
+}: {
+  segments: RestyleAttachment[];
+  onRerunSegment: (segment: RestyleAttachment) => void;
+}) {
+  if (!segments.length) return null;
+  return (
+    <div className="rounded-lg border border-border bg-bg-elevated p-2">
+      <p className="mb-2 text-xs font-semibold text-text-primary">分段返工</p>
+      <div className="space-y-1.5">
+        {segments.map((segment) => (
+          <div
+            key={segment.id}
+            className="flex items-center gap-2 rounded-md bg-bg-surface px-2 py-1.5 text-[11px]"
+          >
+            <span className="font-medium text-text-primary">
+              {segment.episode} {segment.segmentId}
+            </span>
+            <span className="text-text-muted">{renderStatusLabel(segment.renderStatus)}</span>
+            <span className="text-text-muted">{segment.renderProgress ?? 0}%</span>
+            <span className="min-w-0 flex-1 truncate text-text-muted">
+              {segment.resultUrl
+                ? "结果 URL 已写入"
+                : segment.renderTaskId || segment.renderError || "等待任务"}
+            </span>
+            <button
+              type="button"
+              onClick={() => onRerunSegment(segment)}
+              className="shrink-0 rounded border border-border px-2 py-1 text-accent hover:bg-accent-dim"
+            >
+              重跑这一段
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ReviewChecklist({
+  segments,
+  onRerunSegment,
+}: {
+  segments: RestyleAttachment[];
+  onRerunSegment: (segment: RestyleAttachment) => void;
+}) {
   const checks = ["角色一致性", "剧情还原度", "画面还原度", "音频与台词", "画面比例", "画面清洁度"];
   return (
     <div>
@@ -3066,6 +3625,20 @@ function ReviewChecklist() {
       <p className="mt-2 text-[11px] leading-5 text-text-muted">
         局部问题请点名集数和段落返工，例如“EP02 第3段人物不像 Grace Hart，请重跑这一段”。
       </p>
+      {segments.length ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {segments.map((segment) => (
+            <button
+              key={segment.id}
+              type="button"
+              onClick={() => onRerunSegment(segment)}
+              className="rounded-md bg-accent-dim px-2 py-1 text-[11px] font-medium text-accent hover:bg-accent/15"
+            >
+              {segment.episode} {segment.segmentId} 返工
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

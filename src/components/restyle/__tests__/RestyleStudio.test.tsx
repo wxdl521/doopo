@@ -172,6 +172,21 @@ describe("RestyleStudio prototype", () => {
     expect(screen.getByRole("button", { name: "打开附件：EP01.mp4" })).toBeInTheDocument();
   });
 
+  it("submits video rendering from a direct confirm message before the plan stage", async () => {
+    const user = userEvent.setup();
+    renderStudio();
+    await user.click(screen.getByRole("button", { name: "新建转绘项目" }));
+
+    await user.upload(
+      screen.getByTestId("restyle-file-input"),
+      new File(["source"], "EP01.mp4", { type: "video/mp4" }),
+    );
+    await user.type(screen.getByPlaceholderText("输入你的转绘需求…"), "确认生成视频");
+    await user.click(screen.getByRole("button", { name: "发送" }));
+
+    expect(screen.getByText(/已提交 .*正式视频生成/)).toBeInTheDocument();
+  });
+
   it("opens and collapses files from the project file tree", async () => {
     const user = userEvent.setup();
     renderStudio();
@@ -224,6 +239,10 @@ describe("RestyleStudio prototype", () => {
           generatedKind: "final_video",
           sourceAttachmentId: "source-1",
           episode: "EP01",
+          renderTaskId: "render-EP01-final",
+          renderStatus: "succeeded",
+          renderProgress: 100,
+          resultUrl: "https://cdn.example.com/EP01.mp4",
         },
         {
           id: "clip-1",
@@ -235,6 +254,12 @@ describe("RestyleStudio prototype", () => {
           sourceAttachmentId: "source-1",
           episode: "EP01",
           segmentId: "U01",
+          renderTaskId: "render-EP01-U01",
+          renderStatus: "running",
+          renderProgress: 75,
+          resultUrl: "https://cdn.example.com/EP01_U01.mp4",
+          rerunOfAttachmentId: "old-clip-1",
+          feedback: "人物不像 Grace Hart",
         },
       ],
       conversations: [
@@ -266,8 +291,20 @@ describe("RestyleStudio prototype", () => {
     expect(loadRestyleProjects("restyle-user")[0]).toMatchObject({
       files: [
         expect.objectContaining({ id: "source-1" }),
-        expect.objectContaining({ generatedKind: "final_video", sourceAttachmentId: "source-1" }),
-        expect.objectContaining({ generatedKind: "video_clip", segmentId: "U01" }),
+        expect.objectContaining({
+          generatedKind: "final_video",
+          sourceAttachmentId: "source-1",
+          renderStatus: "succeeded",
+          resultUrl: "https://cdn.example.com/EP01.mp4",
+        }),
+        expect.objectContaining({
+          generatedKind: "video_clip",
+          segmentId: "U01",
+          renderStatus: "running",
+          renderProgress: 75,
+          rerunOfAttachmentId: "old-clip-1",
+          feedback: "人物不像 Grace Hart",
+        }),
       ],
       conversations: [
         expect.objectContaining({

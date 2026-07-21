@@ -2,6 +2,8 @@ import type { RestyleStage } from "./restyleTypes";
 
 const STORAGE_PREFIX = "doopoo:restyle-projects:";
 
+export type RestyleRenderStatus = "queued" | "running" | "succeeded" | "failed";
+
 export type RestyleAttachment = {
   id: string;
   name: string;
@@ -15,6 +17,13 @@ export type RestyleAttachment = {
   sourceAttachmentId?: string;
   episode?: string;
   segmentId?: string;
+  renderTaskId?: string;
+  renderStatus?: RestyleRenderStatus;
+  renderProgress?: number;
+  resultUrl?: string;
+  renderError?: string;
+  rerunOfAttachmentId?: string;
+  feedback?: string;
   analysisFrame?: boolean;
   analysisEpisode?: string;
 };
@@ -93,6 +102,10 @@ function isStringArray(value: unknown): value is string[] {
   return Array.isArray(value) && value.every((item) => typeof item === "string");
 }
 
+function isRenderStatus(value: unknown): value is RestyleRenderStatus {
+  return value === "queued" || value === "running" || value === "succeeded" || value === "failed";
+}
+
 function parseAttachment(value: unknown): RestyleAttachment | null {
   if (!value || typeof value !== "object") return null;
   const item = value as Partial<RestyleAttachment>;
@@ -115,6 +128,14 @@ function parseAttachment(value: unknown): RestyleAttachment | null {
       typeof item.sourceAttachmentId === "string" ? item.sourceAttachmentId : undefined,
     episode: typeof item.episode === "string" ? item.episode : undefined,
     segmentId: typeof item.segmentId === "string" ? item.segmentId : undefined,
+    renderTaskId: typeof item.renderTaskId === "string" ? item.renderTaskId : undefined,
+    renderStatus: isRenderStatus(item.renderStatus) ? item.renderStatus : undefined,
+    renderProgress: typeof item.renderProgress === "number" ? item.renderProgress : undefined,
+    resultUrl: typeof item.resultUrl === "string" ? item.resultUrl : undefined,
+    renderError: typeof item.renderError === "string" ? item.renderError : undefined,
+    rerunOfAttachmentId:
+      typeof item.rerunOfAttachmentId === "string" ? item.rerunOfAttachmentId : undefined,
+    feedback: typeof item.feedback === "string" ? item.feedback : undefined,
     analysisFrame: item.analysisFrame === true,
     analysisEpisode: typeof item.analysisEpisode === "string" ? item.analysisEpisode : undefined,
   };
