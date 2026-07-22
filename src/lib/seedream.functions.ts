@@ -1555,7 +1555,7 @@ export const generateStoryboardShotImage = createServerFn({ method: "POST" })
         model: requested,
         size: "2K",
         referenceImages: images,
-        quality: "high",
+        quality: "auto",
       });
       if (!r.url) return { ok: false as const, error: r.error || "数安词源 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -1931,7 +1931,7 @@ export const regenerateStoryboardShot = createServerFn({ method: "POST" })
         model: requested,
         size: "2K",
         referenceImages: images,
-        quality: "high",
+        quality: "auto",
       });
       if (!r.url) return { ok: false as const, error: r.error || "数安词源 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -2461,7 +2461,7 @@ export const generateStoryboardPitchDeck = createServerFn({ method: "POST" })
         model: requested,
         size: "3840x2160",
         referenceImages: data.referenceImages || [],
-        quality: "high",
+        quality: "auto",
       });
       if (!r.url) return { ok: false as const, error: r.error || "Pixflow 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -2484,7 +2484,7 @@ export const generateStoryboardPitchDeck = createServerFn({ method: "POST" })
         model: requested,
         size: "3840x2160",
         referenceImages: data.referenceImages || [],
-        quality: "high",
+        quality: "auto",
       });
       if (!r.url) return { ok: false as const, error: r.error || "Tokenflash 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -2496,7 +2496,7 @@ export const generateStoryboardPitchDeck = createServerFn({ method: "POST" })
         model: requested,
         size: "3840x2160",
         referenceImages: data.referenceImages || [],
-        quality: "high",
+        quality: "auto",
       });
       if (!r.url) return { ok: false as const, error: r.error || "Revora 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -2508,7 +2508,7 @@ export const generateStoryboardPitchDeck = createServerFn({ method: "POST" })
         model: requested,
         size: "3840x2160",
         referenceImages: data.referenceImages || [],
-        quality: "high",
+        quality: "auto",
       });
       if (!r.url) return { ok: false as const, error: r.error || "AIGCFamily 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -2521,7 +2521,7 @@ export const generateStoryboardPitchDeck = createServerFn({ method: "POST" })
         model: requested,
         size: "3840x2160",
         referenceImages: data.referenceImages || [],
-        quality: "high",
+        quality: "auto",
       });
       if (!r.url) return { ok: false as const, error: r.error || "数安词源 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
@@ -2540,7 +2540,7 @@ export const generateStoryboardPitchDeck = createServerFn({ method: "POST" })
         referenceImages: data.referenceImages || [],
         ...((data.referenceImages || []).length > 3
           ? { quality: "medium" as const, stream: false }
-          : { quality: "high" as const }),
+          : { quality: "auto" as const }),
       });
       if (!r.url) return { ok: false as const, error: r.error || "Azure 未返回图片" };
       return { ok: true as const, url: r.url, model: r.model, meta: r.meta };
@@ -2871,7 +2871,7 @@ export const regenerateStoryboardPitchDeck = createServerFn({ method: "POST" })
         prompt,
         model: requested,
         size: "3840x2160",
-        quality: "high",
+        quality: "auto",
         referenceImages: images,
       });
       if (!result.url) return { ok: false as const, error: result.error || "灵梦未返回图片" };
@@ -2907,7 +2907,7 @@ export const regenerateStoryboardPitchDeck = createServerFn({ method: "POST" })
         model: requested,
         size: "3840x2160",
         referenceImages: images,
-        quality: "high" as "high",
+        quality: "auto" as const,
       };
       // 保持静态 import，确保 Cloudflare 构建会把每个供应商实现打进产物。
       const result =
@@ -2992,7 +2992,7 @@ export const regenerateStoryboardPitchDeck = createServerFn({ method: "POST" })
         referenceImages: images,
         ...(images.length > 3
           ? { quality: "medium" as const, stream: false }
-          : { quality: "high" as const }),
+          : { quality: "auto" as const }),
       });
       if (!result.url) return { ok: false as const, error: result.error || "Azure 未返回图片" };
       return { ok: true as const, url: result.url, model: result.model, meta: result.meta };

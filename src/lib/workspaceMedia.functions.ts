@@ -363,7 +363,10 @@ function makePath(
     else ext = "mp4";
   }
   // groupId 可能含特殊字符(grp-N-xxx),URL encode 一下保险
-  const safeGroupId = encodeURIComponent(groupId);
+  // Storage SDK encodes object keys itself. Pre-encoding here double-encodes
+  // characters such as `::` in signed URLs (%253A%253A), making the object
+  // impossible to read back in the browser.
+  const safeGroupId = groupId.replace(/[^A-Za-z0-9._-]/g, "_");
   return `${userId}/${workspaceId}/${kind === "video" ? "videos" : "storyboards"}/${safeGroupId}.${ext}`;
 }
 

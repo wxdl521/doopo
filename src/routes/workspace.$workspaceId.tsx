@@ -2819,6 +2819,13 @@ function WorkspacePage() {
   // 2026/07:接入 localStorage 持久化，刷新页面不丢失已生成的 URL（Seedream URL 24h 有效）。
   type StoryboardGenEntry = {
     url: string;
+    /**
+     * The data URL that was successfully rendered before a background Storage
+     * upload replaced it.  Keep it briefly as a client-side safety net: a bad
+     * signed/CDN URL must not turn an already generated storyboard into a
+     * broken image.
+     */
+    fallbackUrl?: string;
     status: "running" | "succeeded" | "failed";
     startedAt?: number;
   };
@@ -2865,6 +2872,7 @@ function WorkspacePage() {
           result[k] = (v as any[])
             .map((item: any) => ({
               url: item?.url ?? "",
+              fallbackUrl: typeof item?.fallbackUrl === "string" ? item.fallbackUrl : undefined,
               status: item?.status === "running" ? ("failed" as const) : (item?.status ?? "failed"),
               startedAt: item?.startedAt,
             }))
@@ -2873,6 +2881,7 @@ function WorkspacePage() {
           const item = v as any;
           const entry = {
             url: item?.url ?? "",
+            fallbackUrl: typeof item?.fallbackUrl === "string" ? item.fallbackUrl : undefined,
             status: item?.status === "running" ? ("failed" as const) : (item?.status ?? "failed"),
             startedAt: item?.startedAt,
           };
@@ -2880,6 +2889,36 @@ function WorkspacePage() {
         }
       }
       return result;
+    },
+    [],
+  );
+  // 页面刷新时 localStorage 会先恢复，随后异步的数据库媒体快照才回来。
+  // 后者可能仍是生成供应商的短期 URL；绝不能用它覆盖已入库的长效链接。
+  const mergeRestoredStoryboards = useCallback(
+    (
+      current: Record<string, StoryboardGenEntry[]>,
+      incoming: Record<string, StoryboardGenEntry[]>,
+    ): Record<string, StoryboardGenEntry[]> => {
+      const merged = { ...incoming };
+      for (const [gid, currentEntries] of Object.entries(current)) {
+        const currentLatest = currentEntries.at(-1);
+        const incomingLatest = incoming[gid]?.at(-1);
+        const isDurable = (url: string | undefined) =>
+          Boolean(
+            url &&
+              (url.startsWith("data:") ||
+                url.includes("/storage/v1/object/sign/workspace-media/") ||
+                url.includes("/object/sign/workspace-media/") ||
+                url.includes("/storage/v1/object/public/workspace-media/") ||
+                url.includes("/object/public/workspace-media/")),
+          );
+        if (isDurable(currentLatest?.url) && !isDurable(incomingLatest?.url)) {
+          merged[gid] = currentEntries;
+        } else if (!incoming[gid] && isDurable(currentLatest?.url)) {
+          merged[gid] = currentEntries;
+        }
+      }
+      return merged;
     },
     [],
   );
@@ -2919,6 +2958,28 @@ function WorkspacePage() {
       return next;
     });
   }, []);
+  /**
+   * Storage persistence happens after the generated data URL is already on
+   * screen. If that new URL cannot be decoded/read, restore the verified
+   * data URL instead of leaving the storyboard as a broken <img>.
+   */
+  const recoverStoryboardImage = useCallback((gid: string, failedUrl: string) => {
+    const hasFallback = groupStoryboards[gid]?.some(
+      (entry) => entry.url === failedUrl && Boolean(entry.fallbackUrl),
+    );
+    setGroupStoryboards((current) => {
+      const entries = current[gid];
+      if (!entries) return current;
+      const index = entries.findIndex((entry) => entry.url === failedUrl && entry.fallbackUrl);
+      if (index < 0) return current;
+      const fallbackUrl = entries[index].fallbackUrl!;
+      const next = [...entries];
+      next[index] = { ...next[index], url: fallbackUrl, fallbackUrl: undefined };
+      return { ...current, [gid]: next };
+    });
+    if (hasFallback) clearStoryboardBroken(gid);
+    else markStoryboardBroken(gid);
+  }, [clearStoryboardBroken, groupStoryboards, markStoryboardBroken]);
 
   // 2026/06:故事板图自动入库 —— 监听 groupStoryboards 变化,每个 succeeded
   // 且未入库的项自动调 saveOneStoryboard,把临时 TOS URL 替换成永久
@@ -3039,12 +3100,14 @@ function WorkspacePage() {
       const sRaw = localStorage.getItem(`doopoo:ws:${workspaceId}:storyboards`);
       if (sRaw) {
         const parsed = JSON.parse(sRaw) as Record<string, unknown>;
-        setGroupStoryboards(migrateGroupStoryboards(parsed));
+        setGroupStoryboards((current) =>
+          mergeRestoredStoryboards(current, migrateGroupStoryboards(parsed)),
+        );
       }
     } catch {
       /* localStorage 不可用或数据损坏，静默跳过 */
     }
-  }, [workspaceId]);
+  }, [workspaceId, mergeRestoredStoryboards, migrateGroupStoryboards]);
 
   // 2026/07:groupVideos 变更 → 同步到 localStorage
   useEffect(() => {
@@ -3200,8 +3263,11 @@ function WorkspacePage() {
         }
         if (wd.groupStoryboards && typeof wd.groupStoryboards === "object") {
           // 2026/07:故事板多代历史,DB 恢复走 migrate(老单对象/新数组都兼容,running→failed)
-          setGroupStoryboards(
-            migrateGroupStoryboards(wd.groupStoryboards as Record<string, unknown>),
+          setGroupStoryboards((current) =>
+            mergeRestoredStoryboards(
+              current,
+              migrateGroupStoryboards(wd.groupStoryboards as Record<string, unknown>),
+            ),
           );
         }
         // 2026/06:恢复上次选中的集数
@@ -3311,8 +3377,11 @@ function WorkspacePage() {
               );
             }
             if (media.groupStoryboards && typeof media.groupStoryboards === "object") {
-              setGroupStoryboards(
-                migrateGroupStoryboards(media.groupStoryboards as Record<string, unknown>),
+              setGroupStoryboards((current) =>
+                mergeRestoredStoryboards(
+                  current,
+                  migrateGroupStoryboards(media.groupStoryboards as Record<string, unknown>),
+                ),
               );
             }
             setImagesRestored(true);
@@ -3413,7 +3482,9 @@ function WorkspacePage() {
                 const eIdx = entries.findIndex((e) => e.url === item.url);
                 if (eIdx < 0) return m;
                 const next = [...entries];
-                next[eIdx] = { ...next[eIdx], url: r.url };
+                // Do not discard the image that has already rendered while
+                // switching to the asynchronously persisted URL.
+                next[eIdx] = { ...next[eIdx], url: r.url, fallbackUrl: next[eIdx].url };
                 return { ...m, [gid]: next };
               });
             }
@@ -3785,15 +3856,22 @@ function WorkspacePage() {
           } else if (kind === "shot") {
             setShotImages((m) => ({ ...m, [imageKey]: [...(m[imageKey] ?? []), res.url!] }));
           } else if (kind === "storyboard") {
+            // 新上传的故事板必须立即成为当前版本。不要在 setState updater
+            // 内再 setSelectedStoryboardIndex：React 批处理时该更新可能被
+            // 丢到旧的 entries 长度上，界面便仍显示已过期的旧故事板。
+            const nextIndex = (groupStoryboards[id] ?? []).length;
             setGroupStoryboards((m) => {
               const entries = [...(m[id] ?? [])];
               entries.push({ url: res.url!, status: "succeeded" });
-              setSelectedStoryboardIndex((s) => ({ ...s, [id]: entries.length - 1 }));
               return { ...m, [id]: entries };
             });
+            setSelectedStoryboardIndex((s) => ({ ...s, [id]: nextIndex }));
+            clearStoryboardBroken(id);
           }
           toast.success("图片已上传");
-          void handleSaveWorkspace();
+          // 等本轮 state commit 后再保存。必须走 ref 获取最新 render 的
+          // handleSaveWorkspace，直接闭包调用会把上传前的故事板快照写回。
+          setTimeout(() => void handleSaveWorkspaceRef.current(), 0);
         } else {
           toast.error(res?.error || "上传失败");
         }
@@ -8560,7 +8638,7 @@ function WorkspacePage() {
                     const idx = entries.findIndex((e) => e.url === finalUrl);
                     if (idx < 0) return m;
                     const next = [...entries];
-                    next[idx] = { ...next[idx], url: r.url };
+                    next[idx] = { ...next[idx], url: r.url, fallbackUrl: next[idx].url };
                     return { ...m, [groupId]: next };
                   });
                 }
@@ -8593,7 +8671,12 @@ function WorkspacePage() {
           const entries = [...(m[groupId] ?? [])];
           const lastIdx = entries.length - 1;
           if (lastIdx >= 0 && entries[lastIdx].status === "running") {
-            entries[lastIdx] = { ...entries[lastIdx], url: finalUrl, status: "succeeded" };
+            entries[lastIdx] = {
+              ...entries[lastIdx],
+              url: finalUrl,
+              fallbackUrl: base64Url ?? undefined,
+              status: "succeeded",
+            };
           } else {
             entries.push({ url: finalUrl, status: "succeeded" });
           }
@@ -8797,7 +8880,7 @@ function WorkspacePage() {
                     const idx = entries.findIndex((e) => e.url === finalUrl);
                     if (idx < 0) return m;
                     const next = [...entries];
-                    next[idx] = { ...next[idx], url: r.url };
+                    next[idx] = { ...next[idx], url: r.url, fallbackUrl: next[idx].url };
                     return { ...m, [groupId]: next };
                   });
                 }
@@ -8829,7 +8912,12 @@ function WorkspacePage() {
           const entries = [...(m[groupId] ?? [])];
           const lastIdx = entries.length - 1;
           if (lastIdx >= 0 && entries[lastIdx].status === "running") {
-            entries[lastIdx] = { ...entries[lastIdx], url: finalUrl, status: "succeeded" };
+            entries[lastIdx] = {
+              ...entries[lastIdx],
+              url: finalUrl,
+              fallbackUrl: base64Url ?? undefined,
+              status: "succeeded",
+            };
           } else {
             entries.push({ url: finalUrl, status: "succeeded" });
           }
@@ -13472,7 +13560,9 @@ function WorkspacePage() {
                                   src={getActiveStoryboard(g.id)!.url}
                                   alt="故事板"
                                   onLoad={() => clearStoryboardBroken(g.id)}
-                                  onError={() => markStoryboardBroken(g.id)}
+                                  onError={() =>
+                                    recoverStoryboardImage(g.id, getActiveStoryboard(g.id)!.url)
+                                  }
                                   onClick={() => {
                                     void showEditablePromptInChinese(
                                       `storyboard:${g.id}`,
@@ -15909,7 +15999,7 @@ function WorkspacePage() {
                       src={url}
                       alt={title}
                       onLoad={() => clearStoryboardBroken(storyboardPreview.groupId)}
-                      onError={() => markStoryboardBroken(storyboardPreview.groupId)}
+                      onError={() => recoverStoryboardImage(storyboardPreview.groupId, url)}
                       className="max-w-full max-h-full object-contain rounded"
                     />
                     {isModifying && (
