@@ -38,6 +38,7 @@ import {
   loadRestyleProjects,
   saveRestyleProjects,
   type RestyleAttachment,
+  type RestyleAnalysisSections,
   type RestyleConversation,
   type RestyleExtractedAsset,
   type RestyleProject,
@@ -54,10 +55,16 @@ type AssetLibraryStatus = "idle" | "loading" | "ready" | "error";
 type RestyleView = "workbench" | "canvas";
 const RESTYLE_MODELS = [
   { id: "ark:deepseek-v4-pro-260425", label: "DeepSeek V4 Pro" },
+  { id: "ark:doubao-seed-2-1-pro-260628", label: "Doubao Seed 2.1 Pro" },
   { id: "qwen:qwen3.6-plus", label: "Qwen 3.6 Plus · 视觉" },
   { id: "qwen:qwen3.6-flash", label: "Qwen 3.6 Flash · 视觉" },
   { id: "qwen:qwen3.7-max", label: "Qwen 3.7 Max" },
 ] as const;
+
+function relabelRestyleError(error: string, model: RestyleModel): string {
+  const label = RESTYLE_MODELS.find((item) => item.id === model)?.label ?? model;
+  return error.replace("DeepSeek V4 Pro", label).replace("DeepSeek", label);
+}
 
 type RestyleModel = (typeof RESTYLE_MODELS)[number]["id"];
 type RestyleFilePreview =
@@ -119,11 +126,6 @@ function countTreeLeaves(nodes: RestyleFileTreeNode[] = []): number {
   );
 }
 
-function episodeFromFileName(name: string, fallbackIndex = 0): string {
-  const match = name.match(/ep\s*0*(\d+)/i);
-  return `EP${String(match ? Number(match[1]) : fallbackIndex + 1).padStart(2, "0")}`;
-}
-
 function renderStatusLabel(status?: RestyleRenderStatus): string {
   if (status === "queued") return "排队中";
   if (status === "running") return "生成中";
@@ -132,8 +134,8 @@ function renderStatusLabel(status?: RestyleRenderStatus): string {
   return "未开始";
 }
 
-function makeRenderTaskId(episode: string, segmentId?: string): string {
-  const suffix = segmentId ? `${episode}-${segmentId}` : `${episode}-final`;
+function makeRenderTaskId(videoId: string, segmentId?: string): string {
+  const suffix = segmentId ? `${videoId}-${segmentId}` : `${videoId}-final`;
   return `render-${suffix}-${crypto.randomUUID().slice(0, 8)}`;
 }
 
@@ -288,11 +290,6 @@ function groupedAttachmentNodes(files: RestyleAttachment[]): RestyleFileTreeNode
   const folders = files.filter(
     (file) => !file.generatedKind && !file.analysisFrame && file.isFolder,
   );
-  const byEpisode = new Map<string, RestyleAttachment[]>();
-  sourceFiles.forEach((file, index) => {
-    const episode = file.episode ?? episodeFromFileName(file.name, index);
-    byEpisode.set(episode, [...(byEpisode.get(episode) ?? []), file]);
-  });
   const fileNode = (file: RestyleAttachment): RestyleFileTreeNode => ({
     id: `source/${file.id}`,
     label: file.name,
@@ -305,16 +302,29 @@ function groupedAttachmentNodes(files: RestyleAttachment[]): RestyleFileTreeNode
       attachment: file,
     },
   });
+  const sourceVideos = sourceFiles.filter((file) => file.type.startsWith("video/"));
+  const sourceOtherFiles = sourceFiles.filter((file) => !file.type.startsWith("video/"));
+  const episodeNodes = sourceVideos.reduce<RestyleFileTreeNode[]>((nodes, file, index) => {
+    const episode = file.episode ?? `EP${String(index + 1).padStart(2, "0")}`;
+    const existing = nodes.find((node) => node.id === `source/${episode}`);
+    const child = fileNode(file);
+    if (existing) {
+      existing.children = [...(existing.children ?? []), child];
+      existing.count = existing.children.length;
+      return nodes;
+    }
+    nodes.push({
+      id: `source/${episode}`,
+      label: episode,
+      kind: "folder",
+      count: 1,
+      children: [child],
+    });
+    return nodes;
+  }, []);
   return [
-    ...Array.from(byEpisode.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([episode, episodeFiles]) => ({
-        id: `source/${episode}`,
-        label: episode,
-        kind: "folder" as const,
-        count: episodeFiles.length,
-        children: episodeFiles.map(fileNode),
-      })),
+    ...episodeNodes,
+    ...sourceOtherFiles.map(fileNode),
     ...folders.map((file) => {
       if (file.isFolder) {
         return {
@@ -409,11 +419,14 @@ function buildRestyleFileTree(
       ],
     };
   };
-  const sourceEpisodes = groupedAttachmentNodes(project?.files ?? []).filter((node) =>
-    node.label.match(/^EP\d+$/),
-  );
+  const sourceEpisodes = (project?.files ?? [])
+    .filter((file) => file.type.startsWith("video/") && !file.isFolder)
+    .map((file, index) => ({
+      label: file.episode ?? `EP${String(index + 1).padStart(2, "0")}`,
+      file,
+    }));
   const frameFiles = (project?.files ?? []).filter((file) => file.analysisFrame && file.url);
-  const analysisChildren = extractedAssets.length
+  const analysisChildren: RestyleFileTreeNode[] = sourceEpisodes.length
     ? [
         {
           id: "analysis/global",
@@ -467,7 +480,41 @@ function buildRestyleFileTree(
         })),
       ]
     : [];
-  const planChildren = extractedAssets.length
+  analysisChildren.forEach((node) => {
+    const episode = sourceEpisodes.find((item) => item.label === node.label);
+    const sections = episode ? project?.analysisSections?.[episode.label] : undefined;
+    if (!episode || !sections || !node.children) return;
+    const sectionContent: Record<string, string> = {
+      剧情: sections.plot,
+      视频理解: sections.videoUnderstanding,
+      台词: sections.dialogue,
+      资产: sections.assets,
+    };
+    node.children = node.children.map((child) => {
+      const content = sectionContent[child.label];
+      if (!content) return child;
+      const preview = makeVirtualPreview(
+        `${child.id}/${episode.label}_${child.label}.md`,
+        `${episode.label}_${child.label}.md`,
+        "text/markdown",
+        content,
+      );
+      return {
+        ...child,
+        count: 1,
+        children: [
+          {
+            id: preview.key,
+            label: preview.title,
+            kind: "file" as const,
+            size: preview.content.length,
+            preview,
+          },
+        ],
+      };
+    });
+  });
+  const planChildren: RestyleFileTreeNode[] = extractedAssets.length
     ? [
         {
           id: "plan/global",
@@ -493,11 +540,64 @@ function buildRestyleFileTree(
         },
       ]
     : [];
-  const episodePlanNodes = (project?.planEpisodes ?? []).map((plan) => {
+  const planGlobalNode = planChildren[0];
+  if (planGlobalNode?.children) {
+    const generatedAssetFiles = generatedFiles.filter((file) =>
+      ["character", "scene", "prop"].includes(file.generatedKind ?? ""),
+    );
+    planGlobalNode.children.push({
+      id: "plan/global/图片生成",
+      label: "图片生成",
+      kind: "folder",
+      count: generatedAssetFiles.length,
+      children: generatedAssetFiles.map((file) => ({
+        id: `plan/global/图片生成/${file.id}`,
+        label: file.name,
+        kind: "file" as const,
+        size: file.size,
+        preview: {
+          kind: "attachment" as const,
+          key: `attachment:${file.id}`,
+          title: file.name,
+          attachment: file,
+        },
+      })),
+    });
+    const registryFiles = [
+      ["character_confirmation.json", "角色确认表与角色图片绑定。"],
+      ["target_asset_conversion.json", "目标资产转换登记与本项目资产绑定。"],
+      ["target_localization_contract.json", "目标市场、本地化风格和一致性约束。"],
+      ["series_character_registry.json", "角色注册表与跨视频一致性记录。"],
+      ["series_scene_registry.json", "场景注册表与跨视频一致性记录。"],
+      ["series_prop_registry.json", "道具注册表与跨视频一致性记录。"],
+    ] as const;
+    planGlobalNode.children.push(
+      ...registryFiles.map(([name, content]) => {
+        const preview = makeVirtualPreview(
+          `plan/global/${name}`,
+          name,
+          "application/json",
+          content,
+        );
+        return {
+          id: preview.key,
+          label: preview.title,
+          kind: "file" as const,
+          size: preview.content.length,
+          preview,
+        };
+      }),
+    );
+    planGlobalNode.count = planGlobalNode.children.length;
+  }
+  const episodePlanNodes: RestyleFileTreeNode[] = (project?.planEpisodes ?? []).map((plan) => {
     const episode = plan.episode;
+    const sourceName =
+      project?.files.find((file) => file.id === episode || file.episode === episode)?.name ??
+      episode;
     return {
       id: `plan/${episode}`,
-      label: episode,
+      label: sourceName,
       kind: "folder" as const,
       count: plan.segments.length,
       children: [
@@ -532,6 +632,59 @@ function buildRestyleFileTree(
         },
       ],
     };
+  });
+  episodePlanNodes.forEach((node) => {
+    const episode = node.id.replace(/^plan\//, "");
+    const plan = project?.planEpisodes?.find((item) => item.episode === episode);
+    if (!plan) return;
+    const sectionFiles = [
+      [
+        "分段",
+        `${episode}_segments.json`,
+        JSON.stringify({ episode, segments: plan.segments }, null, 2),
+      ],
+      [
+        "分镜",
+        `${episode}_storyboard.md`,
+        plan.segments.map((segment) => `## ${segment.id}\n\n${segment.prompt}`).join("\n\n"),
+      ],
+      [
+        "连续性",
+        `${episode}_continuity.md`,
+        "角色、场景、道具、画面比例和声音要求将在本视频分段之间保持一致。",
+      ],
+      ["确认", `${episode}_confirmation.md`, "请检查分段提示词、资产引用和原片剧情还原度。"],
+    ] as const;
+    const promptFolder = node.children?.find((child) => child.id.endsWith("/提示词"));
+    const extraFolders = sectionFiles.map(([label, name, content]) => {
+      const preview = makeVirtualPreview(
+        `plan/${episode}/${label}/${name}`,
+        name,
+        name.endsWith(".json") ? "application/json" : "text/markdown",
+        content,
+      );
+      return {
+        id: `plan/${episode}/${label}`,
+        label,
+        kind: "folder" as const,
+        count: 1,
+        children: [
+          {
+            id: preview.key,
+            label: preview.title,
+            kind: "file" as const,
+            size: preview.content.length,
+            preview,
+          },
+        ],
+      };
+    });
+    node.children = [
+      ...extraFolders,
+      ...(node.children ?? []).filter((child) => child !== promptFolder),
+      ...(promptFolder ? [promptFolder] : []),
+    ];
+    node.count = node.children.length;
   });
   if (episodePlanNodes.length) {
     planChildren.push(...episodePlanNodes);
@@ -635,6 +788,7 @@ export default function RestyleStudio() {
   const [zoom, setZoom] = useState(100);
   const [canvasKind, setCanvasKind] = useState<RestyleAsset["kind"] | "all">("all");
   const [canvasPrompt, setCanvasPrompt] = useState("");
+  const [selectedCanvasAttachmentId, setSelectedCanvasAttachmentId] = useState<string | null>(null);
   const [assetPickerFor, setAssetPickerFor] = useState<string | null>(null);
   const [assetPickerKind, setAssetPickerKind] = useState<RestyleAsset["kind"] | null>(null);
   const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
@@ -683,6 +837,9 @@ export default function RestyleStudio() {
   const activeConversation = activeProject?.conversations.find(
     (conversation) => conversation.id === activeProject?.activeConversationId,
   );
+  const sourceVideoLabel = (videoId: string): string =>
+    activeProject?.files.find((file) => file.id === videoId || file.episode === videoId)?.name ??
+    videoId;
   const draftAttachments =
     activeProject?.files.filter((file) => draftAttachmentIds.includes(file.id)) ?? [];
   const imageDraftAttachments = draftAttachments.filter((file) => file.type.startsWith("image/"));
@@ -892,6 +1049,9 @@ export default function RestyleStudio() {
       setActiveProjectId(project.id);
     }
     const selectedFiles = Array.from(files);
+    const existingVideoCount = project.files.filter(
+      (file) => file.type.startsWith("video/") && !file.isFolder,
+    ).length;
     const attachments: RestyleAttachment[] = isFolder
       ? [
           {
@@ -905,12 +1065,15 @@ export default function RestyleStudio() {
             fileCount: selectedFiles.length,
           },
         ]
-      : selectedFiles.map((file) => ({
+      : selectedFiles.map((file, index) => ({
           id: crypto.randomUUID(),
           name: file.name,
           size: file.size,
           type: file.type,
           lastModified: file.lastModified,
+          episode: file.type.startsWith("video/")
+            ? `EP${String(existingVideoCount + selectedFiles.slice(0, index).filter((item) => item.type.startsWith("video/")).length + 1).padStart(2, "0")}`
+            : undefined,
         }));
     const previews = attachments.reduce<Record<string, string>>((current, attachment, index) => {
       const file = selectedFiles[index];
@@ -938,6 +1101,11 @@ export default function RestyleStudio() {
       ...currentProject,
       files: [...currentProject.files, ...attachments],
     }));
+    attachments
+      .filter((attachment) => attachment.type.startsWith("video/"))
+      .forEach((attachment) => {
+        void ensureReferenceVideoUrl(project.id, attachment);
+      });
     setDraftAttachmentIds((current) => [
       ...current,
       ...attachments.map((attachment) => attachment.id),
@@ -1025,7 +1193,9 @@ export default function RestyleStudio() {
       ? URL.createObjectURL(localFile)
       : attachment
         ? filePreviews[attachment.id]
-        : URL.createObjectURL(new Blob([preview.content], { type: preview.mime }));
+        : preview.kind === "virtual"
+          ? URL.createObjectURL(new Blob([preview.content], { type: preview.mime }))
+          : undefined;
     if (!source) return;
     const link = document.createElement("a");
     link.href = source;
@@ -1430,8 +1600,8 @@ export default function RestyleStudio() {
     );
     const allPlanEpisodes = project.planEpisodes?.length
       ? project.planEpisodes
-      : sourceFiles.map((file, index) => ({
-          episode: episodeFromFileName(file.name, index),
+      : sourceFiles.map((file) => ({
+          episode: file.episode ?? file.id,
           segments: [{ id: "U01", prompt: "保持原片剧情、动作、站位与音频节奏完成转绘。" }],
         }));
     const planEpisodes = rerun
@@ -1467,14 +1637,15 @@ export default function RestyleStudio() {
           ? sourceFiles.find((file) => file.id === rerun.sourceAttachmentId)
           : undefined) ??
         sourceFiles.find(
-          (file, index) => episodeFromFileName(file.name, index) === episode.episode,
+          (file) => file.id === episode.episode || file.episode === episode.episode,
         ) ??
         sourceFiles[episodeIndex] ??
         sourceFiles[0];
       if (!source) return [];
+      const sourceStem = source.name.replace(/\.[^.]+$/, "") || "转绘视频";
       const clips = episode.segments.map((segment) => ({
         id: crypto.randomUUID(),
-        name: `${episode.episode}_${segment.id}.mp4`,
+        name: `${sourceStem}_${segment.id}.mp4`,
         size: source.size,
         type: "video/mp4",
         lastModified: Date.now(),
@@ -1493,7 +1664,7 @@ export default function RestyleStudio() {
         ...clips,
         {
           id: crypto.randomUUID(),
-          name: `${episode.episode}.mp4`,
+          name: `${sourceStem}_转绘.mp4`,
           size: source.size,
           type: "video/mp4",
           lastModified: Date.now(),
@@ -1603,19 +1774,20 @@ export default function RestyleStudio() {
   }
 
   function episodeForAttachment(file: RestyleAttachment): string {
-    return file.episode ?? episodeFromFileName(file.name);
+    return file.episode ?? file.id;
   }
 
   function attachmentBelongsToFolder(file: RestyleAttachment, folderId: string): boolean {
     if (folderId === "source") {
       return !file.generatedKind && !file.analysisFrame && !file.isFolder;
     }
-    if (folderId.startsWith("source/EP")) {
+    const sourceEpisode = folderId.match(/^source\/(EP\d+)$/)?.[1];
+    if (sourceEpisode) {
       return (
         !file.generatedKind &&
         !file.analysisFrame &&
         !file.isFolder &&
-        episodeForAttachment(file) === folderId.replace("source/", "")
+        file.episode === sourceEpisode
       );
     }
     if (folderId === "results/final") return file.generatedKind === "final_video";
@@ -1634,15 +1806,23 @@ export default function RestyleStudio() {
   }
 
   function applyDropFolderMetadata(file: RestyleAttachment, folderId: string): RestyleAttachment {
-    if (folderId === "source" || folderId.startsWith("source/EP")) {
+    const sourceEpisode = folderId.match(/^source\/(EP\d+)$/)?.[1];
+    if (sourceEpisode) {
       return {
         ...file,
         generatedKind: undefined,
         analysisFrame: undefined,
         analysisEpisode: undefined,
-        episode: folderId.startsWith("source/EP")
-          ? folderId.replace("source/", "")
-          : episodeForAttachment(file),
+        episode: sourceEpisode,
+      };
+    }
+    if (folderId === "source") {
+      return {
+        ...file,
+        generatedKind: undefined,
+        analysisFrame: undefined,
+        analysisEpisode: undefined,
+        episode: episodeForAttachment(file),
       };
     }
     if (folderId === "results/final") {
@@ -1667,7 +1847,7 @@ export default function RestyleStudio() {
     if (!folderId) return false;
     return (
       folderId === "source" ||
-      folderId.startsWith("source/EP") ||
+      /^source\/EP\d+$/.test(folderId) ||
       folderId === "results/final" ||
       folderId === "results/clips" ||
       folderId === "results/assets" ||
@@ -1728,6 +1908,95 @@ export default function RestyleStudio() {
     return kinds;
   }
 
+  function handleAgentFileCommand(
+    project: RestyleProject,
+    conversationId: string,
+    message: string,
+  ): boolean {
+    const normalized = message.trim();
+    const file = project.files.find(
+      (item) => normalized.includes(item.name) || normalized.includes(item.id),
+    );
+    const target = normalized.match(
+      /EP\d+|原片|原片分析|转绘方案|结果|资产|角色|场景|道具|成片|视频片段/i,
+    )?.[0];
+    const targetFolder = target
+      ? target.match(/^EP\d+$/i)
+        ? `source/${target.toUpperCase()}`
+        : target.includes("原片分析")
+          ? "analysis"
+          : target.includes("转绘方案")
+            ? "plan"
+            : target.includes("结果")
+              ? "results"
+              : target.includes("成片")
+                ? "results/final"
+                : target.includes("视频片段")
+                  ? "results/clips"
+                  : target.includes("资产")
+                    ? "results/assets"
+                    : target.includes("角色")
+                      ? "results/assets/character"
+                      : target.includes("场景")
+                        ? "results/assets/scene"
+                        : target.includes("道具")
+                          ? "results/assets/prop"
+                          : "source"
+      : null;
+    if (/打开|查看|定位|跳转/.test(normalized) && targetFolder) {
+      expandFileTreePath(targetFolder);
+      if (targetFolder.startsWith("source/EP")) expandFileTreePath("source");
+      if (targetFolder === "plan") expandFileTreePath("plan");
+      appendConversationMessage(project.id, conversationId, {
+        role: "assistant",
+        content: `已打开项目文件中的 ${target ?? "目标文件夹"}。`,
+      });
+      return true;
+    }
+    if (/删除|移除/.test(normalized) && file) {
+      removeFile(file.id);
+      appendConversationMessage(project.id, conversationId, {
+        role: "assistant",
+        content: `已删除文件：${file.name}。`,
+      });
+      return true;
+    }
+    const renameMatch = normalized.match(/(?:重命名|改名)\s*(.+?)\s*(?:为|成)\s*(.+)$/);
+    if (renameMatch) {
+      const source = project.files.find(
+        (item) => item.name === renameMatch[1].trim() || normalized.includes(item.name),
+      );
+      const nextName = renameMatch[2].trim().replace(/[。！!]+$/, "");
+      if (source && nextName) {
+        updateProject(project.id, (current) => ({
+          ...current,
+          files: current.files.map((item) =>
+            item.id === source.id ? { ...item, name: nextName } : item,
+          ),
+        }));
+        appendConversationMessage(project.id, conversationId, {
+          role: "assistant",
+          content: `已将 ${source.name} 重命名为 ${nextName}。`,
+        });
+        return true;
+      }
+    }
+    if (/移动|移到|放到|归档/.test(normalized) && file && targetFolder) {
+      const moved = applyDropFolderMetadata(file, targetFolder);
+      updateProject(project.id, (current) => ({
+        ...current,
+        files: current.files.map((item) => (item.id === file.id ? moved : item)),
+      }));
+      expandFileTreePath(targetFolder);
+      appendConversationMessage(project.id, conversationId, {
+        role: "assistant",
+        content: `已将 ${file.name} 移动到 ${target ?? targetFolder}。`,
+      });
+      return true;
+    }
+    return false;
+  }
+
   async function sendChatMessage() {
     if (!activeProject || !activeConversation) return;
     const message = chatDraft.trim();
@@ -1759,6 +2028,8 @@ export default function RestyleStudio() {
     setChatDraft("");
     setDraftAttachmentIds([]);
 
+    if (handleAgentFileCommand(activeProject, conversationId, message)) return;
+
     if (/确认生成视频|开始生成视频|生成视频/.test(message)) {
       submitVideoRender(activeProject, conversationId);
       return;
@@ -1774,14 +2045,18 @@ export default function RestyleStudio() {
         data: {
           model: selectedModel,
           instruction: activeProject.planNote,
-          sourceFiles: (sourceFiles.length ? sourceFiles : activeProject.files).map(
-            ({ name, type, size }) => ({ name, type, size }),
-          ),
+          sourceFiles: (sourceFiles.length ? sourceFiles : activeProject.files).map((file) => ({
+            id: file.episode ?? file.id,
+            name: file.name,
+            type: file.type,
+            size: file.size,
+          })),
           assets: activeProject.extractedAssets.map(({ id: _id, ...asset }) => asset),
           episodeCount,
         },
       });
       if (!result.ok) {
+        result.error = relabelRestyleError(result.error, selectedModel);
         setIsAnalyzing(false);
         appendConversationMessage(projectId, conversationId, {
           role: "assistant",
@@ -1790,6 +2065,7 @@ export default function RestyleStudio() {
         return;
       }
       const episodeLinks = result.episodes.map((episode) => episode.episode);
+      const sourceVideoNames = episodeLinks.map(sourceVideoLabel);
       updateProject(projectId, (project) => ({
         ...project,
         stage: "plan",
@@ -1797,14 +2073,14 @@ export default function RestyleStudio() {
       }));
       appendConversationMessage(projectId, conversationId, {
         role: "assistant",
-        content: `已确认资产图片，已生成 ${episodeLinks.join("、")} 的转绘方案。点击集数可展开右侧对应目录，提示词位于“提示词/final”文件夹内。需要微调时，请直接说明集数和分段，例如“请将 EP01 的 U01 光影调整为冷白色调”。调整完成后回复“确认生成视频”。`,
+        content: `已确认资产图片，已生成 ${sourceVideoNames.join("、")} 的转绘方案。点击视频文件可打开右侧对应提示词。需要微调时，请直接说明视频和分段，例如“请将第一个视频的 U01 光影调整为冷白色调”。调整完成后回复“确认生成视频”。`,
         episodeLinks,
       });
       setIsAnalyzing(false);
       return;
     }
 
-    if (activeProject.stage === "plan" && /EP\d+|U\d+|提示词|光影|镜头|台词|节奏/.test(message)) {
+    if (activeProject.stage === "plan" && /U\d+|提示词|光影|镜头|台词|节奏/.test(message)) {
       setIsAnalyzing(true);
       const sourceFiles = activeProject.files.filter(
         (file) => file.type.startsWith("video/") && !file.isFolder,
@@ -1813,15 +2089,21 @@ export default function RestyleStudio() {
         data: {
           model: selectedModel,
           instruction: message,
-          sourceFiles: (sourceFiles.length ? sourceFiles : activeProject.files).map(
-            ({ name, type, size }) => ({ name, type, size }),
-          ),
+          sourceFiles: (sourceFiles.length ? sourceFiles : activeProject.files).map((file) => ({
+            id: file.episode ?? file.id,
+            name: file.name,
+            type: file.type,
+            size: file.size,
+          })),
           assets: activeProject.extractedAssets.map(({ id: _id, ...asset }) => asset),
           episodeCount: activeProject.planEpisodes?.length || sourceFiles.length || 1,
           existingEpisodes: activeProject.planEpisodes ?? [],
         },
       });
       if (result.ok) {
+        const updatedVideoNames = result.episodes.map((episode) =>
+          sourceVideoLabel(episode.episode),
+        );
         updateProject(projectId, (project) => ({
           ...project,
           planEpisodes: result.episodes,
@@ -1829,7 +2111,7 @@ export default function RestyleStudio() {
         }));
         appendConversationMessage(projectId, conversationId, {
           role: "assistant",
-          content: `已根据你的要求更新方案：${result.episodes.map((episode) => `${episode.episode}（${episode.segments.length} 段）`).join("、")}。请点击右侧提示词文件检查修改结果。`,
+          content: `已根据你的要求更新方案：${result.episodes.map((episode, index) => `${updatedVideoNames[index] ?? episode.episode}（${episode.segments.length} 段）`).join("、")}。请点击对话中的视频文件名检查右侧提示词。`,
           episodeLinks: result.episodes.map((episode) => episode.episode),
         });
       } else {
@@ -1900,20 +2182,32 @@ export default function RestyleStudio() {
     setIsAnalyzing(true);
     setAnalysisError("");
     try {
-      const frameFile = sourceFiles
-        .map((file) => fileObjectsRef.current[file.id])
-        .find((file): file is File => Boolean(file));
-      const frameImages = frameFile ? await extractVideoKeyFrames(frameFile).catch(() => []) : [];
+      const frameBatches = await Promise.all(
+        sourceFiles.map(async (file) => {
+          const local = fileObjectsRef.current[file.id];
+          return {
+            file,
+            frames: local ? await extractVideoKeyFrames(local).catch(() => []) : [],
+          };
+        }),
+      );
+      const frameImages = frameBatches.flatMap((batch) => batch.frames).slice(0, 4);
       const result = await callAnalyzeRestyleAssets({
         data: {
           instruction: analysisInstruction,
           model: selectedModel,
-          sourceFiles: sourceFiles.map(({ name, type, size }) => ({ name, type, size })),
+          sourceFiles: sourceFiles.map((file) => ({
+            id: file.episode ?? file.id,
+            name: file.name,
+            type: file.type,
+            size: file.size,
+          })),
           frameImages,
           existingAssets: activeProject.extractedAssets.map(({ id: _id, ...asset }) => asset),
         },
       });
       if (!result.ok) {
+        result.error = relabelRestyleError(result.error, selectedModel);
         setAnalysisError(result.error);
         appendConversationMessage(projectId, conversationId, {
           role: "assistant",
@@ -1925,23 +2219,28 @@ export default function RestyleStudio() {
         id: crypto.randomUUID(),
         ...asset,
       }));
-      const episodeMatch = sourceFiles[0]?.name.match(/ep\s*0*(\d+)/i);
-      const analysisEpisode = `EP${String(episodeMatch ? Number(episodeMatch[1]) : 1).padStart(2, "0")}`;
-      const frameAttachments: RestyleAttachment[] = frameImages.map((url, index) => ({
-        id: crypto.randomUUID(),
-        name: `${analysisEpisode}_frame_${String(index + 1).padStart(2, "0")}.jpg`,
-        size: Math.round(url.length * 0.75),
-        type: "image/jpeg",
-        lastModified: Date.now(),
-        url,
-        analysisFrame: true,
-        analysisEpisode,
-      }));
+      const frameAttachments: RestyleAttachment[] = frameBatches.flatMap(({ file, frames }) => {
+        const episode = file.episode ?? file.id;
+        const videoName = file.name.replace(/\.[^.]+$/, "") || episode;
+        return frames.map((url, index) => ({
+          id: crypto.randomUUID(),
+          name: `${videoName}_frame_${String(index + 1).padStart(2, "0")}.jpg`,
+          size: Math.round(url.length * 0.75),
+          type: "image/jpeg",
+          lastModified: Date.now(),
+          url,
+          analysisFrame: true,
+          analysisEpisode: episode,
+        }));
+      });
       updateProject(projectId, (project) => ({
         ...project,
         stage: "assets",
         extractedAssets,
         analysisSummary: result.summary,
+        analysisSections: Object.fromEntries(
+          sourceFiles.map((file) => [file.episode ?? file.id, result.analysis]),
+        ) as Record<string, RestyleAnalysisSections>,
         confirmedAssetIds: [],
         files: [...project.files.filter((file) => !file.analysisFrame), ...frameAttachments],
       }));
@@ -2110,6 +2409,49 @@ export default function RestyleStudio() {
     ]);
   }
 
+  function canvasAttachmentPrompt(attachment: RestyleAttachment): string {
+    const plan = activeProject?.planEpisodes?.find((item) => item.episode === attachment.episode);
+    if (attachment.segmentId) {
+      return plan?.segments.find((segment) => segment.id === attachment.segmentId)?.prompt ?? "";
+    }
+    return plan?.segments.map((segment) => `${segment.id}: ${segment.prompt}`).join("\n\n") ?? "";
+  }
+
+  function canvasAttachmentUrl(attachment: RestyleAttachment): string | undefined {
+    return attachment.resultUrl ?? attachment.url ?? filePreviews[attachment.id];
+  }
+
+  function regenerateCanvasAttachment(attachment: RestyleAttachment) {
+    if (!activeProject || !activeConversation) return;
+    const prompt = canvasPrompt.trim() || canvasAttachmentPrompt(attachment);
+    if (attachment.generatedKind === "video_clip" || attachment.generatedKind === "final_video") {
+      if (!attachment.episode) return;
+      appendConversationMessage(activeProject.id, activeConversation.id, {
+        role: "user",
+        content: `重新生成 ${attachment.name}：${prompt}`,
+      });
+      generateRenderedVideos(activeProject.id, activeConversation.id, {
+        episode: attachment.episode,
+        segmentId: attachment.segmentId,
+        feedback: prompt || "请根据当前提示词重新生成。",
+        sourceAttachmentId: attachment.sourceAttachmentId,
+        rerunOfAttachmentId: attachment.id,
+      });
+      return;
+    }
+    if (
+      attachment.generatedKind !== "character" &&
+      attachment.generatedKind !== "scene" &&
+      attachment.generatedKind !== "prop"
+    )
+      return;
+    const extracted = activeProject.extractedAssets.find((asset) =>
+      attachment.name.includes(asset.targetName),
+    );
+    if (!extracted) return;
+    void generateAssetImages(activeProject.id, activeConversation.id, prompt, [extracted]);
+  }
+
   if (view === "canvas") {
     const canvasAssets =
       canvasKind === "all" ? assets : assets.filter((asset) => asset.kind === canvasKind);
@@ -2117,6 +2459,16 @@ export default function RestyleStudio() {
       selectedAsset && canvasAssets.some((asset) => asset.id === selectedAsset.id)
         ? selectedAsset
         : canvasAssets[0];
+    const canvasGeneratedAttachments = (activeProject?.files ?? []).filter(
+      (file) =>
+        Boolean(canvasAttachmentUrl(file)) &&
+        ["character", "scene", "prop", "video_clip", "final_video"].includes(
+          file.generatedKind ?? "",
+        ),
+    );
+    const canvasSelectedAttachment = canvasGeneratedAttachments.find(
+      (file) => file.id === selectedCanvasAttachmentId,
+    );
     const canvasEpisodes = (activeProject?.planEpisodes ?? []).map((episode) => episode.episode);
     return (
       <section
@@ -2170,6 +2522,25 @@ export default function RestyleStudio() {
               ))}
             </div>
             <div className="mt-4 border-t border-border pt-3">
+              <p className="mb-2 px-3 text-[11px] font-semibold text-text-muted">已生成媒体</p>
+              {canvasGeneratedAttachments.map((attachment) => (
+                <button
+                  key={attachment.id}
+                  type="button"
+                  onClick={() => {
+                    setSelectedCanvasAttachmentId(attachment.id);
+                    setCanvasPrompt(canvasAttachmentPrompt(attachment));
+                  }}
+                  className={`mb-1 flex w-full items-center gap-2 truncate rounded-lg px-3 py-2 text-left text-xs ${canvasSelectedAttachment?.id === attachment.id ? "bg-bg-elevated text-text-primary" : "text-text-muted hover:bg-bg-elevated"}`}
+                >
+                  <span className="shrink-0 text-accent">
+                    {attachment.generatedKind?.includes("video") ? "视频" : "图片"}
+                  </span>
+                  <span className="truncate">{attachment.name}</span>
+                </button>
+              ))}
+            </div>
+            <div className="mt-4 border-t border-border pt-3">
               <p className="mb-2 px-3 text-[11px] font-semibold text-text-muted">视频分集</p>
               {canvasEpisodes.map((episode) => (
                 <button
@@ -2179,7 +2550,7 @@ export default function RestyleStudio() {
                   className="mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs text-text-secondary hover:bg-bg-elevated"
                 >
                   <span className="text-accent">▣</span>
-                  {episode}
+                  {sourceVideoLabel(episode)}
                 </button>
               ))}
             </div>
@@ -2265,6 +2636,41 @@ export default function RestyleStudio() {
                   </button>
                 ))}
               </div>
+              <div className="absolute left-8 right-[28%] top-[28rem] flex flex-wrap gap-4">
+                {canvasGeneratedAttachments.map((attachment) => {
+                  const url = canvasAttachmentUrl(attachment);
+                  return (
+                    <button
+                      key={attachment.id}
+                      type="button"
+                      onClick={() => {
+                        setSelectedCanvasAttachmentId(attachment.id);
+                        setCanvasPrompt(canvasAttachmentPrompt(attachment));
+                      }}
+                      className={`w-[180px] overflow-hidden rounded-lg border bg-bg-surface text-left shadow-xl ${canvasSelectedAttachment?.id === attachment.id ? "border-accent ring-2 ring-accent/30" : "border-border"}`}
+                    >
+                      <div className="relative h-28 overflow-hidden bg-bg-elevated">
+                        {url && attachment.generatedKind?.includes("video") ? (
+                          <video
+                            src={url}
+                            muted
+                            preload="metadata"
+                            className="h-full w-full object-cover"
+                          />
+                        ) : url ? (
+                          <img src={url} alt="" className="h-full w-full object-cover" />
+                        ) : null}
+                        <span className="absolute left-2 top-2 rounded bg-bg/80 px-1.5 py-0.5 text-[9px] text-text-primary">
+                          {attachment.generatedKind?.includes("video") ? "视频" : "图片"}
+                        </span>
+                      </div>
+                      <p className="truncate px-2 py-2 text-[11px] font-medium text-text-primary">
+                        {attachment.name}
+                      </p>
+                    </button>
+                  );
+                })}
+              </div>
               <div className="absolute right-5 top-24 w-[150px] space-y-3">
                 {canvasEpisodes.length ? (
                   canvasEpisodes.map((episode) => (
@@ -2278,7 +2684,9 @@ export default function RestyleStudio() {
                       }}
                     >
                       <p className="text-[10px] text-text-muted">视频</p>
-                      <p className="mt-1 text-xs font-semibold text-text-primary">{episode}</p>
+                      <p className="mt-1 text-xs font-semibold text-text-primary">
+                        {sourceVideoLabel(episode)}
+                      </p>
                       <p className="mt-1 text-[10px] text-text-muted">
                         {activeProject?.planEpisodes?.find((item) => item.episode === episode)
                           ?.segments.length ?? 0}{" "}
@@ -2331,7 +2739,46 @@ export default function RestyleStudio() {
           </div>
           <aside className="rounded-xl border border-border bg-bg-surface p-4">
             <p className="text-xs text-text-muted">资产编辑</p>
-            {canvasSelectedAsset ? (
+            {canvasSelectedAttachment ? (
+              <>
+                <h2 className="mt-1 truncate font-semibold text-text-primary">
+                  {canvasSelectedAttachment.name}
+                </h2>
+                <div className="mt-3 overflow-hidden rounded-lg bg-bg-elevated">
+                  {canvasAttachmentUrl(canvasSelectedAttachment) &&
+                  canvasSelectedAttachment.generatedKind?.includes("video") ? (
+                    <video
+                      src={canvasAttachmentUrl(canvasSelectedAttachment)}
+                      controls
+                      className="max-h-48 w-full"
+                    />
+                  ) : canvasAttachmentUrl(canvasSelectedAttachment) ? (
+                    <img
+                      src={canvasAttachmentUrl(canvasSelectedAttachment)}
+                      alt=""
+                      className="max-h-48 w-full object-contain"
+                    />
+                  ) : null}
+                </div>
+                <label className="mt-4 block text-xs text-text-muted">
+                  编辑提示词
+                  <textarea
+                    value={canvasPrompt || canvasAttachmentPrompt(canvasSelectedAttachment)}
+                    onChange={(event) => setCanvasPrompt(event.target.value)}
+                    rows={8}
+                    className="mt-2 w-full resize-y rounded-lg border border-border bg-bg-elevated p-3 text-xs leading-5 text-text-primary outline-none focus:border-accent"
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={isAnalyzing || !activeProject || !activeConversation}
+                  onClick={() => regenerateCanvasAttachment(canvasSelectedAttachment)}
+                  className="btn-primary mt-4 w-full text-xs"
+                >
+                  {isAnalyzing ? "生成中…" : "重新生成"}
+                </button>
+              </>
+            ) : canvasSelectedAsset ? (
               <>
                 <h2 className="mt-1 font-semibold text-text-primary">{canvasSelectedAsset.name}</h2>
                 <p className="mt-3 text-xs leading-5 text-text-secondary">
@@ -2640,7 +3087,7 @@ export default function RestyleStudio() {
                           onClick={() => openPlanEpisode(episode)}
                           className="rounded-md px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent-dim"
                         >
-                          {episode}
+                          {sourceVideoLabel(episode)}
                         </button>
                       ))}
                     </div>
@@ -2654,7 +3101,7 @@ export default function RestyleStudio() {
                           onClick={() => openFinalEpisode(episode)}
                           className="rounded-md px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent-dim"
                         >
-                          {episode} 成片
+                          {sourceVideoLabel(episode)} 成片
                         </button>
                       ))}
                       <button
@@ -4094,13 +4541,17 @@ function ExtractedAssetTable({
   onChooseLibraryAsset,
   onDeleteAsset,
   onAddAsset,
+  confirmedAssetIds,
+  onToggleConfirmation,
 }: {
   assets: RestyleExtractedAsset[];
   t: Translations;
-  linkedAssetIds: string[];
-  onChooseLibraryAsset: (assetId: string) => void;
-  onDeleteAsset: (assetId: string) => void;
-  onAddAsset: () => void;
+  linkedAssetIds?: string[];
+  onChooseLibraryAsset?: (assetId: string) => void;
+  onDeleteAsset?: (assetId: string) => void;
+  onAddAsset?: () => void;
+  confirmedAssetIds?: string[];
+  onToggleConfirmation?: (assetId: string) => void;
 }) {
   const kindLabel = (kind: RestyleExtractedAsset["kind"]) =>
     kind === "character"
@@ -4121,7 +4572,7 @@ function ExtractedAssetTable({
           <span>资产库</span>
           <button
             type="button"
-            onClick={onAddAsset}
+            onClick={() => onAddAsset?.()}
             className="flex items-center gap-1 text-accent hover:text-text-primary"
           >
             <Plus size={12} />
@@ -4151,14 +4602,14 @@ function ExtractedAssetTable({
               <span className="flex items-start gap-1.5">
                 <button
                   type="button"
-                  onClick={() => onChooseLibraryAsset(asset.id)}
+                  onClick={() => onChooseLibraryAsset?.(asset.id)}
                   className="h-fit rounded-md border border-border px-2 py-1 text-[11px] text-accent hover:bg-accent-dim"
                 >
-                  {linkedAssetIds.length ? "选择/更换" : "选择资产"}
+                  {linkedAssetIds?.length ? "选择/更换" : "选择资产"}
                 </button>
                 <button
                   type="button"
-                  onClick={() => onDeleteAsset(asset.id)}
+                  onClick={() => onDeleteAsset?.(asset.id)}
                   className="grid h-6 w-6 place-items-center rounded text-text-muted hover:bg-destructive/10 hover:text-destructive"
                   aria-label={`删除资产：${asset.sourceName}`}
                 >

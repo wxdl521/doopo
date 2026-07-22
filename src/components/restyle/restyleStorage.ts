@@ -4,6 +4,13 @@ const STORAGE_PREFIX = "doopoo:restyle-projects:";
 
 export type RestyleRenderStatus = "queued" | "running" | "succeeded" | "failed";
 
+export type RestyleAnalysisSections = {
+  plot: string;
+  videoUnderstanding: string;
+  dialogue: string;
+  assets: string;
+};
+
 export type RestyleAttachment = {
   id: string;
   name: string;
@@ -79,6 +86,7 @@ export type RestyleProject = {
   planNote: string;
   extractedAssets: RestyleExtractedAsset[];
   analysisSummary: string;
+  analysisSections?: Record<string, RestyleAnalysisSections>;
   planEpisodes?: RestylePlanEpisode[];
   imageModel?: string;
   videoModel?: string;
@@ -218,9 +226,25 @@ function parseProject(value: unknown): RestyleProject | null {
   ) {
     return null;
   }
-  const files = Array.isArray(item.files)
+  const rawFiles = Array.isArray(item.files)
     ? item.files.map(parseAttachment).filter((file): file is RestyleAttachment => Boolean(file))
     : [];
+  const sourceEpisodeById = new Map<string, string>();
+  let sourceVideoIndex = 0;
+  const files = rawFiles
+    .map((file) => {
+      if (!file.type.startsWith("video/") || file.isFolder || file.generatedKind) return file;
+      const episode = file.episode ?? `EP${String(++sourceVideoIndex).padStart(2, "0")}`;
+      sourceEpisodeById.set(file.id, episode);
+      sourceEpisodeById.set(file.episode ?? file.id, episode);
+      return { ...file, episode };
+    })
+    .map((file) => {
+      const episode = file.episode
+        ? (sourceEpisodeById.get(file.episode) ?? file.episode)
+        : undefined;
+      return episode && file.episode !== episode ? { ...file, episode } : file;
+    });
   const planEpisodes = Array.isArray(item.planEpisodes)
     ? item.planEpisodes.flatMap((episode) => {
         if (!episode || typeof episode !== "object") return [];
@@ -233,9 +257,32 @@ function parseProject(value: unknown): RestyleProject | null {
             ? [{ id: value.id, prompt: value.prompt }]
             : [];
         });
-        return [{ episode: item.episode, segments }];
+        return [{ episode: sourceEpisodeById.get(item.episode) ?? item.episode, segments }];
       })
     : undefined;
+  const analysisSections =
+    item.analysisSections && typeof item.analysisSections === "object"
+      ? Object.fromEntries(
+          Object.entries(item.analysisSections).flatMap(([episode, value]) => {
+            if (!value || typeof value !== "object") return [];
+            const section = value as Partial<RestyleAnalysisSections>;
+            return [
+              [
+                episode,
+                {
+                  plot: typeof section.plot === "string" ? section.plot : "",
+                  videoUnderstanding:
+                    typeof section.videoUnderstanding === "string"
+                      ? section.videoUnderstanding
+                      : "",
+                  dialogue: typeof section.dialogue === "string" ? section.dialogue : "",
+                  assets: typeof section.assets === "string" ? section.assets : "",
+                },
+              ],
+            ];
+          }),
+        )
+      : undefined;
   const conversations = Array.isArray(item.conversations)
     ? item.conversations
         .filter(
@@ -266,7 +313,13 @@ function parseProject(value: unknown): RestyleProject | null {
           },
         ];
   return {
-    ...item,
+    id: item.id,
+    title: item.title,
+    createdAt: item.createdAt,
+    updatedAt: item.updatedAt,
+    stage: item.stage,
+    assetIds: item.assetIds,
+    confirmedAssetIds: item.confirmedAssetIds,
     files,
     conversations: migratedConversations,
     activeConversationId:
@@ -277,7 +330,10 @@ function parseProject(value: unknown): RestyleProject | null {
     planNote: typeof item.planNote === "string" ? item.planNote : "",
     extractedAssets: parseExtractedAssets(item.extractedAssets),
     analysisSummary: typeof item.analysisSummary === "string" ? item.analysisSummary : "",
+    analysisSections,
     planEpisodes,
+    imageModel: typeof item.imageModel === "string" ? item.imageModel : undefined,
+    videoModel: typeof item.videoModel === "string" ? item.videoModel : undefined,
   };
 }
 
@@ -302,7 +358,29 @@ export function saveRestyleProjects(
 ): void {
   if (!userId || typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(keyFor(userId), JSON.stringify(projects));
+    // Browser object URLs and extracted keyframe data URLs cannot survive a refresh and can
+    // exceed localStorage's quota. Persist the workflow state, not transient preview bytes.
+    const sanitizeAttachment = (file: RestyleAttachment): RestyleAttachment => {
+      const transientUrl = (url: string | undefined) =>
+        Boolean(url && (url.startsWith("blob:") || url.startsWith("data:")));
+      return {
+        ...file,
+        url: transientUrl(file.url) ? undefined : file.url,
+        resultUrl: transientUrl(file.resultUrl) ? undefined : file.resultUrl,
+      };
+    };
+    const durableProjects = projects.map((project) => ({
+      ...project,
+      files: project.files.filter((file) => !file.analysisFrame).map(sanitizeAttachment),
+      conversations: project.conversations.map((conversation) => ({
+        ...conversation,
+        messages: conversation.messages.map((message) => ({
+          ...message,
+          attachments: message.attachments?.map(sanitizeAttachment),
+        })),
+      })),
+    }));
+    window.localStorage.setItem(keyFor(userId), JSON.stringify(durableProjects));
   } catch {
     // Local persistence is best-effort while the restyle database model is not connected.
   }
