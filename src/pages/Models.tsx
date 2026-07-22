@@ -130,6 +130,26 @@ type VideoModel = {
 
 const VIDEO_MODELS: VideoModel[] = [
   {
+    id: "earth/seedance-2.0",
+    name: "Doubao Seedance 2.0 (AgentEarth)",
+    nameEn: "Doubao Seedance 2.0 (AgentEarth)",
+    vendor: "AgentEarth · OpenAI 兼容",
+    tagline: "文本/图片/视频/音频生视频 · 4-15 秒",
+    taglineEn: "Text, Image, Video & Audio to Video · 4-15s",
+    gradient: "from-emerald-500 to-teal-600",
+    status: "available",
+  },
+  {
+    id: "earth/seedance-2.0-global",
+    name: "Doubao Seedance 2.0 Global (AgentEarth)",
+    nameEn: "Doubao Seedance 2.0 Global (AgentEarth)",
+    vendor: "AgentEarth · OpenAI 兼容",
+    tagline: "海外版 · 文本/图片/视频/音频生视频 · 4-15 秒",
+    taglineEn: "Global · Text, Image, Video & Audio to Video · 4-15s",
+    gradient: "from-cyan-500 to-blue-600",
+    status: "available",
+  },
+  {
     id: "doubao-seedance-2-0-260128",
     name: "Doubao Seedance 2.0",
     nameEn: "Doubao Seedance 2.0",

@@ -160,6 +160,18 @@ const sceneModels = realImageModelOptions;
 // Video models —— 2026/06 接入双后端:火山方舟 Seedance(已开通,默认走 ARK) + 阿里 DashScope HappyHorse(备用)
 // 详见 docs/seedream.md (Seedance) 和 docs/qwen.md (HappyHorse)
 const videoModels = [
+  // ---- AgentEarth (OpenAI-compatible gateway · Seedance 2.0) ----
+  {
+    id: "earth/seedance-2.0",
+    label: "Doubao Seedance 2.0 (AgentEarth)",
+    sub: "AgentEarth · 文本/图片/视频/音频生视频 · 4-15 秒",
+  },
+  {
+    id: "earth/seedance-2.0-global",
+    label: "Doubao Seedance 2.0 Global (AgentEarth)",
+    sub: "AgentEarth · 海外版 · 文本/图片/视频/音频生视频 · 4-15 秒",
+  },
+
   // ---- 主力:Seedance(火山方舟 ARK,多模态·支持参考图/视频/音频)----
   {
     id: "doubao-seedance-2-0-260128",
@@ -349,6 +361,7 @@ const videoModels = [
 // 2026/07:视频下拉只保留指定供应商(星标 + 汇流 + ToAPIS + 可灵),
 // 其余(即梦/k99/数安词源/vapeur/HappyHorse)不显示。
 const VISIBLE_VIDEO_PREFIXES = [
+  "earth/",
   "kuaizi-",
   "doubao-seedance-", // 星标
   "confluo-",
@@ -371,6 +384,8 @@ export const realVideoModels = videoModels.filter(
 // ARK Seedance 标准版/Fast:480p、720p;丽帧 pro:480p、720p、1080p;丽帧 fast/mini:480p、720p。
 // 其他视频模型不在此列 -> 选择器禁用,resolution 不传走各后端默认。
 const VIDEO_RESOLUTIONS: Record<string, string[]> = {
+  "earth/seedance-2.0": ["480P", "720P", "1080P"],
+  "earth/seedance-2.0-global": ["480P", "720P", "1080P"],
   "doubao-seedance-2-0-260128": ["480P", "720P"],
   "doubao-seedance-2-0-fast-260128": ["480P", "720P"],
   "kuaizi-lizhen-pro": ["480P", "720P", "1080P"],

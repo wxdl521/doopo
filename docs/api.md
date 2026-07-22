@@ -126,6 +126,7 @@ handler 为 **async generator**，前端以异步迭代消费 `{ delta?, done?, 
 | `ARK_BASE_URL`                                                            | 火山方舟 API 基础 URL(默认 `https://ark.cn-beijing.volces.com/api/v3`) |
 | `ARK_IMAGE_MODEL`                                                         | 默认图像模型(默认 `doubao-seedream-5-0-260128`)                        |
 | `ARK_VIDEO_MODEL`                                                         | 默认视频模型(默认 `doubao-seedance-2-0-260128`)                        |
+| `AGENTEARTH_API_KEY` / `AGENTEARTH_BASE_URL`                              | AgentEarth Image2 / Seedance 2.0 网关（默认 `https://maas.agentearth.ai/v1`） |
 | `Qwen` / `DASHSCOPE_API_KEY`                                              | 阿里 DashScope(通义千问文本 + 图像 legacy 兜底)                        |
 | `SUPABASE_URL` / `SUPABASE_PUBLISHABLE_KEY` / `SUPABASE_SERVICE_ROLE_KEY` | Supabase 服务端                                                        |
 | `VITE_SUPABASE_URL` / `VITE_SUPABASE_PUBLISHABLE_KEY`                     | 浏览器 Supabase 客户端（自动注入）                                     |

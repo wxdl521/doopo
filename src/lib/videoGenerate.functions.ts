@@ -42,6 +42,23 @@ import { videoCost } from "./creditsCost";
 const ARK_DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
 const ARK_DEFAULT_MODEL = "doubao-seedance-2-0-260128";
 
+// ---------- AgentEarth (Seedance 2.0) ----------
+
+const AGENTEARTH_DEFAULT_BASE_URL = "https://maas.agentearth.ai/v1";
+const AGENTEARTH_SEEDANCE_MODEL = "earth/seedance-2.0";
+const AGENTEARTH_SEEDANCE_GLOBAL_MODEL = "earth/seedance-2.0-global";
+
+function isAgentEarthSeedanceModel(model: string): boolean {
+  return model === AGENTEARTH_SEEDANCE_MODEL || model === AGENTEARTH_SEEDANCE_GLOBAL_MODEL;
+}
+
+function getAgentEarthVideoConfig() {
+  return {
+    apiKey: process.env.AGENTEARTH_API_KEY,
+    baseUrl: (process.env.AGENTEARTH_BASE_URL || AGENTEARTH_DEFAULT_BASE_URL).replace(/\/+$/, ""),
+  };
+}
+
 // ---------- DashScope (HappyHorse / Wanx) 配置 ----------
 
 const DASHSCOPE_VIDEO_ENDPOINT =
@@ -73,8 +90,10 @@ export function getVideoBackend(
   | "topenrouter"
   | "hongmeng"
   | "sdreal"
-  | "keyiyun" {
+  | "keyiyun"
+  | "agentearth" {
   const m = (modelId || "").trim().toLowerCase();
+  if (isAgentEarthSeedanceModel(m)) return "agentearth";
   if (m.startsWith("dreamina-seedance-")) return "sdreal";
   if (m.startsWith("doubao-seedance-") || m.startsWith("seedance-")) return "ark";
   if (m.startsWith("shuci-")) return "shuci";
@@ -2216,6 +2235,86 @@ type SubmitInput = {
   referenceAudioUrl?: string;
 };
 
+/**
+ * AgentEarth 的 videos/generations 在网关侧同步等待任务完成，成功时直接返回 MP4 URL。
+ * 因此不进入项目通用的任务轮询流程；URL 仅有效 24 小时，调用方应尽快转存。
+ */
+async function agentEarthSeedanceSubmit(input: {
+  model: string;
+  prompt: string;
+  media: DashScopeMediaItem[];
+  ratio?: SeedanceRatio;
+  resolution?: string;
+  duration?: number;
+  generateAudio?: boolean;
+  referenceVideoUrl?: string;
+  referenceAudioUrl?: string;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<{ ok: true; videoUrl: string } | { ok: false; error: string }> {
+  if (input.duration != null && (input.duration < 4 || input.duration > 15)) {
+    return { ok: false, error: "[agentearth] Seedance 2.0 duration must be between 4 and 15 seconds" };
+  }
+
+  const imageInput =
+    input.media.find((item) => item.type === "first_frame")?.url ||
+    input.media.find((item) => item.type === "reference_image")?.url;
+  const body: Record<string, unknown> = {
+    model: input.model,
+    prompt: input.prompt,
+    resolution: toArkResolution(input.resolution),
+  };
+  if (input.ratio) body.ratio = input.ratio;
+  if (input.duration != null) body.duration = input.duration;
+  if (typeof input.generateAudio === "boolean") body.generate_audio = input.generateAudio;
+  if (imageInput) body.image_input = imageInput;
+  if (input.referenceVideoUrl) body.video_input = input.referenceVideoUrl;
+  if (input.referenceAudioUrl) body.audio_input = input.referenceAudioUrl;
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 600_000);
+  try {
+    const response = await fetch(`${input.baseUrl}/videos/generations`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${input.apiKey}`,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    const responseText = await response.text().catch(() => "");
+    if (!response.ok) {
+      return {
+        ok: false,
+        error: `[agentearth] generate ${response.status}: ${responseText.slice(0, 500)}`,
+      };
+    }
+    let payload: { data?: Array<{ url?: string }>; error?: { message?: string } } = {};
+    try {
+      payload = JSON.parse(responseText);
+    } catch {}
+    const videoUrl = payload.data?.[0]?.url;
+    if (!videoUrl) {
+      return {
+        ok: false,
+        error: `[agentearth] no video URL: ${payload.error?.message || responseText.slice(0, 300)}`,
+      };
+    }
+    return { ok: true, videoUrl };
+  } catch (error) {
+    const message =
+      error instanceof Error && error.name === "AbortError"
+        ? "generation timeout (600s)"
+        : error instanceof Error
+          ? error.message
+          : "fetch failed";
+    return { ok: false, error: `[agentearth] network: ${message}` };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 type VideoBackend =
   | "ark"
   | "dashscope"
@@ -2230,7 +2329,8 @@ type VideoBackend =
   | "topenrouter"
   | "hongmeng"
   | "sdreal"
-  | "keyiyun";
+  | "keyiyun"
+  | "agentearth";
 
 // ====================================================================
 // vapeur.ai 端实现 —— 透传火山方舟 ARK Seedance 原生格式
@@ -2912,11 +3012,37 @@ async function sdrealPoll(input: {
 }
 
 type SubmitResult =
-  | { ok: true; taskId: string; model: string; backend: VideoBackend }
+  | { ok: true; taskId: string; model: string; backend: VideoBackend; videoUrl?: string }
   | { ok: false; error: string };
 
 async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
   const backend = getVideoBackend(input.model);
+  if (backend === "agentearth") {
+    const { apiKey, baseUrl } = getAgentEarthVideoConfig();
+    if (!apiKey) return { ok: false, error: "AGENTEARTH_API_KEY not configured" };
+    const result = await agentEarthSeedanceSubmit({
+      model: input.model,
+      prompt: input.prompt,
+      media: input.media,
+      ratio: input.ratio,
+      resolution: input.resolution,
+      duration: input.duration,
+      generateAudio: input.generateAudio,
+      referenceVideoUrl: input.referenceVideoUrl,
+      referenceAudioUrl: input.referenceAudioUrl,
+      apiKey,
+      baseUrl,
+    });
+    return result.ok
+      ? {
+          ok: true,
+          taskId: `agentearth-sync-${Date.now()}`,
+          model: input.model,
+          backend: "agentearth",
+          videoUrl: result.videoUrl,
+        }
+      : result;
+  }
   if (backend === "keyiyun") {
     const { apiKey, baseUrl } = getKeyiyunConfig();
     if (!apiKey) {
@@ -3367,6 +3493,13 @@ type PollResult =
   | { ok: false; error: string; status?: SeedanceProgress; raw?: any };
 
 async function pollVideoTask(input: PollInput): Promise<PollResult> {
+  if (input.backend === "agentearth") {
+    return {
+      ok: false,
+      error: "[agentearth] generation is synchronous; use the videoUrl returned by submitVideoTaskFn",
+      status: "succeeded",
+    };
+  }
   if (input.backend === "keyiyun") {
     const { apiKey, baseUrl } = getKeyiyunConfig();
     if (!apiKey) return { ok: false, error: "[keyiyun] 缺少 KEYYIYUN_API_KEY" };
@@ -3674,7 +3807,13 @@ export const submitVideoTaskFn = createServerFn({ method: "POST" })
       );
       return { ok: false as const, error: r.error };
     }
-    return { ok: true as const, taskId: r.taskId, model: r.model, backend: r.backend };
+    return {
+      ok: true as const,
+      taskId: r.taskId,
+      model: r.model,
+      backend: r.backend,
+      ...(r.videoUrl && { videoUrl: r.videoUrl }),
+    };
   });
 
 // ---- 2) pollVideoTaskFn (server fn) ----
@@ -3696,6 +3835,7 @@ const PollServerInput = z.object({
     "hongmeng",
     "sdreal",
     "keyiyun",
+    "agentearth",
   ]),
 });
 
@@ -4028,6 +4168,32 @@ export const generateVideo = createServerFn({ method: "POST" })
     );
 
     data.onProgress?.("queued", { taskId: submit.taskId, backend });
+
+    // AgentEarth 网关会等待生成完成后直接返回 MP4，无需再等待一个轮询间隔。
+    if (submit.videoUrl) {
+      data.onProgress?.("succeeded", {
+        taskId: submit.taskId,
+        videoUrl: submit.videoUrl,
+        backend: submit.backend,
+      });
+      const cost = videoCost(submit.model, data.resolution, data.duration);
+      if (cost != null) {
+        await chargeCredits(supabase, userId, {
+          amount: cost,
+          model: submit.model,
+          resolution: data.resolution,
+          duration: data.duration,
+          description: "视频生成",
+        });
+      }
+      return {
+        ok: true as const,
+        taskId: submit.taskId,
+        videoUrl: submit.videoUrl,
+        model: submit.model,
+        backend: submit.backend,
+      };
+    }
 
     // 2) 轮询
     // 视频生成通常需要数分钟，20 秒轮询足够及时且避免无意义地打满供应商查询接口。

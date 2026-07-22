@@ -26,6 +26,10 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { isCosConfigured, uploadToCos, isCosCdnUrl } from "./cosClient";
 
+const FETCH_TIMEOUT_MS = 60_000;
+// MP4 通常比图片大得多；入库下载允许与视频生成相同的 10 分钟等待窗口。
+const VIDEO_FETCH_TIMEOUT_MS = 600_000;
+
 /**
  * 统一上传入口：优先走腾讯云 COS + CDN，未配置时回落到 Supabase Storage。
  * 返回最终对外可访问的 URL（CDN URL 或 Supabase public/signed URL）。
@@ -178,7 +182,7 @@ export const saveOneVideo = createServerFn({ method: "POST" })
     }
 
     try {
-      const { buf, contentType } = await fetchMedia(url);
+      const { buf, contentType } = await fetchMedia(url, VIDEO_FETCH_TIMEOUT_MS);
       const path = makePath(userId, workspaceId, "video", fileId ?? groupId, contentType);
       const mime = MIME_BY_KIND.video;
       const r = await uploadMediaSmart(supabase, path, buf, mime);
@@ -231,7 +235,6 @@ export const persistAssetImage = createServerFn({ method: "POST" })
   });
 
 const BUCKET = "workspace-media";
-const FETCH_TIMEOUT_MS = 60_000;
 
 type MediaItem = {
   url: string;
@@ -451,7 +454,10 @@ export const persistWorkspaceMedia = createServerFn({ method: "POST" })
         }
         // 4) 下载 + 上传
         try {
-          const { buf, contentType } = await fetchMedia(item.url);
+          const { buf, contentType } = await fetchMedia(
+            item.url,
+            kind === "video" ? VIDEO_FETCH_TIMEOUT_MS : FETCH_TIMEOUT_MS,
+          );
           const path = makePath(userId, workspaceId, kind, groupId, contentType);
           const mime = MIME_BY_KIND[kind];
           const r = await uploadMediaSmart(supabase, path, buf, mime, {
