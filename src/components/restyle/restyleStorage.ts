@@ -22,6 +22,7 @@ export type RestyleAttachment = {
   renderProgress?: number;
   resultUrl?: string;
   renderError?: string;
+  renderLog?: string[];
   rerunOfAttachmentId?: string;
   feedback?: string;
   analysisFrame?: boolean;
@@ -133,6 +134,9 @@ function parseAttachment(value: unknown): RestyleAttachment | null {
     renderProgress: typeof item.renderProgress === "number" ? item.renderProgress : undefined,
     resultUrl: typeof item.resultUrl === "string" ? item.resultUrl : undefined,
     renderError: typeof item.renderError === "string" ? item.renderError : undefined,
+    renderLog: Array.isArray(item.renderLog)
+      ? item.renderLog.filter((entry): entry is string => typeof entry === "string").slice(-80)
+      : undefined,
     rerunOfAttachmentId:
       typeof item.rerunOfAttachmentId === "string" ? item.rerunOfAttachmentId : undefined,
     feedback: typeof item.feedback === "string" ? item.feedback : undefined,

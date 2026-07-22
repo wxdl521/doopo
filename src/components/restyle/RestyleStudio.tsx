@@ -46,6 +46,8 @@ import {
 import type { RestyleAsset, RestyleStage } from "./restyleTypes";
 import { analyzeRestyleAssets, generateRestylePlan } from "../../lib/restyleAnalysis.functions";
 import { generateImage, generateImageWithReferences } from "../../lib/seedream.functions";
+import { generateVideo } from "../../lib/videoGenerate.functions";
+import { uploadLocalImage } from "../../lib/uploadImage.functions";
 import { realImageModelOptions, realVideoModels } from "../NewProjectDialog";
 
 type AssetLibraryStatus = "idle" | "loading" | "ready" | "error";
@@ -666,10 +668,16 @@ export default function RestyleStudio() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const fileObjectsRef = useRef<Record<string, File>>({});
+  const sourceVideoUploadRef = useRef<
+    Record<string, Promise<{ ok: true; url: string } | { ok: false; error: string }>>
+  >({});
+  const chatScrollRef = useRef<HTMLDivElement>(null);
   const callAnalyzeRestyleAssets = useServerFn(analyzeRestyleAssets);
   const callGenerateRestylePlan = useServerFn(generateRestylePlan);
   const callGenerateImage = useServerFn(generateImage);
   const callGenerateImageWithReferences = useServerFn(generateImageWithReferences);
+  const callGenerateVideo = useServerFn(generateVideo);
+  const callUploadLocalMedia = useServerFn(uploadLocalImage);
 
   const activeProject = projects.find((project) => project.id === activeProjectId);
   const activeConversation = activeProject?.conversations.find(
@@ -762,7 +770,24 @@ export default function RestyleStudio() {
     if (!activeProject) return;
     if (activeProject.imageModel) setSelectedImageModel(activeProject.imageModel);
     if (activeProject.videoModel) setSelectedVideoModel(activeProject.videoModel);
-  }, [activeProjectId]);
+  }, [activeProject]);
+
+  // Conversations are persisted locally. Always restore the view at the newest message,
+  // and keep it there while new user or assistant messages are appended.
+  useEffect(() => {
+    const container = chatScrollRef.current;
+    if (!container) return;
+    const frame = window.requestAnimationFrame(() => {
+      container.scrollTo({ top: container.scrollHeight, behavior: "auto" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [
+    activeProject,
+    activeProjectId,
+    activeConversation?.id,
+    activeConversation?.messages.length,
+    isAnalyzing,
+  ]);
 
   function createLocalProject() {
     const project = createProjectRecord();
@@ -1030,7 +1055,21 @@ export default function RestyleStudio() {
     setClosedFileTreePaths((current) => current.filter((item) => item !== path));
   }
 
+  function openAssetCategoryFolder(kind: "character" | "scene" | "prop") {
+    expandFileTreePath("results");
+    expandFileTreePath("results/assets");
+    expandFileTreePath(`results/assets/${kind}`);
+    window.requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLElement>(`[data-file-tree-path="results/assets/${kind}"]`)
+        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  }
+
   function previewUrlForAttachment(attachment: RestyleAttachment): string | undefined {
+    if (attachment.generatedKind === "final_video" || attachment.generatedKind === "video_clip") {
+      return filePreviews[attachment.id] ?? stableVideoUrlFor(attachment);
+    }
     return (
       filePreviews[attachment.id] ??
       stableVideoUrlFor(attachment) ??
@@ -1073,6 +1112,30 @@ export default function RestyleStudio() {
     setInspectorOpen(true);
   }
 
+  function openPlanEpisode(episode: string) {
+    expandFileTreePath("plan");
+    expandFileTreePath(`plan/${episode}`);
+    expandFileTreePath(`plan/${episode}/提示词`);
+    expandFileTreePath(`plan/${episode}/提示词/final`);
+    const plan = activeProject?.planEpisodes?.find((item) => item.episode === episode);
+    const segment = plan?.segments[0];
+    if (segment) {
+      const preview = makeVirtualPreview(
+        `plan/${episode}/提示词/final/${episode}_${segment.id}.prompt.txt`,
+        `${episode}_${segment.id}.prompt.txt`,
+        "text/plain",
+        segment.prompt,
+      );
+      setSelectedFilePreview(preview);
+      setInspectorOpen(true);
+    }
+    window.requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLElement>(`[data-file-tree-path="plan/${episode}"]`)
+        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
+  }
+
   function buildRenderStatusPreview(project: RestyleProject): RestyleFilePreview {
     const renderFiles = project.files.filter(
       (file) => file.generatedKind === "final_video" || file.generatedKind === "video_clip",
@@ -1093,6 +1156,12 @@ export default function RestyleStudio() {
           file.resultUrl ?? file.url ?? file.renderError ?? "-",
         ].join(" | "),
       ),
+      "",
+      "## 任务日志",
+      ...renderFiles.flatMap((file) => [
+        `### ${file.episode ?? "-"} ${file.segmentId ?? "成片"}`,
+        ...(file.renderLog?.length ? file.renderLog.map((entry) => `- ${entry}`) : ["- 暂无日志"]),
+      ]),
     ];
     return makeVirtualPreview(
       "results/status/render-status.md",
@@ -1122,26 +1191,132 @@ export default function RestyleStudio() {
     }));
   }
 
-  function completeRenderAttachment(projectId: string, attachmentId: string) {
+  function appendRenderLog(projectId: string, attachmentId: string, message: string) {
+    const entry = `${new Date().toLocaleTimeString("zh-CN", { hour12: false })} ${message}`;
     updateRenderAttachments(
       projectId,
       (file) => file.id === attachmentId,
-      (file) => {
-        const source = projects
-          .find((project) => project.id === projectId)
-          ?.files.find((item) => item.id === file.sourceAttachmentId);
-        const resultUrl =
-          file.resultUrl ?? file.url ?? (source ? stableVideoUrlFor(source) : undefined);
-        return {
-          ...file,
-          url: resultUrl,
-          resultUrl,
-          renderStatus: resultUrl ? "succeeded" : "failed",
-          renderProgress: resultUrl ? 100 : (file.renderProgress ?? 0),
-          renderError: resultUrl ? undefined : "任务完成但没有返回可播放的结果 URL",
-        };
-      },
+      (file) => ({ ...file, renderLog: [...(file.renderLog ?? []), entry].slice(-80) }),
     );
+  }
+
+  function completeRenderAttachment(
+    projectId: string,
+    attachmentId: string,
+    resultUrl: string,
+    taskId?: string,
+  ) {
+    updateProject(projectId, (project) => {
+      const completed = project.files.find((file) => file.id === attachmentId);
+      if (!completed) return project;
+      return {
+        ...project,
+        files: project.files.map((file) => {
+          if (file.id === attachmentId) {
+            return {
+              ...file,
+              url: resultUrl,
+              resultUrl,
+              renderTaskId: taskId ?? file.renderTaskId,
+              renderStatus: "succeeded" as const,
+              renderProgress: 100,
+              renderError: undefined,
+              renderLog: [
+                ...(file.renderLog ?? []),
+                `${new Date().toLocaleTimeString("zh-CN", { hour12: false })} 模型已返回真实视频 URL。`,
+              ].slice(-80),
+            };
+          }
+          // A final episode is the delivered output for its first generated segment.
+          // It intentionally receives the model output, never the original source URL.
+          if (
+            completed.generatedKind === "video_clip" &&
+            file.generatedKind === "final_video" &&
+            file.episode === completed.episode &&
+            !file.resultUrl
+          ) {
+            return {
+              ...file,
+              url: resultUrl,
+              resultUrl,
+              renderTaskId: taskId ?? file.renderTaskId,
+              renderStatus: "succeeded" as const,
+              renderProgress: 100,
+              renderError: undefined,
+              renderLog: [
+                ...(file.renderLog ?? []),
+                `${new Date().toLocaleTimeString("zh-CN", { hour12: false })} 使用该集首个真实分段结果作为成片预览。`,
+              ].slice(-80),
+            };
+          }
+          return file;
+        }),
+      };
+    });
+  }
+
+  function failRenderAttachment(
+    projectId: string,
+    attachmentId: string,
+    error: string,
+    taskId?: string,
+  ) {
+    updateRenderAttachments(
+      projectId,
+      (file) => file.id === attachmentId,
+      (file) => ({
+        ...file,
+        renderTaskId: taskId ?? file.renderTaskId,
+        renderStatus: "failed",
+        renderError: error,
+        renderProgress: 0,
+        renderLog: [
+          ...(file.renderLog ?? []),
+          `${new Date().toLocaleTimeString("zh-CN", { hour12: false })} 任务失败：${error}`,
+        ].slice(-80),
+      }),
+    );
+  }
+
+  async function ensureReferenceVideoUrl(
+    projectId: string,
+    source: RestyleAttachment,
+  ): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+    if (source.url && /^https?:\/\//i.test(source.url)) return { ok: true, url: source.url };
+    const cached = sourceVideoUploadRef.current[source.id];
+    if (cached) return await cached;
+    const localFile = fileObjectsRef.current[source.id];
+    if (!localFile) {
+      return { ok: false, error: "原视频只存在于已失效的本地预览中，请重新上传后再生成。" };
+    }
+    const upload = (async () => {
+      try {
+        const base64 = await fileToDataUrl(localFile);
+        const result = await callUploadLocalMedia({
+          data: { base64, id: source.id, kind: "video" },
+        });
+        if (!result.ok || !result.url) {
+          return {
+            ok: false as const,
+            error: result.ok ? "原视频上传后没有返回访问地址。" : result.error,
+          };
+        }
+        updateProject(projectId, (project) => ({
+          ...project,
+          files: project.files.map((file) =>
+            file.id === source.id ? { ...file, url: result.url } : file,
+          ),
+        }));
+        return { ok: true as const, url: result.url };
+      } catch (error) {
+        return {
+          ok: false as const,
+          error: error instanceof Error ? error.message : "原视频上传失败。",
+        };
+      }
+    })();
+    sourceVideoUploadRef.current[source.id] = upload;
+    return await upload;
   }
 
   function completeRenderQueue(projectId: string, conversationId: string, finalEpisodes: string[]) {
@@ -1150,40 +1325,91 @@ export default function RestyleStudio() {
     appendConversationMessage(projectId, conversationId, {
       role: "assistant",
       content: hasFinalVideos
-        ? `${finalEpisodes.join("、")} 英文剧正式生成完成。所有视频任务已按队列逐个生成；成片和分段任务已写入真实结果 URL 字段，没有返回 URL 的任务会保留失败状态。`
+        ? `${finalEpisodes.join("、")} 的视频任务已处理完成。请在右侧“生成状态”查看每段的真实结果；只有模型返回的视频 URL 才会显示为成片，失败任务会保留错误原因并可重试。`
         : "局部返工片段已按队列逐个生成完成。只更新了问题片段，没有重跑整集或整部剧。",
       finalEpisodeLinks: hasFinalVideos ? finalEpisodes : undefined,
     });
   }
 
-  function runRenderQueue(
+  async function runRenderQueue(
     projectId: string,
     conversationId: string,
-    attachmentIds: string[],
+    jobs: Array<{
+      attachmentId: string;
+      prompt: string;
+      referenceImages: string[];
+      source: RestyleAttachment;
+    }>,
     finalEpisodes: string[],
     index = 0,
-  ) {
-    const attachmentId = attachmentIds[index];
-    if (!attachmentId) {
+  ): Promise<void> {
+    const job = jobs[index];
+    if (!job) {
       completeRenderQueue(projectId, conversationId, finalEpisodes);
       return;
     }
     updateRenderAttachments(
       projectId,
-      (file) => file.id === attachmentId,
-      (file) => ({ ...file, renderStatus: "running", renderProgress: 35 }),
+      (file) => file.id === job.attachmentId,
+      (file) => ({ ...file, renderStatus: "running", renderProgress: 15 }),
     );
-    window.setTimeout(() => {
-      updateRenderAttachments(
+    appendRenderLog(
+      projectId,
+      job.attachmentId,
+      `已提交 ${selectedVideoModel}，正在等待模型创建任务。`,
+    );
+    const startedAt = Date.now();
+    const heartbeat = window.setInterval(() => {
+      const seconds = Math.max(1, Math.floor((Date.now() - startedAt) / 1000));
+      appendRenderLog(projectId, job.attachmentId, `模型仍在生成中，已等待 ${seconds} 秒。`);
+    }, 20_000);
+    try {
+      appendRenderLog(projectId, job.attachmentId, "正在上传原视频，作为动作、镜头和节奏参考。");
+      const referenceVideo = await ensureReferenceVideoUrl(projectId, job.source);
+      if (!referenceVideo.ok) {
+        failRenderAttachment(projectId, job.attachmentId, referenceVideo.error);
+      } else {
+        appendRenderLog(projectId, job.attachmentId, "原视频已就绪，正在提交转绘任务。");
+        const result = await callGenerateVideo({
+          data: {
+            prompt: job.prompt,
+            imageUrl: job.referenceImages[0],
+            referenceImageUrls: job.referenceImages.slice(1),
+            referenceVideoUrl: referenceVideo.url,
+            model: selectedVideoModel,
+            ratio: "16:9",
+            resolution: "720P",
+            duration: 5,
+            generateAudio: true,
+            watermark: false,
+          },
+        });
+        if (!result.ok || !result.videoUrl) {
+          failRenderAttachment(
+            projectId,
+            job.attachmentId,
+            result.ok ? "视频模型没有返回可播放的结果 URL" : result.error,
+            result.taskId,
+          );
+        } else {
+          appendRenderLog(
+            projectId,
+            job.attachmentId,
+            `模型任务 ${result.taskId ?? "已完成"} 返回成功。`,
+          );
+          completeRenderAttachment(projectId, job.attachmentId, result.videoUrl, result.taskId);
+        }
+      }
+    } catch (error) {
+      failRenderAttachment(
         projectId,
-        (file) => file.id === attachmentId,
-        (file) => ({ ...file, renderStatus: "running", renderProgress: 75 }),
+        job.attachmentId,
+        error instanceof Error ? error.message : "视频生成请求失败",
       );
-    }, 450);
-    window.setTimeout(() => {
-      completeRenderAttachment(projectId, attachmentId);
-      runRenderQueue(projectId, conversationId, attachmentIds, finalEpisodes, index + 1);
-    }, 900);
+    } finally {
+      window.clearInterval(heartbeat);
+    }
+    await runRenderQueue(projectId, conversationId, jobs, finalEpisodes, index + 1);
   }
 
   function generateRenderedVideos(
@@ -1218,6 +1444,23 @@ export default function RestyleStudio() {
               : episode.segments,
           }))
       : allPlanEpisodes;
+    const referenceImages = project.files
+      .filter(
+        (file) =>
+          (file.generatedKind === "character" ||
+            file.generatedKind === "scene" ||
+            file.generatedKind === "prop") &&
+          Boolean(file.url),
+      )
+      .map((file) => file.url as string)
+      .slice(0, 9);
+    if (!referenceImages.length) {
+      appendConversationMessage(projectId, conversationId, {
+        role: "assistant",
+        content: "没有可用的转绘资产图。请先生成并确认角色、场景或道具图片后，再确认生成视频。",
+      });
+      return;
+    }
     const attachments: RestyleAttachment[] = planEpisodes.flatMap((episode, episodeIndex) => {
       const source =
         (rerun?.sourceAttachmentId
@@ -1235,7 +1478,6 @@ export default function RestyleStudio() {
         size: source.size,
         type: "video/mp4",
         lastModified: Date.now(),
-        url: stableVideoUrlFor(source),
         generatedKind: "video_clip" as const,
         sourceAttachmentId: source.id,
         episode: episode.episode,
@@ -1243,7 +1485,6 @@ export default function RestyleStudio() {
         renderTaskId: makeRenderTaskId(episode.episode, segment.id),
         renderStatus: "queued" as const,
         renderProgress: 0,
-        resultUrl: stableVideoUrlFor(source),
         rerunOfAttachmentId: rerun?.rerunOfAttachmentId,
         feedback: rerun?.feedback,
       }));
@@ -1256,14 +1497,12 @@ export default function RestyleStudio() {
           size: source.size,
           type: "video/mp4",
           lastModified: Date.now(),
-          url: stableVideoUrlFor(source),
           generatedKind: "final_video" as const,
           sourceAttachmentId: source.id,
           episode: episode.episode,
           renderTaskId: makeRenderTaskId(episode.episode),
           renderStatus: "queued" as const,
           renderProgress: 0,
-          resultUrl: stableVideoUrlFor(source),
           rerunOfAttachmentId: rerun?.rerunOfAttachmentId,
           feedback: rerun?.feedback,
         },
@@ -1280,7 +1519,32 @@ export default function RestyleStudio() {
       .filter((file) => file.generatedKind === "final_video")
       .map((file) => file.episode)
       .filter((episode): episode is string => Boolean(episode));
-    const attachmentIds = attachments.map((file) => file.id);
+    const jobs = attachments
+      .filter((file) => file.generatedKind === "video_clip")
+      .map((file) => {
+        const episode = planEpisodes.find((item) => item.episode === file.episode);
+        const segment = episode?.segments.find((item) => item.id === file.segmentId);
+        const source = sourceFiles.find((item) => item.id === file.sourceAttachmentId);
+        if (!source) return null;
+        return {
+          attachmentId: file.id,
+          prompt:
+            segment?.prompt ||
+            "保持角色、场景、动作、镜头与节奏一致，生成符合已确认转绘资产的短视频。",
+          referenceImages,
+          source,
+        };
+      })
+      .filter(
+        (
+          job,
+        ): job is {
+          attachmentId: string;
+          prompt: string;
+          referenceImages: string[];
+          source: RestyleAttachment;
+        } => Boolean(job),
+      );
     updateProject(projectId, (item) => ({
       ...item,
       stage: "render",
@@ -1293,10 +1557,7 @@ export default function RestyleStudio() {
         ...attachments,
       ],
     }));
-    window.setTimeout(
-      () => runRenderQueue(projectId, conversationId, attachmentIds, [...new Set(finalEpisodes)]),
-      250,
-    );
+    void runRenderQueue(projectId, conversationId, jobs, [...new Set(finalEpisodes)]);
   }
 
   function rerunVideoSegment(segment: RestyleAttachment) {
@@ -1367,8 +1628,7 @@ export default function RestyleStudio() {
       );
     }
     const assetKind = folderId.match(/^results\/assets\/(character|scene|prop)$/)?.[1] as
-      | RestyleAttachment["generatedKind"]
-      | undefined;
+      RestyleAttachment["generatedKind"] | undefined;
     if (assetKind) return file.generatedKind === assetKind;
     return false;
   }
@@ -1397,10 +1657,7 @@ export default function RestyleStudio() {
       };
     }
     const assetKind = folderId.match(/^results\/assets\/(character|scene|prop)$/)?.[1] as
-      | "character"
-      | "scene"
-      | "prop"
-      | undefined;
+      "character" | "scene" | "prop" | undefined;
     if (assetKind) return { ...file, generatedKind: assetKind };
     return file;
   }
@@ -1480,6 +1737,16 @@ export default function RestyleStudio() {
     if (!message && !attachments.length) return;
     const projectId = activeProject.id;
     const conversationId = activeConversation.id;
+    const generatedAssetFiles = activeProject.files.filter(
+      (file) =>
+        (file.generatedKind === "character" ||
+          file.generatedKind === "scene" ||
+          file.generatedKind === "prop") &&
+        file.url,
+    );
+    const shouldContinueToPlan =
+      generatedAssetFiles.length > 0 &&
+      /(继续.*(?:下一步|生成方案)|下一步|进入.*方案|生成.*方案)/.test(message);
     const analysisInstruction =
       message || "请分析上传的视频，提取真正需要转绘的具体角色、场景和道具。";
     const messageAttachments =
@@ -1497,7 +1764,7 @@ export default function RestyleStudio() {
       return;
     }
 
-    if (message === "确认" && activeProject.extractedAssets.length > 0) {
+    if ((message === "确认" || shouldContinueToPlan) && activeProject.extractedAssets.length > 0) {
       setIsAnalyzing(true);
       const sourceFiles = activeProject.files.filter(
         (file) => file.type.startsWith("video/") && !file.isFolder,
@@ -1575,9 +1842,6 @@ export default function RestyleStudio() {
       return;
     }
 
-    const generatedAssetFiles = activeProject.files.filter(
-      (file) => file.generatedKind && file.url,
-    );
     const requestedAssetKinds = getRequestedAssetKinds(message);
     const isAssetImageRequest =
       activeProject.extractedAssets.length > 0 &&
@@ -1707,12 +1971,11 @@ export default function RestyleStudio() {
   ) {
     setIsAnalyzing(true);
     setAnalysisError("");
-    const categoryLinks = [...new Set(extractedAssets.map((asset) => asset.kind))];
     appendConversationMessage(projectId, conversationId, {
       role: "assistant",
       content: "开始生成资产图片，将按角色、场景、道具逐张处理。",
-      assetCategoryLinks: categoryLinks,
     });
+    const generatedKinds: Array<"character" | "scene" | "prop"> = [];
     try {
       for (const asset of extractedAssets) {
         const prompt = [
@@ -1746,13 +2009,23 @@ export default function RestyleStudio() {
         };
         updateProject(projectId, (project) => ({
           ...project,
-          stage: "review",
           files: [...project.files, attachment],
         }));
+        generatedKinds.push(asset.kind);
         appendConversationMessage(projectId, conversationId, {
           role: "assistant",
           content: `已生成：${asset.targetName || asset.sourceName}`,
           attachments: [attachment],
+        });
+      }
+      const assetCategoryLinks = [...new Set(generatedKinds)];
+      if (assetCategoryLinks.length) {
+        updateProject(projectId, (project) => ({ ...project, stage: "plan" }));
+        appendConversationMessage(projectId, conversationId, {
+          role: "assistant",
+          content:
+            "资产图片已生成并归档到右侧“项目文件 > 结果 > 资产”。请按分类检查图片；确认无误后回复“继续下一步”，即可生成转绘方案。",
+          assetCategoryLinks,
         });
       }
     } catch (error) {
@@ -2299,7 +2572,7 @@ export default function RestyleStudio() {
               </h1>
             </div>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
+          <div ref={chatScrollRef} className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-6">
             <div className="mx-auto max-w-4xl space-y-5">
               <div className="flex gap-3">
                 <div className="grid h-8 w-8 shrink-0 place-items-center rounded-lg bg-accent-dim text-accent">
@@ -2349,11 +2622,7 @@ export default function RestyleStudio() {
                           <button
                             key={kind}
                             type="button"
-                            onClick={() => {
-                              expandFileTreePath("results");
-                              expandFileTreePath("results/assets");
-                              expandFileTreePath(`results/assets/${kind}`);
-                            }}
+                            onClick={() => openAssetCategoryFolder(kind)}
                             className="rounded-md px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent-dim"
                           >
                             {label}
@@ -2368,12 +2637,7 @@ export default function RestyleStudio() {
                         <button
                           key={episode}
                           type="button"
-                          onClick={() => {
-                            expandFileTreePath("plan");
-                            expandFileTreePath(`plan/${episode}`);
-                            expandFileTreePath(`plan/${episode}/提示词`);
-                            expandFileTreePath(`plan/${episode}/提示词/final`);
-                          }}
+                          onClick={() => openPlanEpisode(episode)}
                           className="rounded-md px-3 py-1.5 text-xs font-medium text-accent hover:bg-accent-dim"
                         >
                           {episode}
@@ -2744,8 +3008,7 @@ export default function RestyleStudio() {
                   onContextMenuFolder={() => undefined}
                   onChooseFolderAsset={(node) => {
                     const kind = node.id.match(/^results\/assets\/(character|scene|prop)$/)?.[1] as
-                      | RestyleAsset["kind"]
-                      | undefined;
+                      RestyleAsset["kind"] | undefined;
                     if (kind) setAssetPickerKind(kind);
                   }}
                 />
@@ -3096,6 +3359,7 @@ function ProjectFileTreeItem({
         style={{ paddingLeft: depth * 16 + 4 }}
         aria-label={label}
         aria-expanded={isFolder ? isOpen : undefined}
+        data-file-tree-path={node.id}
       >
         {isFolder ? (
           <ChevronDown
@@ -3582,9 +3846,10 @@ function RenderSegmentList({
             <span className="text-text-muted">{renderStatusLabel(segment.renderStatus)}</span>
             <span className="text-text-muted">{segment.renderProgress ?? 0}%</span>
             <span className="min-w-0 flex-1 truncate text-text-muted">
-              {segment.resultUrl
-                ? "结果 URL 已写入"
-                : segment.renderTaskId || segment.renderError || "等待任务"}
+              {segment.renderLog?.at(-1) ??
+                (segment.resultUrl
+                  ? "结果 URL 已写入"
+                  : segment.renderTaskId || segment.renderError || "等待任务")}
             </span>
             <button
               type="button"
