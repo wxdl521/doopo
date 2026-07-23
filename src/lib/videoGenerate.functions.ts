@@ -91,6 +91,8 @@ export function getVideoBackend(
   | "hongmeng"
   | "sdreal"
   | "keyiyun"
+  | "ycore"
+  | "neiwen"
   | "agentearth" {
   const m = (modelId || "").trim().toLowerCase();
   if (isAgentEarthSeedanceModel(m)) return "agentearth";
@@ -107,6 +109,8 @@ export function getVideoBackend(
   if (m.startsWith("topenrouter-")) return "topenrouter";
   if (m.startsWith("hongmeng-")) return "hongmeng";
   if (m.startsWith("keyiyun-")) return "keyiyun";
+  if (m.startsWith("ycore-")) return "ycore";
+  if (m.startsWith("neiwen-")) return "neiwen";
   return "dashscope";
 }
 
@@ -152,6 +156,16 @@ export const KEYYIYUN_VIDEO_MODELS = {
   "keyiyun-sd-2-0-fast-discount-720p": "Seedance 2.0 官方折扣版（客易云 · 720p）",
 } as const;
 
+export const YCORE_VIDEO_MODELS = {
+  "ycore-seedance-2-0": "Seedance 2.0 (爻核云)",
+  "ycore-seedance-2-0-fast": "Seedance 2.0 Fast (爻核云)",
+  "ycore-seedance-2-0-mini": "Seedance 2.0 Mini (爻核云)",
+} as const;
+
+export const NEIWEN_VIDEO_MODELS = {
+  "neiwen-c-seedance-2-0": "c/seedance-2.0 (内文)",
+} as const;
+
 export const SEEDANCE_MODELS = {
   "doubao-seedance-2-0-260128": "Doubao Seedance 2.0",
   "doubao-seedance-2-0-fast-260128": "Doubao Seedance 2.0 Fast (720p)",
@@ -163,6 +177,8 @@ export const SEEDANCE_MODELS = {
   ...HONGMENG_VIDEO_MODELS,
   ...SDREAL_VIDEO_MODELS,
   ...KEYYIYUN_VIDEO_MODELS,
+  ...YCORE_VIDEO_MODELS,
+  ...NEIWEN_VIDEO_MODELS,
   ...KLING_VIDEO_MODELS,
 } as const;
 
@@ -2253,7 +2269,10 @@ async function agentEarthSeedanceSubmit(input: {
   baseUrl: string;
 }): Promise<{ ok: true; videoUrl: string } | { ok: false; error: string }> {
   if (input.duration != null && (input.duration < 4 || input.duration > 15)) {
-    return { ok: false, error: "[agentearth] Seedance 2.0 duration must be between 4 and 15 seconds" };
+    return {
+      ok: false,
+      error: "[agentearth] Seedance 2.0 duration must be between 4 and 15 seconds",
+    };
   }
 
   const imageInput =
@@ -2581,8 +2600,8 @@ async function keyiyunWaitForAsset(input: {
       const asset = json.data || json;
       const status = (asset.status || "").toUpperCase();
       lastStatus = status || lastStatus;
-      if (status === "READY") return { ok: true, url: `assetId://${input.assetId}` };
-      if (["FAILED", "DISABLED"].includes(status)) {
+      if (status === "ACTIVE") return { ok: true, url: `assetId://${input.assetId}` };
+      if (["FAILED", "EXPIRED", "DELETED"].includes(status)) {
         return {
           ok: false,
           error: `[keyiyun] 素材 ${input.assetId} 入库失败 (${status}): ${extractKeyiyunError(asset) || "无详细原因"}`,
@@ -2598,7 +2617,7 @@ async function keyiyunWaitForAsset(input: {
   }
   return {
     ok: false,
-    error: `[keyiyun] 素材 ${input.assetId} 在 ${KEYYIYUN_ASSET_READY_TIMEOUT_MS / 1_000}s 内未进入 READY 状态（当前 ${lastStatus}）`,
+    error: `[keyiyun] 素材 ${input.assetId} 在 ${KEYYIYUN_ASSET_READY_TIMEOUT_MS / 1_000}s 内未进入 ACTIVE 状态（当前 ${lastStatus}）`,
   };
 }
 
@@ -2948,7 +2967,8 @@ async function sdrealSubmit(input: {
   }
   const body: Record<string, unknown> = { model: input.model, content };
   if (input.ratio) body.ratio = input.ratio;
-  if (input.resolution) body.resolution = toArkResolution(input.resolution);
+  // SD Real Max 要求小写分辨率，例如 480p；ARK 使用的 480P 会被该接口拒绝。
+  if (input.resolution) body.resolution = input.resolution.toLowerCase();
   if (typeof input.duration === "number") body.duration = input.duration;
   if (typeof input.generateAudio === "boolean") body.generate_audio = input.generateAudio;
   if (typeof input.watermark === "boolean") body.watermark = input.watermark;
@@ -3007,6 +3027,240 @@ async function sdrealPoll(input: {
     return {
       ok: false,
       error: `[sdreal] poll network: ${error instanceof Error ? error.message : "fetch failed"}`,
+    };
+  }
+}
+
+// ====================================================================
+// 爻核云（Ycore Cloud）—— Seedance 2.0 统一模型
+// ====================================================================
+
+const YCORE_DEFAULT_BASE_URL = "https://yaonic.ai/v1";
+const YCORE_MODEL_MAP: Record<string, string> = {
+  "ycore-seedance-2-0": "seedance-2.0",
+  "ycore-seedance-2-0-fast": "seedance-2.0-fast",
+  "ycore-seedance-2-0-mini": "seedance-2.0-mini",
+};
+
+function getYcoreConfig() {
+  return {
+    apiKey: process.env.YCORE_API_KEY,
+    baseUrl: (process.env.YCORE_BASE_URL || YCORE_DEFAULT_BASE_URL).replace(/\/+$/, ""),
+  };
+}
+
+async function ycoreSubmit(input: {
+  model: string;
+  prompt: string;
+  media: DashScopeMediaItem[];
+  ratio?: SeedanceRatio;
+  resolution?: string;
+  duration?: number;
+  generateAudio?: boolean;
+  referenceVideoUrl?: string;
+  referenceAudioUrl?: string;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<{ ok: true; taskId: string; model: string } | { ok: false; error: string }> {
+  const upstreamModel = YCORE_MODEL_MAP[input.model];
+  if (!upstreamModel) return { ok: false, error: `[ycore] 未识别的模型：${input.model}` };
+  const content = buildArkContent(input.prompt, {
+    firstFrameImageUrl: input.media.find((item) => item.type === "first_frame")?.url,
+    lastFrameImageUrl: input.media.find((item) => item.type === "last_frame")?.url,
+    referenceImageUrls: input.media
+      .filter((item) => item.type === "reference_image")
+      .map((item) => item.url),
+    referenceVideoUrl: input.referenceVideoUrl,
+    referenceAudioUrl: input.referenceAudioUrl,
+  });
+  // 统一模型仅允许多素材 / 自适应比例走智能时长。固定时长只提交纯文本。
+  const hasReference = content.length > 1;
+  if (input.duration !== undefined && (input.duration < 4 || input.duration > 15)) {
+    return { ok: false, error: "[ycore] Seedance 2.0 时长必须为 4-15 秒" };
+  }
+  const body: Record<string, unknown> = {
+    model: upstreamModel,
+    content,
+    resolution: (input.resolution || "720P").toLowerCase(),
+    ratio: input.ratio || "16:9",
+    duration: hasReference ? -1 : (input.duration ?? 5),
+    n: 1,
+  };
+  if (typeof input.generateAudio === "boolean") body.generate_audio = input.generateAudio;
+  try {
+    const res = await fetch(`${input.baseUrl}/videos`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${input.apiKey}` },
+      body: JSON.stringify(body),
+    });
+    const text = await res.text().catch(() => "");
+    let json: { id?: string; task_id?: string; error?: { message?: string } } = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    if (!res.ok)
+      return {
+        ok: false,
+        error: `[ycore] 创建任务 ${res.status}: ${json.error?.message || text.slice(0, 400)}`,
+      };
+    const taskId = json.id || json.task_id;
+    return taskId
+      ? { ok: true, taskId, model: upstreamModel }
+      : { ok: false, error: `[ycore] 创建任务未返回 id: ${text.slice(0, 300)}` };
+  } catch (error) {
+    return {
+      ok: false,
+      error: `[ycore] 创建任务网络错误: ${error instanceof Error ? error.message : "fetch failed"}`,
+    };
+  }
+}
+
+async function ycorePoll(input: {
+  taskId: string;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<PollResult> {
+  try {
+    const res = await fetch(`${input.baseUrl}/videos/${encodeURIComponent(input.taskId)}`, {
+      headers: { Authorization: `Bearer ${input.apiKey}` },
+    });
+    const text = await res.text().catch(() => "");
+    if (!res.ok)
+      return { ok: false, error: `[ycore] 查询任务 ${res.status}: ${text.slice(0, 300)}` };
+    const json = JSON.parse(text) as {
+      status?: string;
+      metadata?: { url?: string };
+      error?: { message?: string };
+    };
+    const status = seedanceStatusToProgress(json.status);
+    return {
+      ok: true,
+      status,
+      videoUrl:
+        status === "succeeded"
+          ? json.metadata?.url ||
+            `${input.baseUrl}/videos/${encodeURIComponent(input.taskId)}/content`
+          : null,
+      raw: json,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: `[ycore] 查询任务网络错误: ${error instanceof Error ? error.message : "fetch failed"}`,
+    };
+  }
+}
+
+// ====================================================================
+// 内文 —— c/seedance-2.0
+// ====================================================================
+
+const NEIWEN_DEFAULT_BASE_URL = "https://api.neiwen.cn";
+
+function getNeiwenConfig() {
+  return {
+    apiKey: process.env.NEIWEN_API_KEY,
+    baseUrl: (process.env.NEIWEN_BASE_URL || NEIWEN_DEFAULT_BASE_URL).replace(/\/+$/, ""),
+  };
+}
+
+async function neiwenSubmit(input: {
+  prompt: string;
+  media: DashScopeMediaItem[];
+  ratio?: SeedanceRatio;
+  resolution?: string;
+  duration?: number;
+  generateAudio?: boolean;
+  watermark?: boolean;
+  referenceVideoUrl?: string;
+  referenceAudioUrl?: string;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<{ ok: true; taskId: string; model: string } | { ok: false; error: string }> {
+  if (input.duration !== undefined && (input.duration < 4 || input.duration > 15))
+    return { ok: false, error: "[neiwen] 时长必须为 4-15 秒" };
+  const references = [
+    ...input.media.map((item) => ({
+      type: "image",
+      url: item.url,
+      role:
+        item.type === "first_frame"
+          ? "reference_image"
+          : item.type === "last_frame"
+            ? "reference_image"
+            : "reference_image",
+    })),
+    ...(input.referenceVideoUrl
+      ? [{ type: "video", url: input.referenceVideoUrl, role: "reference_video" }]
+      : []),
+    ...(input.referenceAudioUrl
+      ? [{ type: "audio", url: input.referenceAudioUrl, role: "reference_audio" }]
+      : []),
+  ];
+  if (references.length > 12) return { ok: false, error: "[neiwen] 参考素材最多 12 个" };
+  const body: Record<string, unknown> = {
+    model: "c/seedance-2.0",
+    prompt: input.prompt,
+    references,
+  };
+  if (input.duration !== undefined) body.duration = input.duration;
+  if (input.resolution) body.resolution = input.resolution.toLowerCase();
+  if (input.ratio) body.ratio = input.ratio;
+  if (typeof input.generateAudio === "boolean") body.generate_audio = input.generateAudio;
+  if (typeof input.watermark === "boolean") body.watermark = input.watermark;
+  try {
+    const res = await fetch(`${input.baseUrl}/seedance/v1/videos/generations`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${input.apiKey}` },
+      body: JSON.stringify(body),
+    });
+    const text = await res.text().catch(() => "");
+    let json: { task_id?: string; error?: { message?: string } } = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    return res.ok && json.task_id
+      ? { ok: true, taskId: json.task_id, model: "c/seedance-2.0" }
+      : {
+          ok: false,
+          error: `[neiwen] 创建任务 ${res.status}: ${json.error?.message || text.slice(0, 400)}`,
+        };
+  } catch (error) {
+    return {
+      ok: false,
+      error: `[neiwen] 创建任务网络错误: ${error instanceof Error ? error.message : "fetch failed"}`,
+    };
+  }
+}
+
+async function neiwenPoll(input: {
+  taskId: string;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<PollResult> {
+  try {
+    const res = await fetch(
+      `${input.baseUrl}/seedance/v1/videos/${encodeURIComponent(input.taskId)}`,
+      { headers: { Authorization: `Bearer ${input.apiKey}` } },
+    );
+    const text = await res.text().catch(() => "");
+    if (!res.ok)
+      return { ok: false, error: `[neiwen] 查询任务 ${res.status}: ${text.slice(0, 300)}` };
+    const json = JSON.parse(text) as {
+      status?: string;
+      videoUrl?: string;
+      error?: { message?: string };
+    };
+    return {
+      ok: true,
+      status: seedanceStatusToProgress(json.status),
+      videoUrl: json.videoUrl || null,
+      raw: json,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: `[neiwen] 查询任务网络错误: ${error instanceof Error ? error.message : "fetch failed"}`,
     };
   }
 }
@@ -3074,6 +3328,50 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
     return r.ok
       ? { ok: true, taskId: r.taskId, model: input.model, backend: "keyiyun" }
       : { ok: false, error: r.error };
+  }
+  if (backend === "ycore") {
+    const { apiKey, baseUrl } = getYcoreConfig();
+    if (!apiKey)
+      return {
+        ok: false,
+        error: "[ycore] 缺少 YCORE_API_KEY，请在 Cloudflare Secrets 或 .env.local 中配置后再试。",
+      };
+    const r = await ycoreSubmit({
+      model: input.model,
+      prompt: input.prompt,
+      media: input.media,
+      ratio: input.ratio,
+      resolution: input.resolution,
+      duration: input.duration,
+      generateAudio: input.generateAudio,
+      referenceVideoUrl: input.referenceVideoUrl,
+      referenceAudioUrl: input.referenceAudioUrl,
+      apiKey,
+      baseUrl,
+    });
+    return r.ok ? { ok: true, taskId: r.taskId, model: input.model, backend: "ycore" } : r;
+  }
+  if (backend === "neiwen") {
+    const { apiKey, baseUrl } = getNeiwenConfig();
+    if (!apiKey)
+      return {
+        ok: false,
+        error: "[neiwen] 缺少 NEIWEN_API_KEY，请在 Cloudflare Secrets 或 .env.local 中配置后再试。",
+      };
+    const r = await neiwenSubmit({
+      prompt: input.prompt,
+      media: input.media,
+      ratio: input.ratio,
+      resolution: input.resolution,
+      duration: input.duration,
+      generateAudio: input.generateAudio,
+      watermark: input.watermark,
+      referenceVideoUrl: input.referenceVideoUrl,
+      referenceAudioUrl: input.referenceAudioUrl,
+      apiKey,
+      baseUrl,
+    });
+    return r.ok ? { ok: true, taskId: r.taskId, model: input.model, backend: "neiwen" } : r;
   }
   if (backend === "sdreal") {
     const { apiKey, baseUrl } = getSdrealConfig();
@@ -3496,7 +3794,8 @@ async function pollVideoTask(input: PollInput): Promise<PollResult> {
   if (input.backend === "agentearth") {
     return {
       ok: false,
-      error: "[agentearth] generation is synchronous; use the videoUrl returned by submitVideoTaskFn",
+      error:
+        "[agentearth] generation is synchronous; use the videoUrl returned by submitVideoTaskFn",
       status: "succeeded",
     };
   }
@@ -3504,6 +3803,16 @@ async function pollVideoTask(input: PollInput): Promise<PollResult> {
     const { apiKey, baseUrl } = getKeyiyunConfig();
     if (!apiKey) return { ok: false, error: "[keyiyun] 缺少 KEYYIYUN_API_KEY" };
     return keyiyunPoll({ taskId: input.taskId, apiKey, baseUrl });
+  }
+  if (input.backend === "ycore") {
+    const { apiKey, baseUrl } = getYcoreConfig();
+    if (!apiKey) return { ok: false, error: "[ycore] 缺少 YCORE_API_KEY" };
+    return ycorePoll({ taskId: input.taskId, apiKey, baseUrl });
+  }
+  if (input.backend === "neiwen") {
+    const { apiKey, baseUrl } = getNeiwenConfig();
+    if (!apiKey) return { ok: false, error: "[neiwen] 缺少 NEIWEN_API_KEY" };
+    return neiwenPoll({ taskId: input.taskId, apiKey, baseUrl });
   }
   if (input.backend === "sdreal") {
     const { apiKey, baseUrl } = getSdrealConfig();
@@ -4141,7 +4450,11 @@ export const generateVideo = createServerFn({ method: "POST" })
                 ? "hongmeng-seedance2-pro"
                 : backend === "keyiyun"
                   ? "keyiyun-sd-2-0-fast-discount-720p"
-                  : "happyhorse-1.0-i2v");
+                  : backend === "ycore"
+                    ? "ycore-seedance-2-0-fast"
+                    : backend === "neiwen"
+                      ? "neiwen-c-seedance-2-0"
+                      : "happyhorse-1.0-i2v");
 
     console.log(
       `[video→] backend=${backend} model=${model} promptChars=${data.prompt.length} images=${persistedMedia.length} videoRef=${referenceVideoUrl ? 1 : 0} audioRef=${referenceAudioUrl ? 1 : 0} ratio=${data.ratio} resolution=${data.resolution} duration=${data.duration}`,

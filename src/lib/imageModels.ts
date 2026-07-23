@@ -132,10 +132,6 @@ export const IMAGE_MODELS: ImageModelOption[] = [
     sub: "[ailinzi·OpenAI] Image2 All · T2I",
   },
 
-  // ---- [TokenHub · OpenAI 兼容] → /v1/images/generations ----
-  { key: "", label: "—— [TokenHub · OpenAI 兼容] ——", sub: undefined, legacy: true },
-  { key: "tokenhub/gpt-image-2", label: "GPT Image 2", sub: "[TokenHub·OpenAI] Image2 · T2I/I2I" },
-
   // ---- [AgentEarth · OpenAI 兼容] maas.agentearth.ai → /v1/images/generations|edits ----
   { key: "", label: "—— [AgentEarth · OpenAI 兼容] ——", sub: undefined, legacy: true },
   {

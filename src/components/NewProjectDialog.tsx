@@ -106,14 +106,6 @@ const imageModelOptions = [
     sub: "仅 T2I",
   },
 
-  // ---- TokenHub(OpenAI 兼容)----
-  { id: "__sep_tokenhub__", label: "—— TokenHub(OpenAI 兼容)——", sub: "" },
-  {
-    id: "tokenhub/gpt-image-2",
-    label: "GPT Image 2 (TokenHub)",
-    sub: "",
-  },
-
   {
     id: "agentearth/image2",
     label: "GPT Image 2 (AgentEarth)",
@@ -143,7 +135,6 @@ const VISIBLE_IMAGE_PREFIXES = [
   "revora/",
   "azure2/",
   "azure0716/",
-  "tokenhub/", // 星标
   "agentearth/",
   "confluo/",
   "aigcfamily/",
@@ -206,6 +197,20 @@ const videoModels = [
     id: "dreamina-seedance-2-0-mini-hc",
     label: "Dreamina Seedance 2.0 Mini",
     sub: "SD Real Max · 轻量版",
+  },
+
+  // ---- 爻核云（Ycore Cloud，需 YCORE_API_KEY）----
+  { id: "__video_sep_ycore__", label: "—— 爻核云（Seedance 2.0）——", sub: "" },
+  { id: "ycore-seedance-2-0", label: "Seedance 2.0", sub: "爻核云 · 480p/720p/1080p/4k" },
+  { id: "ycore-seedance-2-0-fast", label: "Seedance 2.0 Fast", sub: "爻核云 · 480p/720p" },
+  { id: "ycore-seedance-2-0-mini", label: "Seedance 2.0 Mini", sub: "爻核云 · 480p/720p" },
+
+  // ---- 内文（c/seedance-2.0，需 NEIWEN_API_KEY）----
+  { id: "__video_sep_neiwen__", label: "—— 内文（Seedance 2.0）——", sub: "" },
+  {
+    id: "neiwen-c-seedance-2-0",
+    label: "c/seedance-2.0",
+    sub: "内文 · 图片/视频/音频参考 · 4-15 秒",
   },
 
   // ---- 客易云（Seedance 2.0 官方折扣版，完整模型编码固定 720p）----
@@ -372,6 +377,8 @@ const VISIBLE_VIDEO_PREFIXES = [
   "shuci-", // 数安词源
   "dreamina-seedance-", // SD Real Max
   "keyiyun-", // 客易云 Seedance 2.0 官方折扣版
+  "ycore-", // 爻核云 Seedance 2.0
+  "neiwen-", // 内文 c/seedance-2.0
 ];
 const isVisibleVideo = (id: string) =>
   VISIBLE_VIDEO_PREFIXES.some((p) => id.toLowerCase().startsWith(p));
@@ -399,6 +406,10 @@ const VIDEO_RESOLUTIONS: Record<string, string[]> = {
   "dreamina-seedance-2-0-fast-hc": ["480P", "720P"],
   "dreamina-seedance-2-0-hc": ["480P", "720P"],
   "dreamina-seedance-2-0-mini-hc": ["480P", "720P"],
+  "ycore-seedance-2-0": ["480P", "720P", "1080P"],
+  "ycore-seedance-2-0-fast": ["480P", "720P"],
+  "ycore-seedance-2-0-mini": ["480P", "720P"],
+  "neiwen-c-seedance-2-0": ["480P", "720P", "1080P"],
 };
 function videoResolutionOptions(videoModel: string | undefined): string[] {
   if (!videoModel) return [];
@@ -661,7 +672,7 @@ export function NewProjectDialog({
   // ====================================================================
   // 个性化模型选择 UX
   //   - 推荐项(命中下方 IMAGE/VIDEO_RECOMMENDED_PREFIXES)排最前,带 ✨ _recommended
-  //     · 图片推荐:tokenflash / revora / Azure终结点 / tokenhub
+  //     · 图片推荐:tokenflash / revora / Azure终结点
   //     · 视频推荐:丽帧(kuaizi)/ doubao-seedance / TopenRouter
   //   - "用户上次选的"(lastUsed)带 _pinned 标记(🕐);若不在推荐区,排到推荐区之后
   //   - 非法 id(用户 pref 里残留但当前 catalog 没了)静默忽略
@@ -674,13 +685,7 @@ export function NewProjectDialog({
     _recommended?: boolean;
   };
   // 推荐名单:匹配这些前缀的模型排最前 + 带 ✨
-  const IMAGE_RECOMMENDED_PREFIXES = [
-    "tokenflash/",
-    "revora/",
-    "azure2/",
-    "azure0716/",
-    "tokenhub/",
-  ];
+  const IMAGE_RECOMMENDED_PREFIXES = ["tokenflash/", "revora/", "azure2/", "azure0716/"];
   const VIDEO_RECOMMENDED_PREFIXES = ["kuaizi-", "doubao-seedance-", "topenrouter-"];
   const isRecommendedModel = (id: string, prefixes: string[]): boolean =>
     prefixes.some((p) => id.startsWith(p));
