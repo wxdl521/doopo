@@ -23,8 +23,8 @@ const VIDEO_CREDITS: Record<string, Record<string, number>> = {
   "kuaizi-lizhen-fast": { "480P": 89, "720P": 192 },
   "kuaizi-lizhen-pro": { "480P": 110.4, "720P": 118, "1080P": 593 },
   "kuaizi-lizhen-mini": { "480P": 56, "720P": 120 },
-  "doubao-seedance-2-0-fast-260128": { "480P": 52, "720P": 114 },
-  "doubao-seedance-2-0-260128": { "480P": 69, "720P": 146 },
+  "doubao-seedance-2-0-fast-260128": { "480P": 192, "720P": 192 },
+  "doubao-seedance-2-0-260128": { "480P": 237.6, "720P": 237.6 },
 };
 
 /** 生图积分(按张)。模型不在价目表 -> null(不扣分) */

@@ -167,12 +167,12 @@ const videoModels = [
   {
     id: "doubao-seedance-2-0-260128",
     label: "Doubao Seedance 2.0",
-    sub: "多模态 · 69-146积分/10s",
+    sub: "多模态 · 237.6积分/10s",
   },
   {
     id: "doubao-seedance-2-0-fast-260128",
     label: "Doubao Seedance 2.0 Fast",
-    sub: "快速版 · 52-114积分/10s",
+    sub: "快速版 · 192积分/10s",
   },
   { id: "doubao-seedance-1-0-pro-250528", label: "Doubao Seedance 1.0 Pro", sub: "T2V" },
   {
