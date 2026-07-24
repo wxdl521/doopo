@@ -32,6 +32,10 @@ export type RestyleAttachment = {
   renderLog?: string[];
   rerunOfAttachmentId?: string;
   feedback?: string;
+  /** The extracted asset this generated image represents. Keeps one canvas slot per asset. */
+  sourceAssetId?: string;
+  /** Exact prompt used for this generated asset; used by the canvas inspector. */
+  prompt?: string;
   analysisFrame?: boolean;
   analysisEpisode?: string;
 };
@@ -148,6 +152,8 @@ function parseAttachment(value: unknown): RestyleAttachment | null {
     rerunOfAttachmentId:
       typeof item.rerunOfAttachmentId === "string" ? item.rerunOfAttachmentId : undefined,
     feedback: typeof item.feedback === "string" ? item.feedback : undefined,
+    sourceAssetId: typeof item.sourceAssetId === "string" ? item.sourceAssetId : undefined,
+    prompt: typeof item.prompt === "string" ? item.prompt : undefined,
     analysisFrame: item.analysisFrame === true,
     analysisEpisode: typeof item.analysisEpisode === "string" ? item.analysisEpisode : undefined,
   };

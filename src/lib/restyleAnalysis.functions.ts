@@ -47,8 +47,8 @@ const InputSchema = z.object({
     )
     .min(1)
     .max(30),
-  /** Browser-extracted stills. Qwen visual models receive them as image_url parts. */
-  frameImages: z.array(z.string().startsWith("data:image/").max(1_500_000)).max(4).default([]),
+  /** Timeline samples spanning the complete source video. Qwen receives them as image_url parts. */
+  frameImages: z.array(z.string().startsWith("data:image/").max(500_000)).max(24).default([]),
   existingAssets: z.array(AssetSchema).max(60).default([]),
 });
 

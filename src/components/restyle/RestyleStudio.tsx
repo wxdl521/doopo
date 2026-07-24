@@ -194,7 +194,11 @@ function waitForVideoEvent(
   });
 }
 
-/** Extract up to four lightweight stills locally; the original video is never put in localStorage. */
+/**
+ * Build a timeline sample across the whole source, rather than only a handful of
+ * keyframes.  The source video remains local; compact frames give the analysis
+ * model coverage of plot changes, dialogue beats and continuity.
+ */
 async function extractVideoKeyFrames(file: File): Promise<string[]> {
   const url = URL.createObjectURL(file);
   const video = document.createElement("video");
@@ -204,22 +208,26 @@ async function extractVideoKeyFrames(file: File): Promise<string[]> {
   try {
     await waitForVideoEvent(video, "loadedmetadata");
     if (!Number.isFinite(video.duration) || video.duration <= 0 || video.videoWidth <= 0) return [];
-    const scale = Math.min(1, 960 / video.videoWidth);
+    const scale = Math.min(1, 640 / video.videoWidth);
     const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
     canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
     const context = canvas.getContext("2d");
     if (!context) return [];
-    const positions = [
-      ...new Set([0.02, 0.28, 0.55, 0.82].map((ratio) => Math.max(0.05, video.duration * ratio))),
-    ];
+    const sampleCount = Math.min(24, Math.max(8, Math.ceil(video.duration / 12)));
+    const positions = Array.from({ length: sampleCount }, (_, index) =>
+      Math.min(
+        Math.max(0.05, video.duration * ((index + 0.5) / sampleCount)),
+        Math.max(0, video.duration - 0.05),
+      ),
+    );
     const frames: string[] = [];
     for (const position of positions) {
       video.currentTime = Math.min(position, Math.max(0, video.duration - 0.05));
       await waitForVideoEvent(video, "seeked");
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const image = canvas.toDataURL("image/jpeg", 0.62);
-      if (image.length <= 1_400_000) frames.push(image);
+      const image = canvas.toDataURL("image/jpeg", 0.45);
+      if (image.length <= 450_000) frames.push(image);
     }
     return frames;
   } finally {
@@ -447,7 +455,7 @@ function buildRestyleFileTree(
           id: `analysis/${episode.label}`,
           label: episode.label,
           kind: "folder" as const,
-          count: 5,
+          count: 4,
           children: [
             {
               id: `analysis/${episode.label}/抽帧`,
@@ -469,7 +477,7 @@ function buildRestyleFileTree(
                   },
                 })),
             },
-            ...["剧情", "视觉理解", "台词", "资产"].map((label) => ({
+            ...["剧情", "视觉理解", "台词"].map((label) => ({
               id: `analysis/${episode.label}/${label}`,
               label,
               kind: "folder" as const,
@@ -488,7 +496,6 @@ function buildRestyleFileTree(
       剧情: sections.plot,
       视频理解: sections.videoUnderstanding,
       台词: sections.dialogue,
-      资产: sections.assets,
     };
     node.children = node.children.map((child) => {
       const content = sectionContent[child.label];
@@ -789,6 +796,7 @@ export default function RestyleStudio() {
   const [canvasKind, setCanvasKind] = useState<RestyleAsset["kind"] | "all">("all");
   const [canvasPrompt, setCanvasPrompt] = useState("");
   const [selectedCanvasAttachmentId, setSelectedCanvasAttachmentId] = useState<string | null>(null);
+  const [referencedCanvasAttachmentIds, setReferencedCanvasAttachmentIds] = useState<string[]>([]);
   const [assetPickerFor, setAssetPickerFor] = useState<string | null>(null);
   const [assetPickerKind, setAssetPickerKind] = useState<RestyleAsset["kind"] | null>(null);
   const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
@@ -935,7 +943,11 @@ export default function RestyleStudio() {
     const container = chatScrollRef.current;
     if (!container) return;
     const frame = window.requestAnimationFrame(() => {
-      container.scrollTo({ top: container.scrollHeight, behavior: "auto" });
+      if (typeof container.scrollTo === "function") {
+        container.scrollTo({ top: container.scrollHeight, behavior: "auto" });
+      } else {
+        container.scrollTop = container.scrollHeight;
+      }
     });
     return () => window.cancelAnimationFrame(frame);
   }, [
@@ -1397,28 +1409,6 @@ export default function RestyleStudio() {
               ].slice(-80),
             };
           }
-          // A final episode is the delivered output for its first generated segment.
-          // It intentionally receives the model output, never the original source URL.
-          if (
-            completed.generatedKind === "video_clip" &&
-            file.generatedKind === "final_video" &&
-            file.episode === completed.episode &&
-            !file.resultUrl
-          ) {
-            return {
-              ...file,
-              url: resultUrl,
-              resultUrl,
-              renderTaskId: taskId ?? file.renderTaskId,
-              renderStatus: "succeeded" as const,
-              renderProgress: 100,
-              renderError: undefined,
-              renderLog: [
-                ...(file.renderLog ?? []),
-                `${new Date().toLocaleTimeString("zh-CN", { hour12: false })} 使用该集首个真实分段结果作为成片预览。`,
-              ].slice(-80),
-            };
-          }
           return file;
         }),
       };
@@ -1591,6 +1581,7 @@ export default function RestyleStudio() {
       feedback: string;
       sourceAttachmentId?: string;
       rerunOfAttachmentId?: string;
+      referenceAssetIds?: string[];
     },
   ) {
     const project = projects.find((item) => item.id === projectId);
@@ -1614,7 +1605,7 @@ export default function RestyleStudio() {
               : episode.segments,
           }))
       : allPlanEpisodes;
-    const referenceImages = project.files
+    const allReferenceImages = project.files
       .filter(
         (file) =>
           (file.generatedKind === "character" ||
@@ -1624,6 +1615,19 @@ export default function RestyleStudio() {
       )
       .map((file) => file.url as string)
       .slice(0, 9);
+    const referenceImages = rerun?.referenceAssetIds?.length
+      ? project.files
+          .filter(
+            (file) =>
+              rerun.referenceAssetIds?.includes(file.id) &&
+              (file.generatedKind === "character" ||
+                file.generatedKind === "scene" ||
+                file.generatedKind === "prop") &&
+              Boolean(file.url),
+          )
+          .map((file) => file.url as string)
+          .slice(0, 9)
+      : allReferenceImages;
     if (!referenceImages.length) {
       appendConversationMessage(projectId, conversationId, {
         role: "assistant",
@@ -1691,7 +1695,7 @@ export default function RestyleStudio() {
       .map((file) => file.episode)
       .filter((episode): episode is string => Boolean(episode));
     const jobs = attachments
-      .filter((file) => file.generatedKind === "video_clip")
+      .filter((file) => file.generatedKind === "video_clip" || file.generatedKind === "final_video")
       .map((file) => {
         const episode = planEpisodes.find((item) => item.episode === file.episode);
         const segment = episode?.segments.find((item) => item.id === file.segmentId);
@@ -1700,8 +1704,11 @@ export default function RestyleStudio() {
         return {
           attachmentId: file.id,
           prompt:
-            segment?.prompt ||
-            "保持角色、场景、动作、镜头与节奏一致，生成符合已确认转绘资产的短视频。",
+            file.generatedKind === "final_video"
+              ? (episode?.segments.map((item) => `${item.id}: ${item.prompt}`).join("\n\n") ||
+                "保持角色、场景、动作、镜头与节奏一致，生成符合已确认转绘资产的完整转绘视频。")
+              : (segment?.prompt ||
+                "保持角色、场景、动作、镜头与节奏一致，生成符合已确认转绘资产的短视频。"),
           referenceImages,
           source,
         };
@@ -2174,6 +2181,23 @@ export default function RestyleStudio() {
       return;
     }
 
+    // Once a project has been analysed, ordinary conversation must not restart
+    // analysis or blindly ask for the same asset confirmation. Keep the user's
+    // intent in context and tell them the next concrete operation we can perform.
+    if (activeProject.extractedAssets.length > 0) {
+      const stageHint =
+        activeProject.stage === "plan"
+          ? "我会保留当前方案；请指出集数、分段或要调整的提示词，我会只更新对应部分。"
+          : generatedAssetFiles.length
+            ? "转绘资产已经就绪；你可以让我生成或修改某个资产、更新分镜方案，或确认开始生成视频。"
+            : "我已理解你的要求并保留在当前转绘上下文中。你可以直接让我生成指定资产、补充缺失对象，或继续生成方案。";
+      appendConversationMessage(projectId, conversationId, {
+        role: "assistant",
+        content: `已理解：${message || "继续当前转绘任务"}。${stageHint}`,
+      });
+      return;
+    }
+
     const selectedVideoFiles = attachments.filter((file) => file.type.startsWith("video/"));
     const sourceFiles = selectedVideoFiles.length ? selectedVideoFiles : projectVideoFiles;
     if (!sourceFiles.length) return;
@@ -2191,7 +2215,8 @@ export default function RestyleStudio() {
           };
         }),
       );
-      const frameImages = frameBatches.flatMap((batch) => batch.frames).slice(0, 4);
+      // Keep chronological coverage for the full upload, including multi-episode uploads.
+      const frameImages = frameBatches.flatMap((batch) => batch.frames).slice(0, 24);
       const result = await callAnalyzeRestyleAssets({
         data: {
           instruction: analysisInstruction,
@@ -2305,10 +2330,23 @@ export default function RestyleStudio() {
           lastModified: Date.now(),
           url: result.url,
           generatedKind: asset.kind,
+          sourceAssetId: asset.id,
+          prompt,
         };
         updateProject(projectId, (project) => ({
           ...project,
-          files: [...project.files, attachment],
+          // Regeneration replaces the prior rendition of the same restyle asset.
+          // This gives every asset one stable canvas position instead of piling up variants.
+          files: [
+            ...project.files.filter(
+              (file) =>
+                !(
+                  file.generatedKind === asset.kind &&
+                  file.sourceAssetId === asset.id
+                ),
+            ),
+            attachment,
+          ],
         }));
         generatedKinds.push(asset.kind);
         appendConversationMessage(projectId, conversationId, {
@@ -2410,6 +2448,7 @@ export default function RestyleStudio() {
   }
 
   function canvasAttachmentPrompt(attachment: RestyleAttachment): string {
+    if (attachment.prompt) return attachment.prompt;
     const plan = activeProject?.planEpisodes?.find((item) => item.episode === attachment.episode);
     if (attachment.segmentId) {
       return plan?.segments.find((segment) => segment.id === attachment.segmentId)?.prompt ?? "";
@@ -2436,6 +2475,7 @@ export default function RestyleStudio() {
         feedback: prompt || "请根据当前提示词重新生成。",
         sourceAttachmentId: attachment.sourceAttachmentId,
         rerunOfAttachmentId: attachment.id,
+        referenceAssetIds: referencedCanvasAttachmentIds,
       });
       return;
     }
@@ -2453,8 +2493,12 @@ export default function RestyleStudio() {
   }
 
   if (view === "canvas") {
+    // Keep project-library assets separate from generated restyle assets.
+    const canvasProjectAssets = linkedProjectAssets;
     const canvasAssets =
-      canvasKind === "all" ? assets : assets.filter((asset) => asset.kind === canvasKind);
+      canvasKind === "all"
+        ? canvasProjectAssets
+        : canvasProjectAssets.filter((asset) => asset.kind === canvasKind);
     const canvasSelectedAsset =
       selectedAsset && canvasAssets.some((asset) => asset.id === selectedAsset.id)
         ? selectedAsset
@@ -2482,7 +2526,7 @@ export default function RestyleStudio() {
         />
         <div className="grid min-h-0 flex-1 gap-4 overflow-auto bg-[radial-gradient(var(--border-color)_1px,transparent_1px)] bg-[size:16px_16px] p-5 xl:grid-cols-[220px_minmax(0,1fr)_300px]">
           <aside className="rounded-xl border border-border bg-bg-surface p-3">
-            <p className="mb-2 text-xs font-semibold text-text-primary">资产</p>
+            <p className="mb-2 text-xs font-semibold text-text-primary">项目资产</p>
             {(["all", "character", "scene", "prop"] as const).map((kind) => (
               <button
                 key={kind}
@@ -2501,8 +2545,8 @@ export default function RestyleStudio() {
                 </span>
                 <span>
                   {kind === "all"
-                    ? assets.length
-                    : assets.filter((asset) => asset.kind === kind).length}
+                    ? canvasProjectAssets.length
+                    : canvasProjectAssets.filter((asset) => asset.kind === kind).length}
                 </span>
               </button>
             ))}
@@ -2513,6 +2557,7 @@ export default function RestyleStudio() {
                   type="button"
                   onClick={() => {
                     setSelectedAssetId(asset.id);
+                    setSelectedCanvasAttachmentId(null);
                     setCanvasPrompt(asset.detail);
                   }}
                   className={`w-full truncate rounded-lg px-3 py-2 text-left text-xs ${canvasSelectedAsset?.id === asset.id ? "bg-bg-elevated text-text-primary" : "text-text-muted hover:bg-bg-elevated"}`}
@@ -2522,13 +2567,14 @@ export default function RestyleStudio() {
               ))}
             </div>
             <div className="mt-4 border-t border-border pt-3">
-              <p className="mb-2 px-3 text-[11px] font-semibold text-text-muted">已生成媒体</p>
+              <p className="mb-2 px-3 text-[11px] font-semibold text-text-muted">转绘资产（可引用）</p>
               {canvasGeneratedAttachments.map((attachment) => (
                 <button
                   key={attachment.id}
                   type="button"
                   onClick={() => {
                     setSelectedCanvasAttachmentId(attachment.id);
+                    setSelectedAssetId(null);
                     setCanvasPrompt(canvasAttachmentPrompt(attachment));
                   }}
                   className={`mb-1 flex w-full items-center gap-2 truncate rounded-lg px-3 py-2 text-left text-xs ${canvasSelectedAttachment?.id === attachment.id ? "bg-bg-elevated text-text-primary" : "text-text-muted hover:bg-bg-elevated"}`}
@@ -2537,6 +2583,11 @@ export default function RestyleStudio() {
                     {attachment.generatedKind?.includes("video") ? "视频" : "图片"}
                   </span>
                   <span className="truncate">{attachment.name}</span>
+                  {!["video_clip", "final_video"].includes(attachment.generatedKind ?? "") ? (
+                    <span className="ml-auto text-[10px] text-accent">
+                      {referencedCanvasAttachmentIds.includes(attachment.id) ? "已引用" : "引用"}
+                    </span>
+                  ) : null}
                 </button>
               ))}
             </div>
@@ -2769,6 +2820,25 @@ export default function RestyleStudio() {
                     className="mt-2 w-full resize-y rounded-lg border border-border bg-bg-elevated p-3 text-xs leading-5 text-text-primary outline-none focus:border-accent"
                   />
                 </label>
+                {!["video_clip", "final_video"].includes(
+                  canvasSelectedAttachment.generatedKind ?? "",
+                ) ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setReferencedCanvasAttachmentIds((ids) =>
+                        ids.includes(canvasSelectedAttachment.id)
+                          ? ids.filter((id) => id !== canvasSelectedAttachment.id)
+                          : [...ids, canvasSelectedAttachment.id],
+                      )
+                    }
+                    className="btn-ghost mt-3 w-full text-xs"
+                  >
+                    {referencedCanvasAttachmentIds.includes(canvasSelectedAttachment.id)
+                      ? "取消引用到视频"
+                      : "引用到下次视频生成"}
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   disabled={isAnalyzing || !activeProject || !activeConversation}
