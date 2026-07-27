@@ -15,6 +15,7 @@ import {
   DialogDescription,
   DialogFooter,
 } from "./ui/dialog";
+import { Progress } from "./ui/progress";
 
 export function ImportProjectButton({
   onImported,
@@ -24,6 +25,7 @@ export function ImportProjectButton({
   const { t } = useLanguage();
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<ImportedProject | null>(null);
 
@@ -37,13 +39,15 @@ export function ImportProjectButton({
     if (!files || files.length === 0) return;
     setBusy(true);
     setError(null);
+    setProgress(0);
     try {
-      const project = await parseProjectFile(files[0]);
+      const project = await parseProjectFile(files[0], (p) => setProgress(p));
       setPreview(project);
     } catch (e) {
       setError(e instanceof ProjectImportError ? e.message : "导入失败 / Import failed");
     } finally {
       setBusy(false);
+      setProgress(0);
       if (inputRef.current) inputRef.current.value = "";
     }
   }
@@ -57,15 +61,23 @@ export function ImportProjectButton({
 
   return (
     <>
-      <button
-        type="button"
-        onClick={() => inputRef.current?.click()}
-        disabled={busy}
-        className="btn-ghost"
-      >
-        {busy ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
-        {t.projects_import}
-      </button>
+      <div className="inline-flex flex-col items-stretch gap-1">
+        <button
+          type="button"
+          onClick={() => inputRef.current?.click()}
+          disabled={busy}
+          className="btn-ghost"
+        >
+          {busy ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+          {t.projects_import}
+        </button>
+        {busy && (
+          <div className="flex items-center gap-2">
+            <Progress value={progress} className="h-1.5 w-32" />
+            <span className="text-[10px] text-text-muted tabular-nums">{progress}%</span>
+          </div>
+        )}
+      </div>
       <input
         ref={inputRef}
         type="file"

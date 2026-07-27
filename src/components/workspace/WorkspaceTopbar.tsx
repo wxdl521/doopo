@@ -3,7 +3,6 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import {
   ChevronDown,
-  MoreHorizontal,
   Layers,
   FileText,
   Users,
@@ -27,12 +26,7 @@ import { useAuth } from "../../hooks/useAuth";
 import { getUserBalance } from "../../lib/userCredits.functions";
 
 export type WorkspaceTab =
-  | "canvas"
-  | "script"
-  | "episodes"
-  | "character"
-  | "storyboard"
-  | "timeline";
+  "canvas" | "script" | "episodes" | "character" | "storyboard" | "timeline";
 
 // 'episodes' is intentionally excluded from the workflow bar — it is accessed via the top-left episode dropdown
 const tabs: { id: Exclude<WorkspaceTab, "episodes">; icon: typeof Layers }[] = [
@@ -86,7 +80,6 @@ export default function WorkspaceTopbar({
   const { isAuthenticated, loading, user, signOut } = useAuth();
   const navigate = useNavigate();
   const [epOpen, setEpOpen] = useState(false);
-  const [moreOpen, setMoreOpen] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [creditBalance, setCreditBalance] = useState<number | null>(null);
   const accountRef = useRef<HTMLDivElement>(null);
@@ -135,7 +128,6 @@ export default function WorkspaceTopbar({
           <button
             onClick={() => {
               setEpOpen((v) => !v);
-              setMoreOpen(false);
             }}
             className="inline-flex items-center gap-1 px-2 py-1 rounded-md hover:bg-bg-elevated"
           >
@@ -212,33 +204,16 @@ export default function WorkspaceTopbar({
           </button>
         )}
 
-        <div className="relative">
-          <button
-            onClick={() => {
-              setMoreOpen((v) => !v);
-              setEpOpen(false);
-            }}
-            className="p-1 rounded-md hover:bg-bg-elevated text-text-muted"
-          >
-            <MoreHorizontal size={16} />
-          </button>
-          {moreOpen && (
-            <div
-              className="absolute top-full left-0 mt-1 min-w-[180px] bg-bg-surface border border-border rounded-lg shadow-card py-1 z-[100]"
-              onMouseLeave={() => setMoreOpen(false)}
-            >
-              <NewProjectDialog
-                initial={currentProject}
-                onSaved={onProjectSaved}
-                trigger={
-                  <button className="w-full text-left px-3 py-1.5 text-sm hover:bg-bg-elevated inline-flex items-center gap-2">
-                    <Settings size={14} /> {t.ws_settings}
-                  </button>
-                }
-              />
-            </div>
-          )}
-        </div>
+        {/* 基础设置重设 —— 2026/07 从"…"菜单里挪出来,直接放在保存按钮后面。 */}
+        <NewProjectDialog
+          initial={currentProject}
+          onSaved={onProjectSaved}
+          trigger={
+            <button className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold border border-border text-text-secondary hover:text-text-primary hover:border-accent hover:bg-bg-elevated transition">
+              <Settings size={13} /> {t.ws_settings}
+            </button>
+          }
+        />
       </div>
 
       {/* Workflow tabs */}
@@ -279,7 +254,10 @@ export default function WorkspaceTopbar({
             <option value="zh">中文</option>
             <option value="en">English</option>
           </select>
-          <ChevronDown size={12} className="pointer-events-none absolute right-1.5 text-text-muted" />
+          <ChevronDown
+            size={12}
+            className="pointer-events-none absolute right-1.5 text-text-muted"
+          />
         </label>
         {/* 2026/06:查看提示词 toggle —— 开启后所有生成按钮变成"展示 prompt"而不是真正生成 */}
         {onToggleViewPromptsMode && (

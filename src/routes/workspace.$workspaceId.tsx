@@ -2546,6 +2546,8 @@ function WorkspacePage() {
   // 顶部下拉「+ 新增集数」触发的对话框。AI 生成 / 导入剧本 两条路径都走这里。
   const [addEpisodeOpen, setAddEpisodeOpen] = useState(false);
   const [addEpisodeImporting, setAddEpisodeImporting] = useState(false);
+  // 2026/07:导入剧本文件时的读取进度(0-100),null 表示未在读取。
+  const [addEpisodeReadProgress, setAddEpisodeReadProgress] = useState<number | null>(null);
   const addEpisodeFileInputRef = useRef<HTMLInputElement>(null);
   // 分镜图历史 + 预览/修改态(和人物卡片同一套思路)
   //   - shotImages:key = `${groupId}::${shotId}`,value 是按时间顺序的 URL 数组
@@ -2906,11 +2908,11 @@ function WorkspacePage() {
         const isDurable = (url: string | undefined) =>
           Boolean(
             url &&
-              (url.startsWith("data:") ||
-                url.includes("/storage/v1/object/sign/workspace-media/") ||
-                url.includes("/object/sign/workspace-media/") ||
-                url.includes("/storage/v1/object/public/workspace-media/") ||
-                url.includes("/object/public/workspace-media/")),
+            (url.startsWith("data:") ||
+              url.includes("/storage/v1/object/sign/workspace-media/") ||
+              url.includes("/object/sign/workspace-media/") ||
+              url.includes("/storage/v1/object/public/workspace-media/") ||
+              url.includes("/object/public/workspace-media/")),
           );
         if (isDurable(currentLatest?.url) && !isDurable(incomingLatest?.url)) {
           merged[gid] = currentEntries;
@@ -2963,23 +2965,26 @@ function WorkspacePage() {
    * screen. If that new URL cannot be decoded/read, restore the verified
    * data URL instead of leaving the storyboard as a broken <img>.
    */
-  const recoverStoryboardImage = useCallback((gid: string, failedUrl: string) => {
-    const hasFallback = groupStoryboards[gid]?.some(
-      (entry) => entry.url === failedUrl && Boolean(entry.fallbackUrl),
-    );
-    setGroupStoryboards((current) => {
-      const entries = current[gid];
-      if (!entries) return current;
-      const index = entries.findIndex((entry) => entry.url === failedUrl && entry.fallbackUrl);
-      if (index < 0) return current;
-      const fallbackUrl = entries[index].fallbackUrl!;
-      const next = [...entries];
-      next[index] = { ...next[index], url: fallbackUrl, fallbackUrl: undefined };
-      return { ...current, [gid]: next };
-    });
-    if (hasFallback) clearStoryboardBroken(gid);
-    else markStoryboardBroken(gid);
-  }, [clearStoryboardBroken, groupStoryboards, markStoryboardBroken]);
+  const recoverStoryboardImage = useCallback(
+    (gid: string, failedUrl: string) => {
+      const hasFallback = groupStoryboards[gid]?.some(
+        (entry) => entry.url === failedUrl && Boolean(entry.fallbackUrl),
+      );
+      setGroupStoryboards((current) => {
+        const entries = current[gid];
+        if (!entries) return current;
+        const index = entries.findIndex((entry) => entry.url === failedUrl && entry.fallbackUrl);
+        if (index < 0) return current;
+        const fallbackUrl = entries[index].fallbackUrl!;
+        const next = [...entries];
+        next[index] = { ...next[index], url: fallbackUrl, fallbackUrl: undefined };
+        return { ...current, [gid]: next };
+      });
+      if (hasFallback) clearStoryboardBroken(gid);
+      else markStoryboardBroken(gid);
+    },
+    [clearStoryboardBroken, groupStoryboards, markStoryboardBroken],
+  );
 
   // 2026/06:故事板图自动入库 —— 监听 groupStoryboards 变化,每个 succeeded
   // 且未入库的项自动调 saveOneStoryboard,把临时 TOS URL 替换成永久
@@ -9150,16 +9155,25 @@ function WorkspacePage() {
       return;
     }
     setAddEpisodeImporting(true);
+    setAddEpisodeReadProgress(0);
     try {
+      const { readFileAsTextWithProgress, readFileAsArrayBufferWithProgress } =
+        await import("../lib/fileReadProgress");
       let text = "";
       if (lower.endsWith(".docx")) {
         // 懒加载 mammoth,避免把 .docx 解析塞进首屏
+        const arrayBuffer = await readFileAsArrayBufferWithProgress(file, (p) =>
+          setAddEpisodeReadProgress(p),
+        );
+        setAddEpisodeReadProgress(92);
         const mod: any = await import("mammoth");
         const mammoth = mod.default ?? mod;
-        const result = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
+        const result = await mammoth.extractRawText({ arrayBuffer });
+        setAddEpisodeReadProgress(100);
         text = (result?.value ?? "").trim();
       } else {
-        text = (await file.text()).trim();
+        text = (await readFileAsTextWithProgress(file, (p) => setAddEpisodeReadProgress(p))).trim();
+        setAddEpisodeReadProgress(100);
       }
       if (text.length < 5) {
         toast.error("文件内容过短,无法作为本集剧本");
@@ -9185,6 +9199,7 @@ function WorkspacePage() {
       toast.error(e instanceof Error && e.message ? e.message : "读取文件失败");
     } finally {
       setAddEpisodeImporting(false);
+      setAddEpisodeReadProgress(null);
       if (addEpisodeFileInputRef.current) addEpisodeFileInputRef.current.value = "";
     }
   }
@@ -10101,17 +10116,15 @@ function WorkspacePage() {
           const tracks: TimelineTrack[] = (p.tracks ?? []).map((t: any) => ({
             kind: t.kind as "video" | "audio" | "subtitle",
             label: t.label ?? "",
-            clips: (t.clips ?? []).map(
-              (c: any, i: number): TimelineClip => ({
-                id: `tl-${t.kind}-${i}-${Date.now()}`,
-                startSec: typeof c.startSec === "number" ? c.startSec : 0,
-                durationSec: typeof c.durationSec === "number" ? c.durationSec : 3,
-                label: c.label ?? "",
-                panelId: c.panelIndex
-                  ? currentData.storyboard.find((pan) => pan.index === c.panelIndex)?.id
-                  : undefined,
-              }),
-            ),
+            clips: (t.clips ?? []).map((c: any, i: number): TimelineClip => ({
+              id: `tl-${t.kind}-${i}-${Date.now()}`,
+              startSec: typeof c.startSec === "number" ? c.startSec : 0,
+              durationSec: typeof c.durationSec === "number" ? c.durationSec : 3,
+              label: c.label ?? "",
+              panelId: c.panelIndex
+                ? currentData.storyboard.find((pan) => pan.index === c.panelIndex)?.id
+                : undefined,
+            })),
           }));
           const transitionsAt: number[] = Array.isArray(p.transitionsAt) ? p.transitionsAt : [];
           const totalSec = tracks[0]?.clips.reduce((sum, c) => sum + (c.durationSec ?? 0), 0) ?? 0;
@@ -15584,6 +15597,20 @@ function WorkspacePage() {
                     <span className="text-[10px] font-normal opacity-80 leading-snug">
                       .txt / .md / .docx
                     </span>
+                    {/* 2026/07:上传剧本文件读取进度条 */}
+                    {addEpisodeReadProgress !== null && (
+                      <div className="w-full pt-1">
+                        <div className="relative h-1 w-full overflow-hidden rounded-full bg-bg-surface">
+                          <div
+                            className="h-full bg-accent transition-all"
+                            style={{ width: `${addEpisodeReadProgress}%` }}
+                          />
+                        </div>
+                        <div className="text-[10px] text-text-muted tabular-nums text-center pt-0.5">
+                          {addEpisodeReadProgress}%
+                        </div>
+                      </div>
+                    )}
                   </button>
                 </div>
                 <input

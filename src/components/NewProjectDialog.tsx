@@ -1107,7 +1107,7 @@ function FieldSelect({
             );
           })}
         </select>
-        {/* select 右侧的图标:被置顶的项显示"最近使用"提示,推荐的项显示 sparkle */}
+        {/* select 右侧的图标:被置顶的项显示"最近使用"提示(仅图标,label 走 title 悬浮),推荐的项显示 sparkle */}
         {options.find((o) => o.id === value)?._pinned ? (
           <span
             title={pinnedLabel}
@@ -1115,7 +1115,6 @@ function FieldSelect({
             className="absolute right-3 top-1/2 -translate-y-1/2 inline-flex items-center gap-0.5 text-[10px] text-amber-400 pointer-events-none"
           >
             <Clock size={11} />
-            <span className="hidden lg:inline">{pinnedLabel}</span>
           </span>
         ) : options.find((o) => o.id === value)?._recommended ? (
           <span

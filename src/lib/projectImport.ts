@@ -9,6 +9,7 @@
 
 import type { ProjectMeta } from "../components/ProjectCard";
 import { normalizeLegacyDeep } from "./legacyMigrate";
+import { readFileAsTextWithProgress, type ReadProgress } from "./fileReadProgress";
 
 const STORAGE_KEY = "doopoo_imported_projects";
 
@@ -112,13 +113,19 @@ export function parseProjectJson(text: string): ImportedProject {
 }
 
 /** Read a File and parse it WITHOUT persisting. Caller confirms before saving. */
-export async function parseProjectFile(file: File): Promise<ImportedProject> {
+export async function parseProjectFile(
+  file: File,
+  onProgress?: ReadProgress,
+): Promise<ImportedProject> {
   if (!/\.json$/i.test(file.name) && file.type !== "application/json") {
     throw new ProjectImportError("请选择 .json 文件 / Please select a .json file");
   }
   if (file.size > 5 * 1024 * 1024) {
     throw new ProjectImportError("文件过大（>5MB）/ File too large (>5MB)");
   }
-  const text = await file.text();
-  return parseProjectJson(text);
+  const text = await readFileAsTextWithProgress(file, onProgress);
+  onProgress?.(95);
+  const parsed = parseProjectJson(text);
+  onProgress?.(100);
+  return parsed;
 }

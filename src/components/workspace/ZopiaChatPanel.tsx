@@ -486,10 +486,14 @@ const ZopiaChatPanel = forwardRef<
   >(null);
   const [importDragging, setImportDragging] = useState(false);
   const importFileInputRef = useRef<HTMLInputElement>(null);
+  // 2026/07:上传本地剧本文件时的读取进度(0-100),读文件时显示进度条。
+  const [importReadProgress, setImportReadProgress] = useState<number | null>(null);
   // 2026/07:参考图 lightbox —— 点确认卡片缩略图放大查看，并可移除本次生成不用的图。
-  const [lightbox, setLightbox] = useState<{ url: string; msgId: string; imageIndex: number } | null>(
-    null,
-  );
+  const [lightbox, setLightbox] = useState<{
+    url: string;
+    msgId: string;
+    imageIndex: number;
+  } | null>(null);
   // 2026/07:编辑 prompt 时 @ 参考图 —— mentionPickerFor 是当前展开选择条的卡片 msgId
   const [mentionPickerFor, setMentionPickerFor] = useState<string | null>(null);
   // contentEditable div 的 ref(每条卡片一个),用于 @ 参考图插入光标管理
@@ -840,13 +844,27 @@ const ZopiaChatPanel = forwardRef<
   // ============= Import script flow =============
   // Read a File into plain text. .txt uses FileReader, .docx is parsed via mammoth
   // (lazy-loaded to keep the .docx dependency out of the initial bundle).
-  async function readFileToText(file: File): Promise<string> {
+  // 2026/07:通过 fileReadProgress 上报读取进度(0-90%),解析阶段用调用方
+  // 传入的 onProgress(90→100)手动收尾。
+  async function readFileToText(
+    file: File,
+    onProgress?: (percent: number) => void,
+  ): Promise<string> {
+    const { readFileAsTextWithProgress, readFileAsArrayBufferWithProgress } =
+      await import("../../lib/fileReadProgress");
     const lower = file.name.toLowerCase();
-    if (lower.endsWith(".txt")) return await file.text();
+    if (lower.endsWith(".txt")) {
+      const text = await readFileAsTextWithProgress(file, onProgress);
+      onProgress?.(100);
+      return text;
+    }
     if (lower.endsWith(".docx")) {
+      const arrayBuffer = await readFileAsArrayBufferWithProgress(file, onProgress);
+      onProgress?.(92);
       const mod: any = await import("mammoth");
       const mammoth = mod.default ?? mod;
-      const result = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
+      const result = await mammoth.extractRawText({ arrayBuffer });
+      onProgress?.(100);
       if (!result?.value || !result.value.trim()) throw new Error(t.zp_import_error_corrupt);
       return result.value;
     }
@@ -876,9 +894,12 @@ const ZopiaChatPanel = forwardRef<
       return;
     }
     try {
-      const text = await readFileToText(file);
+      setImportReadProgress(0);
+      const text = await readFileToText(file, (p) => setImportReadProgress(p));
+      setImportReadProgress(null);
       setImportModal({ stage: "paste", text, fileName: file.name });
     } catch (e) {
+      setImportReadProgress(null);
       setImportModal({
         stage: "error",
         message: e instanceof Error && e.message ? e.message : t.zp_import_error_read,
@@ -2087,7 +2108,9 @@ const ZopiaChatPanel = forwardRef<
                           <button
                             key={i}
                             type="button"
-                            onClick={() => setLightbox({ url: img.url, msgId: m.id, imageIndex: i })}
+                            onClick={() =>
+                              setLightbox({ url: img.url, msgId: m.id, imageIndex: i })
+                            }
                             className="relative w-14 h-14 rounded-md overflow-hidden border border-border shrink-0 hover:border-accent transition cursor-zoom-in"
                             title={img.label}
                           >
@@ -2792,7 +2815,10 @@ const ZopiaChatPanel = forwardRef<
                 setMessages((prev) =>
                   prev.map((m) =>
                     m.id === lightbox.msgId && m.kind === "video_confirm"
-                      ? { ...m, images: m.images.filter((_, index) => index !== lightbox.imageIndex) }
+                      ? {
+                          ...m,
+                          images: m.images.filter((_, index) => index !== lightbox.imageIndex),
+                        }
                       : m,
                   ),
                 );
@@ -2888,7 +2914,21 @@ const ZopiaChatPanel = forwardRef<
                         : "border-border hover:border-accent text-text-muted"
                     }`}
                   >
-                    {importModal.stage === "paste" && importModal.fileName ? (
+                    {importReadProgress !== null ? (
+                      // 2026/07:上传文档读取进度 —— readFileToText 上报 0-100
+                      <span className="inline-flex flex-col items-center gap-2 w-full">
+                        <span className="inline-flex items-center gap-2 text-text-primary">
+                          <FileText size={18} className="text-accent shrink-0" />
+                          <span>正在读取文件 · {importReadProgress}%</span>
+                        </span>
+                        <div className="relative h-1.5 w-full max-w-[280px] overflow-hidden rounded-full bg-bg-elevated">
+                          <div
+                            className="h-full bg-accent transition-all"
+                            style={{ width: `${importReadProgress}%` }}
+                          />
+                        </div>
+                      </span>
+                    ) : importModal.stage === "paste" && importModal.fileName ? (
                       <span className="text-text-primary inline-flex items-center gap-2">
                         <FileText size={18} className="text-accent shrink-0" />
                         <span className="truncate">
