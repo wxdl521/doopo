@@ -67,6 +67,12 @@ const imageModelOptions = [
     sub: "5积分/张",
   },
 
+  {
+    id: "onetoken/gpt-image-2",
+    label: "GPT Image 2 (OneToken)",
+    sub: "OneToken · OpenAI · Image2",
+  },
+
   // ---- Revora(OpenAI 兼容)----
   { id: "__sep_revora__", label: "—— Revora(OpenAI 兼容)——", sub: "" },
   {
@@ -83,14 +89,6 @@ const imageModelOptions = [
     id: "revora/gpt-image-2-low",
     label: "GPT Image 2 Low (Revora)",
     sub: "快速",
-  },
-
-  // ---- OneToken(OpenAI 兼容)----
-  { id: "__sep_onetoken__", label: "—— OneToken(OpenAI 兼容)——", sub: "" },
-  {
-    id: "onetoken/gpt-image-2",
-    label: "GPT Image 2 (OneToken)",
-    sub: "OneToken · OpenAI · Image2",
   },
 
   // ---- AIGC Family(OpenAI 兼容)----
@@ -132,6 +130,7 @@ const imageModelOptions = [
 const VISIBLE_IMAGE_PREFIXES = [
   "doubao-seedream/", // 默认主力 Seedream
   "tokenflash/",
+  "onetoken/",
   "revora/",
   "azure2/",
   "azure0716/",
@@ -151,6 +150,13 @@ const sceneModels = realImageModelOptions;
 // Video models —— 2026/06 接入双后端:火山方舟 Seedance(已开通,默认走 ARK) + 阿里 DashScope HappyHorse(备用)
 // 详见 docs/seedream.md (Seedance) 和 docs/qwen.md (HappyHorse)
 const videoModels = [
+  // ---- Revora / NewAPI(OpenAI 兼容视频接口) ----
+  {
+    id: "revora-seedance-2-0",
+    label: "Seedance 2.0 (Revora)",
+    sub: "Revora · NewAPI · 文生/图生视频",
+  },
+
   // ---- AgentEarth (OpenAI-compatible gateway · Seedance 2.0) ----
   {
     id: "earth/seedance-2.0",
@@ -366,6 +372,7 @@ const videoModels = [
 // 2026/07:视频下拉只保留指定供应商(星标 + 汇流 + ToAPIS + 可灵),
 // 其余(即梦/k99/数安词源/vapeur/HappyHorse)不显示。
 const VISIBLE_VIDEO_PREFIXES = [
+  "revora-",
   "earth/",
   "kuaizi-",
   "doubao-seedance-", // 星标
@@ -391,6 +398,7 @@ export const realVideoModels = videoModels.filter(
 // ARK Seedance 标准版/Fast:480p、720p;丽帧 pro:480p、720p、1080p;丽帧 fast/mini:480p、720p。
 // 其他视频模型不在此列 -> 选择器禁用,resolution 不传走各后端默认。
 const VIDEO_RESOLUTIONS: Record<string, string[]> = {
+  "revora-seedance-2-0": ["480P", "720P", "1080P"],
   "earth/seedance-2.0": ["480P", "720P", "1080P"],
   "earth/seedance-2.0-global": ["480P", "720P", "1080P"],
   "doubao-seedance-2-0-260128": ["480P", "720P"],
@@ -685,8 +693,19 @@ export function NewProjectDialog({
     _recommended?: boolean;
   };
   // 推荐名单:匹配这些前缀的模型排最前 + 带 ✨
-  const IMAGE_RECOMMENDED_PREFIXES = ["tokenflash/", "revora/", "azure2/", "azure0716/"];
-  const VIDEO_RECOMMENDED_PREFIXES = ["kuaizi-", "doubao-seedance-", "topenrouter-"];
+  const IMAGE_RECOMMENDED_PREFIXES = [
+    "tokenflash/",
+    "onetoken/",
+    "revora/",
+    "azure2/",
+    "azure0716/",
+  ];
+  const VIDEO_RECOMMENDED_PREFIXES = [
+    "revora-",
+    "kuaizi-",
+    "doubao-seedance-",
+    "topenrouter-",
+  ];
   const isRecommendedModel = (id: string, prefixes: string[]): boolean =>
     prefixes.some((p) => id.startsWith(p));
   /**

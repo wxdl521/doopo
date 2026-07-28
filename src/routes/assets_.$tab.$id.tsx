@@ -6,12 +6,9 @@ import { useLanguage } from "../i18n/LanguageContext";
 import type { AssetTab, CharacterAsset, SceneAsset, PropAsset } from "../data/assetTypes";
 import { assetToMarkdown, downloadMarkdown } from "../lib/assetMarkdown";
 import {
-  loadCharacters,
-  loadScenes,
-  loadProps,
-  type DbCharacter,
-  type DbScene,
-  type DbProp,
+  loadCharacterById,
+  loadSceneById,
+  loadPropById,
 } from "../lib/assetsStorage";
 import { useAuth } from "../hooks/useAuth";
 
@@ -37,8 +34,7 @@ function AssetDetailPage() {
     (async () => {
       try {
         if (tab === "character") {
-          const { data } = await loadCharacters(user.id);
-          const found = data?.find((c: DbCharacter) => c.id === id);
+          const { data: found } = await loadCharacterById(user.id, id);
           if (found) {
             const dbImages: { url: string; label: string }[] = Array.isArray((found as any).images)
               ? (found as any).images
@@ -64,8 +60,7 @@ function AssetDetailPage() {
             });
           }
         } else if (tab === "scene") {
-          const { data } = await loadScenes(user.id);
-          const found = data?.find((s: DbScene) => s.id === id) as any;
+          const { data: found } = await loadSceneById(user.id, id);
           if (found) {
             setDbAsset({
               id: found.id,
@@ -89,8 +84,7 @@ function AssetDetailPage() {
             });
           }
         } else if (tab === "prop") {
-          const { data } = await loadProps(user.id);
-          const found = data?.find((p: DbProp) => p.id === id) as any;
+          const { data: found } = await loadPropById(user.id, id);
           if (found) {
             setDbAsset({
               id: found.id,

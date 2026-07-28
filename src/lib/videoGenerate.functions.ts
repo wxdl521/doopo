@@ -59,6 +59,27 @@ function getAgentEarthVideoConfig() {
   };
 }
 
+// ---------- Revora / NewAPI(Sora 兼容视频接口) ----------
+
+const REVORA_VIDEO_DEFAULT_BASE_URL = "https://revora.vip";
+const REVORA_VIDEO_DEFAULT_MODEL = "seedance-2.0";
+
+export const REVORA_VIDEO_MODELS = {
+  "revora-seedance-2-0": "Seedance 2.0 (Revora)",
+} as const;
+
+function isRevoraVideoModel(model: string): boolean {
+  return model.toLowerCase().startsWith("revora-");
+}
+
+function getRevoraVideoConfig() {
+  return {
+    apiKey: process.env.REVORA_VIDEO_API_KEY,
+    baseUrl: (process.env.REVORA_BASE_URL || REVORA_VIDEO_DEFAULT_BASE_URL).replace(/\/+$/, ""),
+    model: process.env.REVORA_VIDEO_MODEL || REVORA_VIDEO_DEFAULT_MODEL,
+  };
+}
+
 // ---------- DashScope (HappyHorse / Wanx) 配置 ----------
 
 const DASHSCOPE_VIDEO_ENDPOINT =
@@ -93,8 +114,10 @@ export function getVideoBackend(
   | "keyiyun"
   | "ycore"
   | "neiwen"
-  | "agentearth" {
+  | "agentearth"
+  | "revora" {
   const m = (modelId || "").trim().toLowerCase();
+  if (isRevoraVideoModel(m)) return "revora";
   if (isAgentEarthSeedanceModel(m)) return "agentearth";
   if (m.startsWith("dreamina-seedance-")) return "sdreal";
   if (m.startsWith("doubao-seedance-") || m.startsWith("seedance-")) return "ark";
@@ -180,6 +203,7 @@ export const SEEDANCE_MODELS = {
   ...YCORE_VIDEO_MODELS,
   ...NEIWEN_VIDEO_MODELS,
   ...KLING_VIDEO_MODELS,
+  ...REVORA_VIDEO_MODELS,
 } as const;
 
 export const HAPPYHORSE_MODELS = {
@@ -2334,6 +2358,163 @@ async function agentEarthSeedanceSubmit(input: {
   }
 }
 
+type RevoraVideoResponse = {
+  id?: string;
+  task_id?: string;
+  status?: string;
+  progress?: number;
+  url?: string;
+  video_url?: string;
+  error?: { message?: string; code?: string } | string;
+  data?: { url?: string; video_url?: string; status?: string } | Array<{ url?: string }>;
+  content?: { video_url?: string; url?: string };
+  video?: { url?: string };
+  output?: { url?: string; video_url?: string };
+};
+
+function revoraVideoUrl(payload: RevoraVideoResponse): string | null {
+  const data = Array.isArray(payload.data) ? payload.data[0] : payload.data;
+  return (
+    payload.url ||
+    payload.video_url ||
+    payload.content?.video_url ||
+    payload.content?.url ||
+    payload.video?.url ||
+    payload.output?.video_url ||
+    payload.output?.url ||
+    data?.url ||
+    data?.video_url ||
+    null
+  );
+}
+
+function revoraVideoStatus(status: string | undefined): SeedanceProgress {
+  const normalized = (status || "queued").toLowerCase();
+  if (["completed", "complete", "succeeded", "success", "done"].includes(normalized))
+    return "succeeded";
+  if (["failed", "failure", "error"].includes(normalized)) return "failed";
+  if (["cancelled", "canceled"].includes(normalized)) return "cancelled";
+  if (["in_progress", "processing", "running", "generating"].includes(normalized))
+    return "running";
+  return "queued";
+}
+
+async function revoraSubmit(input: {
+  model: string;
+  prompt: string;
+  media: DashScopeMediaItem[];
+  ratio?: SeedanceRatio;
+  resolution?: string;
+  duration?: number;
+  apiKey: string;
+  baseUrl: string;
+  upstreamModel: string;
+}): Promise<
+  { ok: true; taskId: string; model: string; videoUrl?: string } | { ok: false; error: string }
+> {
+  const form = new FormData();
+  form.append("model", input.upstreamModel);
+  form.append("prompt", input.prompt);
+  if (input.duration != null) form.append("duration", String(input.duration));
+  if (input.ratio) form.append("metadata", JSON.stringify({ ratio: input.ratio }));
+  if (input.resolution) {
+    const [width, height] = input.ratio === "9:16" ? [720, 1280] : [1280, 720];
+    form.append("width", String(width));
+    form.append("height", String(height));
+  }
+  const image =
+    input.media.find((item) => item.type === "first_frame")?.url ||
+    input.media.find((item) => item.type === "reference_image")?.url;
+  if (image) form.append("image", image);
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 60_000);
+  try {
+    const response = await fetch(`${input.baseUrl}/v1/videos`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${input.apiKey}` },
+      body: form,
+      signal: controller.signal,
+    });
+    const responseText = await response.text().catch(() => "");
+    let payload: RevoraVideoResponse = {};
+    try {
+      payload = JSON.parse(responseText) as RevoraVideoResponse;
+    } catch {
+      // Keep the raw response available for a useful gateway error message.
+    }
+    if (!response.ok) {
+      const detail = typeof payload.error === "string" ? payload.error : payload.error?.message;
+      return {
+        ok: false,
+        error: `[revora] submit ${response.status}: ${detail || responseText.slice(0, 500)}`,
+      };
+    }
+    const taskId = payload.id || payload.task_id;
+    const videoUrl = revoraVideoUrl(payload) || undefined;
+    if (!taskId && !videoUrl) {
+      return {
+        ok: false,
+        error: `[revora] submit returned no task id: ${responseText.slice(0, 500)}`,
+      };
+    }
+    return { ok: true, taskId: taskId || `revora-${Date.now()}`, model: input.model, videoUrl };
+  } catch (error) {
+    const message =
+      error instanceof Error && error.name === "AbortError"
+        ? "submit timeout (60s)"
+        : error instanceof Error
+          ? error.message
+          : "fetch failed";
+    return { ok: false, error: `[revora] submit network: ${message}` };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function revoraPoll(input: {
+  taskId: string;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<PollResult> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const response = await fetch(`${input.baseUrl}/v1/videos/${encodeURIComponent(input.taskId)}`, {
+      headers: { Authorization: `Bearer ${input.apiKey}` },
+      signal: controller.signal,
+    });
+    const responseText = await response.text().catch(() => "");
+    let payload: RevoraVideoResponse = {};
+    try {
+      payload = JSON.parse(responseText) as RevoraVideoResponse;
+    } catch {
+      // Keep the raw response available for a useful gateway error message.
+    }
+    if (!response.ok) {
+      const detail = typeof payload.error === "string" ? payload.error : payload.error?.message;
+      return {
+        ok: false,
+        error: `[revora] poll ${response.status}: ${detail || responseText.slice(0, 400)}`,
+        status: response.status === 404 ? "failed" : undefined,
+        raw: payload,
+      };
+    }
+    const status = revoraVideoStatus(payload.status);
+    return { ok: true, status, videoUrl: revoraVideoUrl(payload), raw: payload };
+  } catch (error) {
+    const message =
+      error instanceof Error && error.name === "AbortError"
+        ? "poll timeout (30s)"
+        : error instanceof Error
+          ? error.message
+          : "fetch failed";
+    return { ok: false, error: `[revora] poll network: ${message}` };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 type VideoBackend =
   | "ark"
   | "dashscope"
@@ -2349,7 +2530,8 @@ type VideoBackend =
   | "hongmeng"
   | "sdreal"
   | "keyiyun"
-  | "agentearth";
+  | "agentearth"
+  | "revora";
 
 // ====================================================================
 // vapeur.ai 端实现 —— 透传火山方舟 ARK Seedance 原生格式
@@ -3271,6 +3453,30 @@ type SubmitResult =
 
 async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
   const backend = getVideoBackend(input.model);
+  if (backend === "revora") {
+    const { apiKey, baseUrl, model: upstreamModel } = getRevoraVideoConfig();
+    if (!apiKey) return { ok: false, error: "REVORA_VIDEO_API_KEY not configured" };
+    const result = await revoraSubmit({
+      model: input.model,
+      prompt: input.prompt,
+      media: input.media,
+      ratio: input.ratio,
+      resolution: input.resolution,
+      duration: input.duration,
+      apiKey,
+      baseUrl,
+      upstreamModel,
+    });
+    return result.ok
+      ? {
+          ok: true,
+          taskId: result.taskId,
+          model: input.model,
+          backend: "revora",
+          videoUrl: result.videoUrl,
+        }
+      : result;
+  }
   if (backend === "agentearth") {
     const { apiKey, baseUrl } = getAgentEarthVideoConfig();
     if (!apiKey) return { ok: false, error: "AGENTEARTH_API_KEY not configured" };
@@ -3791,6 +3997,11 @@ type PollResult =
   | { ok: false; error: string; status?: SeedanceProgress; raw?: any };
 
 async function pollVideoTask(input: PollInput): Promise<PollResult> {
+  if (input.backend === "revora") {
+    const { apiKey, baseUrl } = getRevoraVideoConfig();
+    if (!apiKey) return { ok: false, error: "REVORA_VIDEO_API_KEY not configured" };
+    return revoraPoll({ taskId: input.taskId, apiKey, baseUrl });
+  }
   if (input.backend === "agentearth") {
     return {
       ok: false,
@@ -4145,6 +4356,7 @@ const PollServerInput = z.object({
     "sdreal",
     "keyiyun",
     "agentearth",
+    "revora",
   ]),
 });
 

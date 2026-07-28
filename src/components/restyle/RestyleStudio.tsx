@@ -49,10 +49,20 @@ import { analyzeRestyleAssets, generateRestylePlan } from "../../lib/restyleAnal
 import { generateImage, generateImageWithReferences } from "../../lib/seedream.functions";
 import { generateVideo } from "../../lib/videoGenerate.functions";
 import { uploadLocalImage } from "../../lib/uploadImage.functions";
+import { persistAssetImage } from "../../lib/workspaceMedia.functions";
 import { realImageModelOptions, realVideoModels } from "../NewProjectDialog";
 
 type AssetLibraryStatus = "idle" | "loading" | "ready" | "error";
 type RestyleView = "workbench" | "canvas";
+
+// Older restyle projects stored the raw database id while newer projects use
+// the kind-prefixed id (for example, `character:<uuid>`). Treat both forms as
+// the same asset so existing projects do not render an empty canvas.
+function isRestyleAssetLinked(assetId: string, linkedIds: string[]): boolean {
+  if (linkedIds.includes(assetId)) return true;
+  const rawId = assetId.replace(/^[^:]+:/, "");
+  return rawId !== assetId && linkedIds.includes(rawId);
+}
 const RESTYLE_MODELS = [
   { id: "ark:deepseek-v4-pro-260425", label: "DeepSeek V4 Pro" },
   { id: "ark:doubao-seed-2-1-pro-260628", label: "Doubao Seed 2.1 Pro" },
@@ -208,13 +218,16 @@ async function extractVideoKeyFrames(file: File): Promise<string[]> {
   try {
     await waitForVideoEvent(video, "loadedmetadata");
     if (!Number.isFinite(video.duration) || video.duration <= 0 || video.videoWidth <= 0) return [];
-    const scale = Math.min(1, 640 / video.videoWidth);
+    const scale = Math.min(1, 480 / video.videoWidth);
     const canvas = document.createElement("canvas");
     canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
     canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
     const context = canvas.getContext("2d");
     if (!context) return [];
-    const sampleCount = Math.min(24, Math.max(8, Math.ceil(video.duration / 12)));
+    // Keep the server-function payload small enough for vision requests. The
+    // source video is still covered from beginning to end, but eight compact
+    // frames are more reliable than sending a 10+ MB base64 payload.
+    const sampleCount = Math.min(8, Math.max(4, Math.ceil(video.duration / 20)));
     const positions = Array.from({ length: sampleCount }, (_, index) =>
       Math.min(
         Math.max(0.05, video.duration * ((index + 0.5) / sampleCount)),
@@ -226,8 +239,8 @@ async function extractVideoKeyFrames(file: File): Promise<string[]> {
       video.currentTime = Math.min(position, Math.max(0, video.duration - 0.05));
       await waitForVideoEvent(video, "seeked");
       context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const image = canvas.toDataURL("image/jpeg", 0.45);
-      if (image.length <= 450_000) frames.push(image);
+      const image = canvas.toDataURL("image/jpeg", 0.32);
+      if (image.length <= 180_000) frames.push(image);
     }
     return frames;
   } finally {
@@ -840,6 +853,7 @@ export default function RestyleStudio() {
   const callGenerateImageWithReferences = useServerFn(generateImageWithReferences);
   const callGenerateVideo = useServerFn(generateVideo);
   const callUploadLocalMedia = useServerFn(uploadLocalImage);
+  const callPersistAssetImage = useServerFn(persistAssetImage);
 
   const activeProject = projects.find((project) => project.id === activeProjectId);
   const activeConversation = activeProject?.conversations.find(
@@ -869,7 +883,10 @@ export default function RestyleStudio() {
     [assets],
   );
   const linkedProjectAssets = useMemo(
-    () => assets.filter((asset) => activeProject?.assetIds.includes(asset.id)),
+    () =>
+      assets.filter((asset) =>
+        isRestyleAssetLinked(asset.id, activeProject?.assetIds ?? []),
+      ),
     [activeProject?.assetIds, assets],
   );
   const projectFileTree = useMemo(
@@ -1030,11 +1047,12 @@ export default function RestyleStudio() {
   function toggleAsset(assetId: string) {
     if (!activeProject) return;
     updateProject(activeProject.id, (project) => {
-      const linked = project.assetIds.includes(assetId);
+      const linked = isRestyleAssetLinked(assetId, project.assetIds);
+      const rawId = assetId.replace(/^[^:]+:/, "");
       return {
         ...project,
         assetIds: linked
-          ? project.assetIds.filter((id) => id !== assetId)
+          ? project.assetIds.filter((id) => id !== assetId && id !== rawId)
           : [...project.assetIds, assetId],
         confirmedAssetIds: linked
           ? project.confirmedAssetIds.filter((id) => id !== assetId)
@@ -2216,7 +2234,7 @@ export default function RestyleStudio() {
         }),
       );
       // Keep chronological coverage for the full upload, including multi-episode uploads.
-      const frameImages = frameBatches.flatMap((batch) => batch.frames).slice(0, 24);
+      const frameImages = frameBatches.flatMap((batch) => batch.frames).slice(0, 8);
       const result = await callAnalyzeRestyleAssets({
         data: {
           instruction: analysisInstruction,
@@ -2322,13 +2340,38 @@ export default function RestyleStudio() {
           });
           continue;
         }
+        let durableUrl = result.url;
+        try {
+          const persisted = await callPersistAssetImage({
+            data: {
+              url: result.url,
+              userId: user?.id ?? "",
+              kind: asset.kind,
+              id: `restyle-${projectId}-${asset.id}`,
+            },
+          });
+          if (!persisted.ok || !persisted.url) {
+            appendConversationMessage(projectId, conversationId, {
+              role: "assistant",
+              content: `资产图片已生成，但保存到长期存储失败：${asset.targetName || asset.sourceName}。请重试后再继续转绘。`,
+            });
+            continue;
+          }
+          durableUrl = persisted.url;
+        } catch (error) {
+          appendConversationMessage(projectId, conversationId, {
+            role: "assistant",
+            content: `资产图片已生成，但保存到长期存储失败：${error instanceof Error ? error.message : "未知错误"}。`,
+          });
+          continue;
+        }
         const attachment: RestyleAttachment = {
           id: crypto.randomUUID(),
           name: `${asset.kind}_${(asset.targetName || asset.sourceName).replace(/[^\w\u4e00-\u9fff-]+/g, "_")}.png`,
           size: 0,
           type: "image/png",
           lastModified: Date.now(),
-          url: result.url,
+          url: durableUrl,
           generatedKind: asset.kind,
           sourceAssetId: asset.id,
           prompt,
@@ -2391,7 +2434,7 @@ export default function RestyleStudio() {
     if (!activeProject) return;
     updateProject(activeProject.id, (project) => ({
       ...project,
-      assetIds: project.assetIds.includes(assetId)
+      assetIds: isRestyleAssetLinked(assetId, project.assetIds)
         ? project.assetIds
         : [...project.assetIds, assetId],
     }));
@@ -4820,7 +4863,9 @@ function StagePanel({
               <span>{t.restyle_asset_action}</span>
             </div>
             {assets.map((asset) => {
-              const linked = activeProject?.assetIds.includes(asset.id) ?? false;
+              const linked = activeProject
+                ? isRestyleAssetLinked(asset.id, activeProject.assetIds)
+                : false;
               const confirmed = activeProject?.confirmedAssetIds.includes(asset.id) ?? false;
               return (
                 <div

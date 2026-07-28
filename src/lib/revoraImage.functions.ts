@@ -2,7 +2,7 @@
 //  Revora AI Gateway —— 纯 OpenAI 兼容(api: revora.vip)
 //
 //  Base URL: https://revora.vip (env: REVORA_BASE_URL 可覆盖)
-//  Auth:     Authorization: Bearer ${REVORA_API_KEY}
+//  Auth:     Authorization: Bearer ${REVORA_VIDEO_API_KEY}
 //
 //  本模块只负责 Revora 中转上的 OpenAI 兼容图像接口:
 //    - 无参考图(T2I): POST /v1/images/generations
@@ -41,7 +41,7 @@ export function stripRevoraPrefix(modelId: string): string {
 
 function getRevoraConfig() {
   return {
-    apiKey: process.env.REVORA_API_KEY,
+    apiKey: process.env.REVORA_VIDEO_API_KEY,
     baseUrl: (process.env.REVORA_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, ""),
   };
 }
@@ -102,8 +102,8 @@ export async function callRevoraImage(input: RevoraImageInput): Promise<RevoraIm
   );
 
   if (!apiKey) {
-    console.warn(`[revora×] model=${model} missing REVORA_API_KEY`);
-    return { url: "", urls: [], error: "REVORA_API_KEY not configured", model };
+    console.warn(`[revora×] model=${model} missing REVORA_VIDEO_API_KEY`);
+    return { url: "", urls: [], error: "REVORA_VIDEO_API_KEY not configured", model };
   }
 
   const controller = new AbortController();

@@ -222,6 +222,19 @@ export async function loadProps(userId: string, from = 0, to = 20) {
     .range(from, to);
 }
 
+/** Detail pages query by primary key directly so assets beyond the first page remain addressable. */
+export async function loadCharacterById(userId: string, id: string) {
+  return supabase.from("characters").select("*").eq("user_id", userId).eq("id", id).maybeSingle();
+}
+
+export async function loadSceneById(userId: string, id: string) {
+  return supabase.from("scenes").select("*").eq("user_id", userId).eq("id", id).maybeSingle();
+}
+
+export async function loadPropById(userId: string, id: string) {
+  return supabase.from("props").select("*").eq("user_id", userId).eq("id", id).maybeSingle();
+}
+
 /** 从资产库移除单条角色/场景(per-item 删除按钮用) */
 export async function deleteCharacter(id: string, userId: string) {
   return supabase.from("characters").delete().eq("id", id).eq("user_id", userId);

@@ -86,6 +86,13 @@ export const IMAGE_MODELS: ImageModelOption[] = [
     sub: "[Tokenflash·OpenAI] Image2 · T2I/I2I · 推荐",
   },
 
+  // ---- [OneToken · OpenAI 兼容] api.onetoken.one → /v1/images/generations ----
+  {
+    key: "onetoken/gpt-image-2",
+    label: "GPT Image 2 (OneToken)",
+    sub: "[OneToken·OpenAI] Image2 · T2I",
+  },
+
   // ---- [AIGCFamily · OpenAI 兼容] api1.aigcfamily.top → /v1/images/generations ----
   //  ⚠ 网关仅提供 T2I 端点(无 /v1/images/edits,不接受参考图)→ 仅文生图
   //  2026/06 接入:实测 gpt-image-2 单次 ≈ 50s

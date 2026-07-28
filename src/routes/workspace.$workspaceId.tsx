@@ -9204,6 +9204,37 @@ function WorkspacePage() {
     }
   }
 
+  async function persistAssetEntries(
+    kind: "character" | "scene" | "prop",
+    id: string,
+    entries: { url: string; label: string }[] | undefined,
+    sourceCoverUrl: string | null,
+    persistedCoverUrl: string | null,
+  ): Promise<{ url: string; label: string }[] | undefined> {
+    if (!entries?.length) return undefined;
+    const persisted: { url: string; label: string }[] = [];
+    for (const entry of entries) {
+      if (!entry.url) continue;
+      if (entry.url === sourceCoverUrl && persistedCoverUrl) {
+        persisted.push({ ...entry, url: persistedCoverUrl });
+        continue;
+      }
+      if (isPersistedUrl(entry.url)) {
+        persisted.push(entry);
+        continue;
+      }
+      try {
+        const result = await callPersistAsset({
+          data: { url: entry.url, userId: user?.id ?? "", kind, id },
+        });
+        if (result.ok && result.url) persisted.push({ ...entry, url: result.url });
+      } catch {
+        // Keep the asset record usable even when one historical rendition cannot be rehosted.
+      }
+    }
+    return persisted.length ? persisted : undefined;
+  }
+
   // 2026/06:per-item 保存角色到资产库。
   // - imageKey 形如 `${characterId}`(默认)或 `${characterId}::${lookId}`(变体)
   // - 取该 imageKey 在 charImages 里的最后一张作为 cover_url(per-look 准确对应)
@@ -9240,7 +9271,14 @@ function WorkspacePage() {
         toast.warning("图片保存失败，将以临时链接保存(24h 内有效)");
       }
     }
-    const r = await saveOneCharacter(c, user.id, permCoverUrl, images.length ? images : undefined);
+    const persistedImages = await persistAssetEntries(
+      "character",
+      c.id,
+      images.length ? images : undefined,
+      coverUrl,
+      permCoverUrl,
+    );
+    const r = await saveOneCharacter(c, user.id, permCoverUrl, persistedImages);
     if (!r.ok) {
       toast.error(`保存角色失败:${r.error}`);
       return;
@@ -9277,7 +9315,8 @@ function WorkspacePage() {
         toast.warning("道具图片保存失败，将以临时链接保存(24h 内有效)");
       }
     }
-    const r = await saveOneProp(p, user.id, permCoverUrl, images);
+    const persistedImages = await persistAssetEntries("prop", p.id, images, coverUrl, permCoverUrl);
+    const r = await saveOneProp(p, user.id, permCoverUrl, persistedImages);
     if (!r.ok) {
       toast.error(`保存道具失败:${r.error}`);
       return;
@@ -9312,7 +9351,8 @@ function WorkspacePage() {
         toast.warning("场景图片保存失败，将以临时链接保存(24h 内有效)");
       }
     }
-    const r = await saveOneScene(s, user.id, permCoverUrl, images);
+    const persistedImages = await persistAssetEntries("scene", s.id, images, coverUrl, permCoverUrl);
+    const r = await saveOneScene(s, user.id, permCoverUrl, persistedImages);
     if (!r.ok) {
       toast.error(`保存场景失败:${r.error}`);
       return;
