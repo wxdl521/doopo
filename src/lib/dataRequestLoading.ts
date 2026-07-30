@@ -6,15 +6,43 @@
 export const DATA_REQUEST_EVENT = "doopoo:data-request";
 
 let pendingRequests = 0;
+let totalRequests = 0;
+let completedRequests = 0;
+
+export type DataRequestProgress = {
+  pending: number;
+  total: number;
+  completed: number;
+};
 
 export function getPendingDataRequests() {
   return pendingRequests;
 }
 
+export function getDataRequestProgress(): DataRequestProgress {
+  return {
+    pending: pendingRequests,
+    total: totalRequests,
+    completed: completedRequests,
+  };
+}
+
 function updatePendingRequests(delta: 1 | -1) {
-  pendingRequests = Math.max(0, pendingRequests + delta);
+  if (delta === 1) {
+    if (pendingRequests === 0) {
+      totalRequests = 0;
+      completedRequests = 0;
+    }
+    pendingRequests += 1;
+    totalRequests += 1;
+  } else if (pendingRequests > 0) {
+    pendingRequests -= 1;
+    completedRequests += 1;
+  }
   if (typeof window === "undefined") return;
-  window.dispatchEvent(new CustomEvent<number>(DATA_REQUEST_EVENT, { detail: delta }));
+  window.dispatchEvent(
+    new CustomEvent<DataRequestProgress>(DATA_REQUEST_EVENT, { detail: getDataRequestProgress() }),
+  );
 }
 
 export async function trackDataRequest<T>(request: () => Promise<T>): Promise<T> {

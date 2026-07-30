@@ -238,7 +238,6 @@ const KlingVideoInput = z.object({
   duration: z.number().int().min(3).max(15).optional(),
   ratio: z.enum(["16:9", "9:16", "1:1"]).optional(),
   generateAudio: z.boolean().optional(),
-  pollMs: z.number().min(2_000).max(30_000).optional(),
 });
 
 export const generateKlingVideo = createServerFn({ method: "POST" })
@@ -258,7 +257,7 @@ export const generateKlingVideo = createServerFn({ method: "POST" })
 
     // 2) 轮询
     const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-    const pollInterval = data.pollMs ?? 5_000;
+    const pollInterval = 60_000;
     // 供应商任务未进入明确失败态前持续轮询，不用本地 deadline 误判长任务失败。
     while (true) {
       await sleep(pollInterval);

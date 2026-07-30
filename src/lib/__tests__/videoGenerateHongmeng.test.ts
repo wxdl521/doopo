@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   extractArkVideoUrl,
   getVideoBackend,
+  normalizeShuciVideoBaseUrl,
   seedanceStatusToProgress,
 } from "../videoGenerate.functions";
 
@@ -47,5 +48,16 @@ describe("弘梦 ARK 兼容任务查询", () => {
 
   it("将客易云模型路由至其专用创建、素材和查询接口", () => {
     expect(getVideoBackend("keyiyun-sd-2-0-fast-discount-720p")).toBe("keyiyun");
+  });
+
+  it("数安词源统一使用字节 ARK v3 任务接口根地址", () => {
+    expect(normalizeShuciVideoBaseUrl("http://token.ds.cyberpeace.cn")).toBe(
+      "http://token.ds.cyberpeace.cn/api/v3",
+    );
+    expect(
+      normalizeShuciVideoBaseUrl(
+        "http://token.ds.cyberpeace.cn/api/v3/contents/generations/tasks/task-123",
+      ),
+    ).toBe("http://token.ds.cyberpeace.cn/api/v3");
   });
 });

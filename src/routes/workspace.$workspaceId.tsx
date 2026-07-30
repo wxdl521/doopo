@@ -7587,7 +7587,7 @@ function WorkspacePage() {
    *  2) 第一张图作为 first_frame(视频起始画面)
    *  3) 后续图作为 reference_image(引导模型按这些参考图生成连贯镜头变化)
    *  4) 拼 prompt = 整组剧情 + 每个 shot 的景别/动作/机位,让模型理解整个镜头序列
-   *  5) 调 generateVideo(server 端 submit + poll 4min)
+   *  5) 调 generateVideo(server 端提交后持续轮询)
    *  6) 存到 groupVideos[groupId],UI 在右侧"视频 · Video"面板渲染 <video>
    *
    * 注意:视频 URL 24h 有效(跟图片永久 URL 行为不同)。
@@ -8107,15 +8107,8 @@ function WorkspacePage() {
 
     const lastEntry = (groupVideos[groupId] ?? []).at(-1);
     if (lastEntry?.status === "running") {
-      // 超过 server deadline(5min)+缓冲 → 判定 hang(callGenVideo 被 CF 杀但客户端
-      // fetch 未干净返回),自动重置为 failed 放行重试;否则正常生成中,拦截并发。
-      const elapsed = lastEntry.startedAt ? Date.now() - lastEntry.startedAt : 0;
-      if (elapsed > 330_000) {
-        markVideoFailed(groupId);
-      } else {
-        toast.message("该组视频正在生成中…");
-        return false;
-      }
+      toast.message("该组视频正在生成中…");
+      return false;
     }
 
     let payload: VideoGenPayload | null;
