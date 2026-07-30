@@ -2276,8 +2276,11 @@ type SubmitInput = {
 };
 
 /**
- * AgentEarth 的 videos/generations 在网关侧同步等待任务完成，成功时直接返回 MP4 URL。
- * 因此不进入项目通用的任务轮询流程；URL 仅有效 24 小时，调用方应尽快转存。
+ * AgentEarth Seedance 2.0 异步任务提交。
+ *
+ * 官方接口会立即返回 `queued` 任务；必须再查询 `/videos/{id}` 取得成品 URL。
+ * 不要在 POST 上挂着等模型生成完成：这会让 Cloudflare/网关先断开浏览器请求，表现为
+ * 无上下文的 502，即使上游任务最终已经成功。
  */
 async function agentEarthSeedanceSubmit(input: {
   model: string;
@@ -2291,7 +2294,7 @@ async function agentEarthSeedanceSubmit(input: {
   referenceAudioUrl?: string;
   apiKey: string;
   baseUrl: string;
-}): Promise<{ ok: true; videoUrl: string } | { ok: false; error: string }> {
+}): Promise<{ ok: true; taskId: string; model: string } | { ok: false; error: string }> {
   if (input.duration != null && (input.duration < 4 || input.duration > 15)) {
     return {
       ok: false,
@@ -2314,14 +2317,18 @@ async function agentEarthSeedanceSubmit(input: {
   if (input.referenceVideoUrl) body.video_input = input.referenceVideoUrl;
   if (input.referenceAudioUrl) body.audio_input = input.referenceAudioUrl;
 
+  // AgentEarth 支持 Idempotency-Key；网络重试不会创建重复扣费任务。
+  const idempotencyKey = `doopoo-video-${crypto.randomUUID()}`;
+
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 600_000);
+  const timeout = setTimeout(() => controller.abort(), 30_000);
   try {
-    const response = await fetch(`${input.baseUrl}/videos/generations`, {
+    const response = await fetch(`${input.baseUrl}/videos`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${input.apiKey}`,
+        "Idempotency-Key": idempotencyKey,
       },
       body: JSON.stringify(body),
       signal: controller.signal,
@@ -2333,26 +2340,73 @@ async function agentEarthSeedanceSubmit(input: {
         error: `[agentearth] generate ${response.status}: ${responseText.slice(0, 500)}`,
       };
     }
-    let payload: { data?: Array<{ url?: string }>; error?: { message?: string } } = {};
+    let payload: { id?: string; task_id?: string; error?: { message?: string } } = {};
     try {
       payload = JSON.parse(responseText);
     } catch {}
-    const videoUrl = payload.data?.[0]?.url;
-    if (!videoUrl) {
+    const taskId = payload.id || payload.task_id;
+    if (!taskId) {
       return {
         ok: false,
-        error: `[agentearth] no video URL: ${payload.error?.message || responseText.slice(0, 300)}`,
+        error: `[agentearth] submit missing task id: ${payload.error?.message || responseText.slice(0, 300)}`,
       };
     }
-    return { ok: true, videoUrl };
+    return { ok: true, taskId, model: input.model };
   } catch (error) {
     const message =
       error instanceof Error && error.name === "AbortError"
-        ? "generation timeout (600s)"
+        ? "submit timeout (30s)"
         : error instanceof Error
           ? error.message
           : "fetch failed";
     return { ok: false, error: `[agentearth] network: ${message}` };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/** 查询 AgentEarth 异步视频任务。 */
+async function agentEarthSeedancePoll(input: {
+  taskId: string;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<PollResult> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const response = await fetch(`${input.baseUrl}/videos/${encodeURIComponent(input.taskId)}`, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${input.apiKey}` },
+      signal: controller.signal,
+    });
+    const responseText = await response.text().catch(() => "");
+    let payload: RevoraVideoResponse = {};
+    try {
+      payload = JSON.parse(responseText) as RevoraVideoResponse;
+    } catch {}
+    if (!response.ok) {
+      const detail = typeof payload.error === "string" ? payload.error : payload.error?.message;
+      return {
+        ok: false,
+        error: `[agentearth] poll ${response.status}: ${detail || responseText.slice(0, 400)}`,
+        status: response.status === 404 ? "failed" : undefined,
+        raw: payload,
+      };
+    }
+    return {
+      ok: true,
+      status: seedanceStatusToProgress(payload.status),
+      videoUrl: revoraVideoUrl(payload),
+      raw: payload,
+    };
+  } catch (error) {
+    const message =
+      error instanceof Error && error.name === "AbortError"
+        ? "poll timeout (30s)"
+        : error instanceof Error
+          ? error.message
+          : "fetch failed";
+    return { ok: false, error: `[agentearth] poll network: ${message}` };
   } finally {
     clearTimeout(timeout);
   }
@@ -3496,10 +3550,9 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
     return result.ok
       ? {
           ok: true,
-          taskId: `agentearth-sync-${Date.now()}`,
+          taskId: result.taskId,
           model: input.model,
           backend: "agentearth",
-          videoUrl: result.videoUrl,
         }
       : result;
   }
@@ -4003,12 +4056,9 @@ async function pollVideoTask(input: PollInput): Promise<PollResult> {
     return revoraPoll({ taskId: input.taskId, apiKey, baseUrl });
   }
   if (input.backend === "agentearth") {
-    return {
-      ok: false,
-      error:
-        "[agentearth] generation is synchronous; use the videoUrl returned by submitVideoTaskFn",
-      status: "succeeded",
-    };
+    const { apiKey, baseUrl } = getAgentEarthVideoConfig();
+    if (!apiKey) return { ok: false, error: "AGENTEARTH_API_KEY not configured" };
+    return agentEarthSeedancePoll({ taskId: input.taskId, apiKey, baseUrl });
   }
   if (input.backend === "keyiyun") {
     const { apiKey, baseUrl } = getKeyiyunConfig();
@@ -4252,8 +4302,9 @@ const SubmitServerInput = z.object({
 });
 
 export const submitVideoTaskFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
   .validator((d: unknown) => SubmitServerInput.parse(d))
-  .handler(async ({ data }) => {
+  .handler(async ({ data, context }) => {
     const __t0 = Date.now();
     // ---- 积分预校验:余额不足直接拒绝,避免向外部服务白扣任务额度 ----
     {
@@ -4288,11 +4339,40 @@ export const submitVideoTaskFn = createServerFn({ method: "POST" })
     }
     const prompt = (data.content as any[]).find((i) => i?.type === "text")?.text || "";
     const model = data.model || ARK_DEFAULT_MODEL;
+    const backend = getVideoBackend(model);
+    const { supabase, userId } = context as { supabase: any; userId: string };
+
+    // 与 generateVideo 保持一致：浏览器 data URI 不能直接交给上游视频接口。
+    const persistedMedia: DashScopeMediaItem[] = [];
+    for (const item of media) {
+      if (/^(?:asset|assetId):\/\//.test(item.url)) {
+        persistedMedia.push(item);
+        continue;
+      }
+      const persisted = await persistDataUriUrl(
+        item.url,
+        supabase,
+        userId,
+        backend === "sdreal",
+      );
+      if (!persisted.ok) return { ok: false as const, error: persisted.error };
+      persistedMedia.push({ ...item, url: persisted.url });
+    }
+    if (referenceVideoUrl) {
+      const persisted = await persistDataUriUrl(referenceVideoUrl, supabase, userId);
+      if (!persisted.ok) return { ok: false as const, error: persisted.error };
+      referenceVideoUrl = persisted.url;
+    }
+    if (referenceAudioUrl) {
+      const persisted = await persistAudioUrl(referenceAudioUrl, supabase, userId);
+      if (!persisted.ok) return { ok: false as const, error: persisted.error };
+      referenceAudioUrl = persisted.url;
+    }
 
     const r = await submitVideoTask({
       model,
       prompt,
-      media,
+      media: persistedMedia,
       ratio: data.ratio,
       resolution: data.resolution,
       duration: data.duration,
@@ -4361,6 +4441,7 @@ const PollServerInput = z.object({
 });
 
 export const pollVideoTaskFn = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
   .validator((d: unknown) => PollServerInput.parse(d))
   .handler(async ({ data }) => {
     const r = await pollVideoTask({ taskId: data.taskId, backend: data.backend });
@@ -4694,7 +4775,7 @@ export const generateVideo = createServerFn({ method: "POST" })
 
     data.onProgress?.("queued", { taskId: submit.taskId, backend });
 
-    // AgentEarth 网关会等待生成完成后直接返回 MP4，无需再等待一个轮询间隔。
+    // 少数旧后端会在提交时直接返回 MP4；AgentEarth 等正常走下面的异步轮询。
     if (submit.videoUrl) {
       data.onProgress?.("succeeded", {
         taskId: submit.taskId,

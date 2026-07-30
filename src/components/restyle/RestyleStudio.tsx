@@ -47,7 +47,7 @@ import {
 import type { RestyleAsset, RestyleStage } from "./restyleTypes";
 import { analyzeRestyleAssets, generateRestylePlan } from "../../lib/restyleAnalysis.functions";
 import { generateImage, generateImageWithReferences } from "../../lib/seedream.functions";
-import { generateVideo } from "../../lib/videoGenerate.functions";
+import { pollVideoTaskFn, submitVideoTaskFn } from "../../lib/videoGenerate.functions";
 import { uploadLocalImage } from "../../lib/uploadImage.functions";
 import { persistAssetImage } from "../../lib/workspaceMedia.functions";
 import { realImageModelOptions, realVideoModels } from "../NewProjectDialog";
@@ -851,7 +851,8 @@ export default function RestyleStudio() {
   const callGenerateRestylePlan = useServerFn(generateRestylePlan);
   const callGenerateImage = useServerFn(generateImage);
   const callGenerateImageWithReferences = useServerFn(generateImageWithReferences);
-  const callGenerateVideo = useServerFn(generateVideo);
+  const callSubmitVideoTask = useServerFn(submitVideoTaskFn);
+  const callPollVideoTask = useServerFn(pollVideoTaskFn);
   const callUploadLocalMedia = useServerFn(uploadLocalImage);
   const callPersistAssetImage = useServerFn(persistAssetImage);
 
@@ -1548,12 +1549,25 @@ export default function RestyleStudio() {
         failRenderAttachment(projectId, job.attachmentId, referenceVideo.error);
       } else {
         appendRenderLog(projectId, job.attachmentId, "原视频已就绪，正在提交转绘任务。");
-        const result = await callGenerateVideo({
+        // 提交和查询拆成短请求，避免把视频生成时长挂在同一个 Worker 请求上。
+        // AgentEarth 的异步接口建议每 5 秒查询一次；其它后端也可安全复用这个节奏。
+        const submitted = await callSubmitVideoTask({
           data: {
-            prompt: job.prompt,
-            imageUrl: job.referenceImages[0],
-            referenceImageUrls: job.referenceImages.slice(1),
-            referenceVideoUrl: referenceVideo.url,
+            content: [
+              { type: "text", text: job.prompt },
+              ...job.referenceImages.map((url, index) => ({
+                type: "image_url" as const,
+                image_url: { url },
+                role: (index === 0 ? "first_frame" : "reference_image") as
+                  | "first_frame"
+                  | "reference_image",
+              })),
+              {
+                type: "video_url" as const,
+                video_url: { url: referenceVideo.url },
+                role: "reference_video" as const,
+              },
+            ],
             model: selectedVideoModel,
             ratio: "16:9",
             resolution: "720P",
@@ -1562,20 +1576,88 @@ export default function RestyleStudio() {
             watermark: false,
           },
         });
-        if (!result.ok || !result.videoUrl) {
+        if (!submitted.ok || !submitted.taskId) {
           failRenderAttachment(
             projectId,
             job.attachmentId,
-            result.ok ? "视频模型没有返回可播放的结果 URL" : result.error,
-            result.taskId,
+            submitted.ok ? "视频模型没有返回任务编号" : submitted.error,
           );
         } else {
           appendRenderLog(
             projectId,
             job.attachmentId,
-            `模型任务 ${result.taskId ?? "已完成"} 返回成功。`,
+            `模型任务 ${submitted.taskId} 已创建，正在后台生成。`,
           );
-          completeRenderAttachment(projectId, job.attachmentId, result.videoUrl, result.taskId);
+          updateRenderAttachments(
+            projectId,
+            (file) => file.id === job.attachmentId,
+            (file) => ({
+              ...file,
+              renderTaskId: submitted.taskId,
+              renderStatus: "running" as const,
+              renderProgress: 25,
+            }),
+          );
+
+          while (true) {
+            await new Promise<void>((resolve) => window.setTimeout(resolve, 5_000));
+            let polled: Awaited<ReturnType<typeof callPollVideoTask>>;
+            try {
+              polled = await callPollVideoTask({
+                data: { taskId: submitted.taskId, backend: submitted.backend },
+              });
+            } catch (error) {
+              // 轮询是幂等的，短暂的 502/网络抖动不应直接把已提交的任务标记失败。
+              appendRenderLog(
+                projectId,
+                job.attachmentId,
+                `任务查询暂时不可用，将自动重试：${error instanceof Error ? error.message : "网络错误"}`,
+              );
+              continue;
+            }
+            if (!polled.ok) {
+              if (polled.status === "failed" || polled.status === "cancelled") {
+                failRenderAttachment(projectId, job.attachmentId, polled.error, submitted.taskId);
+                break;
+              }
+              appendRenderLog(projectId, job.attachmentId, `任务查询失败，将自动重试：${polled.error}`);
+              continue;
+            }
+            if (polled.status === "succeeded") {
+              if (!polled.videoUrl) {
+                failRenderAttachment(
+                  projectId,
+                  job.attachmentId,
+                  "视频任务已完成但没有返回可播放的结果 URL",
+                  submitted.taskId,
+                );
+              } else {
+                appendRenderLog(projectId, job.attachmentId, `模型任务 ${submitted.taskId} 返回成功。`);
+                completeRenderAttachment(projectId, job.attachmentId, polled.videoUrl, submitted.taskId);
+              }
+              break;
+            }
+            if (polled.status === "failed" || polled.status === "cancelled") {
+              failRenderAttachment(
+                projectId,
+                job.attachmentId,
+                `视频任务${polled.status === "cancelled" ? "已取消" : "失败"}`,
+                submitted.taskId,
+              );
+              break;
+            }
+            const progress = polled.status === "running" ? 65 : 40;
+            updateRenderAttachments(
+              projectId,
+              (file) => file.id === job.attachmentId,
+              (file) => ({ ...file, renderStatus: "running" as const, renderProgress: progress }),
+            );
+            appendRenderLog(
+              projectId,
+              job.attachmentId,
+              polled.status === "running" ? "模型正在生成视频。" : "任务正在队列中等待执行。",
+            );
+          }
         }
       }
     } catch (error) {
