@@ -15,7 +15,6 @@ import MainLayout from "../layouts/MainLayout";
 import { useEffect } from "react";
 import { runLegacyMigration } from "../lib/legacyMigrate";
 import { Toaster } from "../components/ui/sonner";
-import DatabaseLoadingIndicator from "../components/DatabaseLoadingIndicator";
 
 function NotFoundComponent() {
   return (
@@ -166,7 +165,6 @@ function RootComponent() {
           <MainLayout>
             <Outlet />
           </MainLayout>
-          <DatabaseLoadingIndicator />
           <Toaster />
         </ThemeProvider>
       </LanguageProvider>

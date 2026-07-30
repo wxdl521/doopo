@@ -117,6 +117,7 @@ import {
   Camera,
   Clock,
   Users,
+  Funnel,
   X,
   Loader2,
   Sparkles,
@@ -1258,6 +1259,64 @@ function GroupSceneEditor({
   );
 }
 
+type WorkspaceLoadProgress = {
+  completed: number;
+  total: number;
+};
+
+function StageDatabaseLoadingOverlay({
+  stage,
+  completed,
+  total,
+}: {
+  stage: "character" | "storyboard";
+  completed: number;
+  total: number;
+}) {
+  const progress = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0;
+  const stageLabel = stage === "character" ? "角色资产" : "分镜与素材";
+
+  return (
+    <div className="absolute inset-0 z-40 grid min-h-[420px] place-items-center bg-bg/80 p-6 backdrop-blur-sm">
+      <section
+        aria-live="polite"
+        className="w-full max-w-sm rounded-2xl border border-accent/30 bg-bg-surface/95 p-6 shadow-2xl"
+      >
+        <div className="mb-6 flex items-center gap-4">
+          <div className="relative grid h-12 w-12 place-items-center rounded-xl bg-accent/15 text-accent">
+            <Funnel className="animate-pulse" size={26} />
+            <Loader2 className="absolute -right-1 -bottom-1 animate-spin" size={14} />
+          </div>
+          <div>
+            <p className="font-semibold text-text-primary">正在加载{stageLabel}</p>
+            <p className="mt-1 text-sm text-text-muted">正在从数据库读取工作区内容</p>
+          </div>
+        </div>
+
+        <div
+          aria-label="数据库加载进度"
+          aria-valuemax={total}
+          aria-valuemin={0}
+          aria-valuenow={completed}
+          className="h-2 overflow-hidden rounded-full bg-bg-elevated"
+          role="progressbar"
+        >
+          <div
+            className="h-full rounded-full bg-accent transition-[width] duration-300"
+            style={{ width: progress + "%" }}
+          />
+        </div>
+        <div className="mt-3 flex items-center justify-between text-sm text-text-muted">
+          <span>数据加载进度</span>
+          <span>
+            {completed}/{total}
+          </span>
+        </div>
+      </section>
+    </div>
+  );
+}
+
 function WorkspacePage() {
   const workspaceId = Route.useParams().workspaceId;
   const { t } = useLanguage();
@@ -2007,6 +2066,10 @@ function WorkspacePage() {
   const [workspaceLoadError, setWorkspaceLoadError] = useState<string | null>(null);
   const [workspaceMediaReady, setWorkspaceMediaReady] = useState(false);
   const [workspaceMediaLoadError, setWorkspaceMediaLoadError] = useState<string | null>(null);
+  const [workspaceLoadProgress, setWorkspaceLoadProgress] = useState<WorkspaceLoadProgress>({
+    completed: 0,
+    total: 4,
+  });
   // 已入资产状态需要随工作区保存。仅用内存 Set 会在刷新后把卡片重新显示为“保存到资产”。
   const [savedAssetKeys, setSavedAssetKeys] = useState<Set<string>>(new Set());
   const savedAssetKeysRef = useRef<Set<string>>(new Set());
@@ -3133,14 +3196,26 @@ function WorkspacePage() {
 
   useEffect(() => {
     let cancelled = false;
+    setWorkspaceLoadProgress({ completed: 0, total: 4 });
     // 先完成轻量核心内容。大媒体 JSON 查询会在页面打开后再启动，避免多个
     // 查询同时读取同一条超大 workspace_data 而触发数据库 statement timeout。
     loadProject({ data: { id: workspaceId } })
       .then((r) => {
-        if (!cancelled && r.project) setProject(r.project);
+        if (cancelled) return;
+        if (r.project) setProject(r.project);
+        setWorkspaceLoadProgress((current) => ({
+          ...current,
+          completed: Math.min(current.total, current.completed + 1),
+        }));
       })
       .catch((error) => {
         console.error("[workspace] failed to load project settings:", error);
+        if (!cancelled) {
+          setWorkspaceLoadProgress((current) => ({
+            ...current,
+            completed: Math.min(current.total, current.completed + 1),
+          }));
+        }
       });
     // Load persisted workspace data
     callLoadWorkspace({ data: { id: workspaceId } })
@@ -3153,6 +3228,10 @@ function WorkspacePage() {
           return;
         }
         setWorkspaceLoadError(null);
+        setWorkspaceLoadProgress((current) => ({
+          ...current,
+          completed: Math.min(current.total, current.completed + 1),
+        }));
         const wd = r.workspaceData as Record<string, any>;
         if (Array.isArray(wd.savedAssetKeys)) {
           const keys = new Set(
@@ -3292,6 +3371,10 @@ function WorkspacePage() {
         }));
         void storyboardStructurePromise.then((structureResult: any) => {
           if (cancelled) return;
+          setWorkspaceLoadProgress((current) => ({
+            ...current,
+            completed: Math.min(current.total, current.completed + 1),
+          }));
           if (structureResult.error || !structureResult.workspaceData) {
             toast.warning(`分镜结构暂未恢复：${structureResult.error || "请刷新后重试"}`);
             return;
@@ -3331,6 +3414,10 @@ function WorkspacePage() {
           )
           .then((mediaResult: any) => {
             if (cancelled) return;
+            setWorkspaceLoadProgress((current) => ({
+              ...current,
+              completed: Math.min(current.total, current.completed + 1),
+            }));
             if (mediaResult.error || !mediaResult.workspaceData) {
               const message = mediaResult.error || "项目媒体内容无法加载，请刷新后重试";
               setWorkspaceMediaLoadError(message);
@@ -3399,6 +3486,7 @@ function WorkspacePage() {
         setWorkspaceLoadError(
           error instanceof Error ? error.message : "项目内容加载失败，请刷新后重试",
         );
+        setWorkspaceLoadProgress({ completed: 4, total: 4 });
       });
     return () => {
       cancelled = true;
@@ -11039,7 +11127,16 @@ function WorkspacePage() {
         onProjectSaved={(saved) => setProject((p) => (p ? { ...p, ...saved } : p))}
       />
       <div className="flex-1 flex min-h-0">
-        <main className="flex-1 min-w-0 overflow-auto p-6">
+        <main className="relative flex-1 min-w-0 overflow-auto p-6">
+          {(tab === "character" || tab === "storyboard") &&
+            !workspaceMediaReady &&
+            !workspaceMediaLoadError && (
+              <StageDatabaseLoadingOverlay
+                completed={workspaceLoadProgress.completed}
+                stage={tab}
+                total={workspaceLoadProgress.total}
+              />
+            )}
           {tab === "canvas" && (
             <div className="relative max-w-4xl mx-auto rounded-2xl border-2 border-dashed border-accent/50 bg-bg-surface p-6 min-h-[500px]">
               <div className="flex items-center justify-between mb-3">
