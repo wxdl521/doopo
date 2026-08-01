@@ -9,6 +9,66 @@ import {
 } from "./arkText";
 
 const QWEN_ENDPOINT = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
+const LOVABLE_ENDPOINT = "https://ai.gateway.lovable.dev/v1/chat/completions";
+
+type RestyleProviderConfig = {
+  provider: "ark" | "qwen" | "lovable";
+  model: string;
+  endpoint: string;
+  apiKey: string | undefined;
+  missingKeyError: string;
+  label: string;
+};
+
+/** 把带前缀的模型 id 解析成上游 provider 配置。process.env 只在 handler 内读取。 */
+function resolveProvider(modelId: string): RestyleProviderConfig {
+  if (modelId.startsWith("ark:")) {
+    return {
+      provider: "ark",
+      model: modelId.slice(4) || ARK_TEXT_MODEL,
+      endpoint: arkTextEndpoint(),
+      apiKey: arkTextApiKey(),
+      missingKeyError: "DeepSeek V4 Pro 未配置：请设置 ARK_API_KEY。",
+      label: "DeepSeek",
+    };
+  }
+  if (modelId.startsWith("lovable:")) {
+    return {
+      provider: "lovable",
+      model: modelId.slice(8),
+      endpoint: LOVABLE_ENDPOINT,
+      apiKey: process.env.LOVABLE_API_KEY,
+      missingKeyError: "GPT-5.5 未配置：Lovable AI 网关缺少 LOVABLE_API_KEY。",
+      label: "GPT-5.5",
+    };
+  }
+  return {
+    provider: "qwen",
+    model: modelId.slice(5),
+    endpoint: QWEN_ENDPOINT,
+    apiKey: qwenApiKey(),
+    missingKeyError: "Qwen 未配置：请设置 Qwen、QWEN_API_KEY 或 DASHSCOPE_API_KEY。",
+    label: "Qwen",
+  };
+}
+
+/**
+ * 各家对采样/长度参数的要求不同：GPT-5 系列拒绝 temperature 和 max_tokens，
+ * 只接受 max_completion_tokens；ARK 需要显式关闭 thinking。
+ */
+function providerTuning(
+  config: RestyleProviderConfig,
+  maxTokens: number,
+): Record<string, unknown> {
+  if (config.provider === "lovable") {
+    return { max_completion_tokens: maxTokens };
+  }
+  return {
+    ...(config.provider === "ark" ? { thinking: ARK_TEXT_THINKING_DISABLED } : {}),
+    temperature: 0.2,
+    max_tokens: maxTokens,
+  };
+}
 
 const AssetSchema = z.object({
   kind: z.enum(["character", "scene", "prop"]),
@@ -35,6 +95,7 @@ const InputSchema = z.object({
     "qwen:qwen3.6-plus",
     "qwen:qwen3.6-flash",
     "qwen:qwen3.7-max",
+    "lovable:openai/gpt-5.5",
   ]),
   sourceFiles: z
     .array(
