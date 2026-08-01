@@ -51,6 +51,7 @@ import { pollVideoTaskFn, submitVideoTaskFn } from "../../lib/videoGenerate.func
 import { uploadLocalImage } from "../../lib/uploadImage.functions";
 import { persistAssetImage } from "../../lib/workspaceMedia.functions";
 import { realImageModelOptions, realVideoModels } from "../NewProjectDialog";
+import { isConfirmIntent, isVideoRenderIntent } from "./restyleIntent";
 
 type AssetLibraryStatus = "idle" | "loading" | "ready" | "error";
 type RestyleView = "workbench" | "canvas";
