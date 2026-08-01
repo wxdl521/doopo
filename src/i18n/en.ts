@@ -1695,6 +1695,8 @@ export const en: Translations = {
   restyle_asset_prompts_title: "Asset image prompts",
   restyle_regenerate_with_prompt: "Regenerate with current prompt",
   restyle_reset_prompt_override: "Restore auto prompt",
+  restyle_prompt_override_hint:
+    "This prompt is manually overridden. Corrections you send in chat are prepended with top priority; click Restore auto prompt to go back to the generated one.",
   restyle_prompt_overridden: "Edited",
   restyle_segment_prompts_title: "Segment video prompts",
   restyle_run_process_title: "Processing steps",

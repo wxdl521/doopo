@@ -1668,6 +1668,8 @@ export const zh = {
   restyle_asset_prompts_title: "资产图提示词",
   restyle_regenerate_with_prompt: "按当前提示词重新生成",
   restyle_reset_prompt_override: "恢复自动生成",
+  restyle_prompt_override_hint:
+    "当前为手工覆盖的提示词。对话中提出的修正会以最高优先级叠加在它之前；想完全回到自动拼装请点「恢复自动生成」。",
   restyle_prompt_overridden: "已覆盖",
   restyle_segment_prompts_title: "分段视频提示词",
   restyle_run_process_title: "处理过程",

@@ -42,15 +42,22 @@ export function buildAssetImagePrompt(
   const meaningfulExtra =
     extra && !isConfirmIntent(extra) && !/^按资产表生成/.test(extra) ? extra : "";
 
-  const lines = [
+  const lines: string[] = [];
+  // 本轮修正必须排在最前并声明最高优先级：追加在末尾时，模型仍会被前面
+  // 已经跑偏的目标设定主导，导致“指正了也没变化”。
+  if (meaningfulExtra) {
+    lines.push(
+      `【本次修正要求·优先级最高】${meaningfulExtra}（与下方任何设定冲突时，一律以本条为准）`,
+    );
+  }
+  lines.push(
     `【目标画风·必须严格遵守】${style || "保持原片整体质感，输出干净、统一、可复用的转绘资产图。"}`,
     `【资产类型】${KIND_LABEL[asset.kind]}`,
     `【资产名称】${asset.targetName || asset.sourceName}`,
     `【原片定位】${asset.sourceDescription}`,
     `【目标设定】${asset.targetDescription}`,
     "【约束】只生成该单一资产，背景干净，不得出现其他人物、场景或道具；整体色彩、材质、线条、光影、笔触必须与上述目标画风完全一致，不得混入其他画风。",
-  ];
-  if (meaningfulExtra) lines.push(`【本次补充要求】${meaningfulExtra}`);
+  );
   return lines.join("\n");
 }
 
@@ -71,6 +78,14 @@ export function resolveAssetImagePrompt(
   extraInstruction = "",
 ): string {
   const override = asset.promptOverride?.trim() ?? "";
-  if (override) return override;
+  if (override) {
+    const extra = extraInstruction.trim();
+    const meaningfulExtra =
+      extra && !isConfirmIntent(extra) && !/^按资产表生成/.test(extra) ? extra : "";
+    // 手工覆盖过的提示词不能吞掉本轮指正，否则用户说“生成不对，请重新生成”
+    // 会永远拿到同一张图。
+    if (!meaningfulExtra) return override;
+    return `【本次修正要求·优先级最高】${meaningfulExtra}（与下方任何设定冲突时，一律以本条为准）\n${override}`;
+  }
   return buildAssetImagePrompt(asset, styleBrief, extraInstruction);
 }

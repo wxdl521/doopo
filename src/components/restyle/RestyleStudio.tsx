@@ -68,7 +68,7 @@ import { uploadLocalImage } from "../../lib/uploadImage.functions";
 import { createMediaUploadUrl } from "../../lib/restyleMedia.functions";
 import { persistAssetImage } from "../../lib/workspaceMedia.functions";
 import { realImageModelOptions, realVideoModels } from "../NewProjectDialog";
-import { isConfirmIntent, isVideoRenderIntent } from "./restyleIntent";
+import { isConfirmIntent, isRegenerateIntent, isVideoRenderIntent } from "./restyleIntent";
 import { looksLikeStyleBrief, resolveAssetImagePrompt, withStyleBrief } from "./restylePrompt";
 import { RestyleProcessPanel, type RestyleAssetRunStatus } from "./RestyleProcessPanel";
 import {
@@ -2708,10 +2708,14 @@ export default function RestyleStudio() {
     }
 
     const requestedAssetKinds = getRequestedAssetKinds(message);
+    // 纠错语句（“场景图片生成不对，请重新生成”）也要进入生图分支，
+    // 否则只会得到一句“已理解…”，用户看到的就是“指正无效”。
+    const isCorrection = generatedAssetFiles.length > 0 && isRegenerateIntent(message);
     const isAssetImageRequest =
       activeProject.extractedAssets.length > 0 &&
       (/全部由\s*AI\s*生成|生成(?:全部|这些|资产)?(?:图片|图)|生图/i.test(message) ||
         (requestedAssetKinds.length > 0 && /生成|图片|图/.test(message)) ||
+        isCorrection ||
         (generatedAssetFiles.length > 0 && /修改|调整|请将|变得|改成|换成/i.test(message)));
     if (isAssetImageRequest) {
       // @imageN 现在按项目内图片统一编号，按解析出的附件 id 过滤参考图。
@@ -2736,9 +2740,20 @@ export default function RestyleStudio() {
       const referenceImages = uploadedReferenceImages.length
         ? uploadedReferenceImages
         : generatedReferenceImages;
-      const requestedAssets = requestedAssetKinds.length
-        ? activeProject.extractedAssets.filter((asset) => requestedAssetKinds.includes(asset.kind))
-        : activeProject.extractedAssets;
+      // 指名了资产名时只重生成该资产；其次按类型（角色/场景/道具）过滤；
+      // 都没提到才整表重跑，避免一句“场景不对”把角色和道具也重画一遍。
+      const namedAssets = activeProject.extractedAssets.filter(
+        (asset) =>
+          (asset.targetName && message.includes(asset.targetName)) ||
+          (asset.sourceName && message.includes(asset.sourceName)),
+      );
+      const requestedAssets = namedAssets.length
+        ? namedAssets
+        : requestedAssetKinds.length
+          ? activeProject.extractedAssets.filter((asset) =>
+              requestedAssetKinds.includes(asset.kind),
+            )
+          : activeProject.extractedAssets;
       if (!requestedAssets.length) {
         appendConversationMessage(projectId, conversationId, {
           role: "assistant",
@@ -3159,9 +3174,13 @@ export default function RestyleStudio() {
       attachment.generatedKind !== "prop"
     )
       return;
-    const extracted = activeProject.extractedAssets.find((asset) =>
-      attachment.name.includes(asset.targetName),
-    );
+    // 优先用 sourceAssetId 精确定位；名称匹配只作为旧数据兼容降级，
+    // 否则改名或同名时指正会落到别的资产上。
+    const extracted =
+      activeProject.extractedAssets.find((asset) => asset.id === attachment.sourceAssetId) ??
+      activeProject.extractedAssets.find(
+        (asset) => asset.targetName && attachment.name.includes(asset.targetName),
+      );
     if (!extracted) return;
     void generateAssetImages(activeProject.id, activeConversation.id, prompt, [extracted]);
   }
