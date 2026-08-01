@@ -2317,8 +2317,8 @@ export default function RestyleStudio() {
         activeProject.stage === "plan"
           ? "我会保留当前方案；请指出集数、分段或要调整的提示词，我会只更新对应部分。"
           : generatedAssetFiles.length
-            ? "转绘资产已经就绪；你可以让我生成或修改某个资产、更新分镜方案，或确认开始生成视频。"
-            : "我已理解你的要求并保留在当前转绘上下文中。你可以直接让我生成指定资产、补充缺失对象，或继续生成方案。";
+            ? "转绘资产已经就绪。下一步可回复：“继续下一步”生成转绘方案，或“确认生成视频”开始出片。"
+            : "资产表已就绪但还没有资产图。下一步可回复：“生成资产图片”按资产表逐张生成，或指定某个角色/场景/道具单独生成。";
       appendConversationMessage(projectId, conversationId, {
         role: "assistant",
         content: `已理解：${message || "继续当前转绘任务"}。${stageHint}`,
