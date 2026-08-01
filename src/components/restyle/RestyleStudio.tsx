@@ -52,6 +52,7 @@ import { uploadLocalImage } from "../../lib/uploadImage.functions";
 import { persistAssetImage } from "../../lib/workspaceMedia.functions";
 import { realImageModelOptions, realVideoModels } from "../NewProjectDialog";
 import { isConfirmIntent, isVideoRenderIntent } from "./restyleIntent";
+import { buildAssetImagePrompt, looksLikeStyleBrief, withStyleBrief } from "./restylePrompt";
 
 type AssetLibraryStatus = "idle" | "loading" | "ready" | "error";
 type RestyleView = "workbench" | "canvas";
@@ -861,6 +862,9 @@ export default function RestyleStudio() {
   const callPersistAssetImage = useServerFn(persistAssetImage);
 
   const activeProject = projects.find((project) => project.id === activeProjectId);
+  // 目标画风必须在异步生图循环里可读到最新值，用 ref 避免闭包拿到旧 state。
+  const styleBriefRef = useRef("");
+  styleBriefRef.current = activeProject?.styleBrief ?? "";
   const activeConversation = activeProject?.conversations.find(
     (conversation) => conversation.id === activeProject?.activeConversationId,
   );
