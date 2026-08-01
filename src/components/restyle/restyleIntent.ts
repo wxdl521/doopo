@@ -27,3 +27,17 @@ export function isConfirmIntent(message: string): boolean {
 export function isVideoRenderIntent(message: string): boolean {
   return /确认生成视频|开始生成视频|生成视频|出片|渲染视频/.test(message);
 }
+
+/**
+ * 用户是否在指出结果不对并要求重新生成。
+ * 之前只匹配「修改/调整/改成」，“场景图片生成不对，请重新生成”这类最常见的
+ * 纠错说法会落到兜底回复，重生成根本没被触发。
+ */
+export function isRegenerateIntent(message: string): boolean {
+  const text = message.trim();
+  if (!text) return false;
+  if (isConfirmIntent(text)) return false;
+  return /(不对|不正确|错了|有误|不符合|不像|重新生成|重新出|重画|重做|再生成|再来一张|换一张|换个|重出)/.test(
+    text,
+  );
+}
