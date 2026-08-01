@@ -1733,9 +1733,12 @@ export default function RestyleStudio() {
           .slice(0, 9)
       : allReferenceImages;
     if (!referenceImages.length) {
+      const missing = [...new Set(project.extractedAssets.map((asset) => asset.kind))]
+        .map((kind) => (kind === "character" ? "角色" : kind === "scene" ? "场景" : "道具"))
+        .join("、");
       appendConversationMessage(projectId, conversationId, {
         role: "assistant",
-        content: "没有可用的转绘资产图。请先生成并确认角色、场景或道具图片后，再确认生成视频。",
+        content: `还没有可用的转绘资产图${missing ? `（资产表里待生成：${missing}）` : ""}。请直接回复“生成资产图片”，我会按资产表逐张生成；确认无误后再回复“确认生成视频”。`,
       });
       return;
     }
