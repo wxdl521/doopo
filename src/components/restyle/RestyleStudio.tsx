@@ -2614,7 +2614,7 @@ export default function RestyleStudio() {
     }
 
     if (shouldContinueToPlan && activeProject.extractedAssets.length > 0) {
-      setIsAnalyzing(true);
+      beginRun(projectId, t.restyle_run_step_plan);
       const sourceFiles = activeProject.files.filter(
         (file) => file.type.startsWith("video/") && !file.isFolder,
       );
@@ -2635,13 +2635,15 @@ export default function RestyleStudio() {
       });
       if (!result.ok) {
         result.error = relabelRestyleError(result.error, selectedModel);
-        setIsAnalyzing(false);
+        if (isRunAborted(projectId)) return;
+        finishRun(projectId, "failed", result.error);
         appendConversationMessage(projectId, conversationId, {
           role: "assistant",
           content: `转绘方案生成失败：${result.error}`,
         });
         return;
       }
+      if (isRunAborted(projectId)) return;
       const episodeLinks = result.episodes.map((episode) => episode.episode);
       const sourceVideoNames = episodeLinks.map(sourceVideoLabel);
       updateProject(projectId, (project) => ({
@@ -2654,12 +2656,12 @@ export default function RestyleStudio() {
         content: `已确认资产图片，已生成 ${sourceVideoNames.join("、")} 的转绘方案。点击视频文件可打开右侧对应提示词。需要微调时，请直接说明视频和分段，例如“请将第一个视频的 U01 光影调整为冷白色调”。调整完成后回复“确认生成视频”。`,
         episodeLinks,
       });
-      setIsAnalyzing(false);
+      finishRun(projectId);
       return;
     }
 
     if (activeProject.stage === "plan" && /U\d+|提示词|光影|镜头|台词|节奏/.test(message)) {
-      setIsAnalyzing(true);
+      beginRun(projectId, t.restyle_run_step_prompt_update);
       const sourceFiles = activeProject.files.filter(
         (file) => file.type.startsWith("video/") && !file.isFolder,
       );
