@@ -1039,6 +1039,98 @@ export default function RestyleStudio() {
     if (activeProject.videoModel) setSelectedVideoModel(activeProject.videoModel);
   }, [activeProject]);
 
+  const activeRun = activeProjectId ? projectRuns[activeProjectId] : undefined;
+  // 当前项目是否在执行。其他项目的任务不会影响这里，因此可以并发发送。
+  const isAnalyzing = Boolean(activeRun?.running);
+
+  function isProjectRunning(projectId: string) {
+    return Boolean(projectRuns[projectId]?.running);
+  }
+
+  function isRunAborted(projectId: string) {
+    return Boolean(runAbortRef.current[projectId]?.signal.aborted);
+  }
+
+  /** 开启一次执行，并写入第一个步骤。返回 AbortController 供停止使用。 */
+  function beginRun(projectId: string, label: string) {
+    const controller = new AbortController();
+    runAbortRef.current[projectId] = controller;
+    setProjectRuns((current) => ({
+      ...current,
+      [projectId]: {
+        running: true,
+        startedAt: Date.now(),
+        stopped: false,
+        steps: [{ id: crypto.randomUUID(), label, status: "running", at: Date.now() }],
+      },
+    }));
+    return controller;
+  }
+
+  /** 推进到下一个步骤：上一个进行中的步骤标记完成。 */
+  function markRunStep(projectId: string, label: string, detail?: string) {
+    setProjectRuns((current) => {
+      const run = current[projectId];
+      if (!run?.running) return current;
+      return {
+        ...current,
+        [projectId]: {
+          ...run,
+          steps: [
+            ...run.steps.map((step) =>
+              step.status === "running" ? { ...step, status: "done" as const } : step,
+            ),
+            { id: crypto.randomUUID(), label, detail, status: "running" as const, at: Date.now() },
+          ],
+        },
+      };
+    });
+  }
+
+  function finishRun(
+    projectId: string,
+    status: "done" | "failed" | "stopped" = "done",
+    detail?: string,
+  ) {
+    setProjectRuns((current) => {
+      const run = current[projectId];
+      if (!run) return current;
+      return {
+        ...current,
+        [projectId]: {
+          ...run,
+          running: false,
+          endedAt: Date.now(),
+          stopped: status === "stopped",
+          steps: run.steps.map((step) =>
+            step.status === "running"
+              ? {
+                  ...step,
+                  status: status === "failed" ? ("failed" as const) : ("done" as const),
+                  detail: detail ?? step.detail,
+                }
+              : step,
+          ),
+        },
+      };
+    });
+  }
+
+  /** 用户点击停止：中断进行中的请求，并在对话里留下明确说明。 */
+  function stopRun(projectId: string) {
+    if (!isProjectRunning(projectId)) return;
+    runAbortRef.current[projectId]?.abort();
+    finishRun(projectId, "stopped", t.restyle_run_stopped_step);
+    const project = projects.find((item) => item.id === projectId);
+    const conversationId = project?.activeConversationId;
+    if (project && conversationId) {
+      appendConversationMessage(projectId, conversationId, {
+        role: "assistant",
+        content: t.restyle_run_stopped_message,
+      });
+    }
+  }
+
   // Conversations are persisted locally. Always restore the view at the newest message,
   // and keep it there while new user or assistant messages are appended.
   useEffect(() => {
