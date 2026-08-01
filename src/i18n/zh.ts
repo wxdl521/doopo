@@ -1670,6 +1670,24 @@ export const zh = {
   restyle_reset_prompt_override: "恢复自动生成",
   restyle_prompt_overridden: "已覆盖",
   restyle_segment_prompts_title: "分段视频提示词",
+  restyle_run_process_title: "处理过程",
+  restyle_run_stop: "停止",
+  restyle_run_busy: "当前项目任务进行中",
+  restyle_run_elapsed: "已用时",
+  restyle_run_seconds: "秒",
+  restyle_run_steps_count: "个步骤",
+  restyle_run_expand: "展开",
+  restyle_run_collapse: "收起",
+  restyle_run_stopped_step: "已被用户停止",
+  restyle_run_stopped_message:
+    "已停止本次任务。已生成的资产和提示词均已保留；若视频任务已提交给模型，远端可能仍在出片，可稍后在「生成状态」查看。",
+  restyle_run_step_read_source: "读取原片与关键帧",
+  restyle_run_step_analyze: "模型分析原片",
+  restyle_run_step_asset_table: "生成资产表",
+  restyle_run_step_asset_images: "生成资产图片",
+  restyle_run_step_asset_image_one: "生成资产图：",
+  restyle_run_step_plan: "生成转绘方案",
+  restyle_run_step_prompt_update: "更新分段提示词",
 };
 
 export type Translations = typeof zh;

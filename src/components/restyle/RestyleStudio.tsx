@@ -25,6 +25,7 @@ import {
   Search,
   Send,
   Sparkles,
+  Square,
   Trash2,
   Upload,
   X,
@@ -84,6 +85,24 @@ import { toast } from "sonner";
 
 type AssetLibraryStatus = "idle" | "loading" | "ready" | "error";
 type RestyleView = "workbench" | "canvas";
+
+/** 单个执行步骤：用于把 Agent 的处理过程直接呈现在对话流里。 */
+type RestyleRunStep = {
+  id: string;
+  label: string;
+  detail?: string;
+  status: "running" | "done" | "failed";
+  at: number;
+};
+
+/** 项目级执行态。以项目 id 为键存放，实现多项目并发与独立停止。 */
+type RestyleRunState = {
+  running: boolean;
+  startedAt: number;
+  endedAt?: number;
+  stopped?: boolean;
+  steps: RestyleRunStep[];
+};
 
 // Older restyle projects stored the raw database id while newer projects use
 // the kind-prefixed id (for example, `character:<uuid>`). Treat both forms as
@@ -888,7 +907,9 @@ export default function RestyleStudio() {
       : (realImageModelOptions[0]?.id ?? "doubao-seedream-5-0-260128"),
   );
   const [selectedVideoModel, setSelectedVideoModel] = useState(DEFAULT_RESTYLE_VIDEO_MODEL);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  // 每个转绘项目独立的执行态：切换项目不再互相阻塞，可多项目并发。
+  const [projectRuns, setProjectRuns] = useState<Record<string, RestyleRunState>>({});
+  const runAbortRef = useRef<Record<string, AbortController>>({});
   const [analysisError, setAnalysisError] = useState("");
   // 「过程与提示词」面板的逐项资产生成进度，键为 extractedAsset.id。
   const [assetRunStatus, setAssetRunStatus] = useState<Record<string, RestyleAssetRunStatus>>({});
@@ -1018,6 +1039,98 @@ export default function RestyleStudio() {
     if (activeProject.imageModel) setSelectedImageModel(activeProject.imageModel);
     if (activeProject.videoModel) setSelectedVideoModel(activeProject.videoModel);
   }, [activeProject]);
+
+  const activeRun = activeProjectId ? projectRuns[activeProjectId] : undefined;
+  // 当前项目是否在执行。其他项目的任务不会影响这里，因此可以并发发送。
+  const isAnalyzing = Boolean(activeRun?.running);
+
+  function isProjectRunning(projectId: string) {
+    return Boolean(projectRuns[projectId]?.running);
+  }
+
+  function isRunAborted(projectId: string) {
+    return Boolean(runAbortRef.current[projectId]?.signal.aborted);
+  }
+
+  /** 开启一次执行，并写入第一个步骤。返回 AbortController 供停止使用。 */
+  function beginRun(projectId: string, label: string) {
+    const controller = new AbortController();
+    runAbortRef.current[projectId] = controller;
+    setProjectRuns((current) => ({
+      ...current,
+      [projectId]: {
+        running: true,
+        startedAt: Date.now(),
+        stopped: false,
+        steps: [{ id: crypto.randomUUID(), label, status: "running", at: Date.now() }],
+      },
+    }));
+    return controller;
+  }
+
+  /** 推进到下一个步骤：上一个进行中的步骤标记完成。 */
+  function markRunStep(projectId: string, label: string, detail?: string) {
+    setProjectRuns((current) => {
+      const run = current[projectId];
+      if (!run?.running) return current;
+      return {
+        ...current,
+        [projectId]: {
+          ...run,
+          steps: [
+            ...run.steps.map((step) =>
+              step.status === "running" ? { ...step, status: "done" as const } : step,
+            ),
+            { id: crypto.randomUUID(), label, detail, status: "running" as const, at: Date.now() },
+          ],
+        },
+      };
+    });
+  }
+
+  function finishRun(
+    projectId: string,
+    status: "done" | "failed" | "stopped" = "done",
+    detail?: string,
+  ) {
+    setProjectRuns((current) => {
+      const run = current[projectId];
+      if (!run) return current;
+      return {
+        ...current,
+        [projectId]: {
+          ...run,
+          running: false,
+          endedAt: Date.now(),
+          stopped: status === "stopped",
+          steps: run.steps.map((step) =>
+            step.status === "running"
+              ? {
+                  ...step,
+                  status: status === "failed" ? ("failed" as const) : ("done" as const),
+                  detail: detail ?? step.detail,
+                }
+              : step,
+          ),
+        },
+      };
+    });
+  }
+
+  /** 用户点击停止：中断进行中的请求，并在对话里留下明确说明。 */
+  function stopRun(projectId: string) {
+    if (!isProjectRunning(projectId)) return;
+    runAbortRef.current[projectId]?.abort();
+    finishRun(projectId, "stopped", t.restyle_run_stopped_step);
+    const project = projects.find((item) => item.id === projectId);
+    const conversationId = project?.activeConversationId;
+    if (project && conversationId) {
+      appendConversationMessage(projectId, conversationId, {
+        role: "assistant",
+        content: t.restyle_run_stopped_message,
+      });
+    }
+  }
 
   // Conversations are persisted locally. Always restore the view at the newest message,
   // and keep it there while new user or assistant messages are appended.
@@ -2429,6 +2542,8 @@ export default function RestyleStudio() {
 
   async function sendChatMessage() {
     if (!activeProject || !activeConversation) return;
+    // 同一项目内串行；不同项目各自独立，可并发执行。
+    if (isProjectRunning(activeProject.id)) return;
     const message = chatDraft.trim();
     // 发送时解析文本中的 @imageN / @videoN，把被 @ 的素材一并带上（即使不在附件条里）。
     const mentionedAttachmentIds = resolveMentionedAttachmentIds(message, mentionableAttachments);
@@ -2502,7 +2617,7 @@ export default function RestyleStudio() {
     }
 
     if (shouldContinueToPlan && activeProject.extractedAssets.length > 0) {
-      setIsAnalyzing(true);
+      beginRun(projectId, t.restyle_run_step_plan);
       const sourceFiles = activeProject.files.filter(
         (file) => file.type.startsWith("video/") && !file.isFolder,
       );
@@ -2523,13 +2638,15 @@ export default function RestyleStudio() {
       });
       if (!result.ok) {
         result.error = relabelRestyleError(result.error, selectedModel);
-        setIsAnalyzing(false);
+        if (isRunAborted(projectId)) return;
+        finishRun(projectId, "failed", result.error);
         appendConversationMessage(projectId, conversationId, {
           role: "assistant",
           content: `转绘方案生成失败：${result.error}`,
         });
         return;
       }
+      if (isRunAborted(projectId)) return;
       const episodeLinks = result.episodes.map((episode) => episode.episode);
       const sourceVideoNames = episodeLinks.map(sourceVideoLabel);
       updateProject(projectId, (project) => ({
@@ -2542,12 +2659,12 @@ export default function RestyleStudio() {
         content: `已确认资产图片，已生成 ${sourceVideoNames.join("、")} 的转绘方案。点击视频文件可打开右侧对应提示词。需要微调时，请直接说明视频和分段，例如“请将第一个视频的 U01 光影调整为冷白色调”。调整完成后回复“确认生成视频”。`,
         episodeLinks,
       });
-      setIsAnalyzing(false);
+      finishRun(projectId);
       return;
     }
 
     if (activeProject.stage === "plan" && /U\d+|提示词|光影|镜头|台词|节奏/.test(message)) {
-      setIsAnalyzing(true);
+      beginRun(projectId, t.restyle_run_step_prompt_update);
       const sourceFiles = activeProject.files.filter(
         (file) => file.type.startsWith("video/") && !file.isFolder,
       );
@@ -2586,7 +2703,7 @@ export default function RestyleStudio() {
           content: `提示词修改失败：${result.error}`,
         });
       }
-      setIsAnalyzing(false);
+      finishRun(projectId, result.ok ? "done" : "failed");
       return;
     }
 
@@ -2661,7 +2778,7 @@ export default function RestyleStudio() {
     if (!sourceFiles.length) return;
 
     updateProject(projectId, (project) => ({ ...project, stage: "analysis" }));
-    setIsAnalyzing(true);
+    beginRun(projectId, t.restyle_run_step_read_source);
     setAnalysisError("");
     try {
       const frameBatches = await Promise.all(
@@ -2675,6 +2792,8 @@ export default function RestyleStudio() {
       );
       // Keep chronological coverage for the full upload, including multi-episode uploads.
       const frameImages = frameBatches.flatMap((batch) => batch.frames).slice(0, 8);
+      if (isRunAborted(projectId)) return;
+      markRunStep(projectId, t.restyle_run_step_analyze, selectedModel);
       const result = await callAnalyzeRestyleAssets({
         data: {
           instruction: analysisInstruction,
@@ -2689,15 +2808,18 @@ export default function RestyleStudio() {
           existingAssets: activeProject.extractedAssets.map(({ id: _id, ...asset }) => asset),
         },
       });
+      if (isRunAborted(projectId)) return;
       if (!result.ok) {
         result.error = relabelRestyleError(result.error, selectedModel);
         setAnalysisError(result.error);
+        finishRun(projectId, "failed", result.error);
         appendConversationMessage(projectId, conversationId, {
           role: "assistant",
           content: `${t.restyle_analysis_failed} ${result.error}`,
         });
         return;
       }
+      markRunStep(projectId, t.restyle_run_step_asset_table);
       const extractedAssets: RestyleExtractedAsset[] = result.assets.map((asset) => ({
         id: crypto.randomUUID(),
         ...asset,
@@ -2734,13 +2856,15 @@ export default function RestyleStudio() {
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : t.restyle_analysis_unknown_error;
+      if (isRunAborted(projectId)) return;
       setAnalysisError(detail);
+      finishRun(projectId, "failed", detail);
       appendConversationMessage(projectId, conversationId, {
         role: "assistant",
         content: `${t.restyle_analysis_failed} ${detail}`,
       });
     } finally {
-      setIsAnalyzing(false);
+      if (!isRunAborted(projectId)) finishRun(projectId);
     }
   }
 
@@ -2751,7 +2875,7 @@ export default function RestyleStudio() {
     extractedAssets: RestyleExtractedAsset[],
     referenceImages: string[] = [],
   ) {
-    setIsAnalyzing(true);
+    beginRun(projectId, t.restyle_run_step_asset_images);
     setAnalysisError("");
     setAssetRunStatus({});
     appendConversationMessage(projectId, conversationId, {
@@ -2760,7 +2884,15 @@ export default function RestyleStudio() {
     });
     const generatedKinds: Array<"character" | "scene" | "prop"> = [];
     try {
+      let assetIndex = 0;
       for (const asset of extractedAssets) {
+        if (isRunAborted(projectId)) return;
+        assetIndex += 1;
+        markRunStep(
+          projectId,
+          `${t.restyle_run_step_asset_image_one}${asset.targetName || asset.sourceName}`,
+          `${assetIndex}/${extractedAssets.length}`,
+        );
         setAssetRunStatus((current) => ({ ...current, [asset.id]: { status: "running" } }));
         // 面板里手工覆盖过提示词时直接用覆盖内容，否则按目标画风自动拼装。
         const prompt = resolveAssetImagePrompt(asset, styleBriefRef.current, instruction);
@@ -2862,9 +2994,11 @@ export default function RestyleStudio() {
       }
     } catch (error) {
       const detail = error instanceof Error ? error.message : "未知错误";
+      if (isRunAborted(projectId)) return;
       setAnalysisError(`资产图片生成失败：${detail}`);
+      finishRun(projectId, "failed", detail);
     } finally {
-      setIsAnalyzing(false);
+      if (!isRunAborted(projectId)) finishRun(projectId);
     }
   }
 
@@ -3580,6 +3714,13 @@ export default function RestyleStudio() {
                         >
                           <Folder size={14} />
                           <span className="min-w-0 flex-1 truncate">{project.title}</span>
+                          {isProjectRunning(project.id) ? (
+                            <Loader2
+                              size={12}
+                              className="shrink-0 animate-spin text-accent"
+                              aria-label={t.restyle_run_busy}
+                            />
+                          ) : null}
                         </button>
                       )}
                       <button
@@ -3776,12 +3917,13 @@ export default function RestyleStudio() {
                   ) : null}
                 </div>
               ))}
-              {isAnalyzing && (
-                <div className="flex items-center gap-2 text-sm text-text-secondary" role="status">
-                  <Loader2 size={15} className="animate-spin text-accent" />
-                  {t.restyle_analysis_running}
-                </div>
-              )}
+              {activeRun && activeProjectId ? (
+                <RunProgressCard
+                  run={activeRun}
+                  t={t}
+                  onStop={() => stopRun(activeProjectId)}
+                />
+              ) : null}
               {analysisError && !isAnalyzing && (
                 <p className="text-xs text-destructive" role="alert">
                   {analysisError}
@@ -3933,6 +4075,12 @@ export default function RestyleStudio() {
                     value={chatDraft}
                     onChange={(event) => setChatDraft(event.target.value)}
                     onKeyDown={(event) => {
+                      // 执行中按 Esc 直接停止当前项目的任务。
+                      if (event.key === "Escape" && isAnalyzing && activeProjectId) {
+                        event.preventDefault();
+                        stopRun(activeProjectId);
+                        return;
+                      }
                       // Enter 发送、Shift+Enter 换行；中文输入法拼字中（isComposing）不触发发送。
                       if (event.key !== "Enter" || event.shiftKey) return;
                       if (event.nativeEvent.isComposing) return;
@@ -4048,16 +4196,16 @@ export default function RestyleStudio() {
                   ))}
                 </select>
                 <button
-                  type="submit"
-                  disabled={!activeConversation || isAnalyzing}
+                  type={isAnalyzing ? "button" : "submit"}
+                  onClick={
+                    isAnalyzing && activeProjectId ? () => stopRun(activeProjectId) : undefined
+                  }
+                  disabled={!activeConversation}
                   className="btn-primary !h-8 !w-8 !justify-center !rounded-lg !p-0"
-                  aria-label={t.restyle_send}
+                  aria-label={isAnalyzing ? t.restyle_run_stop : t.restyle_send}
+                  title={isAnalyzing ? t.restyle_run_stop : t.restyle_send}
                 >
-                  {isAnalyzing ? (
-                    <Loader2 size={15} className="animate-spin" />
-                  ) : (
-                    <Send size={15} />
-                  )}
+                  {isAnalyzing ? <Square size={13} fill="currentColor" /> : <Send size={15} />}
                 </button>
               </div>
               {!getVideoAssetLibrarySupport(selectedVideoModel).supported && (
@@ -5599,4 +5747,105 @@ function StagePanel({
       </div>
     );
   return <EmptyState text={stage === "render" ? t.restyle_render_empty : t.restyle_review_empty} />;
+}
+
+/**
+ * 把 Agent 的处理过程直接展示在对话流里：每个步骤的状态、耗时与停止入口。
+ * 完成后自动折叠成一行摘要，点击可展开回看全部步骤。
+ */
+function RunProgressCard({
+  run,
+  t,
+  onStop,
+}: {
+  run: RestyleRunState;
+  t: Translations;
+  onStop: () => void;
+}) {
+  const [expanded, setExpanded] = useState(true);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!run.running) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [run.running]);
+
+  useEffect(() => {
+    if (!run.running) setExpanded(false);
+  }, [run.running]);
+
+  const elapsed = Math.max(0, Math.round(((run.endedAt ?? now) - run.startedAt) / 1000));
+
+  return (
+    <div className="rounded-xl border border-border bg-bg-elevated p-3" role="status">
+      <div className="flex items-center gap-2">
+        {run.running ? (
+          <Loader2 size={14} className="animate-spin text-accent" />
+        ) : (
+          <Check size={14} className="text-accent" />
+        )}
+        <span className="text-sm font-medium text-text-primary">
+          {t.restyle_run_process_title}
+        </span>
+        <span className="text-[11px] text-text-muted">
+          {run.steps.length}
+          {t.restyle_run_steps_count} · {t.restyle_run_elapsed} {elapsed}
+          {t.restyle_run_seconds}
+        </span>
+        <div className="ml-auto flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setExpanded((current) => !current)}
+            className="rounded-md px-2 py-1 text-[11px] text-text-secondary hover:bg-bg"
+          >
+            {expanded ? t.restyle_run_collapse : t.restyle_run_expand}
+          </button>
+          {run.running ? (
+            <button
+              type="button"
+              onClick={onStop}
+              className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-text-secondary hover:bg-bg hover:text-destructive"
+              aria-label={t.restyle_run_stop}
+            >
+              <Square size={11} fill="currentColor" />
+              {t.restyle_run_stop}
+            </button>
+          ) : null}
+        </div>
+      </div>
+      {expanded ? (
+        <ol className="mt-2 space-y-1.5">
+          {run.steps.map((step) => (
+            <li key={step.id} className="flex items-start gap-2 text-xs">
+              <span className="mt-0.5">
+                {step.status === "running" ? (
+                  <Loader2 size={12} className="animate-spin text-accent" />
+                ) : step.status === "failed" ? (
+                  <X size={12} className="text-destructive" />
+                ) : (
+                  <Check size={12} className="text-accent" />
+                )}
+              </span>
+              <span className="min-w-0">
+                <span
+                  className={
+                    step.status === "failed" ? "text-destructive" : "text-text-secondary"
+                  }
+                >
+                  {step.label}
+                </span>
+                {step.detail ? (
+                  <span className="ml-1 text-text-muted">（{step.detail}）</span>
+                ) : null}
+              </span>
+            </li>
+          ))}
+        </ol>
+      ) : null}
+      {run.stopped ? (
+        <p className="mt-2 text-[11px] text-text-muted">{t.restyle_run_stopped_step}</p>
+      ) : null}
+    </div>
+  );
 }
