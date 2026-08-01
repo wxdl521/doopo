@@ -51,6 +51,7 @@ import { pollVideoTaskFn, submitVideoTaskFn } from "../../lib/videoGenerate.func
 import { uploadLocalImage } from "../../lib/uploadImage.functions";
 import { persistAssetImage } from "../../lib/workspaceMedia.functions";
 import { realImageModelOptions, realVideoModels } from "../NewProjectDialog";
+import { isConfirmIntent, isVideoRenderIntent } from "./restyleIntent";
 
 type AssetLibraryStatus = "idle" | "loading" | "ready" | "error";
 type RestyleView = "workbench" | "canvas";
@@ -833,7 +834,10 @@ export default function RestyleStudio() {
   const [fileDropTarget, setFileDropTarget] = useState<RestyleFileDropTarget | null>(null);
   const [selectedModel, setSelectedModel] = useState<RestyleModel>("qwen:qwen3.6-plus");
   const [selectedImageModel, setSelectedImageModel] = useState(
-    realImageModelOptions[0]?.id ?? "doubao-seedream-5-0-260128",
+    // 默认显式使用 Seedream：它支持带参考图的图生图；部分中转（tokenflash）不支持 edits 端点。
+    realImageModelOptions.some((model) => model.id === "doubao-seedream-5-0-260128")
+      ? "doubao-seedream-5-0-260128"
+      : (realImageModelOptions[0]?.id ?? "doubao-seedream-5-0-260128"),
   );
   const [selectedVideoModel, setSelectedVideoModel] = useState(
     realVideoModels[0]?.id ?? "doubao-seedance-2-0-260128",
@@ -1729,9 +1733,12 @@ export default function RestyleStudio() {
           .slice(0, 9)
       : allReferenceImages;
     if (!referenceImages.length) {
+      const missing = [...new Set(project.extractedAssets.map((asset) => asset.kind))]
+        .map((kind) => (kind === "character" ? "角色" : kind === "scene" ? "场景" : "道具"))
+        .join("、");
       appendConversationMessage(projectId, conversationId, {
         role: "assistant",
-        content: "没有可用的转绘资产图。请先生成并确认角色、场景或道具图片后，再确认生成视频。",
+        content: `还没有可用的转绘资产图${missing ? `（资产表里待生成：${missing}）` : ""}。请直接回复“生成资产图片”，我会按资产表逐张生成；确认无误后再回复“确认生成视频”。`,
       });
       return;
     }
@@ -2120,9 +2127,9 @@ export default function RestyleStudio() {
           file.generatedKind === "prop") &&
         file.url,
     );
-    const shouldContinueToPlan =
-      generatedAssetFiles.length > 0 &&
-      /(继续.*(?:下一步|生成方案)|下一步|进入.*方案|生成.*方案)/.test(message);
+    // 只要资产表已经存在，任何口语化的“确认 / 继续 / 下一步”都应推进流程，
+    // 不再要求资产图片必须已经生成，也不再要求消息全等于“确认”。
+    const shouldContinueToPlan = isConfirmIntent(message);
     const analysisInstruction =
       message || "请分析上传的视频，提取真正需要转绘的具体角色、场景和道具。";
     const messageAttachments =
@@ -2137,12 +2144,33 @@ export default function RestyleStudio() {
 
     if (handleAgentFileCommand(activeProject, conversationId, message)) return;
 
-    if (/确认生成视频|开始生成视频|生成视频/.test(message)) {
+    if (isVideoRenderIntent(message)) {
       submitVideoRender(activeProject, conversationId);
       return;
     }
 
-    if ((message === "确认" || shouldContinueToPlan) && activeProject.extractedAssets.length > 0) {
+    // 方案阶段再说“确认/继续”，等价于确认生成视频。
+    if (shouldContinueToPlan && activeProject.stage === "plan" && activeProject.planEpisodes?.length) {
+      submitVideoRender(activeProject, conversationId);
+      return;
+    }
+
+    // 资产表已就绪但还没有任何资产图：先补生成资产图，再让用户确认进入方案。
+    if (
+      shouldContinueToPlan &&
+      activeProject.extractedAssets.length > 0 &&
+      generatedAssetFiles.length === 0
+    ) {
+      await generateAssetImages(
+        projectId,
+        conversationId,
+        message || "按资产表生成全部资产图",
+        activeProject.extractedAssets,
+      );
+      return;
+    }
+
+    if (shouldContinueToPlan && activeProject.extractedAssets.length > 0) {
       setIsAnalyzing(true);
       const sourceFiles = activeProject.files.filter(
         (file) => file.type.startsWith("video/") && !file.isFolder,
@@ -2289,8 +2317,8 @@ export default function RestyleStudio() {
         activeProject.stage === "plan"
           ? "我会保留当前方案；请指出集数、分段或要调整的提示词，我会只更新对应部分。"
           : generatedAssetFiles.length
-            ? "转绘资产已经就绪；你可以让我生成或修改某个资产、更新分镜方案，或确认开始生成视频。"
-            : "我已理解你的要求并保留在当前转绘上下文中。你可以直接让我生成指定资产、补充缺失对象，或继续生成方案。";
+            ? "转绘资产已经就绪。下一步可回复：“继续下一步”生成转绘方案，或“确认生成视频”开始出片。"
+            : "资产表已就绪但还没有资产图。下一步可回复：“生成资产图片”按资产表逐张生成，或指定某个角色/场景/道具单独生成。";
       appendConversationMessage(projectId, conversationId, {
         role: "assistant",
         content: `已理解：${message || "继续当前转绘任务"}。${stageHint}`,
