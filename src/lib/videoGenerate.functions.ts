@@ -4474,22 +4474,24 @@ async function persistDataUriUrl(
       .from("workspace-media")
       .upload(path, blob, { contentType: mime, upsert: true });
     if (uploadErr) return { ok: false, error: `参考图上传失败: ${uploadErr.message}` };
-    // workspace-media 是公开 bucket。不要返回带 JWT 的长效签名 URL：SD Real Max
-    // 会把素材 URL 落到 varchar(500)，而 Supabase 的签名 URL 可能超过该上限，
-    // 造成素材创建阶段 400 / SQLSTATE 22001。公开对象 URL 更短，也便于供应商拉取。
-    const { data: publicUrl } = supabase.storage.from("workspace-media").getPublicUrl(path);
-    if (!publicUrl?.publicUrl) return { ok: false, error: "参考图上传失败: 未取到公开 URL" };
-    const probe = await fetch(publicUrl.publicUrl, {
+    // workspace-media 为私有 bucket：供应商只能拿到限时签名 URL（7 天），
+    // 避免对象被任何知道路径的人无鉴权下载。
+    const { data: signed, error: signErr } = await supabase.storage
+      .from("workspace-media")
+      .createSignedUrl(path, 604_800);
+    if (signErr || !signed?.signedUrl)
+      return { ok: false, error: "参考图上传失败: 未取到访问 URL" };
+    const probe = await fetch(signed.signedUrl, {
       headers: { Range: "bytes=0-1" },
       redirect: "follow",
     });
     if (!probe.ok) {
       return {
         ok: false,
-        error: `参考图转存后仍不可公网读取 (${probe.status})；请联系管理员检查 workspace-media 公开读权限。`,
+        error: `参考图转存后仍不可读取 (${probe.status})；请联系管理员检查 workspace-media 存储配置。`,
       };
     }
-    return { ok: true, url: publicUrl.publicUrl };
+    return { ok: true, url: signed.signedUrl };
   } catch (e: any) {
     return { ok: false, error: `参考图上传失败: ${e?.message ?? String(e)}` };
   }
@@ -4559,24 +4561,25 @@ async function persistAudioUrl(
       .from("workspace-media")
       .upload(path, blob, { contentType: mime, upsert: true });
     if (uploadErr) return { ok: false, error: `参考音频转存失败: ${uploadErr.message}` };
-    // workspace-media 是公开 bucket。ARK 在拉取音频时对某些 Supabase 签名 URL
-    // (特别是超长有效期 token)会报 resource download failed；使用公开对象 URL
-    // 可避免网关重定向/签名校验差异，也不会暴露非公开资源。
-    const { data: publicUrl } = supabase.storage.from("workspace-media").getPublicUrl(path);
-    if (!publicUrl?.publicUrl) return { ok: false, error: "参考音频转存失败: 未取到公开 URL" };
-    // 在发给 ARK 前以匿名请求验证对象确实可被公网下载。既有 bucket 若曾以私有
-    // 模式创建，getPublicUrl 仍会拼出 URL，但 ARK 只能得到 resource download failed。
-    const probe = await fetch(publicUrl.publicUrl, {
+    // workspace-media 为私有 bucket：下发 7 天有效期的签名 URL 供 ARK 拉取，
+    // 过期后对象不再可被任意访问。
+    const { data: signed, error: signErr } = await supabase.storage
+      .from("workspace-media")
+      .createSignedUrl(path, 604_800);
+    if (signErr || !signed?.signedUrl)
+      return { ok: false, error: "参考音频转存失败: 未取到访问 URL" };
+    // 在发给 ARK 前以匿名请求验证签名对象确实可被下载。
+    const probe = await fetch(signed.signedUrl, {
       headers: { Range: "bytes=0-1" },
       redirect: "follow",
     });
     if (!probe.ok) {
       return {
         ok: false,
-        error: `参考音频转存后仍不可公网读取 (${probe.status})；请上传可公开访问的音频，或联系管理员检查 workspace-media 公开读权限。`,
+        error: `参考音频转存后仍不可读取 (${probe.status})；请重试或联系管理员检查 workspace-media 存储配置。`,
       };
     }
-    return { ok: true, url: publicUrl.publicUrl };
+    return { ok: true, url: signed.signedUrl };
   } catch (e: any) {
     return { ok: false, error: `参考音频转存失败: ${e?.message ?? String(e)}` };
   }
