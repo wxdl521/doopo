@@ -181,3 +181,13 @@ export function scriptTagLabel(tag: ScriptTagDef, lang: string): string {
 export function scriptGroupLabel(group: ScriptTagGroup, lang: string): string {
   return lang === "zh" ? group.zh : group.en;
 }
+
+const TAG_BY_VALUE = new Map<string, ScriptTagDef>(
+  [...ALL_SCRIPT_GENRES, ...SCRIPT_TONES].map((tag) => [tag.value, tag]),
+);
+
+/** value -> 展示名（找不到时原样返回，兼容历史剧本里的旧值）。 */
+export function scriptTagValueLabel(value: string, lang: string): string {
+  const tag = TAG_BY_VALUE.get(value.trim());
+  return tag ? scriptTagLabel(tag, lang) : value;
+}
