@@ -8,6 +8,7 @@ import {
   deletePost,
   type PostVisibility,
 } from "@/lib/community.functions";
+import { useConfirmDialog } from "@/hooks/useConfirmDialog";
 
 export const Route = createFileRoute("/account/posts")({
   head: () => ({ meta: [{ title: "我的发布 — Doopoo" }] }),
@@ -20,6 +21,7 @@ function MyPostsPage() {
   const del = useServerFn(deletePost);
   const [rows, setRows] = useState<Awaited<ReturnType<typeof list>>>([]);
   const [loading, setLoading] = useState(true);
+  const { confirm, ConfirmDialog } = useConfirmDialog();
 
   useEffect(() => {
     list()
@@ -32,13 +34,14 @@ function MyPostsPage() {
     setRows((rs) => rs.map((r) => (r.id === id ? { ...r, visibility: v } : r)));
   };
   const remove = async (id: string) => {
-    if (!confirm("确定删除该作品？")) return;
+    if (!(await confirm({ title: "确定删除该作品？", danger: true }))) return;
     await del({ data: { id } });
     setRows((rs) => rs.filter((r) => r.id !== id));
   };
 
   return (
     <div className="space-y-4">
+      <ConfirmDialog />
       <h2 className="font-display text-2xl font-bold">我的发布 ({rows.length})</h2>
       {loading ? (
         <div className="panel p-10 text-center text-text-muted text-sm">加载中…</div>

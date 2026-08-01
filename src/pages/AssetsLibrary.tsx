@@ -4,6 +4,7 @@ import { ChevronDown, Plus, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { useLanguage } from "../i18n/LanguageContext";
 import { useAuth } from "../hooks/useAuth";
+import { useConfirmDialog } from "../hooks/useConfirmDialog";
 import {
   loadCharacters,
   loadScenes,
@@ -35,6 +36,7 @@ const initialLoadMoreStatus: Record<AssetTab, boolean> = {
 export default function AssetsLibrary() {
   const { t } = useLanguage();
   const { user, isAuthenticated } = useAuth();
+  const { confirm, ConfirmDialog } = useConfirmDialog();
   const { tab: requestedTab } = useSearch({ from: "/assets" });
   const [tab, setTab] = useState<AssetTab>("character");
   const [scope, setScope] = useState<Scope>("personal");
@@ -91,7 +93,7 @@ export default function AssetsLibrary() {
 
   async function handleDelete(kind: "character" | "scene" | "prop", id: string, label: string) {
     if (!user) return;
-    if (!confirm(`确定要从资产库移除「${label}」吗?`)) return;
+    if (!(await confirm({ title: `确定要从资产库移除「${label}」吗?`, danger: true }))) return;
     setDeletingId(id);
     try {
       const r =
@@ -394,6 +396,7 @@ export default function AssetsLibrary() {
 
   return (
     <div className="animate-fade-in flex flex-col gap-6 px-1">
+      <ConfirmDialog />
       {/* Header */}
       <header className="flex items-start justify-between gap-4">
         <div>

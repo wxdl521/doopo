@@ -3,14 +3,16 @@
 // 多行 / 需要转绘与重要性切换。编辑经 300ms 防抖走 onChange（父级即
 // updateExtractedAssets：同步 project.extractedAssets、清理失效
 // confirmedAssetIds、回写历史消息 assetTable 并持久化）。
+// 「+ 新增」与行尾铅笔按钮打开 AssetEditDialog 弹窗，提交后立即落表。
 // 自检结果（reviewRestyleAssetTable 的 issues）以行内警示呈现：
 // 单元格警示描边 + 行尾 ⚠ 说明 + 「采纳建议」一键写入。
 // ====================================================================
 
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, Loader2, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { AlertTriangle, Loader2, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react";
 import type { Translations } from "../../i18n/zh";
 import type { AssetReviewIssue } from "../../lib/restyle/assetReview";
+import { AssetEditDialog } from "./AssetEditDialog";
 import type { RestyleExtractedAsset } from "./restyleStorage";
 
 /** 可直接采纳建议写回的文本字段。 */
@@ -20,7 +22,6 @@ const ADOPTABLE_FIELDS = [
   "targetName",
   "targetDescription",
 ] as const;
-type AssetTextField = (typeof ADOPTABLE_FIELDS)[number];
 
 const GRID_COLUMNS =
   "grid-cols-[92px_minmax(110px,1fr)_minmax(150px,1.4fr)_minmax(110px,1fr)_minmax(160px,1.5fr)_118px_128px]";
@@ -102,9 +103,9 @@ export function ExtractedAssetTable({
   const pendingRef = useRef<RestyleExtractedAsset[] | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
-  const [focusRequest, setFocusRequest] = useState<{ id: string; field: AssetTextField } | null>(
-    null,
-  );
+  // 资产弹窗：null 关闭；{ asset: null } 新增；否则编辑该资产。
+  const [dialogAsset, setDialogAsset] = useState<RestyleExtractedAsset | null>(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
 
   // 外部变更（AI 自检写入 / 采纳建议 / 删除）直接覆盖本地行；用户输入的
   // 防抖回合带回来的内容与本地一致，是恒等同步，不会打断输入。
@@ -122,15 +123,6 @@ export function ExtractedAssetTable({
     },
     [],
   );
-
-  useEffect(() => {
-    if (!focusRequest) return;
-    const el = document.querySelector<HTMLInputElement>(
-      `[data-asset-id="${focusRequest.id}"][data-asset-field="${focusRequest.field}"]`,
-    );
-    el?.focus();
-    setFocusRequest(null);
-  }, [focusRequest, rows]);
 
   function commit(next: RestyleExtractedAsset[], immediate = false) {
     setRows(next);
@@ -155,19 +147,20 @@ export function ExtractedAssetTable({
     commit(rows.map((row) => (row.id === assetId ? { ...row, ...patch } : row)));
   }
 
-  function addRow() {
-    const asset: RestyleExtractedAsset = {
-      id: crypto.randomUUID(),
-      kind: "character",
-      sourceName: "",
-      sourceDescription: "",
-      targetName: "",
-      targetDescription: "",
-      importance: "optional",
-      shouldRestyle: true,
-    };
-    commit([...rows, asset], true);
-    setFocusRequest({ id: asset.id, field: "sourceName" });
+  /** 「+ 新增」打开资产弹窗；提交后立即落表（跳过防抖）。 */
+  function openAddDialog() {
+    setDialogAsset(null);
+    setDialogOpen(true);
+  }
+
+  function openEditDialog(asset: RestyleExtractedAsset) {
+    setDialogAsset(asset);
+    setDialogOpen(true);
+  }
+
+  function handleDialogSubmit(asset: RestyleExtractedAsset) {
+    const exists = rows.some((row) => row.id === asset.id);
+    commit(exists ? rows.map((row) => (row.id === asset.id ? asset : row)) : [...rows, asset], true);
   }
 
   const kindLabel = (kind: RestyleExtractedAsset["kind"]) =>
@@ -216,7 +209,7 @@ export function ExtractedAssetTable({
             {editable ? (
               <button
                 type="button"
-                onClick={addRow}
+                onClick={openAddDialog}
                 className="flex items-center gap-1 text-accent hover:text-text-primary"
               >
                 <Plus size={12} />
@@ -256,7 +249,6 @@ export function ExtractedAssetTable({
                     value={asset.sourceName}
                     readOnly={readOnly}
                     data-asset-id={asset.id}
-                    data-asset-field="sourceName"
                     aria-label={`${t.restyle_asset_source_name}：${asset.id}`}
                     onChange={(event) => patchRow(asset.id, { sourceName: event.target.value })}
                     className={`${CELL_INPUT_CLASS} text-sm font-medium text-text-primary ${fieldWarning(issues, "sourceName") ? CELL_WARN_CLASS : ""}`}
@@ -329,14 +321,24 @@ export function ExtractedAssetTable({
                     {linkedAssetIds?.length ? "选择/更换" : "选择资产"}
                   </button>
                   {editable ? (
-                    <button
-                      type="button"
-                      onClick={() => onDeleteAsset?.(asset.id)}
-                      className="grid h-6 w-6 place-items-center rounded text-text-muted hover:bg-destructive/10 hover:text-destructive"
-                      aria-label={`删除资产：${asset.sourceName || asset.id}`}
-                    >
-                      <Trash2 size={13} />
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => openEditDialog(asset)}
+                        className="grid h-6 w-6 place-items-center rounded text-text-muted hover:bg-accent-dim hover:text-accent"
+                        aria-label={`${t.restyle_asset_dialog_edit_title}：${asset.sourceName || asset.id}`}
+                      >
+                        <Pencil size={13} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDeleteAsset?.(asset.id)}
+                        className="grid h-6 w-6 place-items-center rounded text-text-muted hover:bg-destructive/10 hover:text-destructive"
+                        aria-label={`删除资产：${asset.sourceName || asset.id}`}
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </>
                   ) : null}
                 </span>
               </div>
@@ -374,6 +376,13 @@ export function ExtractedAssetTable({
           );
         })}
       </div>
+      <AssetEditDialog
+        open={dialogOpen}
+        initialValue={dialogAsset}
+        onSubmit={handleDialogSubmit}
+        onClose={() => setDialogOpen(false)}
+        t={t}
+      />
     </div>
   );
 }

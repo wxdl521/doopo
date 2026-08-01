@@ -1,7 +1,8 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useServerFn } from "@tanstack/react-start";
 import { ArrowLeft, Heart, Eye, Share2, Check } from "lucide-react";
+import { toast } from "sonner";
 import {
   getPost,
   recordView,
@@ -35,6 +36,7 @@ function viewerKey(): string {
 
 function PostPage() {
   const { t } = useLanguage();
+  const navigate = useNavigate();
   const { postId } = Route.useParams();
   const { isAuthenticated } = useAuth();
   const fetchPost = useServerFn(getPost);
@@ -81,7 +83,9 @@ function PostPage() {
   const cover = post.cover_gradient;
   const onLike = async () => {
     if (!isAuthenticated) {
-      alert(t.post_like_login);
+      toast(t.post_like_login, {
+        action: { label: t.auth_to_signin, onClick: () => navigate({ to: "/login" }) },
+      });
       return;
     }
     setLiked((l) => !l);

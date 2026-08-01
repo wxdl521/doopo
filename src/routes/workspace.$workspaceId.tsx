@@ -15,6 +15,7 @@ import WorkspaceTopbar, { type WorkspaceTab } from "../components/workspace/Work
 import ZopiaChatPanel, { type ZopiaChatPanelHandle } from "../components/workspace/ZopiaChatPanel";
 import { useLanguage } from "../i18n/LanguageContext";
 import { useAuth } from "../hooks/useAuth";
+import { useConfirmDialog } from "../hooks/useConfirmDialog";
 import {
   saveOneCharacter,
   saveOneScene,
@@ -1302,6 +1303,7 @@ function WorkspacePage() {
   const workspaceId = Route.useParams().workspaceId;
   const { t } = useLanguage();
   const { user } = useAuth();
+  const { confirm, ConfirmDialog } = useConfirmDialog();
   const [tab, setTab] = useState<WorkspaceTab>("script");
   const chatPanelRef = useRef<ZopiaChatPanelHandle>(null);
   const [collapsed, setCollapsed] = useState(false);
@@ -4905,8 +4907,15 @@ function WorkspacePage() {
     setPropModError(null);
   }
 
-  function removeCharacter(c: GenCharacter) {
-    if (!window.confirm(`确定删除角色“${c.name}”吗？该角色不会再用于现有分镜。`)) return;
+  async function removeCharacter(c: GenCharacter) {
+    if (
+      !(await confirm({
+        title: `确定删除角色“${c.name}”吗？`,
+        description: "该角色不会再用于现有分镜。",
+        danger: true,
+      }))
+    )
+      return;
     setData((current) => ({
       ...current,
       characters: current.characters.filter((item) => item.id !== c.id),
@@ -4942,11 +4951,17 @@ function WorkspacePage() {
     toast.success("已删除角色");
   }
 
-  function removeCharacterImage(imageKey: string, index: number, cardTitle: string) {
+  async function removeCharacterImage(imageKey: string, index: number, cardTitle: string) {
     const generations = charImagesRef.current[imageKey] ?? [];
     const target = generations[index];
     if (!target) return;
-    if (!window.confirm(`确定删除「${cardTitle}」的第 ${index + 1} 张角色图吗？`)) return;
+    if (
+      !(await confirm({
+        title: `确定删除「${cardTitle}」的第 ${index + 1} 张角色图吗？`,
+        danger: true,
+      }))
+    )
+      return;
 
     const nextGenerations = generations.filter((_, i) => i !== index);
     updateCharImages((images) => ({ ...images, [imageKey]: nextGenerations }));
@@ -4987,8 +5002,15 @@ function WorkspacePage() {
     setCharacterNameDraft("");
   }
 
-  function removeScene(s: GenScene) {
-    if (!window.confirm(`确定删除场景“${s.slug}”吗？该场景会从现有分镜中移除。`)) return;
+  async function removeScene(s: GenScene) {
+    if (
+      !(await confirm({
+        title: `确定删除场景“${s.slug}”吗？`,
+        description: "该场景会从现有分镜中移除。",
+        danger: true,
+      }))
+    )
+      return;
     setData((current) => ({
       ...current,
       scenes: current.scenes.filter((item) => item.id !== s.id),
@@ -5019,8 +5041,15 @@ function WorkspacePage() {
     toast.success("已删除场景");
   }
 
-  function removeProp(p: GenProp) {
-    if (!window.confirm(`确定删除道具“${p.name}”吗？该道具会从现有分镜中移除。`)) return;
+  async function removeProp(p: GenProp) {
+    if (
+      !(await confirm({
+        title: `确定删除道具“${p.name}”吗？`,
+        description: "该道具会从现有分镜中移除。",
+        danger: true,
+      }))
+    )
+      return;
     setData((current) => ({
       ...current,
       props: current.props.filter((item) => item.id !== p.id),
@@ -11074,6 +11103,7 @@ function WorkspacePage() {
 
   return (
     <div className="h-screen flex flex-col bg-bg overflow-hidden">
+      <ConfirmDialog />
       <WorkspaceTopbar
         tab={tab}
         onTabChange={setTab}
@@ -13091,8 +13121,13 @@ function WorkspacePage() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => {
-                              if (window.confirm(`确定删除第 ${g.index} 组分镜？`)) {
+                            onClick={async () => {
+                              if (
+                                await confirm({
+                                  title: `确定删除第 ${g.index} 组分镜？`,
+                                  danger: true,
+                                })
+                              ) {
                                 handleDeleteGroup(g.id);
                               }
                             }}

@@ -3230,7 +3230,8 @@ export default function RestyleStudio() {
     assets: RestyleExtractedAsset[],
     relations: RestyleCharacterRelation[],
   ) {
-    // 空白行（表尾新增的待填行）不送检，server 端 schema 也要求名称非空。
+    // 名称为空的行不送检（弹窗已必填原片名称，此处为防御性过滤），
+    // server 端 schema 也要求名称非空。
     const reviewable = assets.filter((asset) => asset.sourceName.trim());
     if (!reviewable.length) return;
     setAssetReviewRunning(true);

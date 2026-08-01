@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { Trash2, MessageSquare, FileText, Cloud, LogIn, Share2 } from "lucide-react";
 import { useServerFn } from "@tanstack/react-start";
+import { toast } from "sonner";
 import { useLanguage } from "../i18n/LanguageContext";
 import ScriptComposer from "../components/scripts/ScriptComposer";
 import {
@@ -36,6 +37,7 @@ function getModels(t: ReturnType<typeof useLanguage>["t"]) {
 
 export default function Scripts() {
   const { t } = useLanguage();
+  const navigate = useNavigate();
   const models = getModels(t);
   const [scripts, setScripts] = useState<SavedScript[]>([]);
   const { isAuthenticated, loading: authLoading, user, signOut } = useAuth();
@@ -207,7 +209,12 @@ export default function Scripts() {
                       <button
                         onClick={() => {
                           if (!isAuthenticated) {
-                            alert(t.sl_share_login);
+                            toast(t.sl_share_login, {
+                              action: {
+                                label: t.auth_to_signin,
+                                onClick: () => navigate({ to: "/login" }),
+                              },
+                            });
                             return;
                           }
                           setShareScript(s);
