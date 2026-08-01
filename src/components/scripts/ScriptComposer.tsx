@@ -34,6 +34,13 @@ import {
   type SavedScript,
 } from "../../lib/scriptStorage";
 import { uploadScriptCover } from "../../lib/scripts.covers.functions";
+import TagMultiSelect from "./TagMultiSelect";
+import {
+  SCRIPT_GENRE_GROUPS,
+  SCRIPT_TONE_GROUP,
+  scriptTagLabel,
+  type ScriptTagDef,
+} from "../../lib/scriptTags";
 
 // 5 步对话式剧本智能体
 type Stage = "setup" | "synopsis" | "episode" | "episodes" | "done";
