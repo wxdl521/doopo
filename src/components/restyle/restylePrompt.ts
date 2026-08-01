@@ -60,3 +60,17 @@ export function withStyleBrief(instruction: string, styleBrief: string): string 
   if (!style) return instruction;
   return `【目标画风·必须严格遵守】${style}\n${instruction}`.trim();
 }
+
+/**
+ * 资产图最终提示词的来源：用户在「过程与提示词」面板里手工覆盖过（promptOverride）
+ * 时优先使用覆盖内容，否则走 buildAssetImagePrompt 自动拼装。
+ */
+export function resolveAssetImagePrompt(
+  asset: AssetPromptInput & { promptOverride?: string },
+  styleBrief: string,
+  extraInstruction = "",
+): string {
+  const override = asset.promptOverride?.trim() ?? "";
+  if (override) return override;
+  return buildAssetImagePrompt(asset, styleBrief, extraInstruction);
+}

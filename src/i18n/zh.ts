@@ -1643,6 +1643,22 @@ export const zh = {
   restyle_create_project: "创建项目",
   restyle_attach_file: "附加文件",
   restyle_attach_folder: "附加文件夹",
+  restyle_chat_enter_hint: "Enter 发送 · Shift + Enter 换行",
+  restyle_process_panel: "过程与提示词",
+  restyle_process_timeline: "处理过程",
+  restyle_asset_run_pending: "等待中",
+  restyle_asset_run_running: "生成中",
+  restyle_asset_run_done: "已完成",
+  restyle_asset_run_failed: "失败",
+  restyle_prompts_title: "提示词编辑器",
+  restyle_style_brief_label: "目标画风（公共前缀）",
+  restyle_style_brief_placeholder: "目标画风，如：美式 3D 动画 / 日漫赛璐璐",
+  restyle_style_brief_preview: "前缀预览",
+  restyle_asset_prompts_title: "资产图提示词",
+  restyle_regenerate_with_prompt: "按当前提示词重新生成",
+  restyle_reset_prompt_override: "恢复自动生成",
+  restyle_prompt_overridden: "已覆盖",
+  restyle_segment_prompts_title: "分段视频提示词",
 };
 
 export type Translations = typeof zh;

@@ -52,7 +52,8 @@ import { uploadLocalImage } from "../../lib/uploadImage.functions";
 import { persistAssetImage } from "../../lib/workspaceMedia.functions";
 import { realImageModelOptions, realVideoModels } from "../NewProjectDialog";
 import { isConfirmIntent, isVideoRenderIntent } from "./restyleIntent";
-import { buildAssetImagePrompt, looksLikeStyleBrief, withStyleBrief } from "./restylePrompt";
+import { looksLikeStyleBrief, resolveAssetImagePrompt, withStyleBrief } from "./restylePrompt";
+import { RestyleProcessPanel, type RestyleAssetRunStatus } from "./RestyleProcessPanel";
 
 type AssetLibraryStatus = "idle" | "loading" | "ready" | "error";
 type RestyleView = "workbench" | "canvas";
@@ -846,6 +847,8 @@ export default function RestyleStudio() {
   );
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState("");
+  // 「过程与提示词」面板的逐项资产生成进度，键为 extractedAsset.id。
+  const [assetRunStatus, setAssetRunStatus] = useState<Record<string, RestyleAssetRunStatus>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const fileObjectsRef = useRef<Record<string, File>>({});
@@ -2437,6 +2440,7 @@ export default function RestyleStudio() {
   ) {
     setIsAnalyzing(true);
     setAnalysisError("");
+    setAssetRunStatus({});
     appendConversationMessage(projectId, conversationId, {
       role: "assistant",
       content: "开始生成资产图片，将按角色、场景、道具逐张处理。",
@@ -2444,13 +2448,19 @@ export default function RestyleStudio() {
     const generatedKinds: Array<"character" | "scene" | "prop"> = [];
     try {
       for (const asset of extractedAssets) {
-        const prompt = buildAssetImagePrompt(asset, styleBriefRef.current, instruction);
+        setAssetRunStatus((current) => ({ ...current, [asset.id]: { status: "running" } }));
+        // 面板里手工覆盖过提示词时直接用覆盖内容，否则按目标画风自动拼装。
+        const prompt = resolveAssetImagePrompt(asset, styleBriefRef.current, instruction);
         const result = referenceImages.length
           ? await callGenerateImageWithReferences({
               data: { prompt, model: selectedImageModel, size: "2K", referenceImages },
             })
           : await callGenerateImage({ data: { prompt, model: selectedImageModel, size: "2K" } });
         if (!result.url) {
+          setAssetRunStatus((current) => ({
+            ...current,
+            [asset.id]: { status: "failed", error: result.error || "请稍后重试。" },
+          }));
           appendConversationMessage(projectId, conversationId, {
             role: "assistant",
             content: `资产图片生成失败：${asset.targetName || asset.sourceName}。${result.error || "请稍后重试。"}`,
@@ -2468,6 +2478,10 @@ export default function RestyleStudio() {
             },
           });
           if (!persisted.ok || !persisted.url) {
+            setAssetRunStatus((current) => ({
+              ...current,
+              [asset.id]: { status: "failed", error: "保存到长期存储失败" },
+            }));
             appendConversationMessage(projectId, conversationId, {
               role: "assistant",
               content: `资产图片已生成，但保存到长期存储失败：${asset.targetName || asset.sourceName}。请重试后再继续转绘。`,
@@ -2476,6 +2490,13 @@ export default function RestyleStudio() {
           }
           durableUrl = persisted.url;
         } catch (error) {
+          setAssetRunStatus((current) => ({
+            ...current,
+            [asset.id]: {
+              status: "failed",
+              error: error instanceof Error ? error.message : "未知错误",
+            },
+          }));
           appendConversationMessage(projectId, conversationId, {
             role: "assistant",
             content: `资产图片已生成，但保存到长期存储失败：${error instanceof Error ? error.message : "未知错误"}。`,
@@ -2509,6 +2530,7 @@ export default function RestyleStudio() {
           ],
         }));
         generatedKinds.push(asset.kind);
+        setAssetRunStatus((current) => ({ ...current, [asset.id]: { status: "done" } }));
         appendConversationMessage(projectId, conversationId, {
           role: "assistant",
           content: `已生成：${asset.targetName || asset.sourceName}`,
@@ -2605,6 +2627,51 @@ export default function RestyleStudio() {
         shouldRestyle: true,
       },
     ]);
+  }
+
+  // ---- 「过程与提示词」面板的回调：状态全部提升在 activeProject 上，面板保持无状态 ----
+
+  function handleStyleBriefChange(next: string) {
+    if (!activeProject) return;
+    styleBriefRef.current = next;
+    updateProject(activeProject.id, (project) => ({ ...project, styleBrief: next }));
+  }
+
+  function handleAssetPromptOverride(assetId: string, prompt: string) {
+    updateExtractedAssets((assets) =>
+      assets.map((asset) => (asset.id === assetId ? { ...asset, promptOverride: prompt } : asset)),
+    );
+  }
+
+  function handleAssetPromptReset(assetId: string) {
+    updateExtractedAssets((assets) =>
+      assets.map((asset) =>
+        asset.id === assetId ? { ...asset, promptOverride: undefined } : asset,
+      ),
+    );
+  }
+
+  function handleSegmentPromptChange(episode: string, segmentId: string, prompt: string) {
+    if (!activeProject) return;
+    updateProject(activeProject.id, (project) => ({
+      ...project,
+      planEpisodes: project.planEpisodes?.map((plan) =>
+        plan.episode !== episode
+          ? plan
+          : {
+              ...plan,
+              segments: plan.segments.map((segment) =>
+                segment.id === segmentId ? { ...segment, prompt } : segment,
+              ),
+            },
+      ),
+    }));
+  }
+
+  function regenerateAssetWithCurrentPrompt(asset: RestyleExtractedAsset) {
+    if (!activeProject || !activeConversation) return;
+    // 覆盖内容已在编辑时写进 asset.promptOverride，生成时由 resolveAssetImagePrompt 取用。
+    void generateAssetImages(activeProject.id, activeConversation.id, "", [asset]);
   }
 
   function canvasAttachmentPrompt(attachment: RestyleAttachment): string {
@@ -3512,6 +3579,14 @@ export default function RestyleStudio() {
                   <textarea
                     value={chatDraft}
                     onChange={(event) => setChatDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      // Enter 发送、Shift+Enter 换行；中文输入法拼字中（isComposing）不触发发送。
+                      if (event.key !== "Enter" || event.shiftKey) return;
+                      if (event.nativeEvent.isComposing) return;
+                      event.preventDefault();
+                      if (!activeConversation || isAnalyzing) return;
+                      void sendChatMessage();
+                    }}
                     placeholder={
                       activeProject?.extractedAssets.length
                         ? t.restyle_chat_feedback_placeholder
@@ -3522,26 +3597,8 @@ export default function RestyleStudio() {
                   />
                 </div>
               </div>
+              <p className="mt-1.5 px-1 text-[11px] text-text-muted">{t.restyle_chat_enter_hint}</p>
               <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border/70 pt-2 text-xs">
-                <label className="sr-only" htmlFor="restyle-style-brief">
-                  目标画风
-                </label>
-                <input
-                  id="restyle-style-brief"
-                  value={activeProject?.styleBrief ?? ""}
-                  onChange={(event) => {
-                    if (!activeProject) return;
-                    const next = event.target.value;
-                    styleBriefRef.current = next;
-                    updateProject(activeProject.id, (project) => ({
-                      ...project,
-                      styleBrief: next,
-                    }));
-                  }}
-                  disabled={!activeProject}
-                  placeholder="目标画风，如：美式 3D 动画 / 日漫赛璐璐"
-                  className="min-w-52 flex-1 rounded-md border border-border/70 bg-transparent px-2 py-1 text-xs text-text-primary outline-none placeholder:text-text-muted focus:border-accent"
-                />
                 <label className="sr-only" htmlFor="restyle-feature">
                   {t.restyle_select_feature}
                 </label>
@@ -3677,6 +3734,17 @@ export default function RestyleStudio() {
               </button>
             </div>
           </div>
+          <RestyleProcessPanel
+            project={activeProject}
+            isAnalyzing={isAnalyzing}
+            assetRunStatus={assetRunStatus}
+            onStyleBriefChange={handleStyleBriefChange}
+            onAssetPromptChange={handleAssetPromptOverride}
+            onAssetPromptReset={handleAssetPromptReset}
+            onRegenerateAsset={regenerateAssetWithCurrentPrompt}
+            onSegmentPromptChange={handleSegmentPromptChange}
+            t={t}
+          />
           <div className="min-h-0 flex-1 overflow-y-auto p-3">
             {activeProject ? (
               <div>

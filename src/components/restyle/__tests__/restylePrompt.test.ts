@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { buildAssetImagePrompt, looksLikeStyleBrief, withStyleBrief } from "../restylePrompt";
+import {
+  buildAssetImagePrompt,
+  looksLikeStyleBrief,
+  resolveAssetImagePrompt,
+  withStyleBrief,
+} from "../restylePrompt";
 
 const asset = {
   kind: "character" as const,
@@ -32,5 +37,28 @@ describe("restyle prompt", () => {
     expect(looksLikeStyleBrief("确认")).toBe(false);
     expect(withStyleBrief("生成转绘方案", "日漫赛璐璐")).toContain("【目标画风·必须严格遵守】");
     expect(withStyleBrief("生成转绘方案", "  ")).toBe("生成转绘方案");
+  });
+
+  it("prefers the manual prompt override when present", () => {
+    const prompt = resolveAssetImagePrompt(
+      { ...asset, promptOverride: "用户手工改过的提示词" },
+      "美式 3D 动画风格",
+      "确认",
+    );
+    expect(prompt).toBe("用户手工改过的提示词");
+  });
+
+  it("falls back to the auto-built prompt after the override is cleared", () => {
+    const prompt = resolveAssetImagePrompt(
+      { ...asset, promptOverride: undefined },
+      "日漫赛璐璐",
+    );
+    expect(prompt).toBe(buildAssetImagePrompt(asset, "日漫赛璐璐"));
+    expect(prompt).toContain("【目标画风·必须严格遵守】日漫赛璐璐");
+  });
+
+  it("treats a blank override as no override", () => {
+    const prompt = resolveAssetImagePrompt({ ...asset, promptOverride: "   " }, "日漫赛璐璐");
+    expect(prompt).toBe(buildAssetImagePrompt(asset, "日漫赛璐璐"));
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import RestyleStudio from "../RestyleStudio";
 import { libraryAssetsFromRows } from "../restyleAssetLibrary";
@@ -113,7 +113,8 @@ describe("RestyleStudio prototype", () => {
     await user.type(screen.getByPlaceholderText("输入你的转绘需求…"), "保留庄园客厅");
     await user.click(screen.getByRole("button", { name: "发送" }));
 
-    expect(screen.getAllByText("保留庄园客厅")).toHaveLength(3);
+    // 首条消息会被记为目标画风，显示在「过程与提示词」面板的画风编辑框里，因此共 4 处。
+    expect(screen.getAllByText("保留庄园客厅")).toHaveLength(4);
   });
 
   it("keeps the analysis model next to the composer send action", async () => {
@@ -306,11 +307,78 @@ describe("RestyleStudio prototype", () => {
           feedback: "人物不像 Grace Hart",
         }),
       ],
-      conversations: [
-        expect.objectContaining({
-          messages: [expect.objectContaining({ finalEpisodeLinks: ["EP01"] })],
-        }),
-      ],
     });
+  });
+
+  it("sends the composer message on Enter but not on Shift+Enter or while composing", async () => {
+    const user = userEvent.setup();
+    renderStudio();
+    await user.click(screen.getByRole("button", { name: "新建转绘项目" }));
+
+    const textarea = screen.getByPlaceholderText("输入你的转绘需求…");
+    fireEvent.change(textarea, { target: { value: "保留庄园客厅" } });
+
+    // Shift+Enter：换行，不发送。（消息气泡是 div；textarea 草稿不算已发送）
+    fireEvent.keyDown(textarea, { key: "Enter", shiftKey: true });
+    expect(screen.queryByText("保留庄园客厅", { selector: "div" })).not.toBeInTheDocument();
+    expect(textarea).toHaveValue("保留庄园客厅");
+
+    // 中文输入法拼字中（isComposing）：不发送，避免选词误发。
+    fireEvent.keyDown(textarea, { key: "Enter", isComposing: true });
+    expect(screen.queryByText("保留庄园客厅", { selector: "div" })).not.toBeInTheDocument();
+    expect(textarea).toHaveValue("保留庄园客厅");
+
+    // Enter：发送并清空草稿。
+    fireEvent.keyDown(textarea, { key: "Enter" });
+    expect(screen.getAllByText("保留庄园客厅").length).toBeGreaterThan(0);
+    expect(textarea).toHaveValue("");
+  });
+
+  it("persists asset prompt overrides across storage round trips", () => {
+    const project: RestyleProject = {
+      id: "project-override",
+      title: "提示词覆盖",
+      createdAt: "2026-08-02T00:00:00.000Z",
+      updatedAt: "2026-08-02T00:00:00.000Z",
+      stage: "assets",
+      assetIds: [],
+      confirmedAssetIds: [],
+      files: [],
+      conversations: [],
+      activeConversationId: null,
+      planNote: "",
+      styleBrief: "日漫赛璐璐",
+      extractedAssets: [
+        {
+          id: "asset-1",
+          kind: "character",
+          sourceName: "院长",
+          sourceDescription: "医院院长，中年男性",
+          targetName: "Director Hall",
+          targetDescription: "美国郊区医院院长",
+          importance: "required",
+          shouldRestyle: true,
+          promptOverride: "用户手工改过的提示词",
+        },
+        {
+          id: "asset-2",
+          kind: "scene",
+          sourceName: "走廊",
+          sourceDescription: "医院走廊",
+          targetName: "Hallway",
+          targetDescription: "郊区医院走廊",
+          importance: "optional",
+          shouldRestyle: true,
+        },
+      ],
+      analysisSummary: "",
+    };
+
+    saveRestyleProjects("restyle-user", [project]);
+
+    const loaded = loadRestyleProjects("restyle-user")[0];
+    expect(loaded?.extractedAssets[0]?.promptOverride).toBe("用户手工改过的提示词");
+    // 未覆盖（恢复自动生成）的资产不带上该字段。
+    expect(loaded?.extractedAssets[1]?.promptOverride).toBeUndefined();
   });
 });

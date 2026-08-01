@@ -61,6 +61,8 @@ export type RestyleExtractedAsset = {
   targetDescription: string;
   importance: "required" | "optional";
   shouldRestyle: boolean;
+  /** 用户在「过程与提示词」面板里对该资产最终提示词的手工覆盖；为空则自动拼装。 */
+  promptOverride?: string;
 };
 
 export type RestylePlanEpisode = {
@@ -216,7 +218,19 @@ function parseExtractedAssets(value: unknown): RestyleExtractedAsset[] {
     ) {
       return [];
     }
-    return [item as RestyleExtractedAsset];
+    return [
+      {
+        id: item.id,
+        kind: item.kind as RestyleExtractedAsset["kind"],
+        sourceName: item.sourceName,
+        sourceDescription: item.sourceDescription,
+        targetName: item.targetName,
+        targetDescription: item.targetDescription,
+        importance: item.importance as RestyleExtractedAsset["importance"],
+        shouldRestyle: item.shouldRestyle,
+        promptOverride: typeof item.promptOverride === "string" ? item.promptOverride : undefined,
+      },
+    ];
   });
 }
 
