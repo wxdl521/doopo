@@ -56,13 +56,8 @@ type Bubble = {
 
 type Props = {
   types: { value: string; key: keyof ReturnType<typeof useLanguage>["t"] }[];
-  genres: {
-    value: string;
-    key: keyof ReturnType<typeof useLanguage>["t"];
-    locked?: boolean;
-    label?: string;
-  }[];
-  tones: { value: string; key: keyof ReturnType<typeof useLanguage>["t"] }[];
+  genres: ScriptTagDef[];
+  tones: ScriptTagDef[];
   models: { id: string; label: string }[];
   onSaved?: () => void;
 };
