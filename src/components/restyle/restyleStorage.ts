@@ -70,6 +70,18 @@ export type RestylePlanEpisode = {
   segments: Array<{ id: string; prompt: string }>;
 };
 
+/**
+ * 人物关系边。from/to 引用 extractedAssets 中 kind === "character" 的资产 id，
+ * 这样角色改名时关系表自动跟随（显示名实时取自资产）。
+ */
+export type RestyleCharacterRelation = {
+  id: string;
+  from: string;
+  to: string;
+  relation: string;
+  note?: string;
+};
+
 export type RestyleConversation = {
   id: string;
   title: string;
@@ -100,6 +112,8 @@ export type RestyleProject = {
   videoModel?: string;
   /** 素材库预审缓存：`${vendor}\n${url}` -> asset:// 引用；同一张图跨集/跨段只审一次。 */
   assetReviewMap?: Record<string, string>;
+  /** 人物关系表。空关系表不持久化该字段。 */
+  characterRelations?: RestyleCharacterRelation[];
 };
 
 function keyFor(userId: string): string {
@@ -236,6 +250,32 @@ function parseExtractedAssets(value: unknown): RestyleExtractedAsset[] {
   });
 }
 
+function parseCharacterRelations(value: unknown): RestyleCharacterRelation[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const relations = value.flatMap((relation) => {
+    if (!relation || typeof relation !== "object") return [];
+    const edge = relation as Partial<RestyleCharacterRelation>;
+    if (
+      typeof edge.id !== "string" ||
+      typeof edge.from !== "string" ||
+      typeof edge.to !== "string" ||
+      typeof edge.relation !== "string"
+    ) {
+      return [];
+    }
+    return [
+      {
+        id: edge.id,
+        from: edge.from,
+        to: edge.to,
+        relation: edge.relation,
+        note: typeof edge.note === "string" ? edge.note : undefined,
+      },
+    ];
+  });
+  return relations.length ? relations : undefined;
+}
+
 function parseProject(value: unknown): RestyleProject | null {
   if (!value || typeof value !== "object") return null;
   const item = value as Partial<RestyleProject>;
@@ -359,6 +399,7 @@ function parseProject(value: unknown): RestyleProject | null {
     planEpisodes,
     imageModel: typeof item.imageModel === "string" ? item.imageModel : undefined,
     videoModel: typeof item.videoModel === "string" ? item.videoModel : undefined,
+    characterRelations: parseCharacterRelations(item.characterRelations),
     assetReviewMap:
       item.assetReviewMap && typeof item.assetReviewMap === "object"
         ? Object.fromEntries(

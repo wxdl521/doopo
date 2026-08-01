@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildAssetImagePrompt,
+  buildRelationBrief,
   looksLikeStyleBrief,
   resolveAssetImagePrompt,
   withStyleBrief,
@@ -74,5 +75,31 @@ describe("restyle prompt", () => {
   it("treats a blank override as no override", () => {
     const prompt = resolveAssetImagePrompt({ ...asset, promptOverride: "   " }, "日漫赛璐璐");
     expect(prompt).toBe(buildAssetImagePrompt(asset, "日漫赛璐璐"));
+  });
+
+  it("injects character relations into character asset prompts", () => {
+    const relations = [
+      { fromName: "Director Hall", toName: "Nurse Lin", relation: "雇主", note: "EP01 对手戏" },
+      { fromName: "Nurse Lin", toName: "Director Hall", relation: "雇员" },
+      { fromName: "Driver Wang", toName: "Nurse Lin", relation: "兄妹" },
+    ];
+    const brief = buildRelationBrief(relations, "Director Hall");
+    expect(brief).toContain("【人物关系·不得矛盾】");
+    expect(brief).toContain("Director Hall → Nurse Lin：雇主（EP01 对手戏）");
+    expect(brief).toContain("Nurse Lin → Director Hall：雇员");
+    // focusName 之外的边不注入该角色的提示词。
+    expect(brief).not.toContain("Driver Wang");
+
+    const prompt = buildAssetImagePrompt(asset, "美式 3D 动画风格", "", brief);
+    expect(prompt).toContain("【人物关系·不得矛盾】");
+    // 非角色资产不带关系约束；空关系也不留空行。
+    const scenePrompt = buildAssetImagePrompt(
+      { ...asset, kind: "scene" as const },
+      "美式 3D 动画风格",
+      "",
+      brief,
+    );
+    expect(scenePrompt).not.toContain("【人物关系");
+    expect(buildRelationBrief([])).toBe("");
   });
 });

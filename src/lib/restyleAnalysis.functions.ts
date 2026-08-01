@@ -13,6 +13,13 @@ const AssetSchema = z.object({
   shouldRestyle: z.boolean(),
 });
 
+const RelationshipSchema = z.object({
+  from: z.string().min(1).max(80),
+  to: z.string().min(1).max(80),
+  relation: z.string().min(1).max(120),
+  note: z.string().max(240).optional(),
+});
+
 const AnalysisSectionsSchema = z.object({
   plot: z.string().max(4_000).default(""),
   videoUnderstanding: z.string().max(4_000).default(""),
@@ -47,11 +54,13 @@ const InputSchema = z.object({
 });
 
 export type RestyleAnalysisAsset = z.infer<typeof AssetSchema>;
+export type RestyleAnalysisRelationship = z.infer<typeof RelationshipSchema>;
 export type RestyleAnalysisResult =
   | {
       ok: true;
       summary: string;
       assets: RestyleAnalysisAsset[];
+      relationships: RestyleAnalysisRelationship[];
       analysis: z.infer<typeof AnalysisSectionsSchema>;
       model: string;
       usedFrames: boolean;
@@ -71,7 +80,7 @@ function parseJson(content: string): unknown {
 }
 
 function systemPrompt(hasFrames: boolean, isRevision: boolean): string {
-  return `你是面向短剧出海转绘的资产制片人。根据用户要求、上传源片信息${hasFrames ? "以及抽取的关键帧" : ""}，输出供用户确认的资产表。\n\n${isRevision ? "当前已存在资产表。用户这次是在自然语言中反馈修改；只修改受影响的资产、补上明确遗漏项、删除明确要求删除的项，其余保持一致。" : "这是首次分析。只提取剧情理解、光影、节奏和台词语境中真正影响转绘一致性的资产。"}\n\n重要规则：\n1. 角色、场景、道具都不是必选项；某一类不存在时，该类必须输出空，不得为了凑数添加。全部不存在时 assets 必须是空数组。\n2. 角色必须是画面中有明确剧情作用的某一个具体人物，一人一条；不要输出“居民”“市民”“人群”“表演者”“观众”“工作人员”“人物群体”等群体。\n3. 场景必须是一个具体、可定位的地点或空间，例如“街角面馆”“某栋居民楼的客厅”“嵊州古城城门”；不要输出“城市风光”“古城全景”“街景”“环境”“建筑群”等泛称。\n4. 道具必须是一个具体、可单独识别的物件，例如“一盏红灯笼”“一块写有店名的木招牌”“一口铁锅”；不要输出“招牌与灯笼”“器具与食物”等多个对象、类别或概念。\n5. 如果只能确认群体、远景、类别或模糊物件，就不要提取；宁可少提取或返回空数组，也不能猜测。\n6. 根据用户的目标市场、人种、地域、语言、风格要求，为每条具体资产填入目标名称与目标说明；未要求改名时可保留原名。\n7. ${hasFrames ? "关键帧是视觉依据。" : "没有可读取的关键帧时不得虚构视频中具体发生的情节；名称或描述不确定时直接省略该资产。"}\n8. sourceDescription 写该具体人物/地点/物件在原片中的定位；targetDescription 写目标市场版的对应设定。\n9. importance 只有 required 或 optional；shouldRestyle 表示这条是否需要独立转绘。最多 30 条，去重，不输出解释、Markdown 或代码块。\n\n只输出以下 JSON：\n{"summary":"不超过120字的确认提示","assets":[{"kind":"character|scene|prop","sourceName":"","sourceDescription":"","targetName":"","targetDescription":"","importance":"required|optional","shouldRestyle":true}]}`;
+  return `你是面向短剧出海转绘的资产制片人。根据用户要求、上传源片信息${hasFrames ? "以及抽取的关键帧" : ""}，输出供用户确认的资产表。\n\n${isRevision ? "当前已存在资产表。用户这次是在自然语言中反馈修改；只修改受影响的资产、补上明确遗漏项、删除明确要求删除的项，其余保持一致。" : "这是首次分析。只提取剧情理解、光影、节奏和台词语境中真正影响转绘一致性的资产。"}\n\n重要规则：\n1. 角色、场景、道具都不是必选项；某一类不存在时，该类必须输出空，不得为了凑数添加。全部不存在时 assets 必须是空数组。\n2. 角色必须是画面中有明确剧情作用的某一个具体人物，一人一条；不要输出“居民”“市民”“人群”“表演者”“观众”“工作人员”“人物群体”等群体。\n3. 场景必须是一个具体、可定位的地点或空间，例如“街角面馆”“某栋居民楼的客厅”“嵊州古城城门”；不要输出“城市风光”“古城全景”“街景”“环境”“建筑群”等泛称。\n4. 道具必须是一个具体、可单独识别的物件，例如“一盏红灯笼”“一块写有店名的木招牌”“一口铁锅”；不要输出“招牌与灯笼”“器具与食物”等多个对象、类别或概念。\n5. 如果只能确认群体、远景、类别或模糊物件，就不要提取；宁可少提取或返回空数组，也不能猜测。\n6. 根据用户的目标市场、人种、地域、语言、风格要求，为每条具体资产填入目标名称与目标说明；未要求改名时可保留原名。\n7. ${hasFrames ? "关键帧是视觉依据。" : "没有可读取的关键帧时不得虚构视频中具体发生的情节；名称或描述不确定时直接省略该资产。"}\n8. sourceDescription 写该具体人物/地点/物件在原片中的定位；targetDescription 写目标市场版的对应设定。\n9. importance 只有 required 或 optional；shouldRestyle 表示这条是否需要独立转绘。最多 30 条，去重，不输出解释、Markdown 或代码块。\n10. relationships 写人物之间的剧情关系，from/to 必须使用资产表中角色的 sourceName 原文。仅在画面或台词可以确认时输出；角色少于 2 人、或无法确认时返回空数组，禁止虚构、禁止凑数。存在 A→B 时必须同时给出 B→A 的反向边（relation 从对方视角改写）；不得输出指向群体或不存在角色的关系。\n\n只输出以下 JSON：\n{"summary":"不超过120字的确认提示","assets":[{"kind":"character|scene|prop","sourceName":"","sourceDescription":"","targetName":"","targetDescription":"","importance":"required|optional","shouldRestyle":true}],"relationships":[{"from":"角色A sourceName","to":"角色B sourceName","relation":"A 对 B 的关系","note":"可选，剧情依据"}]}`;
 }
 
 function userText(data: z.infer<typeof InputSchema>): string {
@@ -96,6 +105,7 @@ function normalizeResult(
     const parsed = parseJson(content) as {
       summary?: unknown;
       assets?: unknown;
+      relationships?: unknown;
       analysis?: unknown;
     };
     const assets = z
@@ -103,6 +113,24 @@ function normalizeResult(
       .max(30)
       .parse(parsed.assets ?? [])
       .filter((asset) => isConcreteAsset(asset));
+    // 关系只允许引用资产表里的角色（按 sourceName 对齐），自指与重复边在这里就丢弃，
+    // 从源头遵守「禁止虚构、少于 2 人返回空」的口径。
+    const characterNames = new Set(
+      assets.filter((asset) => asset.kind === "character").map((asset) => asset.sourceName),
+    );
+    const seenPairs = new Set<string>();
+    const relationships = z
+      .array(RelationshipSchema)
+      .max(60)
+      .parse(parsed.relationships ?? [])
+      .filter((relation) => {
+        if (!characterNames.has(relation.from) || !characterNames.has(relation.to)) return false;
+        if (relation.from === relation.to) return false;
+        const pairKey = `${relation.from}→${relation.to}`;
+        if (seenPairs.has(pairKey)) return false;
+        seenPairs.add(pairKey);
+        return true;
+      });
     const summary =
       typeof parsed.summary === "string" && parsed.summary.trim()
         ? parsed.summary.trim().slice(0, 240)
@@ -119,7 +147,7 @@ function normalizeResult(
           : "未识别到需要单独转绘的资产。",
       },
     );
-    return { ok: true, summary, assets, analysis, model, usedFrames };
+    return { ok: true, summary, assets, relationships, analysis, model, usedFrames };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "资产表解析失败" };
   }

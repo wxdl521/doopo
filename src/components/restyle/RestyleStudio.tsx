@@ -40,6 +40,7 @@ import {
   saveRestyleProjects,
   type RestyleAttachment,
   type RestyleAnalysisSections,
+  type RestyleCharacterRelation,
   type RestyleConversation,
   type RestyleExtractedAsset,
   type RestyleProject,
@@ -47,6 +48,12 @@ import {
 } from "./restyleStorage";
 import type { RestyleAsset, RestyleStage } from "./restyleTypes";
 import { analyzeRestyleAssets, generateRestylePlan } from "../../lib/restyleAnalysis.functions";
+import { reviewRestyleAssetTable } from "../../lib/restyle/restyleAssetReview.functions";
+import type { AssetReviewIssue, AssetReviewVerdict } from "../../lib/restyle/assetReview";
+import {
+  validateCharacterRelations,
+  withCompletedReverseRelations,
+} from "../../lib/restyle/relationValidate";
 import { generateImage, generateImageWithReferences } from "../../lib/seedream.functions";
 import {
   pollVideoTaskFn,
@@ -69,7 +76,22 @@ import { createMediaUploadUrl } from "../../lib/restyleMedia.functions";
 import { persistAssetImage } from "../../lib/workspaceMedia.functions";
 import { realImageModelOptions, realVideoModels } from "../NewProjectDialog";
 import { isConfirmIntent, isRegenerateIntent, isVideoRenderIntent } from "./restyleIntent";
-import { looksLikeStyleBrief, resolveAssetImagePrompt, withStyleBrief } from "./restylePrompt";
+import {
+  buildRelationBrief,
+  looksLikeStyleBrief,
+  resolveAssetImagePrompt,
+  withStyleBrief,
+  type CharacterRelationBrief,
+} from "./restylePrompt";
+import {
+  ActionCallout,
+  AssetConfirmationGuide,
+  ImageGenerationModeGuide,
+  extractActionPhrases,
+  findPendingActionPhrase,
+} from "./ActionCallout";
+import { ExtractedAssetTable } from "./ExtractedAssetTable";
+import { CharacterRelationTable } from "./CharacterRelationTable";
 import { RestyleProcessPanel, type RestyleAssetRunStatus } from "./RestyleProcessPanel";
 import {
   shouldUseDirectUpload,
@@ -911,6 +933,14 @@ export default function RestyleStudio() {
   const [projectRuns, setProjectRuns] = useState<Record<string, RestyleRunState>>({});
   const runAbortRef = useRef<Record<string, AbortController>>({});
   const [analysisError, setAnalysisError] = useState("");
+  // 资产表 skill 自检结果（reviewRestyleAssetTable）：仅组件内状态，不落盘。
+  const [assetReview, setAssetReview] = useState<{
+    verdict: AssetReviewVerdict;
+    issues: AssetReviewIssue[];
+  } | null>(null);
+  const [assetReviewRunning, setAssetReviewRunning] = useState(false);
+  // 手工编辑后置 true：自检结果可能过期，靠「重新检查」手动刷新。
+  const [assetReviewStale, setAssetReviewStale] = useState(false);
   // 「过程与提示词」面板的逐项资产生成进度，键为 extractedAsset.id。
   const [assetRunStatus, setAssetRunStatus] = useState<Record<string, RestyleAssetRunStatus>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -933,6 +963,7 @@ export default function RestyleStudio() {
   const callUploadLocalMedia = useServerFn(uploadLocalImage);
   const callCreateMediaUploadUrl = useServerFn(createMediaUploadUrl);
   const callPersistAssetImage = useServerFn(persistAssetImage);
+  const callReviewRestyleAssetTable = useServerFn(reviewRestyleAssetTable);
 
   const activeProject = projects.find((project) => project.id === activeProjectId);
   // 目标画风必须在异步生图循环里可读到最新值，用 ref 避免闭包拿到旧 state。
@@ -1043,6 +1074,73 @@ export default function RestyleStudio() {
   const activeRun = activeProjectId ? projectRuns[activeProjectId] : undefined;
   // 当前项目是否在执行。其他项目的任务不会影响这里，因此可以并发发送。
   const isAnalyzing = Boolean(activeRun?.running);
+
+  // ---- 人物关系：表格与画布共用 project.characterRelations 一份数据 ----
+  const characterAssets = useMemo(
+    () => (activeProject?.extractedAssets ?? []).filter((asset) => asset.kind === "character"),
+    [activeProject?.extractedAssets],
+  );
+  const relationCharacters = useMemo(
+    () =>
+      characterAssets.map((asset) => ({
+        id: asset.id,
+        name: asset.targetName || asset.sourceName,
+      })),
+    [characterAssets],
+  );
+  const characterRelations = useMemo(
+    () => activeProject?.characterRelations ?? [],
+    [activeProject?.characterRelations],
+  );
+  // 本地校验实时跑：悬空引用 / 自指 / 重复边 / 缺失反向边。
+  const relationIssues = useMemo(
+    () =>
+      validateCharacterRelations(
+        characterRelations,
+        characterAssets.map((asset) => asset.id),
+      ),
+    [characterRelations, characterAssets],
+  );
+  // 注入生图/方案提示词的关系文本（id 还原为角色名）。
+  const relationBriefs = useMemo<CharacterRelationBrief[]>(() => {
+    const byId = new Map((activeProject?.extractedAssets ?? []).map((asset) => [asset.id, asset]));
+    return characterRelations.flatMap((relation) => {
+      const from = byId.get(relation.from);
+      const to = byId.get(relation.to);
+      if (!from || !to) return [];
+      return [
+        {
+          fromName: from.targetName || from.sourceName,
+          toName: to.targetName || to.sourceName,
+          relation: relation.relation,
+          note: relation.note,
+        },
+      ];
+    });
+  }, [activeProject?.extractedAssets, characterRelations]);
+  // 异步生图/方案流程里读最新关系文本，用 ref 避免闭包拿到旧 state。
+  const relationBriefsRef = useRef<CharacterRelationBrief[]>([]);
+  relationBriefsRef.current = relationBriefs;
+
+  // 最新一条未响应的待确认口令：驱动输入框高亮与占位文案。
+  const pendingActionPhrase = useMemo(
+    () => findPendingActionPhrase(activeConversation?.messages ?? []),
+    [activeConversation?.messages],
+  );
+  // 关系表只挂在最新一条资产表消息下面，避免历史消息里重复出现。
+  const lastAssetTableMessageId = useMemo(() => {
+    const messages = activeConversation?.messages ?? [];
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (messages[index]?.assetTable?.length) return messages[index]!.id;
+    }
+    return null;
+  }, [activeConversation?.messages]);
+
+  // 切换项目时清空自检结果（状态按项目隔离，不落盘）。
+  useEffect(() => {
+    setAssetReview(null);
+    setAssetReviewStale(false);
+  }, [activeProjectId]);
 
   function isProjectRunning(projectId: string) {
     return Boolean(projectRuns[projectId]?.running);
@@ -2540,11 +2638,11 @@ export default function RestyleStudio() {
     return false;
   }
 
-  async function sendChatMessage() {
+  async function sendChatMessage(overrideMessage?: string) {
     if (!activeProject || !activeConversation) return;
     // 同一项目内串行；不同项目各自独立，可并发执行。
     if (isProjectRunning(activeProject.id)) return;
-    const message = chatDraft.trim();
+    const message = (overrideMessage ?? chatDraft).trim();
     // 发送时解析文本中的 @imageN / @videoN，把被 @ 的素材一并带上（即使不在附件条里）。
     const mentionedAttachmentIds = resolveMentionedAttachmentIds(message, mentionableAttachments);
     const outgoingAttachmentIds = [
@@ -2625,7 +2723,7 @@ export default function RestyleStudio() {
       const result = await callGenerateRestylePlan({
         data: {
           model: selectedModel,
-          instruction: withStyleBrief(activeProject.planNote, styleBriefRef.current),
+          instruction: withRelationBrief(withStyleBrief(activeProject.planNote, styleBriefRef.current)),
           sourceFiles: (sourceFiles.length ? sourceFiles : activeProject.files).map((file) => ({
             id: file.episode ?? file.id,
             name: file.name,
@@ -2671,7 +2769,7 @@ export default function RestyleStudio() {
       const result = await callGenerateRestylePlan({
         data: {
           model: selectedModel,
-          instruction: withStyleBrief(message, styleBriefRef.current),
+          instruction: withRelationBrief(withStyleBrief(message, styleBriefRef.current)),
           sourceFiles: (sourceFiles.length ? sourceFiles : activeProject.files).map((file) => ({
             id: file.episode ?? file.id,
             name: file.name,
@@ -2839,6 +2937,28 @@ export default function RestyleStudio() {
         id: crypto.randomUUID(),
         ...asset,
       }));
+      // analysis 的 relationships 按角色名对齐到资产 id：改名后关系表自动跟随。
+      const newCharacterAssets = extractedAssets.filter((asset) => asset.kind === "character");
+      const relationEdges: RestyleCharacterRelation[] = (result.relationships ?? []).flatMap(
+        (relation) => {
+          const match = (name: string) =>
+            newCharacterAssets.find(
+              (asset) => asset.sourceName === name || asset.targetName === name,
+            );
+          const from = match(relation.from);
+          const to = match(relation.to);
+          if (!from || !to || from.id === to.id) return [];
+          return [
+            {
+              id: crypto.randomUUID(),
+              from: from.id,
+              to: to.id,
+              relation: relation.relation,
+              note: relation.note,
+            },
+          ];
+        },
+      );
       const frameAttachments: RestyleAttachment[] = frameBatches.flatMap(({ file, frames }) => {
         const episode = file.episode ?? file.id;
         const videoName = file.name.replace(/\.[^.]+$/, "") || episode;
@@ -2862,6 +2982,8 @@ export default function RestyleStudio() {
           sourceFiles.map((file) => [file.episode ?? file.id, result.analysis]),
         ) as Record<string, RestyleAnalysisSections>,
         confirmedAssetIds: [],
+        // 关系表随新一轮资产表重建（角色 id 重新生成，旧边全部失效）。
+        characterRelations: relationEdges.length ? relationEdges : undefined,
         files: [...project.files.filter((file) => !file.analysisFrame), ...frameAttachments],
       }));
       appendConversationMessage(projectId, conversationId, {
@@ -2869,6 +2991,8 @@ export default function RestyleStudio() {
         content: `${result.summary}${result.usedFrames ? ` ${t.restyle_frames_analyzed}` : ""}`,
         assetTable: extractedAssets,
       });
+      // 资产表生成后自动跑一次 skill 自检（1 分/次，与旧分析调用同口径）。
+      void runAssetTableReview(extractedAssets, relationEdges);
     } catch (error) {
       const detail = error instanceof Error ? error.message : t.restyle_analysis_unknown_error;
       if (isRunAborted(projectId)) return;
@@ -2910,7 +3034,17 @@ export default function RestyleStudio() {
         );
         setAssetRunStatus((current) => ({ ...current, [asset.id]: { status: "running" } }));
         // 面板里手工覆盖过提示词时直接用覆盖内容，否则按目标画风自动拼装。
-        const prompt = resolveAssetImagePrompt(asset, styleBriefRef.current, instruction);
+        // 角色资产附带人物关系约束，同框/互动不跑偏。
+        const relationBrief = buildRelationBrief(
+          relationBriefsRef.current,
+          asset.targetName || asset.sourceName,
+        );
+        const prompt = resolveAssetImagePrompt(
+          asset,
+          styleBriefRef.current,
+          instruction,
+          relationBrief,
+        );
         const result = referenceImages.length
           ? await callGenerateImageWithReferences({
               data: { prompt, model: selectedImageModel, size: "2K", referenceImages },
@@ -3065,30 +3199,79 @@ export default function RestyleStudio() {
     });
   }
 
-  function addExtractedAsset() {
-    const sourceName = window.prompt("请输入资产名称");
-    if (!sourceName?.trim()) return;
-    const kindInput = window.prompt("请输入类型：角色、场景或道具", "场景")?.trim();
-    const kind: RestyleExtractedAsset["kind"] =
-      kindInput === "角色" ? "character" : kindInput === "道具" ? "prop" : "scene";
-    const sourceDescription =
-      window.prompt("请输入原片定位", "用户补充的具体资产") || "用户补充的具体资产";
-    const targetName = window.prompt("请输入目标名称", sourceName) || sourceName;
-    const targetDescription =
-      window.prompt("请输入目标设定", sourceDescription) || sourceDescription;
-    updateExtractedAssets((assets) => [
-      ...assets,
-      {
-        id: crypto.randomUUID(),
-        kind,
-        sourceName: sourceName.trim(),
-        sourceDescription,
-        targetName,
-        targetDescription,
-        importance: "optional",
-        shouldRestyle: true,
-      },
-    ]);
+  function updateCharacterRelations(
+    mutator: (current: RestyleCharacterRelation[]) => RestyleCharacterRelation[],
+  ) {
+    if (!activeProject) return;
+    updateProject(activeProject.id, (project) => {
+      const next = mutator(project.characterRelations ?? []);
+      // 空关系表不保留该字段（简单剧集自然不出现关系表）。
+      return { ...project, characterRelations: next.length ? next : undefined };
+    });
+  }
+
+  function handleRelationsChange(relations: RestyleCharacterRelation[]) {
+    updateCharacterRelations(() => relations);
+  }
+
+  /** 「补全反向关系」一键修复：为每条单边补上反向边。 */
+  function handleFixReverseRelations() {
+    if (!activeProject) return;
+    const characterIds = activeProject.extractedAssets
+      .filter((asset) => asset.kind === "character")
+      .map((asset) => asset.id);
+    updateCharacterRelations((current) =>
+      withCompletedReverseRelations(current, characterIds),
+    );
+  }
+
+  /** 资产表 skill 自检：生成后自动跑一次，手工编辑后由「重新检查」触发。 */
+  async function runAssetTableReview(
+    assets: RestyleExtractedAsset[],
+    relations: RestyleCharacterRelation[],
+  ) {
+    // 空白行（表尾新增的待填行）不送检，server 端 schema 也要求名称非空。
+    const reviewable = assets.filter((asset) => asset.sourceName.trim());
+    if (!reviewable.length) return;
+    setAssetReviewRunning(true);
+    try {
+      const result = await callReviewRestyleAssetTable({
+        data: { model: selectedModel, assets: reviewable, relations },
+      });
+      if (result.ok) {
+        setAssetReview({ verdict: result.verdict, issues: result.issues });
+        setAssetReviewStale(false);
+      } else {
+        toast.error(result.error);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "资产表自检失败");
+    } finally {
+      setAssetReviewRunning(false);
+    }
+  }
+
+  /** 把人物关系文本拼进方案生成指令，分段提示词中的人物互动不得与关系矛盾。 */
+  function withRelationBrief(instruction: string): string {
+    const brief = buildRelationBrief(relationBriefsRef.current);
+    return brief ? `${instruction}\n${brief}（分段提示词中的人物互动必须与上述关系一致）` : instruction;
+  }
+
+  /** 「采纳建议」一键写入：仅文本字段可直接写回。 */
+  function handleAdoptReviewIssue(issue: AssetReviewIssue) {
+    if (
+      !["sourceName", "sourceDescription", "targetName", "targetDescription"].includes(issue.field)
+    ) {
+      return;
+    }
+    updateExtractedAssets((assets) =>
+      assets.map((asset) =>
+        asset.id === issue.assetId ? { ...asset, [issue.field]: issue.suggestion } : asset,
+      ),
+    );
+    setAssetReview((current) =>
+      current ? { ...current, issues: current.issues.filter((item) => item !== issue) } : current,
+    );
   }
 
   // ---- 「过程与提示词」面板的回调：状态全部提升在 activeProject 上，面板保持无状态 ----
@@ -3907,11 +4090,23 @@ export default function RestyleStudio() {
                     </div>
                   ) : null}
                   {message.content ? (
-                    <div
-                      className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-6 ${message.role === "assistant" ? "rounded-bl-md border border-border bg-bg-surface text-text-secondary" : "rounded-br-md bg-accent text-bg"}`}
-                    >
-                      {message.content}
-                    </div>
+                    message.role === "assistant" &&
+                    extractActionPhrases(message.content).length ? (
+                      // 含动作口令的助手消息升级为待办卡片：口令 chip 点击即发送。
+                      <ActionCallout
+                        content={message.content}
+                        phrases={extractActionPhrases(message.content)}
+                        disabled={isAnalyzing || !activeConversation}
+                        onRun={(phrase) => void sendChatMessage(phrase)}
+                        t={t}
+                      />
+                    ) : (
+                      <div
+                        className={`max-w-[80%] rounded-2xl px-4 py-2.5 text-sm leading-6 ${message.role === "assistant" ? "rounded-bl-md border border-border bg-bg-surface text-text-secondary" : "rounded-br-md bg-accent text-bg"}`}
+                      >
+                        {message.content}
+                      </div>
+                    )
                   ) : null}
                   {message.assetTable?.length ? (
                     <div className="w-full rounded-2xl border border-border bg-bg-surface p-3 shadow-card">
@@ -3929,8 +4124,37 @@ export default function RestyleStudio() {
                             assets.filter((asset) => asset.id !== assetId),
                           )
                         }
-                        onAddAsset={addExtractedAsset}
+                        onChange={(next) => {
+                          // 手工编辑后自检结果可能过期，提示用户手动「重新检查」。
+                          setAssetReviewStale(true);
+                          updateExtractedAssets(() => next);
+                        }}
+                        reviewIssues={(assetReview?.issues ?? []).filter(
+                          (issue) => issue.field !== "relation",
+                        )}
+                        onAdoptIssue={handleAdoptReviewIssue}
+                        onRecheck={() =>
+                          void runAssetTableReview(
+                            activeProject?.extractedAssets ?? [],
+                            characterRelations,
+                          )
+                        }
+                        reviewRunning={assetReviewRunning}
+                        reviewStale={assetReviewStale}
                       />
+                      {message.id === lastAssetTableMessageId ? (
+                        <CharacterRelationTable
+                          characters={relationCharacters}
+                          relations={characterRelations}
+                          issues={relationIssues}
+                          reviewIssues={(assetReview?.issues ?? []).filter(
+                            (issue) => issue.field === "relation",
+                          )}
+                          onChange={handleRelationsChange}
+                          onFixReverse={handleFixReverseRelations}
+                          t={t}
+                        />
+                      ) : null}
                       <ImageGenerationModeGuide t={t} />
                     </div>
                   ) : null}
@@ -3957,7 +4181,9 @@ export default function RestyleStudio() {
               sendChatMessage();
             }}
           >
-            <div className="mx-auto max-w-4xl rounded-xl border border-border bg-bg-elevated p-2 focus-within:border-accent">
+            <div
+              className={`mx-auto max-w-4xl rounded-xl border bg-bg-elevated p-2 focus-within:border-accent ${pendingActionPhrase ? "border-accent/60" : "border-border"}`}
+            >
               {draftAttachments.length > 0 && (
                 <div className="flex flex-wrap gap-2 px-1 pb-2">
                   {draftAttachments.map((attachment) => (
@@ -4108,9 +4334,11 @@ export default function RestyleStudio() {
                       void sendChatMessage();
                     }}
                     placeholder={
-                      activeProject?.extractedAssets.length
-                        ? t.restyle_chat_feedback_placeholder
-                        : t.restyle_chat_placeholder
+                      pendingActionPhrase
+                        ? `${t.restyle_pending_confirm_prefix}${pendingActionPhrase}`
+                        : activeProject?.extractedAssets.length
+                          ? t.restyle_chat_feedback_placeholder
+                          : t.restyle_chat_placeholder
                     }
                     rows={1}
                     className="max-h-24 min-h-8 w-full resize-none bg-transparent py-1.5 text-sm text-text-primary outline-none placeholder:text-text-muted"
@@ -5461,125 +5689,6 @@ function AttachmentFileGroup({
   );
 }
 
-function ExtractedAssetTable({
-  assets,
-  t,
-  linkedAssetIds,
-  onChooseLibraryAsset,
-  onDeleteAsset,
-  onAddAsset,
-  confirmedAssetIds,
-  onToggleConfirmation,
-}: {
-  assets: RestyleExtractedAsset[];
-  t: Translations;
-  linkedAssetIds?: string[];
-  onChooseLibraryAsset?: (assetId: string) => void;
-  onDeleteAsset?: (assetId: string) => void;
-  onAddAsset?: () => void;
-  confirmedAssetIds?: string[];
-  onToggleConfirmation?: (assetId: string) => void;
-}) {
-  const kindLabel = (kind: RestyleExtractedAsset["kind"]) =>
-    kind === "character"
-      ? t.restyle_assets_characters
-      : kind === "scene"
-        ? t.restyle_assets_scenes
-        : t.restyle_assets_props;
-
-  return (
-    <div className="mt-5 overflow-x-auto rounded-xl border border-border">
-      <div className="min-w-[1040px] overflow-hidden">
-        <div className="grid grid-cols-[64px_minmax(140px,1fr)_minmax(180px,1.4fr)_minmax(140px,1fr)_minmax(190px,1.5fr)_112px] gap-3 border-b border-border bg-bg-elevated px-4 py-2 text-[11px] font-medium text-text-muted">
-          <span>{t.restyle_asset_type}</span>
-          <span>{t.restyle_asset_source_name}</span>
-          <span>{t.restyle_asset_source_description}</span>
-          <span>{t.restyle_asset_target_name}</span>
-          <span>{t.restyle_asset_target_description}</span>
-          <span>资产库</span>
-          <button
-            type="button"
-            onClick={() => onAddAsset?.()}
-            className="flex items-center gap-1 text-accent hover:text-text-primary"
-          >
-            <Plus size={12} />
-            新增
-          </button>
-        </div>
-        {assets.map((asset) => {
-          return (
-            <div
-              key={asset.id}
-              className="grid grid-cols-[64px_minmax(140px,1fr)_minmax(180px,1.4fr)_minmax(140px,1fr)_minmax(190px,1.5fr)_150px] gap-3 border-b border-border px-4 py-3 text-left last:border-0 hover:bg-bg-elevated/70"
-            >
-              <span className="text-xs text-accent">{kindLabel(asset.kind)}</span>
-              <span className="text-sm font-medium text-text-primary">{asset.sourceName}</span>
-              <span className="text-xs leading-5 text-text-secondary">
-                {asset.sourceDescription}
-              </span>
-              <span className="text-sm font-medium text-text-primary">{asset.targetName}</span>
-              <span className="text-xs leading-5 text-text-secondary">
-                {asset.targetDescription}
-                {!asset.shouldRestyle && (
-                  <span className="mt-1 block text-[10px] text-text-muted">
-                    {t.restyle_asset_keep_original}
-                  </span>
-                )}
-              </span>
-              <span className="flex items-start gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => onChooseLibraryAsset?.(asset.id)}
-                  className="h-fit rounded-md border border-border px-2 py-1 text-[11px] text-accent hover:bg-accent-dim"
-                >
-                  {linkedAssetIds?.length ? "选择/更换" : "选择资产"}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onDeleteAsset?.(asset.id)}
-                  className="grid h-6 w-6 place-items-center rounded text-text-muted hover:bg-destructive/10 hover:text-destructive"
-                  aria-label={`删除资产：${asset.sourceName}`}
-                >
-                  <Trash2 size={13} />
-                </button>
-              </span>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function ImageGenerationModeGuide({ t }: { t: Translations }) {
-  return (
-    <div className="mt-4 rounded-xl border border-accent/20 bg-accent-dim/15 p-3 text-xs leading-5 text-text-secondary">
-      <p className="font-medium text-text-primary">{t.restyle_image_generation_title}</p>
-      <p className="mt-1">{t.restyle_image_generation_ai}</p>
-      <p>{t.restyle_image_generation_reference}</p>
-      <p className="text-text-muted">{t.restyle_image_generation_example}</p>
-    </div>
-  );
-}
-
-function AssetConfirmationGuide({ t }: { t: Translations }) {
-  return (
-    <div className="mt-4 rounded-xl border border-accent/20 bg-accent-dim/20 p-3 text-sm text-text-secondary">
-      <p className="font-medium text-text-primary">{t.restyle_assets_confirmation_intro}</p>
-      <ul className="mt-2 grid gap-1 pl-4 text-xs leading-5 sm:grid-cols-2">
-        <li>{t.restyle_assets_check_characters}</li>
-        <li>{t.restyle_assets_check_scenes}</li>
-        <li>{t.restyle_assets_check_props}</li>
-        <li>{t.restyle_assets_check_market}</li>
-      </ul>
-      <p className="mt-2 text-xs leading-5">
-        {t.restyle_assets_feedback_hint}{" "}
-        <span className="text-text-muted">{t.restyle_assets_feedback_example}</span>
-      </p>
-    </div>
-  );
-}
-
 function StagePanel({
   stage,
   assets,
@@ -5660,12 +5769,7 @@ function StagePanel({
         </div>
         {extractedAssets.length > 0 && <AssetConfirmationGuide t={t} />}
         {extractedAssets.length ? (
-          <ExtractedAssetTable
-            assets={extractedAssets}
-            confirmedAssetIds={activeProject?.confirmedAssetIds ?? []}
-            onToggleConfirmation={onToggleAssetConfirmation}
-            t={t}
-          />
+          <ExtractedAssetTable assets={extractedAssets} t={t} />
         ) : assetLibraryStatus === "loading" ? (
           <EmptyState text={t.restyle_assets_syncing} />
         ) : assets.length ? (

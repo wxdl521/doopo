@@ -29,11 +29,42 @@ export function looksLikeStyleBrief(message: string): boolean {
   );
 }
 
+/** 一条已解析成角色名的人物关系，用于注入提示词。 */
+export type CharacterRelationBrief = {
+  fromName: string;
+  toName: string;
+  relation: string;
+  note?: string;
+};
+
+/**
+ * 把人物关系表转成一行提示词约束。focusName 只保留与该角色相关的边；
+ * 无关系时返回空串，调用方直接跳过。
+ */
+export function buildRelationBrief(
+  relations: CharacterRelationBrief[],
+  focusName?: string,
+): string {
+  const focus = focusName?.trim();
+  const lines = relations
+    .filter(
+      (relation) =>
+        !focus || relation.fromName === focus || relation.toName === focus,
+    )
+    .map(
+      (relation) =>
+        `${relation.fromName} → ${relation.toName}：${relation.relation}${relation.note ? `（${relation.note}）` : ""}`,
+    );
+  if (!lines.length) return "";
+  return `【人物关系·不得矛盾】${lines.join("；")}`;
+}
+
 /** 组装单张资产图的提示词，强制带上目标画风约束。 */
 export function buildAssetImagePrompt(
   asset: AssetPromptInput,
   styleBrief: string,
   extraInstruction = "",
+  relationBrief = "",
 ): string {
   const style = styleBrief.trim();
   const extra = extraInstruction.trim();
@@ -56,6 +87,12 @@ export function buildAssetImagePrompt(
     `【资产名称】${asset.targetName || asset.sourceName}`,
     `【原片定位】${asset.sourceDescription}`,
     `【目标设定】${asset.targetDescription}`,
+  );
+  // 角色资产带上人物关系约束，避免与其他角色同框/互动时关系跑偏。
+  if (asset.kind === "character" && relationBrief.trim()) {
+    lines.push(relationBrief.trim());
+  }
+  lines.push(
     "【约束】只生成该单一资产，背景干净，不得出现其他人物、场景或道具；整体色彩、材质、线条、光影、笔触必须与上述目标画风完全一致，不得混入其他画风。",
   );
   return lines.join("\n");
@@ -76,6 +113,7 @@ export function resolveAssetImagePrompt(
   asset: AssetPromptInput & { promptOverride?: string },
   styleBrief: string,
   extraInstruction = "",
+  relationBrief = "",
 ): string {
   const override = asset.promptOverride?.trim() ?? "";
   if (override) {
@@ -87,5 +125,5 @@ export function resolveAssetImagePrompt(
     if (!meaningfulExtra) return override;
     return `【本次修正要求·优先级最高】${meaningfulExtra}（与下方任何设定冲突时，一律以本条为准）\n${override}`;
   }
-  return buildAssetImagePrompt(asset, styleBrief, extraInstruction);
+  return buildAssetImagePrompt(asset, styleBrief, extraInstruction, relationBrief);
 }
