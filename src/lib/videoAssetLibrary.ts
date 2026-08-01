@@ -1,0 +1,196 @@
+/**
+ * 视频素材库预审的共享纯函数。
+ *
+ * 背景：真人参考图直接以公网 URL 放进视频任务的 content[]，会触发上游
+ * `InputImageSensitiveContentDetected.PrivacyInformation` 风控。官方规避路径是
+ * 先把素材登记进渠道素材库，审核为 Active 后用 `asset://<id>` 引用提交。
+ * 工作区（角色/场景/道具详情页）与转绘页共用这里的判定与降级逻辑。
+ */
+
+export type VideoAssetLibrarySupport = {
+  supported: boolean;
+  message: string;
+};
+
+/**
+ * 判断视频模型对应的后端是否支持素材库预审。
+ * 已接入素材登记通道的后端：TopenRouter / 客易云 / 筷子丽帧。
+ */
+export function getVideoAssetLibrarySupport(model: string | undefined): VideoAssetLibrarySupport {
+  if (!model?.trim()) {
+    return { supported: false, message: "请先在项目设置中选择视频模型。" };
+  }
+  if (
+    model.startsWith("topenrouter-doubao-seedance-") ||
+    model.startsWith("kuaizi-lizhen-") ||
+    model.startsWith("keyiyun-")
+  ) {
+    return { supported: true, message: "" };
+  }
+  return {
+    supported: false,
+    message: `${model} 暂不支持真人脸审核。`,
+  };
+}
+
+export type VideoAssetVendor = "topenrouter" | "keyiyun" | "kuaizi";
+
+/** 返回模型对应的素材库供应商；不支持素材库时返回 null。 */
+export function assetLibraryVendorForModel(model: string | undefined): VideoAssetVendor | null {
+  if (!model?.trim()) return null;
+  if (model.startsWith("topenrouter-doubao-seedance-")) return "topenrouter";
+  if (model.startsWith("keyiyun-")) return "keyiyun";
+  if (model.startsWith("kuaizi-lizhen-")) return "kuaizi";
+  return null;
+}
+
+/**
+ * 转绘项目级素材审核缓存的键。asset:// 引用不能跨渠道复用，
+ * 因此键里必须带供应商，同一 URL 换渠道后重新入库。
+ */
+export function restyleAssetCacheKey(vendor: VideoAssetVendor, url: string): string {
+  return `${vendor}\n${url}`;
+}
+
+/** 上游真人风控/素材敏感类报错。 */
+export function isSensitiveContentError(error: string): boolean {
+  return (
+    /InputImageSensitiveContentDetected/i.test(error) ||
+    /PrivacyInformation/i.test(error) ||
+    /may contain real person/i.test(error) ||
+    /真实人物|真人|敏感内容/.test(error)
+  );
+}
+
+/** 从上游报错中解析被点名的 content[n] 下标（去重、升序）。 */
+export function parseRejectedContentIndexes(error: string): number[] {
+  const indexes = new Set<number>();
+  for (const match of error.matchAll(/content\[(\d+)\]/g)) {
+    indexes.add(Number.parseInt(match[1], 10));
+  }
+  return [...indexes].sort((a, b) => a - b);
+}
+
+// ---------- 转绘提交内容与降级链 ----------
+
+export type RestyleSubmitContentItem =
+  | { type: "text"; text: string }
+  | {
+      type: "image_url";
+      image_url: { url: string };
+      role?: "first_frame" | "reference_image";
+    }
+  | { type: "video_url"; video_url: { url: string }; role?: "reference_video" };
+
+/**
+ * 降级阶段：
+ * - full：首帧 + 全部参考图 + 参考视频；
+ * - without-rejected：剔除被风控/审核点名的参考图后重投（可重复）；
+ * - first-frame：只保留首帧图；
+ * - text-video：仅文本 + 参考视频。
+ */
+export type RestyleFallbackStage = "full" | "without-rejected" | "first-frame" | "text-video";
+
+/**
+ * 拼装转绘视频任务的 content 数组。约定 imageUrls[0] 充当首帧
+ * （role=first_frame），其余为 reference_image；参考视频固定在末尾，
+ * 因此 content[0] 是文本、content[1..n] 是图片 —— 与上游报错里的
+ * content[n] 下标一致。
+ */
+export function buildRestyleVideoContent(input: {
+  prompt: string;
+  /** 已通过剔除与 asset:// 映射的图片 URL，首帧在 index 0。 */
+  imageUrls: string[];
+  referenceVideoUrl?: string;
+  stage: RestyleFallbackStage;
+}): RestyleSubmitContentItem[] {
+  const images =
+    input.stage === "text-video"
+      ? []
+      : input.stage === "first-frame"
+        ? input.imageUrls.slice(0, 1)
+        : input.imageUrls;
+  const content: RestyleSubmitContentItem[] = [{ type: "text", text: input.prompt }];
+  for (const [index, url] of images.entries()) {
+    content.push({
+      type: "image_url",
+      image_url: { url },
+      role: index === 0 ? "first_frame" : "reference_image",
+    });
+  }
+  if (input.referenceVideoUrl) {
+    content.push({
+      type: "video_url",
+      video_url: { url: input.referenceVideoUrl },
+      role: "reference_video",
+    });
+  }
+  return content;
+}
+
+/** 把报错里的 content[n] 下标映射回对应的图片 URL（按提交时的 content 顺序）。 */
+export function rejectedImageUrlsFromError(
+  error: string,
+  content: RestyleSubmitContentItem[],
+): string[] {
+  const urls: string[] = [];
+  for (const index of parseRejectedContentIndexes(error)) {
+    const item = content[index];
+    if (item?.type === "image_url" && !urls.includes(item.image_url.url)) {
+      urls.push(item.image_url.url);
+    }
+  }
+  return urls;
+}
+
+export type RestyleFallbackPlan = {
+  stage: RestyleFallbackStage;
+  /** 本次新剔除的图片 URL（按提交时 content 里的 URL 口径，调用方自行映射回原始 URL）。 */
+  dropUrls: string[];
+  /** 写入任务日志的说明。 */
+  message: string;
+};
+
+/**
+ * 提交被拒后决定下一步降级动作；返回 null 表示降级链已穷尽，应判失败。
+ * 只有真人风控/素材敏感类错误才进入降级链，其它错误由调用方直接判失败。
+ */
+export function planRestyleFallback(input: {
+  stage: RestyleFallbackStage;
+  error: string;
+  content: RestyleSubmitContentItem[];
+  /** 已剔除过的图片 URL（与 content 里的 URL 同一口径）。 */
+  droppedUrls: readonly string[];
+}): RestyleFallbackPlan | null {
+  if (!isSensitiveContentError(input.error)) return null;
+  const newlyRejected = rejectedImageUrlsFromError(input.error, input.content).filter(
+    (url) => !input.droppedUrls.includes(url),
+  );
+  // 还能点名到新的参考图：剔除后继续重投（无论当前处于哪个带图阶段）。
+  if (newlyRejected.length > 0 && input.stage !== "text-video") {
+    return {
+      stage: "without-rejected",
+      dropUrls: newlyRejected,
+      message: `参考图被真人风控拦截，已剔除 ${newlyRejected.length} 张后重投。`,
+    };
+  }
+  if (input.stage === "full" || input.stage === "without-rejected") {
+    return {
+      stage: "first-frame",
+      dropUrls: [],
+      message: "参考图仍被拦截，降级为只保留首帧图重投。",
+    };
+  }
+  if (input.stage === "first-frame") {
+    return {
+      stage: "text-video",
+      dropUrls: [],
+      message: "首帧图仍被拦截，降级为仅文本 + 参考视频重投。",
+    };
+  }
+  return null;
+}
+
+/** 降级链穷尽后的可操作失败文案。 */
+export const RESTYLE_FALLBACK_EXHAUSTED_MESSAGE =
+  "参考图被判定为真实人物且素材预审未通过，请把该角色图换成更风格化（非写实）的版本，或改用支持素材库的视频模型";

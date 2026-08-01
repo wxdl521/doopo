@@ -98,6 +98,8 @@ export type RestyleProject = {
   planEpisodes?: RestylePlanEpisode[];
   imageModel?: string;
   videoModel?: string;
+  /** 素材库预审缓存：`${vendor}\n${url}` -> asset:// 引用；同一张图跨集/跨段只审一次。 */
+  assetReviewMap?: Record<string, string>;
 };
 
 function keyFor(userId: string): string {
@@ -357,6 +359,19 @@ function parseProject(value: unknown): RestyleProject | null {
     planEpisodes,
     imageModel: typeof item.imageModel === "string" ? item.imageModel : undefined,
     videoModel: typeof item.videoModel === "string" ? item.videoModel : undefined,
+    assetReviewMap:
+      item.assetReviewMap && typeof item.assetReviewMap === "object"
+        ? Object.fromEntries(
+            Object.entries(item.assetReviewMap).flatMap(([key, value]) =>
+              typeof key === "string" &&
+              key.includes("\n") &&
+              typeof value === "string" &&
+              /^(?:asset|assetId):\/\/[a-zA-Z0-9_-]+$/.test(value)
+                ? [[key, value]]
+                : [],
+            ),
+          )
+        : undefined,
   };
 }
 

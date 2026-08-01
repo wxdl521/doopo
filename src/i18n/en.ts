@@ -1606,6 +1606,11 @@ export const en: Translations = {
   restyle_select_model: "Select analysis model",
   restyle_image_model: "Image model",
   restyle_video_model: "Video model",
+  restyle_video_model_asset_review: "Real-person asset review",
+  restyle_video_model_no_review_warning:
+    "This model skips real-person pre-review; reference images containing real people may be rejected",
+  restyle_reupload_source_video: "Re-upload source video",
+  restyle_retry_render: "Retry",
   restyle_analysis_running: "Thinking…",
   restyle_analysis_revision_running: "Thinking…",
   restyle_analysis_failed: "Asset analysis was not completed:",

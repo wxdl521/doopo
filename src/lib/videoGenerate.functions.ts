@@ -375,6 +375,72 @@ function getArkConfig() {
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
+// 2026/08:submit 超时 30s→60s。上游创建任务偶发超过 30s（EP01 U01 曾因此
+// 误报 submit timeout），60s 配合下面的网络类重试能覆盖绝大多数抖动。
+const VIDEO_TASK_HTTP_TIMEOUT_MS = 60_000;
+const SUBMIT_MAX_ATTEMPTS = 3;
+
+type SubmitFetchResult =
+  | { ok: true; status: number; text: string }
+  | { ok: false; networkError: string };
+
+/** 429 / 5xx 属于可重试的临时故障；业务 4xx（如风控 400）重投无意义。 */
+function isRetryableSubmitStatus(status: number): boolean {
+  return status === 429 || status >= 500;
+}
+
+/**
+ * 视频任务提交共用的 POST 请求：60s 超时，对网络类错误（AbortError /
+ * fetch failed / 429 / 5xx）做最多 3 次指数退避重试；业务 4xx 立即返回，
+ * 由调用方按原格式包装错误。
+ */
+async function fetchSubmitWithRetry(input: {
+  url: string;
+  headers: Record<string, string>;
+  body: string;
+  /** 错误日志标签,如 "ark-seedance" / "topenrouter" */
+  label: string;
+}): Promise<SubmitFetchResult> {
+  let lastNetworkError = "fetch failed";
+  for (let attempt = 1; attempt <= SUBMIT_MAX_ATTEMPTS; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), VIDEO_TASK_HTTP_TIMEOUT_MS);
+    try {
+      const res = await fetch(input.url, {
+        method: "POST",
+        headers: input.headers,
+        body: input.body,
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      const text = await res.text().catch(() => "");
+      if (!res.ok && isRetryableSubmitStatus(res.status) && attempt < SUBMIT_MAX_ATTEMPTS) {
+        console.warn(
+          `[${input.label}] submit ${res.status} 可重试，第 ${attempt}/${SUBMIT_MAX_ATTEMPTS} 次后退避重投`,
+        );
+        await sleep(1_000 * 2 ** (attempt - 1));
+        continue;
+      }
+      return { ok: true, status: res.status, text };
+    } catch (e) {
+      clearTimeout(timeout);
+      lastNetworkError =
+        e instanceof Error
+          ? e.name === "AbortError"
+            ? `submit timeout (${VIDEO_TASK_HTTP_TIMEOUT_MS / 1_000}s)`
+            : e.message
+          : "fetch failed";
+      if (attempt < SUBMIT_MAX_ATTEMPTS) {
+        console.warn(
+          `[${input.label}] submit network=${lastNetworkError}，第 ${attempt}/${SUBMIT_MAX_ATTEMPTS} 次后退避重投`,
+        );
+        await sleep(1_000 * 2 ** (attempt - 1));
+      }
+    }
+  }
+  return { ok: false, networkError: lastNetworkError };
+}
+
 /** 项目内部 resolution('480P'/'720P'/'1080P' 大写)-> ARK Seedance 小写格式。
  *  ARK 协议 resolution 为顶层字段(与 ratio/duration 平级),取值小写。
  *  按需求不支持 4k,仅映射 480p/720p/1080p,其余兜底 720p。 */
@@ -409,23 +475,21 @@ async function arkSubmit(input: {
   if (typeof input.generateAudio === "boolean") body.generate_audio = input.generateAudio;
   if (typeof input.watermark === "boolean") body.watermark = input.watermark;
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30_000);
-  try {
-    const res = await fetch(`${input.baseUrl}/contents/generations/tasks`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${input.apiKey}`,
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-    const text = await res.text().catch(() => "");
-    if (!res.ok) {
-      console.warn(`[${tag}] submit ${res.status} full body:`, text.slice(0, 2000));
-      return { ok: false, error: `[${tag}] submit ${res.status}: ${text.slice(0, 500)}` };
+  const result = await fetchSubmitWithRetry({
+    url: `${input.baseUrl}/contents/generations/tasks`,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${input.apiKey}`,
+    },
+    body: JSON.stringify(body),
+    label: tag,
+  });
+  if (!result.ok) return { ok: false, error: `[${tag}] network: ${result.networkError}` };
+  const { status, text } = result;
+  {
+    if (status < 200 || status >= 300) {
+      console.warn(`[${tag}] submit ${status} full body:`, text.slice(0, 2000));
+      return { ok: false, error: `[${tag}] submit ${status}: ${text.slice(0, 500)}` };
     }
     // 2026/06 Bugfix:res.text() 已经把 body 流消费了,res.json() 必然失败。
     // 改成 JSON.parse(text) 复用同一份 text,不再二次读 body。
@@ -441,15 +505,6 @@ async function arkSubmit(input: {
       };
     }
     return { ok: true, taskId: json.id, model: input.model };
-  } catch (e) {
-    clearTimeout(timeout);
-    const msg =
-      e instanceof Error
-        ? e.name === "AbortError"
-          ? "submit timeout (30s)"
-          : e.message
-        : "fetch failed";
-    return { ok: false, error: `[${tag}] network: ${msg}` };
   }
 }
 
@@ -554,7 +609,7 @@ async function arkPoll(input: {
 > {
   const tag = input.label || "ark-seedance";
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30_000);
+  const timeout = setTimeout(() => controller.abort(), VIDEO_TASK_HTTP_TIMEOUT_MS);
   try {
     const res = await fetch(`${input.baseUrl}/contents/generations/tasks/${input.taskId}`, {
       method: "GET",
@@ -580,7 +635,7 @@ async function arkPoll(input: {
     const msg =
       e instanceof Error
         ? e.name === "AbortError"
-          ? "poll timeout (30s)"
+          ? `poll timeout (${VIDEO_TASK_HTTP_TIMEOUT_MS / 1_000}s)`
           : e.message
         : "fetch failed";
     return { ok: false, error: `[${tag}] poll network: ${msg}` };
@@ -695,23 +750,23 @@ async function dashscopeSubmit(input: {
     },
   };
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30_000);
-  try {
-    const res = await fetch(DASHSCOPE_VIDEO_ENDPOINT, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${input.apiKey}`,
-        "X-DashScope-Async": "enable",
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-    const text = await res.text().catch(() => "");
-    if (!res.ok)
-      return { ok: false, error: `[dashscope-video] submit ${res.status}: ${text.slice(0, 300)}` };
+  const result = await fetchSubmitWithRetry({
+    url: DASHSCOPE_VIDEO_ENDPOINT,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${input.apiKey}`,
+      "X-DashScope-Async": "enable",
+    },
+    body: JSON.stringify(body),
+    label: "dashscope-video",
+  });
+  if (!result.ok) {
+    return { ok: false, error: `[dashscope-video] network: ${result.networkError}` };
+  }
+  const { status, text } = result;
+  {
+    if (status < 200 || status >= 300)
+      return { ok: false, error: `[dashscope-video] submit ${status}: ${text.slice(0, 300)}` };
     // 2026/06 Bugfix:见 arkSubmit —— 改用 JSON.parse(text) 而不是 res.json()
     let json: {
       output?: { task_id?: string; task_status?: string };
@@ -728,15 +783,6 @@ async function dashscopeSubmit(input: {
       };
     }
     return { ok: true, taskId, model: input.model };
-  } catch (e) {
-    clearTimeout(timeout);
-    const msg =
-      e instanceof Error
-        ? e.name === "AbortError"
-          ? "submit timeout (30s)"
-          : e.message
-        : "fetch failed";
-    return { ok: false, error: `[dashscope-video] network: ${msg}` };
   }
 }
 
@@ -761,7 +807,7 @@ async function dashscopePoll(input: {
   | { ok: false; error: string; status?: SeedanceProgress; raw?: any }
 > {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30_000);
+  const timeout = setTimeout(() => controller.abort(), VIDEO_TASK_HTTP_TIMEOUT_MS);
   try {
     const res = await fetch(DASHSCOPE_TASK_GET + input.taskId, {
       headers: { Authorization: `Bearer ${input.apiKey}` },
@@ -797,7 +843,7 @@ async function dashscopePoll(input: {
     const msg =
       e instanceof Error
         ? e.name === "AbortError"
-          ? "poll timeout (30s)"
+          ? `poll timeout (${VIDEO_TASK_HTTP_TIMEOUT_MS / 1_000}s)`
           : e.message
         : "fetch failed";
     return { ok: false, error: `[dashscope-video] poll network: ${msg}` };
@@ -2122,23 +2168,24 @@ async function topenrouterSubmit(input: {
     `[topenrouter video→] model=${upstreamModel} content=${input.content.length} ratio=${input.ratio || "default"} resolution=${body.resolution || "default"} duration=${input.duration ?? "default"}`,
   );
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30_000);
-  try {
-    const res = await fetch(`${input.baseUrl}/v1/video/tasks`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${input.apiKey}`,
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    clearTimeout(timeout);
-    const text = await res.text().catch(() => "");
-    if (!res.ok) {
+  const result = await fetchSubmitWithRetry({
+    url: `${input.baseUrl}/v1/video/tasks`,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${input.apiKey}`,
+    },
+    body: JSON.stringify(body),
+    label: "topenrouter video",
+  });
+  if (!result.ok) {
+    console.warn(`[topenrouter video×] submit network=${result.networkError}`);
+    return { ok: false, error: `[topenrouter] network: ${result.networkError}` };
+  }
+  const { status, text } = result;
+  {
+    if (status < 200 || status >= 300) {
       const upstreamError = topenrouterErrorBody(text);
-      console.warn(`[topenrouter video×] submit status=${res.status} body=${upstreamError}`);
+      console.warn(`[topenrouter video×] submit status=${status} body=${upstreamError}`);
       // 直接将供应商 code/message 返回给界面，避免包装错误掩盖上游实际原因。
       return { ok: false, error: upstreamError };
     }
@@ -2158,16 +2205,6 @@ async function topenrouterSubmit(input: {
     }
     console.log(`[topenrouter video✓] submitted taskId=${json.id}`);
     return { ok: true, taskId: json.id, model: input.model };
-  } catch (e) {
-    clearTimeout(timeout);
-    const msg =
-      e instanceof Error
-        ? e.name === "AbortError"
-          ? "submit timeout (30s)"
-          : e.message
-        : "fetch failed";
-    console.warn(`[topenrouter video×] submit network=${msg}`);
-    return { ok: false, error: `[topenrouter] network: ${msg}` };
   }
 }
 
@@ -2991,21 +3028,22 @@ async function keyiyunSubmit(input: {
   if (typeof input.duration === "number") body.duration = input.duration;
   if (typeof input.generateAudio === "boolean") body.generate_audio = input.generateAudio;
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30_000);
-  try {
-    const res = await fetch(`${input.baseUrl}/v1/seedance-special/videos`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${input.apiKey}`,
-      },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    });
-    const text = await res.text().catch(() => "");
-    if (!res.ok)
-      return { ok: false, error: `[keyiyun] 创建任务 ${res.status}: ${text.slice(0, 500)}` };
+  const result = await fetchSubmitWithRetry({
+    url: `${input.baseUrl}/v1/seedance-special/videos`,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${input.apiKey}`,
+    },
+    body: JSON.stringify(body),
+    label: "keyiyun",
+  });
+  if (!result.ok) {
+    return { ok: false, error: `[keyiyun] 创建任务网络错误: ${result.networkError}` };
+  }
+  const { status, text } = result;
+  {
+    if (status < 200 || status >= 300)
+      return { ok: false, error: `[keyiyun] 创建任务 ${status}: ${text.slice(0, 500)}` };
     let json: KeyiyunEnvelope<{ id?: string }> & { id?: string } = {};
     try {
       json = JSON.parse(text);
@@ -3020,16 +3058,6 @@ async function keyiyunSubmit(input: {
       };
     }
     return { ok: true, taskId, model: KEYYIYUN_UPSTREAM_MODEL };
-  } catch (error) {
-    const message =
-      error instanceof Error
-        ? error.name === "AbortError"
-          ? "创建任务超时 (30s)"
-          : error.message
-        : "fetch failed";
-    return { ok: false, error: `[keyiyun] 创建任务网络错误: ${message}` };
-  } finally {
-    clearTimeout(timeout);
   }
 }
 

@@ -47,7 +47,22 @@ import {
 import type { RestyleAsset, RestyleStage } from "./restyleTypes";
 import { analyzeRestyleAssets, generateRestylePlan } from "../../lib/restyleAnalysis.functions";
 import { generateImage, generateImageWithReferences } from "../../lib/seedream.functions";
-import { pollVideoTaskFn, submitVideoTaskFn } from "../../lib/videoGenerate.functions";
+import {
+  pollVideoTaskFn,
+  submitVideoTaskFn,
+  uploadKeyiyunAsset,
+  uploadTopenrouterAsset,
+} from "../../lib/videoGenerate.functions";
+import {
+  assetLibraryVendorForModel,
+  buildRestyleVideoContent,
+  getVideoAssetLibrarySupport,
+  isSensitiveContentError,
+  planRestyleFallback,
+  RESTYLE_FALLBACK_EXHAUSTED_MESSAGE,
+  restyleAssetCacheKey,
+  type RestyleFallbackStage,
+} from "../../lib/videoAssetLibrary";
 import { uploadLocalImage } from "../../lib/uploadImage.functions";
 import { persistAssetImage } from "../../lib/workspaceMedia.functions";
 import { realImageModelOptions, realVideoModels } from "../NewProjectDialog";
@@ -81,6 +96,18 @@ function relabelRestyleError(error: string, model: RestyleModel): string {
 }
 
 type RestyleModel = (typeof RESTYLE_MODELS)[number]["id"];
+
+// 支持素材库预审（真人素材审核）的视频模型排最前并作为默认：真人参考图直接以
+// 公网 URL 提交会触发上游风控，素材库通道（asset:// 引用）是官方规避路径。
+const RESTYLE_VIDEO_MODELS = [...realVideoModels].sort(
+  (a, b) =>
+    Number(getVideoAssetLibrarySupport(b.id).supported) -
+    Number(getVideoAssetLibrarySupport(a.id).supported),
+);
+const DEFAULT_RESTYLE_VIDEO_MODEL =
+  RESTYLE_VIDEO_MODELS.find((model) => getVideoAssetLibrarySupport(model.id).supported)?.id ??
+  realVideoModels[0]?.id ??
+  "doubao-seedance-2-0-260128";
 type RestyleFilePreview =
   | {
       kind: "attachment";
@@ -842,15 +869,15 @@ export default function RestyleStudio() {
       ? "doubao-seedream-5-0-260128"
       : (realImageModelOptions[0]?.id ?? "doubao-seedream-5-0-260128"),
   );
-  const [selectedVideoModel, setSelectedVideoModel] = useState(
-    realVideoModels[0]?.id ?? "doubao-seedance-2-0-260128",
-  );
+  const [selectedVideoModel, setSelectedVideoModel] = useState(DEFAULT_RESTYLE_VIDEO_MODEL);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState("");
   // 「过程与提示词」面板的逐项资产生成进度，键为 extractedAsset.id。
   const [assetRunStatus, setAssetRunStatus] = useState<Record<string, RestyleAssetRunStatus>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+  const reuploadInputRef = useRef<HTMLInputElement>(null);
+  const reuploadTargetRef = useRef<{ projectId: string; attachmentId: string } | null>(null);
   const fileObjectsRef = useRef<Record<string, File>>({});
   const sourceVideoUploadRef = useRef<
     Record<string, Promise<{ ok: true; url: string } | { ok: false; error: string }>>
@@ -862,6 +889,8 @@ export default function RestyleStudio() {
   const callGenerateImageWithReferences = useServerFn(generateImageWithReferences);
   const callSubmitVideoTask = useServerFn(submitVideoTaskFn);
   const callPollVideoTask = useServerFn(pollVideoTaskFn);
+  const callUploadTopenrouterAsset = useServerFn(uploadTopenrouterAsset);
+  const callUploadKeyiyunAsset = useServerFn(uploadKeyiyunAsset);
   const callUploadLocalMedia = useServerFn(uploadLocalImage);
   const callPersistAssetImage = useServerFn(persistAssetImage);
 
@@ -1523,6 +1552,78 @@ export default function RestyleStudio() {
     });
   }
 
+  /**
+   * 渲染前素材预审：把首帧图与全部参考图登记进当前视频模型的素材库，
+   * 审核通过后改用 asset:// 引用提交，规避 InputImageSensitiveContentDetected 风控。
+   * 结果按 url -> assetUrl 缓存到项目级 assetReviewMap（restyleStorage 持久化），
+   * 同一张图跨集/跨段只审一次。被拒的图放入 rejected，由调用方剔除后重投；
+   * 网络/配置类错误保留原始链接，由服务端转存兜底。
+   */
+  async function ensureRestyleAssets(input: {
+    projectId: string;
+    attachmentId: string;
+    urls: string[];
+  }): Promise<{ assetUrls: Record<string, string>; rejected: string[] }> {
+    const result: { assetUrls: Record<string, string>; rejected: string[] } = {
+      assetUrls: {},
+      rejected: [],
+    };
+    const vendor = assetLibraryVendorForModel(selectedVideoModel);
+    // 筷子丽帧以公网 URL 作为视频输入，无需替换 asset://；不支持素材库的模型维持原样提交。
+    if (!vendor || vendor === "kuaizi") return result;
+    const cache = projects.find((item) => item.id === input.projectId)?.assetReviewMap ?? {};
+    const pending: Array<{ url: string; index: number }> = [];
+    input.urls.forEach((url, index) => {
+      // 素材接口只接受公网 HTTP(S) URL；blob:/data: 交给服务端转存。
+      if (!/^https?:\/\//i.test(url)) return;
+      const cached = cache[restyleAssetCacheKey(vendor, url)];
+      if (cached) result.assetUrls[url] = cached;
+      else pending.push({ url, index });
+    });
+    for (const { url, index } of pending) {
+      const label = index === 0 ? "首帧图" : `参考图 ${index + 1}`;
+      appendRenderLog(input.projectId, input.attachmentId, `${label}素材入库中…`);
+      const name = `doopoo-restyle-${Date.now()}-${index + 1}`.slice(0, 200);
+      try {
+        const uploaded =
+          vendor === "keyiyun"
+            ? await callUploadKeyiyunAsset({ data: { url, assetType: "Image", name } })
+            : await callUploadTopenrouterAsset({
+                data: { url, assetType: "Image", name, model: selectedVideoModel },
+              });
+        if (uploaded.ok && uploaded.assetUrl) {
+          const assetUrl = uploaded.assetUrl;
+          result.assetUrls[url] = assetUrl;
+          appendRenderLog(input.projectId, input.attachmentId, `${label}素材已通过审核入库。`);
+          const cacheKey = restyleAssetCacheKey(vendor, url);
+          updateProject(input.projectId, (project) => ({
+            ...project,
+            assetReviewMap: { ...project.assetReviewMap, [cacheKey]: assetUrl },
+          }));
+        } else {
+          const error = uploaded.ok ? "素材入库未返回素材引用" : uploaded.error;
+          if (/status\s*=\s*failed|入库失败|sensitive|real person/i.test(error)) {
+            result.rejected.push(url);
+            appendRenderLog(input.projectId, input.attachmentId, `${label}素材被拒：${error}`);
+          } else {
+            appendRenderLog(
+              input.projectId,
+              input.attachmentId,
+              `${label}素材入库失败，改用原始链接提交：${error}`,
+            );
+          }
+        }
+      } catch (error) {
+        appendRenderLog(
+          input.projectId,
+          input.attachmentId,
+          `${label}素材入库请求失败，改用原始链接提交：${error instanceof Error ? error.message : "网络错误"}`,
+        );
+      }
+    }
+    return result;
+  }
+
   async function runRenderQueue(
     projectId: string,
     conversationId: string,
@@ -1562,38 +1663,71 @@ export default function RestyleStudio() {
         failRenderAttachment(projectId, job.attachmentId, referenceVideo.error);
       } else {
         appendRenderLog(projectId, job.attachmentId, "原视频已就绪，正在提交转绘任务。");
+        // 素材库预审：首帧图 + 全部参考图先登记为 asset:// 引用（同图跨集/跨段只审一次）；
+        // 预审被拒的图直接剔除，从 without-rejected 阶段开始。
+        const preChecked = await ensureRestyleAssets({
+          projectId,
+          attachmentId: job.attachmentId,
+          urls: job.referenceImages,
+        });
+        const dropped: string[] = [...preChecked.rejected];
+        let stage: RestyleFallbackStage = dropped.length ? "without-rejected" : "full";
         // 提交和查询拆成短请求，避免把视频生成时长挂在同一个 Worker 请求上。
         // AgentEarth 的异步接口建议每 5 秒查询一次；其它后端也可安全复用这个节奏。
-        const submitted = await callSubmitVideoTask({
-          data: {
-            content: [
-              { type: "text", text: job.prompt },
-              ...job.referenceImages.map((url, index) => ({
-                type: "image_url" as const,
-                image_url: { url },
-                role: (index === 0 ? "first_frame" : "reference_image") as
-                  | "first_frame"
-                  | "reference_image",
-              })),
-              {
-                type: "video_url" as const,
-                video_url: { url: referenceVideo.url },
-                role: "reference_video" as const,
-              },
-            ],
-            model: selectedVideoModel,
-            ratio: "16:9",
-            resolution: "720P",
-            duration: 5,
-            generateAudio: true,
-            watermark: false,
-          },
-        });
-        if (!submitted.ok || !submitted.taskId) {
+        let submitted: Awaited<ReturnType<typeof callSubmitVideoTask>> | null = null;
+        let submitFailure: string | null = null;
+        // 被拒降级链：剔除被点名参考图重投 → 只留首帧 → 仅文本 + 参考视频；6 次硬上限防死循环。
+        for (let attempt = 0; attempt < 6; attempt++) {
+          const keptImages = job.referenceImages.filter((url) => !dropped.includes(url));
+          const content = buildRestyleVideoContent({
+            prompt: job.prompt,
+            imageUrls: keptImages.map((url) => preChecked.assetUrls[url] ?? url),
+            referenceVideoUrl: referenceVideo.url,
+            stage,
+          });
+          const result = await callSubmitVideoTask({
+            data: {
+              content,
+              model: selectedVideoModel,
+              ratio: "16:9",
+              resolution: "720P",
+              duration: 5,
+              generateAudio: true,
+              watermark: false,
+            },
+          });
+          if (result.ok && result.taskId) {
+            submitted = result;
+            break;
+          }
+          const error = result.ok ? "视频模型没有返回任务编号" : result.error;
+          const plan = planRestyleFallback({
+            stage,
+            error,
+            content,
+            droppedUrls: dropped.map((url) => preChecked.assetUrls[url] ?? url),
+          });
+          if (!plan) {
+            submitFailure = isSensitiveContentError(error)
+              ? RESTYLE_FALLBACK_EXHAUSTED_MESSAGE
+              : error;
+            break;
+          }
+          appendRenderLog(projectId, job.attachmentId, plan.message);
+          // content 里的 URL 可能已被映射成 asset://，剔除时映射回原始 URL 口径。
+          for (const submittedUrl of plan.dropUrls) {
+            const original =
+              keptImages.find((url) => (preChecked.assetUrls[url] ?? url) === submittedUrl) ??
+              submittedUrl;
+            if (!dropped.includes(original)) dropped.push(original);
+          }
+          stage = plan.stage;
+        }
+        if (!submitted) {
           failRenderAttachment(
             projectId,
             job.attachmentId,
-            submitted.ok ? "视频模型没有返回任务编号" : submitted.error,
+            submitFailure ?? RESTYLE_FALLBACK_EXHAUSTED_MESSAGE,
           );
         } else {
           appendRenderLog(
@@ -1852,6 +1986,79 @@ export default function RestyleStudio() {
       ],
     }));
     void runRenderQueue(projectId, conversationId, jobs, [...new Set(finalEpisodes)]);
+  }
+
+  /** 失败任务一键重试：沿用原提示词与参考素材重新提交，不再追问返工原因。 */
+  function retryVideoSegment(segment: RestyleAttachment) {
+    if (!activeProject || !activeConversation || !segment.episode || !segment.segmentId) return;
+    appendConversationMessage(activeProject.id, activeConversation.id, {
+      role: "assistant",
+      content: `已重试 ${segment.episode} ${segment.segmentId}，沿用原提示词与参考素材重新提交。`,
+    });
+    generateRenderedVideos(activeProject.id, activeConversation.id, {
+      episode: segment.episode,
+      segmentId: segment.segmentId,
+      feedback: segment.feedback || `${segment.episode} ${segment.segmentId} 重试`,
+      sourceAttachmentId: segment.sourceAttachmentId,
+      rerunOfAttachmentId: segment.id,
+    });
+  }
+
+  /** 本地预览失效的原视频：就地替换文件并立即后台上传换持久 URL。 */
+  function requestReuploadSourceVideo(attachment: RestyleAttachment) {
+    if (!activeProject) return;
+    reuploadTargetRef.current = { projectId: activeProject.id, attachmentId: attachment.id };
+    reuploadInputRef.current?.click();
+  }
+
+  async function handleReuploadSourceVideo(file: File | undefined) {
+    const target = reuploadTargetRef.current;
+    reuploadTargetRef.current = null;
+    if (!target || !file) return;
+    // 保留原 attachment id 就地替换：失败任务的 sourceAttachmentId 不变，重试即可复用新链接。
+    fileObjectsRef.current[target.attachmentId] = file;
+    delete sourceVideoUploadRef.current[target.attachmentId];
+    setFilePreviews((current) => ({
+      ...current,
+      [target.attachmentId]: URL.createObjectURL(file),
+    }));
+    updateProject(target.projectId, (project) => ({
+      ...project,
+      files: project.files.map((item) =>
+        item.id === target.attachmentId
+          ? {
+              ...item,
+              size: file.size,
+              type: file.type || item.type,
+              lastModified: file.lastModified,
+              url: undefined,
+            }
+          : item,
+      ),
+    }));
+    void extractVideoThumbnail(file)
+      .then((thumbnail) => {
+        if (!thumbnail) return;
+        setFileThumbnails((current) => ({ ...current, [target.attachmentId]: thumbnail }));
+      })
+      .catch(() => {});
+    const attachment = projects
+      .find((item) => item.id === target.projectId)
+      ?.files.find((item) => item.id === target.attachmentId);
+    if (!attachment) return;
+    const uploaded = await ensureReferenceVideoUrl(target.projectId, {
+      ...attachment,
+      url: undefined,
+    });
+    const conversationId = activeConversation?.id;
+    if (conversationId) {
+      appendConversationMessage(target.projectId, conversationId, {
+        role: "assistant",
+        content: uploaded.ok
+          ? "原视频已重新上传并换取持久链接。该集失败的片段可在“生成状态”中点“重试”单独重跑。"
+          : `原视频重新上传失败：${uploaded.error}`,
+      });
+    }
   }
 
   function rerunVideoSegment(segment: RestyleAttachment) {
@@ -3527,6 +3734,17 @@ export default function RestyleStudio() {
                   }}
                 />
                 <input
+                  ref={reuploadInputRef}
+                  type="file"
+                  accept="video/*"
+                  className="sr-only"
+                  data-testid="restyle-reupload-input"
+                  onChange={(event) => {
+                    void handleReuploadSourceVideo(event.target.files?.[0]);
+                    event.target.value = "";
+                  }}
+                />
+                <input
                   ref={(node) => {
                     folderInputRef.current = node;
                     if (node) {
@@ -3671,9 +3889,12 @@ export default function RestyleStudio() {
                   className="max-w-40 rounded-md bg-transparent px-2 py-1 text-xs text-text-secondary outline-none hover:bg-bg"
                   aria-label={t.restyle_video_model}
                 >
-                  {realVideoModels.map((model) => (
+                  {RESTYLE_VIDEO_MODELS.map((model) => (
                     <option key={model.id} value={model.id}>
                       {model.label}
+                      {getVideoAssetLibrarySupport(model.id).supported
+                        ? ` · ${t.restyle_video_model_asset_review}`
+                        : ""}
                     </option>
                   ))}
                 </select>
@@ -3704,6 +3925,11 @@ export default function RestyleStudio() {
                   )}
                 </button>
               </div>
+              {!getVideoAssetLibrarySupport(selectedVideoModel).supported && (
+                <p className="mt-2 rounded-md border border-amber-300/70 bg-amber-50 px-2 py-1 text-[11px] leading-4 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
+                  {t.restyle_video_model_no_review_warning}
+                </p>
+              )}
             </div>
           </form>
         </main>
@@ -3825,7 +4051,10 @@ export default function RestyleStudio() {
                       : []
                   }
                   onRerunSegment={rerunVideoSegment}
+                  onRetrySegment={retryVideoSegment}
+                  onReuploadSourceVideo={requestReuploadSourceVideo}
                   onOpen={() => setPreviewDialog(selectedFilePreview)}
+                  t={t}
                 />
               ) : selectedAsset ? (
                 <div className="flex gap-3">
@@ -4226,7 +4455,10 @@ function FilePreviewInspector({
   videoPair,
   renderSegments,
   onRerunSegment,
+  onRetrySegment,
+  onReuploadSourceVideo,
   onOpen,
+  t,
 }: {
   preview: RestyleFilePreview;
   previewUrl?: string;
@@ -4234,10 +4466,18 @@ function FilePreviewInspector({
   videoPair?: RestyleVideoPair | null;
   renderSegments: RestyleAttachment[];
   onRerunSegment: (segment: RestyleAttachment) => void;
+  onRetrySegment: (segment: RestyleAttachment) => void;
+  onReuploadSourceVideo: (attachment: RestyleAttachment) => void;
   onOpen: () => void;
+  t: Translations;
 }) {
   if (preview.kind === "attachment") {
     const isVideo = preview.attachment.type.startsWith("video/");
+    const isDeadSourceVideo =
+      isVideo &&
+      !preview.attachment.generatedKind &&
+      !preview.attachment.analysisFrame &&
+      !previewUrl;
     if (videoPair) {
       return (
         <div className="space-y-3">
@@ -4252,7 +4492,12 @@ function FilePreviewInspector({
               {formatFileSize(preview.attachment.size) || "大小未知"}
             </p>
           </div>
-          <RenderSegmentList segments={renderSegments} onRerunSegment={onRerunSegment} />
+          <RenderSegmentList
+            segments={renderSegments}
+            onRerunSegment={onRerunSegment}
+            onRetrySegment={onRetrySegment}
+            t={t}
+          />
           <ReviewChecklist segments={renderSegments} onRerunSegment={onRerunSegment} />
           <button type="button" onClick={onOpen} className="btn-ghost !px-3 !py-2 text-xs">
             打开大预览
@@ -4291,9 +4536,25 @@ function FilePreviewInspector({
             {formatFileSize(preview.attachment.size) || "大小未知"}
           </p>
         </div>
-        <button type="button" onClick={onOpen} className="btn-ghost !px-3 !py-2 text-xs">
-          打开预览
-        </button>
+        {isDeadSourceVideo ? (
+          <p className="rounded-md border border-amber-300/70 bg-amber-50 px-2 py-1 text-[11px] leading-4 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
+            本地预览已失效，渲染前需重新上传原视频换取持久链接。
+          </p>
+        ) : null}
+        <div className="flex flex-wrap gap-2">
+          <button type="button" onClick={onOpen} className="btn-ghost !px-3 !py-2 text-xs">
+            打开预览
+          </button>
+          {isDeadSourceVideo ? (
+            <button
+              type="button"
+              onClick={() => onReuploadSourceVideo(preview.attachment)}
+              className="btn-ghost !px-3 !py-2 text-xs text-accent"
+            >
+              {t.restyle_reupload_source_video}
+            </button>
+          ) : null}
+        </div>
       </div>
     );
   }
@@ -4590,9 +4851,13 @@ VideoCompareSlot.displayName = "VideoCompareSlot";
 function RenderSegmentList({
   segments,
   onRerunSegment,
+  onRetrySegment,
+  t,
 }: {
   segments: RestyleAttachment[];
   onRerunSegment: (segment: RestyleAttachment) => void;
+  onRetrySegment: (segment: RestyleAttachment) => void;
+  t: Translations;
 }) {
   if (!segments.length) return null;
   return (
@@ -4615,6 +4880,15 @@ function RenderSegmentList({
                   ? "结果 URL 已写入"
                   : segment.renderTaskId || segment.renderError || "等待任务")}
             </span>
+            {segment.renderStatus === "failed" ? (
+              <button
+                type="button"
+                onClick={() => onRetrySegment(segment)}
+                className="shrink-0 rounded border border-border px-2 py-1 text-accent hover:bg-accent-dim"
+              >
+                {t.restyle_retry_render}
+              </button>
+            ) : null}
             <button
               type="button"
               onClick={() => onRerunSegment(segment)}

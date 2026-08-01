@@ -70,6 +70,7 @@ import {
   uploadTopenrouterAsset,
 } from "../lib/videoGenerate.functions";
 import { getKuaiziAsset, uploadKuaiziAsset } from "../lib/kuaiziAssets.functions";
+import { getVideoAssetLibrarySupport } from "../lib/videoAssetLibrary";
 import { refineStoryboardVideoPrompt } from "../lib/videoPromptRefine.functions";
 import { translateEditablePrompt } from "../lib/promptTranslation.functions";
 import { runStoryboardVideoAgent } from "../lib/storyboardVideoAgent.functions";
@@ -313,26 +314,6 @@ function savedImageAssetKey(key: string): string | null {
   // 因此恢复为“未入库”，避免把过期或未知归属的素材错误标为可用。
   if (isHttpImageUrl(key)) return null;
   return imageAssetUrlFromKey(key) ? key : null;
-}
-
-function getVideoAssetLibrarySupport(model: string | undefined): {
-  supported: boolean;
-  message: string;
-} {
-  if (!model?.trim()) {
-    return { supported: false, message: "请先在项目设置中选择视频模型。" };
-  }
-  if (
-    model.startsWith("topenrouter-doubao-seedance-") ||
-    model.startsWith("kuaizi-lizhen-") ||
-    model.startsWith("keyiyun-")
-  ) {
-    return { supported: true, message: "" };
-  }
-  return {
-    supported: false,
-    message: `${model} 暂不支持真人脸审核。`,
-  };
 }
 
 function readSavedImageReviews(value: unknown): Record<string, ImageAssetRecord> {
