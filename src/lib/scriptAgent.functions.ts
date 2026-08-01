@@ -418,8 +418,8 @@ export const streamSynopsis = createServerFn({ method: "POST" })
     const sys = wrapFictionSystem(data.lang, rawSys);
     const rawUser =
       data.lang === "zh"
-        ? `【类型】${data.type}\n【题材】${data.genre}\n【风格】${data.tone}\n【主题/标题】${data.theme}\n【剧情概要】${data.plot}\n【预计集数】${data.expectedEpisodes} 集\n【总时长限制】约 ${data.totalMinutes} 分钟`
-        : `[Type] ${data.type}\n[Genre] ${data.genre}\n[Tone] ${data.tone}\n[Theme] ${data.theme}\n[Plot] ${data.plot}\n[Expected episodes] ${data.expectedEpisodes}\n[Total duration] ~${data.totalMinutes} min`;
+        ? `【类型】${data.type}\n【题材】${genreNames}\n【风格】${toneNames}\n【主题/标题】${data.theme}\n【剧情概要】${data.plot}\n【预计集数】${data.expectedEpisodes} 集\n【总时长限制】约 ${data.totalMinutes} 分钟${guideBlock}`
+        : `[Type] ${data.type}\n[Genre] ${genreNames}\n[Tone] ${toneNames}\n[Theme] ${data.theme}\n[Plot] ${data.plot}\n[Expected episodes] ${data.expectedEpisodes}\n[Total duration] ~${data.totalMinutes} min${guideBlock}`;
     const user = wrapFictionUser(data.lang, rawUser);
     yield* streamChat({ model: pickModel(data.model), system: sys, user });
   });
