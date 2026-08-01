@@ -2789,6 +2789,8 @@ export default function RestyleStudio() {
       );
       // Keep chronological coverage for the full upload, including multi-episode uploads.
       const frameImages = frameBatches.flatMap((batch) => batch.frames).slice(0, 8);
+      if (isRunAborted(projectId)) return;
+      markRunStep(projectId, t.restyle_run_step_analyze, selectedModel);
       const result = await callAnalyzeRestyleAssets({
         data: {
           instruction: analysisInstruction,
@@ -2803,15 +2805,18 @@ export default function RestyleStudio() {
           existingAssets: activeProject.extractedAssets.map(({ id: _id, ...asset }) => asset),
         },
       });
+      if (isRunAborted(projectId)) return;
       if (!result.ok) {
         result.error = relabelRestyleError(result.error, selectedModel);
         setAnalysisError(result.error);
+        finishRun(projectId, "failed", result.error);
         appendConversationMessage(projectId, conversationId, {
           role: "assistant",
           content: `${t.restyle_analysis_failed} ${result.error}`,
         });
         return;
       }
+      markRunStep(projectId, t.restyle_run_step_asset_table);
       const extractedAssets: RestyleExtractedAsset[] = result.assets.map((asset) => ({
         id: crypto.randomUUID(),
         ...asset,
@@ -2848,13 +2853,15 @@ export default function RestyleStudio() {
       });
     } catch (error) {
       const detail = error instanceof Error ? error.message : t.restyle_analysis_unknown_error;
+      if (isRunAborted(projectId)) return;
       setAnalysisError(detail);
+      finishRun(projectId, "failed", detail);
       appendConversationMessage(projectId, conversationId, {
         role: "assistant",
         content: `${t.restyle_analysis_failed} ${detail}`,
       });
     } finally {
-      setIsAnalyzing(false);
+      if (!isRunAborted(projectId)) finishRun(projectId);
     }
   }
 
@@ -2865,7 +2872,7 @@ export default function RestyleStudio() {
     extractedAssets: RestyleExtractedAsset[],
     referenceImages: string[] = [],
   ) {
-    setIsAnalyzing(true);
+    beginRun(projectId, t.restyle_run_step_asset_images);
     setAnalysisError("");
     setAssetRunStatus({});
     appendConversationMessage(projectId, conversationId, {
