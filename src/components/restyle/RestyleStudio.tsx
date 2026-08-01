@@ -4073,6 +4073,12 @@ export default function RestyleStudio() {
                     value={chatDraft}
                     onChange={(event) => setChatDraft(event.target.value)}
                     onKeyDown={(event) => {
+                      // 执行中按 Esc 直接停止当前项目的任务。
+                      if (event.key === "Escape" && isAnalyzing && activeProjectId) {
+                        event.preventDefault();
+                        stopRun(activeProjectId);
+                        return;
+                      }
                       // Enter 发送、Shift+Enter 换行；中文输入法拼字中（isComposing）不触发发送。
                       if (event.key !== "Enter" || event.shiftKey) return;
                       if (event.nativeEvent.isComposing) return;
