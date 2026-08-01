@@ -88,6 +88,8 @@ export type RestyleProject = {
   conversations: RestyleConversation[];
   activeConversationId: string | null;
   planNote: string;
+  /** 用户描述的目标画风，所有资产图与方案提示词都必须沿用。 */
+  styleBrief?: string;
   extractedAssets: RestyleExtractedAsset[];
   analysisSummary: string;
   analysisSections?: Record<string, RestyleAnalysisSections>;
@@ -334,6 +336,7 @@ function parseProject(value: unknown): RestyleProject | null {
         ? item.activeConversationId
         : (migratedConversations[0]?.id ?? null),
     planNote: typeof item.planNote === "string" ? item.planNote : "",
+    styleBrief: typeof item.styleBrief === "string" ? item.styleBrief : "",
     extractedAssets: parseExtractedAssets(item.extractedAssets),
     analysisSummary: typeof item.analysisSummary === "string" ? item.analysisSummary : "",
     analysisSections,
