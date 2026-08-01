@@ -29,7 +29,11 @@ describe("restyle prompt", () => {
 
   it("keeps real revision requests", () => {
     const prompt = buildAssetImagePrompt(asset, "日漫赛璐璐", "把发色改成银白");
-    expect(prompt).toContain("【本次补充要求】把发色改成银白");
+    expect(prompt).toContain("【本次修正要求·优先级最高】把发色改成银白");
+    // 修正必须排在目标设定之前，否则会被跑偏的旧设定压过去。
+    expect(prompt.indexOf("【本次修正要求·优先级最高】")).toBeLessThan(
+      prompt.indexOf("【目标设定】"),
+    );
   });
 
   it("detects style briefs and prefixes plan instructions", () => {
@@ -46,6 +50,16 @@ describe("restyle prompt", () => {
       "确认",
     );
     expect(prompt).toBe("用户手工改过的提示词");
+  });
+
+  it("prepends the current correction even when an override exists", () => {
+    const prompt = resolveAssetImagePrompt(
+      { ...asset, promptOverride: "用户手工改过的提示词" },
+      "美式 3D 动画风格",
+      "场景图片生成不对，请重新生成",
+    );
+    expect(prompt).toContain("场景图片生成不对，请重新生成");
+    expect(prompt.indexOf("场景图片生成不对")).toBeLessThan(prompt.indexOf("用户手工改过的提示词"));
   });
 
   it("falls back to the auto-built prompt after the override is cleared", () => {
