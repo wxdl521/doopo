@@ -85,6 +85,24 @@ import { toast } from "sonner";
 type AssetLibraryStatus = "idle" | "loading" | "ready" | "error";
 type RestyleView = "workbench" | "canvas";
 
+/** 单个执行步骤：用于把 Agent 的处理过程直接呈现在对话流里。 */
+type RestyleRunStep = {
+  id: string;
+  label: string;
+  detail?: string;
+  status: "running" | "done" | "failed";
+  at: number;
+};
+
+/** 项目级执行态。以项目 id 为键存放，实现多项目并发与独立停止。 */
+type RestyleRunState = {
+  running: boolean;
+  startedAt: number;
+  endedAt?: number;
+  stopped?: boolean;
+  steps: RestyleRunStep[];
+};
+
 // Older restyle projects stored the raw database id while newer projects use
 // the kind-prefixed id (for example, `character:<uuid>`). Treat both forms as
 // the same asset so existing projects do not render an empty canvas.
