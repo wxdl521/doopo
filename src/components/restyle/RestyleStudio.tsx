@@ -25,6 +25,7 @@ import {
   Search,
   Send,
   Sparkles,
+  Square,
   Trash2,
   Upload,
   X,
