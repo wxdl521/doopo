@@ -4181,16 +4181,16 @@ export default function RestyleStudio() {
                   ))}
                 </select>
                 <button
-                  type="submit"
-                  disabled={!activeConversation || isAnalyzing}
+                  type={isAnalyzing ? "button" : "submit"}
+                  onClick={
+                    isAnalyzing && activeProjectId ? () => stopRun(activeProjectId) : undefined
+                  }
+                  disabled={!activeConversation}
                   className="btn-primary !h-8 !w-8 !justify-center !rounded-lg !p-0"
-                  aria-label={t.restyle_send}
+                  aria-label={isAnalyzing ? t.restyle_run_stop : t.restyle_send}
+                  title={isAnalyzing ? t.restyle_run_stop : t.restyle_send}
                 >
-                  {isAnalyzing ? (
-                    <Loader2 size={15} className="animate-spin" />
-                  ) : (
-                    <Send size={15} />
-                  )}
+                  {isAnalyzing ? <Square size={13} fill="currentColor" /> : <Send size={15} />}
                 </button>
               </div>
               {!getVideoAssetLibrarySupport(selectedVideoModel).supported && (
