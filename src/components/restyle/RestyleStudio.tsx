@@ -3522,6 +3522,25 @@ export default function RestyleStudio() {
                 </div>
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border/70 pt-2 text-xs">
+                <label className="sr-only" htmlFor="restyle-style-brief">
+                  目标画风
+                </label>
+                <input
+                  id="restyle-style-brief"
+                  value={activeProject?.styleBrief ?? ""}
+                  onChange={(event) => {
+                    if (!activeProject) return;
+                    const next = event.target.value;
+                    styleBriefRef.current = next;
+                    updateProject(activeProject.id, (project) => ({
+                      ...project,
+                      styleBrief: next,
+                    }));
+                  }}
+                  disabled={!activeProject}
+                  placeholder="目标画风，如：美式 3D 动画 / 日漫赛璐璐"
+                  className="min-w-52 flex-1 rounded-md border border-border/70 bg-transparent px-2 py-1 text-xs text-text-primary outline-none placeholder:text-text-muted focus:border-accent"
+                />
                 <label className="sr-only" htmlFor="restyle-feature">
                   {t.restyle_select_feature}
                 </label>
