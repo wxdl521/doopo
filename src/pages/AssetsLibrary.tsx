@@ -53,7 +53,7 @@ export default function AssetsLibrary() {
   const loadingMoreRef = useRef<Record<AssetTab, boolean>>(initialLoadMoreStatus);
 
   useEffect(() => {
-    if (requestedTab) setTab(requestedTab);
+    if (requestedTab) setTab(requestedTab as AssetTab);
   }, [requestedTab]);
 
   const refresh = useCallback(

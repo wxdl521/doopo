@@ -38,6 +38,7 @@ import { Route as WorkspaceWorkspaceIdRouteImport } from './routes/workspace.$wo
 import { Route as TeamCreateRouteImport } from './routes/team.create'
 import { Route as ShowcaseItemIdRouteImport } from './routes/showcase.$itemId'
 import { Route as ScriptsScriptIdRouteImport } from './routes/scripts.$scriptId'
+import { Route as RestyleV2RouteImport } from './routes/restyle_.v2'
 import { Route as ProjectsProjectIdRouteImport } from './routes/projects.$projectId'
 import { Route as CommunityPostIdRouteImport } from './routes/community.$postId'
 import { Route as CharactersRelationsRouteImport } from './routes/characters.relations'
@@ -200,6 +201,11 @@ const ScriptsScriptIdRoute = ScriptsScriptIdRouteImport.update({
   path: '/$scriptId',
   getParentRoute: () => ScriptsRoute,
 } as any)
+const RestyleV2Route = RestyleV2RouteImport.update({
+  id: '/restyle_/v2',
+  path: '/restyle/v2',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ProjectsProjectIdRoute = ProjectsProjectIdRouteImport.update({
   id: '/$projectId',
   path: '/$projectId',
@@ -316,6 +322,7 @@ export interface FileRoutesByFullPath {
   '/characters/relations': typeof CharactersRelationsRoute
   '/community/$postId': typeof CommunityPostIdRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
+  '/restyle/v2': typeof RestyleV2Route
   '/scripts/$scriptId': typeof ScriptsScriptIdRoute
   '/showcase/$itemId': typeof ShowcaseItemIdRoute
   '/team/create': typeof TeamCreateRoute
@@ -358,6 +365,7 @@ export interface FileRoutesByTo {
   '/characters/relations': typeof CharactersRelationsRoute
   '/community/$postId': typeof CommunityPostIdRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
+  '/restyle/v2': typeof RestyleV2Route
   '/scripts/$scriptId': typeof ScriptsScriptIdRoute
   '/showcase/$itemId': typeof ShowcaseItemIdRoute
   '/team/create': typeof TeamCreateRoute
@@ -406,6 +414,7 @@ export interface FileRoutesById {
   '/characters/relations': typeof CharactersRelationsRoute
   '/community/$postId': typeof CommunityPostIdRoute
   '/projects/$projectId': typeof ProjectsProjectIdRoute
+  '/restyle_/v2': typeof RestyleV2Route
   '/scripts/$scriptId': typeof ScriptsScriptIdRoute
   '/showcase/$itemId': typeof ShowcaseItemIdRoute
   '/team/create': typeof TeamCreateRoute
@@ -455,6 +464,7 @@ export interface FileRouteTypes {
     | '/characters/relations'
     | '/community/$postId'
     | '/projects/$projectId'
+    | '/restyle/v2'
     | '/scripts/$scriptId'
     | '/showcase/$itemId'
     | '/team/create'
@@ -497,6 +507,7 @@ export interface FileRouteTypes {
     | '/characters/relations'
     | '/community/$postId'
     | '/projects/$projectId'
+    | '/restyle/v2'
     | '/scripts/$scriptId'
     | '/showcase/$itemId'
     | '/team/create'
@@ -544,6 +555,7 @@ export interface FileRouteTypes {
     | '/characters/relations'
     | '/community/$postId'
     | '/projects/$projectId'
+    | '/restyle_/v2'
     | '/scripts/$scriptId'
     | '/showcase/$itemId'
     | '/team/create'
@@ -579,6 +591,7 @@ export interface RootRouteChildren {
   ShowcaseRoute: typeof ShowcaseRouteWithChildren
   TeamRoute: typeof TeamRouteWithChildren
   ZoclawRoute: typeof ZoclawRoute
+  RestyleV2Route: typeof RestyleV2Route
   WorkspaceWorkspaceIdRoute: typeof WorkspaceWorkspaceIdRoute
   ApiPublicTestAitokenvibeRoute: typeof ApiPublicTestAitokenvibeRoute
   AssetsTabIdRoute: typeof AssetsTabIdRoute
@@ -788,6 +801,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/scripts/$scriptId'
       preLoaderRoute: typeof ScriptsScriptIdRouteImport
       parentRoute: typeof ScriptsRoute
+    }
+    '/restyle_/v2': {
+      id: '/restyle_/v2'
+      path: '/restyle/v2'
+      fullPath: '/restyle/v2'
+      preLoaderRoute: typeof RestyleV2RouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/projects/$projectId': {
       id: '/projects/$projectId'
@@ -1043,6 +1063,7 @@ const rootRouteChildren: RootRouteChildren = {
   ShowcaseRoute: ShowcaseRouteWithChildren,
   TeamRoute: TeamRouteWithChildren,
   ZoclawRoute: ZoclawRoute,
+  RestyleV2Route: RestyleV2Route,
   WorkspaceWorkspaceIdRoute: WorkspaceWorkspaceIdRoute,
   ApiPublicTestAitokenvibeRoute: ApiPublicTestAitokenvibeRoute,
   AssetsTabIdRoute: AssetsTabIdRoute,

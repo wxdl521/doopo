@@ -1,74 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import {
-  ARK_TEXT_MODEL,
-  ARK_TEXT_THINKING_DISABLED,
-  arkTextApiKey,
-  arkTextEndpoint,
-  qwenApiKey,
-} from "./arkText";
-
-const QWEN_ENDPOINT = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
-const LOVABLE_ENDPOINT = "https://ai.gateway.lovable.dev/v1/chat/completions";
-
-type RestyleProviderConfig = {
-  provider: "ark" | "qwen" | "lovable";
-  model: string;
-  endpoint: string;
-  apiKey: string | undefined;
-  missingKeyError: string;
-  label: string;
-};
-
-/** 把带前缀的模型 id 解析成上游 provider 配置。process.env 只在 handler 内读取。 */
-function resolveProvider(modelId: string): RestyleProviderConfig {
-  if (modelId.startsWith("ark:")) {
-    return {
-      provider: "ark",
-      model: modelId.slice(4) || ARK_TEXT_MODEL,
-      endpoint: arkTextEndpoint(),
-      apiKey: arkTextApiKey(),
-      missingKeyError: "DeepSeek V4 Pro 未配置：请设置 ARK_API_KEY。",
-      label: "DeepSeek",
-    };
-  }
-  if (modelId.startsWith("lovable:")) {
-    return {
-      provider: "lovable",
-      model: modelId.slice(8),
-      endpoint: LOVABLE_ENDPOINT,
-      apiKey: process.env.LOVABLE_API_KEY,
-      missingKeyError: "GPT-5.5 未配置：Lovable AI 网关缺少 LOVABLE_API_KEY。",
-      label: "GPT-5.5",
-    };
-  }
-  return {
-    provider: "qwen",
-    model: modelId.slice(5),
-    endpoint: QWEN_ENDPOINT,
-    apiKey: qwenApiKey(),
-    missingKeyError: "Qwen 未配置：请设置 Qwen、QWEN_API_KEY 或 DASHSCOPE_API_KEY。",
-    label: "Qwen",
-  };
-}
-
-/**
- * 各家对采样/长度参数的要求不同：GPT-5 系列拒绝 temperature 和 max_tokens，
- * 只接受 max_completion_tokens；ARK 需要显式关闭 thinking。
- */
-function providerTuning(
-  config: RestyleProviderConfig,
-  maxTokens: number,
-): Record<string, unknown> {
-  if (config.provider === "lovable") {
-    return { max_completion_tokens: maxTokens };
-  }
-  return {
-    ...(config.provider === "ark" ? { thinking: ARK_TEXT_THINKING_DISABLED } : {}),
-    temperature: 0.2,
-    max_tokens: maxTokens,
-  };
-}
+import { requireSupabaseAuth } from "../integrations/supabase/auth-middleware";
+import { providerTuning, resolveProvider } from "./restyle/lovableGateway";
 
 const AssetSchema = z.object({
   kind: z.enum(["character", "scene", "prop"]),
@@ -209,13 +142,21 @@ function isConcreteAsset(asset: RestyleAnalysisAsset): boolean {
  * Qwen 3.6 Plus/Flash 支持视觉理解，客户端会将源视频的关键帧作为 image_url 传入。
  */
 export const analyzeRestyleAssets = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
   .validator((input: unknown) => InputSchema.parse(input))
-  .handler(async ({ data }): Promise<RestyleAnalysisResult> => {
+  .handler(async ({ data, context }): Promise<RestyleAnalysisResult> => {
     const config = resolveProvider(data.model);
     const model = config.model;
     const isArk = config.provider === "ark";
     if (!config.apiKey) {
       return { ok: false, error: config.missingKeyError };
+    }
+    // 积分：视觉分析 2 分/次（含多关键帧），纯文本 1 分/次
+    const __cost = data.frameImages.length > 0 ? 2 : 1;
+    const { ensureEnoughCredits } = await import("./creditsGuard");
+    const __guard = await ensureEnoughCredits(__cost, { kind: "image", model });
+    if (!__guard.ok) {
+      return { ok: false, error: __guard.error };
     }
 
     const canReadFrames =
@@ -300,16 +241,23 @@ const PlanInputSchema = z.object({
 });
 
 export const generateRestylePlan = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
   .validator((input: unknown) => PlanInputSchema.parse(input))
   .handler(
     async ({
       data,
+      context,
     }): Promise<
       { ok: true; episodes: RestylePlanEpisode[]; model: string } | { ok: false; error: string }
     > => {
       const config = resolveProvider(data.model);
       const model = config.model;
       if (!config.apiKey) return { ok: false, error: config.missingKeyError };
+      const { ensureEnoughCredits } = await import("./creditsGuard");
+      const __guard = await ensureEnoughCredits(1, { kind: "image", model });
+      if (!__guard.ok) {
+        return { ok: false, error: __guard.error };
+      }
       const files = data.sourceFiles
         .map((file) => `- 视频 ID: ${file.id || file.name}; 文件名: ${file.name}`)
         .join("\n");

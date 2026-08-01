@@ -130,7 +130,7 @@ function AssetDetailPage() {
     return (
       <div className="animate-fade-in flex flex-col items-center justify-center min-h-[60vh] gap-4">
         <p className="text-text-muted">{t.asset_not_found}</p>
-        <Link to="/assets" className="btn-ghost text-xs">
+        <Link to="/assets" search={{ tab: undefined }} className="btn-ghost text-xs">
           <ArrowLeft size={14} /> {t.assets_back}
         </Link>
       </div>
@@ -190,7 +190,7 @@ function AssetDetailPage() {
       <header className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-3">
           <button
-            onClick={() => navigate({ to: "/assets" })}
+            onClick={() => navigate({ to: "/assets", search: { tab: undefined } })}
             className="flex items-center gap-1.5 text-xs text-text-muted hover:text-text-primary transition"
           >
             <ArrowLeft size={14} /> {t.assets_back}
@@ -198,6 +198,7 @@ function AssetDetailPage() {
           <span className="text-text-muted text-xs">/</span>
           <Link
             to="/assets"
+            search={{ tab: undefined }}
             className="text-xs text-text-secondary hover:text-text-primary transition"
           >
             {t.assets_title}
