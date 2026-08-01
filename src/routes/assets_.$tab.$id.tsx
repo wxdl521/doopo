@@ -62,17 +62,18 @@ function AssetDetailPage() {
         } else if (tab === "scene") {
           const { data: found } = await loadSceneById(user.id, id);
           if (found) {
+            const f = found as Record<string, any>;
             setDbAsset({
               id: found.id,
               name: found.name || found.location,
               emoji: "🌄",
-              gradient: found.gradient || "from-emerald-400/40 via-teal-300/30 to-sky-200/30",
+              gradient: f.gradient || "from-emerald-400/40 via-teal-300/30 to-sky-200/30",
               time: found.time_of_day || "",
-              mood: found.mood || "",
-              shot: found.shot || "",
-              lighting: found.lighting || "",
-              sound: found.sound || "",
-              reference: found.reference || "",
+              mood: f.mood || "",
+              shot: f.shot || "",
+              lighting: f.lighting || "",
+              sound: f.sound || "",
+              reference: f.reference || "",
               tags: [found.location, found.time_of_day].filter(Boolean),
               summary: found.action || "",
               cover: found.cover_url || "",
@@ -86,22 +87,23 @@ function AssetDetailPage() {
         } else if (tab === "prop") {
           const { data: found } = await loadPropById(user.id, id);
           if (found) {
+            const f = found as Record<string, any>;
             setDbAsset({
               id: found.id,
               name: found.name,
               emoji: "📦",
-              gradient: found.gradient || "from-teal-400/40 via-cyan-300/30 to-emerald-200/30",
+              gradient: f.gradient || "from-teal-400/40 via-cyan-300/30 to-emerald-200/30",
               cover: found.cover_url || "",
               images: Array.isArray((found as any).images) ? (found as any).images : undefined,
-              owner: found.owner || "",
+              owner: f.owner || "",
               appearance: found.description || "",
               firstAppear: "",
               lastAppear: "",
-              material: found.visual_style || "",
+              material: f.visual_style || "",
               symbol: found.key_moments || "",
               detail: found.movement_description || found.description || "",
               summary: found.description || "",
-              tags: [found.visual_style, found.palette].filter(Boolean),
+              tags: [f.visual_style, found.palette].filter(Boolean),
             });
           }
         }
