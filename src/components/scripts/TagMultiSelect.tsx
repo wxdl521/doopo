@@ -163,11 +163,7 @@ export default function TagMultiSelect({
                               : "bg-bg-base border-border text-text-secondary hover:border-accent/40"
                         }`}
                       >
-                        {tag.locked ? (
-                          <Lock size={10} />
-                        ) : isSelected ? (
-                          <Check size={11} />
-                        ) : null}
+                        {tag.locked ? <Lock size={10} /> : isSelected ? <Check size={11} /> : null}
                         {scriptTagLabel(tag, lang)}
                       </button>
                     );
