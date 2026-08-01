@@ -5,17 +5,25 @@
 //    1. <video> 元素读时长 → sliceUnits(duration) 切分析单元（默认 120s/单元）
 //    2. 每单元 canvas 均匀抽 4 个关键帧（3~5 区间取中值）
 //    3. Web Audio 解码整段音频 → 重采样 16k 单声道 → 按单元切 WAV
-//       （按 45s 一段分片处理，与单元边界对齐）
-//    4. 复用 uploadLocalImage（workspace-media / COS）上传视频、帧图、音频
+//       （按 45s 一段分片处理，与单元边界对齐；文件 > AUDIO_DECODE_MAX_BYTES
+//        时跳过音轨，走 no_audio 降级）
+//    4. 源视频走 createMediaUploadUrl 签名地址二进制直传（XHR PUT 带进度），
+//       帧图/单元音频等小文件仍走 uploadLocalImage base64 路径
 //    5. 产出 units 数组喂 submitEpisodeAnalysisFn
 //
-//  文件 > 200MB 直接拒绝（base64 上传链路的内存与体积双重限制）。
+//  文件 > 2GB 拒绝；音频解码阈值 80MB（decodeAudioData 会把整段 PCM 放进内存）。
 // ====================================================================
 
 import { sliceUnits, type AnalysisUnit } from "@/lib/restyle/analysisMerge";
 
-/** 单文件上限：超过后 base64 上传会把字符串/请求体撑到不可接受。 */
-export const MAX_SOURCE_FILE_BYTES = 200 * 1024 * 1024;
+/** 单文件上限：直传后不再受 base64 内存约束，放宽到 2GB。 */
+export const MAX_SOURCE_FILE_BYTES = 2 * 1024 * 1024 * 1024;
+
+/**
+ * 音频整段解码的体积阈值：超过则跳过 decodeAudioData（其会把整段 PCM 放进
+ * 内存，大文件直接撑爆标签页），该集标记 no_audio，走服务端无音频降级路径。
+ */
+export const AUDIO_DECODE_MAX_BYTES = 80 * 1024 * 1024;
 
 /** 每单元关键帧数量（需求口径 3~5，取中值 4）。 */
 export const FRAMES_PER_UNIT = 4;
@@ -53,6 +61,13 @@ export type MediaUploadFn = (input: {
   id: string;
   kind: "video" | "shot" | "character-audio";
 }) => Promise<{ ok: boolean; url?: string; error?: string }>;
+
+/** createMediaUploadUrl 的最小签名：为二进制直传取签名上传地址。 */
+export type PrepareUploadUrlFn = (input: {
+  id: string;
+  kind: "video" | "audio";
+  ext: string;
+}) => Promise<{ ok: boolean; uploadUrl?: string; readUrl?: string; error?: string }>;
 
 /** 与 submitEpisodeAnalysisFn 入参 units 元素一致。 */
 export interface PreparedUnit {
@@ -162,7 +177,7 @@ async function captureUnitFrames(
 /**
  * 整段音频解码 → 重采样为 16kHz 单声道 Float32。
  * 无音轨 / 解码失败返回 null（服务端走 no_audio 降级路径）。
- * 注意：decodeAudioData 会把整段 PCM 放进内存，200MB 上限同时也在约束这里。
+ * 注意：decodeAudioData 会把整段 PCM 放进内存，调用方按 AUDIO_DECODE_MAX_BYTES 把关。
  */
 async function decodeToMono16k(file: File, durationSec: number): Promise<Float32Array | null> {
   let decoded: AudioBuffer;
@@ -217,7 +232,7 @@ export function encodeWavPcm16(samples: Float32Array, sampleRate = 16_000): Blob
 }
 
 /** 按 45s 一段从 16k 单声道 PCM 中切出单元音频并编码为 WAV。 */
-function sliceUnitWav(pcm: Float32Array, unit: AnalysisUnit): Blob | null {
+export function sliceUnitWav(pcm: Float32Array, unit: AnalysisUnit): Blob | null {
   const rate = 16_000;
   const startSample = Math.floor(unit.sourceStartSeconds * rate);
   const endSample = Math.min(pcm.length, Math.ceil((unit.sourceStartSeconds + unit.durationSec) * rate));
@@ -249,6 +264,44 @@ function fileToDataUrl(file: File): Promise<string> {
   return blobToDataUrl(file);
 }
 
+/** 从文件名/MIME 取扩展名（签名上传路径用）。 */
+export function extFromFile(file: File): string {
+  const byName = file.name.match(/\.([a-z0-9]{2,5})$/i)?.[1];
+  if (byName) return byName.toLowerCase();
+  const byType = file.type.split("/")[1];
+  return (byType || "mp4").replace("quicktime", "mov").toLowerCase();
+}
+
+/** 音频解码决策（纯函数，便于测试）。 */
+export function shouldDecodeAudio(fileSizeBytes: number): boolean {
+  return fileSizeBytes <= AUDIO_DECODE_MAX_BYTES;
+}
+
+/**
+ * 二进制直传：XHR PUT 原始 File 到签名上传地址（不转 base64、不进内存字符串），
+ * 带上传进度回调。返回可长效访问的签名读 URL。
+ */
+export async function putBinaryWithProgress(
+  file: Blob,
+  target: { uploadUrl: string; readUrl: string },
+  onPercent?: (percent: number) => void,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("PUT", target.uploadUrl, true);
+    xhr.setRequestHeader("content-type", file.type || "application/octet-stream");
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onPercent) onPercent(Math.round((e.loaded / e.total) * 100));
+    };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) resolve(target.readUrl);
+      else reject(new Error(`直传失败（HTTP ${xhr.status}）：${(xhr.responseText || "").slice(0, 120)}`));
+    };
+    xhr.onerror = () => reject(new Error("直传网络错误"));
+    xhr.send(file);
+  });
+}
+
 async function uploadOrThrow(upload: MediaUploadFn, input: Parameters<MediaUploadFn>[0]) {
   const result = await upload(input);
   if (!result.ok || !result.url) {
@@ -266,10 +319,28 @@ export async function prepareEpisodeMedia(
   opts: {
     episodeId: string;
     upload: MediaUploadFn;
+    /** 大文件（源视频）直传地址获取；不传则回退 base64 旧路径。 */
+    createUploadUrl?: PrepareUploadUrlFn;
     onProgress?: OnUnitProgress;
+    /** 测试注入点：生产勿传。 */
+    deps?: {
+      probe?: typeof probeVideoDuration;
+      decodeAudio?: typeof decodeToMono16k;
+      openSession?: typeof openVideoSession;
+      captureFrames?: typeof captureUnitFrames;
+      putBinary?: typeof putBinaryWithProgress;
+    };
   },
 ): Promise<PreparedEpisode> {
-  const { episodeId, upload, onProgress } = opts;
+  const { episodeId, upload, createUploadUrl, onProgress } = opts;
+  const deps = {
+    probe: probeVideoDuration,
+    decodeAudio: decodeToMono16k,
+    openSession: openVideoSession,
+    captureFrames: captureUnitFrames,
+    putBinary: putBinaryWithProgress,
+    ...opts.deps,
+  };
   const report = (e: UnitProgressEvent) => onProgress?.(e);
 
   if (file.size > MAX_SOURCE_FILE_BYTES) {
@@ -279,29 +350,53 @@ export async function prepareEpisodeMedia(
   }
 
   report({ unitIndex: -1, unitId: "", phase: "probe" });
-  const durationSec = await probeVideoDuration(file);
+  const durationSec = await deps.probe(file);
   const units = sliceUnits(durationSec);
   if (units.length === 0) throw new Error("视频时长为 0，无法切片。");
 
-  report({ unitIndex: -1, unitId: "", phase: "video_upload" });
-  const videoUrl = await uploadOrThrow(upload, {
-    base64: await fileToDataUrl(file),
-    id: episodeId,
-    kind: "video",
-  });
+  report({ unitIndex: -1, unitId: "", phase: "video_upload", detail: "准备上传 0%" });
+  let videoUrl: string;
+  if (createUploadUrl) {
+    // 二进制直传：不转 base64，大文件不占内存
+    const target = await createUploadUrl({ id: episodeId, kind: "video", ext: extFromFile(file) });
+    if (!target.ok || !target.uploadUrl || !target.readUrl) {
+      throw new Error(target.ok ? "未获取到上传地址。" : (target.error ?? "获取上传地址失败。"));
+    }
+    videoUrl = await deps.putBinary(
+      file,
+      { uploadUrl: target.uploadUrl, readUrl: target.readUrl },
+      (p) => report({ unitIndex: -1, unitId: "", phase: "video_upload", detail: `已上传 ${p}%` }),
+    );
+  } else {
+    videoUrl = await uploadOrThrow(upload, {
+      base64: await fileToDataUrl(file),
+      id: episodeId,
+      kind: "video",
+    });
+  }
 
-  // 音频整段解码一次，各单元共用（无音轨时整集走降级路径）
-  report({ unitIndex: -1, unitId: "", phase: "audio", detail: "解码整集音频" });
-  const pcm = await decodeToMono16k(file, durationSec);
+  // 音频整段解码一次，各单元共用；超阈值跳过（no_audio 降级），切完即释放
+  let pcm: Float32Array | null = null;
+  if (shouldDecodeAudio(file.size)) {
+    report({ unitIndex: -1, unitId: "", phase: "audio", detail: "解码整集音频" });
+    pcm = await deps.decodeAudio(file, durationSec);
+  } else {
+    report({
+      unitIndex: -1,
+      unitId: "",
+      phase: "audio",
+      detail: `文件超过 ${formatMb(AUDIO_DECODE_MAX_BYTES)}MB，已跳过音轨提取，台词分析将仅依据画面`,
+    });
+  }
 
-  const session = await openVideoSession(file);
+  const session = await deps.openSession(file);
   try {
     const prepared: PreparedUnit[] = [];
     for (let i = 0; i < units.length; i += 1) {
       const unit = units[i];
       try {
         report({ unitIndex: i, unitId: unit.unitId, phase: "frames" });
-        const frames = await captureUnitFrames(session, unit, FRAMES_PER_UNIT);
+        const frames = await deps.captureFrames(session, unit, FRAMES_PER_UNIT);
 
         report({ unitIndex: i, unitId: unit.unitId, phase: "audio" });
         const wav = pcm ? sliceUnitWav(pcm, unit) : null;
@@ -344,6 +439,12 @@ export async function prepareEpisodeMedia(
     }
     return { durationSec, videoUrl, units: prepared };
   } finally {
-    URL.revokeObjectURL(session.url);
+    pcm = null; // 释放整段 PCM 引用，避免常驻数百 MB
+    if (session?.url && typeof URL.revokeObjectURL === "function") {
+      URL.revokeObjectURL(session.url);
+    }
   }
 }
+
+/** prepareEpisodeMedia 的依赖注入类型（测试用）。 */
+export type MediaPrepDeps = NonNullable<Parameters<typeof prepareEpisodeMedia>[1]["deps"]>;
