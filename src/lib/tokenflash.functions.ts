@@ -94,7 +94,7 @@ export async function callTokenflashImage(
   const { apiKey, baseUrl } = getTokenflashConfig();
   const model = stripTokenflashPrefix(input.model);
   const hasRefs = !!input.referenceImages?.length;
-  const endpoint = hasRefs ? "/v1/images/edits" : "/v1/images/generations";
+  let endpoint = hasRefs ? "/v1/images/edits" : "/v1/images/generations";
   const size = normalizeTokenflashSize(input.size, model);
   const t0 = Date.now();
   console.log(
@@ -112,6 +112,29 @@ export async function callTokenflashImage(
     // T2I 用 JSON;I2I 走 OpenAI 标准的 multipart/form-data,必须上传真实图片文件,
     // 不能用 image_url(tokenflash 上游会报 "image_url must point to an image")。
     let requestInit: RequestInit;
+    // T2I(JSON /v1/images/generations)请求体构造器。
+    // 当中转不支持 /v1/images/edits(405/404/501)时,用它降级重发。
+    const buildT2IInit = (prompt: string): RequestInit => {
+      const body: Record<string, unknown> = {
+        model,
+        prompt,
+        n: input.n ?? 1,
+        size,
+        quality: input.quality ?? "auto",
+      };
+      if (!/^gpt-image/i.test(model)) {
+        body.response_format = "url";
+      }
+      return {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      };
+    };
     if (hasRefs) {
       const form = new FormData();
       form.append("model", model);
@@ -156,36 +179,35 @@ export async function callTokenflashImage(
         signal: controller.signal,
       };
     } else {
-      const body: Record<string, unknown> = {
-        model,
-        prompt: input.prompt,
-        n: input.n ?? 1,
-        size,
-        quality: input.quality ?? "auto",
-      };
-      // gpt-image-* 系列只返回 b64_json,不支持 response_format=url;
-      // 其它模型才传 response_format。
-      if (!/^gpt-image/i.test(model)) {
-        body.response_format = "url";
-      }
-      requestInit = {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${apiKey}`,
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal,
-      };
+      // gpt-image-* 系列只返回 b64_json,不支持 response_format=url(在 buildT2IInit 中已守卫)
+      requestInit = buildT2IInit(input.prompt);
     }
 
     // 对 502/503/504/524 这种上游瞬时错误做一次重试(1.5s 退避)
     let res: Response | null = null;
     let lastText = "";
+    let fellBackToT2I = false;
     for (let attempt = 0; attempt < 2; attempt++) {
       res = await fetch(`${baseUrl}${endpoint}`, requestInit);
       if (res.ok) break;
       lastText = await res.text().catch(() => "");
+      // 中转不支持 edits 端点:降级为 T2I,把参考图语义并进 prompt。
+      if (
+        hasRefs &&
+        !fellBackToT2I &&
+        (res.status === 405 || res.status === 404 || res.status === 501)
+      ) {
+        console.warn(
+          `[tokenflash⤵] model=${model} endpoint=${endpoint} status=${res.status} fallback=generations`,
+        );
+        fellBackToT2I = true;
+        endpoint = "/v1/images/generations";
+        requestInit = buildT2IInit(
+          `${input.prompt}\n\n(参考图无法直接上传,请严格按上述文字描述还原角色/场景/道具的外形、配色与风格一致性。)`,
+        );
+        attempt = -1; // 降级后重新获得一次完整重试机会
+        continue;
+      }
       const transient =
         res.status === 502 || res.status === 503 || res.status === 504 || res.status === 524;
       if (!transient || attempt === 1) break;
@@ -201,6 +223,14 @@ export async function callTokenflashImage(
       console.warn(
         `[tokenflash×] model=${model} endpoint=${endpoint} status=${status} dur=${Date.now() - t0}ms body=${lastText.slice(0, 200)}`,
       );
+      if (hasRefs && (status === 405 || status === 404 || status === 501)) {
+        return {
+          url: "",
+          urls: [],
+          error: `[tokenflash ${model}] 该中转当前不支持图生图（/v1/images/edits 返回 ${status}）。请改用 Seedream 或 Azure gpt-image-2 生成带参考图的资产。`,
+          model,
+        };
+      }
       return {
         url: "",
         urls: [],
