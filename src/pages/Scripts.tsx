@@ -14,6 +14,7 @@ import {
 import { uploadScriptCover } from "../lib/scripts.covers.functions";
 import { useAuth } from "../hooks/useAuth";
 import ShareDialog from "../components/community/ShareDialog";
+import { ALL_SCRIPT_GENRES, SCRIPT_TONES } from "../lib/scriptTags";
 
 const TYPES = [
   { value: "Micro", key: "script_type_micro" as const },
@@ -21,27 +22,8 @@ const TYPES = [
   { value: "Feature", key: "script_type_feature" as const },
   { value: "Ad", key: "script_type_ad" as const },
 ];
-const GENRES = [
-  { value: "Sci-Fi", key: "script_genre_scifi" as const },
-  { value: "Romance", key: "script_genre_romance" as const },
-  { value: "Thriller", key: "script_genre_thriller" as const },
-  { value: "Comedy", key: "script_genre_comedy" as const },
-  { value: "Drama", key: "script_genre_drama" as const },
-  { value: "Horror", key: "script_genre_horror" as const },
-  { value: "Fantasy", key: "script_genre_fantasy" as const },
-  { value: "Historical", key: "script_genre_historical" as const },
-  {
-    value: "Violence",
-    key: "script_genre_scifi" as const,
-    locked: true,
-    label: "sl_genre_violence",
-  },
-  { value: "Erotic", key: "script_genre_scifi" as const, locked: true, label: "sl_genre_erotic" },
-];
-const TONES = [
-  { value: "Serious", key: "script_tone_serious" as const },
-  { value: "Suspense", key: "script_tone_suspense" as const },
-];
+const GENRES = ALL_SCRIPT_GENRES;
+const TONES = SCRIPT_TONES;
 
 function getModels(t: ReturnType<typeof useLanguage>["t"]) {
   return [
