@@ -5746,3 +5746,104 @@ function StagePanel({
     );
   return <EmptyState text={stage === "render" ? t.restyle_render_empty : t.restyle_review_empty} />;
 }
+
+/**
+ * 把 Agent 的处理过程直接展示在对话流里：每个步骤的状态、耗时与停止入口。
+ * 完成后自动折叠成一行摘要，点击可展开回看全部步骤。
+ */
+function RunProgressCard({
+  run,
+  t,
+  onStop,
+}: {
+  run: RestyleRunState;
+  t: Translations;
+  onStop: () => void;
+}) {
+  const [expanded, setExpanded] = useState(true);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!run.running) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [run.running]);
+
+  useEffect(() => {
+    if (!run.running) setExpanded(false);
+  }, [run.running]);
+
+  const elapsed = Math.max(0, Math.round(((run.endedAt ?? now) - run.startedAt) / 1000));
+
+  return (
+    <div className="rounded-xl border border-border bg-bg-elevated p-3" role="status">
+      <div className="flex items-center gap-2">
+        {run.running ? (
+          <Loader2 size={14} className="animate-spin text-accent" />
+        ) : (
+          <Check size={14} className="text-accent" />
+        )}
+        <span className="text-sm font-medium text-text-primary">
+          {t.restyle_run_process_title}
+        </span>
+        <span className="text-[11px] text-text-muted">
+          {run.steps.length}
+          {t.restyle_run_steps_count} · {t.restyle_run_elapsed} {elapsed}
+          {t.restyle_run_seconds}
+        </span>
+        <div className="ml-auto flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => setExpanded((current) => !current)}
+            className="rounded-md px-2 py-1 text-[11px] text-text-secondary hover:bg-bg"
+          >
+            {expanded ? t.restyle_run_collapse : t.restyle_run_expand}
+          </button>
+          {run.running ? (
+            <button
+              type="button"
+              onClick={onStop}
+              className="flex items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] text-text-secondary hover:bg-bg hover:text-destructive"
+              aria-label={t.restyle_run_stop}
+            >
+              <Square size={11} fill="currentColor" />
+              {t.restyle_run_stop}
+            </button>
+          ) : null}
+        </div>
+      </div>
+      {expanded ? (
+        <ol className="mt-2 space-y-1.5">
+          {run.steps.map((step) => (
+            <li key={step.id} className="flex items-start gap-2 text-xs">
+              <span className="mt-0.5">
+                {step.status === "running" ? (
+                  <Loader2 size={12} className="animate-spin text-accent" />
+                ) : step.status === "failed" ? (
+                  <X size={12} className="text-destructive" />
+                ) : (
+                  <Check size={12} className="text-accent" />
+                )}
+              </span>
+              <span className="min-w-0">
+                <span
+                  className={
+                    step.status === "failed" ? "text-destructive" : "text-text-secondary"
+                  }
+                >
+                  {step.label}
+                </span>
+                {step.detail ? (
+                  <span className="ml-1 text-text-muted">（{step.detail}）</span>
+                ) : null}
+              </span>
+            </li>
+          ))}
+        </ol>
+      ) : null}
+      {run.stopped ? (
+        <p className="mt-2 text-[11px] text-text-muted">{t.restyle_run_stopped_step}</p>
+      ) : null}
+    </div>
+  );
+}
