@@ -416,6 +416,25 @@ export const streamSynopsis = createServerFn({ method: "POST" })
       .replace("__CHAPTER_RANGES__", rangesZh)
       .replace("__CHAPTER_RANGES_EN__", rangesEn);
     const sys = wrapFictionSystem(data.lang, rawSys);
+    // 题材/风格创作要点：把用户勾选的标签翻译成中文名，并附上该题材的写法要求，
+    // 让模型真正按该题材的套路与节奏创作。
+    const genreValues = data.genre
+      .split(/[、,，\/]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const toneValues = data.tone
+      .split(/[、,，\/]/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const labelOf = (v: string) => scriptTagValueLabel(v, data.lang);
+    const genreNames = genreValues.map(labelOf).join("、") || data.genre;
+    const toneNames = toneValues.map(labelOf).join("、") || data.tone;
+    const genreGuides = buildGuideBlock(genreValues, GENRE_GUIDES, labelOf, 4);
+    const toneGuides = buildGuideBlock(toneValues, TONE_GUIDES, labelOf, 3);
+    const guideBlock =
+      genreGuides || toneGuides
+        ? `\n【题材创作要点】\n${[genreGuides, toneGuides].filter(Boolean).join("\n")}`
+        : "";
     const rawUser =
       data.lang === "zh"
         ? `【类型】${data.type}\n【题材】${genreNames}\n【风格】${toneNames}\n【主题/标题】${data.theme}\n【剧情概要】${data.plot}\n【预计集数】${data.expectedEpisodes} 集\n【总时长限制】约 ${data.totalMinutes} 分钟${guideBlock}`
