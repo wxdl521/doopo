@@ -273,6 +273,11 @@ export function RestyleProcessPanel({
                           </button>
                         )}
                       </div>
+                      {overridden && (
+                        <p className="mt-1 text-[10px] leading-4 text-text-muted">
+                          {t.restyle_prompt_override_hint}
+                        </p>
+                      )}
                     </div>
                   );
                 })}
