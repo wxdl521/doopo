@@ -2881,7 +2881,15 @@ export default function RestyleStudio() {
     });
     const generatedKinds: Array<"character" | "scene" | "prop"> = [];
     try {
+      let assetIndex = 0;
       for (const asset of extractedAssets) {
+        if (isRunAborted(projectId)) return;
+        assetIndex += 1;
+        markRunStep(
+          projectId,
+          `${t.restyle_run_step_asset_image_one}${asset.targetName || asset.sourceName}`,
+          `${assetIndex}/${extractedAssets.length}`,
+        );
         setAssetRunStatus((current) => ({ ...current, [asset.id]: { status: "running" } }));
         // 面板里手工覆盖过提示词时直接用覆盖内容，否则按目标画风自动拼装。
         const prompt = resolveAssetImagePrompt(asset, styleBriefRef.current, instruction);
@@ -2983,9 +2991,11 @@ export default function RestyleStudio() {
       }
     } catch (error) {
       const detail = error instanceof Error ? error.message : "未知错误";
+      if (isRunAborted(projectId)) return;
       setAnalysisError(`资产图片生成失败：${detail}`);
+      finishRun(projectId, "failed", detail);
     } finally {
-      setIsAnalyzing(false);
+      if (!isRunAborted(projectId)) finishRun(projectId);
     }
   }
 
