@@ -55,18 +55,14 @@ async function uploadMediaSmart(
     .from(BUCKET)
     .upload(key, blob, { contentType, upsert: true });
   if (uploadErr) return { ok: false, error: `storage upload failed: ${uploadErr.message}` };
-  if (opts.signed) {
-    const { data: signed, error: signErr } = await supabase.storage
-      .from(BUCKET)
-      .createSignedUrl(key, 315_360_000);
-    if (signErr || !signed?.signedUrl) {
-      return { ok: false, error: `storage sign failed: ${signErr?.message ?? "no signed url"}` };
-    }
-    return { ok: true, url: signed.signedUrl };
+  // workspace-media 为私有 bucket：一律签名下发，绝不使用 public URL。
+  const { data: signed, error: signErr } = await supabase.storage
+    .from(BUCKET)
+    .createSignedUrl(key, 315_360_000);
+  if (signErr || !signed?.signedUrl) {
+    return { ok: false, error: `storage sign failed: ${signErr?.message ?? "no signed url"}` };
   }
-  const { data: publicUrl } = supabase.storage.from(BUCKET).getPublicUrl(key);
-  if (!publicUrl?.publicUrl) return { ok: false, error: "no public url after upload" };
-  return { ok: true, url: publicUrl.publicUrl };
+  return { ok: true, url: signed.signedUrl };
 }
 
 /**
