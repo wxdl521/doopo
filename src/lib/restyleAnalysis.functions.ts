@@ -211,16 +211,11 @@ function isConcreteAsset(asset: RestyleAnalysisAsset): boolean {
 export const analyzeRestyleAssets = createServerFn({ method: "POST" })
   .validator((input: unknown) => InputSchema.parse(input))
   .handler(async ({ data }): Promise<RestyleAnalysisResult> => {
-    const isArk = data.model.startsWith("ark:");
-    const model = isArk ? data.model.slice(4) || ARK_TEXT_MODEL : data.model.slice(5);
-    const apiKey = isArk ? arkTextApiKey() : qwenApiKey();
-    if (!apiKey) {
-      return {
-        ok: false,
-        error: isArk
-          ? "DeepSeek V4 Pro 未配置：请设置 ARK_API_KEY。"
-          : "Qwen 未配置：请设置 Qwen、QWEN_API_KEY 或 DASHSCOPE_API_KEY。",
-      };
+    const config = resolveProvider(data.model);
+    const model = config.model;
+    const isArk = config.provider === "ark";
+    if (!config.apiKey) {
+      return { ok: false, error: config.missingKeyError };
     }
 
     const canReadFrames =
@@ -240,15 +235,13 @@ export const analyzeRestyleAssets = createServerFn({ method: "POST" })
     // than a text-only completion. Keep the client-side request alive for 3 min.
     const timeout = setTimeout(() => controller.abort(), 180_000);
     try {
-      const response = await fetch(isArk ? arkTextEndpoint() : QWEN_ENDPOINT, {
+      const response = await fetch(config.endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.apiKey}` },
         signal: controller.signal,
         body: JSON.stringify({
           model,
-          ...(isArk ? { thinking: ARK_TEXT_THINKING_DISABLED } : {}),
-          temperature: 0.2,
-          max_tokens: 5_000,
+          ...providerTuning(config, 5_000),
           messages: [
             {
               role: "system",
@@ -262,7 +255,7 @@ export const analyzeRestyleAssets = createServerFn({ method: "POST" })
         const detail = (await response.text()).replace(/\s+/g, " ").slice(0, 240);
         return {
           ok: false,
-          error: `${isArk ? "DeepSeek" : "Qwen"} 请求失败（${response.status}）：${detail || "上游未返回详情"}`,
+          error: `${config.label} 请求失败（${response.status}）：${detail || "上游未返回详情"}`,
         };
       }
       const payload = (await response.json()) as {
@@ -270,7 +263,7 @@ export const analyzeRestyleAssets = createServerFn({ method: "POST" })
       };
       const content = payload.choices?.[0]?.message?.content;
       if (typeof content !== "string" || !content.trim()) {
-        return { ok: false, error: `${isArk ? "DeepSeek" : "Qwen"} 未返回资产表内容。` };
+        return { ok: false, error: `${config.label} 未返回资产表内容。` };
       }
       return normalizeResult(content, model, canReadFrames);
     } catch (error) {
