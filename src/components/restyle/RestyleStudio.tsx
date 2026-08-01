@@ -2147,6 +2147,14 @@ export default function RestyleStudio() {
     setChatDraft("");
     setDraftAttachmentIds([]);
 
+    // 记住用户描述的目标画风：首轮转绘要求自动沿用，之后再次提到画风则覆盖。
+    if (message && (!styleBriefRef.current || looksLikeStyleBrief(message))) {
+      if (looksLikeStyleBrief(message) || !activeProject.extractedAssets.length) {
+        styleBriefRef.current = message;
+        updateProject(projectId, (project) => ({ ...project, styleBrief: message }));
+      }
+    }
+
     if (handleAgentFileCommand(activeProject, conversationId, message)) return;
 
     if (isVideoRenderIntent(message)) {
@@ -2184,7 +2192,7 @@ export default function RestyleStudio() {
       const result = await callGenerateRestylePlan({
         data: {
           model: selectedModel,
-          instruction: activeProject.planNote,
+          instruction: withStyleBrief(activeProject.planNote, styleBriefRef.current),
           sourceFiles: (sourceFiles.length ? sourceFiles : activeProject.files).map((file) => ({
             id: file.episode ?? file.id,
             name: file.name,
@@ -2228,7 +2236,7 @@ export default function RestyleStudio() {
       const result = await callGenerateRestylePlan({
         data: {
           model: selectedModel,
-          instruction: message,
+          instruction: withStyleBrief(message, styleBriefRef.current),
           sourceFiles: (sourceFiles.length ? sourceFiles : activeProject.files).map((file) => ({
             id: file.episode ?? file.id,
             name: file.name,
