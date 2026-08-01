@@ -161,12 +161,20 @@ const DEFAULT_RESTYLE_VIDEO_MODEL =
   RESTYLE_VIDEO_MODELS.find((model) => getVideoAssetLibrarySupport(model.id).supported)?.id ??
   realVideoModels[0]?.id ??
   "doubao-seedance-2-0-260128";
+// 默认显式使用 Seedream：它支持带参考图的图生图；部分中转（tokenflash）不支持 edits 端点。
+const DEFAULT_RESTYLE_IMAGE_MODEL = realImageModelOptions.some(
+  (model) => model.id === "doubao-seedream-5-0-260128",
+)
+  ? "doubao-seedream-5-0-260128"
+  : (realImageModelOptions[0]?.id ?? "doubao-seedream-5-0-260128");
 type RestyleFilePreview =
   | {
       kind: "attachment";
       key: string;
       title: string;
       attachment: RestyleAttachment;
+      /** 预览归属的项目：渲染前校验，归属不符一律不显示，防止串项目。 */
+      projectId?: string | null;
     }
   | {
       kind: "virtual";
@@ -174,6 +182,8 @@ type RestyleFilePreview =
       title: string;
       mime: "application/json" | "text/markdown" | "text/plain";
       content: string;
+      /** 预览归属的项目：渲染前校验，归属不符一律不显示，防止串项目。 */
+      projectId?: string | null;
     };
 
 type RestyleFileTreeNode = {
@@ -244,6 +254,18 @@ function makeVirtualPreview(
   content: string,
 ): Extract<RestyleFilePreview, { kind: "virtual" }> {
   return { kind: "virtual", key, title, mime, content };
+}
+
+/** 给文件树里的预览统一打上项目归属，渲染前按 activeProjectId 校验。 */
+function stampPreviewProjectId(
+  nodes: RestyleFileTreeNode[],
+  projectId: string | null,
+): RestyleFileTreeNode[] {
+  return nodes.map((node) => ({
+    ...node,
+    preview: node.preview ? { ...node.preview, projectId } : node.preview,
+    children: node.children ? stampPreviewProjectId(node.children, projectId) : node.children,
+  }));
 }
 
 function AssetVisual({ asset, compact = false }: { asset: RestyleAsset; compact?: boolean }) {
@@ -885,7 +907,8 @@ export default function RestyleStudio() {
   const [projects, setProjects] = useState<RestyleProject[]>([]);
   const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
   const [projectQuery, setProjectQuery] = useState("");
-  const [chatDraft, setChatDraft] = useState("");
+  // 输入草稿按项目归档：在 A 打字打一半切到 B，各自草稿互不污染，切回 A 还在。
+  const [chatDrafts, setChatDrafts] = useState<Record<string, string>>({});
   const [editingProjectId, setEditingProjectId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [storageReady, setStorageReady] = useState(false);
@@ -901,7 +924,10 @@ export default function RestyleStudio() {
     null,
   );
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
-  const [draftAttachmentIds, setDraftAttachmentIds] = useState<string[]>([]);
+  // 草稿附件按项目归档：A 选好的附件不会带进 B 的输入框，也不会在 B 发送时被合并。
+  const [draftAttachmentIdsByProject, setDraftAttachmentIdsByProject] = useState<
+    Record<string, string[]>
+  >({});
   // 附件直传状态（上传中/已完成/失败），按 attachmentId 归档，仅组件内可见。
   const [attachmentUploads, setAttachmentUploads] = useState<
     Record<string, DirectUploadState>
@@ -922,12 +948,7 @@ export default function RestyleStudio() {
   const [draggedFileId, setDraggedFileId] = useState<string | null>(null);
   const [fileDropTarget, setFileDropTarget] = useState<RestyleFileDropTarget | null>(null);
   const [selectedModel, setSelectedModel] = useState<RestyleModel>("qwen:qwen3.6-plus");
-  const [selectedImageModel, setSelectedImageModel] = useState(
-    // 默认显式使用 Seedream：它支持带参考图的图生图；部分中转（tokenflash）不支持 edits 端点。
-    realImageModelOptions.some((model) => model.id === "doubao-seedream-5-0-260128")
-      ? "doubao-seedream-5-0-260128"
-      : (realImageModelOptions[0]?.id ?? "doubao-seedream-5-0-260128"),
-  );
+  const [selectedImageModel, setSelectedImageModel] = useState(DEFAULT_RESTYLE_IMAGE_MODEL);
   const [selectedVideoModel, setSelectedVideoModel] = useState(DEFAULT_RESTYLE_VIDEO_MODEL);
   // 每个转绘项目独立的执行态：切换项目不再互相阻塞，可多项目并发。
   const [projectRuns, setProjectRuns] = useState<Record<string, RestyleRunState>>({});
@@ -966,12 +987,38 @@ export default function RestyleStudio() {
   const callReviewRestyleAssetTable = useServerFn(reviewRestyleAssetTable);
 
   const activeProject = projects.find((project) => project.id === activeProjectId);
-  // 目标画风必须在异步生图循环里可读到最新值，用 ref 避免闭包拿到旧 state。
-  const styleBriefRef = useRef("");
-  styleBriefRef.current = activeProject?.styleBrief ?? "";
+  // projects 的最新快照：异步回调按 projectId 取自己项目的字段（如目标画风），
+  // 不被「切换到其他项目」影响。渲染期只维护全量快照，不再按激活项目覆盖单份 ref。
+  const projectsRef = useRef<RestyleProject[]>(projects);
+  projectsRef.current = projects;
   const activeConversation = activeProject?.conversations.find(
     (conversation) => conversation.id === activeProject?.activeConversationId,
   );
+  // 草稿与草稿附件读写都带当前项目 id；无项目时用 "" 兜底键，输入框仍可编辑。
+  const chatDraft = chatDrafts[activeProjectId ?? ""] ?? "";
+  const draftAttachmentIds = draftAttachmentIdsByProject[activeProjectId ?? ""] ?? [];
+
+  function setChatDraft(update: string | ((current: string) => string)) {
+    const key = activeProjectId ?? "";
+    setChatDrafts((current) => ({
+      ...current,
+      [key]: typeof update === "function" ? update(current[key] ?? "") : update,
+    }));
+  }
+
+  function setDraftAttachmentIds(update: string[] | ((current: string[]) => string[])) {
+    const key = activeProjectId ?? "";
+    setDraftAttachmentIdsByProject((current) => ({
+      ...current,
+      [key]: typeof update === "function" ? update(current[key] ?? []) : update,
+    }));
+  }
+
+  /** 按项目取目标画风：异步生成回调只认任务自己的 projectId，不读激活项目的全局值。 */
+  function styleBriefForProject(projectId: string): string {
+    return projectsRef.current.find((project) => project.id === projectId)?.styleBrief ?? "";
+  }
+
   const sourceVideoLabel = (videoId: string): string =>
     activeProject?.files.find((file) => file.id === videoId || file.episode === videoId)?.name ??
     videoId;
@@ -1007,9 +1054,24 @@ export default function RestyleStudio() {
     [activeProject?.assetIds, assets],
   );
   const projectFileTree = useMemo(
-    () => buildRestyleFileTree(activeProject, linkedProjectAssets, t),
+    () =>
+      stampPreviewProjectId(
+        buildRestyleFileTree(activeProject, linkedProjectAssets, t),
+        activeProject?.id ?? null,
+      ),
     [activeProject, linkedProjectAssets, t],
   );
+  // 预览归属校验：即使某条重置路径漏掉，也不把上一个项目的媒体渲染到当前项目。
+  const visibleFilePreview =
+    selectedFilePreview && (selectedFilePreview.projectId ?? null) === activeProjectId
+      ? selectedFilePreview
+      : null;
+  const visiblePreviewDialog =
+    previewDialog && (previewDialog.projectId ?? null) === activeProjectId ? previewDialog : null;
+  const visibleFileContextMenu =
+    fileContextMenu && (fileContextMenu.preview.projectId ?? null) === activeProjectId
+      ? fileContextMenu
+      : null;
 
   useEffect(() => {
     if (!isAuthenticated || !user?.id) {
@@ -1065,11 +1127,27 @@ export default function RestyleStudio() {
     setSelectedAssetId(assets[0]?.id ?? null);
   }, [assets, selectedAssetId]);
 
+  // 模型选择随项目走：项目没设过模型时无条件回落默认值，绝不沿用上一个项目的选择。
+  // 用户在下拉里改模型时会写回 project.imageModel/videoModel，选择随项目持久化。
   useEffect(() => {
-    if (!activeProject) return;
-    if (activeProject.imageModel) setSelectedImageModel(activeProject.imageModel);
-    if (activeProject.videoModel) setSelectedVideoModel(activeProject.videoModel);
-  }, [activeProject]);
+    setSelectedImageModel(activeProject?.imageModel ?? DEFAULT_RESTYLE_IMAGE_MODEL);
+    setSelectedVideoModel(activeProject?.videoModel ?? DEFAULT_RESTYLE_VIDEO_MODEL);
+  }, [activeProject?.id, activeProject?.imageModel, activeProject?.videoModel]);
+
+  // 切换项目时统一重置与项目绑定的视图态：预览、画布选中、菜单、错误提示等不跨项目残留。
+  // 输入草稿与草稿附件按项目归档（见 chatDrafts / draftAttachmentIdsByProject），无需清空。
+  useEffect(() => {
+    setSelectedFilePreview(null);
+    setPreviewDialog(null);
+    setFileContextMenu(null);
+    setSelectedCanvasAttachmentId(null);
+    setReferencedCanvasAttachmentIds([]);
+    setCanvasPrompt("");
+    setCanvasOffset({ x: 0, y: 0 });
+    setSelectedAssetId(null);
+    setAttachmentMenuOpen(false);
+    setAnalysisError("");
+  }, [activeProjectId]);
 
   const activeRun = activeProjectId ? projectRuns[activeProjectId] : undefined;
   // 当前项目是否在执行。其他项目的任务不会影响这里，因此可以并发发送。
@@ -1418,10 +1496,14 @@ export default function RestyleStudio() {
       .forEach((attachment) => {
         void ensureReferenceVideoUrl(project.id, attachment);
       });
-    setDraftAttachmentIds((current) => [
+    // 直接按目标项目 id 归档：项目刚创建时 activeProjectId 尚未生效，不能用当前项目键。
+    setDraftAttachmentIdsByProject((current) => ({
       ...current,
-      ...attachments.map((attachment) => attachment.id),
-    ]);
+      [project.id]: [
+        ...(current[project.id] ?? []),
+        ...attachments.map((attachment) => attachment.id),
+      ],
+    }));
     setAttachmentMenuOpen(false);
   }
 
@@ -1491,6 +1573,7 @@ export default function RestyleStudio() {
       key: `attachment:${attachment.id}`,
       title: attachment.name,
       attachment,
+      projectId: activeProject?.id ?? null,
     };
   }
 
@@ -1613,7 +1696,7 @@ export default function RestyleStudio() {
         "text/plain",
         segment.prompt,
       );
-      setSelectedFilePreview(preview);
+      setSelectedFilePreview({ ...preview, projectId: activeProject?.id ?? null });
       setInspectorOpen(true);
     }
     window.requestAnimationFrame(() => {
@@ -1661,7 +1744,10 @@ export default function RestyleStudio() {
   function openRenderStatus() {
     if (!activeProject) return;
     expandFileTreePath("results");
-    setSelectedFilePreview(buildRenderStatusPreview(activeProject));
+    setSelectedFilePreview({
+      ...buildRenderStatusPreview(activeProject),
+      projectId: activeProject.id,
+    });
     setInspectorOpen(true);
   }
 
@@ -1842,12 +1928,13 @@ export default function RestyleStudio() {
     projectId: string;
     attachmentId: string;
     urls: string[];
+    videoModel: string;
   }): Promise<{ assetUrls: Record<string, string>; rejected: string[] }> {
     const result: { assetUrls: Record<string, string>; rejected: string[] } = {
       assetUrls: {},
       rejected: [],
     };
-    const vendor = assetLibraryVendorForModel(selectedVideoModel);
+    const vendor = assetLibraryVendorForModel(input.videoModel);
     // 筷子丽帧以公网 URL 作为视频输入，无需替换 asset://；不支持素材库的模型维持原样提交。
     if (!vendor || vendor === "kuaizi") return result;
     const cache = projects.find((item) => item.id === input.projectId)?.assetReviewMap ?? {};
@@ -1868,7 +1955,7 @@ export default function RestyleStudio() {
           vendor === "keyiyun"
             ? await callUploadKeyiyunAsset({ data: { url, assetType: "Image", name } })
             : await callUploadTopenrouterAsset({
-                data: { url, assetType: "Image", name, model: selectedVideoModel },
+                data: { url, assetType: "Image", name, model: input.videoModel },
               });
         if (uploaded.ok && uploaded.assetUrl) {
           const assetUrl = uploaded.assetUrl;
@@ -1913,6 +2000,7 @@ export default function RestyleStudio() {
       source: RestyleAttachment;
     }>,
     finalEpisodes: string[],
+    videoModel: string,
     index = 0,
   ): Promise<void> {
     const job = jobs[index];
@@ -1928,7 +2016,7 @@ export default function RestyleStudio() {
     appendRenderLog(
       projectId,
       job.attachmentId,
-      `已提交 ${selectedVideoModel}，正在等待模型创建任务。`,
+      `已提交 ${videoModel}，正在等待模型创建任务。`,
     );
     const startedAt = Date.now();
     const heartbeat = window.setInterval(() => {
@@ -1948,6 +2036,7 @@ export default function RestyleStudio() {
           projectId,
           attachmentId: job.attachmentId,
           urls: job.referenceImages,
+          videoModel,
         });
         const dropped: string[] = [...preChecked.rejected];
         let stage: RestyleFallbackStage = dropped.length ? "without-rejected" : "full";
@@ -1967,7 +2056,7 @@ export default function RestyleStudio() {
           const result = await callSubmitVideoTask({
             data: {
               content,
-              model: selectedVideoModel,
+              model: videoModel,
               ratio: "16:9",
               resolution: "720P",
               duration: 5,
@@ -2095,7 +2184,7 @@ export default function RestyleStudio() {
     } finally {
       window.clearInterval(heartbeat);
     }
-    await runRenderQueue(projectId, conversationId, jobs, finalEpisodes, index + 1);
+    await runRenderQueue(projectId, conversationId, jobs, finalEpisodes, videoModel, index + 1);
   }
 
   function generateRenderedVideos(
@@ -2112,6 +2201,8 @@ export default function RestyleStudio() {
   ) {
     const project = projects.find((item) => item.id === projectId);
     if (!project) return;
+    // 发起时快照视频模型：渲染队列的 await 轮询里只用快照，中途切换项目不会换模型。
+    const videoModel = selectedVideoModel;
     const sourceFiles = project.files.filter(
       (file) => file.type.startsWith("video/") && !file.isFolder,
     );
@@ -2264,7 +2355,7 @@ export default function RestyleStudio() {
         ...attachments,
       ],
     }));
-    void runRenderQueue(projectId, conversationId, jobs, [...new Set(finalEpisodes)]);
+    void runRenderQueue(projectId, conversationId, jobs, [...new Set(finalEpisodes)], videoModel);
   }
 
   /** 失败任务一键重试：沿用原提示词与参考素材重新提交，不再追问返工原因。 */
@@ -2656,6 +2747,9 @@ export default function RestyleStudio() {
     if (!message && !attachments.length) return;
     const projectId = activeProject.id;
     const conversationId = activeConversation.id;
+    // 本次生成任务的入口快照：后续 await 之后只用快照 + updateProject(projectId, ...) 回写，
+    // 不再读激活项目的全局画风/模型，切换项目不会串到本次任务。
+    let styleBrief = activeProject.styleBrief ?? "";
     const generatedAssetFiles = activeProject.files.filter(
       (file) =>
         (file.generatedKind === "character" ||
@@ -2679,9 +2773,9 @@ export default function RestyleStudio() {
     setDraftAttachmentIds([]);
 
     // 记住用户描述的目标画风：首轮转绘要求自动沿用，之后再次提到画风则覆盖。
-    if (message && (!styleBriefRef.current || looksLikeStyleBrief(message))) {
+    if (message && (!styleBrief || looksLikeStyleBrief(message))) {
       if (looksLikeStyleBrief(message) || !activeProject.extractedAssets.length) {
-        styleBriefRef.current = message;
+        styleBrief = message;
         updateProject(projectId, (project) => ({ ...project, styleBrief: message }));
       }
     }
@@ -2710,6 +2804,8 @@ export default function RestyleStudio() {
         conversationId,
         message || "按资产表生成全部资产图",
         activeProject.extractedAssets,
+        [],
+        styleBrief,
       );
       return;
     }
@@ -2723,7 +2819,7 @@ export default function RestyleStudio() {
       const result = await callGenerateRestylePlan({
         data: {
           model: selectedModel,
-          instruction: withRelationBrief(withStyleBrief(activeProject.planNote, styleBriefRef.current)),
+          instruction: withRelationBrief(withStyleBrief(activeProject.planNote, styleBrief)),
           sourceFiles: (sourceFiles.length ? sourceFiles : activeProject.files).map((file) => ({
             id: file.episode ?? file.id,
             name: file.name,
@@ -2769,7 +2865,7 @@ export default function RestyleStudio() {
       const result = await callGenerateRestylePlan({
         data: {
           model: selectedModel,
-          instruction: withRelationBrief(withStyleBrief(message, styleBriefRef.current)),
+          instruction: withRelationBrief(withStyleBrief(message, styleBrief)),
           sourceFiles: (sourceFiles.length ? sourceFiles : activeProject.files).map((file) => ({
             id: file.episode ?? file.id,
             name: file.name,
@@ -2865,6 +2961,7 @@ export default function RestyleStudio() {
         message,
         requestedAssets,
         referenceImages,
+        styleBrief,
       );
       return;
     }
@@ -3013,6 +3110,10 @@ export default function RestyleStudio() {
     instruction: string,
     extractedAssets: RestyleExtractedAsset[],
     referenceImages: string[] = [],
+    // 发起时快照的目标画风与图片模型：逐张生成的 await 循环里只用快照，
+    // 中途切换项目不会把别的项目的画风/模型带进本次任务。
+    styleBrief: string,
+    imageModel: string = selectedImageModel,
   ) {
     beginRun(projectId, t.restyle_run_step_asset_images);
     setAnalysisError("");
@@ -3039,17 +3140,12 @@ export default function RestyleStudio() {
           relationBriefsRef.current,
           asset.targetName || asset.sourceName,
         );
-        const prompt = resolveAssetImagePrompt(
-          asset,
-          styleBriefRef.current,
-          instruction,
-          relationBrief,
-        );
+        const prompt = resolveAssetImagePrompt(asset, styleBrief, instruction, relationBrief);
         const result = referenceImages.length
           ? await callGenerateImageWithReferences({
-              data: { prompt, model: selectedImageModel, size: "2K", referenceImages },
+              data: { prompt, model: imageModel, size: "2K", referenceImages },
             })
-          : await callGenerateImage({ data: { prompt, model: selectedImageModel, size: "2K" } });
+          : await callGenerateImage({ data: { prompt, model: imageModel, size: "2K" } });
         if (!result.url) {
           setAssetRunStatus((current) => ({
             ...current,
@@ -3279,7 +3375,6 @@ export default function RestyleStudio() {
 
   function handleStyleBriefChange(next: string) {
     if (!activeProject) return;
-    styleBriefRef.current = next;
     updateProject(activeProject.id, (project) => ({ ...project, styleBrief: next }));
   }
 
@@ -3317,7 +3412,14 @@ export default function RestyleStudio() {
   function regenerateAssetWithCurrentPrompt(asset: RestyleExtractedAsset) {
     if (!activeProject || !activeConversation) return;
     // 覆盖内容已在编辑时写进 asset.promptOverride，生成时由 resolveAssetImagePrompt 取用。
-    void generateAssetImages(activeProject.id, activeConversation.id, "", [asset]);
+    void generateAssetImages(
+      activeProject.id,
+      activeConversation.id,
+      "",
+      [asset],
+      [],
+      styleBriefForProject(activeProject.id),
+    );
   }
 
   function canvasAttachmentPrompt(attachment: RestyleAttachment): string {
@@ -3366,7 +3468,14 @@ export default function RestyleStudio() {
         (asset) => asset.targetName && attachment.name.includes(asset.targetName),
       );
     if (!extracted) return;
-    void generateAssetImages(activeProject.id, activeConversation.id, prompt, [extracted]);
+    void generateAssetImages(
+      activeProject.id,
+      activeConversation.id,
+      prompt,
+      [extracted],
+      [],
+      styleBriefForProject(activeProject.id),
+    );
   }
 
   if (view === "canvas") {
@@ -3764,6 +3873,8 @@ export default function RestyleStudio() {
                           shouldRestyle: true,
                         },
                       ],
+                      [],
+                      styleBriefForProject(activeProject.id),
                     )
                   }
                   className="btn-primary mt-4 w-full text-xs"
@@ -4514,7 +4625,7 @@ export default function RestyleStudio() {
                 <ProjectFileTree
                   nodes={projectFileTree}
                   closedPaths={closedFileTreePaths}
-                  selectedPreviewKey={selectedFilePreview?.key ?? ""}
+                  selectedPreviewKey={visibleFilePreview?.key ?? ""}
                   onToggleFolder={toggleFileTreePath}
                   onOpenFile={openFilePreview}
                   onDragFile={setDraggedFileId}
@@ -4558,33 +4669,33 @@ export default function RestyleStudio() {
                   </button>
                 </div>
               </div>
-              {selectedFilePreview ? (
+              {visibleFilePreview ? (
                 <FilePreviewInspector
-                  preview={selectedFilePreview}
+                  preview={visibleFilePreview}
                   previewUrl={
-                    selectedFilePreview.kind === "attachment"
-                      ? previewUrlForAttachment(selectedFilePreview.attachment)
+                    visibleFilePreview.kind === "attachment"
+                      ? previewUrlForAttachment(visibleFilePreview.attachment)
                       : undefined
                   }
                   thumbnailUrl={
-                    selectedFilePreview.kind === "attachment"
-                      ? fileThumbnails[selectedFilePreview.attachment.id]
+                    visibleFilePreview.kind === "attachment"
+                      ? fileThumbnails[visibleFilePreview.attachment.id]
                       : undefined
                   }
                   videoPair={
-                    selectedFilePreview.kind === "attachment"
-                      ? videoPairForAttachment(selectedFilePreview.attachment)
+                    visibleFilePreview.kind === "attachment"
+                      ? videoPairForAttachment(visibleFilePreview.attachment)
                       : null
                   }
                   renderSegments={
-                    selectedFilePreview.kind === "attachment"
-                      ? renderSegmentsForAttachment(selectedFilePreview.attachment)
+                    visibleFilePreview.kind === "attachment"
+                      ? renderSegmentsForAttachment(visibleFilePreview.attachment)
                       : []
                   }
                   onRerunSegment={rerunVideoSegment}
                   onRetrySegment={retryVideoSegment}
                   onReuploadSourceVideo={requestReuploadSourceVideo}
-                  onOpen={() => setPreviewDialog(selectedFilePreview)}
+                  onOpen={() => setPreviewDialog(visibleFilePreview)}
                   t={t}
                 />
               ) : selectedAsset ? (
@@ -4621,26 +4732,26 @@ export default function RestyleStudio() {
             </div>
           )}
         </aside>
-        {fileContextMenu ? (
+        {visibleFileContextMenu ? (
           <div
             className="fixed z-[60] min-w-36 rounded-lg border border-border bg-bg-surface p-1 shadow-2xl"
-            style={{ left: fileContextMenu.x, top: fileContextMenu.y }}
+            style={{ left: visibleFileContextMenu.x, top: visibleFileContextMenu.y }}
             role="menu"
             onMouseLeave={() => setFileContextMenu(null)}
           >
             <button
               type="button"
               role="menuitem"
-              onClick={() => downloadFilePreview(fileContextMenu.preview)}
+              onClick={() => downloadFilePreview(visibleFileContextMenu.preview)}
               className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-xs text-text-secondary hover:bg-bg-elevated hover:text-text-primary"
             >
               <Download size={14} /> 下载文件
             </button>
-            {fileContextMenu.preview.kind === "attachment" ? (
+            {visibleFileContextMenu.preview.kind === "attachment" ? (
               <button
                 type="button"
                 role="menuitem"
-                onClick={() => deleteFilePreview(fileContextMenu.preview)}
+                onClick={() => deleteFilePreview(visibleFileContextMenu.preview)}
                 className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-xs text-destructive hover:bg-destructive/10"
               >
                 <Trash2 size={14} /> 删除文件
@@ -4649,27 +4760,27 @@ export default function RestyleStudio() {
           </div>
         ) : null}
       </div>
-      {previewDialog ? (
+      {visiblePreviewDialog ? (
         <FilePreviewDialog
-          preview={previewDialog}
+          preview={visiblePreviewDialog}
           previewUrl={
-            previewDialog.kind === "attachment"
-              ? previewUrlForAttachment(previewDialog.attachment)
+            visiblePreviewDialog.kind === "attachment"
+              ? previewUrlForAttachment(visiblePreviewDialog.attachment)
               : undefined
           }
           thumbnailUrl={
-            previewDialog.kind === "attachment"
-              ? fileThumbnails[previewDialog.attachment.id]
+            visiblePreviewDialog.kind === "attachment"
+              ? fileThumbnails[visiblePreviewDialog.attachment.id]
               : undefined
           }
           videoPair={
-            previewDialog.kind === "attachment"
-              ? videoPairForAttachment(previewDialog.attachment)
+            visiblePreviewDialog.kind === "attachment"
+              ? videoPairForAttachment(visiblePreviewDialog.attachment)
               : null
           }
           renderSegments={
-            previewDialog.kind === "attachment"
-              ? renderSegmentsForAttachment(previewDialog.attachment)
+            visiblePreviewDialog.kind === "attachment"
+              ? renderSegmentsForAttachment(visiblePreviewDialog.attachment)
               : []
           }
           onRerunSegment={rerunVideoSegment}

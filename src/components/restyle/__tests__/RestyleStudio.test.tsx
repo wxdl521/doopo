@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import RestyleStudio from "../RestyleStudio";
@@ -6,6 +6,47 @@ import { libraryAssetsFromRows } from "../restyleAssetLibrary";
 import type { DbCharacter, DbProp, DbScene } from "../../../lib/assetsStorage";
 import { LanguageProvider } from "../../../i18n/LanguageContext";
 import { loadRestyleProjects, saveRestyleProjects, type RestyleProject } from "../restyleStorage";
+
+// 让工作区读到 localStorage 里预置的项目；资产库走空数据，避免真实请求。
+vi.mock("../../../hooks/useAuth", () => ({
+  useAuth: () => ({
+    session: null,
+    user: { id: "restyle-user" },
+    loading: false,
+    isAuthenticated: true,
+    signOut: async () => {},
+  }),
+}));
+vi.mock("../../../lib/assetsStorage", () => ({
+  loadCharacters: vi.fn(async () => ({ data: [], error: null })),
+  loadScenes: vi.fn(async () => ({ data: [], error: null })),
+  loadProps: vi.fn(async () => ({ data: [], error: null })),
+}));
+
+beforeEach(() => {
+  window.localStorage.clear();
+});
+
+const SEED_NOW = "2026-08-02T00:00:00.000Z";
+
+function seedProject(overrides: Partial<RestyleProject> = {}): RestyleProject {
+  return {
+    id: "project-a",
+    title: "项目 A",
+    createdAt: SEED_NOW,
+    updatedAt: SEED_NOW,
+    stage: "upload",
+    assetIds: [],
+    confirmedAssetIds: [],
+    files: [],
+    conversations: [],
+    activeConversationId: null,
+    planNote: "",
+    extractedAssets: [],
+    analysisSummary: "",
+    ...overrides,
+  };
+}
 
 function renderStudio() {
   return render(
@@ -380,5 +421,79 @@ describe("RestyleStudio prototype", () => {
     expect(loaded?.extractedAssets[0]?.promptOverride).toBe("用户手工改过的提示词");
     // 未覆盖（恢复自动生成）的资产不带上该字段。
     expect(loaded?.extractedAssets[1]?.promptOverride).toBeUndefined();
+  });
+
+  it("clears the inspector preview after switching projects", async () => {
+    const user = userEvent.setup();
+    saveRestyleProjects("restyle-user", [
+      seedProject({
+        id: "project-a",
+        title: "项目 A",
+        files: [
+          { id: "video-a", name: "EP-A.mp4", size: 1024, type: "video/mp4", lastModified: 0 },
+        ],
+      }),
+      seedProject({ id: "project-b", title: "项目 B" }),
+    ]);
+    renderStudio();
+
+    // 打开 A 的视频预览：右侧检查器显示本地视频。
+    await user.click(await screen.findByRole("button", { name: "预览文件：EP-A.mp4" }));
+    expect(screen.getByText(/本地视频/)).toBeInTheDocument();
+
+    // 切到 B：A 的预览必须清空，不能残留 A 的媒体。
+    await user.selectOptions(screen.getByLabelText("选择项目"), "project-b");
+    expect(screen.queryByText(/本地视频/)).not.toBeInTheDocument();
+    expect(screen.queryByText("EP-A.mp4")).not.toBeInTheDocument();
+  });
+
+  it("keeps draft attachments scoped to their own project", async () => {
+    const user = userEvent.setup();
+    saveRestyleProjects("restyle-user", [
+      seedProject({ id: "project-a", title: "项目 A" }),
+      seedProject({ id: "project-b", title: "项目 B" }),
+    ]);
+    renderStudio();
+
+    // 在 A 的输入框附件条里加一张图。
+    await user.upload(
+      screen.getByTestId("restyle-file-input"),
+      new File(["cover"], "draft-cover.png", { type: "image/png" }),
+    );
+    expect(screen.getAllByText("draft-cover.png").length).toBeGreaterThan(0);
+
+    // 切到 B：附件条与文件树都不出现 A 的草稿附件。
+    await user.selectOptions(screen.getByLabelText("选择项目"), "project-b");
+    expect(screen.queryByText("draft-cover.png")).not.toBeInTheDocument();
+
+    // 切回 A：草稿附件还在，互不污染。
+    await user.selectOptions(screen.getByLabelText("选择项目"), "project-a");
+    expect(screen.getAllByText("draft-cover.png").length).toBeGreaterThan(0);
+  });
+
+  it("falls back to default models when the project has no saved model", async () => {
+    const user = userEvent.setup();
+    saveRestyleProjects("restyle-user", [
+      seedProject({
+        id: "project-a",
+        title: "项目 A",
+        imageModel: "revora/gpt-image-2-high",
+        videoModel: "doubao-seedance-1-0-pro-250528",
+      }),
+      seedProject({ id: "project-b", title: "项目 B" }),
+    ]);
+    renderStudio();
+
+    const imageSelect = await screen.findByLabelText("生图模型");
+    const videoSelect = screen.getByLabelText("生视频模型");
+    // A 设过模型：沿用项目内保存的选择。
+    expect(imageSelect).toHaveValue("revora/gpt-image-2-high");
+    expect(videoSelect).toHaveValue("doubao-seedance-1-0-pro-250528");
+
+    // B 没设过模型：回落默认值，而不是沿用 A 的选择。
+    await user.selectOptions(screen.getByLabelText("选择项目"), "project-b");
+    // 默认生图模型 = realImageModelOptions 里第一个可见模型（Seedream 不在可见列表时）。
+    expect(imageSelect).toHaveValue("tokenflash/gpt-image-2");
+    expect(videoSelect).not.toHaveValue("doubao-seedance-1-0-pro-250528");
   });
 });
