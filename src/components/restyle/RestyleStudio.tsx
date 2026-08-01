@@ -1002,6 +1002,7 @@ export default function RestyleStudio() {
       conversations: [conversation],
       activeConversationId: conversation.id,
       planNote: "",
+      styleBrief: "",
       extractedAssets: [],
       analysisSummary: "",
     };
@@ -2431,13 +2432,7 @@ export default function RestyleStudio() {
     try {
       for (const asset of extractedAssets) {
         const prompt = [
-          `为转绘项目生成一张${asset.kind === "character" ? "角色" : asset.kind === "scene" ? "场景" : "道具"}资产图。`,
-          `资产名称：${asset.targetName || asset.sourceName}`,
-          `原片定位：${asset.sourceDescription}`,
-          `目标设定：${asset.targetDescription}`,
-          "请只生成该单一资产，不要添加无关人物、场景或道具。",
-          `用户要求：${instruction}`,
-        ].join("\n");
+        const prompt = buildAssetImagePrompt(asset, styleBriefRef.current, instruction);
         const result = referenceImages.length
           ? await callGenerateImageWithReferences({
               data: { prompt, model: selectedImageModel, size: "2K", referenceImages },
