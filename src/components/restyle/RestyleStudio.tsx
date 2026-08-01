@@ -2431,7 +2431,6 @@ export default function RestyleStudio() {
     const generatedKinds: Array<"character" | "scene" | "prop"> = [];
     try {
       for (const asset of extractedAssets) {
-        const prompt = [
         const prompt = buildAssetImagePrompt(asset, styleBriefRef.current, instruction);
         const result = referenceImages.length
           ? await callGenerateImageWithReferences({
