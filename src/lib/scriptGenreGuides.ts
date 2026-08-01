@@ -93,13 +93,14 @@ export const TONE_GUIDES: Record<string, string> = {
 export function buildGuideBlock(
   tags: string[],
   dict: Record<string, string>,
+  labelOf: (value: string) => string = (v) => v,
   max = 4,
 ): string {
   const lines: string[] = [];
   for (const tag of tags) {
     const key = tag.trim();
     const guide = dict[key];
-    if (guide) lines.push(`- ${key}：${guide}`);
+    if (guide) lines.push(`- ${labelOf(key)}：${guide}`);
     if (lines.length >= max) break;
   }
   return lines.join("\n");
