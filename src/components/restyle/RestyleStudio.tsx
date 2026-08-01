@@ -3908,12 +3908,13 @@ export default function RestyleStudio() {
                   ) : null}
                 </div>
               ))}
-              {isAnalyzing && (
-                <div className="flex items-center gap-2 text-sm text-text-secondary" role="status">
-                  <Loader2 size={15} className="animate-spin text-accent" />
-                  {t.restyle_analysis_running}
-                </div>
-              )}
+              {activeRun && activeProjectId ? (
+                <RunProgressCard
+                  run={activeRun}
+                  t={t}
+                  onStop={() => stopRun(activeProjectId)}
+                />
+              ) : null}
               {analysisError && !isAnalyzing && (
                 <p className="text-xs text-destructive" role="alert">
                   {analysisError}
