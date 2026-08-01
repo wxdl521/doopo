@@ -307,16 +307,9 @@ export const generateRestylePlan = createServerFn({ method: "POST" })
     }): Promise<
       { ok: true; episodes: RestylePlanEpisode[]; model: string } | { ok: false; error: string }
     > => {
-      const isArk = data.model.startsWith("ark:");
-      const model = isArk ? data.model.slice(4) || ARK_TEXT_MODEL : data.model.slice(5);
-      const apiKey = isArk ? arkTextApiKey() : qwenApiKey();
-      if (!apiKey)
-        return {
-          ok: false,
-          error: isArk
-            ? "DeepSeek V4 Pro 未配置：请设置 ARK_API_KEY。"
-            : "Qwen 未配置：请设置 Qwen、QWEN_API_KEY 或 DASHSCOPE_API_KEY。",
-        };
+      const config = resolveProvider(data.model);
+      const model = config.model;
+      if (!config.apiKey) return { ok: false, error: config.missingKeyError };
       const files = data.sourceFiles
         .map((file) => `- 视频 ID: ${file.id || file.name}; 文件名: ${file.name}`)
         .join("\n");
@@ -324,15 +317,16 @@ export const generateRestylePlan = createServerFn({ method: "POST" })
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 180_000);
       try {
-        const response = await fetch(isArk ? arkTextEndpoint() : QWEN_ENDPOINT, {
+        const response = await fetch(config.endpoint, {
           method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${config.apiKey}`,
+          },
           signal: controller.signal,
           body: JSON.stringify({
             model,
-            ...(isArk ? { thinking: ARK_TEXT_THINKING_DISABLED } : {}),
-            temperature: 0.2,
-            max_tokens: 12_000,
+            ...providerTuning(config, 12_000),
             response_format: { type: "json_object" },
             messages: [
               {
