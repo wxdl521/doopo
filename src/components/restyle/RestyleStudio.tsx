@@ -888,7 +888,9 @@ export default function RestyleStudio() {
       : (realImageModelOptions[0]?.id ?? "doubao-seedream-5-0-260128"),
   );
   const [selectedVideoModel, setSelectedVideoModel] = useState(DEFAULT_RESTYLE_VIDEO_MODEL);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  // 每个转绘项目独立的执行态：切换项目不再互相阻塞，可多项目并发。
+  const [projectRuns, setProjectRuns] = useState<Record<string, RestyleRunState>>({});
+  const runAbortRef = useRef<Record<string, AbortController>>({});
   const [analysisError, setAnalysisError] = useState("");
   // 「过程与提示词」面板的逐项资产生成进度，键为 extractedAsset.id。
   const [assetRunStatus, setAssetRunStatus] = useState<Record<string, RestyleAssetRunStatus>>({});
