@@ -1,6 +1,7 @@
 // ====================================================================
-//  转绘 v2 大文件直传：浏览器 PUT 原始二进制到 Supabase Storage 签名上传地址，
-//  不经 base64 / 不进内存字符串（212MB 视频 base64 化会撑爆标签页）。
+//  转绘大文件直传（v2 与旧版工作台共用）：浏览器 PUT 原始二进制到
+//  Supabase Storage 签名上传地址，不经 base64 / 不进内存字符串
+//  （212MB 视频 base64 化会撑爆标签页）。
 //
 //  桶策略已允许用户写自己 userId/ 前缀（create_workspace_media_bucket 迁移），
 //  无需新增 storage SQL。帧图/单元音频等小文件仍走 uploadLocalImage。
@@ -16,7 +17,7 @@ const READ_URL_TTL_SEC = 315_360_000;
 
 const Input = z.object({
   id: z.string().min(1).max(128),
-  kind: z.enum(["video", "audio"]),
+  kind: z.enum(["video", "audio", "image"]),
   ext: z.string().min(1).max(10).regex(/^[a-z0-9]+$/i),
 });
 

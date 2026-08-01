@@ -64,11 +64,23 @@ import {
   type RestyleFallbackStage,
 } from "../../lib/videoAssetLibrary";
 import { uploadLocalImage } from "../../lib/uploadImage.functions";
+import { createMediaUploadUrl } from "../../lib/restyleMedia.functions";
 import { persistAssetImage } from "../../lib/workspaceMedia.functions";
 import { realImageModelOptions, realVideoModels } from "../NewProjectDialog";
 import { isConfirmIntent, isVideoRenderIntent } from "./restyleIntent";
 import { looksLikeStyleBrief, resolveAssetImagePrompt, withStyleBrief } from "./restylePrompt";
 import { RestyleProcessPanel, type RestyleAssetRunStatus } from "./RestyleProcessPanel";
+import {
+  shouldUseDirectUpload,
+  uploadFileDirect,
+  type DirectUploadState,
+} from "./restyleUpload";
+import {
+  buildMentionables,
+  resolveMentionedAttachmentIds,
+  type MentionableAttachment,
+} from "./restyleMentions";
+import { toast } from "sonner";
 
 type AssetLibraryStatus = "idle" | "loading" | "ready" | "error";
 type RestyleView = "workbench" | "canvas";
@@ -849,6 +861,12 @@ export default function RestyleStudio() {
   );
   const [attachmentMenuOpen, setAttachmentMenuOpen] = useState(false);
   const [draftAttachmentIds, setDraftAttachmentIds] = useState<string[]>([]);
+  // 附件直传状态（上传中/已完成/失败），按 attachmentId 归档，仅组件内可见。
+  const [attachmentUploads, setAttachmentUploads] = useState<
+    Record<string, DirectUploadState>
+  >({});
+  // 外部文件拖入工作区时显示「松开即上传」遮罩。
+  const [isFileDragActive, setIsFileDragActive] = useState(false);
   const [filePreviews, setFilePreviews] = useState<Record<string, string>>({});
   const [fileThumbnails, setFileThumbnails] = useState<Record<string, string>>({});
   const [closedFileTreePaths, setClosedFileTreePaths] = useState<string[]>([]);
@@ -892,6 +910,7 @@ export default function RestyleStudio() {
   const callUploadTopenrouterAsset = useServerFn(uploadTopenrouterAsset);
   const callUploadKeyiyunAsset = useServerFn(uploadKeyiyunAsset);
   const callUploadLocalMedia = useServerFn(uploadLocalImage);
+  const callCreateMediaUploadUrl = useServerFn(createMediaUploadUrl);
   const callPersistAssetImage = useServerFn(persistAssetImage);
 
   const activeProject = projects.find((project) => project.id === activeProjectId);
@@ -906,8 +925,12 @@ export default function RestyleStudio() {
     videoId;
   const draftAttachments =
     activeProject?.files.filter((file) => draftAttachmentIds.includes(file.id)) ?? [];
-  const imageDraftAttachments = draftAttachments.filter((file) => file.type.startsWith("image/"));
-  const imageMentionQuery = chatDraft.match(/(?:^|\s)@([a-zA-Z0-9_]*)$/);
+  // @ 可引用的素材：当前项目全部已上传图片与视频（不限于本轮草稿），按类型分别编号。
+  const mentionableAttachments = useMemo(
+    () => buildMentionables(activeProject?.files ?? []),
+    [activeProject?.files],
+  );
+  const mentionQuery = chatDraft.match(/(?:^|\s)@([a-zA-Z0-9_]*)$/);
   const selectedAsset = assets.find((asset) => asset.id === selectedAssetId) ?? assets[0];
   const matchingProjects = useMemo(
     () =>
@@ -1114,7 +1137,7 @@ export default function RestyleStudio() {
     }));
   }
 
-  function attachFiles(files: FileList | null, isFolder = false) {
+  function attachFiles(files: FileList | File[] | null, isFolder = false) {
     if (!files?.length) return;
     const project = activeProject ?? createProjectRecord();
     if (!activeProject) {
@@ -1174,8 +1197,13 @@ export default function RestyleStudio() {
       ...currentProject,
       files: [...currentProject.files, ...attachments],
     }));
+    // 选中即后台异步上传：视频与 >4MB 文件走签名地址二进制直传，不做 base64。
     attachments
-      .filter((attachment) => attachment.type.startsWith("video/"))
+      .filter(
+        (attachment) =>
+          !attachment.isFolder &&
+          shouldUseDirectUpload({ type: attachment.type, size: attachment.size }),
+      )
       .forEach((attachment) => {
         void ensureReferenceVideoUrl(project.id, attachment);
       });
@@ -1199,7 +1227,12 @@ export default function RestyleStudio() {
       return next;
     });
     setDraftAttachmentIds((current) => current.filter((id) => id !== fileId));
+    setAttachmentUploads((current) => {
+      const { [fileId]: _removed, ...next } = current;
+      return next;
+    });
     delete fileObjectsRef.current[fileId];
+    delete sourceVideoUploadRef.current[fileId];
     updateProject(activeProject.id, (project) => ({
       ...project,
       files: project.files.filter((file) => file.id !== fileId),
@@ -1499,6 +1532,17 @@ export default function RestyleStudio() {
     );
   }
 
+  function setAttachmentUpload(attachmentId: string, state: DirectUploadState) {
+    setAttachmentUploads((current) => ({ ...current, [attachmentId]: state }));
+  }
+
+  /** 上传失败后允许从附件卡片重试：清掉去重缓存再走一次上传通道。 */
+  function retryAttachmentUpload(attachment: RestyleAttachment) {
+    if (!activeProject) return;
+    delete sourceVideoUploadRef.current[attachment.id];
+    void ensureReferenceVideoUrl(activeProject.id, attachment);
+  }
+
   async function ensureReferenceVideoUrl(
     projectId: string,
     source: RestyleAttachment,
@@ -1510,33 +1554,57 @@ export default function RestyleStudio() {
     if (!localFile) {
       return { ok: false, error: "原视频只存在于已失效的本地预览中，请重新上传后再生成。" };
     }
+    // 视频与 >4MB 文件走签名地址二进制直传（不做 base64）；小图片保留 base64 旧路径。
+    const useDirect = shouldUseDirectUpload(localFile);
+    if (useDirect) setAttachmentUpload(source.id, { status: "uploading", progress: 0 });
     const upload = (async () => {
       try {
-        const base64 = await fileToDataUrl(localFile);
-        const result = await callUploadLocalMedia({
-          data: { base64, id: source.id, kind: "video" },
-        });
-        if (!result.ok || !result.url) {
-          return {
-            ok: false as const,
-            error: result.ok ? "原视频上传后没有返回访问地址。" : result.error,
-          };
+        let url: string;
+        if (useDirect) {
+          const direct = await uploadFileDirect(
+            localFile,
+            source.id,
+            (input) => callCreateMediaUploadUrl({ data: input }),
+            (percent) =>
+              setAttachmentUpload(source.id, { status: "uploading", progress: percent }),
+          );
+          if (!direct.ok) return direct;
+          url = direct.url;
+        } else {
+          const base64 = await fileToDataUrl(localFile);
+          const result = await callUploadLocalMedia({
+            data: { base64, id: source.id, kind: "video" },
+          });
+          if (!result.ok || !result.url) {
+            return {
+              ok: false as const,
+              error: result.ok ? "原视频上传后没有返回访问地址。" : result.error,
+            };
+          }
+          url = result.url;
         }
+        // readUrl 写回 project.files[].url 并随 projects 持久化，刷新后不再依赖本地预览。
         updateProject(projectId, (project) => ({
           ...project,
           files: project.files.map((file) =>
-            file.id === source.id ? { ...file, url: result.url } : file,
+            file.id === source.id ? { ...file, url } : file,
           ),
         }));
-        return { ok: true as const, url: result.url };
+        if (useDirect) setAttachmentUpload(source.id, { status: "done", progress: 100 });
+        return { ok: true as const, url };
       } catch (error) {
-        return {
-          ok: false as const,
-          error: error instanceof Error ? error.message : "原视频上传失败。",
-        };
+        const message = error instanceof Error ? error.message : "原视频上传失败。";
+        if (useDirect) {
+          setAttachmentUpload(source.id, { status: "error", progress: 0, error: message });
+        }
+        return { ok: false as const, error: message };
       }
     })();
     sourceVideoUploadRef.current[source.id] = upload;
+    // 失败结果不缓存，后续调用（卡片重试 / 重新生成）可以再次发起上传。
+    void upload.then((result) => {
+      if (!result.ok) delete sourceVideoUploadRef.current[source.id];
+    });
     return await upload;
   }
 
@@ -2224,10 +2292,42 @@ export default function RestyleStudio() {
     setFileDropTarget(null);
   }
 
-  function insertImageMention(imageIndex: number) {
+  function insertMention(item: MentionableAttachment) {
     setChatDraft((current) =>
-      current.replace(/(^|\s)@[a-zA-Z0-9_]*$/, `$1@image${imageIndex + 1} `),
+      current.replace(/(^|\s)@[a-zA-Z0-9_]*$/, `$1${item.alias} `),
     );
+    setDraftAttachmentIds((current) =>
+      current.includes(item.attachment.id) ? current : [...current, item.attachment.id],
+    );
+  }
+
+  /** 外部文件拖入（dataTransfer 含 Files）；文件树内部排序拖拽只有 text/plain，直接跳过。 */
+  function isExternalFileDrag(event: ReactDragEvent): boolean {
+    return Array.from(event.dataTransfer.types).includes("Files");
+  }
+
+  function handleWorkspaceDragOver(event: ReactDragEvent) {
+    if (!isExternalFileDrag(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "copy";
+    setIsFileDragActive(true);
+  }
+
+  function handleWorkspaceDragLeave(event: ReactDragEvent) {
+    if (!isExternalFileDrag(event)) return;
+    const next = event.relatedTarget as Node | null;
+    if (next && event.currentTarget.contains(next)) return;
+    setIsFileDragActive(false);
+  }
+
+  function handleWorkspaceDrop(event: ReactDragEvent) {
+    if (!isExternalFileDrag(event)) return;
+    event.preventDefault();
+    setIsFileDragActive(false);
+    const dropped = Array.from(event.dataTransfer.files);
+    const accepted = dropped.filter((file) => /^(image|video)\//.test(file.type));
+    if (accepted.length < dropped.length) toast.error(t.restyle_drop_unsupported_type);
+    if (accepted.length) attachFiles(accepted);
   }
 
   function getRequestedAssetKinds(message: string): Array<"character" | "scene" | "prop"> {
@@ -2330,7 +2430,14 @@ export default function RestyleStudio() {
   async function sendChatMessage() {
     if (!activeProject || !activeConversation) return;
     const message = chatDraft.trim();
-    const attachments = activeProject.files.filter((file) => draftAttachmentIds.includes(file.id));
+    // 发送时解析文本中的 @imageN / @videoN，把被 @ 的素材一并带上（即使不在附件条里）。
+    const mentionedAttachmentIds = resolveMentionedAttachmentIds(message, mentionableAttachments);
+    const outgoingAttachmentIds = [
+      ...new Set([...draftAttachmentIds, ...mentionedAttachmentIds]),
+    ];
+    const attachments = activeProject.files.filter((file) =>
+      outgoingAttachmentIds.includes(file.id),
+    );
     const referenceAttachments = attachments.filter((file) => file.type.startsWith("image/"));
     const projectVideoFiles = activeProject.files.filter((file) => file.type.startsWith("video/"));
     if (!message && !attachments.length) return;
@@ -2490,13 +2597,12 @@ export default function RestyleStudio() {
         (requestedAssetKinds.length > 0 && /生成|图片|图/.test(message)) ||
         (generatedAssetFiles.length > 0 && /修改|调整|请将|变得|改成|换成/i.test(message)));
     if (isAssetImageRequest) {
-      const mentionedImages =
-        message.match(/@image(\d+)/gi)?.map((mention) => Number(mention.replace(/\D/g, "")) - 1) ??
-        [];
+      // @imageN 现在按项目内图片统一编号，按解析出的附件 id 过滤参考图。
+      const mentionedImageIds = mentionedAttachmentIds;
       const uploadedReferenceImages = (
         await Promise.all(
           referenceAttachments
-            .filter((_file, index) => !mentionedImages.length || mentionedImages.includes(index))
+            .filter((file) => !mentionedImageIds.length || mentionedImageIds.includes(file.id))
             .map((file) => {
               const local = fileObjectsRef.current[file.id];
               return local ? fileToDataUrl(local) : Promise.resolve(file.url ?? "");
@@ -3339,9 +3445,22 @@ export default function RestyleStudio() {
 
   return (
     <section
-      className="flex h-[100dvh] min-h-[640px] flex-col overflow-hidden bg-bg"
+      className="relative flex h-[100dvh] min-h-[640px] flex-col overflow-hidden bg-bg"
       data-testid="restyle-workbench"
+      onDragOver={handleWorkspaceDragOver}
+      onDragLeave={handleWorkspaceDragLeave}
+      onDrop={handleWorkspaceDrop}
     >
+      {isFileDragActive ? (
+        <div
+          className="pointer-events-none absolute inset-0 z-40 grid place-items-center bg-bg/70"
+          data-testid="restyle-drop-overlay"
+        >
+          <div className="grid h-[calc(100%-2rem)] w-[calc(100%-2rem)] place-items-center rounded-2xl border-2 border-dashed border-accent bg-accent-dim/40">
+            <p className="text-sm font-medium text-accent">{t.restyle_drop_upload_hint}</p>
+          </div>
+        </div>
+      ) : null}
       <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden xl:grid-cols-[232px_minmax(0,1fr)_310px]">
         {assetPickerFor || assetPickerKind ? (
           <div
@@ -3686,6 +3805,14 @@ export default function RestyleStudio() {
                       attachment={attachment}
                       previewUrl={filePreviews[attachment.id] ?? attachment.url}
                       thumbnailUrl={fileThumbnails[attachment.id]}
+                      uploadState={attachmentUploads[attachment.id]}
+                      onRetryUpload={() => retryAttachmentUpload(attachment)}
+                      uploadLabels={{
+                        uploading: t.restyle_upload_uploading,
+                        done: t.restyle_upload_done,
+                        failed: t.restyle_upload_failed,
+                        retry: t.restyle_upload_retry,
+                      }}
                       onRemove={() => removeFile(attachment.id)}
                       removeLabel={t.restyle_remove_file}
                     />
@@ -3762,36 +3889,44 @@ export default function RestyleStudio() {
                   }}
                 />
                 <div className="relative min-w-0 flex-1">
-                  {imageMentionQuery && imageDraftAttachments.length ? (
+                  {mentionQuery && mentionableAttachments.length ? (
                     <div className="absolute bottom-10 left-0 z-30 w-full max-w-md rounded-xl border border-border bg-bg-surface p-1.5 shadow-2xl">
-                      {imageDraftAttachments.map((attachment, index) => (
-                        <button
-                          key={attachment.id}
-                          type="button"
-                          onClick={() => insertImageMention(index)}
-                          className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-bg-elevated"
-                        >
-                          <span className="grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-md bg-bg-elevated text-text-muted">
-                            {filePreviews[attachment.id] ? (
-                              <img
-                                src={filePreviews[attachment.id]}
-                                alt=""
-                                className="h-full w-full object-cover"
-                              />
-                            ) : (
-                              <FileText size={14} />
-                            )}
-                          </span>
-                          <span className="min-w-0">
-                            <span className="block text-sm font-semibold text-text-primary">
-                              @image{index + 1}
+                      <p className="px-2 pb-1 pt-1.5 text-[11px] font-medium text-text-muted">
+                        {t.restyle_mention_panel_title}
+                      </p>
+                      {mentionableAttachments.map((item) => {
+                        const thumb =
+                          fileThumbnails[item.attachment.id] ??
+                          (item.kind === "image"
+                            ? (filePreviews[item.attachment.id] ?? item.attachment.url)
+                            : undefined);
+                        return (
+                          <button
+                            key={item.attachment.id}
+                            type="button"
+                            onClick={() => insertMention(item)}
+                            className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left hover:bg-bg-elevated"
+                          >
+                            <span className="grid h-8 w-8 shrink-0 place-items-center overflow-hidden rounded-md bg-bg-elevated text-text-muted">
+                              {thumb ? (
+                                <img src={thumb} alt="" className="h-full w-full object-cover" />
+                              ) : item.kind === "video" ? (
+                                <Play size={14} />
+                              ) : (
+                                <FileText size={14} />
+                              )}
                             </span>
-                            <span className="block truncate text-xs text-text-muted">
-                              {attachment.name}
+                            <span className="min-w-0">
+                              <span className="block text-sm font-semibold text-text-primary">
+                                {item.alias}
+                              </span>
+                              <span className="block truncate text-xs text-text-muted">
+                                {item.attachment.name}
+                              </span>
                             </span>
-                          </span>
-                        </button>
-                      ))}
+                          </button>
+                        );
+                      })}
                     </div>
                   ) : null}
                   <textarea
@@ -4987,12 +5122,18 @@ function AttachmentPreview({
   attachment,
   previewUrl,
   thumbnailUrl,
+  uploadState,
+  uploadLabels,
+  onRetryUpload,
   onRemove,
   removeLabel,
 }: {
   attachment: RestyleAttachment;
   previewUrl?: string;
   thumbnailUrl?: string;
+  uploadState?: DirectUploadState;
+  uploadLabels?: { uploading: string; done: string; failed: string; retry: string };
+  onRetryUpload?: () => void;
   onRemove: () => void;
   removeLabel: string;
 }) {
@@ -5012,6 +5153,34 @@ function AttachmentPreview({
         )}
       </div>
       <p className="truncate px-1.5 py-1 text-[10px] text-text-primary">{attachment.name}</p>
+      {uploadState && uploadLabels ? (
+        <div className="px-1.5 pb-1" data-testid={`upload-state-${attachment.id}`}>
+          {uploadState.status === "uploading" ? (
+            <div>
+              <div className="h-1 w-full overflow-hidden rounded bg-bg-elevated">
+                <div
+                  className="h-1 rounded bg-accent transition-all"
+                  style={{ width: `${uploadState.progress}%` }}
+                />
+              </div>
+              <p className="mt-0.5 text-[9px] text-text-muted">
+                {uploadLabels.uploading} {uploadState.progress}%
+              </p>
+            </div>
+          ) : uploadState.status === "done" ? (
+            <p className="text-[9px] text-accent">{uploadLabels.done}</p>
+          ) : (
+            <button
+              type="button"
+              onClick={onRetryUpload}
+              title={uploadState.error}
+              className="text-[9px] text-destructive underline"
+            >
+              {uploadLabels.failed} · {uploadLabels.retry}
+            </button>
+          )}
+        </div>
+      ) : null}
       {attachment.isFolder && attachment.fileCount ? (
         <span className="absolute bottom-5 right-1 rounded bg-black/55 px-1 text-[9px] text-white">
           {attachment.fileCount}
