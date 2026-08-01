@@ -8,6 +8,8 @@ import {
   arkTextEndpoint,
   qwenApiKey,
 } from "./arkText";
+import { buildGuideBlock, GENRE_GUIDES, TONE_GUIDES } from "./scriptGenreGuides";
+import { scriptTagValueLabel } from "./scriptTags";
 
 // ============================================================
 // 剧本智能体 — 流式生成（Qwen API，async generator）
