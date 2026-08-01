@@ -2700,7 +2700,7 @@ export default function RestyleStudio() {
           content: `提示词修改失败：${result.error}`,
         });
       }
-      setIsAnalyzing(false);
+      finishRun(projectId, result.ok ? "done" : "failed");
       return;
     }
 
@@ -2775,7 +2775,7 @@ export default function RestyleStudio() {
     if (!sourceFiles.length) return;
 
     updateProject(projectId, (project) => ({ ...project, stage: "analysis" }));
-    setIsAnalyzing(true);
+    beginRun(projectId, t.restyle_run_step_read_source);
     setAnalysisError("");
     try {
       const frameBatches = await Promise.all(
