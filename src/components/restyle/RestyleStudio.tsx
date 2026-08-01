@@ -833,7 +833,10 @@ export default function RestyleStudio() {
   const [fileDropTarget, setFileDropTarget] = useState<RestyleFileDropTarget | null>(null);
   const [selectedModel, setSelectedModel] = useState<RestyleModel>("qwen:qwen3.6-plus");
   const [selectedImageModel, setSelectedImageModel] = useState(
-    realImageModelOptions[0]?.id ?? "doubao-seedream-5-0-260128",
+    // 默认显式使用 Seedream：它支持带参考图的图生图；部分中转（tokenflash）不支持 edits 端点。
+    realImageModelOptions.some((model) => model.id === "doubao-seedream-5-0-260128")
+      ? "doubao-seedream-5-0-260128"
+      : (realImageModelOptions[0]?.id ?? "doubao-seedream-5-0-260128"),
   );
   const [selectedVideoModel, setSelectedVideoModel] = useState(
     realVideoModels[0]?.id ?? "doubao-seedance-2-0-260128",
