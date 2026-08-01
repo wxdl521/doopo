@@ -2124,9 +2124,9 @@ export default function RestyleStudio() {
           file.generatedKind === "prop") &&
         file.url,
     );
-    const shouldContinueToPlan =
-      generatedAssetFiles.length > 0 &&
-      /(继续.*(?:下一步|生成方案)|下一步|进入.*方案|生成.*方案)/.test(message);
+    // 只要资产表已经存在，任何口语化的“确认 / 继续 / 下一步”都应推进流程，
+    // 不再要求资产图片必须已经生成，也不再要求消息全等于“确认”。
+    const shouldContinueToPlan = isConfirmIntent(message);
     const analysisInstruction =
       message || "请分析上传的视频，提取真正需要转绘的具体角色、场景和道具。";
     const messageAttachments =
@@ -2141,12 +2141,33 @@ export default function RestyleStudio() {
 
     if (handleAgentFileCommand(activeProject, conversationId, message)) return;
 
-    if (/确认生成视频|开始生成视频|生成视频/.test(message)) {
+    if (isVideoRenderIntent(message)) {
       submitVideoRender(activeProject, conversationId);
       return;
     }
 
-    if ((message === "确认" || shouldContinueToPlan) && activeProject.extractedAssets.length > 0) {
+    // 方案阶段再说“确认/继续”，等价于确认生成视频。
+    if (shouldContinueToPlan && activeProject.stage === "plan" && activeProject.planEpisodes?.length) {
+      submitVideoRender(activeProject, conversationId);
+      return;
+    }
+
+    // 资产表已就绪但还没有任何资产图：先补生成资产图，再让用户确认进入方案。
+    if (
+      shouldContinueToPlan &&
+      activeProject.extractedAssets.length > 0 &&
+      generatedAssetFiles.length === 0
+    ) {
+      await generateAssetImages(
+        projectId,
+        conversationId,
+        message || "按资产表生成全部资产图",
+        activeProject.extractedAssets,
+      );
+      return;
+    }
+
+    if (shouldContinueToPlan && activeProject.extractedAssets.length > 0) {
       setIsAnalyzing(true);
       const sourceFiles = activeProject.files.filter(
         (file) => file.type.startsWith("video/") && !file.isFolder,
