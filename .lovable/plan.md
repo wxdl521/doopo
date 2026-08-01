@@ -1,39 +1,30 @@
-## 问题
+## 目标
 
-转绘模块生成角色/场景/道具资产图时，提示词里只有「资产名称 + 原片定位 + 目标设定 + 本次消息」。用户第一次描述的目标画风（例如「转成美式 3D 动画」「日漫赛璐璐风」）没有被保存，用户回复「确认」时传给生图的「用户要求」变成了 `按资产表生成全部资产图`，画风信息完全丢失，因此生成结果不跟随提示词风格。
+转绘工作台的「文本模型」下拉里增加 **GPT-5.5** 选项，调用 Lovable AI 提供的 `openai/gpt-5.5`，用于资产提取与转绘方案生成两个环节。
 
-## 方案
+## 现状
 
-### 1. 项目里新增画风字段
-- `restyleStorage.ts` 的项目类型增加 `styleBrief: string`，新建项目默认空字符串，读取旧数据时兜底为 `""`（向后兼容已保存的项目）。
+- 下拉选项来自 `src/components/restyle/RestyleStudio.tsx` 的 `RESTYLE_MODELS`（目前 5 项：ARK DeepSeek / Doubao、DashScope Qwen ×3）。
+- 服务端 `src/lib/restyleAnalysis.functions.ts` 里的 `analyzeRestyleAssets` 与 `generateRestylePlan` 用 `ark:` / `qwen:` 前缀二选一分流，各自拼 endpoint、Key 与请求体。
 
-### 2. 自动沿用首轮转绘要求
-- 触发资产分析时，把当轮用户指令写入 `styleBrief`（仅在其为空时写入，避免后续闲聊覆盖）。
-- 之后用户消息中出现明确画风表述（含「风格 / 画风 / 转成 / 漫改 / 3D / 二次元」等关键词）时，更新 `styleBrief`。
+## 改动
 
-### 3. 新增可编辑「目标画风」输入框
-- 在转绘工作台现有「方案备注」同一区域，加一个「目标画风」输入框，绑定 `styleBrief`，用户可随时修改覆盖自动值。
+1. `RESTYLE_MODELS` 增加 `{ id: "lovable:openai/gpt-5.5", label: "GPT-5.5 · 视觉" }`。
+2. `restyleAnalysis.functions.ts`
+   - `InputSchema.model` 枚举加入该 id（`generateRestylePlan` 复用同一枚举，自动生效）。
+   - 把现有的 `isArk` 布尔分流改成三分支的小工具函数：返回 `{ provider, model, endpoint, apiKey }`。
+     - `lovable` → `https://ai.gateway.lovable.dev/v1/chat/completions`，`Authorization: Bearer ${process.env.LOVABLE_API_KEY}`（在 handler 内读取）。
+   - 请求体按 GPT-5 系列要求裁剪：不发 `temperature`、不发 `max_tokens`，改用 `max_completion_tokens`；`thinking` 字段仅 ARK 发送；`response_format: { type: "json_object" }` 在方案生成里保留。
+   - 关键帧：GPT-5.5 支持图片输入，因此 `canReadFrames` 判定放开为「非 ARK 且非 qwen3.7-max」，Lovable 分支同样走 `image_url` 多模态消息。
+   - 错误文案与缺 Key 提示补上 Lovable 分支（缺 `LOVABLE_API_KEY` 时提示未配置）。
+3. 前端错误重标签 `relabelRestyleError` 无需改动（按 label 匹配已覆盖）。
 
-### 4. 生图提示词强制带画风
-`generateAssetImages` 的提示词重构为分段结构：
-```text
-【目标画风·必须严格遵守】<styleBrief>
-【资产类型】角色 / 场景 / 道具
-【资产名称】…
-【原片定位】…
-【目标设定】…
-【约束】只生成该单一资产，纯净背景，不得出现其他人物/场景/道具；
-        整体色彩、材质、线条、光影必须与上述目标画风完全一致。
-【本次补充要求】<仅当用户消息是真实要求时写入；"确认/继续" 之类不写入>
-```
-同一段画风文本也注入画布右侧的单张「重新生成」路径，保证重绘与批量生成风格一致。
+## 验证
 
-### 5. 方案阶段同步
-- `generateRestylePlan` 调用时把 `styleBrief` 拼进 `instruction`，让分段视频提示词也带上同一画风约束。
+- 单测跑 `src/components/restyle/__tests__`，确保无回归。
+- 选中 GPT-5.5 实际发一次资产分析请求，读取响应确认 200 且返回可解析 JSON；若网关返回 400 按报错调整请求字段。
 
-## 技术细节
+## 技术备注
 
-- 改动文件：`src/components/restyle/restyleStorage.ts`、`src/components/restyle/RestyleStudio.tsx`。
-- 不改服务端生图链路（`seedream.functions.ts` 及各供应商函数）；只调整前端提示词组装与状态持久化。
-- `styleBrief` 随现有项目持久化机制一起保存，刷新页面不丢失。
-- 新增一个纯函数 `buildAssetImagePrompt(asset, styleBrief, extra)` 并补 Vitest 用例，断言画风段落必定出现、且「确认」类消息不会被当作补充要求写入。
+- `LOVABLE_API_KEY` 已由平台自动注入，只在服务端 handler 内读取，不暴露前端。
+- 费用由工作区积分扣减，429/402 的错误信息会原样透传到聊天面板。
