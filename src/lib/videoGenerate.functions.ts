@@ -2383,7 +2383,9 @@ type RevoraVideoResponse = {
   url?: string;
   video_url?: string;
   error?: { message?: string; code?: string } | string;
-  data?: { url?: string; video_url?: string; status?: string } | Array<{ url?: string }>;
+  data?:
+    | { url?: string; video_url?: string; status?: string }
+    | Array<{ url?: string; video_url?: string; status?: string }>;
   content?: { video_url?: string; url?: string };
   video?: { url?: string };
   output?: { url?: string; video_url?: string };
@@ -2547,6 +2549,8 @@ type VideoBackend =
   | "hongmeng"
   | "sdreal"
   | "keyiyun"
+  | "ycore"
+  | "neiwen"
   | "agentearth"
   | "revora";
 

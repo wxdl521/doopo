@@ -1,55 +1,46 @@
-
 ## 目标
 
-`/account/rewards`（积分与奖励）当前全部使用 `mockRewards` 假数据（余额、累计获得、等级、进度条、明细表）。改为读取当前登录用户的真实积分与流水，与顶部导航栏、`/account/credits` 页保持一致、实时同步。
+参考红果短剧的短剧标签体系，把现在只有 8 个题材 + 2 个风格的标签扩充到 50+ 个；因为数量变多，把当前"一整排 chip 平铺"改成**分组下拉面板勾选**（仍是多选，已选项以 chip 形式回显在收起状态）；后端在生成梗概/分集时，按所选题材注入对应的创作要点，让模型真正按该题材套路写。
 
-## 现状核对（已核验）
+## 一、标签库扩充
 
-- 真实积分余额来源：`public.user_wallets.credits_balance`（`getUserBalance` 已封装）。
-- 真实流水来源：`public.user_credit_transactions`，字段含 `type / amount / balance_after / model / resolution / duration / description / created_at`（`getUserCreditTransactions` 已封装）。
-- 现有 `type` 取值：`consume / recharge / admin_grant / admin_reclaim / team_allocate / team_reclaim`（无 `earn / cashout` 之类奖励语义，产品尚无“获赞奖励 / 提现”功能）。
-- `account.credits.tsx` 已经用这两个 server fn 正确渲染余额 + 明细，可作为参考实现。
-- `account.rewards.tsx` 里的“等级 / 等级进度 / 满 500 分可提现”是纯装饰文案，与后端无对应数据。
+新增一个集中定义文件（题材 + 风格），按红果短剧常见分类分组：
 
-## 改动方案
+| 分组 | 标签 |
+|---|---|
+| 都市爽剧 | 都市、战神、赘婿、逆袭、打脸、扮猪吃虎、神医、兵王、总裁、豪门、职场、创业 |
+| 情感 | 甜宠、虐恋、先婚后爱、追妻火葬场、破镜重圆、暗恋、双向奔赴、婚姻、婆媳、家庭伦理 |
+| 脑洞 | 重生、穿越、系统、无限流、时间循环、末世、灵异、快穿 |
+| 古装 | 古装、宫斗、宅斗、权谋、江湖、武侠、种田、女帝 |
+| 玄幻仙侠 | 玄幻、仙侠、修真、异能、神话 |
+| 悬疑犯罪 | 悬疑、推理、犯罪、罪案、谍战、心理 |
+| 题材向 | 科幻、奇幻、恐怖、惊悚、喜剧、剧情、历史、年代、军旅、乡村、校园、青春、萌宝、亲情、励志、治愈 |
+| 风格（tone） | 严肃、悬疑、轻松搞笑、热血、温情、暗黑、爽感强、写实、荒诞、高能反转 |
+| 受限（保留锁） | 暴力、情色（维持现有 🔒 弹窗行为，不可勾选） |
 
-### 1. 新增一个聚合查询 server fn（`src/lib/userCredits.functions.ts`）
+- 每个标签保留 `value`（英文稳定值，写进已存剧本数据）+ 中英文案（`zh.ts` / `en.ts` 同步补键）。
+- 现有 8 个题材和 2 个风格的 value 完全不变，历史剧本记录不受影响。
 
-新增 `getUserCreditSummary`：
-- 用当前用户 token 查 `user_wallets.credits_balance` → `balance`
-- 汇总 `user_credit_transactions` 中该用户 `amount > 0` 的记录 → `lifetimeEarned`（含充值、管理员发放等所有入账）
-- 汇总 `amount < 0` 的绝对值 → `lifetimeSpent`
-- 返回 `{ balance, lifetimeEarned, lifetimeSpent }`
-- 使用现有 `requireSupabaseAuth` 中间件；RLS 已限制只查自己。
+## 二、前端交互改造（`ScriptComposer` 的 SetupBar）
 
-### 2. 重写 `src/routes/account.rewards.tsx`
+- 题材/风格区域从平铺 chip 改为一个**下拉多选控件**：
+  - 收起态：显示已选标签 chip（可点 × 移除）+ "选择题材 / 风格"按钮，超过 6 个折叠为「+N」。
+  - 展开态：浮层内按上表分组展示，带搜索框（输入即过滤），点击项切换勾选，勾选项左侧显示对勾；锁定项保留 🔒 与说明弹窗。
+  - 面板可滚动，点击外部/Esc 关闭。
+- 多选语义不变：`selectedTags` 仍是 value 数组，提交时照旧按 genre / tone 分组拼成 `genre`、`tone` 两个字符串下发。
+- 默认选中仍为 剧情 + 严肃。
+- 同步更新首页 Hero 预填的白名单校验（自动生效，因为它读同一份标签表）。
 
-- 移除对 `mockRewards` 的所有依赖。
-- 顶部三张 StatCard 改为：
-  - 余额 → `balance`（真实值，加载中显示 `...`）
-  - 累计获得 → `lifetimeEarned`
-  - 累计消耗 → `lifetimeSpent`（替换掉“等级 / 社区前 8%”这类无后端支撑的假指标）
-- 删除“等级进度”卡片（当前没有真实等级体系，保留只会继续误导）。
-- 明细表改为读取 `getUserCreditTransactions`（复用 credits 页的 20 条/页分页交互）：
-  - 列：日期 / 描述（description / model / resolution / duration 组合，与 credits 页一致） / 类型 / 积分变动
-  - 类型显示按真实 `type` 做一次中文映射：`recharge=充值`、`consume=消耗`、`admin_grant=系统发放`、`admin_reclaim=系统回收`、`team_allocate=团队分配`、`team_reclaim=团队回收`、`team_transfer_in/out=团队转账`
-  - 正数绿色、负数橙红，与现有配色一致
-- 页面副标题改为客观描述（例如“查看你的积分余额与全部收支明细”），不再承诺“满 500 可提现”。
+## 三、后端支持（`scriptAgent.functions.ts`）
 
-### 3. 实时性
+- 新建题材要点映射：对高辨识度题材给一段简短创作指引（例如「赘婿：开局被轻视→隐藏身份→节点式打脸，前 3 集必须有羞辱与反转」「追妻火葬场：先男主犯错→女主决绝离开→男主追悔逐步补偿」「系统：明确金手指规则与代价，每集给一次任务/奖励节奏」等）。
+- 在 `streamSynopsis` / `streamEpisodeScenes` 组装 prompt 时，除现有 `【题材】{genre}`，追加一段 `【题材创作要点】`，只拼接命中的标签要点（最多取前 4 个，避免 prompt 过长）；未命中映射的标签只保留名称，不影响生成。
+- 风格（tone）同样追加简短语气指引。
+- 不改模型路由、不改流式协议、不改数据库。
 
-- 页面挂载即拉取；用户在其他页面（充值、生成图）产生变动后，回到此页会重新触发 `useEffect`，与 `/account/credits` 行为一致。
-- 顶部导航栏的余额已由各自的 hook 拉取，不在本次范围内改动。
+## 技术细节
 
-### 4. 验证
-
-- 用真实账号访问 `/account/rewards`：
-  - 三张卡片值 = SQL 手动核对（`user_wallets.credits_balance`、`SUM(amount) FILTER (WHERE amount>0)`、`SUM(-amount) FILTER (WHERE amount<0)`）。
-  - 明细分页翻页、类型/描述/时间显示正确。
-  - 与 `/account/credits` 的余额、最新一条流水完全一致。
-- 新账号（无流水）：三张卡片显示 0，表格显示空状态文案。
-
-## 不改动
-
-- `mockRewards` 数据结构本身保留在 `src/data/mock/index.ts`（其它演示位可能引用），本次仅是页面不再使用。
-- 顶部导航、`/account/credits`、i18n 键、后端 RPC、其它路由均不变。
+- 新增 `src/lib/scriptTags.ts` 导出 `SCRIPT_GENRE_GROUPS` / `SCRIPT_TONES`（含 `value` / i18n key / group / locked），`Scripts.tsx` 的 `GENRES`/`TONES` 改为从此文件派生，`ScriptComposer` 的 Props 类型加一个可选 `group` 字段。
+- 新增 `src/lib/scriptGenreGuides.ts`（纯数据 value→中文要点），被 `scriptAgent.functions.ts` 引入；它不含运行时副作用，符合 server function 文件只放函数声明的约束。
+- 新增下拉组件 `src/components/scripts/TagMultiSelect.tsx`。
+- `zh.ts` / `en.ts` 同步补齐全部新键。

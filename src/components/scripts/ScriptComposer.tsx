@@ -34,6 +34,13 @@ import {
   type SavedScript,
 } from "../../lib/scriptStorage";
 import { uploadScriptCover } from "../../lib/scripts.covers.functions";
+import TagMultiSelect from "./TagMultiSelect";
+import {
+  SCRIPT_GENRE_GROUPS,
+  SCRIPT_TONE_GROUP,
+  scriptTagLabel,
+  type ScriptTagDef,
+} from "../../lib/scriptTags";
 
 // 5 步对话式剧本智能体
 type Stage = "setup" | "synopsis" | "episode" | "episodes" | "done";
@@ -56,13 +63,8 @@ type Bubble = {
 
 type Props = {
   types: { value: string; key: keyof ReturnType<typeof useLanguage>["t"] }[];
-  genres: {
-    value: string;
-    key: keyof ReturnType<typeof useLanguage>["t"];
-    locked?: boolean;
-    label?: string;
-  }[];
-  tones: { value: string; key: keyof ReturnType<typeof useLanguage>["t"] }[];
+  genres: ScriptTagDef[];
+  tones: ScriptTagDef[];
   models: { id: string; label: string }[];
   onSaved?: () => void;
 };
@@ -1333,26 +1335,8 @@ function SetupBar(props: {
 }) {
   const { t } = props;
   const [lockModal, setLockModal] = useState<string | null>(null);
-  const allTags: TagOption[] = [
-    ...props.genres.map((g) => ({
-      value: g.value,
-      label: g.locked && g.label ? (t as Record<string, string>)[g.label] : (t[g.key] as string),
-      group: "genre" as const,
-      locked: g.locked,
-    })),
-    ...props.tones.map((g) => ({
-      value: g.value,
-      label: t[g.key] as string,
-      group: "tone" as const,
-    })),
-  ];
-  const toggleTag = (value: string) => {
-    if (props.selectedTags.includes(value)) {
-      props.setSelectedTags(props.selectedTags.filter((v) => v !== value));
-    } else {
-      props.setSelectedTags([...props.selectedTags, value]);
-    }
-  };
+  const { lang } = useLanguage();
+  const tagGroups = [...SCRIPT_GENRE_GROUPS, SCRIPT_TONE_GROUP];
   return (
     <div className="space-y-3 pt-1">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -1365,42 +1349,16 @@ function SetupBar(props: {
         {/* 合并后的题材+风格多选 */}
         <div className="col-span-2">
           <label className="text-xs text-text-muted mb-1 block">{t.sc_genre_tone_multi}</label>
-          <div className="flex flex-wrap gap-1.5 p-2 rounded-lg bg-bg-elevated border border-border min-h-[42px]">
-            {allTags.map((tag) => {
-              const selected = props.selectedTags.includes(tag.value);
-              if (tag.locked) {
-                return (
-                  <button
-                    key={tag.value}
-                    type="button"
-                    onClick={() => setLockModal(tag.label)}
-                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border transition-colors bg-bg-base border-border text-text-muted hover:border-rose-500/50 hover:text-rose-400"
-                  >
-                    🔒 {tag.label}
-                  </button>
-                );
-              }
-              return (
-                <button
-                  key={tag.value}
-                  type="button"
-                  onClick={() => toggleTag(tag.value)}
-                  className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border transition-colors ${
-                    selected
-                      ? "bg-accent/20 border-accent text-accent"
-                      : "bg-bg-base border-border text-text-muted hover:border-accent/40"
-                  }`}
-                >
-                  {selected && (
-                    <span className="text-[10px] opacity-60">
-                      {tag.group === "genre" ? t.sc_genre_label : t.sc_tone_label}
-                    </span>
-                  )}
-                  {tag.label}
-                </button>
-              );
-            })}
-          </div>
+          <TagMultiSelect
+            groups={tagGroups}
+            selected={props.selectedTags}
+            onChange={props.setSelectedTags}
+            onLocked={(label) => setLockModal(label)}
+            lang={lang}
+            placeholder={t.sc_tag_select_placeholder}
+            searchPlaceholder={t.sc_tag_search_placeholder}
+            clearLabel={t.sc_tag_clear}
+          />
         </div>
         <div>
           <label className="text-xs text-text-muted mb-1 block">{t.sc_expected_episodes}</label>
