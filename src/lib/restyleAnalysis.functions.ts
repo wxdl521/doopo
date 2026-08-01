@@ -9,6 +9,66 @@ import {
 } from "./arkText";
 
 const QWEN_ENDPOINT = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
+const LOVABLE_ENDPOINT = "https://ai.gateway.lovable.dev/v1/chat/completions";
+
+type RestyleProviderConfig = {
+  provider: "ark" | "qwen" | "lovable";
+  model: string;
+  endpoint: string;
+  apiKey: string | undefined;
+  missingKeyError: string;
+  label: string;
+};
+
+/** 把带前缀的模型 id 解析成上游 provider 配置。process.env 只在 handler 内读取。 */
+function resolveProvider(modelId: string): RestyleProviderConfig {
+  if (modelId.startsWith("ark:")) {
+    return {
+      provider: "ark",
+      model: modelId.slice(4) || ARK_TEXT_MODEL,
+      endpoint: arkTextEndpoint(),
+      apiKey: arkTextApiKey(),
+      missingKeyError: "DeepSeek V4 Pro 未配置：请设置 ARK_API_KEY。",
+      label: "DeepSeek",
+    };
+  }
+  if (modelId.startsWith("lovable:")) {
+    return {
+      provider: "lovable",
+      model: modelId.slice(8),
+      endpoint: LOVABLE_ENDPOINT,
+      apiKey: process.env.LOVABLE_API_KEY,
+      missingKeyError: "GPT-5.5 未配置：Lovable AI 网关缺少 LOVABLE_API_KEY。",
+      label: "GPT-5.5",
+    };
+  }
+  return {
+    provider: "qwen",
+    model: modelId.slice(5),
+    endpoint: QWEN_ENDPOINT,
+    apiKey: qwenApiKey(),
+    missingKeyError: "Qwen 未配置：请设置 Qwen、QWEN_API_KEY 或 DASHSCOPE_API_KEY。",
+    label: "Qwen",
+  };
+}
+
+/**
+ * 各家对采样/长度参数的要求不同：GPT-5 系列拒绝 temperature 和 max_tokens，
+ * 只接受 max_completion_tokens；ARK 需要显式关闭 thinking。
+ */
+function providerTuning(
+  config: RestyleProviderConfig,
+  maxTokens: number,
+): Record<string, unknown> {
+  if (config.provider === "lovable") {
+    return { max_completion_tokens: maxTokens };
+  }
+  return {
+    ...(config.provider === "ark" ? { thinking: ARK_TEXT_THINKING_DISABLED } : {}),
+    temperature: 0.2,
+    max_tokens: maxTokens,
+  };
+}
 
 const AssetSchema = z.object({
   kind: z.enum(["character", "scene", "prop"]),
@@ -35,6 +95,7 @@ const InputSchema = z.object({
     "qwen:qwen3.6-plus",
     "qwen:qwen3.6-flash",
     "qwen:qwen3.7-max",
+    "lovable:openai/gpt-5.5",
   ]),
   sourceFiles: z
     .array(
@@ -150,16 +211,11 @@ function isConcreteAsset(asset: RestyleAnalysisAsset): boolean {
 export const analyzeRestyleAssets = createServerFn({ method: "POST" })
   .validator((input: unknown) => InputSchema.parse(input))
   .handler(async ({ data }): Promise<RestyleAnalysisResult> => {
-    const isArk = data.model.startsWith("ark:");
-    const model = isArk ? data.model.slice(4) || ARK_TEXT_MODEL : data.model.slice(5);
-    const apiKey = isArk ? arkTextApiKey() : qwenApiKey();
-    if (!apiKey) {
-      return {
-        ok: false,
-        error: isArk
-          ? "DeepSeek V4 Pro 未配置：请设置 ARK_API_KEY。"
-          : "Qwen 未配置：请设置 Qwen、QWEN_API_KEY 或 DASHSCOPE_API_KEY。",
-      };
+    const config = resolveProvider(data.model);
+    const model = config.model;
+    const isArk = config.provider === "ark";
+    if (!config.apiKey) {
+      return { ok: false, error: config.missingKeyError };
     }
 
     const canReadFrames =
@@ -179,15 +235,13 @@ export const analyzeRestyleAssets = createServerFn({ method: "POST" })
     // than a text-only completion. Keep the client-side request alive for 3 min.
     const timeout = setTimeout(() => controller.abort(), 180_000);
     try {
-      const response = await fetch(isArk ? arkTextEndpoint() : QWEN_ENDPOINT, {
+      const response = await fetch(config.endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.apiKey}` },
         signal: controller.signal,
         body: JSON.stringify({
           model,
-          ...(isArk ? { thinking: ARK_TEXT_THINKING_DISABLED } : {}),
-          temperature: 0.2,
-          max_tokens: 5_000,
+          ...providerTuning(config, 5_000),
           messages: [
             {
               role: "system",
@@ -201,7 +255,7 @@ export const analyzeRestyleAssets = createServerFn({ method: "POST" })
         const detail = (await response.text()).replace(/\s+/g, " ").slice(0, 240);
         return {
           ok: false,
-          error: `${isArk ? "DeepSeek" : "Qwen"} 请求失败（${response.status}）：${detail || "上游未返回详情"}`,
+          error: `${config.label} 请求失败（${response.status}）：${detail || "上游未返回详情"}`,
         };
       }
       const payload = (await response.json()) as {
@@ -209,7 +263,7 @@ export const analyzeRestyleAssets = createServerFn({ method: "POST" })
       };
       const content = payload.choices?.[0]?.message?.content;
       if (typeof content !== "string" || !content.trim()) {
-        return { ok: false, error: `${isArk ? "DeepSeek" : "Qwen"} 未返回资产表内容。` };
+        return { ok: false, error: `${config.label} 未返回资产表内容。` };
       }
       return normalizeResult(content, model, canReadFrames);
     } catch (error) {
@@ -253,16 +307,9 @@ export const generateRestylePlan = createServerFn({ method: "POST" })
     }): Promise<
       { ok: true; episodes: RestylePlanEpisode[]; model: string } | { ok: false; error: string }
     > => {
-      const isArk = data.model.startsWith("ark:");
-      const model = isArk ? data.model.slice(4) || ARK_TEXT_MODEL : data.model.slice(5);
-      const apiKey = isArk ? arkTextApiKey() : qwenApiKey();
-      if (!apiKey)
-        return {
-          ok: false,
-          error: isArk
-            ? "DeepSeek V4 Pro 未配置：请设置 ARK_API_KEY。"
-            : "Qwen 未配置：请设置 Qwen、QWEN_API_KEY 或 DASHSCOPE_API_KEY。",
-        };
+      const config = resolveProvider(data.model);
+      const model = config.model;
+      if (!config.apiKey) return { ok: false, error: config.missingKeyError };
       const files = data.sourceFiles
         .map((file) => `- 视频 ID: ${file.id || file.name}; 文件名: ${file.name}`)
         .join("\n");
@@ -270,15 +317,16 @@ export const generateRestylePlan = createServerFn({ method: "POST" })
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 180_000);
       try {
-        const response = await fetch(isArk ? arkTextEndpoint() : QWEN_ENDPOINT, {
+        const response = await fetch(config.endpoint, {
           method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${config.apiKey}`,
+          },
           signal: controller.signal,
           body: JSON.stringify({
             model,
-            ...(isArk ? { thinking: ARK_TEXT_THINKING_DISABLED } : {}),
-            temperature: 0.2,
-            max_tokens: 12_000,
+            ...providerTuning(config, 12_000),
             response_format: { type: "json_object" },
             messages: [
               {
