@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { Check, ChevronDown, ChevronRight, ListTree, Loader2, RotateCcw, Wand2 } from "lucide-react";
+import { BookOpen, Check, ChevronDown, ChevronRight, ListTree, Loader2, RotateCcw, Wand2 } from "lucide-react";
 import type { Translations } from "../../i18n/zh";
 import type { RestyleExtractedAsset, RestyleProject } from "./restyleStorage";
 import type { RestyleStage } from "./restyleTypes";
 import { buildAssetImagePrompt } from "./restylePrompt";
+import { SKILLS } from "@/lib/restyle/skills";
 
 /** 单个资产图本轮生成的运行状态，由 RestyleStudio 在生成循环里逐项更新。 */
 export type RestyleAssetRunStatus = {
@@ -20,6 +21,15 @@ const STAGE_LABEL_KEY: Record<(typeof TIMELINE_STAGES)[number], keyof Translatio
   assets: "restyle_stage_assets",
   plan: "restyle_stage_plan",
   render: "restyle_stage_render",
+};
+
+/** 各处理阶段实际调用/遵循的 skill（v2 skill 驱动流水线口径，对用户可见）。 */
+const STAGE_SKILLS: Record<(typeof TIMELINE_STAGES)[number], string[]> = {
+  upload: [],
+  analysis: ["video-analysis-extract", "audio-transcript-align"],
+  assets: ["character-bible", "wardrobe-continuity"],
+  plan: ["shot-to-segment", "restyle-prompt-contract"],
+  render: ["restyle-prompt-contract"],
 };
 
 const KIND_LABEL_KEY: Record<RestyleExtractedAsset["kind"], keyof Translations> = {
@@ -57,6 +67,7 @@ export function RestyleProcessPanel({
   t,
 }: RestyleProcessPanelProps) {
   const [collapsed, setCollapsed] = useState(false);
+  const [openSkill, setOpenSkill] = useState<string | null>(null);
   if (!project) return null;
 
   const styleBrief = project.styleBrief ?? "";
@@ -114,11 +125,39 @@ export function RestyleProcessPanel({
                         className={`h-1.5 w-1.5 shrink-0 rounded-full ${current ? "bg-accent" : "bg-border"}`}
                       />
                     )}
-                    {t[STAGE_LABEL_KEY[stage]]}
+                    <span>{t[STAGE_LABEL_KEY[stage]]}</span>
+                    {STAGE_SKILLS[stage].length > 0 && (
+                      <span className="ml-auto flex flex-wrap items-center justify-end gap-1">
+                        {STAGE_SKILLS[stage].map((skillId) => (
+                          <button
+                            key={skillId}
+                            type="button"
+                            title={skillId}
+                            onClick={() => setOpenSkill(openSkill === skillId ? null : skillId)}
+                            className={`inline-flex items-center gap-0.5 rounded border px-1 py-px font-mono text-[10px] transition ${
+                              openSkill === skillId
+                                ? "border-accent bg-accent-dim text-accent"
+                                : "border-border/70 text-text-muted hover:text-text-secondary"
+                            }`}
+                          >
+                            <BookOpen size={9} />
+                            {skillId}
+                          </button>
+                        ))}
+                      </span>
+                    )}
                   </li>
                 );
               })}
             </ol>
+            {openSkill && SKILLS[openSkill] && (
+              <div className="mt-2 rounded-md border border-border/70 bg-background/60 p-2">
+                <p className="mb-1 font-mono text-[10px] text-accent">{openSkill}</p>
+                <pre className="max-h-44 overflow-y-auto font-mono text-[10px] leading-4 whitespace-pre-wrap text-text-secondary">
+                  {SKILLS[openSkill]}
+                </pre>
+              </div>
+            )}
             {showAssetProgress && (
               <ul className="mt-2 space-y-1 border-l border-border/70 pl-3">
                 {project.extractedAssets.map((asset) => {

@@ -114,3 +114,27 @@ describe("RestyleProcessPanel", () => {
     expect(screen.getByText(/失败：模型超时/)).toBeInTheDocument();
   });
 });
+
+describe("RestyleProcessPanel · skill 可见性", () => {
+  it("各阶段展示对应 skill 芯片，点击展开规约全文", () => {
+    renderPanel(makeProject({ stage: "analysis" }));
+    // 分析阶段的两个 skill 芯片可见
+    const chip = screen.getByTitle("video-analysis-extract");
+    expect(chip).toBeTruthy();
+    expect(screen.getByTitle("audio-transcript-align")).toBeTruthy();
+    // 点击展开规约内容（md 标题出现）
+    fireEvent.click(chip);
+    expect(screen.getByText(/原视频视觉分析提取/)).toBeTruthy();
+    // 再点收起
+    fireEvent.click(chip);
+    expect(screen.queryByText(/原视频视觉分析提取/)).toBeNull();
+  });
+
+  it("upload 阶段无 skill 芯片；plan 阶段含提示词契约 skill", () => {
+    renderPanel(makeProject({ stage: "plan" }));
+    // prompt-contract 同时挂在 plan 和 render 两个阶段
+    expect(screen.getAllByTitle("restyle-prompt-contract").length).toBe(2);
+    expect(screen.getByTitle("shot-to-segment")).toBeTruthy();
+    expect(screen.queryByTitle("video-analysis-extract")).toBeTruthy(); // analysis 阶段芯片也在时间线上
+  });
+});
