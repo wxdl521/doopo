@@ -52,6 +52,7 @@ import { uploadLocalImage } from "../../lib/uploadImage.functions";
 import { persistAssetImage } from "../../lib/workspaceMedia.functions";
 import { realImageModelOptions, realVideoModels } from "../NewProjectDialog";
 import { isConfirmIntent, isVideoRenderIntent } from "./restyleIntent";
+import { buildAssetImagePrompt, looksLikeStyleBrief, withStyleBrief } from "./restylePrompt";
 
 type AssetLibraryStatus = "idle" | "loading" | "ready" | "error";
 type RestyleView = "workbench" | "canvas";
@@ -861,6 +862,9 @@ export default function RestyleStudio() {
   const callPersistAssetImage = useServerFn(persistAssetImage);
 
   const activeProject = projects.find((project) => project.id === activeProjectId);
+  // 目标画风必须在异步生图循环里可读到最新值，用 ref 避免闭包拿到旧 state。
+  const styleBriefRef = useRef("");
+  styleBriefRef.current = activeProject?.styleBrief ?? "";
   const activeConversation = activeProject?.conversations.find(
     (conversation) => conversation.id === activeProject?.activeConversationId,
   );
@@ -1002,6 +1006,7 @@ export default function RestyleStudio() {
       conversations: [conversation],
       activeConversationId: conversation.id,
       planNote: "",
+      styleBrief: "",
       extractedAssets: [],
       analysisSummary: "",
     };
@@ -2142,6 +2147,14 @@ export default function RestyleStudio() {
     setChatDraft("");
     setDraftAttachmentIds([]);
 
+    // 记住用户描述的目标画风：首轮转绘要求自动沿用，之后再次提到画风则覆盖。
+    if (message && (!styleBriefRef.current || looksLikeStyleBrief(message))) {
+      if (looksLikeStyleBrief(message) || !activeProject.extractedAssets.length) {
+        styleBriefRef.current = message;
+        updateProject(projectId, (project) => ({ ...project, styleBrief: message }));
+      }
+    }
+
     if (handleAgentFileCommand(activeProject, conversationId, message)) return;
 
     if (isVideoRenderIntent(message)) {
@@ -2179,7 +2192,7 @@ export default function RestyleStudio() {
       const result = await callGenerateRestylePlan({
         data: {
           model: selectedModel,
-          instruction: activeProject.planNote,
+          instruction: withStyleBrief(activeProject.planNote, styleBriefRef.current),
           sourceFiles: (sourceFiles.length ? sourceFiles : activeProject.files).map((file) => ({
             id: file.episode ?? file.id,
             name: file.name,
@@ -2223,7 +2236,7 @@ export default function RestyleStudio() {
       const result = await callGenerateRestylePlan({
         data: {
           model: selectedModel,
-          instruction: message,
+          instruction: withStyleBrief(message, styleBriefRef.current),
           sourceFiles: (sourceFiles.length ? sourceFiles : activeProject.files).map((file) => ({
             id: file.episode ?? file.id,
             name: file.name,
@@ -2430,14 +2443,7 @@ export default function RestyleStudio() {
     const generatedKinds: Array<"character" | "scene" | "prop"> = [];
     try {
       for (const asset of extractedAssets) {
-        const prompt = [
-          `为转绘项目生成一张${asset.kind === "character" ? "角色" : asset.kind === "scene" ? "场景" : "道具"}资产图。`,
-          `资产名称：${asset.targetName || asset.sourceName}`,
-          `原片定位：${asset.sourceDescription}`,
-          `目标设定：${asset.targetDescription}`,
-          "请只生成该单一资产，不要添加无关人物、场景或道具。",
-          `用户要求：${instruction}`,
-        ].join("\n");
+        const prompt = buildAssetImagePrompt(asset, styleBriefRef.current, instruction);
         const result = referenceImages.length
           ? await callGenerateImageWithReferences({
               data: { prompt, model: selectedImageModel, size: "2K", referenceImages },
@@ -3516,6 +3522,25 @@ export default function RestyleStudio() {
                 </div>
               </div>
               <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border/70 pt-2 text-xs">
+                <label className="sr-only" htmlFor="restyle-style-brief">
+                  目标画风
+                </label>
+                <input
+                  id="restyle-style-brief"
+                  value={activeProject?.styleBrief ?? ""}
+                  onChange={(event) => {
+                    if (!activeProject) return;
+                    const next = event.target.value;
+                    styleBriefRef.current = next;
+                    updateProject(activeProject.id, (project) => ({
+                      ...project,
+                      styleBrief: next,
+                    }));
+                  }}
+                  disabled={!activeProject}
+                  placeholder="目标画风，如：美式 3D 动画 / 日漫赛璐璐"
+                  className="min-w-52 flex-1 rounded-md border border-border/70 bg-transparent px-2 py-1 text-xs text-text-primary outline-none placeholder:text-text-muted focus:border-accent"
+                />
                 <label className="sr-only" htmlFor="restyle-feature">
                   {t.restyle_select_feature}
                 </label>
