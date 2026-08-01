@@ -2542,6 +2542,8 @@ export default function RestyleStudio() {
 
   async function sendChatMessage() {
     if (!activeProject || !activeConversation) return;
+    // 同一项目内串行；不同项目各自独立，可并发执行。
+    if (isProjectRunning(activeProject.id)) return;
     const message = chatDraft.trim();
     // 发送时解析文本中的 @imageN / @videoN，把被 @ 的素材一并带上（即使不在附件条里）。
     const mentionedAttachmentIds = resolveMentionedAttachmentIds(message, mentionableAttachments);
