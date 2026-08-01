@@ -3712,6 +3712,13 @@ export default function RestyleStudio() {
                         >
                           <Folder size={14} />
                           <span className="min-w-0 flex-1 truncate">{project.title}</span>
+                          {isProjectRunning(project.id) ? (
+                            <Loader2
+                              size={12}
+                              className="shrink-0 animate-spin text-accent"
+                              aria-label={t.restyle_run_busy}
+                            />
+                          ) : null}
                         </button>
                       )}
                       <button
