@@ -449,6 +449,810 @@ export type Database = {
         }
         Relationships: []
       }
+      restyle_artifacts: {
+        Row: {
+          approved_at: string | null
+          approved_by: string | null
+          content: Json | null
+          created_at: string | null
+          id: string
+          issues: Json | null
+          node_key: string
+          project_id: string
+          revision: number
+          scope_hash: string | null
+          stage: string
+          status: string
+          updated_at: string | null
+          user_content: Json | null
+          user_id: string
+          verdict: string | null
+        }
+        Insert: {
+          approved_at?: string | null
+          approved_by?: string | null
+          content?: Json | null
+          created_at?: string | null
+          id: string
+          issues?: Json | null
+          node_key: string
+          project_id: string
+          revision?: number
+          scope_hash?: string | null
+          stage: string
+          status?: string
+          updated_at?: string | null
+          user_content?: Json | null
+          user_id: string
+          verdict?: string | null
+        }
+        Update: {
+          approved_at?: string | null
+          approved_by?: string | null
+          content?: Json | null
+          created_at?: string | null
+          id?: string
+          issues?: Json | null
+          node_key?: string
+          project_id?: string
+          revision?: number
+          scope_hash?: string | null
+          stage?: string
+          status?: string
+          updated_at?: string | null
+          user_content?: Json | null
+          user_id?: string
+          verdict?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "restyle_artifacts_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "restyle_projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      restyle_character_looks: {
+        Row: {
+          back_url: string | null
+          character_id: string
+          created_at: string | null
+          from_shot: string | null
+          front_url: string | null
+          id: string
+          image_url: string | null
+          name: string
+          redesign_reason: string | null
+          reuse_existing: boolean | null
+          reuse_source: string | null
+          side_url: string | null
+          to_shot: string | null
+          user_id: string
+        }
+        Insert: {
+          back_url?: string | null
+          character_id: string
+          created_at?: string | null
+          from_shot?: string | null
+          front_url?: string | null
+          id: string
+          image_url?: string | null
+          name: string
+          redesign_reason?: string | null
+          reuse_existing?: boolean | null
+          reuse_source?: string | null
+          side_url?: string | null
+          to_shot?: string | null
+          user_id: string
+        }
+        Update: {
+          back_url?: string | null
+          character_id?: string
+          created_at?: string | null
+          from_shot?: string | null
+          front_url?: string | null
+          id?: string
+          image_url?: string | null
+          name?: string
+          redesign_reason?: string | null
+          reuse_existing?: boolean | null
+          reuse_source?: string | null
+          side_url?: string | null
+          to_shot?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "restyle_character_looks_character_id_fkey"
+            columns: ["character_id"]
+            isOneToOne: false
+            referencedRelation: "restyle_characters"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      restyle_character_relations: {
+        Row: {
+          character_id: string
+          created_at: string | null
+          id: string
+          related_character_id: string
+          relation: string
+          user_id: string
+        }
+        Insert: {
+          character_id: string
+          created_at?: string | null
+          id: string
+          related_character_id: string
+          relation: string
+          user_id: string
+        }
+        Update: {
+          character_id?: string
+          created_at?: string | null
+          id?: string
+          related_character_id?: string
+          relation?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "restyle_character_relations_character_id_fkey"
+            columns: ["character_id"]
+            isOneToOne: false
+            referencedRelation: "restyle_characters"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "restyle_character_relations_related_character_id_fkey"
+            columns: ["related_character_id"]
+            isOneToOne: false
+            referencedRelation: "restyle_characters"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      restyle_characters: {
+        Row: {
+          asset_origin: Json | null
+          clothing: string | null
+          created_at: string | null
+          description: string | null
+          id: string
+          identity_lock: string | null
+          main_image_url: string | null
+          name: string
+          project_id: string
+          source_description: string | null
+          status: string
+          turnaround_url: string | null
+          updated_at: string | null
+          user_id: string
+          voice_profile: Json | null
+        }
+        Insert: {
+          asset_origin?: Json | null
+          clothing?: string | null
+          created_at?: string | null
+          description?: string | null
+          id: string
+          identity_lock?: string | null
+          main_image_url?: string | null
+          name: string
+          project_id: string
+          source_description?: string | null
+          status?: string
+          turnaround_url?: string | null
+          updated_at?: string | null
+          user_id: string
+          voice_profile?: Json | null
+        }
+        Update: {
+          asset_origin?: Json | null
+          clothing?: string | null
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          identity_lock?: string | null
+          main_image_url?: string | null
+          name?: string
+          project_id?: string
+          source_description?: string | null
+          status?: string
+          turnaround_url?: string | null
+          updated_at?: string | null
+          user_id?: string
+          voice_profile?: Json | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "restyle_characters_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "restyle_projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      restyle_episodes: {
+        Row: {
+          analysis_error: string | null
+          analysis_json: Json | null
+          analysis_status: string
+          analysis_units: Json | null
+          created_at: string | null
+          duration_sec: number | null
+          episode_no: number
+          id: string
+          project_id: string
+          review_status: string
+          source_media_url: string | null
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          analysis_error?: string | null
+          analysis_json?: Json | null
+          analysis_status?: string
+          analysis_units?: Json | null
+          created_at?: string | null
+          duration_sec?: number | null
+          episode_no: number
+          id: string
+          project_id: string
+          review_status?: string
+          source_media_url?: string | null
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          analysis_error?: string | null
+          analysis_json?: Json | null
+          analysis_status?: string
+          analysis_units?: Json | null
+          created_at?: string | null
+          duration_sec?: number | null
+          episode_no?: number
+          id?: string
+          project_id?: string
+          review_status?: string
+          source_media_url?: string | null
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "restyle_episodes_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "restyle_projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      restyle_groups: {
+        Row: {
+          created_at: string | null
+          episode_id: string
+          group_no: number
+          id: string
+          reason: string | null
+          scope_hash: string | null
+          shot_ids: string[]
+          status: string
+          total_seconds: number
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          episode_id: string
+          group_no: number
+          id: string
+          reason?: string | null
+          scope_hash?: string | null
+          shot_ids?: string[]
+          status?: string
+          total_seconds: number
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          episode_id?: string
+          group_no?: number
+          id?: string
+          reason?: string | null
+          scope_hash?: string | null
+          shot_ids?: string[]
+          status?: string
+          total_seconds?: number
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "restyle_groups_episode_id_fkey"
+            columns: ["episode_id"]
+            isOneToOne: false
+            referencedRelation: "restyle_episodes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      restyle_ignored_assets: {
+        Row: {
+          created_at: string | null
+          id: string
+          kind: string
+          name: string
+          project_id: string
+          reason: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          id: string
+          kind: string
+          name: string
+          project_id: string
+          reason?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          kind?: string
+          name?: string
+          project_id?: string
+          reason?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "restyle_ignored_assets_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "restyle_projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      restyle_projects: {
+        Row: {
+          created_at: string | null
+          id: string
+          image_model: string | null
+          stage: string
+          style_brief: string | null
+          text_model: string | null
+          title: string
+          updated_at: string | null
+          user_id: string
+          video_model: string | null
+          vision_model: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          id: string
+          image_model?: string | null
+          stage?: string
+          style_brief?: string | null
+          text_model?: string | null
+          title: string
+          updated_at?: string | null
+          user_id: string
+          video_model?: string | null
+          vision_model?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          id?: string
+          image_model?: string | null
+          stage?: string
+          style_brief?: string | null
+          text_model?: string | null
+          title?: string
+          updated_at?: string | null
+          user_id?: string
+          video_model?: string | null
+          vision_model?: string | null
+        }
+        Relationships: []
+      }
+      restyle_props: {
+        Row: {
+          asset_origin: Json | null
+          created_at: string | null
+          description: string | null
+          id: string
+          image_url: string | null
+          name: string
+          project_id: string
+          prompt: string | null
+          source_description: string | null
+          status: string
+          user_id: string
+        }
+        Insert: {
+          asset_origin?: Json | null
+          created_at?: string | null
+          description?: string | null
+          id: string
+          image_url?: string | null
+          name: string
+          project_id: string
+          prompt?: string | null
+          source_description?: string | null
+          status?: string
+          user_id: string
+        }
+        Update: {
+          asset_origin?: Json | null
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          image_url?: string | null
+          name?: string
+          project_id?: string
+          prompt?: string | null
+          source_description?: string | null
+          status?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "restyle_props_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "restyle_projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      restyle_reviews: {
+        Row: {
+          created_at: string | null
+          description: string | null
+          doc_kind: string
+          episode_id: string | null
+          id: string
+          issue_type: string | null
+          project_id: string
+          risk: string | null
+          severity: string | null
+          status: string
+          suggestion: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          description?: string | null
+          doc_kind: string
+          episode_id?: string | null
+          id: string
+          issue_type?: string | null
+          project_id: string
+          risk?: string | null
+          severity?: string | null
+          status?: string
+          suggestion?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          description?: string | null
+          doc_kind?: string
+          episode_id?: string | null
+          id?: string
+          issue_type?: string | null
+          project_id?: string
+          risk?: string | null
+          severity?: string | null
+          status?: string
+          suggestion?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "restyle_reviews_episode_id_fkey"
+            columns: ["episode_id"]
+            isOneToOne: false
+            referencedRelation: "restyle_episodes"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "restyle_reviews_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "restyle_projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      restyle_scenes: {
+        Row: {
+          asset_origin: Json | null
+          created_at: string | null
+          description: string | null
+          id: string
+          image_url: string | null
+          name: string
+          project_id: string
+          prompt: string | null
+          source_description: string | null
+          status: string
+          user_id: string
+        }
+        Insert: {
+          asset_origin?: Json | null
+          created_at?: string | null
+          description?: string | null
+          id: string
+          image_url?: string | null
+          name: string
+          project_id: string
+          prompt?: string | null
+          source_description?: string | null
+          status?: string
+          user_id: string
+        }
+        Update: {
+          asset_origin?: Json | null
+          created_at?: string | null
+          description?: string | null
+          id?: string
+          image_url?: string | null
+          name?: string
+          project_id?: string
+          prompt?: string | null
+          source_description?: string | null
+          status?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "restyle_scenes_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "restyle_projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      restyle_segments: {
+        Row: {
+          created_at: string | null
+          group_id: string
+          id: string
+          postcheck: Json | null
+          precheck: Json | null
+          prompt_pack: Json | null
+          render_status: string
+          render_task_id: string | null
+          result_url: string | null
+          updated_at: string | null
+          user_id: string
+        }
+        Insert: {
+          created_at?: string | null
+          group_id: string
+          id: string
+          postcheck?: Json | null
+          precheck?: Json | null
+          prompt_pack?: Json | null
+          render_status?: string
+          render_task_id?: string | null
+          result_url?: string | null
+          updated_at?: string | null
+          user_id: string
+        }
+        Update: {
+          created_at?: string | null
+          group_id?: string
+          id?: string
+          postcheck?: Json | null
+          precheck?: Json | null
+          prompt_pack?: Json | null
+          render_status?: string
+          render_task_id?: string | null
+          result_url?: string | null
+          updated_at?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "restyle_segments_group_id_fkey"
+            columns: ["group_id"]
+            isOneToOne: false
+            referencedRelation: "restyle_groups"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      restyle_shots: {
+        Row: {
+          characters: Json | null
+          created_at: string | null
+          dialogue: string | null
+          emotion: string | null
+          end_ms: number
+          end_state_action: string | null
+          episode_id: string
+          id: string
+          props: Json | null
+          scene_type: string | null
+          set_ref: string | null
+          shot_no: string
+          shot_type: string | null
+          sound_effects: string | null
+          spatial_anchor: string | null
+          start_ms: number
+          use_new_set: boolean | null
+          user_id: string
+          voice_type: string | null
+        }
+        Insert: {
+          characters?: Json | null
+          created_at?: string | null
+          dialogue?: string | null
+          emotion?: string | null
+          end_ms: number
+          end_state_action?: string | null
+          episode_id: string
+          id: string
+          props?: Json | null
+          scene_type?: string | null
+          set_ref?: string | null
+          shot_no: string
+          shot_type?: string | null
+          sound_effects?: string | null
+          spatial_anchor?: string | null
+          start_ms: number
+          use_new_set?: boolean | null
+          user_id: string
+          voice_type?: string | null
+        }
+        Update: {
+          characters?: Json | null
+          created_at?: string | null
+          dialogue?: string | null
+          emotion?: string | null
+          end_ms?: number
+          end_state_action?: string | null
+          episode_id?: string
+          id?: string
+          props?: Json | null
+          scene_type?: string | null
+          set_ref?: string | null
+          shot_no?: string
+          shot_type?: string | null
+          sound_effects?: string | null
+          spatial_anchor?: string | null
+          start_ms?: number
+          use_new_set?: boolean | null
+          user_id?: string
+          voice_type?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "restyle_shots_episode_id_fkey"
+            columns: ["episode_id"]
+            isOneToOne: false
+            referencedRelation: "restyle_episodes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      restyle_source_assets: {
+        Row: {
+          aliases: Json | null
+          appearance: string | null
+          created_at: string | null
+          description: string | null
+          episode_id: string
+          first_seen_ms: number | null
+          id: string
+          kind: string
+          last_seen_ms: number | null
+          relationships: Json | null
+          source_name: string
+          uncertainty: Json | null
+          user_id: string
+          wardrobe: string | null
+        }
+        Insert: {
+          aliases?: Json | null
+          appearance?: string | null
+          created_at?: string | null
+          description?: string | null
+          episode_id: string
+          first_seen_ms?: number | null
+          id: string
+          kind: string
+          last_seen_ms?: number | null
+          relationships?: Json | null
+          source_name: string
+          uncertainty?: Json | null
+          user_id: string
+          wardrobe?: string | null
+        }
+        Update: {
+          aliases?: Json | null
+          appearance?: string | null
+          created_at?: string | null
+          description?: string | null
+          episode_id?: string
+          first_seen_ms?: number | null
+          id?: string
+          kind?: string
+          last_seen_ms?: number | null
+          relationships?: Json | null
+          source_name?: string
+          uncertainty?: Json | null
+          user_id?: string
+          wardrobe?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "restyle_source_assets_episode_id_fkey"
+            columns: ["episode_id"]
+            isOneToOne: false
+            referencedRelation: "restyle_episodes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      restyle_transcripts: {
+        Row: {
+          begin_ms: number
+          confidence: number | null
+          created_at: string | null
+          end_ms: number
+          episode_id: string
+          id: string
+          sentence_id: string | null
+          speaker: string | null
+          text: string
+          unit_id: string | null
+          user_id: string
+        }
+        Insert: {
+          begin_ms: number
+          confidence?: number | null
+          created_at?: string | null
+          end_ms: number
+          episode_id: string
+          id: string
+          sentence_id?: string | null
+          speaker?: string | null
+          text: string
+          unit_id?: string | null
+          user_id: string
+        }
+        Update: {
+          begin_ms?: number
+          confidence?: number | null
+          created_at?: string | null
+          end_ms?: number
+          episode_id?: string
+          id?: string
+          sentence_id?: string | null
+          speaker?: string | null
+          text?: string
+          unit_id?: string | null
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "restyle_transcripts_episode_id_fkey"
+            columns: ["episode_id"]
+            isOneToOne: false
+            referencedRelation: "restyle_episodes"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       scenes: {
         Row: {
           action: string | null
