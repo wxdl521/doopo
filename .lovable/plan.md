@@ -1,35 +1,53 @@
-## 范围
+## 目标
 
-只修复第二个问题：用户在图片生成错误后提出指正，重新生成仍产出同样的图。第一个问题（提示词被误操作修改）按你的意见不做改动。
+新增独立的「台词稿转写」功能：用户上传音频或视频文件 → 服务端调用 Lovable AI Gateway 官方语音转写端点 → 生成带时间码的台词稿 → 可复制 / 导出 / 回填到剧本。
 
-## 已确认的根因
+## 用户流程
 
-1. `restylePrompt.ts:73-75`：`resolveAssetImagePrompt()` 一旦发现 `promptOverride`，直接返回覆盖内容并 **完全丢弃本轮的用户指正**。第一个问题正是由手工覆盖引起，于是后续所有指正都被这条分支吞掉，重生成必然产出同一张图。
-2. `restylePrompt.ts:53`：即使没有覆盖，指正也只是作为 `【本次补充要求】` 追加在提示词最末尾，排在错误的 `目标设定` 之后，优先级不足以纠正已经跑偏的画面。
-3. `RestyleStudio.tsx:3162-3164`：画布重生成通过 `attachment.name.includes(asset.targetName)` 按名称定位资产，改名或同名时会选错资产，指正落到别的资产上。
-4. `RestyleStudio.tsx:2710-2715`：纠错类语句（“场景图片生成不对，请重新生成”）依赖 `/修改|调整|请将|变得|改成|换成/` 匹配，“不对”“重新生成”不在其中，消息可能根本没进入生图分支，只回一句“已理解…”。
+```text
+/transcribe 页面
+  ├─ 拖拽或选择文件（mp3/wav/m4a/aac/mp4/mov/webm）
+  ├─ 浏览器端预处理：视频抽音轨 → 16k 单声道 WAV → 按 ~45s 切片
+  ├─ 逐片上传转写（进度条：第 3/12 片）
+  ├─ 结果面板：左侧时间码句列表（可编辑文本/说话人），右侧整稿纯文本
+  └─ 操作：复制全文 / 导出 SRT / 导出 TXT / 保存到剧本
+```
 
-## 修复方案
+## 实现要点
 
-### 1. 本轮指正永不被覆盖提示词吞掉
-`src/components/restyle/restylePrompt.ts`：
-- `resolveAssetImagePrompt` 在存在 `promptOverride` 时，仍把本轮有效指正拼到覆盖提示词之前，并标注为最高优先级；无指正时行为不变。
-- `buildAssetImagePrompt` 把 `【本次修正要求·优先级最高】` 移到提示词最前面，明确声明与后面的目标设定冲突时以本条为准。
+### 1. 后端转写函数（新文件 `src/lib/transcribeAudio.functions.ts`）
 
-### 2. 识别纠错意图
-`src/components/restyle/restyleIntent.ts` 新增 `isRegenerateIntent()`，覆盖“不对/不正确/错了/重新生成/重画/再生成一张/换一张”等表述；`RestyleStudio.tsx` 的 `isAssetImageRequest` 判定接入该函数，保证纠错消息进入生图分支。
+- `createServerFn({ method: "POST" })` + `requireSupabaseAuth` + Zod 校验。
+- 走 Gateway 官方端点 `POST https://ai.gateway.lovable.dev/v1/audio/transcriptions`（`multipart/form-data`，模型 `openai/gpt-4o-transcribe`），比现有 `input_audio` chat 路径更稳、更省。
+- 入参：`audioBase64`（≤15MB 单片）、`format`、`offsetSeconds`、可选 `language`。
+- 出参：`{ ok: true, text, sentences: [{ begin_ms, end_ms, text }] }`；失败时透传 Gateway 状态码与错误体（402/429/400 分别给出中文提示）。
+- 复用 `creditsGuard.ensureEnoughCredits` 做余额预校验，失败返回 `INSUFFICIENT_CREDITS`。
+- 失败时写入现有 `generation_error_logs`，与其他链路保持一致。
 
-### 3. 精确定位被指正的资产
-`RestyleStudio.tsx`：
-- 画布重生成优先用 `attachment.sourceAssetId` 定位资产，名称匹配仅作旧数据兼容降级。
-- 对话内纠错时，若消息含“场景/角色/道具”或某个资产名，只重生成对应资产，不整表重跑。
+### 2. 客户端音频处理（新文件 `src/lib/audioExtract.ts`）
 
-### 4. 提示词面板给出被覆盖的明确提示
-`RestyleProcessPanel.tsx` 在已有的「已手工覆盖」标签旁补一行说明：当前提示词为手工覆盖，本轮对话指正会叠加在其之前，可点“重置”回到自动拼装。避免再次出现“改了没反应”的困惑。
+- 复用/抽取转绘模块 `restyleTranscript.ts` 中已有的 WAV 编码逻辑（`decodeAudioData` → 16k 单声道 → 手写 WAV 头）。
+- 视频文件同样用 `AudioContext.decodeAudioData` 解出音轨，无需 ffmpeg。
+- 按时长切片，逐片串行调用后端并累积时间码偏移；空片/静音片跳过。
 
-### 5. 回归测试
-扩充 `src/components/restyle/__tests__/restylePrompt.test.ts` 并新增 intent 用例：
-- 存在 `promptOverride` 时，本轮指正仍出现在最终提示词中且位于覆盖内容之前。
-- 无指正时覆盖内容保持原样返回。
-- 指正段落排在目标设定之前。
-- “场景图片生成不对，请重新生成”被识别为重生成意图，“确认/继续”不被识别。
+### 3. 页面与路由
+
+- 新增 `src/routes/transcribe.tsx` + `src/pages/Transcribe.tsx`，配 `head()`（独立 title/description/og）。
+- UI 使用现有 shadcn 组件与语义色（`bg-background` / `text-muted-foreground`），弹窗统一走 `AssetEditDialog` 风格，不用原生 `prompt/alert`。
+- 在主导航（`MainLayout`）「剧本」相关分组下增加入口。
+
+### 4. 导出与回填
+
+- SRT 由句级时间码生成，TXT 为纯文本；均在前端拼装下载，无需后端。
+- 「保存到剧本」：复用现有 `scripts.functions.ts` 的创建/更新接口，把整稿写入剧本正文（弹窗选择新建剧本或追加到已有剧本）。
+
+### 5. i18n 与测试
+
+- `src/i18n/zh.ts` / `en.ts` 同步新增 `transcribe.*` 键。
+- 新增 `src/lib/__tests__/transcribeAudio.test.ts`：覆盖时间码偏移累积、SRT 生成、错误码映射。
+
+## 技术说明
+
+- 转写端点由 Lovable 托管，使用项目自动下发的 `LOVABLE_API_KEY`，仅在服务端读取 `process.env`，绝不进入浏览器包。
+- 音频以 base64 经服务函数中转（同源，无 CORS）；单片 ≤15MB，超长文件由前端切片解决，不截断音频。
+- 不改动转绘模块现有的 `transcribeRestyleAudio` 链路；如后续验证新端点更优，可再单独提议迁移。

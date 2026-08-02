@@ -1725,6 +1725,31 @@ export const zh = {
   restyle_run_step_transcribe: "识别原片台词",
   restyle_run_step_plan: "生成转绘方案",
   restyle_run_step_prompt_update: "更新分段提示词",
+
+  // ===== 台词稿转写 =====
+  nav_transcribe: "台词稿",
+  transcribe_title: "台词稿转写",
+  transcribe_subtitle: "上传配音音频或剧集视频，自动生成带时间码的台词稿，可导出 SRT / TXT 或保存为剧本。",
+  transcribe_dropzone: "点击或拖拽上传音频 / 视频文件",
+  transcribe_dropzone_hint: "支持 mp3、wav、m4a、aac、mp4、mov、webm；长文件会自动分片识别",
+  transcribe_start: "开始转写",
+  transcribe_running: "转写中…",
+  transcribe_stop: "停止",
+  transcribe_progress: "已完成片段",
+  transcribe_done: "转写完成",
+  transcribe_empty_result: "没有识别到台词，请确认文件中包含人声。",
+  transcribe_lines_title: "台词行（可直接编辑）",
+  transcribe_plain_title: "整稿预览",
+  transcribe_speaker: "说话人",
+  transcribe_copy: "复制全文",
+  transcribe_copied: "已复制到剪贴板",
+  transcribe_save_script: "保存为剧本",
+  transcribe_save_hint: "台词稿将作为剧本正文保存，可在剧本页继续编辑。",
+  transcribe_script_title: "剧本标题",
+  transcribe_cancel: "取消",
+  transcribe_confirm_save: "确认保存",
+  transcribe_saved_script: "已保存到剧本",
+  transcribe_save_failed: "保存失败",
 };
 
 export type Translations = typeof zh;
