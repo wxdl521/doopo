@@ -1752,4 +1752,31 @@ export const en: Translations = {
   restyle_run_step_transcribe: "Transcribing source dialogue",
   restyle_run_step_plan: "Generating restyle plan",
   restyle_run_step_prompt_update: "Updating segment prompts",
+
+  // ===== Dialogue transcription =====
+  nav_transcribe: "Transcript",
+  transcribe_title: "Dialogue Transcription",
+  transcribe_subtitle:
+    "Upload voiceover audio or an episode video to generate a timecoded dialogue script, then export SRT / TXT or save it as a script.",
+  transcribe_dropzone: "Click or drag an audio / video file here",
+  transcribe_dropzone_hint:
+    "Supports mp3, wav, m4a, aac, mp4, mov, webm; long files are sliced automatically",
+  transcribe_start: "Start transcription",
+  transcribe_running: "Transcribing…",
+  transcribe_stop: "Stop",
+  transcribe_progress: "Chunks done",
+  transcribe_done: "Transcription complete",
+  transcribe_empty_result: "No speech was recognized. Please check the file contains voice audio.",
+  transcribe_lines_title: "Dialogue lines (editable)",
+  transcribe_plain_title: "Full transcript",
+  transcribe_speaker: "Speaker",
+  transcribe_copy: "Copy all",
+  transcribe_copied: "Copied to clipboard",
+  transcribe_save_script: "Save as script",
+  transcribe_save_hint: "The transcript is saved as script body text and stays editable.",
+  transcribe_script_title: "Script title",
+  transcribe_cancel: "Cancel",
+  transcribe_confirm_save: "Save",
+  transcribe_saved_script: "Saved to scripts",
+  transcribe_save_failed: "Save failed",
 };
