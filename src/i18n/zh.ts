@@ -1722,6 +1722,7 @@ export const zh = {
   restyle_run_step_asset_table: "生成资产表",
   restyle_run_step_asset_images: "生成资产图片",
   restyle_run_step_asset_image_one: "生成资产图：",
+  restyle_run_step_transcribe: "识别原片台词",
   restyle_run_step_plan: "生成转绘方案",
   restyle_run_step_prompt_update: "更新分段提示词",
 };
