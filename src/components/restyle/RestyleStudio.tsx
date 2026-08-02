@@ -50,6 +50,9 @@ import {
 } from "./restyleStorage";
 import type { RestyleAsset, RestyleStage } from "./restyleTypes";
 import { analyzeRestyleAssets, generateRestylePlan } from "../../lib/restyleAnalysis.functions";
+import { transcribeRestyleAudio } from "../../lib/restyleAudio.functions";
+import { pollVideoStitchJob, submitVideoStitchJob } from "../../lib/videoStitch.functions";
+import { transcribeSourceVideo } from "./restyleTranscript";
 import { reviewRestyleAssetTable } from "../../lib/restyle/restyleAssetReview.functions";
 import type { AssetReviewIssue, AssetReviewVerdict } from "../../lib/restyle/assetReview";
 import {
