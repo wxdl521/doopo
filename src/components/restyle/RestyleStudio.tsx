@@ -3028,6 +3028,30 @@ export default function RestyleStudio() {
       // Keep chronological coverage for the full upload, including multi-episode uploads.
       const frameImages = frameBatches.flatMap((batch) => batch.frames).slice(0, 8);
       if (isRunAborted(projectId)) return;
+      // 音频通道：抽 16k 单声道 WAV 分片走网关 ASR，台词作为分析与方案的可信证据。
+      // 无音轨 / 源片过大 / 网关拒绝 input_audio 时返回空台词并继续，不阻断分析。
+      const transcriptSource = fileObjectsRef.current[sourceFiles[0].id];
+      let transcriptText = "";
+      if (transcriptSource) {
+        markRunStep(projectId, t.restyle_run_step_transcribe);
+        const transcript = await transcribeSourceVideo(
+          transcriptSource,
+          (input) => callTranscribeRestyleAudio(input),
+          {
+            isAborted: () => isRunAborted(projectId),
+            onProgress: (done, total) =>
+              markRunStep(projectId, `${t.restyle_run_step_transcribe} ${done}/${total}`),
+          },
+        );
+        transcriptText = transcript.text;
+        if (!transcriptText && transcript.degradedReason) {
+          appendConversationMessage(projectId, conversationId, {
+            role: "assistant",
+            content: `原片台词识别未产出结果：${transcript.degradedReason} 分析将只依据画面进行，台词相关设定请人工补充。`,
+          });
+        }
+      }
+      if (isRunAborted(projectId)) return;
       markRunStep(projectId, t.restyle_run_step_analyze, selectedModel);
       const result = await callAnalyzeRestyleAssets({
         data: {
@@ -3040,6 +3064,7 @@ export default function RestyleStudio() {
             size: file.size,
           })),
           frameImages,
+          transcript: transcriptText,
           existingAssets: activeProject.extractedAssets.map(({ id: _id, ...asset }) => asset),
         },
       });
