@@ -2336,7 +2336,8 @@ export default function RestyleStudio() {
       .map((file) => file.episode)
       .filter((episode): episode is string => Boolean(episode));
     const jobs = attachments
-      .filter((file) => file.generatedKind === "video_clip" || file.generatedKind === "final_video")
+      // 成片不再交给视频模型整集重跑：分段跑完后由外部转码服务按顺序拼接（见 stitchFinalEpisodes）。
+      .filter((file) => file.generatedKind === "video_clip")
       .map((file) => {
         const episode = planEpisodes.find((item) => item.episode === file.episode);
         const segment = episode?.segments.find((item) => item.id === file.segmentId);
@@ -2345,11 +2346,8 @@ export default function RestyleStudio() {
         return {
           attachmentId: file.id,
           prompt:
-            file.generatedKind === "final_video"
-              ? (episode?.segments.map((item) => `${item.id}: ${item.prompt}`).join("\n\n") ||
-                "保持角色、场景、动作、镜头与节奏一致，生成符合已确认转绘资产的完整转绘视频。")
-              : (segment?.prompt ||
-                "保持角色、场景、动作、镜头与节奏一致，生成符合已确认转绘资产的短视频。"),
+            segment?.prompt ||
+            "保持角色、场景、动作、镜头与节奏一致，生成符合已确认转绘资产的短视频。",
           referenceImages,
           source,
         };
