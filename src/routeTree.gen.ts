@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as ZoclawRouteImport } from './routes/zoclaw'
+import { Route as TranscribeRouteImport } from './routes/transcribe'
 import { Route as TeamRouteImport } from './routes/team'
 import { Route as ShowcaseRouteImport } from './routes/showcase'
 import { Route as ScriptsRouteImport } from './routes/scripts'
@@ -59,6 +60,11 @@ import { Route as ApiPublicTestAitokenvibeRouteImport } from './routes/api/publi
 const ZoclawRoute = ZoclawRouteImport.update({
   id: '/zoclaw',
   path: '/zoclaw',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TranscribeRoute = TranscribeRouteImport.update({
+  id: '/transcribe',
+  path: '/transcribe',
   getParentRoute: () => rootRouteImport,
 } as any)
 const TeamRoute = TeamRouteImport.update({
@@ -308,6 +314,7 @@ export interface FileRoutesByFullPath {
   '/scripts': typeof ScriptsRouteWithChildren
   '/showcase': typeof ShowcaseRouteWithChildren
   '/team': typeof TeamRouteWithChildren
+  '/transcribe': typeof TranscribeRoute
   '/zoclaw': typeof ZoclawRoute
   '/account/assets': typeof AccountAssetsRoute
   '/account/credits': typeof AccountCreditsRoute
@@ -351,6 +358,7 @@ export interface FileRoutesByTo {
   '/reset-password': typeof ResetPasswordRoute
   '/restyle': typeof RestyleRoute
   '/showcase': typeof ShowcaseRouteWithChildren
+  '/transcribe': typeof TranscribeRoute
   '/zoclaw': typeof ZoclawRoute
   '/account/assets': typeof AccountAssetsRoute
   '/account/credits': typeof AccountCreditsRoute
@@ -400,6 +408,7 @@ export interface FileRoutesById {
   '/scripts': typeof ScriptsRouteWithChildren
   '/showcase': typeof ShowcaseRouteWithChildren
   '/team': typeof TeamRouteWithChildren
+  '/transcribe': typeof TranscribeRoute
   '/zoclaw': typeof ZoclawRoute
   '/account/assets': typeof AccountAssetsRoute
   '/account/credits': typeof AccountCreditsRoute
@@ -450,6 +459,7 @@ export interface FileRouteTypes {
     | '/scripts'
     | '/showcase'
     | '/team'
+    | '/transcribe'
     | '/zoclaw'
     | '/account/assets'
     | '/account/credits'
@@ -493,6 +503,7 @@ export interface FileRouteTypes {
     | '/reset-password'
     | '/restyle'
     | '/showcase'
+    | '/transcribe'
     | '/zoclaw'
     | '/account/assets'
     | '/account/credits'
@@ -541,6 +552,7 @@ export interface FileRouteTypes {
     | '/scripts'
     | '/showcase'
     | '/team'
+    | '/transcribe'
     | '/zoclaw'
     | '/account/assets'
     | '/account/credits'
@@ -590,6 +602,7 @@ export interface RootRouteChildren {
   ScriptsRoute: typeof ScriptsRouteWithChildren
   ShowcaseRoute: typeof ShowcaseRouteWithChildren
   TeamRoute: typeof TeamRouteWithChildren
+  TranscribeRoute: typeof TranscribeRoute
   ZoclawRoute: typeof ZoclawRoute
   RestyleV2Route: typeof RestyleV2Route
   WorkspaceWorkspaceIdRoute: typeof WorkspaceWorkspaceIdRoute
@@ -604,6 +617,13 @@ declare module '@tanstack/react-router' {
       path: '/zoclaw'
       fullPath: '/zoclaw'
       preLoaderRoute: typeof ZoclawRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/transcribe': {
+      id: '/transcribe'
+      path: '/transcribe'
+      fullPath: '/transcribe'
+      preLoaderRoute: typeof TranscribeRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/team': {
@@ -1062,6 +1082,7 @@ const rootRouteChildren: RootRouteChildren = {
   ScriptsRoute: ScriptsRouteWithChildren,
   ShowcaseRoute: ShowcaseRouteWithChildren,
   TeamRoute: TeamRouteWithChildren,
+  TranscribeRoute: TranscribeRoute,
   ZoclawRoute: ZoclawRoute,
   RestyleV2Route: RestyleV2Route,
   WorkspaceWorkspaceIdRoute: WorkspaceWorkspaceIdRoute,

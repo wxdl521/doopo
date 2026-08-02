@@ -10,6 +10,7 @@ import {
   FileText,
   Library,
   Palette,
+  AudioLines,
 } from "lucide-react";
 import { useLanguage } from "../i18n/LanguageContext";
 
@@ -19,6 +20,7 @@ export default function Sidebar({ fullHeight = false }: { fullHeight?: boolean }
   const items = [
     { to: "/home", label: t.nav_home, icon: Home },
     { to: "/scripts", label: t.nav_scripts, icon: FileText },
+    { to: "/transcribe", label: t.nav_transcribe, icon: AudioLines },
     { to: "/projects", label: t.nav_projects, icon: FolderOpen },
     { to: "/assets", label: t.nav_assets, icon: Library },
     { to: "/bases", label: t.nav_bases, icon: Bookmark },
