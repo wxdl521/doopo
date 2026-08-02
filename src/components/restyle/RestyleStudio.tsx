@@ -990,6 +990,9 @@ export default function RestyleStudio() {
   const callCreateMediaUploadUrl = useServerFn(createMediaUploadUrl);
   const callPersistAssetImage = useServerFn(persistAssetImage);
   const callReviewRestyleAssetTable = useServerFn(reviewRestyleAssetTable);
+  const callTranscribeRestyleAudio = useServerFn(transcribeRestyleAudio);
+  const callSubmitVideoStitchJob = useServerFn(submitVideoStitchJob);
+  const callPollVideoStitchJob = useServerFn(pollVideoStitchJob);
 
   const activeProject = projects.find((project) => project.id === activeProjectId);
   // projects 的最新快照：异步回调按 projectId 取自己项目的字段（如目标画风），
