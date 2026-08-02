@@ -2844,7 +2844,10 @@ export default function RestyleStudio() {
       const result = await callGenerateRestylePlan({
         data: {
           model: selectedModel,
-          instruction: withRelationBrief(withStyleBrief(activeProject.planNote, styleBrief)),
+          instruction: withTranscript(
+            withRelationBrief(withStyleBrief(activeProject.planNote, styleBrief)),
+            activeProject.transcript,
+          ),
           sourceFiles: (sourceFiles.length ? sourceFiles : activeProject.files).map((file) => ({
             id: file.episode ?? file.id,
             name: file.name,
