@@ -22,6 +22,7 @@ import {
   Pencil,
   Play,
   Plus,
+  RotateCcw,
   Search,
   Send,
   Sparkles,
@@ -31,6 +32,7 @@ import {
   X,
 } from "lucide-react";
 import { useLanguage } from "../../i18n/LanguageContext";
+import { SegmentRerunDialog } from "./SegmentRerunDialog";
 import type { Translations } from "../../i18n/zh";
 import { useAuth } from "../../hooks/useAuth";
 import { loadCharacters, loadProps, loadScenes } from "../../lib/assetsStorage";
@@ -2431,15 +2433,15 @@ export default function RestyleStudio() {
     }
   }
 
+  const [rerunTarget, setRerunTarget] = useState<RestyleAttachment | null>(null);
+
   function rerunVideoSegment(segment: RestyleAttachment) {
+    if (!segment.episode || !segment.segmentId) return;
+    setRerunTarget(segment);
+  }
+
+  function submitSegmentRerun(segment: RestyleAttachment, feedback: string) {
     if (!activeProject || !activeConversation || !segment.episode || !segment.segmentId) return;
-    const feedback =
-      window
-        .prompt(
-          "请描述这段需要返工的问题",
-          `${segment.episode} ${segment.segmentId} 人物/动作/比例需要调整`,
-        )
-        ?.trim() || `${segment.episode} ${segment.segmentId} 需要局部返工`;
     appendConversationMessage(activeProject.id, activeConversation.id, {
       role: "user",
       content: `${segment.episode} ${segment.segmentId} ${feedback}`,
@@ -4787,6 +4789,15 @@ export default function RestyleStudio() {
           onClose={() => setPreviewDialog(null)}
         />
       ) : null}
+      <SegmentRerunDialog
+        open={rerunTarget !== null}
+        segment={rerunTarget}
+        onSubmit={(feedback) => {
+          if (rerunTarget) submitSegmentRerun(rerunTarget, feedback);
+        }}
+        onClose={() => setRerunTarget(null)}
+        t={t}
+      />
     </section>
   );
 }
@@ -5534,8 +5545,9 @@ function RenderSegmentList({
             <button
               type="button"
               onClick={() => onRerunSegment(segment)}
-              className="shrink-0 rounded border border-border px-2 py-1 text-accent hover:bg-accent-dim"
+              className="inline-flex shrink-0 items-center gap-1 rounded border border-accent/50 bg-accent-dim px-2 py-1 text-accent transition hover:bg-accent/15"
             >
+              <RotateCcw size={11} />
               重跑这一段
             </button>
           </div>
@@ -5571,18 +5583,24 @@ function ReviewChecklist({
         局部问题请点名集数和段落返工，例如“EP02 第3段人物不像 Grace Hart，请重跑这一段”。
       </p>
       {segments.length ? (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {segments.map((segment) => (
-            <button
-              key={segment.id}
-              type="button"
-              onClick={() => onRerunSegment(segment)}
-              className="rounded-md bg-accent-dim px-2 py-1 text-[11px] font-medium text-accent hover:bg-accent/15"
-            >
-              {segment.episode} {segment.segmentId} 返工
-            </button>
-          ))}
-        </div>
+        <>
+          <p className="mt-2 text-[11px] font-medium text-text-secondary">
+            直接点击下面按钮即可对指定段落返工：
+          </p>
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {segments.map((segment) => (
+              <button
+                key={segment.id}
+                type="button"
+                onClick={() => onRerunSegment(segment)}
+                className="inline-flex items-center gap-1 rounded-md bg-accent px-2.5 py-1.5 text-xs font-medium text-bg-base shadow-sm transition hover:opacity-90"
+              >
+                <RotateCcw size={12} />
+                {segment.episode} {segment.segmentId} 返工
+              </button>
+            ))}
+          </div>
+        </>
       ) : null}
     </div>
   );
