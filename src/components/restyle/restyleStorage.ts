@@ -1,4 +1,11 @@
 import type { RestyleStage } from "./restyleTypes";
+import {
+  isRestyleGateId,
+  type RestyleAspect,
+  type RestyleAssetImageSource,
+  type RestyleExecutionMode,
+  type RestyleVoiceSource,
+} from "./restyleExecution";
 
 const STORAGE_PREFIX = "doopoo:restyle-projects:";
 
@@ -116,6 +123,18 @@ export type RestyleProject = {
   assetReviewMap?: Record<string, string>;
   /** 人物关系表。空关系表不持久化该字段。 */
   characterRelations?: RestyleCharacterRelation[];
+  /** 执行模式：极速全自动 / 分步护航（默认）/ 自定义干预。 */
+  executionMode?: RestyleExecutionMode;
+  /** 自动执行总预算（积分），默认 100000；累计消耗达上限即暂停。 */
+  autoBudget?: number;
+  /** 资产图片来源：系统生成 / 用户上传 / 混合。 */
+  assetImageSource?: RestyleAssetImageSource;
+  /** 角色声音来源：自动 / 用户指定音色 / 用户上传音频。 */
+  voiceSource?: RestyleVoiceSource;
+  /** 自定义干预模式下需要人工审核的环节 id 列表（见 restyleExecution.GATES）。 */
+  manualGates?: string[];
+  /** 项目画幅，默认 9:16。 */
+  aspect?: RestyleAspect;
 };
 
 function keyFor(userId: string): string {
@@ -139,6 +158,22 @@ function isStringArray(value: unknown): value is string[] {
 
 function isRenderStatus(value: unknown): value is RestyleRenderStatus {
   return value === "queued" || value === "running" || value === "succeeded" || value === "failed";
+}
+
+function isExecutionMode(value: unknown): value is RestyleExecutionMode {
+  return value === "auto" || value === "guided" || value === "custom";
+}
+
+function isAssetImageSource(value: unknown): value is RestyleAssetImageSource {
+  return value === "system" || value === "upload" || value === "mixed";
+}
+
+function isVoiceSource(value: unknown): value is RestyleVoiceSource {
+  return value === "auto" || value === "voice_pick" || value === "upload";
+}
+
+function isAspect(value: unknown): value is RestyleAspect {
+  return value === "16:9" || value === "4:3" || value === "3:4" || value === "9:16";
 }
 
 function parseAttachment(value: unknown): RestyleAttachment | null {
@@ -403,6 +438,19 @@ function parseProject(value: unknown): RestyleProject | null {
     imageModel: typeof item.imageModel === "string" ? item.imageModel : undefined,
     videoModel: typeof item.videoModel === "string" ? item.videoModel : undefined,
     characterRelations: parseCharacterRelations(item.characterRelations),
+    executionMode: isExecutionMode(item.executionMode) ? item.executionMode : undefined,
+    autoBudget:
+      typeof item.autoBudget === "number" && Number.isFinite(item.autoBudget) && item.autoBudget > 0
+        ? item.autoBudget
+        : undefined,
+    assetImageSource: isAssetImageSource(item.assetImageSource)
+      ? item.assetImageSource
+      : undefined,
+    voiceSource: isVoiceSource(item.voiceSource) ? item.voiceSource : undefined,
+    manualGates: isStringArray(item.manualGates)
+      ? item.manualGates.filter(isRestyleGateId)
+      : undefined,
+    aspect: isAspect(item.aspect) ? item.aspect : undefined,
     assetReviewMap:
       item.assetReviewMap && typeof item.assetReviewMap === "object"
         ? Object.fromEntries(

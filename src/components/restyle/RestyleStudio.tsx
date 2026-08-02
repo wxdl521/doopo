@@ -110,6 +110,23 @@ import {
   type MentionableAttachment,
 } from "./restyleMentions";
 import { toast } from "sonner";
+import { listModelPricing } from "../../lib/modelPricing.functions";
+import type { ModelPricingRow } from "../../lib/modelPricingCache";
+import {
+  RestyleSetupPanel,
+  RestyleSpecCard,
+  defaultVideoPricing,
+  pricingForVideoModel,
+  type RestyleSetupPatch,
+} from "./RestyleSetupPanel";
+import {
+  isInsufficientCreditsError,
+  isOverBudget,
+  resolveExecutionConfig,
+  shouldPauseAt,
+  type RestyleExecutionConfig,
+  type RestyleGateId,
+} from "./restyleExecution";
 
 type AssetLibraryStatus = "idle" | "loading" | "ready" | "error";
 type RestyleView = "workbench" | "canvas";
@@ -956,6 +973,12 @@ export default function RestyleStudio() {
   const [selectedModel, setSelectedModel] = useState<RestyleModel>("qwen:qwen3.6-plus");
   const [selectedImageModel, setSelectedImageModel] = useState(DEFAULT_RESTYLE_IMAGE_MODEL);
   const [selectedVideoModel, setSelectedVideoModel] = useState(DEFAULT_RESTYLE_VIDEO_MODEL);
+  // 模型定价（model_pricing 表）：视频档给工作台选项区与成本预估用，图像档给生图成本预估用。
+  const [pricingRows, setPricingRows] = useState<ModelPricingRow[]>([]);
+  const pricingRowsRef = useRef<ModelPricingRow[]>([]);
+  pricingRowsRef.current = pricingRows;
+  // 自动执行累计消耗（积分），按项目归档；达到 autoBudget 上限即强制暂停。
+  const spendRef = useRef<Record<string, number>>({});
   // 每个转绘项目独立的执行态：切换项目不再互相阻塞，可多项目并发。
   const [projectRuns, setProjectRuns] = useState<Record<string, RestyleRunState>>({});
   const runAbortRef = useRef<Record<string, AbortController>>({});
@@ -994,6 +1017,7 @@ export default function RestyleStudio() {
   const callTranscribeRestyleAudio = useServerFn(transcribeRestyleAudio);
   const callSubmitVideoStitchJob = useServerFn(submitVideoStitchJob);
   const callPollVideoStitchJob = useServerFn(pollVideoStitchJob);
+  const callListModelPricing = useServerFn(listModelPricing);
 
   const activeProject = projects.find((project) => project.id === activeProjectId);
   // projects 的最新快照：异步回调按 projectId 取自己项目的字段（如目标画风），
@@ -1136,12 +1160,43 @@ export default function RestyleStudio() {
     setSelectedAssetId(assets[0]?.id ?? null);
   }, [assets, selectedAssetId]);
 
+  // 模型定价入库读取：登录后拉一次（服务端模块级缓存 60s），工作台选项区与成本预估共用。
+  useEffect(() => {
+    if (!isAuthenticated) {
+      setPricingRows([]);
+      return;
+    }
+    let active = true;
+    void callListModelPricing({ data: {} })
+      .then((result) => {
+        if (active && result?.rows) setPricingRows(result.rows);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated]);
+
+  const videoPricingRows = useMemo(
+    () => pricingRows.filter((row) => row.kind === "video" && row.enabled),
+    [pricingRows],
+  );
+  // 未选择视频模型时取库内 is_default（Seedance 2.0 720P）；库读不到回落内置默认。
+  const defaultRestyleVideoModel = useMemo(
+    () => defaultVideoPricing(videoPricingRows)?.modelId ?? DEFAULT_RESTYLE_VIDEO_MODEL,
+    [videoPricingRows],
+  );
+
   // 模型选择随项目走：项目没设过模型时无条件回落默认值，绝不沿用上一个项目的选择。
   // 用户在下拉里改模型时会写回 project.imageModel/videoModel，选择随项目持久化。
   useEffect(() => {
     setSelectedImageModel(activeProject?.imageModel ?? DEFAULT_RESTYLE_IMAGE_MODEL);
-    setSelectedVideoModel(activeProject?.videoModel ?? DEFAULT_RESTYLE_VIDEO_MODEL);
-  }, [activeProject?.id, activeProject?.imageModel, activeProject?.videoModel]);
+    setSelectedVideoModel(activeProject?.videoModel ?? defaultRestyleVideoModel);
+  }, [activeProject?.id, activeProject?.imageModel, activeProject?.videoModel, defaultRestyleVideoModel]);
+
+  // 当前生效的视频模型：项目持久化值优先，未设置时用下拉当前值（已按默认值兜底）。
+  const currentVideoModel = activeProject?.videoModel ?? selectedVideoModel;
 
   // 切换项目时统一重置与项目绑定的视图态：预览、画布选中、菜单、错误提示等不跨项目残留。
   // 输入草稿与草稿附件按项目归档（见 chatDrafts / draftAttachmentIdsByProject），无需清空。
@@ -1384,6 +1439,184 @@ export default function RestyleStudio() {
           : project,
       ),
     );
+  }
+
+  // ---- 视频转绘工作台：执行配置 / 预算 / 自动推进 ----
+
+  /** 右侧选项区与聊天规格表共用的回写入口：两侧读写同一份项目状态。 */
+  function updateProjectSetup(patch: RestyleSetupPatch) {
+    if (!activeProject) return;
+    updateProject(activeProject.id, (project) => ({ ...project, ...patch }));
+  }
+
+  /** 目标项目的执行配置（填充默认值）；异步回调里一律按 projectId 取，不读激活项目。 */
+  function executionConfigFor(projectId: string): Required<RestyleExecutionConfig> {
+    const project = projectsRef.current.find((item) => item.id === projectId);
+    return resolveExecutionConfig(project);
+  }
+
+  function pauseAtGate(projectId: string, gate: RestyleGateId): boolean {
+    return shouldPauseAt(executionConfigFor(projectId), gate);
+  }
+
+  function spentFor(projectId: string): number {
+    return spendRef.current[projectId] ?? 0;
+  }
+
+  function chargeSpend(projectId: string, credits: number) {
+    spendRef.current[projectId] = spentFor(projectId) + credits;
+  }
+
+  /** 预算校验：任何模式下累计消耗达上限都强制暂停。 */
+  function budgetExceeded(projectId: string, extra = 0): boolean {
+    return isOverBudget(spentFor(projectId) + extra, executionConfigFor(projectId).autoBudget);
+  }
+
+  function pauseForBudget(projectId: string, conversationId: string) {
+    appendConversationMessage(projectId, conversationId, {
+      role: "assistant",
+      content: t.restyle_setup_budget_pause,
+    });
+  }
+
+  /** 单张资产图成本预估：图像档按前缀匹配生图模型，查不到回落 5 积分。 */
+  function imageJobCost(imageModel: string): number {
+    const row = pricingRowsRef.current.find(
+      (item) => item.kind === "image" && item.enabled && imageModel.startsWith(item.modelId),
+    );
+    return row?.credits ?? 5;
+  }
+
+  /** 单段视频成本预估：视频档每 10 秒单价 × 分段时长（5s）。 */
+  function videoJobCost(videoModel: string): number {
+    const row = pricingForVideoModel(pricingRowsRef.current, videoModel);
+    return ((row?.credits ?? 240) * 5) / 10;
+  }
+
+  /** 聊天规格表确认按钮：状态已由双向联动即时回写，这里播报并引导进入下一步。 */
+  function confirmProductionSpecs() {
+    if (!activeProject || !activeConversation) return;
+    appendConversationMessage(activeProject.id, activeConversation.id, {
+      role: "assistant",
+      content: t.restyle_setup_spec_confirmed_msg,
+    });
+  }
+
+  /**
+   * 资产表产出后的执行模式联动：
+   * - 环节「目标资产设定」需人工审核 → 维持现状暂停（等用户确认）
+   * - 资产图片来源 = 用户上传 → 跳过 AI 生图，挂待办卡片等上传
+   * - 其余（极速 / 自定义未勾选）→ 自动生成全部资产图，后续环节继续按模式推进
+   */
+  async function autoAdvanceAfterAssetTable(projectId: string, conversationId: string) {
+    if (pauseAtGate(projectId, "asset_setting")) return;
+    const project = projectsRef.current.find((item) => item.id === projectId);
+    if (!project?.extractedAssets.length) return;
+    const config = executionConfigFor(projectId);
+    if (config.voiceSource !== "auto") {
+      appendConversationMessage(projectId, conversationId, {
+        role: "assistant",
+        content: t.restyle_setup_voice_todo,
+      });
+    }
+    if (config.assetImageSource === "upload") {
+      appendConversationMessage(projectId, conversationId, {
+        role: "assistant",
+        content: t.restyle_setup_upload_todo,
+      });
+      return;
+    }
+    if (budgetExceeded(projectId)) {
+      pauseForBudget(projectId, conversationId);
+      return;
+    }
+    await generateAssetImages(
+      projectId,
+      conversationId,
+      "",
+      project.extractedAssets,
+      [],
+      project.styleBrief ?? "",
+    );
+  }
+
+  /**
+   * 生成转绘方案（目标分镜）。返回是否成功。
+   * 成功后按执行模式决定：分步护航 / 自定义勾选环节 → 暂停等确认；
+   * 极速全自动（且未勾选视频分组 / 报价环节）→ 直接提交视频生成。
+   */
+  async function runPlanGeneration(
+    projectId: string,
+    conversationId: string,
+    styleBrief: string,
+  ): Promise<boolean> {
+    const project = projectsRef.current.find((item) => item.id === projectId);
+    if (!project || !project.extractedAssets.length) return false;
+    beginRun(projectId, t.restyle_run_step_plan);
+    const sourceFiles = project.files.filter(
+      (file) => file.type.startsWith("video/") && !file.isFolder,
+    );
+    const episodeCount = sourceFiles.length || 1;
+    const result = await callGenerateRestylePlan({
+      data: {
+        model: selectedModel,
+        instruction: withTranscript(
+          withRelationBrief(withStyleBrief(project.planNote, styleBrief)),
+          project.transcript,
+        ),
+        sourceFiles: (sourceFiles.length ? sourceFiles : project.files).map((file) => ({
+          id: file.episode ?? file.id,
+          name: file.name,
+          type: file.type,
+          size: file.size,
+        })),
+        assets: project.extractedAssets.map(({ id: _id, ...asset }) => asset),
+        episodeCount,
+      },
+    });
+    if (!result.ok) {
+      result.error = relabelRestyleError(result.error, selectedModel);
+      if (isRunAborted(projectId)) return false;
+      finishRun(projectId, "failed", result.error);
+      appendConversationMessage(projectId, conversationId, {
+        role: "assistant",
+        content: `转绘方案生成失败：${result.error}`,
+      });
+      return false;
+    }
+    if (isRunAborted(projectId)) return false;
+    const episodeLinks = result.episodes.map((episode) => episode.episode);
+    const sourceVideoNames = episodeLinks.map(sourceVideoLabel);
+    updateProject(projectId, (current) => ({
+      ...current,
+      stage: "plan",
+      planEpisodes: result.episodes,
+    }));
+    finishRun(projectId);
+    if (
+      pauseAtGate(projectId, "storyboard") ||
+      pauseAtGate(projectId, "video_grouping") ||
+      pauseAtGate(projectId, "video_quote")
+    ) {
+      appendConversationMessage(projectId, conversationId, {
+        role: "assistant",
+        content: `已确认资产图片，已生成 ${sourceVideoNames.join("、")} 的转绘方案。点击视频文件可打开右侧对应提示词。需要微调时，请直接说明视频和分段，例如“请将第一个视频的 U01 光影调整为冷白色调”。调整完成后回复“确认生成视频”。`,
+        episodeLinks,
+      });
+      return true;
+    }
+    if (budgetExceeded(projectId)) {
+      appendConversationMessage(projectId, conversationId, {
+        role: "assistant",
+        content: `已生成 ${sourceVideoNames.join("、")} 的转绘方案。`,
+        episodeLinks,
+      });
+      pauseForBudget(projectId, conversationId);
+      return true;
+    }
+    const latest = projectsRef.current.find((item) => item.id === projectId) ?? project;
+    submitVideoRender(latest, conversationId);
+    return true;
   }
 
   function setProjectStage(nextStage: RestyleStage) {
@@ -2103,6 +2336,16 @@ export default function RestyleStudio() {
       completeRenderQueue(projectId, conversationId, finalEpisodes);
       return;
     }
+    // 预算校验：任何模式下累计消耗达上限即强制暂停，不再提交后续分段。
+    const estimatedCost = videoJobCost(videoModel);
+    if (budgetExceeded(projectId, estimatedCost)) {
+      failRenderAttachment(projectId, job.attachmentId, t.restyle_setup_budget_pause);
+      pauseForBudget(projectId, conversationId);
+      return;
+    }
+    // 项目画幅：转绘右栏选项区配置（默认 9:16），随项目持久化。
+    const projectAspect =
+      projectsRef.current.find((item) => item.id === projectId)?.aspect ?? "9:16";
     updateRenderAttachments(
       projectId,
       (file) => file.id === job.attachmentId,
@@ -2152,7 +2395,7 @@ export default function RestyleStudio() {
             data: {
               content,
               model: videoModel,
-              ratio: "16:9",
+              ratio: projectAspect,
               resolution: "720P",
               duration: 5,
               generateAudio: true,
@@ -2164,6 +2407,13 @@ export default function RestyleStudio() {
             break;
           }
           const error = result.ok ? "视频模型没有返回任务编号" : result.error;
+          // 余额不足（creditsGuard INSUFFICIENT_CREDITS）：不走进降级重投链，强制暂停等用户处理。
+          const resultCode =
+            "code" in result ? (result as { code?: string }).code : undefined;
+          if (resultCode === "INSUFFICIENT_CREDITS" || isInsufficientCreditsError(error)) {
+            submitFailure = error;
+            break;
+          }
           const plan = planRestyleFallback({
             stage,
             error,
@@ -2192,12 +2442,21 @@ export default function RestyleStudio() {
             job.attachmentId,
             submitFailure ?? RESTYLE_FALLBACK_EXHAUSTED_MESSAGE,
           );
+          // 余额不足：在对话里明确播报强制暂停原因，任务不再自动推进。
+          if (isInsufficientCreditsError(submitFailure)) {
+            appendConversationMessage(projectId, conversationId, {
+              role: "assistant",
+              content: submitFailure ?? "",
+            });
+          }
         } else {
           appendRenderLog(
             projectId,
             job.attachmentId,
             `模型任务 ${submitted.taskId} 已创建，正在后台生成。`,
           );
+          // 任务提交成功即计入预算消耗（按提交时的单价预估）。
+          chargeSpend(projectId, estimatedCost);
           updateRenderAttachments(
             projectId,
             (file) => file.id === job.attachmentId,
@@ -2303,7 +2562,7 @@ export default function RestyleStudio() {
     // 避免切换项目后 A 的渲染误用 B 的模型。
     const videoModel =
       project.videoModel ??
-      (projectId === activeProjectId ? selectedVideoModel : DEFAULT_RESTYLE_VIDEO_MODEL);
+      (projectId === activeProjectId ? selectedVideoModel : defaultRestyleVideoModel);
     const sourceFiles = project.files.filter(
       (file) => file.type.startsWith("video/") && !file.isFolder,
     );
@@ -2567,7 +2826,7 @@ export default function RestyleStudio() {
     const latest = projectsRef.current.find((item) => item.id === project.id) ?? project;
     const reportModel =
       latest.videoModel ??
-      (latest.id === activeProjectId ? selectedVideoModel : DEFAULT_RESTYLE_VIDEO_MODEL);
+      (latest.id === activeProjectId ? selectedVideoModel : defaultRestyleVideoModel);
     updateProject(project.id, (current) => ({ ...current, stage: "render" }));
     appendConversationMessage(project.id, conversationId, {
       role: "assistant",
@@ -2921,52 +3180,7 @@ export default function RestyleStudio() {
     }
 
     if (shouldContinueToPlan && activeProject.extractedAssets.length > 0) {
-      beginRun(projectId, t.restyle_run_step_plan);
-      const sourceFiles = activeProject.files.filter(
-        (file) => file.type.startsWith("video/") && !file.isFolder,
-      );
-      const episodeCount = sourceFiles.length || 1;
-      const result = await callGenerateRestylePlan({
-        data: {
-          model: selectedModel,
-          instruction: withTranscript(
-            withRelationBrief(withStyleBrief(activeProject.planNote, styleBrief)),
-            activeProject.transcript,
-          ),
-          sourceFiles: (sourceFiles.length ? sourceFiles : activeProject.files).map((file) => ({
-            id: file.episode ?? file.id,
-            name: file.name,
-            type: file.type,
-            size: file.size,
-          })),
-          assets: activeProject.extractedAssets.map(({ id: _id, ...asset }) => asset),
-          episodeCount,
-        },
-      });
-      if (!result.ok) {
-        result.error = relabelRestyleError(result.error, selectedModel);
-        if (isRunAborted(projectId)) return;
-        finishRun(projectId, "failed", result.error);
-        appendConversationMessage(projectId, conversationId, {
-          role: "assistant",
-          content: `转绘方案生成失败：${result.error}`,
-        });
-        return;
-      }
-      if (isRunAborted(projectId)) return;
-      const episodeLinks = result.episodes.map((episode) => episode.episode);
-      const sourceVideoNames = episodeLinks.map(sourceVideoLabel);
-      updateProject(projectId, (project) => ({
-        ...project,
-        stage: "plan",
-        planEpisodes: result.episodes,
-      }));
-      appendConversationMessage(projectId, conversationId, {
-        role: "assistant",
-        content: `已确认资产图片，已生成 ${sourceVideoNames.join("、")} 的转绘方案。点击视频文件可打开右侧对应提示词。需要微调时，请直接说明视频和分段，例如“请将第一个视频的 U01 光影调整为冷白色调”。调整完成后回复“确认生成视频”。`,
-        episodeLinks,
-      });
-      finishRun(projectId);
+      await runPlanGeneration(projectId, conversationId, styleBrief);
       return;
     }
 
@@ -3106,6 +3320,7 @@ export default function RestyleStudio() {
     updateProject(projectId, (project) => ({ ...project, stage: "analysis" }));
     beginRun(projectId, t.restyle_run_step_read_source);
     setAnalysisError("");
+    let analysisCompleted = false;
     try {
       const frameBatches = await Promise.all(
         sourceFiles.map(async (file) => {
@@ -3232,6 +3447,7 @@ export default function RestyleStudio() {
       });
       // 资产表生成后自动跑一次 skill 自检（1 分/次，与旧分析调用同口径）。
       void runAssetTableReview(extractedAssets, relationEdges);
+      analysisCompleted = true;
     } catch (error) {
       const detail = error instanceof Error ? error.message : t.restyle_analysis_unknown_error;
       if (isRunAborted(projectId)) return;
@@ -3243,6 +3459,11 @@ export default function RestyleStudio() {
       });
     } finally {
       if (!isRunAborted(projectId)) finishRun(projectId);
+    }
+    // 执行模式联动：资产表产出后，极速 / 自定义（未勾选「目标资产设定」）自动推进下一步；
+    // 分步护航维持现状暂停等确认。放在 finally 之后，避免新任务被上一个 run 的收尾标记覆盖。
+    if (analysisCompleted && !isRunAborted(projectId)) {
+      await autoAdvanceAfterAssetTable(projectId, conversationId);
     }
   }
 
@@ -3265,10 +3486,18 @@ export default function RestyleStudio() {
       content: "开始生成资产图片，将按角色、场景、道具逐张处理。",
     });
     const generatedKinds: Array<"character" | "scene" | "prop"> = [];
+    let budgetStopped = false;
+    let advanceToPlan = false;
     try {
       let assetIndex = 0;
       for (const asset of extractedAssets) {
         if (isRunAborted(projectId)) return;
+        // 预算校验：任何模式下累计消耗达上限即强制暂停（极速/自定义同样生效）。
+        if (budgetExceeded(projectId, imageJobCost(imageModel))) {
+          budgetStopped = true;
+          pauseForBudget(projectId, conversationId);
+          break;
+        }
         assetIndex += 1;
         markRunStep(
           projectId,
@@ -3362,6 +3591,7 @@ export default function RestyleStudio() {
           ],
         }));
         generatedKinds.push(asset.kind);
+        chargeSpend(projectId, imageJobCost(imageModel));
         setAssetRunStatus((current) => ({ ...current, [asset.id]: { status: "done" } }));
         appendConversationMessage(projectId, conversationId, {
           role: "assistant",
@@ -3370,14 +3600,26 @@ export default function RestyleStudio() {
         });
       }
       const assetCategoryLinks = [...new Set(generatedKinds)];
-      if (assetCategoryLinks.length) {
+      if (assetCategoryLinks.length && !budgetStopped) {
         updateProject(projectId, (project) => ({ ...project, stage: "plan" }));
-        appendConversationMessage(projectId, conversationId, {
-          role: "assistant",
-          content:
-            "资产图片已生成并归档到右侧“项目文件 > 结果 > 资产”。请按分类检查图片；确认无误后回复“继续下一步”，即可生成转绘方案。",
-          assetCategoryLinks,
-        });
+        // 环节「全部目标资产图片 / 角色主图与三视图」需人工审核 → 暂停等确认（现状行为）；
+        // 否则按当前执行模式继续生成转绘方案（在 finally 收尾后推进）。
+        if (pauseAtGate(projectId, "all_asset_images") || pauseAtGate(projectId, "character_images")) {
+          appendConversationMessage(projectId, conversationId, {
+            role: "assistant",
+            content:
+              "资产图片已生成并归档到右侧“项目文件 > 结果 > 资产”。请按分类检查图片；确认无误后回复“继续下一步”，即可生成转绘方案。",
+            assetCategoryLinks,
+          });
+        } else {
+          appendConversationMessage(projectId, conversationId, {
+            role: "assistant",
+            content:
+              "资产图片已生成并归档到右侧“项目文件 > 结果 > 资产”。按当前执行模式继续生成转绘方案。",
+            assetCategoryLinks,
+          });
+          advanceToPlan = true;
+        }
       }
     } catch (error) {
       const detail = error instanceof Error ? error.message : "未知错误";
@@ -3386,6 +3628,9 @@ export default function RestyleStudio() {
       finishRun(projectId, "failed", detail);
     } finally {
       if (!isRunAborted(projectId)) finishRun(projectId);
+    }
+    if (advanceToPlan && !isRunAborted(projectId)) {
+      await runPlanGeneration(projectId, conversationId, styleBrief);
     }
   }
 
@@ -4252,6 +4497,17 @@ export default function RestyleStudio() {
                   </p>
                 </div>
               </div>
+              {activeProject ? (
+                // 「请先确认这 3 项制作规格」表：与右侧选项区读写同一份项目状态，双向即时同步。
+                <RestyleSpecCard
+                  project={activeProject}
+                  videoPricing={videoPricingRows}
+                  currentVideoModel={currentVideoModel}
+                  onPatch={updateProjectSetup}
+                  onConfirm={confirmProductionSpecs}
+                  t={t}
+                />
+              ) : null}
               {(activeConversation?.messages ?? []).map((message) => (
                 <div
                   key={message.id}
@@ -4744,6 +5000,13 @@ export default function RestyleStudio() {
               </button>
             </div>
           </div>
+          <RestyleSetupPanel
+            project={activeProject}
+            videoPricing={videoPricingRows}
+            currentVideoModel={currentVideoModel}
+            onPatch={updateProjectSetup}
+            t={t}
+          />
           <RestyleProcessPanel
             project={activeProject}
             isAnalyzing={isAnalyzing}
