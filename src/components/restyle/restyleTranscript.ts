@@ -26,10 +26,15 @@ export interface TranscriptResult {
   degradedReason?: string;
 }
 
-type TranscribeFn = (input: { data: Parameters<typeof identity>[0] }) => Promise<RestyleAsrResult>;
-function identity<T>(value: T): T {
-  return value;
+export interface TranscribeInput {
+  unitId: string;
+  audioBase64: string;
+  format: "wav";
+  sourceStartSeconds: number;
+  durationSec: number;
 }
+
+type TranscribeFn = (input: { data: TranscribeInput }) => Promise<RestyleAsrResult>;
 
 function pcmToWavBase64(pcm: Float32Array, start: number, end: number): Promise<string> {
   const blob = encodeWavPcm16(pcm.slice(start, end), 16_000);
