@@ -106,6 +106,16 @@ export function withStyleBrief(instruction: string, styleBrief: string): string 
 }
 
 /**
+ * 把 ASR 识别出的原片台词拼进方案指令：分段提示词的对白、节奏与情绪
+ * 必须对齐原片台词，没有台词时保持原指令不变。
+ */
+export function withTranscript(instruction: string, transcript?: string): string {
+  const text = (transcript ?? "").trim();
+  if (!text) return instruction;
+  return `${instruction}\n\n【原片台词·ASR，分段提示词的对白与节奏必须与之对齐，不得虚构台词】\n${text.slice(0, 8_000)}`.trim();
+}
+
+/**
  * 资产图最终提示词的来源：用户在「过程与提示词」面板里手工覆盖过（promptOverride）
  * 时优先使用覆盖内容，否则走 buildAssetImagePrompt 自动拼装。
  */
