@@ -86,6 +86,7 @@ import {
   looksLikeStyleBrief,
   resolveAssetImagePrompt,
   withStyleBrief,
+  withTranscript,
   type CharacterRelationBrief,
 } from "./restylePrompt";
 import {
