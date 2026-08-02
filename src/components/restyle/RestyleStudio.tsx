@@ -1914,13 +1914,110 @@ export default function RestyleStudio() {
     return await upload;
   }
 
-  function completeRenderQueue(projectId: string, conversationId: string, finalEpisodes: string[]) {
+  /**
+   * 分段全部跑完后合成整集成片：按 segmentId 顺序取本集 video_clip 的结果 URL，
+   * 交给外部转码服务 concat（原片音轨随分段视频自带，不做二次混音）。
+   * 任一分段缺结果就把成片标记为失败并说明缺哪些段，不做静默拼接。
+   */
+  async function stitchFinalEpisodes(projectId: string, episodes: string[]) {
+    for (const episode of episodes) {
+      const project = projectsRef.current.find((item) => item.id === projectId);
+      const finalAttachment = project?.files.find(
+        (file) => file.generatedKind === "final_video" && file.episode === episode,
+      );
+      if (!finalAttachment) continue;
+      const clips = (project?.files ?? [])
+        .filter((file) => file.generatedKind === "video_clip" && file.episode === episode)
+        .sort((a, b) => (a.segmentId ?? "").localeCompare(b.segmentId ?? "", "zh-Hans-CN"));
+      const missing = clips.filter((clip) => !clip.url || !/^https?:\/\//i.test(clip.url));
+      if (!clips.length || missing.length) {
+        failRenderAttachment(
+          projectId,
+          finalAttachment.id,
+          clips.length
+            ? `以下分段还没有可用视频，成片未合成：${missing.map((clip) => clip.segmentId ?? clip.name).join("、")}`
+            : "本集没有已生成的分段视频，成片未合成。",
+        );
+        continue;
+      }
+      updateRenderAttachments(
+        projectId,
+        (file) => file.id === finalAttachment.id,
+        (file) => ({ ...file, renderStatus: "running", renderProgress: 20 }),
+      );
+      appendRenderLog(
+        projectId,
+        finalAttachment.id,
+        `开始按顺序合成 ${clips.length} 个分段：${clips.map((clip) => clip.segmentId ?? clip.name).join(" → ")}`,
+      );
+      try {
+        const submitted = await callSubmitVideoStitchJob({
+          data: {
+            clips: clips.map((clip) => ({ url: clip.url as string })),
+            outputName: finalAttachment.name,
+          },
+        });
+        if (!submitted.ok) {
+          failRenderAttachment(projectId, finalAttachment.id, submitted.error);
+          continue;
+        }
+        if (submitted.url) {
+          completeRenderAttachment(projectId, finalAttachment.id, submitted.url, submitted.jobId);
+          continue;
+        }
+        const jobId = submitted.jobId;
+        let stitched = "";
+        let lastError = "合成服务未在预期时间内返回成片。";
+        for (let attempt = 0; attempt < 120; attempt += 1) {
+          if (isRunAborted(projectId)) return;
+          await new Promise((resolve) => setTimeout(resolve, 5_000));
+          const polled = await callPollVideoStitchJob({ data: { jobId } });
+          if (!polled.ok) {
+            lastError = polled.error;
+            break;
+          }
+          updateRenderAttachments(
+            projectId,
+            (file) => file.id === finalAttachment.id,
+            (file) => ({
+              ...file,
+              renderProgress: Math.min(95, Math.max(file.renderProgress ?? 20, polled.progress ?? 0)),
+            }),
+          );
+          if (polled.status === "succeeded" && polled.url) {
+            stitched = polled.url;
+            break;
+          }
+          if (polled.status === "failed") {
+            lastError = polled.error || "合成任务失败。";
+            break;
+          }
+        }
+        if (stitched) completeRenderAttachment(projectId, finalAttachment.id, stitched, jobId);
+        else failRenderAttachment(projectId, finalAttachment.id, lastError, jobId);
+      } catch (error) {
+        failRenderAttachment(
+          projectId,
+          finalAttachment.id,
+          error instanceof Error ? error.message : "成片合成请求失败。",
+        );
+      }
+    }
+  }
+
+  async function completeRenderQueue(
+    projectId: string,
+    conversationId: string,
+    finalEpisodes: string[],
+  ) {
+    if (finalEpisodes.length) await stitchFinalEpisodes(projectId, finalEpisodes);
+    if (isRunAborted(projectId)) return;
     updateProject(projectId, (project) => ({ ...project, stage: "review" }));
     const hasFinalVideos = finalEpisodes.length > 0;
     appendConversationMessage(projectId, conversationId, {
       role: "assistant",
       content: hasFinalVideos
-        ? `${finalEpisodes.join("、")} 的视频任务已处理完成。请在右侧“生成状态”查看每段的真实结果；只有模型返回的视频 URL 才会显示为成片，失败任务会保留错误原因并可重试。`
+        ? `${finalEpisodes.join("、")} 的分段视频已生成，并按顺序合成整集成片（保留分段自带音轨）。请在右侧“生成状态”查看每段与成片的真实结果，失败任务会保留错误原因并可重试。`
         : "局部返工片段已按队列逐个生成完成。只更新了问题片段，没有重跑整集或整部剧。",
       finalEpisodeLinks: hasFinalVideos ? finalEpisodes : undefined,
     });
