@@ -1749,6 +1749,7 @@ export const en: Translations = {
   restyle_run_step_asset_table: "Building asset table",
   restyle_run_step_asset_images: "Generating asset images",
   restyle_run_step_asset_image_one: "Generating asset image: ",
+  restyle_run_step_transcribe: "Transcribing source dialogue",
   restyle_run_step_plan: "Generating restyle plan",
   restyle_run_step_prompt_update: "Updating segment prompts",
 };

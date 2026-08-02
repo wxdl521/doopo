@@ -179,7 +179,7 @@ async function captureUnitFrames(
  * 无音轨 / 解码失败返回 null（服务端走 no_audio 降级路径）。
  * 注意：decodeAudioData 会把整段 PCM 放进内存，调用方按 AUDIO_DECODE_MAX_BYTES 把关。
  */
-async function decodeToMono16k(file: File, durationSec: number): Promise<Float32Array | null> {
+export async function decodeToMono16k(file: File, durationSec: number): Promise<Float32Array | null> {
   let decoded: AudioBuffer;
   const ctx = new AudioContext();
   try {

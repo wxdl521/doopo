@@ -50,6 +50,8 @@ const InputSchema = z.object({
     .max(30),
   /** Timeline samples spanning the complete source video. Qwen receives them as image_url parts. */
   frameImages: z.array(z.string().startsWith("data:image/").max(500_000)).max(24).default([]),
+  /** ASR 通道产出的整集台词（带时间码）。为空表示无音轨或识别降级。 */
+  transcript: z.string().max(20_000).default(""),
   existingAssets: z.array(AssetSchema).max(60).default([]),
 });
 
@@ -93,13 +95,17 @@ function userText(data: z.infer<typeof InputSchema>): string {
   const previous = data.existingAssets.length
     ? `\n\n[CURRENT ASSET TABLE]\n${JSON.stringify(data.existingAssets)}`
     : "";
-  return `[USER INSTRUCTION]\n${data.instruction}\n\n[SOURCE VIDEO FILES]\n${files}${previous}\n\n[ANALYSIS SECTIONS]\nAlso return an analysis object with four concise strings: plot, videoUnderstanding, dialogue, and assets. Keep the asset table unchanged; do not invent dialogue when it cannot be confirmed.`;
+  const transcript = data.transcript.trim()
+    ? `\n\n[SOURCE DIALOGUE (ASR, 带时间码，来自原片音轨)]\n${data.transcript.trim().slice(0, 12_000)}\n台词是可信证据：角色身份、关系、场景与剧情理解优先依据台词，不得与台词冲突。`
+    : "\n\n[SOURCE DIALOGUE]\n原片没有可用音轨或识别失败，不得虚构台词。";
+  return `[USER INSTRUCTION]\n${data.instruction}\n\n[SOURCE VIDEO FILES]\n${files}${transcript}${previous}\n\n[ANALYSIS SECTIONS]\nAlso return an analysis object with four concise strings: plot, videoUnderstanding, dialogue, and assets. dialogue 必须基于上面的 ASR 台词做摘要（引用关键台词），没有台词时写明未识别到台词。Keep the asset table unchanged; do not invent dialogue when it cannot be confirmed.`;
 }
 
 function normalizeResult(
   content: string,
   model: string,
   usedFrames: boolean,
+  transcript = "",
 ): RestyleAnalysisResult {
   try {
     const parsed = parseJson(content) as {
@@ -141,12 +147,18 @@ function normalizeResult(
         videoUnderstanding: usedFrames
           ? "已结合关键帧完成画面、镜头和动作理解。"
           : "已完成原片结构分析；当前模型未读取关键帧。",
-        dialogue: "未返回可确认的台词文本，请在原片分析中补充或校对。",
+        dialogue: transcript
+          ? transcript.slice(0, 4_000)
+          : "未返回可确认的台词文本，请在原片分析中补充或校对。",
         assets: assets.length
           ? assets.map((asset) => asset.sourceName).join("、")
           : "未识别到需要单独转绘的资产。",
       },
     );
+    // 模型没写 dialogue（或只回了占位）时，直接落 ASR 原文，保证台词不丢。
+    if (transcript && (!analysis.dialogue.trim() || /未返回|无法确认|未识别/.test(analysis.dialogue))) {
+      analysis.dialogue = transcript.slice(0, 4_000);
+    }
     return { ok: true, summary, assets, relationships, analysis, model, usedFrames };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "资产表解析失败" };
@@ -234,7 +246,7 @@ export const analyzeRestyleAssets = createServerFn({ method: "POST" })
       if (typeof content !== "string" || !content.trim()) {
         return { ok: false, error: `${config.label} 未返回资产表内容。` };
       }
-      return normalizeResult(content, model, canReadFrames);
+      return normalizeResult(content, model, canReadFrames, data.transcript);
     } catch (error) {
       return {
         ok: false,

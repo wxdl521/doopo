@@ -50,6 +50,9 @@ import {
 } from "./restyleStorage";
 import type { RestyleAsset, RestyleStage } from "./restyleTypes";
 import { analyzeRestyleAssets, generateRestylePlan } from "../../lib/restyleAnalysis.functions";
+import { transcribeRestyleAudio } from "../../lib/restyleAudio.functions";
+import { pollVideoStitchJob, submitVideoStitchJob } from "../../lib/videoStitch.functions";
+import { transcribeSourceVideo } from "./restyleTranscript";
 import { reviewRestyleAssetTable } from "../../lib/restyle/restyleAssetReview.functions";
 import type { AssetReviewIssue, AssetReviewVerdict } from "../../lib/restyle/assetReview";
 import {
@@ -83,6 +86,7 @@ import {
   looksLikeStyleBrief,
   resolveAssetImagePrompt,
   withStyleBrief,
+  withTranscript,
   type CharacterRelationBrief,
 } from "./restylePrompt";
 import {
@@ -987,6 +991,9 @@ export default function RestyleStudio() {
   const callCreateMediaUploadUrl = useServerFn(createMediaUploadUrl);
   const callPersistAssetImage = useServerFn(persistAssetImage);
   const callReviewRestyleAssetTable = useServerFn(reviewRestyleAssetTable);
+  const callTranscribeRestyleAudio = useServerFn(transcribeRestyleAudio);
+  const callSubmitVideoStitchJob = useServerFn(submitVideoStitchJob);
+  const callPollVideoStitchJob = useServerFn(pollVideoStitchJob);
 
   const activeProject = projects.find((project) => project.id === activeProjectId);
   // projects 的最新快照：异步回调按 projectId 取自己项目的字段（如目标画风），
@@ -1907,13 +1914,99 @@ export default function RestyleStudio() {
     return await upload;
   }
 
-  function completeRenderQueue(projectId: string, conversationId: string, finalEpisodes: string[]) {
+  /**
+   * 分段全部跑完后合成整集成片：按 segmentId 顺序取本集 video_clip 的结果 URL，
+   * 交给外部转码服务 concat（原片音轨随分段视频自带，不做二次混音）。
+   * 任一分段缺结果就把成片标记为失败并说明缺哪些段，不做静默拼接。
+   */
+  async function stitchFinalEpisodes(projectId: string, episodes: string[]) {
+    for (const episode of episodes) {
+      const project = projectsRef.current.find((item) => item.id === projectId);
+      const finalAttachment = project?.files.find(
+        (file) => file.generatedKind === "final_video" && file.episode === episode,
+      );
+      if (!finalAttachment) continue;
+      const clips = (project?.files ?? [])
+        .filter((file) => file.generatedKind === "video_clip" && file.episode === episode)
+        .sort((a, b) => (a.segmentId ?? "").localeCompare(b.segmentId ?? "", "zh-Hans-CN"));
+      const missing = clips.filter((clip) => !clip.url || !/^https?:\/\//i.test(clip.url));
+      if (!clips.length || missing.length) {
+        failRenderAttachment(
+          projectId,
+          finalAttachment.id,
+          clips.length
+            ? `以下分段还没有可用视频，成片未合成：${missing.map((clip) => clip.segmentId ?? clip.name).join("、")}`
+            : "本集没有已生成的分段视频，成片未合成。",
+        );
+        continue;
+      }
+      updateRenderAttachments(
+        projectId,
+        (file) => file.id === finalAttachment.id,
+        (file) => ({ ...file, renderStatus: "running", renderProgress: 20 }),
+      );
+      appendRenderLog(
+        projectId,
+        finalAttachment.id,
+        `开始按顺序合成 ${clips.length} 个分段：${clips.map((clip) => clip.segmentId ?? clip.name).join(" → ")}`,
+      );
+      try {
+        const submitted = await callSubmitVideoStitchJob({
+          data: { episode, clips: clips.map((clip) => clip.url as string) },
+        });
+        if (!submitted.ok) {
+          failRenderAttachment(projectId, finalAttachment.id, submitted.error);
+          continue;
+        }
+        const jobId = submitted.jobId;
+        let stitched = "";
+        let lastError = "合成服务未在预期时间内返回成片。";
+        for (let attempt = 0; attempt < 120; attempt += 1) {
+          if (isRunAborted(projectId)) return;
+          await new Promise((resolve) => setTimeout(resolve, 5_000));
+          const polled = await callPollVideoStitchJob({ data: { jobId } });
+          if (!polled.ok) {
+            lastError = polled.error;
+            break;
+          }
+          if (polled.status === "succeeded") {
+            stitched = polled.videoUrl;
+            break;
+          }
+          updateRenderAttachments(
+            projectId,
+            (file) => file.id === finalAttachment.id,
+            (file) => ({
+              ...file,
+              renderProgress: Math.min(95, (file.renderProgress ?? 20) + 2),
+            }),
+          );
+        }
+        if (stitched) completeRenderAttachment(projectId, finalAttachment.id, stitched, jobId);
+        else failRenderAttachment(projectId, finalAttachment.id, lastError, jobId);
+      } catch (error) {
+        failRenderAttachment(
+          projectId,
+          finalAttachment.id,
+          error instanceof Error ? error.message : "成片合成请求失败。",
+        );
+      }
+    }
+  }
+
+  async function completeRenderQueue(
+    projectId: string,
+    conversationId: string,
+    finalEpisodes: string[],
+  ) {
+    if (finalEpisodes.length) await stitchFinalEpisodes(projectId, finalEpisodes);
+    if (isRunAborted(projectId)) return;
     updateProject(projectId, (project) => ({ ...project, stage: "review" }));
     const hasFinalVideos = finalEpisodes.length > 0;
     appendConversationMessage(projectId, conversationId, {
       role: "assistant",
       content: hasFinalVideos
-        ? `${finalEpisodes.join("、")} 的视频任务已处理完成。请在右侧“生成状态”查看每段的真实结果；只有模型返回的视频 URL 才会显示为成片，失败任务会保留错误原因并可重试。`
+        ? `${finalEpisodes.join("、")} 的分段视频已生成，并按顺序合成整集成片（保留分段自带音轨）。请在右侧“生成状态”查看每段与成片的真实结果，失败任务会保留错误原因并可重试。`
         : "局部返工片段已按队列逐个生成完成。只更新了问题片段，没有重跑整集或整部剧。",
       finalEpisodeLinks: hasFinalVideos ? finalEpisodes : undefined,
     });
@@ -2329,7 +2422,8 @@ export default function RestyleStudio() {
       .map((file) => file.episode)
       .filter((episode): episode is string => Boolean(episode));
     const jobs = attachments
-      .filter((file) => file.generatedKind === "video_clip" || file.generatedKind === "final_video")
+      // 成片不再交给视频模型整集重跑：分段跑完后由外部转码服务按顺序拼接（见 stitchFinalEpisodes）。
+      .filter((file) => file.generatedKind === "video_clip")
       .map((file) => {
         const episode = planEpisodes.find((item) => item.episode === file.episode);
         const segment = episode?.segments.find((item) => item.id === file.segmentId);
@@ -2338,11 +2432,8 @@ export default function RestyleStudio() {
         return {
           attachmentId: file.id,
           prompt:
-            file.generatedKind === "final_video"
-              ? (episode?.segments.map((item) => `${item.id}: ${item.prompt}`).join("\n\n") ||
-                "保持角色、场景、动作、镜头与节奏一致，生成符合已确认转绘资产的完整转绘视频。")
-              : (segment?.prompt ||
-                "保持角色、场景、动作、镜头与节奏一致，生成符合已确认转绘资产的短视频。"),
+            segment?.prompt ||
+            "保持角色、场景、动作、镜头与节奏一致，生成符合已确认转绘资产的短视频。",
           referenceImages,
           source,
         };
@@ -2838,7 +2929,10 @@ export default function RestyleStudio() {
       const result = await callGenerateRestylePlan({
         data: {
           model: selectedModel,
-          instruction: withRelationBrief(withStyleBrief(activeProject.planNote, styleBrief)),
+          instruction: withTranscript(
+            withRelationBrief(withStyleBrief(activeProject.planNote, styleBrief)),
+            activeProject.transcript,
+          ),
           sourceFiles: (sourceFiles.length ? sourceFiles : activeProject.files).map((file) => ({
             id: file.episode ?? file.id,
             name: file.name,
@@ -2884,7 +2978,10 @@ export default function RestyleStudio() {
       const result = await callGenerateRestylePlan({
         data: {
           model: selectedModel,
-          instruction: withRelationBrief(withStyleBrief(message, styleBrief)),
+          instruction: withTranscript(
+            withRelationBrief(withStyleBrief(message, styleBrief)),
+            activeProject.transcript,
+          ),
           sourceFiles: (sourceFiles.length ? sourceFiles : activeProject.files).map((file) => ({
             id: file.episode ?? file.id,
             name: file.name,
@@ -3022,6 +3119,30 @@ export default function RestyleStudio() {
       // Keep chronological coverage for the full upload, including multi-episode uploads.
       const frameImages = frameBatches.flatMap((batch) => batch.frames).slice(0, 8);
       if (isRunAborted(projectId)) return;
+      // 音频通道：抽 16k 单声道 WAV 分片走网关 ASR，台词作为分析与方案的可信证据。
+      // 无音轨 / 源片过大 / 网关拒绝 input_audio 时返回空台词并继续，不阻断分析。
+      const transcriptSource = fileObjectsRef.current[sourceFiles[0].id];
+      let transcriptText = "";
+      if (transcriptSource) {
+        markRunStep(projectId, t.restyle_run_step_transcribe);
+        const transcript = await transcribeSourceVideo(
+          transcriptSource,
+          (input) => callTranscribeRestyleAudio(input),
+          {
+            isAborted: () => isRunAborted(projectId),
+            onProgress: (done, total) =>
+              markRunStep(projectId, `${t.restyle_run_step_transcribe} ${done}/${total}`),
+          },
+        );
+        transcriptText = transcript.text;
+        if (!transcriptText && transcript.degradedReason) {
+          appendConversationMessage(projectId, conversationId, {
+            role: "assistant",
+            content: `原片台词识别未产出结果：${transcript.degradedReason} 分析将只依据画面进行，台词相关设定请人工补充。`,
+          });
+        }
+      }
+      if (isRunAborted(projectId)) return;
       markRunStep(projectId, t.restyle_run_step_analyze, selectedModel);
       const result = await callAnalyzeRestyleAssets({
         data: {
@@ -3034,6 +3155,7 @@ export default function RestyleStudio() {
             size: file.size,
           })),
           frameImages,
+          transcript: transcriptText,
           existingAssets: activeProject.extractedAssets.map(({ id: _id, ...asset }) => asset),
         },
       });
@@ -3094,6 +3216,7 @@ export default function RestyleStudio() {
         stage: "assets",
         extractedAssets,
         analysisSummary: result.summary,
+        transcript: transcriptText || project.transcript,
         analysisSections: Object.fromEntries(
           sourceFiles.map((file) => [file.episode ?? file.id, result.analysis]),
         ) as Record<string, RestyleAnalysisSections>,
