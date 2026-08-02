@@ -232,6 +232,51 @@ export type Database = {
         }
         Relationships: []
       }
+      model_pricing: {
+        Row: {
+          created_at: string | null
+          credits: number
+          enabled: boolean
+          id: string
+          is_default: boolean
+          kind: string
+          label: string
+          model_id: string
+          note: string | null
+          resolution: string | null
+          sort_order: number
+          updated_at: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          credits: number
+          enabled?: boolean
+          id?: string
+          is_default?: boolean
+          kind: string
+          label: string
+          model_id: string
+          note?: string | null
+          resolution?: string | null
+          sort_order?: number
+          updated_at?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          credits?: number
+          enabled?: boolean
+          id?: string
+          is_default?: boolean
+          kind?: string
+          label?: string
+          model_id?: string
+          note?: string | null
+          resolution?: string | null
+          sort_order?: number
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       password_audit_log: {
         Row: {
           action: string
@@ -820,9 +865,14 @@ export type Database = {
       }
       restyle_projects: {
         Row: {
+          aspect: string | null
+          asset_image_source: string | null
+          auto_budget: number | null
           created_at: string | null
+          execution_mode: string | null
           id: string
           image_model: string | null
+          manual_gates: Json | null
           stage: string
           style_brief: string | null
           text_model: string | null
@@ -831,11 +881,17 @@ export type Database = {
           user_id: string
           video_model: string | null
           vision_model: string | null
+          voice_source: string | null
         }
         Insert: {
+          aspect?: string | null
+          asset_image_source?: string | null
+          auto_budget?: number | null
           created_at?: string | null
+          execution_mode?: string | null
           id: string
           image_model?: string | null
+          manual_gates?: Json | null
           stage?: string
           style_brief?: string | null
           text_model?: string | null
@@ -844,11 +900,17 @@ export type Database = {
           user_id: string
           video_model?: string | null
           vision_model?: string | null
+          voice_source?: string | null
         }
         Update: {
+          aspect?: string | null
+          asset_image_source?: string | null
+          auto_budget?: number | null
           created_at?: string | null
+          execution_mode?: string | null
           id?: string
           image_model?: string | null
+          manual_gates?: Json | null
           stage?: string
           style_brief?: string | null
           text_model?: string | null
@@ -857,6 +919,7 @@ export type Database = {
           user_id?: string
           video_model?: string | null
           vision_model?: string | null
+          voice_source?: string | null
         }
         Relationships: []
       }
