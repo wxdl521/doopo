@@ -104,6 +104,8 @@ export type RestyleProject = {
   planNote: string;
   /** 用户描述的目标画风，所有资产图与方案提示词都必须沿用。 */
   styleBrief?: string;
+  /** ASR 通道识别出的原片台词（带时间码），供分析、方案与分段提示词复用。 */
+  transcript?: string;
   extractedAssets: RestyleExtractedAsset[];
   analysisSummary: string;
   analysisSections?: Record<string, RestyleAnalysisSections>;
@@ -393,6 +395,7 @@ function parseProject(value: unknown): RestyleProject | null {
         : (migratedConversations[0]?.id ?? null),
     planNote: typeof item.planNote === "string" ? item.planNote : "",
     styleBrief: typeof item.styleBrief === "string" ? item.styleBrief : "",
+    transcript: typeof item.transcript === "string" ? item.transcript : undefined,
     extractedAssets: parseExtractedAssets(item.extractedAssets),
     analysisSummary: typeof item.analysisSummary === "string" ? item.analysisSummary : "",
     analysisSections,
