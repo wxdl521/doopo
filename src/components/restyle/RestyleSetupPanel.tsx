@@ -8,7 +8,7 @@
 //    与本面板读写同一份项目状态，任一侧改动即时同步
 // ====================================================================
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Check, ChevronDown, Clapperboard, Gauge, SlidersHorizontal, X, Zap } from "lucide-react";
 import type { Translations } from "../../i18n/zh";
 import type { ModelPricingRow } from "../../lib/modelPricingCache";
@@ -181,11 +181,7 @@ export function RestyleSetupPanel({
   t,
 }: PanelProps) {
   const config = resolveExecutionConfig(project);
-  const [pendingMode, setPendingMode] = useState<RestyleExecutionMode>(config.executionMode);
-  // 切换项目 / 外部（聊天规格表）改模式时同步待应用卡片，保证双向外显一致。
-  useEffect(() => {
-    setPendingMode(config.executionMode);
-  }, [project?.id, config.executionMode]);
+  // 模式卡片点击即生效（onPatch 直写项目状态），与聊天规格卡双向即时联动。
   const [modelDialogOpen, setModelDialogOpen] = useState(false);
   const appliedMode = config.executionMode;
   const currentPricing = useMemo(
@@ -206,12 +202,12 @@ export function RestyleSetupPanel({
       {/* 1. 执行模式三选一卡片 + 应用按钮 */}
       <div className="space-y-1.5">
         {MODE_META.map(({ mode, titleKey, descKey, icon: Icon }) => {
-          const selected = pendingMode === mode;
+          const selected = appliedMode === mode;
           return (
             <button
               key={mode}
               type="button"
-              onClick={() => setPendingMode(mode)}
+              onClick={() => project && onPatch({ executionMode: mode })}
               aria-pressed={selected}
               className={`flex w-full items-start gap-2 rounded-lg border px-2.5 py-2 text-left ${
                 selected
@@ -236,14 +232,6 @@ export function RestyleSetupPanel({
             </button>
           );
         })}
-        <button
-          type="button"
-          onClick={() => onPatch({ executionMode: pendingMode })}
-          disabled={!project || pendingMode === appliedMode}
-          className="btn-primary w-full !py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {t.restyle_setup_apply}
-        </button>
       </div>
 
       {/* 极速模式：仍保留总预算输入（预算超限强制暂停） */}
