@@ -246,7 +246,7 @@ export const analyzeRestyleAssets = createServerFn({ method: "POST" })
       if (typeof content !== "string" || !content.trim()) {
         return { ok: false, error: `${config.label} 未返回资产表内容。` };
       }
-      return normalizeResult(content, model, canReadFrames);
+      return normalizeResult(content, model, canReadFrames, data.transcript);
     } catch (error) {
       return {
         ok: false,
