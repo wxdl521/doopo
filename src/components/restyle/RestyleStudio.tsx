@@ -1952,17 +1952,10 @@ export default function RestyleStudio() {
       );
       try {
         const submitted = await callSubmitVideoStitchJob({
-          data: {
-            clips: clips.map((clip) => ({ url: clip.url as string })),
-            outputName: finalAttachment.name,
-          },
+          data: { episode, clips: clips.map((clip) => clip.url as string) },
         });
         if (!submitted.ok) {
           failRenderAttachment(projectId, finalAttachment.id, submitted.error);
-          continue;
-        }
-        if (submitted.url) {
-          completeRenderAttachment(projectId, finalAttachment.id, submitted.url, submitted.jobId);
           continue;
         }
         const jobId = submitted.jobId;
@@ -1976,22 +1969,18 @@ export default function RestyleStudio() {
             lastError = polled.error;
             break;
           }
+          if (polled.status === "succeeded") {
+            stitched = polled.videoUrl;
+            break;
+          }
           updateRenderAttachments(
             projectId,
             (file) => file.id === finalAttachment.id,
             (file) => ({
               ...file,
-              renderProgress: Math.min(95, Math.max(file.renderProgress ?? 20, polled.progress ?? 0)),
+              renderProgress: Math.min(95, (file.renderProgress ?? 20) + 2),
             }),
           );
-          if (polled.status === "succeeded" && polled.url) {
-            stitched = polled.url;
-            break;
-          }
-          if (polled.status === "failed") {
-            lastError = polled.error || "合成任务失败。";
-            break;
-          }
         }
         if (stitched) completeRenderAttachment(projectId, finalAttachment.id, stitched, jobId);
         else failRenderAttachment(projectId, finalAttachment.id, lastError, jobId);
