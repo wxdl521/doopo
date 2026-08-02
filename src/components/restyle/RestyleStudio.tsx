@@ -1300,7 +1300,7 @@ export default function RestyleStudio() {
     if (!isProjectRunning(projectId)) return;
     runAbortRef.current[projectId]?.abort();
     finishRun(projectId, "stopped", t.restyle_run_stopped_step);
-    const project = projects.find((item) => item.id === projectId);
+    const project = projectsRef.current.find((item) => item.id === projectId);
     const conversationId = project?.activeConversationId;
     if (project && conversationId) {
       appendConversationMessage(projectId, conversationId, {
@@ -1939,7 +1939,7 @@ export default function RestyleStudio() {
     const vendor = assetLibraryVendorForModel(input.videoModel);
     // 筷子丽帧以公网 URL 作为视频输入，无需替换 asset://；不支持素材库的模型维持原样提交。
     if (!vendor || vendor === "kuaizi") return result;
-    const cache = projects.find((item) => item.id === input.projectId)?.assetReviewMap ?? {};
+    const cache = projectsRef.current.find((item) => item.id === input.projectId)?.assetReviewMap ?? {};
     const pending: Array<{ url: string; index: number }> = [];
     input.urls.forEach((url, index) => {
       // 素材接口只接受公网 HTTP(S) URL；blob:/data: 交给服务端转存。
@@ -2201,10 +2201,16 @@ export default function RestyleStudio() {
       referenceAssetIds?: string[];
     },
   ) {
-    const project = projects.find((item) => item.id === projectId);
+    // 必须用 projectsRef 取最新项目：本函数常在多次 await（分析→方案→确认）之后
+    // 执行，渲染闭包里的 projects 是发起时的旧快照，可能没有刚写入的源片，
+    // 会误报「没有找到可用于生成的视频源文件」。
+    const project = projectsRef.current.find((item) => item.id === projectId);
     if (!project) return;
-    // 发起时快照视频模型：渲染队列的 await 轮询里只用快照，中途切换项目不会换模型。
-    const videoModel = selectedVideoModel;
+    // 视频模型按目标项目取：持久化值优先；同项目用当前下拉值；跨项目回落默认，
+    // 避免切换项目后 A 的渲染误用 B 的模型。
+    const videoModel =
+      project.videoModel ??
+      (projectId === activeProjectId ? selectedVideoModel : DEFAULT_RESTYLE_VIDEO_MODEL);
     const sourceFiles = project.files.filter(
       (file) => file.type.startsWith("video/") && !file.isFolder,
     );
@@ -2306,9 +2312,15 @@ export default function RestyleStudio() {
       ];
     });
     if (!attachments.length) {
+      // 区分「真的没上传」与「上传还在进行中（url 尚未写回持久地址）」，避免用户误以为源片丢失。
+      const hasUploadingVideo = sourceFiles.some(
+        (file) => !file.url || file.url.startsWith("blob:"),
+      );
       appendConversationMessage(projectId, conversationId, {
         role: "assistant",
-        content: "没有找到可用于生成的视频源文件，请先上传原片后再确认生成。",
+        content: hasUploadingVideo
+          ? "原片仍在上传中，请等待上传完成后再确认生成。"
+          : "没有找到可用于生成的视频源文件，请先上传原片后再确认生成。",
       });
       return;
     }
@@ -2460,10 +2472,15 @@ export default function RestyleStudio() {
   }
 
   function submitVideoRender(project: RestyleProject, conversationId: string) {
+    // 播报也用最新项目与目标项目模型，避免与 generateRenderedVideos 实际下发不一致。
+    const latest = projectsRef.current.find((item) => item.id === project.id) ?? project;
+    const reportModel =
+      latest.videoModel ??
+      (latest.id === activeProjectId ? selectedVideoModel : DEFAULT_RESTYLE_VIDEO_MODEL);
     updateProject(project.id, (current) => ({ ...current, stage: "render" }));
     appendConversationMessage(project.id, conversationId, {
       role: "assistant",
-      content: `已提交 ${project.planEpisodes?.length || project.files.filter((file) => file.type.startsWith("video/") && !file.isFolder).length || 1} 集正式视频生成，任务已进入队列。模型：${selectedVideoModel}。系统会按分段 1 个 1 个生成，全部完成后再合成为成片并返还验收链接。`,
+      content: `已提交 ${latest.planEpisodes?.length || latest.files.filter((file) => file.type.startsWith("video/") && !file.isFolder).length || 1} 集正式视频生成，任务已进入队列。模型：${reportModel}。系统会按分段 1 个 1 个生成，全部完成后再合成为成片并返还验收链接。`,
     });
     generateRenderedVideos(project.id, conversationId);
   }
