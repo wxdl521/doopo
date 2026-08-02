@@ -3125,6 +3125,7 @@ export default function RestyleStudio() {
         stage: "assets",
         extractedAssets,
         analysisSummary: result.summary,
+        transcript: transcriptText || project.transcript,
         analysisSections: Object.fromEntries(
           sourceFiles.map((file) => [file.episode ?? file.id, result.analysis]),
         ) as Record<string, RestyleAnalysisSections>,
