@@ -79,6 +79,7 @@ import {
 import { uploadLocalImage } from "../../lib/uploadImage.functions";
 import { createMediaUploadUrl } from "../../lib/restyleMedia.functions";
 import { persistAssetImage } from "../../lib/workspaceMedia.functions";
+import { persistRestyleVideo } from "../../lib/restyleMedia.functions";
 import { realImageModelOptions, realVideoModels } from "../NewProjectDialog";
 import {
   isConfirmIntent,
@@ -1073,6 +1074,7 @@ export default function RestyleStudio() {
   const callUploadLocalMedia = useServerFn(uploadLocalImage);
   const callCreateMediaUploadUrl = useServerFn(createMediaUploadUrl);
   const callPersistAssetImage = useServerFn(persistAssetImage);
+  const callPersistRestyleVideo = useServerFn(persistRestyleVideo);
   const callReviewRestyleAssetTable = useServerFn(reviewRestyleAssetTable);
   const callTranscribeRestyleAudio = useServerFn(transcribeRestyleAudio);
   const callSubmitVideoStitchJob = useServerFn(submitVideoStitchJob);
@@ -2275,7 +2277,17 @@ export default function RestyleStudio() {
             }),
           );
         }
-        if (stitched) completeRenderAttachment(projectId, finalAttachment.id, stitched, jobId);
+        if (stitched) {
+          // 转码服务的结果同样是临时链接，先转存到自己的桶再落成最终 URL
+          const persisted = await callPersistRestyleVideo({
+            data: { url: stitched, id: finalAttachment.id },
+          });
+          const finalUrl = persisted.ok ? persisted.url : stitched;
+          if (!persisted.ok) {
+            appendRenderLog(projectId, finalAttachment.id, `成片转存素材库失败（链接可能 24h 后失效）：${persisted.error}`);
+          }
+          completeRenderAttachment(projectId, finalAttachment.id, finalUrl, jobId);
+        }
         else failRenderAttachment(projectId, finalAttachment.id, lastError, jobId);
       } catch (error) {
         failRenderAttachment(
@@ -2562,7 +2574,20 @@ export default function RestyleStudio() {
                 );
               } else {
                 appendRenderLog(projectId, job.attachmentId, `模型任务 ${submitted.taskId} 返回成功。`);
-                completeRenderAttachment(projectId, job.attachmentId, polled.videoUrl, submitted.taskId);
+                // 模型 TOS 链接约 24h 过期，先转存素材库再写回
+                appendRenderLog(projectId, job.attachmentId, "正在转存视频到素材库…");
+                const persisted = await callPersistRestyleVideo({
+                  data: { url: polled.videoUrl, id: job.attachmentId },
+                });
+                const finalUrl = persisted.ok ? persisted.url : polled.videoUrl;
+                appendRenderLog(
+                  projectId,
+                  job.attachmentId,
+                  persisted.ok
+                    ? "已转存素材库，链接长期有效。"
+                    : `转存失败（链接可能 24h 后失效）：${persisted.error}`,
+                );
+                completeRenderAttachment(projectId, job.attachmentId, finalUrl, submitted.taskId);
               }
               break;
             }

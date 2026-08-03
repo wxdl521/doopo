@@ -47,3 +47,41 @@ export const createMediaUploadUrl = createServerFn({ method: "POST" })
     }
     return { ok: true as const, uploadUrl: upload.signedUrl, readUrl: pub.publicUrl, path };
   });
+
+const PersistInput = z.object({
+  url: z.string().url().max(2_000),
+  id: z.string().min(1).max(128),
+});
+
+export type PersistVideoResult = { ok: true; url: string } | { ok: false; error: string };
+
+/**
+ * 转存模型产出的视频到 workspace-media（分段/成片通用）。
+ * 模型 TOS 链接约 24h 过期，必须下载后写入自己的桶换永久 URL；
+ * 失败只返回 error，调用方保留原链接并在日志中标注。
+ */
+export const persistRestyleVideo = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((d: unknown) => PersistInput.parse(d))
+  .handler(async ({ data, context }): Promise<PersistVideoResult> => {
+    const { supabase, userId } = context as { supabase: any; userId: string };
+
+    let res: Response;
+    try {
+      res = await fetch(data.url, { signal: AbortSignal.timeout(600_000) });
+    } catch (error) {
+      return { ok: false as const, error: `下载失败: ${error instanceof Error ? error.message : "网络错误"}` };
+    }
+    if (!res.ok) return { ok: false as const, error: `下载失败 HTTP ${res.status}` };
+
+    const buf = await res.arrayBuffer();
+    const path = `${userId}/uploads/restyle-v2/video/${data.id}-${Date.now()}.mp4`;
+    const { error: uploadErr } = await supabase.storage
+      .from(BUCKET)
+      .upload(path, new Blob([buf], { type: "video/mp4" }), { contentType: "video/mp4" });
+    if (uploadErr) return { ok: false as const, error: `转存失败: ${uploadErr.message}` };
+
+    const { data: pub } = supabase.storage.from(BUCKET).getPublicUrl(path);
+    if (!pub?.publicUrl) return { ok: false as const, error: "读取地址生成失败" };
+    return { ok: true as const, url: pub.publicUrl };
+  });
