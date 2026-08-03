@@ -85,7 +85,7 @@ describe("RestyleSetupPanel 目标市场与智能补镜", () => {
     const onPatch = renderPanel(makeProject());
     const toggle = screen.getByRole("button", { name: /智能补镜/ });
     expect(toggle).toHaveAttribute("aria-pressed", "false");
-    expect(toggle).toHaveTextContent("当前版本先记录偏好，补镜执行在下个迭代开放");
+    expect(toggle).toHaveTextContent("AI 将自动填补原片缺失的情绪特写与空镜");
 
     fireEvent.click(toggle);
     expect(onPatch).toHaveBeenCalledWith({ smartInsert: true } satisfies RestyleSetupPatch);

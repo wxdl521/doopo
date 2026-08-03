@@ -52,6 +52,14 @@ import type { RestyleAsset, RestyleStage } from "./restyleTypes";
 import { analyzeRestyleAssets, generateRestylePlan } from "../../lib/restyleAnalysis.functions";
 import { withSegmentDirection } from "../../lib/restyle/shotSchedule";
 import { formatLightingParams } from "../../lib/restyle/cameraDirection";
+import {
+  mergeInsertClips,
+  planInsertJobs,
+  runInsertJobs,
+  type AnchoredInsert,
+  type InsertClipResult,
+  type InsertJob,
+} from "./restyleInserts";
 import { transcribeRestyleAudio } from "../../lib/restyleAudio.functions";
 import { pollVideoStitchJob, submitVideoStitchJob } from "../../lib/videoStitch.functions";
 import { transcribeSourceVideo } from "./restyleTranscript";
@@ -133,6 +141,7 @@ import {
   isOverBudget,
   resolveExecutionConfig,
   shouldPauseAt,
+  type RestyleAspect,
   type RestyleExecutionConfig,
   type RestyleGateId,
 } from "./restyleExecution";
@@ -1082,6 +1091,9 @@ export default function RestyleStudio() {
   const sourceVideoUploadRef = useRef<
     Record<string, Promise<{ ok: true; url: string } | { ok: false; error: string }>>
   >({});
+  // 智能补镜产物：`${projectId}:${episode}` → 已生成的补镜片段（含锚点分段），
+  // 由 stitchFinalEpisodes 在拼接前并入序列；不落 localStorage，刷新后补镜不补跑。
+  const insertClipsRef = useRef<Record<string, InsertClipResult[]>>({});
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const callAnalyzeRestyleAssets = useServerFn(analyzeRestyleAssets);
   const callGenerateRestylePlan = useServerFn(generateRestylePlan);
@@ -2273,6 +2285,24 @@ export default function RestyleStudio() {
         );
         continue;
       }
+      // 智能补镜并入：补镜片段按锚点分段插入拼接序列，原片分段顺序与剪辑点不变；
+      // 缺结果校验只针对原片分段（补镜产物必有 url，锚点缺失的补镜已被 merge 丢弃）。
+      const insertResults = insertClipsRef.current[`${projectId}:${episode}`] ?? [];
+      const insertAnchors: Array<AnchoredInsert<RestyleAttachment>> = insertResults.map(
+        (insert, index) => ({
+          anchorSegmentId: insert.anchorSegmentId,
+          position: insert.position,
+          item: {
+            id: `insert-${episode}-${index + 1}`,
+            name: `补镜_${insert.kind === "closeup" ? "情绪特写" : "空镜"}_${index + 1}.mp4`,
+            size: 0,
+            type: "video/mp4",
+            lastModified: Date.now(),
+            url: insert.url,
+          },
+        }),
+      );
+      const mergedClips = mergeInsertClips(clips, insertAnchors);
       updateRenderAttachments(
         projectId,
         (file) => file.id === finalAttachment.id,
@@ -2281,11 +2311,13 @@ export default function RestyleStudio() {
       appendRenderLog(
         projectId,
         finalAttachment.id,
-        `开始按顺序合成 ${clips.length} 个分段：${clips.map((clip) => clip.segmentId ?? clip.name).join(" → ")}`,
+        insertResults.length
+          ? `开始按顺序合成 ${mergedClips.length} 个片段（含 ${insertResults.length} 个补镜）：${mergedClips.map((clip) => clip.segmentId ?? clip.name).join(" → ")}`
+          : `开始按顺序合成 ${mergedClips.length} 个分段：${mergedClips.map((clip) => clip.segmentId ?? clip.name).join(" → ")}`,
       );
       try {
         const submitted = await callSubmitVideoStitchJob({
-          data: { episode, clips: clips.map((clip) => clip.url as string) },
+          data: { episode, clips: mergedClips.map((clip) => clip.url as string) },
         });
         if (!submitted.ok) {
           failRenderAttachment(projectId, finalAttachment.id, submitted.error);
@@ -2341,8 +2373,14 @@ export default function RestyleStudio() {
     projectId: string,
     conversationId: string,
     finalEpisodes: string[],
+    videoModel: string,
   ) {
-    if (finalEpisodes.length) await stitchFinalEpisodes(projectId, finalEpisodes);
+    if (finalEpisodes.length) {
+      // 智能补镜（P2）：基础分段全部渲染完成后、整集 stitch 前执行；
+      // 任何补镜失败都只跳过该补镜，不影响主片拼接。
+      await runSmartInserts(projectId, finalEpisodes, videoModel);
+      await stitchFinalEpisodes(projectId, finalEpisodes);
+    }
     if (isRunAborted(projectId)) return;
     updateProject(projectId, (project) => ({ ...project, stage: "review" }));
     const hasFinalVideos = finalEpisodes.length > 0;
@@ -2353,6 +2391,177 @@ export default function RestyleStudio() {
         : "局部返工片段已按队列逐个生成完成。只更新了问题片段，没有重跑整集或整部剧。",
       finalEpisodeLinks: hasFinalVideos ? finalEpisodes : undefined,
     });
+  }
+
+  /**
+   * 补镜静帧 → 首帧模式短视频：静帧作首帧（role=first_frame），无参考视频，
+   * duration 取档内最小值（0.5s 特写按 1s 提交），关闭模型自造音轨避免污染
+   * 主片音轨。成功后再转存素材库（临时链接约 24h 过期），转存失败沿用原链接。
+   */
+  async function generateInsertVideo(input: {
+    projectId: string;
+    job: InsertJob;
+    stillUrl: string;
+    durationSec: number;
+    videoModel: string;
+    aspect: RestyleAspect;
+  }): Promise<{ ok: boolean; url?: string; error?: string }> {
+    try {
+      const content = [
+        { type: "text", text: input.job.prompt },
+        {
+          type: "image_url",
+          image_url: { url: input.stillUrl },
+          role: "first_frame" as const,
+        },
+      ];
+      const submitted = await callSubmitVideoTask({
+        data: {
+          content,
+          model: input.videoModel,
+          ratio: input.aspect,
+          resolution: "720P",
+          duration: input.durationSec,
+          generateAudio: false,
+          watermark: false,
+        },
+      });
+      if (!submitted.ok || !submitted.taskId) {
+        return { ok: false, error: submitted.ok ? "视频模型没有返回任务编号" : submitted.error };
+      }
+      for (let attempt = 0; attempt < 120; attempt += 1) {
+        if (isRunAborted(input.projectId)) return { ok: false, error: "任务已中止" };
+        await new Promise((resolve) => setTimeout(resolve, 5_000));
+        let polled: Awaited<ReturnType<typeof callPollVideoTask>>;
+        try {
+          polled = await callPollVideoTask({
+            data: { taskId: submitted.taskId, backend: submitted.backend },
+          });
+        } catch {
+          // 轮询幂等，短暂网络抖动不判失败。
+          continue;
+        }
+        if (!polled.ok) {
+          if (polled.status === "failed" || polled.status === "cancelled") {
+            return { ok: false, error: polled.error };
+          }
+          continue;
+        }
+        if (polled.status === "succeeded") {
+          if (!polled.videoUrl) {
+            return { ok: false, error: "视频任务已完成但没有返回可播放的结果 URL" };
+          }
+          const persisted = await callPersistRestyleVideo({
+            data: { url: polled.videoUrl, id: `insert-${input.job.anchorShotNo}` },
+          });
+          return { ok: true, url: persisted.ok ? persisted.url : polled.videoUrl };
+        }
+        if (polled.status === "failed" || polled.status === "cancelled") {
+          return {
+            ok: false,
+            error: `补镜视频任务${polled.status === "cancelled" ? "已取消" : "失败"}`,
+          };
+        }
+      }
+      return { ok: false, error: "补镜视频生成超时" };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "补镜视频请求失败" };
+    }
+  }
+
+  /**
+   * 智能补镜执行链（仅在 project.smartInsert 开启且有逐镜表时运行）：
+   * planInsertJobs 规划触发点 → A 类带同场角色资产图走 I2I 出大特写静帧
+   * （光线 +20% 破格写入 prompt），B 类文生图出空镜静帧 → 静帧转短视频 →
+   * 结果存 insertClipsRef，由 stitchFinalEpisodes 并入拼接序列。
+   * 日志逐条写在该集成片的任务日志里；整体不抛错，失败只跳过对应补镜。
+   */
+  async function runSmartInserts(projectId: string, episodes: string[], videoModel: string) {
+    const project = projectsRef.current.find((item) => item.id === projectId);
+    if (!project?.smartInsert || !project.shotSchedule?.length) return;
+    const market = project.targetMarket ?? "kr";
+    const imageModel = project.imageModel ?? selectedImageModel;
+    // A 类面部锚定参考：同项目角色资产图（面部特征 + 服装风格 Tag 软引导，不强锁）。
+    const characterRefs = project.files
+      .filter(
+        (file) =>
+          file.generatedKind === "character" && file.url && /^https?:\/\//i.test(file.url),
+      )
+      .map((file) => file.url as string)
+      .slice(0, 4);
+    const jobs = planInsertJobs({
+      shots: project.shotSchedule,
+      smartInsert: project.smartInsert,
+      market,
+      styleBrief: project.styleBrief,
+      characterReferenceImages: characterRefs,
+    });
+    for (const episode of episodes) {
+      if (isRunAborted(projectId)) return;
+      const current = projectsRef.current.find((item) => item.id === projectId);
+      const finalAttachment = current?.files.find(
+        (file) => file.generatedKind === "final_video" && file.episode === episode,
+      );
+      if (!finalAttachment) continue;
+      const logId = finalAttachment.id;
+      if (!jobs.length) {
+        appendRenderLog(projectId, logId, t.restyle_insert_log_none);
+        continue;
+      }
+      if (budgetExceeded(projectId, videoJobCost(videoModel))) {
+        appendRenderLog(projectId, logId, t.restyle_insert_log_budget);
+        continue;
+      }
+      appendRenderLog(
+        projectId,
+        logId,
+        t.restyle_insert_log_start.replace("{count}", String(jobs.length)),
+      );
+      const results = await runInsertJobs(jobs, {
+        generateImage: async ({ prompt }) => {
+          const result = await callGenerateImage({
+            data: { prompt, model: imageModel, size: "2K" },
+          });
+          return { url: result.url || undefined, error: result.error };
+        },
+        generateImageWithReferences: async ({ prompt, referenceImages }) => {
+          const result = await callGenerateImageWithReferences({
+            data: { prompt, model: imageModel, size: "2K", referenceImages },
+          });
+          return { url: result.url || undefined, error: result.error };
+        },
+        stillToVideo: ({ job, stillUrl, durationSec }) =>
+          generateInsertVideo({
+            projectId,
+            job,
+            stillUrl,
+            durationSec,
+            videoModel,
+            aspect: current?.aspect ?? "9:16",
+          }),
+        onJobStart: (job) =>
+          appendRenderLog(
+            projectId,
+            logId,
+            job.kind === "closeup"
+              ? t.restyle_insert_log_closeup_generating
+              : t.restyle_insert_log_establishing_generating,
+          ),
+        onJobDone: () => appendRenderLog(projectId, logId, t.restyle_insert_log_done),
+        onJobSkipped: (_job, reason) =>
+          appendRenderLog(projectId, logId, `${t.restyle_insert_log_skipped}${reason}`),
+        isAborted: () => isRunAborted(projectId),
+      });
+      insertClipsRef.current[`${projectId}:${episode}`] = results;
+      if (results.length) {
+        chargeSpend(projectId, videoJobCost(videoModel) * results.length);
+        appendRenderLog(
+          projectId,
+          logId,
+          t.restyle_insert_log_merge.replace("{count}", String(results.length)),
+        );
+      }
+    }
   }
 
   /**
@@ -2445,7 +2654,7 @@ export default function RestyleStudio() {
   ): Promise<void> {
     const job = jobs[index];
     if (!job) {
-      completeRenderQueue(projectId, conversationId, finalEpisodes);
+      completeRenderQueue(projectId, conversationId, finalEpisodes, videoModel);
       return;
     }
     // 预算校验：任何模式下累计消耗达上限即强制暂停，不再提交后续分段。

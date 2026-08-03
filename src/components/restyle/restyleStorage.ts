@@ -141,7 +141,7 @@ export type RestyleProject = {
   shotSchedule?: DirectionShot[];
   /** 目标市场（光照预设 + 俚语本土化口径），默认 kr。 */
   targetMarket?: Market;
-  /** ✨ 智能补镜开关：当前版本只记录偏好，补镜执行在下个迭代开放。 */
+  /** ✨ 智能补镜开关：开启后基础渲染完成时自动补情绪特写与空镜（见 restyleInserts）。 */
   smartInsert?: boolean;
 };
 

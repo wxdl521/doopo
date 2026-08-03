@@ -1849,7 +1849,18 @@ export const en: Translations = {
   restyle_setup_lighting_dim_skin: "Skin tone offset",
   restyle_setup_smart_insert: "✨ Smart insert shots",
   restyle_setup_smart_insert_desc:
-    "When enabled, AI automatically fills in missing emotional close-ups and establishing shots (this version only records the preference; insert-shot execution ships in the next iteration)",
+    "When enabled, AI automatically fills in missing emotional close-ups and establishing shots (a 0.5s close-up at emotional peaks, a 1s establishing shot at scene changes, without altering the original edit points)",
+  restyle_insert_log_start:
+    "Smart insert: {count} insert trigger(s) found, generating insert clips one by one.",
+  restyle_insert_log_none:
+    "Smart insert: no close-up/establishing triggers found, stitching the main video directly.",
+  restyle_insert_log_budget:
+    "Budget cap reached; smart insert skipped, stitching the main video directly.",
+  restyle_insert_log_closeup_generating: "Insert: generating emotional close-up…",
+  restyle_insert_log_establishing_generating: "Insert: generating establishing shot…",
+  restyle_insert_log_done: "Insert clip generated.",
+  restyle_insert_log_skipped: "Insert skipped: ",
+  restyle_insert_log_merge: "{count} insert clip(s) generated and merged into the stitch sequence.",
   restyle_setup_video_model: "Video model",
   restyle_setup_choose_model: "Choose model",
   restyle_setup_model_dialog_title: "Choose a video model",
