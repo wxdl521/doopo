@@ -11,8 +11,10 @@
 
 import {
   buildDirectionBlock,
+  customLightingPreset,
   LIGHTING_PRESETS,
   resolveLighting,
+  type CustomLightingInput,
   type DirectionShot,
   type LightingParams,
   type Market,
@@ -136,6 +138,8 @@ export interface SegmentDirectionOptions {
   segmentDurationMs?: number;
   /** 当前着装状态描述（软引导，透传给调度块【服装引导】段）。 */
   clothingState?: string;
+  /** 自定义光照风格：存在时覆盖 market 地域预设（自定义优先，文档第五节）。 */
+  customLighting?: CustomLightingInput;
   /** 测试可注入的调度块组装实现，默认 cameraDirection.buildDirectionBlock。 */
   buildBlock?: typeof buildDirectionBlock;
 }
@@ -145,6 +149,8 @@ export interface SegmentDirectionResult {
   prompt: string;
   /** 本镜实际生效的光照参数（情绪微调/一致性回滚后）；未注入时为 undefined。 */
   lighting?: LightingParams;
+  /** 光照说明（自定义风格标注 / 情绪微调 / 一致性回滚），供渲染日志记录。 */
+  lightingNote?: string;
 }
 
 /**
@@ -159,14 +165,16 @@ export function withSegmentDirection(
   prompt: string,
   options: SegmentDirectionOptions,
 ): SegmentDirectionResult {
-  const { shots, segmentId, market, segmentDurationMs, clothingState } = options;
+  const { shots, segmentId, market, segmentDurationMs, clothingState, customLighting } = options;
   if (!shots?.length) return { prompt };
   const segmentIndex = segmentIndexFromId(segmentId);
   if (segmentIndex === undefined) return { prompt };
   const match = matchShotForSegment(shots, segmentIndex, segmentDurationMs);
   if (!match) return { prompt };
 
-  const preset = LIGHTING_PRESETS[market];
+  const preset = customLighting
+    ? customLightingPreset(market, customLighting)
+    : LIGHTING_PRESETS[market];
   const prevLighting =
     match.prevShot && match.prevShot.scene === match.shot.scene
       ? resolveLighting({ preset, emotion: match.prevShot.emotion }).params
@@ -182,6 +190,17 @@ export function withSegmentDirection(
     market,
     clothingState,
     prevLighting,
+    customLighting,
   });
-  return { prompt: `${block}\n${prompt}`, lighting: lighting.params };
+  const lightingNote = [
+    lighting.note,
+    customLighting ? `自定义风格：${customLighting.name}` : undefined,
+  ]
+    .filter((note): note is string => Boolean(note))
+    .join("；");
+  return {
+    prompt: `${block}\n${prompt}`,
+    lighting: lighting.params,
+    lightingNote: lightingNote || undefined,
+  };
 }

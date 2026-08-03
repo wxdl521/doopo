@@ -6,10 +6,21 @@ import {
   type RestyleExecutionMode,
   type RestyleVoiceSource,
 } from "./restyleExecution";
-import type { DirectionShot, Market } from "../../lib/restyle/cameraDirection";
+import type { DirectionShot, LightingParams, Market } from "../../lib/restyle/cameraDirection";
 import { parseShotSchedule } from "../../lib/restyle/shotSchedule";
 
 const STORAGE_PREFIX = "doopoo:restyle-projects:";
+
+/**
+ * 用户自定义光照风格（「我的风格库」，文档第三节）：
+ * - source "reference"：路径 A 参考图提取；source "manual"：路径 B 调色台微调；
+ * - 存在时渲染与调度块优先于 targetMarket 地域预设（文档第五节）。
+ */
+export type RestyleCustomLighting = {
+  name: string;
+  params: LightingParams;
+  source: "reference" | "manual";
+};
 
 export type RestyleRenderStatus = "queued" | "running" | "succeeded" | "failed";
 
@@ -143,6 +154,8 @@ export type RestyleProject = {
   targetMarket?: Market;
   /** ✨ 智能补镜开关：开启后基础渲染完成时自动补情绪特写与空镜（见 restyleInserts）。 */
   smartInsert?: boolean;
+  /** 自定义光照风格（我的风格库）；存在时优先于 targetMarket 地域预设。 */
+  customLighting?: RestyleCustomLighting;
 };
 
 function keyFor(userId: string): string {
@@ -195,6 +208,48 @@ const MARKETS: ReadonlySet<string> = new Set<Market>([
 
 function isMarket(value: unknown): value is Market {
   return typeof value === "string" && MARKETS.has(value);
+}
+
+const clampLightingDim = (value: unknown): number => {
+  const num = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(num)) return 0;
+  return Math.max(-100, Math.min(100, Math.round(num)));
+};
+
+const lightingText = (value: unknown, fallback: string): string =>
+  typeof value === "string" && value.trim() ? value.trim().slice(0, 80) : fallback;
+
+/**
+ * 解析持久化的自定义光照风格：5 维字段逐一校验，光比/色温数值钳 ±100，
+ * 文本维缺失给兜底文案；params 整体不是对象时丢弃该字段（回落地域预设）。
+ */
+export function parseCustomLighting(value: unknown): RestyleCustomLighting | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const item = value as Partial<RestyleCustomLighting>;
+  if (!item.params || typeof item.params !== "object") return undefined;
+  const raw = item.params as Partial<Record<keyof LightingParams, unknown>>;
+  const rawPalette =
+    raw.palette && typeof raw.palette === "object"
+      ? (raw.palette as Partial<LightingParams["palette"]>)
+      : {};
+  return {
+    name:
+      typeof item.name === "string" && item.name.trim()
+        ? item.name.trim().slice(0, 24)
+        : "自定义风格",
+    source: item.source === "reference" ? "reference" : "manual",
+    params: {
+      contrastRatio: clampLightingDim(raw.contrastRatio),
+      tempTint: clampLightingDim(raw.tempTint),
+      palette: {
+        shadows: lightingText(rawPalette.shadows, "自然过渡"),
+        midtones: lightingText(rawPalette.midtones, "自然过渡"),
+        highlights: lightingText(rawPalette.highlights, "保留细节不溢出"),
+      },
+      textureRollOff: lightingText(raw.textureRollOff, "高光柔化，暗部不死黑"),
+      skinToneOffset: lightingText(raw.skinToneOffset, "中性，肤色防变绿变黄"),
+    },
+  };
 }
 
 function parseAttachment(value: unknown): RestyleAttachment | null {
@@ -475,6 +530,7 @@ function parseProject(value: unknown): RestyleProject | null {
     shotSchedule: parseShotSchedule(item.shotSchedule),
     targetMarket: isMarket(item.targetMarket) ? item.targetMarket : undefined,
     smartInsert: item.smartInsert === true ? true : undefined,
+    customLighting: parseCustomLighting(item.customLighting),
     assetReviewMap:
       item.assetReviewMap && typeof item.assetReviewMap === "object"
         ? Object.fromEntries(

@@ -13,6 +13,7 @@ import { Check, ChevronDown, Clapperboard, Gauge, SlidersHorizontal, Sparkles, X
 import type { Translations } from "../../i18n/zh";
 import type { ModelPricingRow } from "../../lib/modelPricingCache";
 import { LIGHTING_LUTS, LIGHTING_PRESETS, type Market } from "../../lib/restyle/cameraDirection";
+import { CustomLightingPanel } from "./CustomLightingPanel";
 import type { RestyleProject } from "./restyleStorage";
 import {
   DEFAULT_AUTO_BUDGET,
@@ -78,6 +79,7 @@ export type RestyleSetupPatch = Partial<
     | "videoModel"
     | "targetMarket"
     | "smartInsert"
+    | "customLighting"
   >
 >;
 
@@ -347,6 +349,9 @@ export function RestyleSetupPanel({
           {LIGHTING_LUTS[project?.targetMarket ?? "kr"].join(" · ")}
         </p>
       </div>
+
+      {/* 4.5 我的风格库：自定义光照（路径 A 参考图提取 / 路径 B 调色台微调），优先于地域预设 */}
+      <CustomLightingPanel project={project} onPatch={onPatch} t={t} />
 
       {/* 5. ✨ 智能补镜（当前版本只记录偏好，执行在下个迭代开放） */}
       <div className="mt-3">

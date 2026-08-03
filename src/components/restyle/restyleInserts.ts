@@ -13,11 +13,13 @@
 // ====================================================================
 
 import {
+  customLightingPreset,
   findInsertShots,
   formatLightingParams,
   LIGHTING_PRESETS,
   resolveCameraMovement,
   resolveLighting,
+  type CustomLightingInput,
   type DirectionShot,
   type LightingParams,
   type Market,
@@ -78,6 +80,16 @@ export interface PlanInsertJobsInput {
   clothingState?: string;
   /** 同场角色资产图 URL（A 类面部锚定参考，最多取前 4 张）。 */
   characterReferenceImages?: string[];
+  /**
+   * 自定义光照风格：存在时覆盖 market 地域预设（自定义优先）；
+   * A 类情绪高潮的 +20% 破格在自定义风格上同样生效（boostLightingParams 复用）。
+   */
+  customLighting?: CustomLightingInput;
+}
+
+/** 补镜光照解算预设：自定义风格优先，否则地域预设。 */
+function insertLightingPreset(market: Market, custom?: CustomLightingInput) {
+  return custom ? customLightingPreset(market, custom) : LIGHTING_PRESETS[market];
 }
 
 function buildCloseupPrompt(input: {
@@ -85,9 +97,10 @@ function buildCloseupPrompt(input: {
   market: Market;
   styleBrief?: string;
   clothingState?: string;
+  customLighting?: CustomLightingInput;
 }): string {
-  const { shot, market, styleBrief, clothingState } = input;
-  const preset = LIGHTING_PRESETS[market];
+  const { shot, market, styleBrief, clothingState, customLighting } = input;
+  const preset = insertLightingPreset(market, customLighting);
   // 补镜景别强制升级为大特写；运镜沿用情绪映射（特写不走环绕/摇晃，无眩晕风险）。
   const cam = resolveCameraMovement({ emotion: shot.emotion, shotType: "大特写" });
   const lighting = resolveLighting({ preset, emotion: shot.emotion });
@@ -106,7 +119,8 @@ function buildCloseupPrompt(input: {
   sections.push("【转场指令】连续插入：补镜不做轴线冲突检测，特写属无轴线负担画面");
   sections.push(
     `【光线语言】${formatLightingParams(boosted)}；` +
-      "情绪高潮破格：光照强度短暂提升 20%，背景光晕增强 20%",
+      "情绪高潮破格：光照强度短暂提升 20%，背景光晕增强 20%" +
+      (customLighting ? `；自定义风格：${customLighting.name}` : ""),
   );
   sections.push(
     "【服装引导】角色仅锚定面部特征与体型骨架；当前着装：" +
@@ -126,9 +140,10 @@ function buildEstablishingPrompt(input: {
   shot: DirectionShot;
   market: Market;
   styleBrief?: string;
+  customLighting?: CustomLightingInput;
 }): string {
-  const { prevShot, shot, market, styleBrief } = input;
-  const preset = LIGHTING_PRESETS[market];
+  const { prevShot, shot, market, styleBrief, customLighting } = input;
+  const preset = insertLightingPreset(market, customLighting);
   // 空镜取新场景首镜的情绪做光照解算（不触发 +20% 破格，破格仅限情绪高潮特写）。
   const lighting = resolveLighting({ preset, emotion: shot.emotion });
 
@@ -143,7 +158,10 @@ function buildEstablishingPrompt(input: {
       "无人出镜，纯环境交代",
   );
   sections.push("【转场指令】连续插入：补镜不做轴线冲突检测，空镜属中立画面");
-  sections.push(`【光线语言】${formatLightingParams(lighting.params)}`);
+  sections.push(
+    `【光线语言】${formatLightingParams(lighting.params)}` +
+      (customLighting ? `；自定义风格：${customLighting.name}` : ""),
+  );
   if (shot.action) sections.push(`【环境参考】${shot.action}`);
   return sections.join("\n");
 }
@@ -153,7 +171,7 @@ function buildEstablishingPrompt(input: {
  * 严格遵循原片镜头数量、时长与剪辑点，绝不新增镜头）。
  */
 export function planInsertJobs(input: PlanInsertJobsInput): InsertJob[] {
-  const { shots, smartInsert, market, styleBrief, clothingState } = input;
+  const { shots, smartInsert, market, styleBrief, clothingState, customLighting } = input;
   if (!smartInsert || !shots?.length) return [];
   const triggers = findInsertShots(shots);
   if (!triggers.length) return [];
@@ -173,7 +191,7 @@ export function planInsertJobs(input: PlanInsertJobsInput): InsertJob[] {
         insertAtMs,
         anchorSegmentId: segmentIdAtMs(insertAtMs),
         durationSec: trigger.insertDurationSec,
-        prompt: buildCloseupPrompt({ shot, market, styleBrief, clothingState }),
+        prompt: buildCloseupPrompt({ shot, market, styleBrief, clothingState, customLighting }),
         boostLighting: true,
         referenceImages: characterRefs,
       });
@@ -190,7 +208,7 @@ export function planInsertJobs(input: PlanInsertJobsInput): InsertJob[] {
         insertAtMs,
         anchorSegmentId: segmentIdAtMs(insertAtMs),
         durationSec: trigger.insertDurationSec,
-        prompt: buildEstablishingPrompt({ prevShot, shot, market, styleBrief }),
+        prompt: buildEstablishingPrompt({ prevShot, shot, market, styleBrief, customLighting }),
         boostLighting: false,
         referenceImages: [],
       });

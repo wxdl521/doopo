@@ -314,6 +314,22 @@ export interface LightingResult {
   note?: string;
 }
 
+/**
+ * 用户自定义光照风格（《光线调度机制调整-20260804》第三节「我的风格库」）。
+ * 自定义优先于地域预设（第五节）：存在时调度块与渲染用该 5 维参数，
+ * 情绪微调 / 同场景缓变 / 智能补镜 +20% 破格规则照旧生效。
+ */
+export interface CustomLightingInput {
+  /** 风格名（写入调度块 note「自定义风格：{name}」）。 */
+  name: string;
+  params: LightingParams;
+}
+
+/** 由自定义风格构造一个可进 resolveLighting 的临时预设（沿用 market 档位的元信息）。 */
+export function customLightingPreset(market: Market, custom: CustomLightingInput): LightingPreset {
+  return { ...LIGHTING_PRESETS[market], params: cloneParams(custom.params) };
+}
+
 /** 情绪微调幅度硬钳 ±10%（文档第四节：色温/光比微调幅度限制在 ±10% 内）。 */
 export const EMOTION_LIGHTING_MAX_DELTA = 10;
 
@@ -405,6 +421,8 @@ export interface DirectionBlockInput {
    * 仅在同一场戏内传递，跨场景换光合法、不传。
    */
   prevLighting?: LightingParams;
+  /** 自定义光照风格（存在时覆盖 market 地域预设，note 标注「自定义风格：{name}」）。 */
+  customLighting?: CustomLightingInput;
 }
 
 /**
@@ -412,8 +430,7 @@ export interface DirectionBlockInput {
  * 【运镜调度】→【转场指令】→【光线语言】→【服装引导】（可选）。
  */
 export function buildDirectionBlock(input: DirectionBlockInput): string {
-  const { shot, prevShot, market, clothingState, dramaChanged = false, prevLighting } = input;
-  const cam = resolveCameraMovement({
+  const { shot, prevShot, market, clothingState, dramaChanged = false, prevLighting } = input;  const cam = resolveCameraMovement({
     emotion: shot.emotion,
     shotType: shot.shotType,
   });
@@ -443,14 +460,20 @@ export function buildDirectionBlock(input: DirectionBlockInput): string {
   }
 
   // 【光线语言】渲染 5 维原子参数（光比/色温/调色盘/质感衰减/肤色保护逐条），
-  // 情绪微调或一致性回滚的 note 附在段尾。
+  // 情绪微调或一致性回滚的 note 附在段尾；自定义风格覆盖地域预设并标注风格名。
   const lighting = resolveLighting({
-    preset: LIGHTING_PRESETS[market],
+    preset: input.customLighting
+      ? customLightingPreset(market, input.customLighting)
+      : LIGHTING_PRESETS[market],
     emotion: shot.emotion,
     prevLighting,
   });
   const lightingLine = `【光线语言】${formatLightingParams(lighting.params)}`;
-  sections.push(lighting.note ? `${lightingLine}；${lighting.note}` : lightingLine);
+  const lightingNotes = [
+    lighting.note,
+    input.customLighting ? `自定义风格：${input.customLighting.name}` : undefined,
+  ].filter((note): note is string => Boolean(note));
+  sections.push(lightingNotes.length ? `${lightingLine}；${lightingNotes.join("；")}` : lightingLine);
 
   if (clothingState) {
     sections.push(

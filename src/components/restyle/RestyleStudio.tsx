@@ -2495,6 +2495,7 @@ export default function RestyleStudio() {
       market,
       styleBrief: project.styleBrief,
       characterReferenceImages: characterRefs,
+      customLighting: project.customLighting,
     });
     for (const episode of episodes) {
       if (isRunAborted(projectId)) return;
@@ -2668,10 +2669,12 @@ export default function RestyleStudio() {
     // 项目画幅：转绘右栏选项区配置（默认 9:16），随项目持久化。
     const projectAspect = queueProject?.aspect ?? "9:16";
     // 导演镜头调度注入：按分段就近匹配逐镜表生成调度块前缀；无逐镜表时原样提交。
+    // 自定义光照风格（我的风格库）存在时优先于 targetMarket 地域预设。
     const directed = withSegmentDirection(job.prompt, {
       shots: queueProject?.shotSchedule,
       segmentId: job.segmentId,
       market: queueProject?.targetMarket ?? "kr",
+      customLighting: queueProject?.customLighting,
     });
     const directedPrompt = directed.prompt;
     // 光线调度主路径：本镜实际光照参数写渲染日志，供用户下次微调参考。
@@ -2679,7 +2682,8 @@ export default function RestyleStudio() {
       appendRenderLog(
         projectId,
         job.attachmentId,
-        `光照参数：${formatLightingParams(directed.lighting)}`,
+        `光照参数：${formatLightingParams(directed.lighting)}` +
+          (directed.lightingNote ? `；${directed.lightingNote}` : ""),
       );
     }
     updateRenderAttachments(

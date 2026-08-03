@@ -236,3 +236,70 @@ describe("withSegmentDirection 调度块注入", () => {
     expect(buildBlock).not.toHaveBeenCalled();
   });
 });
+
+// --------------------------------------------------------------------
+// 自定义光照风格（我的风格库）：自定义优先于地域预设
+// --------------------------------------------------------------------
+
+describe("withSegmentDirection 自定义光照优先", () => {
+  const shots = [makeShot({ shotNo: "SC001", startMs: 0, endMs: 10_000, emotion: "舒缓" })];
+  const customLighting = {
+    name: "冷调都市",
+    params: {
+      contrastRatio: -60,
+      tempTint: -80,
+      palette: { shadows: "深青蓝", midtones: "冷灰低饱和", highlights: "阴冷白收敛" },
+      textureRollOff: "整体低反差平滑，数字感干净",
+      skinToneOffset: "偏冷白，去饱和防红润",
+    },
+  };
+
+  it("自定义风格覆盖 market 预设：调度块与返回参数都用自定义 5 维", () => {
+    const result = withSegmentDirection("原分段提示词", {
+      shots,
+      segmentId: "U01",
+      market: "kr",
+      customLighting,
+    });
+    // kr 预设是光比+30/色温+20，自定义是 -60/-80
+    expect(result.prompt).toContain("【光线语言】光比-60");
+    expect(result.prompt).toContain("色温-80");
+    expect(result.prompt).toContain("深青蓝");
+    expect(result.prompt).not.toContain("光比+30");
+    expect(result.lighting).toEqual(customLighting.params);
+  });
+
+  it("自定义时 note 标注「自定义风格：{name}」并透出 lightingNote", () => {
+    const result = withSegmentDirection("原分段提示词", {
+      shots,
+      segmentId: "U01",
+      market: "kr",
+      customLighting,
+    });
+    expect(result.prompt).toContain("自定义风格：冷调都市");
+    expect(result.lightingNote).toBe("自定义风格：冷调都市");
+  });
+
+  it("自定义风格上情绪微调照旧生效（±10% 硬钳）", () => {
+    const result = withSegmentDirection("原分段提示词", {
+      shots: [makeShot({ shotNo: "SC001", startMs: 0, endMs: 10_000, emotion: "愤怒" })],
+      segmentId: "U01",
+      market: "kr",
+      customLighting,
+    });
+    expect(result.lighting?.contrastRatio).toBe(-50);
+    expect(result.lighting?.tempTint).toBe(-90);
+    expect(result.lightingNote).toContain("情绪「愤怒」微调");
+    expect(result.lightingNote).toContain("自定义风格：冷调都市");
+  });
+
+  it("无自定义时 lightingNote 只在有微调/回滚时出现，且行为与之前一致", () => {
+    const calm = withSegmentDirection("原分段提示词", {
+      shots,
+      segmentId: "U01",
+      market: "kr",
+    });
+    expect(calm.lightingNote).toBeUndefined();
+    expect(calm.lighting).toEqual(LIGHTING_PRESETS.kr.params);
+  });
+});

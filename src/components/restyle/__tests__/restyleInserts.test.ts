@@ -94,6 +94,35 @@ describe("planInsertJobs", () => {
     ];
     expect(planInsertJobs({ shots: tightShots, smartInsert: true, market: "us" })).toEqual([]);
   });
+
+  it("自定义光照风格优先于地域预设，+20% 破格在自定义风格上同样生效", () => {
+    const customLighting = {
+      name: "霓虹夜",
+      params: {
+        contrastRatio: 50,
+        tempTint: -10,
+        palette: { shadows: "死黑", midtones: "青橙强反差", highlights: "霓虹洋红溢出" },
+        textureRollOff: "暗部死黑，高光霓虹光晕柔化",
+        skinToneOffset: "中性偏暖，防霓虹杂光染绿",
+      },
+    };
+    const jobs = planInsertJobs({
+      shots: TRIGGER_SHOTS,
+      smartInsert: true,
+      market: "kr",
+      customLighting,
+    });
+    // A 类：SC001 震惊无情绪微调 → 自定义光比 50 × 1.2 = 60（非 kr 预设的 36）
+    const closeup = jobs.find((job) => job.kind === "closeup");
+    expect(closeup?.prompt).toContain("光比+60");
+    expect(closeup?.prompt).toContain("霓虹洋红溢出，背景光晕增强 20%");
+    expect(closeup?.prompt).toContain("自定义风格：霓虹夜");
+    expect(closeup?.prompt).not.toContain("光比+36");
+    // B 类：自定义参数但不破格
+    const establishing = jobs.find((job) => job.kind === "establishing");
+    expect(establishing?.prompt).toContain("自定义风格：霓虹夜");
+    expect(establishing?.prompt).not.toContain("背景光晕增强 20%");
+  });
 });
 
 describe("segmentIdAtMs", () => {
