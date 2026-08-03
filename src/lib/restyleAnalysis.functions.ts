@@ -3,6 +3,8 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "../integrations/supabase/auth-middleware";
 import { providerTuning, resolveProvider, INTERNAL_VISION_MODEL } from "./restyle/lovableGateway";
 import { runAssetAnalysis } from "./restyle/analyzeAssetsCore";
+import { LIGHTING_LUTS, type DirectionShot, type Market } from "./restyle/cameraDirection";
+import { parseShotSchedule } from "./restyle/shotSchedule";
 
 const AssetSchema = z.object({
   kind: z.enum(["character", "scene", "prop"]),
@@ -65,6 +67,8 @@ export type RestyleAnalysisResult =
       assets: RestyleAnalysisAsset[];
       relationships: RestyleAnalysisRelationship[];
       analysis: z.infer<typeof AnalysisSectionsSchema>;
+      /** 轻量逐镜表（导演镜头调度机制第二阶段）；模型未产出时缺省。 */
+      shots?: DirectionShot[];
       model: string;
       usedFrames: boolean;
     }
@@ -83,7 +87,7 @@ function parseJson(content: string): unknown {
 }
 
 function systemPrompt(hasFrames: boolean, isRevision: boolean): string {
-  return `你是面向短剧出海转绘的资产制片人。根据用户要求、上传源片信息${hasFrames ? "以及抽取的关键帧" : ""}，输出供用户确认的资产表。\n\n${isRevision ? "当前已存在资产表。用户这次是在自然语言中反馈修改；只修改受影响的资产、补上明确遗漏项、删除明确要求删除的项，其余保持一致。" : "这是首次分析。只提取剧情理解、光影、节奏和台词语境中真正影响转绘一致性的资产。"}\n\n重要规则：\n1. 角色、场景、道具都不是必选项；某一类不存在时，该类必须输出空，不得为了凑数添加。全部不存在时 assets 必须是空数组。\n2. 角色必须是画面中有明确剧情作用的某一个具体人物，一人一条；不要输出“居民”“市民”“人群”“表演者”“观众”“工作人员”“人物群体”等群体。\n3. 场景必须是一个具体、可定位的地点或空间，例如“街角面馆”“某栋居民楼的客厅”“嵊州古城城门”；不要输出“城市风光”“古城全景”“街景”“环境”“建筑群”等泛称。\n4. 道具必须是一个具体、可单独识别的物件，例如“一盏红灯笼”“一块写有店名的木招牌”“一口铁锅”；不要输出“招牌与灯笼”“器具与食物”等多个对象、类别或概念。\n5. 如果只能确认群体、远景、类别或模糊物件，就不要提取；宁可少提取或返回空数组，也不能猜测。\n6. 根据用户的目标市场、人种、地域、语言、风格要求，为每条具体资产填入目标名称与目标说明；未要求改名时可保留原名。\n7. ${hasFrames ? "关键帧是视觉依据。" : "没有可读取的关键帧时不得虚构视频中具体发生的情节；名称或描述不确定时直接省略该资产。"}\n8. sourceDescription 写该具体人物/地点/物件在原片中的定位；targetDescription 写目标市场版的对应设定。\n9. importance 只有 required 或 optional；shouldRestyle 表示这条是否需要独立转绘。最多 30 条，去重，不输出解释、Markdown 或代码块。\n10. relationships 写人物之间的剧情关系，from/to 必须使用资产表中角色的 sourceName 原文。仅在画面或台词可以确认时输出；角色少于 2 人、或无法确认时返回空数组，禁止虚构、禁止凑数。存在 A→B 时必须同时给出 B→A 的反向边（relation 从对方视角改写）；不得输出指向群体或不存在角色的关系。\n\n只输出以下 JSON：\n{"summary":"不超过120字的确认提示","assets":[{"kind":"character|scene|prop","sourceName":"","sourceDescription":"","targetName":"","targetDescription":"","importance":"required|optional","shouldRestyle":true}],"relationships":[{"from":"角色A sourceName","to":"角色B sourceName","relation":"A 对 B 的关系","note":"可选，剧情依据"}]}`;
+  return `你是面向短剧出海转绘的资产制片人。根据用户要求、上传源片信息${hasFrames ? "以及抽取的关键帧" : ""}，输出供用户确认的资产表。\n\n${isRevision ? "当前已存在资产表。用户这次是在自然语言中反馈修改；只修改受影响的资产、补上明确遗漏项、删除明确要求删除的项，其余保持一致。" : "这是首次分析。只提取剧情理解、光影、节奏和台词语境中真正影响转绘一致性的资产。"}\n\n重要规则：\n1. 角色、场景、道具都不是必选项；某一类不存在时，该类必须输出空，不得为了凑数添加。全部不存在时 assets 必须是空数组。\n2. 角色必须是画面中有明确剧情作用的某一个具体人物，一人一条；不要输出“居民”“市民”“人群”“表演者”“观众”“工作人员”“人物群体”等群体。\n3. 场景必须是一个具体、可定位的地点或空间，例如“街角面馆”“某栋居民楼的客厅”“嵊州古城城门”；不要输出“城市风光”“古城全景”“街景”“环境”“建筑群”等泛称。\n4. 道具必须是一个具体、可单独识别的物件，例如“一盏红灯笼”“一块写有店名的木招牌”“一口铁锅”；不要输出“招牌与灯笼”“器具与食物”等多个对象、类别或概念。\n5. 如果只能确认群体、远景、类别或模糊物件，就不要提取；宁可少提取或返回空数组，也不能猜测。\n6. 根据用户的目标市场、人种、地域、语言、风格要求，为每条具体资产填入目标名称与目标说明；未要求改名时可保留原名。\n7. ${hasFrames ? "关键帧是视觉依据。" : "没有可读取的关键帧时不得虚构视频中具体发生的情节；名称或描述不确定时直接省略该资产。"}\n8. sourceDescription 写该具体人物/地点/物件在原片中的定位；targetDescription 写目标市场版的对应设定。\n9. importance 只有 required 或 optional；shouldRestyle 表示这条是否需要独立转绘。最多 30 条，去重，不输出解释、Markdown 或代码块。\n10. relationships 写人物之间的剧情关系，from/to 必须使用资产表中角色的 sourceName 原文。仅在画面或台词可以确认时输出；角色少于 2 人、或无法确认时返回空数组，禁止虚构、禁止凑数。存在 A→B 时必须同时给出 B→A 的反向边（relation 从对方视角改写）；不得输出指向群体或不存在角色的关系。\n11. shots 是从关键帧与台词产出的轻量逐镜表，供导演镜头调度使用：按原片时间顺序逐镜一条，shotNo 用 SC001 起递增编号；startMs/endMs 为该镜在原片中的起止毫秒（必须 startMs < endMs，按 startMs 升序）；scene 是物理空间命名，同一场景跨镜头必须保持一致；shotType 只能取「特写|大特写|近景|中景|全景|远景」；emotion 只能取「愤怒|暧昧|紧张|舒缓|震惊|悲伤」，无法识别时用「中性」；action/dialogue 为该镜动作与台词摘要（无则省略）。关键帧与台词都不足以判断镜头时 shots 返回空数组，禁止虚构。\n\n只输出以下 JSON：\n{"summary":"不超过120字的确认提示","assets":[{"kind":"character|scene|prop","sourceName":"","sourceDescription":"","targetName":"","targetDescription":"","importance":"required|optional","shouldRestyle":true}],"relationships":[{"from":"角色A sourceName","to":"角色B sourceName","relation":"A 对 B 的关系","note":"可选，剧情依据"}],"shots":[{"shotNo":"SC001","startMs":0,"endMs":3000,"scene":"场景名","shotType":"特写|大特写|近景|中景|全景|远景","emotion":"愤怒|暧昧|紧张|舒缓|震惊|悲伤","action":"可选","dialogue":"可选"}]}`;
 }
 
 function userText(data: z.infer<typeof InputSchema>): string {
@@ -102,7 +106,8 @@ function userText(data: z.infer<typeof InputSchema>): string {
   return `[USER INSTRUCTION]\n${data.instruction}\n\n[SOURCE VIDEO FILES]\n${files}${transcript}${previous}\n\n[ANALYSIS SECTIONS]\nAlso return an analysis object with four concise strings: plot, videoUnderstanding, dialogue, and assets. dialogue 必须基于上面的 ASR 台词做摘要（引用关键台词），没有台词时写明未识别到台词。Keep the asset table unchanged; do not invent dialogue when it cannot be confirmed.`;
 }
 
-function normalizeResult(
+// 导出供单测直接覆盖 shots 契约解析（合法/非法枚举、排序、缺省）。
+export function normalizeResult(
   content: string,
   model: string,
   usedFrames: boolean,
@@ -114,6 +119,7 @@ function normalizeResult(
       assets?: unknown;
       relationships?: unknown;
       analysis?: unknown;
+      shots?: unknown;
     };
     const assets = z
       .array(AssetSchema)
@@ -160,7 +166,9 @@ function normalizeResult(
     if (transcript && (!analysis.dialogue.trim() || /未返回|无法确认|未识别/.test(analysis.dialogue))) {
       analysis.dialogue = transcript.slice(0, 4_000);
     }
-    return { ok: true, summary, assets, relationships, analysis, model, usedFrames };
+    // 逐镜表契约清洗：非法枚举/时间区间整条丢弃，按 startMs 排序；无有效镜头则缺省。
+    const shots = parseShotSchedule(parsed.shots);
+    return { ok: true, summary, assets, relationships, analysis, shots, model, usedFrames };
   } catch (error) {
     return { ok: false, error: error instanceof Error ? error.message : "资产表解析失败" };
   }
@@ -212,6 +220,17 @@ const PlanEpisodeSchema = z.object({
 
 export type RestylePlanEpisode = z.infer<typeof PlanEpisodeSchema>;
 
+const PlanShotSchema = z.object({
+  shotNo: z.string().min(1).max(40),
+  startMs: z.number().nonnegative(),
+  endMs: z.number().nonnegative(),
+  scene: z.string().max(120),
+  shotType: z.enum(["特写", "大特写", "近景", "中景", "全景", "远景"]),
+  emotion: z.string().max(40),
+  action: z.string().max(240).optional(),
+  dialogue: z.string().max(240).optional(),
+});
+
 const PlanInputSchema = z.object({
   model: InputSchema.shape.model,
   instruction: z.string().max(4_000).default(""),
@@ -219,6 +238,10 @@ const PlanInputSchema = z.object({
   assets: z.array(AssetSchema).max(60),
   episodeCount: z.number().int().min(1).max(100),
   existingEpisodes: z.array(PlanEpisodeSchema).default([]),
+  /** 分析层产出的轻量逐镜表，供方案对齐镜头情绪与景别。 */
+  shotSchedule: z.array(PlanShotSchema).max(200).default([]),
+  /** 目标市场：决定光线 LUT 与俚语本土化口径。 */
+  targetMarket: z.enum(["kr", "us", "in"]).default("kr"),
 });
 
 export const generateRestylePlan = createServerFn({ method: "POST" })
@@ -242,7 +265,19 @@ export const generateRestylePlan = createServerFn({ method: "POST" })
       const files = data.sourceFiles
         .map((file) => `- 视频 ID: ${file.id || file.name}; 文件名: ${file.name}`)
         .join("\n");
-      const prompt = `用户要求：${data.instruction || "生成转绘方案"}\n视频数量：${data.episodeCount}\n源视频：\n${files}\n已确认资产：${JSON.stringify(data.assets)}\n已有方案（如有，请只修改用户点名的视频和分段，其余保持不变）：${JSON.stringify(data.existingEpisodes)}\n\n请为每一个源视频生成或修改分段视频提示词。只输出 JSON，不要 Markdown：{"episodes":[{"episode":"源视频 ID（必须原样使用上方的视频 ID）","segments":[{"id":"U01","prompt":"..."}]}]}。每段不超过15秒，提示词须包含人物、场景、动作、镜头、光影、节奏和对白/声音要求；不得虚构资产表中不存在的具体人物或地点。`;
+      // 导演镜头调度：目标市场 LUT + 俚语本土化（禁直译），逐镜表摘要供分段对齐情绪与景别。
+      const market = data.targetMarket as Market;
+      const marketRequirement = `目标市场：${market}。光线必须体现该市场 LUT：${LIGHTING_LUTS[market].join("、")}；对白与字幕必须做目标市场俚语本土化转译，禁止直译。`;
+      const shotBrief = data.shotSchedule.length
+        ? `\n原片逐镜调度表（分段提示词的镜头、情绪与景别须与之对齐）：\n${data.shotSchedule
+            .slice(0, 60)
+            .map(
+              (shot) =>
+                `${shot.shotNo} ${shot.startMs}-${shot.endMs}ms ${shot.scene} ${shot.shotType} ${shot.emotion}${shot.action ? ` ${shot.action}` : ""}`,
+            )
+            .join("\n")}`
+        : "";
+      const prompt = `用户要求：${data.instruction || "生成转绘方案"}\n视频数量：${data.episodeCount}\n源视频：\n${files}\n已确认资产：${JSON.stringify(data.assets)}\n已有方案（如有，请只修改用户点名的视频和分段，其余保持不变）：${JSON.stringify(data.existingEpisodes)}\n${marketRequirement}${shotBrief}\n\n请为每一个源视频生成或修改分段视频提示词。只输出 JSON，不要 Markdown：{"episodes":[{"episode":"源视频 ID（必须原样使用上方的视频 ID）","segments":[{"id":"U01","prompt":"..."}]}]}。每段不超过15秒，提示词须包含人物、场景、动作、镜头、光影、节奏和对白/声音要求；不得虚构资产表中不存在的具体人物或地点。`;
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 180_000);
       try {

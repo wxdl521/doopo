@@ -3,15 +3,16 @@
 //
 //  - 执行模式三选一卡片 + 「应用执行模式」按钮
 //  - 自定义干预联动区（仅选中展开；极速模式仍保留总预算）
-//  - 项目画幅 / 视频模型（单价来自 listModelPricing，弹窗选模型）
+//  - 项目画幅 / 目标市场（LUT 简述）/ ✨ 智能补镜开关 / 视频模型（单价来自 listModelPricing，弹窗选模型）
 //  - RestyleSpecCard：聊天区「请先确认这 3 项制作规格」表，
 //    与本面板读写同一份项目状态，任一侧改动即时同步
 // ====================================================================
 
 import { useMemo, useState } from "react";
-import { Check, ChevronDown, Clapperboard, Gauge, SlidersHorizontal, X, Zap } from "lucide-react";
+import { Check, ChevronDown, Clapperboard, Gauge, SlidersHorizontal, Sparkles, X, Zap } from "lucide-react";
 import type { Translations } from "../../i18n/zh";
 import type { ModelPricingRow } from "../../lib/modelPricingCache";
+import { LIGHTING_LUTS, type Market } from "../../lib/restyle/cameraDirection";
 import type { RestyleProject } from "./restyleStorage";
 import {
   DEFAULT_AUTO_BUDGET,
@@ -75,8 +76,17 @@ export type RestyleSetupPatch = Partial<
     | "manualGates"
     | "aspect"
     | "videoModel"
+    | "targetMarket"
+    | "smartInsert"
   >
 >;
+
+/** 目标市场三选一（光线 LUT + 俚语本土化口径），默认 kr。 */
+const MARKET_OPTIONS: Array<{ value: Market; labelKey: keyof Translations }> = [
+  { value: "kr", labelKey: "restyle_setup_market_kr" },
+  { value: "us", labelKey: "restyle_setup_market_us" },
+  { value: "in", labelKey: "restyle_setup_market_in" },
+];
 
 /** 当前模型的单价档：优先 720P（渲染默认清晰度），取不到用该模型任意一档。 */
 export function pricingForVideoModel(
@@ -313,7 +323,57 @@ export function RestyleSetupPanel({
         />
       </div>
 
-      {/* 4. 视频模型：当前值 + 单价，弹窗选择 */}
+      {/* 4. 目标市场（决定光线 LUT 与俚语本土化口径） */}
+      <div className="mt-3">
+        <OptionRow<Market>
+          label={t.restyle_setup_target_market}
+          value={project?.targetMarket ?? "kr"}
+          onChange={(targetMarket) => onPatch({ targetMarket })}
+          options={MARKET_OPTIONS.map((option) => ({
+            value: option.value,
+            label: t[option.labelKey],
+          }))}
+        />
+        <p className="mt-1 text-[10px] leading-4 text-text-muted" data-testid="market-lut-brief">
+          {t.restyle_setup_market_lut}：
+          {LIGHTING_LUTS[project?.targetMarket ?? "kr"].join(" · ")}
+        </p>
+      </div>
+
+      {/* 5. ✨ 智能补镜（当前版本只记录偏好，执行在下个迭代开放） */}
+      <div className="mt-3">
+        <button
+          type="button"
+          onClick={() => project && onPatch({ smartInsert: !(project.smartInsert ?? false) })}
+          aria-pressed={project?.smartInsert ?? false}
+          disabled={!project}
+          className={`flex w-full items-start gap-2 rounded-lg border px-2.5 py-2 text-left disabled:opacity-50 ${
+            project?.smartInsert
+              ? "border-accent bg-accent-dim/60"
+              : "border-border hover:bg-bg-elevated"
+          }`}
+        >
+          <Sparkles
+            size={14}
+            className={`mt-0.5 shrink-0 ${project?.smartInsert ? "text-accent" : "text-text-muted"}`}
+          />
+          <span className="min-w-0">
+            <span className="flex items-center gap-1.5 text-xs font-medium text-text-primary">
+              {t.restyle_setup_smart_insert}
+              {project?.smartInsert ? (
+                <span className="rounded bg-accent-dim px-1 py-px text-[9px] text-accent">
+                  {t.restyle_setup_applied}
+                </span>
+              ) : null}
+            </span>
+            <span className="mt-0.5 block text-[10px] leading-4 text-text-muted">
+              {t.restyle_setup_smart_insert_desc}
+            </span>
+          </span>
+        </button>
+      </div>
+
+      {/* 6. 视频模型：当前值 + 单价，弹窗选择 */}
       <div className="mt-3">
         <p className="text-[11px] font-medium text-text-muted">{t.restyle_setup_video_model}</p>
         <div className="mt-1 flex items-center gap-2 rounded-lg border border-border bg-bg-elevated/50 px-2.5 py-2">

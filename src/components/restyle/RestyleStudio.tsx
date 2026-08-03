@@ -50,6 +50,7 @@ import {
 } from "./restyleStorage";
 import type { RestyleAsset, RestyleStage } from "./restyleTypes";
 import { analyzeRestyleAssets, generateRestylePlan } from "../../lib/restyleAnalysis.functions";
+import { withSegmentDirection } from "../../lib/restyle/shotSchedule";
 import { transcribeRestyleAudio } from "../../lib/restyleAudio.functions";
 import { pollVideoStitchJob, submitVideoStitchJob } from "../../lib/videoStitch.functions";
 import { transcribeSourceVideo } from "./restyleTranscript";
@@ -1652,6 +1653,8 @@ export default function RestyleStudio() {
         })),
         assets: project.extractedAssets.map(({ id: _id, ...asset }) => asset),
         episodeCount,
+        shotSchedule: project.shotSchedule ?? [],
+        targetMarket: project.targetMarket ?? "kr",
       },
     });
     if (!result.ok) {
@@ -2432,6 +2435,8 @@ export default function RestyleStudio() {
       prompt: string;
       referenceImages: string[];
       source: RestyleAttachment;
+      episode?: string;
+      segmentId?: string;
     }>,
     finalEpisodes: string[],
     videoModel: string,
@@ -2449,9 +2454,15 @@ export default function RestyleStudio() {
       pauseForBudget(projectId, conversationId);
       return;
     }
+    const queueProject = projectsRef.current.find((item) => item.id === projectId);
     // 项目画幅：转绘右栏选项区配置（默认 9:16），随项目持久化。
-    const projectAspect =
-      projectsRef.current.find((item) => item.id === projectId)?.aspect ?? "9:16";
+    const projectAspect = queueProject?.aspect ?? "9:16";
+    // 导演镜头调度注入：按分段就近匹配逐镜表生成调度块前缀；无逐镜表时原样提交。
+    const directedPrompt = withSegmentDirection(job.prompt, {
+      shots: queueProject?.shotSchedule,
+      segmentId: job.segmentId,
+      market: queueProject?.targetMarket ?? "kr",
+    });
     updateRenderAttachments(
       projectId,
       (file) => file.id === job.attachmentId,
@@ -2492,7 +2503,7 @@ export default function RestyleStudio() {
         for (let attempt = 0; attempt < 6; attempt++) {
           const keptImages = job.referenceImages.filter((url) => !dropped.includes(url));
           const content = buildRestyleVideoContent({
-            prompt: job.prompt,
+            prompt: directedPrompt,
             imageUrls: keptImages.map((url) => preChecked.assetUrls[url] ?? url),
             referenceVideoUrl: referenceVideo.url,
             stage,
@@ -2814,6 +2825,8 @@ export default function RestyleStudio() {
             "保持角色、场景、动作、镜头与节奏一致，生成符合已确认转绘资产的短视频。",
           referenceImages,
           source,
+          episode: file.episode,
+          segmentId: file.segmentId,
         };
       })
       .filter(
@@ -2824,6 +2837,8 @@ export default function RestyleStudio() {
           prompt: string;
           referenceImages: string[];
           source: RestyleAttachment;
+          episode: string | undefined;
+          segmentId: string | undefined;
         } => Boolean(job),
       );
     updateProject(projectId, (item) => ({
@@ -3391,6 +3406,8 @@ export default function RestyleStudio() {
         analysisSections: Object.fromEntries(
           sourceFiles.map((file) => [file.episode ?? file.id, result.analysis]),
         ) as Record<string, RestyleAnalysisSections>,
+        // 逐镜表随本轮分析重建（重分析/增量分析同路径）；模型未产出时缺省。
+        shotSchedule: result.shots?.length ? result.shots : undefined,
         confirmedAssetIds: [],
         // 关系表随新一轮资产表重建（角色 id 重新生成，旧边全部失效）。
         characterRelations: relationEdges.length ? relationEdges : undefined,
@@ -3534,6 +3551,8 @@ export default function RestyleStudio() {
           assets: activeProject.extractedAssets.map(({ id: _id, ...asset }) => asset),
           episodeCount: activeProject.planEpisodes?.length || sourceFiles.length || 1,
           existingEpisodes: activeProject.planEpisodes ?? [],
+          shotSchedule: activeProject.shotSchedule ?? [],
+          targetMarket: activeProject.targetMarket ?? "kr",
         },
       });
       if (result.ok) {

@@ -102,4 +102,17 @@ describe("restyle prompt", () => {
     expect(scenePrompt).not.toContain("【人物关系");
     expect(buildRelationBrief([])).toBe("");
   });
+
+  it("角色资产的服装描述降级为软引导（锚定面部/骨架，不硬锁），非角色资产不带", () => {
+    const prompt = buildAssetImagePrompt(asset, "美式 3D 动画风格");
+    expect(prompt).toContain("【服装引导】");
+    expect(prompt).toContain("仅锚定面部特征与体型骨架");
+    expect(prompt).toContain("不做像素级强制锁定");
+
+    const scenePrompt = buildAssetImagePrompt(
+      { ...asset, kind: "scene" as const },
+      "美式 3D 动画风格",
+    );
+    expect(scenePrompt).not.toContain("【服装引导】");
+  });
 });

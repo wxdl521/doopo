@@ -92,6 +92,13 @@ export function buildAssetImagePrompt(
   if (asset.kind === "character" && relationBrief.trim()) {
     lines.push(relationBrief.trim());
   }
+  // 服装从「强行锁定」降级为「风格引导」：只锚定面部特征与体型骨架，
+  // 着装作为软性参考，允许模型随光影与动作自然调整质感（镜头调度机制第三节）。
+  if (asset.kind === "character") {
+    lines.push(
+      "【服装引导】角色仅锚定面部特征与体型骨架；着装以上述目标设定为软性参考，允许随光影与动作（转身、挥手等）自然调整衣物质感与褶皱，不做像素级强制锁定。",
+    );
+  }
   lines.push(
     "【约束】只生成该单一资产，背景干净，不得出现其他人物、场景或道具；整体色彩、材质、线条、光影、笔触必须与上述目标画风完全一致，不得混入其他画风。",
   );
