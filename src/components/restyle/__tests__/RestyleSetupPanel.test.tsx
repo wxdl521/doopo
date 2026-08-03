@@ -44,14 +44,22 @@ function renderPanel(project: RestyleProject, onPatch = vi.fn()) {
 }
 
 describe("RestyleSetupPanel 目标市场与智能补镜", () => {
-  it("目标市场默认韩剧（kr），卡片显示对应 LUT 简述", () => {
+  it("目标市场默认韩剧（kr），卡片显示对应光照预设简述", () => {
     renderPanel(makeProject());
     expect(screen.getByRole("button", { name: "韩剧" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("button", { name: "美剧" })).toHaveAttribute("aria-pressed", "false");
-    expect(screen.getByTestId("market-lut-brief")).toHaveTextContent("阿宝色调");
+    expect(screen.getByTestId("market-lut-brief")).toHaveTextContent("阴影加蓝");
+    expect(screen.getByTestId("market-preset-desc")).toHaveTextContent("韩式柔和");
   });
 
-  it("点击美剧回写 targetMarket，回显时选中态与 LUT 简述跟随", () => {
+  it("目标市场六档齐全：韩/美/印/北欧/港/日", () => {
+    renderPanel(makeProject());
+    for (const name of ["韩剧", "美剧", "印度剧", "北欧剧", "港剧", "日剧"]) {
+      expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    }
+  });
+
+  it("点击美剧回写 targetMarket，回显时选中态与光照简述跟随", () => {
     const onPatch = renderPanel(makeProject());
     fireEvent.click(screen.getByRole("button", { name: "美剧" }));
     expect(onPatch).toHaveBeenCalledWith({ targetMarket: "us" } satisfies RestyleSetupPatch);
@@ -59,7 +67,18 @@ describe("RestyleSetupPanel 目标市场与智能补镜", () => {
     renderPanel(makeProject({ targetMarket: "us" }));
     const usButtons = screen.getAllByRole("button", { name: "美剧" });
     expect(usButtons.some((button) => button.getAttribute("aria-pressed") === "true")).toBe(true);
-    expect(screen.getAllByTestId("market-lut-brief")[1]).toHaveTextContent("高对比度");
+    expect(screen.getAllByTestId("market-lut-brief")[1]).toHaveTextContent("硬朗高反差");
+    expect(screen.getAllByTestId("market-preset-desc")[1]).toHaveTextContent("美式硬朗");
+  });
+
+  it("点击北欧剧回写 targetMarket=nordic，回显描述文案", () => {
+    const onPatch = renderPanel(makeProject());
+    fireEvent.click(screen.getByRole("button", { name: "北欧剧" }));
+    expect(onPatch).toHaveBeenCalledWith({ targetMarket: "nordic" } satisfies RestyleSetupPatch);
+
+    renderPanel(makeProject({ targetMarket: "nordic" }));
+    expect(screen.getAllByTestId("market-preset-desc")[1]).toHaveTextContent("北欧性冷淡");
+    expect(screen.getAllByTestId("market-lut-brief")[1]).toHaveTextContent("强冷调");
   });
 
   it("智能补镜默认关闭，点击回写 smartInsert 并展示说明文案", () => {
@@ -82,15 +101,15 @@ describe("restyleStorage 新字段持久化", () => {
     window.localStorage.clear();
   });
 
-  it("targetMarket / smartInsert / shotSchedule 随项目持久化回读", () => {
+  it("targetMarket / smartInsert / shotSchedule 随项目持久化回读（含新档位 jp）", () => {
     const shotSchedule = [
       { shotNo: "SC001", startMs: 0, endMs: 3000, scene: "天台", shotType: "中景" as const, emotion: "愤怒" },
     ];
     saveRestyleProjects(USER_ID, [
-      makeProject({ targetMarket: "in", smartInsert: true, shotSchedule }),
+      makeProject({ targetMarket: "jp", smartInsert: true, shotSchedule }),
     ]);
     const [loaded] = loadRestyleProjects(USER_ID);
-    expect(loaded.targetMarket).toBe("in");
+    expect(loaded.targetMarket).toBe("jp");
     expect(loaded.smartInsert).toBe(true);
     expect(loaded.shotSchedule).toEqual(shotSchedule);
   });
@@ -109,7 +128,7 @@ describe("restyleStorage 新字段持久化", () => {
       JSON.stringify([
         {
           ...makeProject(),
-          targetMarket: "jp",
+          targetMarket: "fr",
           smartInsert: true,
           shotSchedule: [
             { shotNo: "SC001", startMs: 0, endMs: 3000, scene: "天台", shotType: "中景", emotion: "愤怒" },

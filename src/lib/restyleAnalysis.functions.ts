@@ -240,8 +240,8 @@ const PlanInputSchema = z.object({
   existingEpisodes: z.array(PlanEpisodeSchema).default([]),
   /** 分析层产出的轻量逐镜表，供方案对齐镜头情绪与景别。 */
   shotSchedule: z.array(PlanShotSchema).max(200).default([]),
-  /** 目标市场：决定光线 LUT 与俚语本土化口径。 */
-  targetMarket: z.enum(["kr", "us", "in"]).default("kr"),
+  /** 目标市场：决定光照预设与俚语本土化口径。 */
+  targetMarket: z.enum(["kr", "us", "in", "nordic", "hk", "jp"]).default("kr"),
 });
 
 export const generateRestylePlan = createServerFn({ method: "POST" })

@@ -1826,7 +1826,27 @@ export const en: Translations = {
   restyle_setup_market_kr: "K-drama",
   restyle_setup_market_us: "US drama",
   restyle_setup_market_in: "Indian drama",
+  restyle_setup_market_nordic: "Nordic drama",
+  restyle_setup_market_hk: "Hong Kong drama",
+  restyle_setup_market_jp: "J-drama",
   restyle_setup_market_lut: "Lighting LUT",
+  restyle_setup_lighting_kr_desc:
+    "K-Drama soft: soft large-ratio key light, creamy highlight bloom, blue-tinted shadows, pinkish-white skin tones",
+  restyle_setup_lighting_us_desc:
+    "Hollywood hard: high contrast, strong directional rim light, textured blacks, bronze skin tones",
+  restyle_setup_lighting_in_desc:
+    "Bollywood warm sun: saturated warm yellow, slight facial overexposure, brightened eyes & teeth, orange-red shadows",
+  restyle_setup_lighting_nordic_desc:
+    "Nordic cold: low contrast, cold white balance, very low saturation, large cold-gray midtones",
+  restyle_setup_lighting_hk_desc:
+    "Hong Kong neon: teal-orange/teal-red contrast, mottled light spots, crushed blacks with hazy soft filter",
+  restyle_setup_lighting_jp_desc:
+    "J-Drama fresh: half-stop overexposure, high-key low saturation, soft diffusion, translucent-blue skin tones",
+  restyle_setup_lighting_dim_contrast: "Contrast ratio",
+  restyle_setup_lighting_dim_temp: "Temp/Tint",
+  restyle_setup_lighting_dim_palette: "Color palette",
+  restyle_setup_lighting_dim_texture: "Texture roll-off",
+  restyle_setup_lighting_dim_skin: "Skin tone offset",
   restyle_setup_smart_insert: "✨ Smart insert shots",
   restyle_setup_smart_insert_desc:
     "When enabled, AI automatically fills in missing emotional close-ups and establishing shots (this version only records the preference; insert-shot execution ships in the next iteration)",

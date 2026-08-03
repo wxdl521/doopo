@@ -2,14 +2,19 @@
 // shotSchedule —— 转绘「导演镜头调度机制」第二阶段：逐镜数据底座
 // 1. parseShotSchedule：分析层产出的轻量逐镜表做契约清洗（枚举归一、
 //    startMs<endMs、按 startMs 排序），供 normalizeResult 与本地持久化复用。
-// 2. withSegmentDirection：渲染提交前按分段就近匹配镜头，把 buildDirectionBlock
-//    调度块拼到分段提示词前面；无逐镜表时原样返回（跳过注入）。
+// 2. withSegmentDirection：渲染提交前按分段就近匹配镜头，调 resolveLighting
+//    解算本镜实际光照（情绪微调 + 同场景一致性回滚），把 buildDirectionBlock
+//    调度块拼到分段提示词前面，并返回本镜光照参数供调用方写渲染日志；
+//    无逐镜表时原样返回（跳过注入）。
 // 纯函数、零依赖（仅引用 cameraDirection 类型与调度块组装）。
 // ====================================================================
 
 import {
   buildDirectionBlock,
+  LIGHTING_PRESETS,
+  resolveLighting,
   type DirectionShot,
+  type LightingParams,
   type Market,
   type ShotType,
 } from "./cameraDirection";
@@ -135,26 +140,48 @@ export interface SegmentDirectionOptions {
   buildBlock?: typeof buildDirectionBlock;
 }
 
+export interface SegmentDirectionResult {
+  /** 注入调度块后的分段提示词；未注入时等于原 prompt。 */
+  prompt: string;
+  /** 本镜实际生效的光照参数（情绪微调/一致性回滚后）；未注入时为 undefined。 */
+  lighting?: LightingParams;
+}
+
 /**
  * 渲染提交前的提示词注入：有逐镜表且分段能匹配到镜头时，
  * 把【运镜调度】/【转场指令】/【光线语言】（/【服装引导】）调度块拼到
- * 原分段提示词前面；否则原样返回，不注入。
+ * 原分段提示词前面，并返回本镜实际光照参数供渲染日志记录；
+ * 否则原样返回，不注入。
+ * 同场景一致性硬规则只约束同一场戏：前一镜场景不同则跨场景换光合法，
+ * 不传 prevLighting。
  */
 export function withSegmentDirection(
   prompt: string,
   options: SegmentDirectionOptions,
-): string {
+): SegmentDirectionResult {
   const { shots, segmentId, market, segmentDurationMs, clothingState } = options;
-  if (!shots?.length) return prompt;
+  if (!shots?.length) return { prompt };
   const segmentIndex = segmentIndexFromId(segmentId);
-  if (segmentIndex === undefined) return prompt;
+  if (segmentIndex === undefined) return { prompt };
   const match = matchShotForSegment(shots, segmentIndex, segmentDurationMs);
-  if (!match) return prompt;
+  if (!match) return { prompt };
+
+  const preset = LIGHTING_PRESETS[market];
+  const prevLighting =
+    match.prevShot && match.prevShot.scene === match.shot.scene
+      ? resolveLighting({ preset, emotion: match.prevShot.emotion }).params
+      : undefined;
+  const lighting = resolveLighting({
+    preset,
+    emotion: match.shot.emotion,
+    prevLighting,
+  });
   const block = (options.buildBlock ?? buildDirectionBlock)({
     shot: match.shot,
     prevShot: match.prevShot,
     market,
     clothingState,
+    prevLighting,
   });
-  return `${block}\n${prompt}`;
+  return { prompt: `${block}\n${prompt}`, lighting: lighting.params };
 }

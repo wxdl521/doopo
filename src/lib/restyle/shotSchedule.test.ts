@@ -2,7 +2,7 @@
 // shotSchedule 纯函数测试：逐镜表契约清洗、分段就近匹配、调度块注入
 // ====================================================================
 import { describe, expect, it, vi } from "vitest";
-import { buildDirectionBlock, type DirectionShot } from "./cameraDirection";
+import { buildDirectionBlock, LIGHTING_PRESETS, resolveLighting, type DirectionShot } from "./cameraDirection";
 import {
   matchShotForSegment,
   parseShotSchedule,
@@ -133,43 +133,92 @@ describe("withSegmentDirection 调度块注入", () => {
 
   it("有逐镜表时调用 buildDirectionBlock 并把调度块拼在提示词前", () => {
     const buildBlock = vi.fn(() => "MOCK_BLOCK");
-    const prompt = withSegmentDirection("原分段提示词", {
+    const result = withSegmentDirection("原分段提示词", {
       shots,
       segmentId: "U02",
       market: "us",
       buildBlock,
     });
     expect(buildBlock).toHaveBeenCalledOnce();
+    // 两镜场景不同（跨场景换光合法），不传 prevLighting
     expect(buildBlock).toHaveBeenCalledWith({
       shot: shots[1],
       prevShot: shots[0],
       market: "us",
       clothingState: undefined,
+      prevLighting: undefined,
     });
-    expect(prompt).toBe("MOCK_BLOCK\n原分段提示词");
+    expect(result.prompt).toBe("MOCK_BLOCK\n原分段提示词");
   });
 
   it("真实调度块含【运镜调度】【转场指令】【光线语言】三段", () => {
-    const prompt = withSegmentDirection("原分段提示词", {
+    const result = withSegmentDirection("原分段提示词", {
       shots,
       segmentId: "U02",
       market: "kr",
     });
-    expect(prompt).toContain("【运镜调度】");
-    expect(prompt).toContain("【转场指令】");
-    expect(prompt).toContain("【光线语言】阿宝色调");
-    expect(prompt.endsWith("原分段提示词")).toBe(true);
+    expect(result.prompt).toContain("【运镜调度】");
+    expect(result.prompt).toContain("【转场指令】");
+    expect(result.prompt).toContain("【光线语言】光比+30");
+    expect(result.prompt.endsWith("原分段提示词")).toBe(true);
     // 与直接调用 buildDirectionBlock 的产物一致。
-    expect(prompt).toBe(
+    expect(result.prompt).toBe(
       `${buildDirectionBlock({ shot: shots[1], prevShot: shots[0], market: "kr" })}\n原分段提示词`,
     );
+  });
+
+  it("返回本镜实际光照参数（含情绪微调），供调用方写渲染日志", () => {
+    const result = withSegmentDirection("原分段提示词", {
+      shots,
+      segmentId: "U02",
+      market: "kr",
+    });
+    // SC002 情绪「悲伤」无微调 → 即 kr 预设参数
+    expect(result.lighting).toEqual(LIGHTING_PRESETS.kr.params);
+
+    const angry = withSegmentDirection("原分段提示词", {
+      shots,
+      segmentId: "U01",
+      market: "kr",
+    });
+    // SC001 情绪「愤怒」→ 光比+10、色温-10
+    expect(angry.lighting?.contrastRatio).toBe(LIGHTING_PRESETS.kr.params.contrastRatio + 10);
+    expect(angry.lighting?.tempTint).toBe(LIGHTING_PRESETS.kr.params.tempTint - 10);
+  });
+
+  it("同一场戏内前一镜光照参与一致性校验（同场景传 prevLighting）", () => {
+    const sameSceneShots = [
+      makeShot({ shotNo: "SC001", startMs: 0, endMs: 10_000, emotion: "暧昧" }),
+      makeShot({ shotNo: "SC002", startMs: 10_000, endMs: 20_000, emotion: "愤怒" }),
+    ];
+    const buildBlock = vi.fn(() => "MOCK_BLOCK");
+    const result = withSegmentDirection("原分段提示词", {
+      shots: sameSceneShots,
+      segmentId: "U02",
+      market: "kr",
+      buildBlock,
+    });
+    // 前一镜同场景：prevLighting = 前一镜（暧昧微调后）的实际参数
+    const expectedPrev = resolveLighting({
+      preset: LIGHTING_PRESETS.kr,
+      emotion: "暧昧",
+    }).params;
+    expect(buildBlock).toHaveBeenCalledWith({
+      shot: sameSceneShots[1],
+      prevShot: sameSceneShots[0],
+      market: "kr",
+      clothingState: undefined,
+      prevLighting: expectedPrev,
+    });
+    // 同预设同场景不会翻转 → 不回滚，本镜愤怒微调生效
+    expect(result.lighting?.contrastRatio).toBe(LIGHTING_PRESETS.kr.params.contrastRatio + 10);
   });
 
   it("无逐镜表 / 分段 id 无法解析时跳过注入，且不调用调度块组装", () => {
     const buildBlock = vi.fn(() => "MOCK_BLOCK");
     expect(
       withSegmentDirection("原分段提示词", { segmentId: "U01", market: "kr", buildBlock }),
-    ).toBe("原分段提示词");
+    ).toEqual({ prompt: "原分段提示词" });
     expect(
       withSegmentDirection("原分段提示词", {
         shots: [],
@@ -177,13 +226,13 @@ describe("withSegmentDirection 调度块注入", () => {
         market: "kr",
         buildBlock,
       }),
-    ).toBe("原分段提示词");
+    ).toEqual({ prompt: "原分段提示词" });
     expect(
       withSegmentDirection("原分段提示词", { shots, segmentId: "EP01", market: "kr", buildBlock }),
-    ).toBe("原分段提示词");
+    ).toEqual({ prompt: "原分段提示词" });
     expect(
       withSegmentDirection("原分段提示词", { shots, market: "kr", buildBlock }),
-    ).toBe("原分段提示词");
+    ).toEqual({ prompt: "原分段提示词" });
     expect(buildBlock).not.toHaveBeenCalled();
   });
 });

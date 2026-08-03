@@ -3,7 +3,7 @@
 //
 //  - 执行模式三选一卡片 + 「应用执行模式」按钮
 //  - 自定义干预联动区（仅选中展开；极速模式仍保留总预算）
-//  - 项目画幅 / 目标市场（LUT 简述）/ ✨ 智能补镜开关 / 视频模型（单价来自 listModelPricing，弹窗选模型）
+//  - 项目画幅 / 目标市场（光照预设简述）/ ✨ 智能补镜开关 / 视频模型（单价来自 listModelPricing，弹窗选模型）
 //  - RestyleSpecCard：聊天区「请先确认这 3 项制作规格」表，
 //    与本面板读写同一份项目状态，任一侧改动即时同步
 // ====================================================================
@@ -12,7 +12,7 @@ import { useMemo, useState } from "react";
 import { Check, ChevronDown, Clapperboard, Gauge, SlidersHorizontal, Sparkles, X, Zap } from "lucide-react";
 import type { Translations } from "../../i18n/zh";
 import type { ModelPricingRow } from "../../lib/modelPricingCache";
-import { LIGHTING_LUTS, type Market } from "../../lib/restyle/cameraDirection";
+import { LIGHTING_LUTS, LIGHTING_PRESETS, type Market } from "../../lib/restyle/cameraDirection";
 import type { RestyleProject } from "./restyleStorage";
 import {
   DEFAULT_AUTO_BUDGET,
@@ -81,12 +81,13 @@ export type RestyleSetupPatch = Partial<
   >
 >;
 
-/** 目标市场三选一（光线 LUT + 俚语本土化口径），默认 kr。 */
-const MARKET_OPTIONS: Array<{ value: Market; labelKey: keyof Translations }> = [
-  { value: "kr", labelKey: "restyle_setup_market_kr" },
-  { value: "us", labelKey: "restyle_setup_market_us" },
-  { value: "in", labelKey: "restyle_setup_market_in" },
-];
+/** 目标市场六档（光照预设 + 俚语本土化口径），默认 kr；顺序与 LIGHTING_PRESETS 一致。 */
+const MARKET_OPTIONS: Array<{ value: Market; labelKey: keyof Translations }> = (
+  Object.keys(LIGHTING_PRESETS) as Market[]
+).map((value) => ({
+  value,
+  labelKey: LIGHTING_PRESETS[value].nameKey as keyof Translations,
+}));
 
 /** 当前模型的单价档：优先 720P（渲染默认清晰度），取不到用该模型任意一档。 */
 export function pricingForVideoModel(
@@ -323,7 +324,7 @@ export function RestyleSetupPanel({
         />
       </div>
 
-      {/* 4. 目标市场（决定光线 LUT 与俚语本土化口径） */}
+      {/* 4. 目标市场（决定光照预设与俚语本土化口径） */}
       <div className="mt-3">
         <OptionRow<Market>
           label={t.restyle_setup_target_market}
@@ -334,7 +335,14 @@ export function RestyleSetupPanel({
             label: t[option.labelKey],
           }))}
         />
-        <p className="mt-1 text-[10px] leading-4 text-text-muted" data-testid="market-lut-brief">
+        <p className="mt-1 text-[10px] leading-4 text-text-muted" data-testid="market-preset-desc">
+          {
+            t[
+              LIGHTING_PRESETS[project?.targetMarket ?? "kr"].descriptionKey as keyof Translations
+            ]
+          }
+        </p>
+        <p className="mt-0.5 text-[10px] leading-4 text-text-muted" data-testid="market-lut-brief">
           {t.restyle_setup_market_lut}：
           {LIGHTING_LUTS[project?.targetMarket ?? "kr"].join(" · ")}
         </p>

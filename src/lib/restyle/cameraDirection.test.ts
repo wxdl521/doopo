@@ -1,15 +1,20 @@
 // ====================================================================
-// cameraDirection 纯函数测试：三层耦合、跳切红线、LUT、调度块、补镜
+// cameraDirection 纯函数测试：三层耦合、跳切红线、光照参数矩阵、调度块、补镜
 // ====================================================================
 import { describe, expect, it } from "vitest";
 import {
   buildDirectionBlock,
+  EMOTION_LIGHTING_MAX_DELTA,
   EMOTION_MOVEMENT_MAP,
   findInsertShots,
   LIGHTING_LUTS,
+  LIGHTING_PRESETS,
   resolveCameraMovement,
+  resolveLighting,
   resolveSceneCut,
   type DirectionShot,
+  type LightingParams,
+  type Market,
 } from "./cameraDirection";
 
 function makeShot(overrides: Partial<DirectionShot> = {}): DirectionShot {
@@ -154,34 +159,163 @@ describe("resolveSceneCut", () => {
 });
 
 // --------------------------------------------------------------------
-// LIGHTING_LUTS
+// LIGHTING_PRESETS：6 档预设的 5 维参数矩阵完整性
 // --------------------------------------------------------------------
 
-describe("LIGHTING_LUTS", () => {
-  it("韩剧：阿宝色调 + 柔光漫反射 + 圣光光晕 + 阴影加蓝", () => {
-    expect(LIGHTING_LUTS.kr).toEqual([
-      "阿宝色调",
-      "柔光漫反射",
-      "逆光位带圣光光晕",
-      "阴影区加蓝",
-    ]);
+const MARKETS: Market[] = ["kr", "us", "in", "nordic", "hk", "jp"];
+
+describe("LIGHTING_PRESETS 6 档预设完整性", () => {
+  it("覆盖 6 个市场，id/nameKey/descriptionKey 齐全", () => {
+    expect(Object.keys(LIGHTING_PRESETS).sort()).toEqual([...MARKETS].sort());
+    for (const market of MARKETS) {
+      const preset = LIGHTING_PRESETS[market];
+      expect(preset.id).toBe(market);
+      expect(preset.nameKey).toBe(`restyle_setup_market_${market}`);
+      expect(preset.descriptionKey).toMatch(/^restyle_setup_lighting_\w+_desc$/);
+    }
   });
 
-  it("美剧：高对比度 + 硬光切边 + 暗部死黑 + 高光细节", () => {
-    expect(LIGHTING_LUTS.us).toEqual([
-      "高对比度",
-      "硬光切边",
-      "暗部死黑保留质感",
-      "高光区保留细节（FilmLight 风格）",
-    ]);
+  it.each(MARKETS)("%s：5 维参数完整，数值维在 -100~+100", (market) => {
+    const { params } = LIGHTING_PRESETS[market];
+    expect(params.contrastRatio).toBeGreaterThanOrEqual(-100);
+    expect(params.contrastRatio).toBeLessThanOrEqual(100);
+    expect(params.tempTint).toBeGreaterThanOrEqual(-100);
+    expect(params.tempTint).toBeLessThanOrEqual(100);
+    expect(params.palette.shadows).toBeTruthy();
+    expect(params.palette.midtones).toBeTruthy();
+    expect(params.palette.highlights).toBeTruthy();
+    expect(params.textureRollOff).toBeTruthy();
+    expect(params.skinToneOffset).toBeTruthy();
   });
 
-  it("印度剧：高饱和暖黄 + 面部过曝半档 + 眼白牙齿提亮", () => {
-    expect(LIGHTING_LUTS.in).toEqual([
-      "高饱和暖黄",
-      "面部过曝半档",
-      "眼白与牙齿单独提亮",
-    ]);
+  it("关键预设口径：kr 柔光偏暖阴影加蓝；nordic 低反差强冷调", () => {
+    expect(LIGHTING_PRESETS.kr.params.contrastRatio).toBe(30);
+    expect(LIGHTING_PRESETS.kr.params.tempTint).toBeGreaterThan(0);
+    expect(LIGHTING_PRESETS.kr.params.palette.shadows).toContain("加蓝");
+    expect(LIGHTING_PRESETS.kr.params.textureRollOff).toContain("奶油状扩散");
+    expect(LIGHTING_PRESETS.kr.params.skinToneOffset).toContain("偏粉白");
+    expect(LIGHTING_PRESETS.nordic.params.contrastRatio).toBeLessThan(0);
+    expect(LIGHTING_PRESETS.nordic.params.tempTint).toBeLessThanOrEqual(-30);
+  });
+});
+
+// --------------------------------------------------------------------
+// resolveLighting：情绪微调（±10% 硬钳）+ 同场景一致性回滚
+// --------------------------------------------------------------------
+
+describe("resolveLighting 情绪微调", () => {
+  it("未识别情绪：原样返回预设参数，无 note", () => {
+    const result = resolveLighting({ preset: LIGHTING_PRESETS.kr, emotion: "中性" });
+    expect(result.params).toEqual(LIGHTING_PRESETS.kr.params);
+    expect(result.note).toBeUndefined();
+  });
+
+  it("愤怒 → 光比+10、色温-10（更冷更硬），附微调 note", () => {
+    const result = resolveLighting({ preset: LIGHTING_PRESETS.kr, emotion: "愤怒" });
+    expect(result.params.contrastRatio).toBe(LIGHTING_PRESETS.kr.params.contrastRatio + 10);
+    expect(result.params.tempTint).toBe(LIGHTING_PRESETS.kr.params.tempTint - 10);
+    expect(result.note).toBe("情绪「愤怒」微调：光比+10/色温-10");
+  });
+
+  it.each(["恐怖", "紧张"])("%s → 同愤怒：光比+10、色温-10", (emotion) => {
+    const result = resolveLighting({ preset: LIGHTING_PRESETS.us, emotion });
+    expect(result.params.contrastRatio).toBe(LIGHTING_PRESETS.us.params.contrastRatio + 10);
+    expect(result.params.tempTint).toBe(LIGHTING_PRESETS.us.params.tempTint - 10);
+  });
+
+  it.each(["暧昧", "浪漫"])("%s → 色温+10、光比-10", (emotion) => {
+    const result = resolveLighting({ preset: LIGHTING_PRESETS.nordic, emotion });
+    expect(result.params.contrastRatio).toBe(LIGHTING_PRESETS.nordic.params.contrastRatio - 10);
+    expect(result.params.tempTint).toBe(LIGHTING_PRESETS.nordic.params.tempTint + 10);
+  });
+
+  it("微调幅度硬钳 ±10%：任何情绪的数值偏移不超过 ±10", () => {
+    for (const emotion of ["愤怒", "暧昧", "恐怖", "紧张", "浪漫"]) {
+      const result = resolveLighting({ preset: LIGHTING_PRESETS.jp, emotion });
+      expect(
+        Math.abs(result.params.contrastRatio - LIGHTING_PRESETS.jp.params.contrastRatio),
+      ).toBeLessThanOrEqual(EMOTION_LIGHTING_MAX_DELTA);
+      expect(
+        Math.abs(result.params.tempTint - LIGHTING_PRESETS.jp.params.tempTint),
+      ).toBeLessThanOrEqual(EMOTION_LIGHTING_MAX_DELTA);
+    }
+  });
+
+  it("微调不改动调色盘/质感/肤色三维", () => {
+    const result = resolveLighting({ preset: LIGHTING_PRESETS.hk, emotion: "愤怒" });
+    expect(result.params.palette).toEqual(LIGHTING_PRESETS.hk.params.palette);
+    expect(result.params.textureRollOff).toBe(LIGHTING_PRESETS.hk.params.textureRollOff);
+    expect(result.params.skinToneOffset).toBe(LIGHTING_PRESETS.hk.params.skinToneOffset);
+  });
+});
+
+describe("resolveLighting 同场景一致性（硬规则）", () => {
+  const warmPrev: LightingParams = {
+    ...LIGHTING_PRESETS.kr.params,
+    palette: { ...LIGHTING_PRESETS.kr.params.palette },
+  };
+
+  it("色温符号翻转 → 回滚为 prevLighting 并附回滚 note", () => {
+    const coldPrev: LightingParams = {
+      ...LIGHTING_PRESETS.nordic.params,
+      palette: { ...LIGHTING_PRESETS.nordic.params.palette },
+    };
+    const result = resolveLighting({
+      preset: LIGHTING_PRESETS.kr, // tempTint +20，与 nordic 的 -60 符号相反
+      emotion: "中性",
+      prevLighting: coldPrev,
+    });
+    expect(result.params).toEqual(coldPrev);
+    expect(result.note).toBe("相邻镜头光照方向突变，已回滚保持缓变");
+  });
+
+  it("阴影色相大类改变（加蓝 → 偏橙红）→ 同样触发回滚", () => {
+    const result = resolveLighting({
+      preset: LIGHTING_PRESETS.in, // 阴影偏橙红，与 kr 的加蓝色相大类不同；色温同向不翻转
+      emotion: "中性",
+      prevLighting: warmPrev,
+    });
+    expect(result.params).toEqual(warmPrev);
+    expect(result.note).toBe("相邻镜头光照方向突变，已回滚保持缓变");
+  });
+
+  it("同向缓变不触发回滚：情绪微调照常生效", () => {
+    const result = resolveLighting({
+      preset: LIGHTING_PRESETS.kr,
+      emotion: "愤怒",
+      prevLighting: warmPrev, // 同预设同场景：色温 +20 → +10 仍为正，阴影色相不变
+    });
+    expect(result.params.contrastRatio).toBe(LIGHTING_PRESETS.kr.params.contrastRatio + 10);
+    expect(result.params.tempTint).toBe(LIGHTING_PRESETS.kr.params.tempTint - 10);
+    expect(result.note).toBe("情绪「愤怒」微调：光比+10/色温-10");
+  });
+
+  it("prevLighting 缺省时不做一致性校验", () => {
+    const result = resolveLighting({ preset: LIGHTING_PRESETS.kr, emotion: "愤怒" });
+    expect(result.note).toBe("情绪「愤怒」微调：光比+10/色温-10");
+  });
+});
+
+// --------------------------------------------------------------------
+// LIGHTING_LUTS：兼容导出（由 params 生成的一行式简述）
+// --------------------------------------------------------------------
+
+describe("LIGHTING_LUTS 兼容导出", () => {
+  it("6 个市场均有由 5 维参数生成的简述（供现有面板/提示词沿用）", () => {
+    expect(Object.keys(LIGHTING_LUTS).sort()).toEqual([...MARKETS].sort());
+    for (const market of MARKETS) {
+      const brief = LIGHTING_LUTS[market];
+      expect(brief.length).toBeGreaterThanOrEqual(4);
+      expect(brief.every((item) => typeof item === "string" && item.length > 0)).toBe(true);
+    }
+  });
+
+  it("简述内容与预设参数一致（kr：光比+30 / 色温偏暖 / 阴影加蓝 / 肤色偏粉白）", () => {
+    expect(LIGHTING_LUTS.kr.join(" · ")).toContain("光比+30");
+    expect(LIGHTING_LUTS.kr.join(" · ")).toContain("偏暖");
+    expect(LIGHTING_LUTS.kr.join(" · ")).toContain("阴影加蓝");
+    expect(LIGHTING_LUTS.kr.join(" · ")).toContain("肤色偏粉白");
+    expect(LIGHTING_LUTS.us.join(" · ")).toContain("硬朗高反差");
   });
 });
 
@@ -249,12 +383,33 @@ describe("buildDirectionBlock", () => {
     expect(dramaBlock).toContain("交导演模型判断");
   });
 
-  it("光线语言段逐条列出目标市场 LUT", () => {
+  it("光线语言段逐条渲染 5 维参数（光比/色温/调色盘/质感衰减/肤色保护）", () => {
     const block = buildDirectionBlock({
       shot: makeShot(),
       market: "kr",
     });
-    expect(block).toContain("阿宝色调；柔光漫反射；逆光位带圣光光晕；阴影区加蓝");
+    const line = block.split("\n").find((item) => item.startsWith("【光线语言】"))!;
+    expect(line).toContain("光比+30");
+    expect(line).toContain("色温+20");
+    expect(line).toContain("调色盘[阴影加蓝");
+    expect(line).toContain("质感衰减[");
+    expect(line).toContain("肤色保护[");
+  });
+
+  it("光线语言段尾附情绪微调 note；一致性回滚时附回滚 note", () => {
+    const tweaked = buildDirectionBlock({
+      shot: makeShot({ emotion: "愤怒", shotType: "中景" }),
+      market: "kr",
+    });
+    expect(tweaked).toContain("情绪「愤怒」微调：光比+10/色温-10");
+
+    const rolledBack = buildDirectionBlock({
+      shot: makeShot({ emotion: "中性" }),
+      market: "kr",
+      prevLighting: LIGHTING_PRESETS.nordic.params, // 色温符号翻转 → 强制回滚
+    });
+    expect(rolledBack).toContain("相邻镜头光照方向突变，已回滚保持缓变");
+    expect(rolledBack).toContain("色温-60");
   });
 
   it("含 clothingState 时输出服装软引导句", () => {

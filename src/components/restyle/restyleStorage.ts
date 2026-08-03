@@ -139,7 +139,7 @@ export type RestyleProject = {
   aspect?: RestyleAspect;
   /** 分析层产出的轻量逐镜表（导演镜头调度机制）；旧项目缺省兼容。 */
   shotSchedule?: DirectionShot[];
-  /** 目标市场（光线 LUT + 俚语本土化口径），默认 kr。 */
+  /** 目标市场（光照预设 + 俚语本土化口径），默认 kr。 */
   targetMarket?: Market;
   /** ✨ 智能补镜开关：当前版本只记录偏好，补镜执行在下个迭代开放。 */
   smartInsert?: boolean;
@@ -184,8 +184,17 @@ function isAspect(value: unknown): value is RestyleAspect {
   return value === "16:9" || value === "4:3" || value === "3:4" || value === "9:16";
 }
 
+const MARKETS: ReadonlySet<string> = new Set<Market>([
+  "kr",
+  "us",
+  "in",
+  "nordic",
+  "hk",
+  "jp",
+]);
+
 function isMarket(value: unknown): value is Market {
-  return value === "kr" || value === "us" || value === "in";
+  return typeof value === "string" && MARKETS.has(value);
 }
 
 function parseAttachment(value: unknown): RestyleAttachment | null {
