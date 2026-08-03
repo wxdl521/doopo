@@ -41,3 +41,34 @@ export function isRegenerateIntent(message: string): boolean {
     text,
   );
 }
+
+/**
+ * 用户是否在要求重新分析原片、重建或补充资产表。
+ * 与 isConfirmIntent / isRegenerateIntent 互斥：确认类口语与明确指向资产图片
+ * （含「图片 / 图 / 生图」且未提「资产表 / 分析」）的说法都不算重分析，
+ * 后者交给生图纠错分支处理。
+ */
+export function isReanalyzeIntent(message: string): boolean {
+  const text = message.trim();
+  if (!text) return false;
+  if (isConfirmIntent(text)) return false;
+  const mentionsAnalysis = /(资产表|分析|提取|识别|原片)/.test(text);
+  if (/(图片|生图|图)/.test(text) && !mentionsAnalysis) return false;
+  if (isRegenerateIntent(text) && !mentionsAnalysis) return false;
+  return /(重新分析|再次分析|再分析|重看|重新提取|重新识别|重跑|重新跑|补充分析|漏了|遗漏|资产表(不对|不正确|错了|有误|有问题)|re-?analy\w*|re-?extract\w*)/i.test(
+    text,
+  );
+}
+
+/**
+ * 用户是否在要求整套重做转绘方案（区别于指出某集某段的局部修改）。
+ * 与 isConfirmIntent 互斥（其已有的「重新 / 修改」排除逻辑会把这些说法挡在确认之外）。
+ */
+export function isReplanIntent(message: string): boolean {
+  const text = message.trim();
+  if (!text) return false;
+  if (isConfirmIntent(text)) return false;
+  return /(方案(不对|不正确|有误|有问题)|重新出方案|重出方案|重做方案|重新做方案|重新生成方案|重新分镜|重做分镜|redo\s+(the\s+)?(plan|storyboard)|replan)/i.test(
+    text,
+  );
+}

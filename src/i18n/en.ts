@@ -1779,6 +1779,13 @@ export const en: Translations = {
   restyle_run_step_transcribe: "Transcribing source dialogue",
   restyle_run_step_plan: "Generating restyle plan",
   restyle_run_step_prompt_update: "Updating segment prompts",
+  restyle_run_step_fetch_source: "Fetching source video…",
+  restyle_reanalyze_button: "Re-analyse source",
+  restyle_reanalyze_cached_frames: "Re-analysed from cached key frames this time.",
+  restyle_reanalyze_suggest_replan:
+    "Assets updated. Reply \"redo the plan\" to regenerate the restyle plan.",
+  restyle_reanalyze_no_source:
+    "Source footage unavailable (neither the local cache nor the persisted URL works). Please re-upload the source video before analysing.",
 
   // ===== Restyle video workbench (right setup panel + execution logic) =====
   restyle_setup_title: "Video Restyle Workbench",

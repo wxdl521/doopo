@@ -80,7 +80,13 @@ import { uploadLocalImage } from "../../lib/uploadImage.functions";
 import { createMediaUploadUrl } from "../../lib/restyleMedia.functions";
 import { persistAssetImage } from "../../lib/workspaceMedia.functions";
 import { realImageModelOptions, realVideoModels } from "../NewProjectDialog";
-import { isConfirmIntent, isRegenerateIntent, isVideoRenderIntent } from "./restyleIntent";
+import {
+  isConfirmIntent,
+  isReanalyzeIntent,
+  isRegenerateIntent,
+  isReplanIntent,
+  isVideoRenderIntent,
+} from "./restyleIntent";
 import {
   buildRelationBrief,
   looksLikeStyleBrief,
@@ -377,6 +383,60 @@ async function extractVideoKeyFrames(file: File): Promise<string[]> {
     video.load();
     URL.revokeObjectURL(url);
   }
+}
+
+/**
+ * 重跑分析时取回源视频 File：优先命中内存映射（同一会话），
+ * 未命中则通过持久 URL（ensureReferenceVideoUrl 已写回 project.files[].url）
+ * fetch 回 Blob 重建 File，并回填内存映射供后续转写/重跑直接命中。
+ */
+export async function resolveSourceVideoFile(
+  attachment: RestyleAttachment,
+  fileObjects: Record<string, File | undefined>,
+  ensureUrl: (
+    file: RestyleAttachment,
+  ) => Promise<{ ok: true; url: string } | { ok: false; error: string }>,
+  fetchImpl: typeof fetch = fetch,
+): Promise<{ ok: true; file: File; restored: boolean } | { ok: false; error: string }> {
+  const local = fileObjects[attachment.id];
+  if (local) return { ok: true, file: local, restored: false };
+  const ensured = await ensureUrl(attachment);
+  if (!ensured.ok) return { ok: false, error: ensured.error };
+  try {
+    const response = await fetchImpl(ensured.url);
+    if (!response.ok) {
+      return { ok: false, error: `原片取回失败（HTTP ${response.status}）。` };
+    }
+    const blob = await response.blob();
+    const file = new File([blob], attachment.name, {
+      type: attachment.type || blob.type,
+      lastModified: attachment.lastModified || Date.now(),
+    });
+    fileObjects[attachment.id] = file;
+    return { ok: true, file, restored: true };
+  } catch (error) {
+    return { ok: false, error: error instanceof Error ? error.message : "原片取回失败。" };
+  }
+}
+
+/**
+ * 三级回退：原片取不回时，复用首轮分析持久化的 analysisFrame 关键帧附件 url
+ * 作为 frameImages（仅限 episodeKeys 对应的源视频）。
+ */
+export function cachedAnalysisFrames(
+  files: RestyleAttachment[],
+  episodeKeys: string[],
+): string[] {
+  const wanted = new Set(episodeKeys);
+  return files
+    .filter(
+      (file) =>
+        file.analysisFrame === true &&
+        typeof file.url === "string" &&
+        wanted.has(file.analysisEpisode ?? ""),
+    )
+    .map((file) => file.url as string)
+    .slice(0, 8);
 }
 
 async function extractVideoThumbnail(file: File): Promise<string> {
@@ -3098,6 +3158,216 @@ export default function RestyleStudio() {
     return false;
   }
 
+  /**
+   * 首轮分析与「重新分析原片」共用的分析主体：抽帧 → 台词转写 → 资产表/关系表重建 → skill 自检。
+   * keepAssets=true（「补充分析 / 漏了 X」）时继续传 existingAssets 增量补全；
+   * 用户明说「重新提取 / 重跑」时传空数组全量重建。
+   * 素材三级回退：fileObjectsRef 命中 → ensureReferenceVideoUrl 持久 URL 回源重建 File →
+   * 复用首轮 analysisFrame 附件 url 与 project.transcript；三级都没有才报错要求重新上传。
+   */
+  async function runSourceAnalysis(
+    projectId: string,
+    conversationId: string,
+    instruction: string,
+    options: { keepAssets: boolean; sourceFiles?: RestyleAttachment[] },
+  ): Promise<boolean> {
+    const snapshot = projectsRef.current.find((item) => item.id === projectId);
+    if (!snapshot) return false;
+    // 只分析原始上传：渲染产物（video_clip / final_video）也是 video/*，必须排除。
+    const projectVideoFiles = snapshot.files.filter(
+      (file) => file.type.startsWith("video/") && !file.isFolder && !file.generatedKind,
+    );
+    const sourceFiles = options.sourceFiles?.length ? options.sourceFiles : projectVideoFiles;
+    if (!sourceFiles.length) return false;
+    const isRerun = snapshot.extractedAssets.length > 0;
+
+    updateProject(projectId, (project) => ({ ...project, stage: "analysis" }));
+    beginRun(projectId, t.restyle_run_step_read_source);
+    setAnalysisError("");
+    let analysisCompleted = false;
+    try {
+      // 内存映射未命中（页面刷新后）时，先取回持久 URL 上的原片重建 File 再抽帧。
+      if (sourceFiles.some((file) => !fileObjectsRef.current[file.id])) {
+        markRunStep(projectId, t.restyle_run_step_fetch_source);
+      }
+      const frameBatches = await Promise.all(
+        sourceFiles.map(async (file) => {
+          const resolved = await resolveSourceVideoFile(file, fileObjectsRef.current, (target) =>
+            ensureReferenceVideoUrl(projectId, target),
+          );
+          return {
+            file,
+            frames: resolved.ok ? await extractVideoKeyFrames(resolved.file).catch(() => []) : [],
+          };
+        }),
+      );
+      // Keep chronological coverage for the full upload, including multi-episode uploads.
+      let frameImages = frameBatches.flatMap((batch) => batch.frames).slice(0, 8);
+      // 原片取不回时退化为复用首轮持久化的关键帧附件。
+      let usedCachedFrames = false;
+      if (!frameImages.length && isRerun) {
+        const cached = cachedAnalysisFrames(
+          snapshot.files,
+          sourceFiles.map((file) => file.episode ?? file.id),
+        );
+        if (cached.length) {
+          frameImages = cached;
+          usedCachedFrames = true;
+        }
+      }
+      if (isRunAborted(projectId)) return false;
+      // 音频通道：抽 16k 单声道 WAV 分片走网关 ASR，台词作为分析与方案的可信证据。
+      // 无音轨 / 源片过大 / 网关拒绝 input_audio 时返回空台词并继续，不阻断分析。
+      const transcriptSource = fileObjectsRef.current[sourceFiles[0].id];
+      let transcriptText = "";
+      if (transcriptSource) {
+        markRunStep(projectId, t.restyle_run_step_transcribe);
+        const transcript = await transcribeSourceVideo(
+          transcriptSource,
+          (input) => callTranscribeRestyleAudio(input),
+          {
+            isAborted: () => isRunAborted(projectId),
+            onProgress: (done, total) =>
+              markRunStep(projectId, `${t.restyle_run_step_transcribe} ${done}/${total}`),
+          },
+        );
+        transcriptText = transcript.text;
+        if (!transcriptText && transcript.degradedReason) {
+          appendConversationMessage(projectId, conversationId, {
+            role: "assistant",
+            content: `原片台词识别未产出结果：${transcript.degradedReason} 分析将只依据画面进行，台词相关设定请人工补充。`,
+          });
+        }
+      }
+      // 转写不可用（如基于缓存关键帧重跑）时沿用首轮台词。
+      if (!transcriptText) transcriptText = snapshot.transcript ?? "";
+      if (isRunAborted(projectId)) return false;
+      if (!frameImages.length && !transcriptText) {
+        // 三级都拿不到画面：不静默产出空输入分析，提示重新上传。
+        const detail = t.restyle_reanalyze_no_source;
+        setAnalysisError(detail);
+        finishRun(projectId, "failed", detail);
+        appendConversationMessage(projectId, conversationId, {
+          role: "assistant",
+          content: `${t.restyle_analysis_failed} ${detail}`,
+        });
+        return false;
+      }
+      markRunStep(projectId, t.restyle_run_step_analyze, selectedModel);
+      const result = await callAnalyzeRestyleAssets({
+        data: {
+          instruction,
+          model: selectedModel,
+          sourceFiles: sourceFiles.map((file) => ({
+            id: file.episode ?? file.id,
+            name: file.name,
+            type: file.type,
+            size: file.size,
+          })),
+          frameImages,
+          transcript: transcriptText,
+          existingAssets: options.keepAssets
+            ? snapshot.extractedAssets.map(({ id: _id, ...asset }) => asset)
+            : [],
+        },
+      });
+      if (isRunAborted(projectId)) return false;
+      if (!result.ok) {
+        result.error = relabelRestyleError(result.error, selectedModel);
+        setAnalysisError(result.error);
+        finishRun(projectId, "failed", result.error);
+        appendConversationMessage(projectId, conversationId, {
+          role: "assistant",
+          content: `${t.restyle_analysis_failed} ${result.error}`,
+        });
+        return false;
+      }
+      markRunStep(projectId, t.restyle_run_step_asset_table);
+      const extractedAssets: RestyleExtractedAsset[] = result.assets.map((asset) => ({
+        id: crypto.randomUUID(),
+        ...asset,
+      }));
+      // analysis 的 relationships 按角色名对齐到资产 id：改名后关系表自动跟随。
+      const newCharacterAssets = extractedAssets.filter((asset) => asset.kind === "character");
+      const relationEdges: RestyleCharacterRelation[] = (result.relationships ?? []).flatMap(
+        (relation) => {
+          const match = (name: string) =>
+            newCharacterAssets.find(
+              (asset) => asset.sourceName === name || asset.targetName === name,
+            );
+          const from = match(relation.from);
+          const to = match(relation.to);
+          if (!from || !to || from.id === to.id) return [];
+          return [
+            {
+              id: crypto.randomUUID(),
+              from: from.id,
+              to: to.id,
+              relation: relation.relation,
+              note: relation.note,
+            },
+          ];
+        },
+      );
+      const frameAttachments: RestyleAttachment[] = frameBatches.flatMap(({ file, frames }) => {
+        const episode = file.episode ?? file.id;
+        const videoName = file.name.replace(/\.[^.]+$/, "") || episode;
+        return frames.map((url, index) => ({
+          id: crypto.randomUUID(),
+          name: `${videoName}_frame_${String(index + 1).padStart(2, "0")}.jpg`,
+          size: Math.round(url.length * 0.75),
+          type: "image/jpeg",
+          lastModified: Date.now(),
+          url,
+          analysisFrame: true,
+          analysisEpisode: episode,
+        }));
+      });
+      updateProject(projectId, (project) => ({
+        ...project,
+        stage: "assets",
+        extractedAssets,
+        analysisSummary: result.summary,
+        transcript: transcriptText || project.transcript,
+        analysisSections: Object.fromEntries(
+          sourceFiles.map((file) => [file.episode ?? file.id, result.analysis]),
+        ) as Record<string, RestyleAnalysisSections>,
+        confirmedAssetIds: [],
+        // 关系表随新一轮资产表重建（角色 id 重新生成，旧边全部失效）。
+        characterRelations: relationEdges.length ? relationEdges : undefined,
+        // 基于缓存关键帧重跑时没有新帧附件，保留首轮的 analysisFrame 附件。
+        files: usedCachedFrames
+          ? project.files
+          : [...project.files.filter((file) => !file.analysisFrame), ...frameAttachments],
+      }));
+      appendConversationMessage(projectId, conversationId, {
+        role: "assistant",
+        content: `${result.summary}${result.usedFrames ? ` ${t.restyle_frames_analyzed}` : ""}${usedCachedFrames ? ` ${t.restyle_reanalyze_cached_frames}` : ""}${isRerun && snapshot.planEpisodes?.length ? ` ${t.restyle_reanalyze_suggest_replan}` : ""}`,
+        assetTable: extractedAssets,
+      });
+      // 资产表生成后自动跑一次 skill 自检（1 分/次，与旧分析调用同口径）。
+      void runAssetTableReview(extractedAssets, relationEdges);
+      analysisCompleted = true;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : t.restyle_analysis_unknown_error;
+      if (isRunAborted(projectId)) return false;
+      setAnalysisError(detail);
+      finishRun(projectId, "failed", detail);
+      appendConversationMessage(projectId, conversationId, {
+        role: "assistant",
+        content: `${t.restyle_analysis_failed} ${detail}`,
+      });
+    } finally {
+      if (!isRunAborted(projectId)) finishRun(projectId);
+    }
+    // 执行模式联动：资产表产出后，极速 / 自定义（未勾选「目标资产设定」）自动推进下一步；
+    // 分步护航维持现状暂停等确认。放在 finally 之后，避免新任务被上一个 run 的收尾标记覆盖。
+    if (analysisCompleted && !isRunAborted(projectId)) {
+      await autoAdvanceAfterAssetTable(projectId, conversationId);
+    }
+    return analysisCompleted;
+  }
+
   async function sendChatMessage(overrideMessage?: string) {
     if (!activeProject || !activeConversation) return;
     // 同一项目内串行；不同项目各自独立，可并发执行。
@@ -3231,6 +3501,25 @@ export default function RestyleStudio() {
       return;
     }
 
+    // 资产表已产出后的「重做」入口：重新分析原片 / 整套重做方案。
+    // 必须排在生图纠错分支之前，否则「资产表不对，重新分析」会被 isRegenerateIntent
+    // 当成资产图片重生成而走错分支。
+    if (activeProject.extractedAssets.length > 0 && isReanalyzeIntent(message)) {
+      // 「补充分析 / 漏了 X」增量补全（传 existingAssets）；明说「重新 / 重跑」则全量重建。
+      const keepAssets =
+        /(补充|漏了|遗漏|少了|缺少)/.test(message) && !/重新|重跑|全量|全部/.test(message);
+      // 用户的原话就是最高优先级证据，直接作为分析 instruction。
+      await runSourceAnalysis(projectId, conversationId, message || analysisInstruction, {
+        keepAssets,
+      });
+      return;
+    }
+
+    if (activeProject.extractedAssets.length > 0 && isReplanIntent(message)) {
+      await runPlanGeneration(projectId, conversationId, styleBrief);
+      return;
+    }
+
     const requestedAssetKinds = getRequestedAssetKinds(message);
     // 纠错语句（“场景图片生成不对，请重新生成”）也要进入生图分支，
     // 否则只会得到一句“已理解…”，用户看到的就是“指正无效”。
@@ -3302,10 +3591,10 @@ export default function RestyleStudio() {
     if (activeProject.extractedAssets.length > 0) {
       const stageHint =
         activeProject.stage === "plan"
-          ? "我会保留当前方案；请指出集数、分段或要调整的提示词，我会只更新对应部分。"
+          ? "我会保留当前方案；请指出集数、分段或要调整的提示词，我会只更新对应部分。也可以回复“重新分析原片”重跑资产提取，或“重做方案”整套重出方案。"
           : generatedAssetFiles.length
-            ? "转绘资产已经就绪。下一步可回复：“继续下一步”生成转绘方案，或“确认生成视频”开始出片。"
-            : "资产表已就绪但还没有资产图。下一步可回复：“生成资产图片”按资产表逐张生成，或指定某个角色/场景/道具单独生成。";
+            ? "转绘资产已经就绪。下一步可回复：“继续下一步”生成转绘方案，或“确认生成视频”开始出片；资产表有问题可回复“重新分析原片”，方案要整套重出可回复“重做方案”。"
+            : "资产表已就绪但还没有资产图。下一步可回复：“生成资产图片”按资产表逐张生成，或指定某个角色/场景/道具单独生成；资产表有问题可回复“重新分析原片”。";
       appendConversationMessage(projectId, conversationId, {
         role: "assistant",
         content: `已理解：${message || "继续当前转绘任务"}。${stageHint}`,
@@ -3317,154 +3606,11 @@ export default function RestyleStudio() {
     const sourceFiles = selectedVideoFiles.length ? selectedVideoFiles : projectVideoFiles;
     if (!sourceFiles.length) return;
 
-    updateProject(projectId, (project) => ({ ...project, stage: "analysis" }));
-    beginRun(projectId, t.restyle_run_step_read_source);
-    setAnalysisError("");
-    let analysisCompleted = false;
-    try {
-      const frameBatches = await Promise.all(
-        sourceFiles.map(async (file) => {
-          const local = fileObjectsRef.current[file.id];
-          return {
-            file,
-            frames: local ? await extractVideoKeyFrames(local).catch(() => []) : [],
-          };
-        }),
-      );
-      // Keep chronological coverage for the full upload, including multi-episode uploads.
-      const frameImages = frameBatches.flatMap((batch) => batch.frames).slice(0, 8);
-      if (isRunAborted(projectId)) return;
-      // 音频通道：抽 16k 单声道 WAV 分片走网关 ASR，台词作为分析与方案的可信证据。
-      // 无音轨 / 源片过大 / 网关拒绝 input_audio 时返回空台词并继续，不阻断分析。
-      const transcriptSource = fileObjectsRef.current[sourceFiles[0].id];
-      let transcriptText = "";
-      if (transcriptSource) {
-        markRunStep(projectId, t.restyle_run_step_transcribe);
-        const transcript = await transcribeSourceVideo(
-          transcriptSource,
-          (input) => callTranscribeRestyleAudio(input),
-          {
-            isAborted: () => isRunAborted(projectId),
-            onProgress: (done, total) =>
-              markRunStep(projectId, `${t.restyle_run_step_transcribe} ${done}/${total}`),
-          },
-        );
-        transcriptText = transcript.text;
-        if (!transcriptText && transcript.degradedReason) {
-          appendConversationMessage(projectId, conversationId, {
-            role: "assistant",
-            content: `原片台词识别未产出结果：${transcript.degradedReason} 分析将只依据画面进行，台词相关设定请人工补充。`,
-          });
-        }
-      }
-      if (isRunAborted(projectId)) return;
-      markRunStep(projectId, t.restyle_run_step_analyze, selectedModel);
-      const result = await callAnalyzeRestyleAssets({
-        data: {
-          instruction: analysisInstruction,
-          model: selectedModel,
-          sourceFiles: sourceFiles.map((file) => ({
-            id: file.episode ?? file.id,
-            name: file.name,
-            type: file.type,
-            size: file.size,
-          })),
-          frameImages,
-          transcript: transcriptText,
-          existingAssets: activeProject.extractedAssets.map(({ id: _id, ...asset }) => asset),
-        },
-      });
-      if (isRunAborted(projectId)) return;
-      if (!result.ok) {
-        result.error = relabelRestyleError(result.error, selectedModel);
-        setAnalysisError(result.error);
-        finishRun(projectId, "failed", result.error);
-        appendConversationMessage(projectId, conversationId, {
-          role: "assistant",
-          content: `${t.restyle_analysis_failed} ${result.error}`,
-        });
-        return;
-      }
-      markRunStep(projectId, t.restyle_run_step_asset_table);
-      const extractedAssets: RestyleExtractedAsset[] = result.assets.map((asset) => ({
-        id: crypto.randomUUID(),
-        ...asset,
-      }));
-      // analysis 的 relationships 按角色名对齐到资产 id：改名后关系表自动跟随。
-      const newCharacterAssets = extractedAssets.filter((asset) => asset.kind === "character");
-      const relationEdges: RestyleCharacterRelation[] = (result.relationships ?? []).flatMap(
-        (relation) => {
-          const match = (name: string) =>
-            newCharacterAssets.find(
-              (asset) => asset.sourceName === name || asset.targetName === name,
-            );
-          const from = match(relation.from);
-          const to = match(relation.to);
-          if (!from || !to || from.id === to.id) return [];
-          return [
-            {
-              id: crypto.randomUUID(),
-              from: from.id,
-              to: to.id,
-              relation: relation.relation,
-              note: relation.note,
-            },
-          ];
-        },
-      );
-      const frameAttachments: RestyleAttachment[] = frameBatches.flatMap(({ file, frames }) => {
-        const episode = file.episode ?? file.id;
-        const videoName = file.name.replace(/\.[^.]+$/, "") || episode;
-        return frames.map((url, index) => ({
-          id: crypto.randomUUID(),
-          name: `${videoName}_frame_${String(index + 1).padStart(2, "0")}.jpg`,
-          size: Math.round(url.length * 0.75),
-          type: "image/jpeg",
-          lastModified: Date.now(),
-          url,
-          analysisFrame: true,
-          analysisEpisode: episode,
-        }));
-      });
-      updateProject(projectId, (project) => ({
-        ...project,
-        stage: "assets",
-        extractedAssets,
-        analysisSummary: result.summary,
-        transcript: transcriptText || project.transcript,
-        analysisSections: Object.fromEntries(
-          sourceFiles.map((file) => [file.episode ?? file.id, result.analysis]),
-        ) as Record<string, RestyleAnalysisSections>,
-        confirmedAssetIds: [],
-        // 关系表随新一轮资产表重建（角色 id 重新生成，旧边全部失效）。
-        characterRelations: relationEdges.length ? relationEdges : undefined,
-        files: [...project.files.filter((file) => !file.analysisFrame), ...frameAttachments],
-      }));
-      appendConversationMessage(projectId, conversationId, {
-        role: "assistant",
-        content: `${result.summary}${result.usedFrames ? ` ${t.restyle_frames_analyzed}` : ""}`,
-        assetTable: extractedAssets,
-      });
-      // 资产表生成后自动跑一次 skill 自检（1 分/次，与旧分析调用同口径）。
-      void runAssetTableReview(extractedAssets, relationEdges);
-      analysisCompleted = true;
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : t.restyle_analysis_unknown_error;
-      if (isRunAborted(projectId)) return;
-      setAnalysisError(detail);
-      finishRun(projectId, "failed", detail);
-      appendConversationMessage(projectId, conversationId, {
-        role: "assistant",
-        content: `${t.restyle_analysis_failed} ${detail}`,
-      });
-    } finally {
-      if (!isRunAborted(projectId)) finishRun(projectId);
-    }
-    // 执行模式联动：资产表产出后，极速 / 自定义（未勾选「目标资产设定」）自动推进下一步；
-    // 分步护航维持现状暂停等确认。放在 finally 之后，避免新任务被上一个 run 的收尾标记覆盖。
-    if (analysisCompleted && !isRunAborted(projectId)) {
-      await autoAdvanceAfterAssetTable(projectId, conversationId);
-    }
+    // 首轮分析与重跑共用同一条链路（含台词转写、skill 自检、关系表重建）。
+    await runSourceAnalysis(projectId, conversationId, analysisInstruction, {
+      keepAssets: false,
+      sourceFiles,
+    });
   }
 
   async function generateAssetImages(
@@ -4623,6 +4769,18 @@ export default function RestyleStudio() {
                       <div className="mb-2 flex items-center gap-2 text-xs font-semibold text-text-primary">
                         <FileText size={14} className="text-accent" />
                         {t.restyle_stage_assets}
+                        {message.id === lastAssetTableMessageId ? (
+                          <button
+                            type="button"
+                            // 等价于在对话里发送「重新分析原片」指令，免猜关键词。
+                            onClick={() => void sendChatMessage(t.restyle_reanalyze_button)}
+                            disabled={isAnalyzing || !activeConversation}
+                            className="ml-auto inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-accent hover:bg-accent-dim disabled:opacity-50"
+                          >
+                            <RotateCcw size={12} />
+                            {t.restyle_reanalyze_button}
+                          </button>
+                        ) : null}
                       </div>
                       <ExtractedAssetTable
                         assets={message.assetTable}

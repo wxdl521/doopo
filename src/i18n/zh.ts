@@ -1752,6 +1752,12 @@ export const zh = {
   restyle_run_step_transcribe: "识别原片台词",
   restyle_run_step_plan: "生成转绘方案",
   restyle_run_step_prompt_update: "更新分段提示词",
+  restyle_run_step_fetch_source: "正在取回原片…",
+  restyle_reanalyze_button: "重新分析原片",
+  restyle_reanalyze_cached_frames: "本次基于已缓存关键帧重新分析。",
+  restyle_reanalyze_suggest_replan: "资产已更新，建议回复“重做方案”重新生成转绘方案。",
+  restyle_reanalyze_no_source:
+    "无法取回原片画面（本地缓存与持久地址均不可用），请重新上传原片后再分析。",
 
   // ===== 视频转绘工作台（右侧选项区 + 执行逻辑联动） =====
   restyle_setup_title: "视频转绘工作台",
