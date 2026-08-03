@@ -981,6 +981,24 @@ function buildRestyleFileTree(
   ];
 }
 
+/**
+ * 原附件 blob 失效时的兜底选择：在同一份文件列表里找另一个已有持久
+ * http(s) URL 的源视频（如同集刚重传的那份）。
+ */
+export function pickEpisodeSourceFallback(
+  files: RestyleAttachment[],
+  source: RestyleAttachment,
+): RestyleAttachment | undefined {
+  return files.find(
+    (file) =>
+      file.id !== source.id &&
+      file.type.startsWith("video/") &&
+      Boolean(file.url) &&
+      /^https?:\/\//i.test(file.url!) &&
+      (!source.episode || !file.episode || file.episode === source.episode),
+  );
+}
+
 export default function RestyleStudio() {
   const { t } = useLanguage();
   const { user, isAuthenticated } = useAuth();
@@ -2144,6 +2162,8 @@ export default function RestyleStudio() {
     void ensureReferenceVideoUrl(activeProject.id, attachment);
   }
 
+
+
   async function ensureReferenceVideoUrl(
     projectId: string,
     source: RestyleAttachment,
@@ -2153,6 +2173,20 @@ export default function RestyleStudio() {
     if (cached) return await cached;
     const localFile = fileObjectsRef.current[source.id];
     if (!localFile) {
+      // 本地预览已失效：优先回绑到同集重传后的持久 URL 源片，而不是直接报错
+      const fallback = pickEpisodeSourceFallback(
+        projectsRef.current.find((item) => item.id === projectId)?.files ?? [],
+        source,
+      );
+      if (fallback?.url) {
+        updateProject(projectId, (project) => ({
+          ...project,
+          files: project.files.map((file) =>
+            file.id === source.id ? { ...file, url: fallback.url } : file,
+          ),
+        }));
+        return { ok: true, url: fallback.url };
+      }
       return { ok: false, error: "原视频只存在于已失效的本地预览中，请重新上传后再生成。" };
     }
     // 视频与 >4MB 文件走签名地址二进制直传（不做 base64）；小图片保留 base64 旧路径。
