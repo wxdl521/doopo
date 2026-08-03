@@ -23,7 +23,7 @@ export const MAX_SOURCE_FILE_BYTES = 2 * 1024 * 1024 * 1024;
  * 音频整段解码的体积阈值：超过则跳过 decodeAudioData（其会把整段 PCM 放进
  * 内存，大文件直接撑爆标签页），该集标记 no_audio，走服务端无音频降级路径。
  */
-export const AUDIO_DECODE_MAX_BYTES = 80 * 1024 * 1024;
+export const AUDIO_DECODE_MAX_BYTES = 400 * 1024 * 1024;
 
 /** 每单元关键帧数量（需求口径 3~5，取中值 4）。 */
 export const FRAMES_PER_UNIT = 4;

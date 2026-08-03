@@ -58,7 +58,7 @@ export async function runAssetAnalysis<T extends AssetAnalysisInput, R>(
 
   const result: GatewayChatResult = await callChat({
     model: INTERNAL_VISION_MODEL,
-    maxTokens: 5_000,
+    maxTokens: 12_000,
     timeoutMs: 180_000,
     messages: [
       { role: "system", content: system },

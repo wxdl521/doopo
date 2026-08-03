@@ -54,7 +54,7 @@ describe("阈值决策", () => {
 describe("大文件降级（212MB 样例场景）", () => {
   it("超过音频阈值：不解码、不中断，units 完整且无 audioUrl", async () => {
     const decodeAudio = vi.fn(async () => null);
-    const big = fileWithSize(212 * 1024 * 1024); // 212MB
+    const big = fileWithSize(450 * 1024 * 1024); // 450MB，超过 400MB 音频阈值
     const result = await prepareEpisodeMedia(big, {
       episodeId: "ep1",
       upload: okUpload,
@@ -75,7 +75,7 @@ describe("大文件降级（212MB 样例场景）", () => {
 
   it("源视频直传收到的是 File/Blob 而不是 base64 字符串", async () => {
     const putBinary = vi.fn(async (_blob: Blob, _t: { uploadUrl: string; readUrl: string }) => "https://signed/read.mp4");
-    const big = fileWithSize(212 * 1024 * 1024);
+    const big = fileWithSize(450 * 1024 * 1024);
     await prepareEpisodeMedia(big, {
       episodeId: "ep1",
       upload: okUpload,

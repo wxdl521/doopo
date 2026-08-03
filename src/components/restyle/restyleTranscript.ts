@@ -79,7 +79,12 @@ export async function transcribeSourceVideo(
   options?: { onProgress?: (done: number, total: number) => void; isAborted?: () => boolean },
 ): Promise<TranscriptResult> {
   if (!shouldDecodeAudio(file.size)) {
-    return { text: "", sentences: [], degradedReason: "源片过大，已跳过音轨识别（no_audio）。" };
+    const mb = (file.size / 1024 / 1024).toFixed(1);
+    return {
+      text: "",
+      sentences: [],
+      degradedReason: `源片 ${mb}MB 超过音轨识别上限（400MB），已跳过音轨识别（no_audio）。可压缩后重传，或在提示词中人工补充台词。`,
+    };
   }
   let durationSec = 0;
   try {

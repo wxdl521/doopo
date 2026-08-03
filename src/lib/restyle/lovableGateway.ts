@@ -84,22 +84,24 @@ export type GatewayChatResult =
   | { ok: true; text: string; model: string }
   | { ok: false; error: string };
 
-/**
- * 调 Lovable 网关 chat/completions（OpenAI 兼容）。
- * modelId 不带前缀（如 "openai/gpt-5.6-sol"、"google/gemini-3.6-flash"）。
- * GPT-5 系列只发 max_completion_tokens；不传 temperature。
- */
-export async function callLovableChat(opts: {
+type GatewayOptions = {
   model: string;
   messages: ChatMessage[];
   maxTokens?: number;
   timeoutMs?: number;
   jsonMode?: boolean;
-}): Promise<GatewayChatResult> {
+  /** 默认 "none"：不让推理 token 吃掉输出预算（gemini 空正文根因）。 */
+  reasoningEffort?: "none" | "low" | "medium" | "high";
+};
+
+async function postChat(opts: GatewayOptions, maxTokens: number, extraNote?: string) {
   const apiKey = process.env.LOVABLE_API_KEY;
   if (!apiKey) {
-    return { ok: false, error: "Lovable AI 网关缺少 LOVABLE_API_KEY。" };
+    return { ok: false as const, error: "Lovable AI 网关缺少 LOVABLE_API_KEY。" };
   }
+  const messages = extraNote
+    ? [...opts.messages, { role: "user" as const, content: extraNote }]
+    : opts.messages;
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), opts.timeoutMs ?? 180_000);
   try {
@@ -109,27 +111,73 @@ export async function callLovableChat(opts: {
       signal: controller.signal,
       body: JSON.stringify({
         model: opts.model,
-        max_completion_tokens: opts.maxTokens ?? 12_000,
+        max_completion_tokens: maxTokens,
+        reasoning_effort: opts.reasoningEffort ?? "none",
         ...(opts.jsonMode ? { response_format: { type: "json_object" } } : {}),
-        messages: opts.messages,
+        messages,
       }),
     });
     if (!response.ok) {
       const body = (await response.text()).slice(0, 300);
-      return { ok: false, error: `网关 HTTP ${response.status}: ${body}` };
+      return { ok: false as const, error: `网关 HTTP ${response.status}: ${body}` };
     }
-    const json = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    const text = json.choices?.[0]?.message?.content;
-    if (!text) return { ok: false, error: "网关返回为空" };
-    return { ok: true, text, model: opts.model };
+    return { ok: true as const, json: (await response.json()) as Record<string, unknown> };
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
-    return { ok: false, error: `网关调用失败: ${msg}` };
+    return { ok: false as const, error: `网关调用失败: ${msg}` };
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function extractChoice(json: Record<string, unknown>) {
+  const choices = json.choices as
+    | Array<{ finish_reason?: string; message?: { content?: string } }>
+    | undefined;
+  const usage = json.usage as
+    | { completion_tokens?: number; completion_tokens_details?: { reasoning_tokens?: number } }
+    | undefined;
+  return {
+    text: choices?.[0]?.message?.content ?? "",
+    finishReason: choices?.[0]?.finish_reason ?? "unknown",
+    completionTokens: usage?.completion_tokens ?? 0,
+    reasoningTokens: usage?.completion_tokens_details?.reasoning_tokens ?? 0,
+  };
+}
+
+/**
+ * 调 Lovable 网关 chat/completions（OpenAI 兼容）。
+ * modelId 不带前缀（如 "openai/gpt-5.6-sol"、"google/gemini-3.6-flash"）。
+ * GPT-5 系列只发 max_completion_tokens；不传 temperature。
+ * 空正文（典型：gemini 把预算全花在 reasoning token）自动重试一次，
+ * 重试抬高 token 上限并追加「直接输出 JSON」指令；仍空则带 token 诊断报错。
+ */
+export async function callLovableChat(opts: GatewayOptions): Promise<GatewayChatResult> {
+  const maxTokens = opts.maxTokens ?? 12_000;
+  const first = await postChat(opts, maxTokens);
+  if (!first.ok) return { ok: false, error: first.error };
+  let choice = extractChoice(first.json);
+
+  if (!choice.text.trim()) {
+    // 空正文重试：抬高输出预算并明确要求跳过思考过程
+    const retry = await postChat(
+      opts,
+      Math.max(maxTokens * 2, 12_000),
+      "直接输出 JSON 正文，不要输出任何思考过程。",
+    );
+    if (!retry.ok) return { ok: false, error: retry.error };
+    choice = extractChoice(retry.json);
+  }
+
+  if (!choice.text.trim()) {
+    return {
+      ok: false,
+      error:
+        `网关返回为空（finish_reason=${choice.finishReason}，` +
+        `completion_tokens=${choice.completionTokens}，其中 reasoning_tokens=${choice.reasoningTokens}）`,
+    };
+  }
+  return { ok: true, text: choice.text, model: opts.model };
 }
 
 /** 内部 skill 模型 id（不进用户下拉）。 */
