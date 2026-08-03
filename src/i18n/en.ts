@@ -1637,6 +1637,7 @@ export const en: Translations = {
     "This model skips real-person pre-review; reference images containing real people may be rejected",
   restyle_reupload_source_video: "Re-upload source video",
   restyle_retry_render: "Retry",
+  restyle_analysis_model_hint: "Frame analysis runs on internal Gemini (video-analysis-extract skill); this dropdown picks the director/planning model",
   restyle_rework_dialog_title: "Partial rework",
   restyle_rework_dialog_placeholder: "Describe what needs rework in this segment…",
   restyle_rework_dialog_submit: "Submit rework",

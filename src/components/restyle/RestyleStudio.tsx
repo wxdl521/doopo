@@ -4945,6 +4945,7 @@ export default function RestyleStudio() {
                   disabled={isAnalyzing}
                   className="ml-auto max-w-44 rounded-md bg-transparent px-2 py-1 text-xs text-text-secondary outline-none hover:bg-bg disabled:cursor-not-allowed"
                   aria-label={t.restyle_select_model}
+                  title={t.restyle_analysis_model_hint}
                 >
                   {RESTYLE_MODELS.map((model) => (
                     <option key={model.id} value={model.id}>

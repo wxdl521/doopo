@@ -1611,6 +1611,7 @@ export const zh = {
   restyle_video_model_no_review_warning: "该模型不做真人预审，含真人的参考图可能被拒",
   restyle_reupload_source_video: "重新上传原视频",
   restyle_retry_render: "重试",
+  restyle_analysis_model_hint: "视频画面分析由内部 Gemini（video-analysis-extract skill）完成；此处选择导演/方案模型",
   restyle_rework_dialog_title: "局部返工",
   restyle_rework_dialog_placeholder: "描述这段需要返工的问题…",
   restyle_rework_dialog_submit: "提交返工",

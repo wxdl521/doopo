@@ -1,7 +1,8 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "../integrations/supabase/auth-middleware";
-import { providerTuning, resolveProvider } from "./restyle/lovableGateway";
+import { providerTuning, resolveProvider, INTERNAL_VISION_MODEL } from "./restyle/lovableGateway";
+import { runAssetAnalysis } from "./restyle/analyzeAssetsCore";
 
 const AssetSchema = z.object({
   kind: z.enum(["character", "scene", "prop"]),
@@ -181,83 +182,23 @@ function isConcreteAsset(asset: RestyleAnalysisAsset): boolean {
  * 转绘第一阶段：服务端调用 ARK DeepSeek 或 DashScope Qwen，返回结构化资产表。
  * Qwen 3.6 Plus/Flash 支持视觉理解，客户端会将源视频的关键帧作为 image_url 传入。
  */
+/**
+ * 转绘第一阶段（v1）：画面分析统一走内部 Gemini skill（video-analysis-extract），
+ * 不再使用用户下拉的导演模型；导演模型只用于方案生成与资产审核。
+ * 用户选择的 data.model 仍透传用于播报与结果记录。
+ */
 export const analyzeRestyleAssets = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input: unknown) => InputSchema.parse(input))
   .handler(async ({ data, context }): Promise<RestyleAnalysisResult> => {
-    const config = resolveProvider(data.model);
-    const model = config.model;
-    const isArk = config.provider === "ark";
-    if (!config.apiKey) {
-      return { ok: false, error: config.missingKeyError };
-    }
     // 积分：视觉分析 2 分/次（含多关键帧），纯文本 1 分/次
     const __cost = data.frameImages.length > 0 ? 2 : 1;
     const { ensureEnoughCredits } = await import("./creditsGuard");
-    const __guard = await ensureEnoughCredits(__cost, { kind: "image", model });
+    const __guard = await ensureEnoughCredits(__cost, { kind: "image", model: INTERNAL_VISION_MODEL });
     if (!__guard.ok) {
       return { ok: false, error: __guard.error };
     }
-
-    const canReadFrames =
-      !isArk && data.model !== "qwen:qwen3.7-max" && data.frameImages.length > 0;
-    const userContent: Array<Record<string, unknown>> = [{ type: "text", text: userText(data) }];
-    if (canReadFrames) {
-      data.frameImages.forEach((url, index) => {
-        // Keep the label as a separate content part: OpenAI-compatible multimodal APIs
-        // reject a part that mixes `text` and `image_url` fields.
-        userContent.push({ type: "text", text: `关键帧 ${index + 1}：` });
-        userContent.push({ type: "image_url", image_url: { url } });
-      });
-    }
-
-    const controller = new AbortController();
-    // Vision requests include several keyframes and can legitimately take longer
-    // than a text-only completion. Keep the client-side request alive for 3 min.
-    const timeout = setTimeout(() => controller.abort(), 180_000);
-    try {
-      const response = await fetch(config.endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.apiKey}` },
-        signal: controller.signal,
-        body: JSON.stringify({
-          model,
-          ...providerTuning(config, 5_000),
-          messages: [
-            {
-              role: "system",
-              content: systemPrompt(canReadFrames, data.existingAssets.length > 0),
-            },
-            { role: "user", content: isArk ? userText(data) : userContent },
-          ],
-        }),
-      });
-      if (!response.ok) {
-        const detail = (await response.text()).replace(/\s+/g, " ").slice(0, 240);
-        return {
-          ok: false,
-          error: `${config.label} 请求失败（${response.status}）：${detail || "上游未返回详情"}`,
-        };
-      }
-      const payload = (await response.json()) as {
-        choices?: Array<{ message?: { content?: unknown } }>;
-      };
-      const content = payload.choices?.[0]?.message?.content;
-      if (typeof content !== "string" || !content.trim()) {
-        return { ok: false, error: `${config.label} 未返回资产表内容。` };
-      }
-      return normalizeResult(content, model, canReadFrames, data.transcript);
-    } catch (error) {
-      return {
-        ok: false,
-        error:
-          error instanceof Error && error.name === "AbortError"
-            ? "资产分析超时，请稍后重试或切换模型。"
-            : `资产分析请求失败：${error instanceof Error ? error.message : "未知错误"}`,
-      };
-    } finally {
-      clearTimeout(timeout);
-    }
+    return runAssetAnalysis(data, { userText, systemPrompt, normalizeResult });
   });
 
 const PlanEpisodeSchema = z.object({
