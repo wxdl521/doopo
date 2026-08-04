@@ -1565,6 +1565,7 @@ export type Database = {
           description: string | null
           duration: number | null
           id: string
+          idempotency_key: string | null
           model: string | null
           resolution: string | null
           type: string
@@ -1577,6 +1578,7 @@ export type Database = {
           description?: string | null
           duration?: number | null
           id?: string
+          idempotency_key?: string | null
           model?: string | null
           resolution?: string | null
           type?: string
@@ -1589,6 +1591,7 @@ export type Database = {
           description?: string | null
           duration?: number | null
           id?: string
+          idempotency_key?: string | null
           model?: string | null
           resolution?: string | null
           type?: string
@@ -1685,11 +1688,13 @@ export type Database = {
           p_amount: number
           p_description: string
           p_duration: number
+          p_idempotency_key?: string
           p_model: string
           p_resolution: string
         }
         Returns: {
           balance_after: number
+          deduped: boolean
           ok: boolean
         }[]
       }
