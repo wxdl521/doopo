@@ -2431,22 +2431,28 @@ export default function RestyleStudio() {
     finalEpisodes: string[],
     videoModel: string,
   ) {
-    if (finalEpisodes.length) {
-      // 智能补镜（P2）：基础分段全部渲染完成后、整集 stitch 前执行；
-      // 任何补镜失败都只跳过该补镜，不影响主片拼接。
-      await runSmartInserts(projectId, finalEpisodes, videoModel);
-      await stitchFinalEpisodes(projectId, finalEpisodes);
+    try {
+      if (finalEpisodes.length) {
+        // 智能补镜（P2）：基础分段全部渲染完成后、整集 stitch 前执行；
+        // 任何补镜失败都只跳过该补镜，不影响主片拼接。
+        await runSmartInserts(projectId, finalEpisodes, videoModel);
+        await stitchFinalEpisodes(projectId, finalEpisodes);
+      }
+      if (isRunAborted(projectId)) return;
+      updateProject(projectId, (project) => ({ ...project, stage: "review" }));
+      const hasFinalVideos = finalEpisodes.length > 0;
+      appendConversationMessage(projectId, conversationId, {
+        role: "assistant",
+        content: hasFinalVideos
+          ? `${finalEpisodes.join("、")} 的分段视频已生成，并按顺序合成整集成片（保留分段自带音轨）。请在右侧“生成状态”查看每段与成片的真实结果，失败任务会保留错误原因并可重试。`
+          : "局部返工片段已按队列逐个生成完成。只更新了问题片段，没有重跑整集或整部剧。",
+        finalEpisodeLinks: hasFinalVideos ? finalEpisodes : undefined,
+      });
+    } finally {
+      // 渲染队列状态机收尾：无论拼接/播报是否抛错都结束本次 run；
+      // 用户主动停止时 stopRun 已收尾，这里不重复。
+      if (!isRunAborted(projectId)) finishRun(projectId);
     }
-    if (isRunAborted(projectId)) return;
-    updateProject(projectId, (project) => ({ ...project, stage: "review" }));
-    const hasFinalVideos = finalEpisodes.length > 0;
-    appendConversationMessage(projectId, conversationId, {
-      role: "assistant",
-      content: hasFinalVideos
-        ? `${finalEpisodes.join("、")} 的分段视频已生成，并按顺序合成整集成片（保留分段自带音轨）。请在右侧“生成状态”查看每段与成片的真实结果，失败任务会保留错误原因并可重试。`
-        : "局部返工片段已按队列逐个生成完成。只更新了问题片段，没有重跑整集或整部剧。",
-      finalEpisodeLinks: hasFinalVideos ? finalEpisodes : undefined,
-    });
   }
 
   /**
@@ -2709,6 +2715,8 @@ export default function RestyleStudio() {
     videoModel: string,
     index = 0,
   ): Promise<void> {
+    // 用户停止后不再推进后续分段（stopRun 已负责收尾 run 状态）。
+    if (isRunAborted(projectId)) return;
     const job = jobs[index];
     if (!job) {
       completeRenderQueue(projectId, conversationId, finalEpisodes, videoModel);
@@ -2719,6 +2727,7 @@ export default function RestyleStudio() {
     if (budgetExceeded(projectId, estimatedCost)) {
       failRenderAttachment(projectId, job.attachmentId, t.restyle_setup_budget_pause);
       pauseForBudget(projectId, conversationId);
+      finishRun(projectId, "failed", t.restyle_setup_budget_pause);
       return;
     }
     const queueProject = projectsRef.current.find((item) => item.id === projectId);
@@ -2859,7 +2868,21 @@ export default function RestyleStudio() {
             }),
           );
 
+          // 轮询上限 120 次 × 5s（与 generateInsertVideo 对齐）：超限标 failed 并提示，
+          // 避免后端任务卡死时前端永久轮询；中止时立即退出循环。
+          let pollCount = 0;
           while (true) {
+            if (isRunAborted(projectId)) break;
+            pollCount += 1;
+            if (pollCount > 120) {
+              failRenderAttachment(
+                projectId,
+                job.attachmentId,
+                "视频生成超时：已等待约 10 分钟仍未完成，请稍后重试该分段。",
+                submitted.taskId,
+              );
+              break;
+            }
             await new Promise<void>((resolve) => window.setTimeout(resolve, 5_000));
             let polled: Awaited<ReturnType<typeof callPollVideoTask>>;
             try {
@@ -2970,6 +2993,15 @@ export default function RestyleStudio() {
     // 会误报「没有找到可用于生成的视频源文件」。
     const project = projectsRef.current.find((item) => item.id === projectId);
     if (!project) return;
+    // 渲染队列状态机：同一项目同时只允许一个活跃队列，重复发起直接拒绝。
+    if (isProjectRunning(projectId)) {
+      appendConversationMessage(projectId, conversationId, {
+        role: "assistant",
+        content: "该项目已有任务正在进行中，请等待完成（或点击停止）后再发起新的生成。",
+      });
+      return;
+    }
+    beginRun(projectId, t.restyle_run_step_render);
     // 视频模型按目标项目取：持久化值优先；同项目用当前下拉值；跨项目回落默认，
     // 避免切换项目后 A 的渲染误用 B 的模型。
     const videoModel =
@@ -3021,6 +3053,7 @@ export default function RestyleStudio() {
       const missing = [...new Set(project.extractedAssets.map((asset) => asset.kind))]
         .map((kind) => (kind === "character" ? "角色" : kind === "scene" ? "场景" : "道具"))
         .join("、");
+      finishRun(projectId, "failed", "缺少可用的转绘资产图");
       appendConversationMessage(projectId, conversationId, {
         role: "assistant",
         content: `还没有可用的转绘资产图${missing ? `（资产表里待生成：${missing}）` : ""}。请直接回复“生成资产图片”，我会按资产表逐张生成；确认无误后再回复“确认生成视频”。`,
@@ -3079,6 +3112,11 @@ export default function RestyleStudio() {
       // 区分「真的没上传」与「上传还在进行中（url 尚未写回持久地址）」，避免用户误以为源片丢失。
       const hasUploadingVideo = sourceFiles.some(
         (file) => !file.url || file.url.startsWith("blob:"),
+      );
+      finishRun(
+        projectId,
+        "failed",
+        hasUploadingVideo ? "原片仍在上传中" : "没有找到可用于生成的视频源文件",
       );
       appendConversationMessage(projectId, conversationId, {
         role: "assistant",

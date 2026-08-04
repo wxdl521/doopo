@@ -58,7 +58,7 @@ type SttVerbosePayload = {
 export const transcribeRestyleAudio = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input: unknown) => InputSchema.parse(input))
-  .handler(async ({ data }): Promise<RestyleAsrResult> => {
+  .handler(async ({ data, context }): Promise<RestyleAsrResult> => {
     const apiKey = process.env["LOVABLE_API_KEY"];
     if (!apiKey) return { ok: false, error: "LOVABLE_API_KEY 未配置，无法调用语音转写。", degraded: false };
 
@@ -127,7 +127,18 @@ export const transcribeRestyleAudio = createServerFn({ method: "POST" })
     }
 
     const payload = (await response.json().catch(() => null)) as SttVerbosePayload | null;
-    return { ok: true, sentences: parseSttPayload(payload, data.sourceStartSeconds, data.durationSec) };
+    const sentences = parseSttPayload(payload, data.sourceStartSeconds, data.durationSec);
+    // 成功才扣费（1 分/次，与预校验口径一致）；扣费失败不阻断主流程。
+    {
+      const { supabase, userId } = context as { supabase: any; userId: string };
+      const { chargeCredits } = await import("./userCredits.functions");
+      await chargeCredits(supabase, userId, {
+        amount: 1,
+        model: STT_MODEL,
+        description: "转绘语音转写",
+      });
+    }
+    return { ok: true, sentences };
   });
 
 /** STT verbose_json 响应 → 整集绝对毫秒台词句（纯函数，可测）。 */

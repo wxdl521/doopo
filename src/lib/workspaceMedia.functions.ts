@@ -234,7 +234,7 @@ const BUCKET = "workspace-media";
 
 type MediaItem = {
   url: string;
-  status: "running" | "succeeded" | "failed";
+  status: "running" | "succeeded" | "failed" | "persist_failed";
 };
 
 /** 检测 URL 是否已经是我们自己的 Supabase Storage 链接(已入库) */
@@ -415,7 +415,8 @@ export const persistWorkspaceMedia = createServerFn({ method: "POST" })
 
     /**
      * 处理一份 map 的通用逻辑:
-     *   1) status !== succeeded → 原样保留
+     *   1) status 不是 succeeded / persist_failed → 原样保留
+     *      (persist_failed = 已生成但上次转存失败,这里视为待重试的 ephemeral 项)
      *   2) url 为空 → 原样保留
      *   3) 已经入库 → 原样保留 + skippedCount++
      *   4) 否则 → 下载 + 上传 + 替换 url
@@ -428,7 +429,7 @@ export const persistWorkspaceMedia = createServerFn({ method: "POST" })
       const entries = Object.entries(inputMap);
       for (const [groupId, item] of entries) {
         // 1) 原样保留
-        if (item.status !== "succeeded" || !item.url) {
+        if ((item.status !== "succeeded" && item.status !== "persist_failed") || !item.url) {
           outputMap[groupId] = { url: item.url, status: item.status as MediaItem["status"] };
           continue;
         }

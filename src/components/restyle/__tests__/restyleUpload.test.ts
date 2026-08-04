@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { DIRECT_UPLOAD_MIN_BYTES, shouldUseDirectUpload } from "../restyleUpload";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  DIRECT_UPLOAD_MIN_BYTES,
+  shouldUseDirectUpload,
+  uploadFileDirect,
+} from "../restyleUpload";
 import {
   buildMentionables,
   isMentionableAttachment,
@@ -38,8 +42,7 @@ describe("shouldUseDirectUpload", () => {
   });
 });
 
-describe("restyle mentions", () => {
-  const files: RestyleAttachment[] = [
+describe("restyle mentions", () => {  const files: RestyleAttachment[] = [
     makeFile({ id: "img-1", type: "image/png", name: "a.png" }),
     makeFile({ id: "vid-1", type: "video/mp4", name: "b.mp4" }),
     makeFile({ id: "folder-1", isFolder: true, name: "素材夹" }),
@@ -81,5 +84,94 @@ describe("restyle mentions", () => {
   it("matches aliases case-insensitively", () => {
     const mentionables = buildMentionables(files);
     expect(resolveMentionedAttachmentIds("@Video2", mentionables)).toEqual(["vid-2"]);
+  });
+});
+
+// --------------------------------------------------------------------
+// uploadFileDirect：XHR 永不 settle 的回归测试（signRead 异常 / 超时）
+// --------------------------------------------------------------------
+
+class FakeXHR {
+  static instances: FakeXHR[] = [];
+  /** send 后自动触发的回调（测试用来模拟 onload / ontimeout）。 */
+  static autoRespond: ((xhr: FakeXHR) => void) | null = null;
+
+  status = 200;
+  responseText = "";
+  timeout = 0;
+  upload: { onprogress: ((event: { lengthComputable: boolean; loaded: number; total: number }) => void) | null } =
+    { onprogress: null };
+  onload: (() => void) | null = null;
+  onerror: (() => void) | null = null;
+  onabort: (() => void) | null = null;
+  ontimeout: (() => void) | null = null;
+
+  open(): void {}
+  setRequestHeader(): void {}
+  send(): void {
+    FakeXHR.instances.push(this);
+    const respond = FakeXHR.autoRespond;
+    if (respond) setTimeout(() => respond(this), 0);
+  }
+}
+
+function makeVideoFile(): File {
+  return new File(["x"], "clip.mp4", { type: "video/mp4" });
+}
+
+const okPrepare = async () => ({
+  ok: true,
+  uploadUrl: "https://storage.example.com/upload-signed",
+  path: "u1/uploads/restyle-v2/video/t-1.mp4",
+});
+
+describe("uploadFileDirect · settle 保障", () => {
+  afterEach(() => {
+    FakeXHR.instances = [];
+    FakeXHR.autoRespond = null;
+    vi.unstubAllGlobals();
+  });
+
+  it("上传成功后正常签发读地址", async () => {
+    vi.stubGlobal("XMLHttpRequest", FakeXHR);
+    FakeXHR.autoRespond = (xhr) => xhr.onload?.();
+    const result = await uploadFileDirect(makeVideoFile(), "id-1", okPrepare, async () => ({
+      ok: true,
+      url: "https://storage.example.com/read-signed",
+    }));
+    expect(result).toEqual({ ok: true, url: "https://storage.example.com/read-signed" });
+  });
+
+  it("signRead 抛异常时 resolve({ok:false})，Promise 不悬挂", async () => {
+    vi.stubGlobal("XMLHttpRequest", FakeXHR);
+    FakeXHR.autoRespond = (xhr) => xhr.onload?.();
+    const result = await uploadFileDirect(makeVideoFile(), "id-1", okPrepare, async () => {
+      throw new Error("签名服务 502");
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("签名服务 502");
+  });
+
+  it("设置了 30 分钟超时且 ontimeout 能 settle", async () => {
+    vi.stubGlobal("XMLHttpRequest", FakeXHR);
+    FakeXHR.autoRespond = (xhr) => xhr.ontimeout?.();
+    const result = await uploadFileDirect(makeVideoFile(), "id-1", okPrepare, async () => ({
+      ok: true,
+      url: "https://storage.example.com/unused",
+    }));
+    expect(FakeXHR.instances[0]!.timeout).toBe(30 * 60 * 1000);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("超时");
+  });
+
+  it("网络错误 onerror 能 settle", async () => {
+    vi.stubGlobal("XMLHttpRequest", FakeXHR);
+    FakeXHR.autoRespond = (xhr) => xhr.onerror?.();
+    const result = await uploadFileDirect(makeVideoFile(), "id-1", okPrepare, async () => ({
+      ok: true,
+      url: "https://storage.example.com/unused",
+    }));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("网络中断");
   });
 });

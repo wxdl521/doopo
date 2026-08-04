@@ -13,8 +13,12 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { assertContentLengthWithin, assertPublicHttpsUrl } from "./restyle/ssrfGuard";
 
 const BUCKET = "workspace-media";
+
+/** 转存视频的体积上限（Content-Length 预检 + 实际字节数双保险）。 */
+const MAX_PERSIST_VIDEO_BYTES = 500 * 1024 * 1024;
 
 const Input = z.object({
   id: z.string().min(1).max(128),
@@ -82,15 +86,31 @@ export const persistRestyleVideo = createServerFn({ method: "POST" })
   .handler(async ({ data, context }): Promise<PersistVideoResult> => {
     const { supabase, userId } = context as { supabase: any; userId: string };
 
+    // SSRF 收敛：仅允许 https 公网地址，拒绝内网/环回/保留段。
+    try {
+      assertPublicHttpsUrl(data.url);
+    } catch (error) {
+      return { ok: false as const, error: error instanceof Error ? error.message : "下载地址不合法" };
+    }
+
     let res: Response;
     try {
-      res = await fetch(data.url, { signal: AbortSignal.timeout(600_000) });
+      res = await fetch(data.url, { signal: AbortSignal.timeout(120_000) });
     } catch (error) {
       return { ok: false as const, error: `下载失败: ${error instanceof Error ? error.message : "网络错误"}` };
     }
     if (!res.ok) return { ok: false as const, error: `下载失败 HTTP ${res.status}` };
 
+    // arrayBuffer 之前先按 Content-Length 拦截超大负载，避免把内存打爆。
+    try {
+      assertContentLengthWithin(res, MAX_PERSIST_VIDEO_BYTES);
+    } catch (error) {
+      return { ok: false as const, error: error instanceof Error ? error.message : "文件超过体积上限" };
+    }
     const buf = await res.arrayBuffer();
+    if (buf.byteLength > MAX_PERSIST_VIDEO_BYTES) {
+      return { ok: false as const, error: "文件超过 500MB 体积上限" };
+    }
     const path = `${userId}/uploads/restyle-v2/video/${data.id}-${Date.now()}.mp4`;
     const { error: uploadErr } = await supabase.storage
       .from(BUCKET)

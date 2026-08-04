@@ -81,6 +81,12 @@ export interface ReviewRunDeps {
     jsonMode?: boolean;
   }) => Promise<GatewayChatResult>;
   ensureCredits?: typeof ensureEnoughCredits;
+  /** 成功后的实际扣费；默认走 deduct_user_credits RPC（扣失败不阻断主流程）。 */
+  chargeCredits?: (params: {
+    amount: number;
+    model?: string;
+    description: string;
+  }) => Promise<{ ok: boolean; balanceAfter: number | null }>;
 }
 
 export type RunReviewResult =
@@ -606,6 +612,16 @@ export async function runAiSelfReviewCore(
     mergedIssues,
   );
   if (upserted.error) return { ok: false, code: "DB_ERROR", error: upserted.error };
+
+  // ---- 9. 成功扣费（2 分/次，与预校验口径一致）；扣失败不阻断主流程 ----
+  // 动态引入避免把 server fn 依赖静态带进本 core 模块的引用图。
+  const charge =
+    deps.chargeCredits ??
+    (async (params: { amount: number; model?: string; description: string }) => {
+      const { chargeCredits } = await import("../userCredits.functions");
+      return chargeCredits(supabase, userId, params);
+    });
+  await charge({ amount: 2, model: aiResult.model, description: "转绘 AI 审核" });
 
   return {
     ok: true,

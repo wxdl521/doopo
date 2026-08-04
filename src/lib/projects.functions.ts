@@ -37,6 +37,8 @@ export type ProjectConfigRow = {
   style: string;
   customStyle: string | null;
   customCover: string | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export const upsertProject = createServerFn({ method: "POST" })
@@ -77,7 +79,7 @@ export const getProject = createServerFn({ method: "POST" })
     const { data: row, error } = await supabase
       .from("projects")
       .select(
-        "id,name,aspect,storyboard_model,scene_model,video_model,audio,character_nationality,workflow,style,custom_style,custom_cover,resolution",
+        "id,name,aspect,storyboard_model,scene_model,video_model,audio,character_nationality,workflow,style,custom_style,custom_cover,resolution,created_at,updated_at",
       )
       .eq("id", data.id)
       .maybeSingle();
@@ -97,6 +99,8 @@ export const getProject = createServerFn({ method: "POST" })
       style: row.style,
       customStyle: row.custom_style ?? null,
       customCover: row.custom_cover,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
     };
     return { project, error: null as string | null };
   });

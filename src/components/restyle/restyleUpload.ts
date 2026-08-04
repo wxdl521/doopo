@@ -80,6 +80,8 @@ export async function uploadFileDirect(
   return new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", uploadUrl, true);
+    // 大文件直传的硬超时（30 分钟）：防止网络挂死导致 Promise 永不 settle。
+    xhr.timeout = 30 * 60 * 1000;
     xhr.setRequestHeader("content-type", file.type || "application/octet-stream");
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable && onProgress) {
@@ -89,14 +91,25 @@ export async function uploadFileDirect(
     xhr.onload = async () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         onProgress?.(100);
-        // 上传完成后再签发读地址（对象已存在，签名成功且私有桶可播）
-        const read = await signRead({ path });
-        if (!read.ok || !read.url) {
-          resolve({ ok: false, error: read.ok ? "读取地址签发失败。" : read.error ?? "读取地址签发失败。" });
-          return;
+        // 上传完成后再签发读地址（对象已存在，签名成功且私有桶可播）。
+        // signRead 抛异常时必须兜住：否则 onload 的 async rejection 会让
+        // 外层 Promise 永远悬挂，附件卡片卡在「上传中」。
+        try {
+          const read = await signRead({ path });
+          if (!read.ok || !read.url) {
+            resolve({ ok: false, error: read.ok ? "读取地址签发失败。" : read.error ?? "读取地址签发失败。" });
+            return;
+          }
+          resolve({ ok: true, url: read.url });
+        } catch (error) {
+          resolve({
+            ok: false,
+            error: `读取地址签发失败：${error instanceof Error ? error.message : "网络错误"}`,
+          });
         }
-        resolve({ ok: true, url: read.url });
-      } else if (xhr.status >= 400 && xhr.status < 500) {
+        return;
+      }
+      if (xhr.status >= 400 && xhr.status < 500) {
         resolve({
           ok: false,
           error: `存储拒绝了上传（HTTP ${xhr.status}）：${(xhr.responseText || "").slice(0, 120)}`,
@@ -107,6 +120,8 @@ export async function uploadFileDirect(
     };
     xhr.onerror = () => resolve({ ok: false, error: "网络中断，上传未完成，请重试。" });
     xhr.onabort = () => resolve({ ok: false, error: "上传已中止。" });
+    xhr.ontimeout = () =>
+      resolve({ ok: false, error: "上传超时（超过 30 分钟），请检查网络后重试。" });
     xhr.send(file);
   });
 }

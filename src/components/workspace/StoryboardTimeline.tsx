@@ -47,7 +47,11 @@ function isPersistedUrl(url: string | undefined | null): boolean {
 
 export type GroupVideoMap = Record<
   string,
-  { url: string; status: "running" | "succeeded" | "failed"; durationSec?: number }
+  {
+    url: string;
+    status: "running" | "succeeded" | "failed" | "persist_failed";
+    durationSec?: number;
+  }
 >;
 
 type Props = {
@@ -125,7 +129,8 @@ export default function StoryboardTimeline({
           groupId: g.id,
           group: g,
           video: v,
-          playable: !!v && v.status === "succeeded",
+          // persist_failed:视频已生成可播放,只是转存失败(24h 临时链接)
+          playable: !!v && (v.status === "succeeded" || v.status === "persist_failed"),
           thumb,
           persisted: isPersistedUrl(v?.url),
           durationSec,

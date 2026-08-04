@@ -256,6 +256,10 @@ function parseAttachment(value: unknown): RestyleAttachment | null {
   if (!value || typeof value !== "object") return null;
   const item = value as Partial<RestyleAttachment>;
   if (typeof item.id !== "string" || typeof item.name !== "string") return null;
+  // 页面刷新会打断内存中的渲染队列：持久化时仍为 queued/running 的附件
+  // 永远不会再被推进，加载时一律落为 failed 并附注原因，避免永久「生成中」假象。
+  const persistedStatus = isRenderStatus(item.renderStatus) ? item.renderStatus : undefined;
+  const interrupted = persistedStatus === "queued" || persistedStatus === "running";
   return {
     id: item.id,
     name: item.name,
@@ -275,10 +279,16 @@ function parseAttachment(value: unknown): RestyleAttachment | null {
     episode: typeof item.episode === "string" ? item.episode : undefined,
     segmentId: typeof item.segmentId === "string" ? item.segmentId : undefined,
     renderTaskId: typeof item.renderTaskId === "string" ? item.renderTaskId : undefined,
-    renderStatus: isRenderStatus(item.renderStatus) ? item.renderStatus : undefined,
+    renderStatus: interrupted ? "failed" : persistedStatus,
     renderProgress: typeof item.renderProgress === "number" ? item.renderProgress : undefined,
     resultUrl: typeof item.resultUrl === "string" ? item.resultUrl : undefined,
-    renderError: typeof item.renderError === "string" ? item.renderError : undefined,
+    renderError: interrupted
+      ? typeof item.renderError === "string" && item.renderError
+        ? item.renderError
+        : "页面刷新中断：渲染队列已停止，请重试该分段。"
+      : typeof item.renderError === "string"
+        ? item.renderError
+        : undefined,
     renderLog: Array.isArray(item.renderLog)
       ? item.renderLog.filter((entry): entry is string => typeof entry === "string").slice(-80)
       : undefined,

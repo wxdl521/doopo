@@ -355,7 +355,10 @@ describe("RestyleStudio prototype", () => {
         expect.objectContaining({
           generatedKind: "video_clip",
           segmentId: "U01",
-          renderStatus: "running",
+          // 持久化的 running 状态在加载时收敛为 failed（页面刷新中断），
+          // 其余字段（进度 / 返工链 / 反馈）照常往返。
+          renderStatus: "failed",
+          renderError: expect.stringContaining("页面刷新中断"),
           renderProgress: 75,
           rerunOfAttachmentId: "old-clip-1",
           feedback: "人物不像 Grace Hart",

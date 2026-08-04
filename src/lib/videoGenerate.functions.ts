@@ -4637,6 +4637,24 @@ function isHttpMediaUrl(value: string): boolean {
   }
 }
 
+/**
+ * 轮询 succeeded 分支的裁决：有可用 videoUrl 才放行（随后才扣费）；
+ * 空 URL 按失败处理，不进入扣费路径。导出供单测覆盖。
+ */
+export function verdictForSucceededPoll(
+  backend: string,
+  videoUrl: string | null | undefined,
+): { ok: true; videoUrl: string } | { ok: false; error: string } {
+  const url = typeof videoUrl === "string" ? videoUrl.trim() : "";
+  if (!url) {
+    return {
+      ok: false,
+      error: `[${backend}] 任务已完成但没有返回可播放的结果 URL`,
+    };
+  }
+  return { ok: true, videoUrl: url };
+}
+
 const ExternalVideoMediaUrl = z
   .string()
   .min(1)
@@ -4682,6 +4700,48 @@ export const generateVideo = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context as { supabase: any; userId: string };
     const backend = getVideoBackend(data.model);
+    const model =
+      data.model ||
+      (backend === "ark" || backend === "shuci"
+        ? ARK_DEFAULT_MODEL
+        : backend === "kling"
+          ? "kling-v2-6"
+          : backend === "confluo"
+            ? "confluo-doubao-seedance-2-0-mini-260615"
+            : backend === "topenrouter"
+              ? "topenrouter-doubao-seedance-2-0-260128"
+              : backend === "hongmeng"
+                ? "hongmeng-seedance2-pro"
+                : backend === "keyiyun"
+                  ? "keyiyun-sd-2-0-fast-discount-720p"
+                  : backend === "ycore"
+                    ? "ycore-seedance-2-0-fast"
+                    : backend === "neiwen"
+                      ? "neiwen-c-seedance-2-0"
+                      : "happyhorse-1.0-i2v");
+
+    // ---- 积分预校验:与 submitVideoTaskFn 同口径,按最终路由 model 计费 ----
+    {
+      const { ensureEnoughCredits } = await import("./creditsGuard");
+      const __cost = videoCost(model, data.resolution, data.duration);
+      const __guard = await ensureEnoughCredits(__cost, {
+        kind: "video",
+        model,
+      });
+      if (!__guard.ok) {
+        console.warn(
+          `[video×] insufficient credits model=${model} required=${__guard.required} balance=${__guard.balance}`,
+        );
+        return {
+          ok: false as const,
+          error: __guard.error,
+          code: "INSUFFICIENT_CREDITS",
+          taskId: undefined,
+          backend,
+        };
+      }
+    }
+
     const media: DashScopeMediaItem[] = [];
     if (data.imageUrl) media.push({ type: "first_frame", url: data.imageUrl });
     if (data.lastFrameImageUrl) media.push({ type: "last_frame", url: data.lastFrameImageUrl });
@@ -4732,26 +4792,6 @@ export const generateVideo = createServerFn({ method: "POST" })
       if (!r.ok) return { ok: false as const, error: r.error, taskId: undefined, backend };
       referenceAudioUrl = r.url;
     }
-
-    const model =
-      data.model ||
-      (backend === "ark" || backend === "shuci"
-        ? ARK_DEFAULT_MODEL
-        : backend === "kling"
-          ? "kling-v2-6"
-          : backend === "confluo"
-            ? "confluo-doubao-seedance-2-0-mini-260615"
-            : backend === "topenrouter"
-              ? "topenrouter-doubao-seedance-2-0-260128"
-              : backend === "hongmeng"
-                ? "hongmeng-seedance2-pro"
-                : backend === "keyiyun"
-                  ? "keyiyun-sd-2-0-fast-discount-720p"
-                  : backend === "ycore"
-                    ? "ycore-seedance-2-0-fast"
-                    : backend === "neiwen"
-                      ? "neiwen-c-seedance-2-0"
-                      : "happyhorse-1.0-i2v");
 
     console.log(
       `[video→] backend=${backend} model=${model} promptChars=${data.prompt.length} images=${persistedMedia.length} videoRef=${referenceVideoUrl ? 1 : 0} audioRef=${referenceAudioUrl ? 1 : 0} ratio=${data.ratio} resolution=${data.resolution} duration=${data.duration}`,
@@ -4834,9 +4874,23 @@ export const generateVideo = createServerFn({ method: "POST" })
         `[video⟳] backend=${submit.backend} taskId=${submit.taskId} status=${poll.status}`,
       );
       if (poll.status === "succeeded") {
+        // 空 videoUrl 按失败处理：不扣费，返回明确错误。
+        const verdict = verdictForSucceededPoll(submit.backend, poll.videoUrl);
+        if (!verdict.ok) {
+          console.warn(
+            `[video×] backend=${submit.backend} taskId=${submit.taskId} succeeded but empty videoUrl`,
+          );
+          return {
+            ok: false as const,
+            error: verdict.error,
+            taskId: submit.taskId,
+            backend: submit.backend,
+            lastStatus: poll.status,
+          };
+        }
         data.onProgress?.("succeeded", {
           taskId: submit.taskId,
-          videoUrl: poll.videoUrl,
+          videoUrl: verdict.videoUrl,
           backend: submit.backend,
         });
         // 成功才扣分(视频积分,按 duration 比例)。不在价目表 -> 不扣;扣失败不阻断
@@ -4854,7 +4908,7 @@ export const generateVideo = createServerFn({ method: "POST" })
         return {
           ok: true as const,
           taskId: submit.taskId,
-          videoUrl: poll.videoUrl || "",
+          videoUrl: verdict.videoUrl,
           model: submit.model,
           backend: submit.backend,
         };

@@ -20,7 +20,9 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { ensureEnoughCredits } from "../creditsGuard";
+import { chargeCredits } from "../userCredits.functions";
 import { logGenerationError } from "../errorLogs.server";
+import { assertContentLengthWithin, assertPublicHttpsUrl } from "./ssrfGuard";
 import {
   callLovableChat,
   INTERNAL_VISION_MODEL,
@@ -236,15 +238,21 @@ function audioFormatFromUrl(url: string): string {
   return "mp3";
 }
 
+/** 网关对单条消息体积有限制，超过 25MB 的音频不内联 base64。 */
+const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
+
 async function fetchAudioBase64(
   fetchFn: typeof fetch,
   url: string,
 ): Promise<{ data: string; format: string }> {
-  const res = await fetchFn(url);
+  // SSRF 收敛：audioUrl 来自客户端，仅允许 https 公网地址，60s 超时。
+  assertPublicHttpsUrl(url);
+  const res = await fetchFn(url, { signal: AbortSignal.timeout(60_000) });
   if (!res.ok) throw new Error(`音频拉取失败 HTTP ${res.status}`);
+  // arrayBuffer 之前先按 Content-Length 预检，超限不下载。
+  assertContentLengthWithin(res, MAX_AUDIO_BYTES);
   const buf = await res.arrayBuffer();
-  // 网关对单条消息体积有限制，超过 25MB 的音频不内联 base64
-  if (buf.byteLength > 25 * 1024 * 1024) {
+  if (buf.byteLength > MAX_AUDIO_BYTES) {
     throw new Error(`音频体积 ${(buf.byteLength / 1024 / 1024).toFixed(1)}MB 超过 25MB 上限`);
   }
   return { data: Buffer.from(buf).toString("base64"), format: audioFormatFromUrl(url) };
@@ -846,6 +854,18 @@ export const submitEpisodeAnalysisFn = createServerFn({ method: "POST" })
         })
         .eq("id", data.episodeId);
       if (finalError) return { ok: false, code: "DB_ERROR", error: finalError.message };
+
+      // ---- 扣费：按本轮新跑成功的单元数 ×2（与预校验口径一致）----
+      // 幂等：历史已成功单元不重扣；失败单元不扣，重跑成功才计一次。
+      // 扣费失败不阻断主流程（分析结果已落库，不收回）。
+      const succeededThisRun = results.filter((r) => r.ok).length;
+      if (succeededThisRun > 0) {
+        await chargeCredits(supabase, userId, {
+          amount: succeededThisRun * 2,
+          model: INTERNAL_VISION_MODEL,
+          description: `转绘原片分析（${succeededThisRun} 个单元）`,
+        });
+      }
 
       if (failedUnits.length > 0) {
         logGenerationError({

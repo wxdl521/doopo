@@ -5,13 +5,14 @@
 // 关系」并拆解为 5 维光照参数 JSON；prompt 显式屏蔽纹理/背景图案/具体
 // 物象，防止把参考图的猫/树当成光照迁移到短剧人物脸上。
 // 解析（zod + ±100 钳制 + 脏数据兜底）为纯函数 parseLightingExtraction，
-// 服务端壳只做鉴权、积分预校验（1 分/次，与资产表自检同口径）与调用。
+// 服务端壳只做鉴权、积分预校验 + 成功扣费（1 分/次，与资产表自检同口径）与调用。
 // ====================================================================
 
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { ensureEnoughCredits } from "../creditsGuard";
+import { chargeCredits } from "../userCredits.functions";
 import { logGenerationError } from "../errorLogs.server";
 import {
   callLovableChat,
@@ -155,7 +156,7 @@ export const extractLightingFromImages = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input: unknown) => ExtractInputSchema.parse(input))
   .handler(async ({ data, context }): Promise<ExtractLightingResult> => {
-    const { userId } = context as { supabase: unknown; userId: string };
+    const { supabase, userId } = context as { supabase: any; userId: string };
 
     // 积分预校验：1 分/次（与资产表自检同口径，按图片类计费）。
     const guard = await ensureEnoughCredits(1, { kind: "image", model: INTERNAL_VISION_MODEL });
@@ -180,9 +181,9 @@ export const extractLightingFromImages = createServerFn({ method: "POST" })
       return { ok: false, code: "GATEWAY_ERROR", error: `风格提取失败：${res.error}` };
     }
 
+    let extracted: LightingExtraction;
     try {
-      const { name, params } = parseLightingExtraction(res.text);
-      return { ok: true, name, params };
+      extracted = parseLightingExtraction(res.text);
     } catch (error) {
       const message = error instanceof Error ? error.message : LIGHTING_EXTRACT_PARSE_ERROR;
       logGenerationError({
@@ -196,4 +197,11 @@ export const extractLightingFromImages = createServerFn({ method: "POST" })
       });
       return { ok: false, code: "PARSE_ERROR", error: message };
     }
+    // 成功才扣费（1 分/次，与预校验口径一致）；扣失败不阻断主流程。
+    await chargeCredits(supabase, userId, {
+      amount: 1,
+      model: INTERNAL_VISION_MODEL,
+      description: "光照风格提取",
+    });
+    return { ok: true, name: extracted.name, params: extracted.params };
   });

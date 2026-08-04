@@ -2710,11 +2710,17 @@ function WorkspacePage() {
   // 2026/07:接入 localStorage 持久化，刷新页面不丢失已生成的 URL（URL 24h 有效）。
   type VideoGenEntry = {
     url: string;
-    status: "running" | "succeeded" | "failed";
+    /**
+     * persist_failed:视频已生成(url 为供应商 24h 临时链接),但转存到自己的
+     * 存储失败。与 succeeded 一样可以播放/重新生成,但 UI 会提示并给出"重新转存"。
+     */
+    status: "running" | "succeeded" | "failed" | "persist_failed";
     startedAt?: number;
     method?: "shots" | "storyboard";
     /** 视频文件 metadata 读到的真实时长；生成/上传初始时为空。 */
     durationSec?: number;
+    /** status === "persist_failed" 时的转存失败原因,用于 UI 提示。 */
+    persistError?: string;
   };
   const [groupVideos, setGroupVideos] = useState<Record<string, VideoGenEntry[]>>({});
   // 仅记录用户主动点击的单条视频入库状态，用于视频栏按钮的加载反馈。
@@ -2756,7 +2762,13 @@ function WorkspacePage() {
   const persistVideoEntry = useCallback(
     async (groupId: string, entryIndex: number) => {
       const entry = groupVideos[groupId]?.[entryIndex];
-      if (!entry || entry.status !== "succeeded" || !entry.url || isPersistedUrl(entry.url)) return;
+      if (
+        !entry ||
+        (entry.status !== "succeeded" && entry.status !== "persist_failed") ||
+        !entry.url ||
+        isPersistedUrl(entry.url)
+      )
+        return;
 
       const sourceUrl = entry.url;
       const key = `${groupId}:${entryIndex}`;
@@ -2766,6 +2778,18 @@ function WorkspacePage() {
           data: { workspaceId, groupId, fileId: `${groupId}-${entryIndex}`, url: sourceUrl },
         });
         if (!result.ok || !result.url) {
+          // 标记为 persist_failed,UI 显示"转存失败"并可再次重试
+          setGroupVideos((current) => {
+            const entries = current[groupId];
+            if (!entries || entries[entryIndex]?.url !== sourceUrl) return current;
+            const next = [...entries];
+            next[entryIndex] = {
+              ...next[entryIndex],
+              status: "persist_failed",
+              persistError: result.error || "转存失败",
+            };
+            return { ...current, [groupId]: next };
+          });
           toast.error(`视频入库失败：${result.error || "请稍后重试"}`);
           return;
         }
@@ -2774,12 +2798,28 @@ function WorkspacePage() {
           // 只替换仍指向本次临时链接的版本，避免覆盖重新生成结果。
           if (!entries || entries[entryIndex]?.url !== sourceUrl) return current;
           const next = [...entries];
-          next[entryIndex] = { ...next[entryIndex], url: result.url };
+          next[entryIndex] = {
+            ...next[entryIndex],
+            url: result.url,
+            status: "succeeded",
+            persistError: undefined,
+          };
           return { ...current, [groupId]: next };
         });
         toast.success("视频已存储，可长期访问");
       } catch (error) {
         console.warn(`[video persist] ${groupId}[${entryIndex}] 失败:`, error);
+        setGroupVideos((current) => {
+          const entries = current[groupId];
+          if (!entries || entries[entryIndex]?.url !== sourceUrl) return current;
+          const next = [...entries];
+          next[entryIndex] = {
+            ...next[entryIndex],
+            status: "persist_failed",
+            persistError: error instanceof Error ? error.message : "转存失败",
+          };
+          return { ...current, [groupId]: next };
+        });
         toast.error("视频入库失败，请稍后重试");
       } finally {
         setPersistingVideoKey((current) => (current === key ? null : current));
@@ -2803,6 +2843,7 @@ function WorkspacePage() {
                 typeof item?.durationSec === "number" && item.durationSec > 0
                   ? item.durationSec
                   : undefined,
+              persistError: typeof item?.persistError === "string" ? item.persistError : undefined,
             }))
             .filter((item) => item.status !== "failed");
         } else if (v && typeof v === "object" && "url" in (v as object)) {
@@ -2816,6 +2857,7 @@ function WorkspacePage() {
               typeof item?.durationSec === "number" && item.durationSec > 0
                 ? item.durationSec
                 : undefined,
+            persistError: typeof item?.persistError === "string" ? item.persistError : undefined,
           };
           if (entry.status !== "failed") result[k] = [entry];
         }
@@ -2827,7 +2869,11 @@ function WorkspacePage() {
   const resolvedGroupVideos = useMemo(() => {
     const result: Record<
       string,
-      { url: string; status: "running" | "succeeded" | "failed"; durationSec?: number }
+      {
+        url: string;
+        status: "running" | "succeeded" | "failed" | "persist_failed";
+        durationSec?: number;
+      }
     > = {};
     for (const [gid, failedAt] of Object.entries(groupVideoFailures)) {
       result[gid] = { url: "", status: "failed" };
@@ -8297,6 +8343,7 @@ function WorkspacePage() {
       if (res.ok && res.videoUrl) {
         // 供应商视频 URL 会过期；在写入工作区状态前立即转存。
         let videoUrl = res.videoUrl;
+        let persistError: string | undefined;
         try {
           const persisted = await callSaveOneVideo({
             data: {
@@ -8307,26 +8354,39 @@ function WorkspacePage() {
             },
           });
           if (persisted.ok && persisted.url) videoUrl = persisted.url;
-          else console.warn("[video persist]", persisted.error ?? "转存失败");
-        } catch (persistError) {
-          console.warn("[video persist]", persistError);
+          else persistError = persisted.error ?? "转存失败";
+        } catch (e) {
+          persistError = e instanceof Error ? e.message : "转存失败";
         }
+        if (persistError) console.warn("[video persist]", persistError);
+        // 转存失败不能冒充 succeeded:标 persist_failed + 记录原因,UI 会提示
+        // "已生成但转存失败,链接将于 24h 后失效"并提供"重新转存"按钮。
+        const finalStatus = persistError ? ("persist_failed" as const) : ("succeeded" as const);
         setGroupVideos((m) => {
           const entries = [...(m[groupId] ?? [])];
           const lastIdx = entries.length - 1;
           if (lastIdx >= 0 && entries[lastIdx].status === "running") {
-            entries[lastIdx] = { ...entries[lastIdx], url: videoUrl, status: "succeeded" };
+            entries[lastIdx] = {
+              ...entries[lastIdx],
+              url: videoUrl,
+              status: finalStatus,
+              persistError,
+            };
           } else {
-            entries.push({ url: videoUrl, status: "succeeded", method });
+            entries.push({ url: videoUrl, status: finalStatus, method, persistError });
           }
           setSelectedVideoIndex((s) => ({ ...s, [groupId]: entries.length - 1 }));
           return { ...m, [groupId]: entries };
         });
-        toast.success(
-          method === "shots"
-            ? `分镜组视频已生成 (${payload.shotCount} 个镜头)`
-            : "按故事板的视频已生成",
-        );
+        if (persistError) {
+          toast.warning("视频已生成，但转存失败，链接将于 24h 后失效，可点击“重新转存”重试");
+        } else {
+          toast.success(
+            method === "shots"
+              ? `分镜组视频已生成 (${payload.shotCount} 个镜头)`
+              : "按故事板的视频已生成",
+          );
+        }
         return true;
       } else {
         markVideoFailed(groupId);
@@ -9661,7 +9721,9 @@ function WorkspacePage() {
       let persistGroupStoryboards = groupStoryboards;
       const hasEphemeralMedia =
         Object.values(groupVideos).some((arr) =>
-          (arr ?? []).some((v) => v.status === "succeeded" && v.url),
+          (arr ?? []).some(
+            (v) => (v.status === "succeeded" || v.status === "persist_failed") && v.url,
+          ),
         ) ||
         Object.values(groupStoryboards).some((arr) =>
           (arr ?? []).some((v) => v.status === "succeeded" && v.url),
@@ -9681,11 +9743,17 @@ function WorkspacePage() {
           for (const gid of Object.keys(groupVideos)) {
             const origEntries = groupVideos[gid] ?? [];
             const persistedEntries = persistedFlat[gid] ?? [];
-            merged[gid] = origEntries.map((orig, i) => ({
-              ...orig,
-              url: persistedEntries[i]?.url ?? orig.url,
-              status: (persistedEntries[i]?.status ?? orig.status) as VideoGenEntry["status"],
-            }));
+            merged[gid] = origEntries.map((orig, i) => {
+              const nextStatus = (persistedEntries[i]?.status ??
+                orig.status) as VideoGenEntry["status"];
+              return {
+                ...orig,
+                url: persistedEntries[i]?.url ?? orig.url,
+                status: nextStatus,
+                // 入库成功(状态回到 succeeded)后清掉旧的转存失败原因
+                persistError: nextStatus === "succeeded" ? undefined : orig.persistError,
+              };
+            });
           }
           persistGroupVideos = merged;
           const persistedSbMap = unflattenPersistStoryboards(persistRes.groupStoryboards ?? {});
@@ -13915,6 +13983,32 @@ function WorkspacePage() {
                                           </button>
                                         )}
                                       </div>
+                                    ) : videoEntry?.status === "persist_failed" ? (
+                                      <div className="inline-flex items-center gap-1.5">
+                                        <span
+                                          className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded border bg-rose-500/15 text-rose-500 border-rose-500/30"
+                                          title={
+                                            videoEntry.persistError
+                                              ? `转存失败：${videoEntry.persistError}`
+                                              : "已生成但转存失败，链接将于 24h 后失效"
+                                          }
+                                        >
+                                          <Clock size={10} />
+                                          转存失败 · 24h 后失效
+                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={() => void persistVideoEntry(g.id, activeIdx)}
+                                          disabled={activeVideoPersisting}
+                                          className="inline-flex items-center gap-1 text-[9px] px-1.5 py-0.5 rounded border border-accent/50 bg-accent-dim/20 text-accent hover:border-accent hover:bg-accent-dim/40 transition disabled:cursor-not-allowed disabled:opacity-50"
+                                          title="用保留的临时链接重新转存，成功后转为永久链接"
+                                        >
+                                          {activeVideoPersisting && (
+                                            <Loader2 size={10} className="animate-spin" />
+                                          )}
+                                          {activeVideoPersisting ? "转存中…" : "重新转存"}
+                                        </button>
+                                      </div>
                                     ) : videoEntry?.status === "running" ? (
                                       <span className="text-[9px] px-1.5 py-0.5 rounded bg-bg-elevated border border-border text-text-muted">
                                         生成中…
@@ -13929,8 +14023,10 @@ function WorkspacePage() {
                                       </span>
                                     )}
                                   </div>
-                                  {/* 视频区 */}
-                                  {videoEntry?.status === "succeeded" && videoEntry?.url ? (
+                                  {/* 视频区(persist_failed 同样有 url,可正常播放) */}
+                                  {(videoEntry?.status === "succeeded" ||
+                                    videoEntry?.status === "persist_failed") &&
+                                  videoEntry?.url ? (
                                     <div className="relative group w-full max-w-[520px] rounded border border-accent/30 overflow-hidden bg-black aspect-video mx-auto">
                                       <WorkspaceMediaVideo
                                         src={videoEntry.url}
@@ -14052,7 +14148,8 @@ function WorkspacePage() {
                                                 · 预计 3-5 分钟
                                               </span>
                                             </span>
-                                          ) : videoEntry?.status === "succeeded" ? (
+                                          ) : videoEntry?.status === "succeeded" ||
+                                            videoEntry?.status === "persist_failed" ? (
                                             <>
                                               <RefreshCw size={9} /> 按分镜图重新生成视频
                                             </>
@@ -14115,7 +14212,8 @@ function WorkspacePage() {
                                                 · 预计 3-5 分钟
                                               </span>
                                             </span>
-                                          ) : videoEntry?.status === "succeeded" ? (
+                                          ) : videoEntry?.status === "succeeded" ||
+                                            videoEntry?.status === "persist_failed" ? (
                                             <>
                                               <RefreshCw size={9} /> 按故事板重新生成视频
                                             </>

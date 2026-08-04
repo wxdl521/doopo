@@ -206,7 +206,18 @@ export const analyzeRestyleAssets = createServerFn({ method: "POST" })
     if (!__guard.ok) {
       return { ok: false, error: __guard.error };
     }
-    return runAssetAnalysis(data, { userText, systemPrompt, normalizeResult });
+    const result = await runAssetAnalysis(data, { userText, systemPrompt, normalizeResult });
+    // 成功才扣费；扣费失败不阻断主流程（分析结果已产出，不收回）。
+    if (result.ok) {
+      const { supabase, userId } = context as { supabase: any; userId: string };
+      const { chargeCredits } = await import("./userCredits.functions");
+      await chargeCredits(supabase, userId, {
+        amount: __cost,
+        model: INTERNAL_VISION_MODEL,
+        description: "转绘资产分析",
+      });
+    }
+    return result;
   });
 
 const PlanEpisodeSchema = z.object({
@@ -329,6 +340,16 @@ export const generateRestylePlan = createServerFn({ method: "POST" })
             }
           );
         });
+        // 成功才扣费（1 分/次，与预校验口径一致）；扣费失败不阻断主流程。
+        {
+          const { supabase, userId } = context as { supabase: any; userId: string };
+          const { chargeCredits } = await import("./userCredits.functions");
+          await chargeCredits(supabase, userId, {
+            amount: 1,
+            model,
+            description: "转绘方案生成",
+          });
+        }
         return { ok: true, episodes, model };
       } catch (error) {
         return {
