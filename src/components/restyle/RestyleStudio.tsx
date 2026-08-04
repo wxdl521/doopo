@@ -116,11 +116,7 @@ import {
 import { ExtractedAssetTable } from "./ExtractedAssetTable";
 import { CharacterRelationTable } from "./CharacterRelationTable";
 import { RestyleProcessPanel, type RestyleAssetRunStatus } from "./RestyleProcessPanel";
-import {
-  shouldUseDirectUpload,
-  uploadFileDirect,
-  type DirectUploadState,
-} from "./restyleUpload";
+import { shouldUseDirectUpload, uploadFileDirect, type DirectUploadState } from "./restyleUpload";
 import {
   buildMentionables,
   resolveMentionedAttachmentIds,
@@ -457,10 +453,7 @@ export async function resolveSourceVideoFile(
  * 三级回退：原片取不回时，复用首轮分析持久化的 analysisFrame 关键帧附件 url
  * 作为 frameImages（仅限 episodeKeys 对应的源视频）。
  */
-export function cachedAnalysisFrames(
-  files: RestyleAttachment[],
-  episodeKeys: string[],
-): string[] {
+export function cachedAnalysisFrames(files: RestyleAttachment[], episodeKeys: string[]): string[] {
   const wanted = new Set(episodeKeys);
   return files
     .filter(
@@ -1064,9 +1057,7 @@ export default function RestyleStudio() {
     Record<string, string[]>
   >({});
   // 附件直传状态（上传中/已完成/失败），按 attachmentId 归档，仅组件内可见。
-  const [attachmentUploads, setAttachmentUploads] = useState<
-    Record<string, DirectUploadState>
-  >({});
+  const [attachmentUploads, setAttachmentUploads] = useState<Record<string, DirectUploadState>>({});
   // 外部文件拖入工作区时显示「松开即上传」遮罩。
   const [isFileDragActive, setIsFileDragActive] = useState(false);
   const [filePreviews, setFilePreviews] = useState<Record<string, string>>({});
@@ -1218,10 +1209,7 @@ export default function RestyleStudio() {
     [assets],
   );
   const linkedProjectAssets = useMemo(
-    () =>
-      assets.filter((asset) =>
-        isRestyleAssetLinked(asset.id, activeProject?.assetIds ?? []),
-      ),
+    () => assets.filter((asset) => isRestyleAssetLinked(asset.id, activeProject?.assetIds ?? [])),
     [activeProject?.assetIds, assets],
   );
   const projectFileTree = useMemo(
@@ -1331,7 +1319,12 @@ export default function RestyleStudio() {
   useEffect(() => {
     setSelectedImageModel(activeProject?.imageModel ?? DEFAULT_RESTYLE_IMAGE_MODEL);
     setSelectedVideoModel(activeProject?.videoModel ?? defaultRestyleVideoModel);
-  }, [activeProject?.id, activeProject?.imageModel, activeProject?.videoModel, defaultRestyleVideoModel]);
+  }, [
+    activeProject?.id,
+    activeProject?.imageModel,
+    activeProject?.videoModel,
+    defaultRestyleVideoModel,
+  ]);
 
   // 当前生效的视频模型：项目持久化值优先，未设置时用下拉当前值（已按默认值兜底）。
   const currentVideoModel = activeProject?.videoModel ?? selectedVideoModel;
@@ -2240,8 +2233,6 @@ export default function RestyleStudio() {
     void ensureReferenceVideoUrl(activeProject.id, attachment);
   }
 
-
-
   async function ensureReferenceVideoUrl(
     projectId: string,
     source: RestyleAttachment,
@@ -2278,8 +2269,7 @@ export default function RestyleStudio() {
             localFile,
             source.id,
             (input) => callCreateMediaUploadUrl({ data: input }),
-            (percent) =>
-              setAttachmentUpload(source.id, { status: "uploading", progress: percent }),
+            (percent) => setAttachmentUpload(source.id, { status: "uploading", progress: percent }),
           );
           if (!direct.ok) return direct;
           url = direct.url;
@@ -2299,9 +2289,7 @@ export default function RestyleStudio() {
         // readUrl 写回 project.files[].url 并随 projects 持久化，刷新后不再依赖本地预览。
         updateProject(projectId, (project) => ({
           ...project,
-          files: project.files.map((file) =>
-            file.id === source.id ? { ...file, url } : file,
-          ),
+          files: project.files.map((file) => (file.id === source.id ? { ...file, url } : file)),
         }));
         if (useDirect) setAttachmentUpload(source.id, { status: "done", progress: 100 });
         return { ok: true as const, url };
@@ -2416,11 +2404,14 @@ export default function RestyleStudio() {
           });
           const finalUrl = persisted.ok ? persisted.url : stitched;
           if (!persisted.ok) {
-            appendRenderLog(projectId, finalAttachment.id, `成片转存素材库失败（链接可能 24h 后失效）：${persisted.error}`);
+            appendRenderLog(
+              projectId,
+              finalAttachment.id,
+              `成片转存素材库失败（链接可能 24h 后失效）：${persisted.error}`,
+            );
           }
           completeRenderAttachment(projectId, finalAttachment.id, finalUrl, jobId);
-        }
-        else failRenderAttachment(projectId, finalAttachment.id, lastError, jobId);
+        } else failRenderAttachment(projectId, finalAttachment.id, lastError, jobId);
       } catch (error) {
         failRenderAttachment(
           projectId,
@@ -2546,8 +2537,7 @@ export default function RestyleStudio() {
     // A 类面部锚定参考：同项目角色资产图（面部特征 + 服装风格 Tag 软引导，不强锁）。
     const characterRefs = project.files
       .filter(
-        (file) =>
-          file.generatedKind === "character" && file.url && /^https?:\/\//i.test(file.url),
+        (file) => file.generatedKind === "character" && file.url && /^https?:\/\//i.test(file.url),
       )
       .map((file) => file.url as string)
       .slice(0, 4);
@@ -2647,7 +2637,8 @@ export default function RestyleStudio() {
     const vendor = assetLibraryVendorForModel(input.videoModel);
     // 筷子丽帧以公网 URL 作为视频输入，无需替换 asset://；不支持素材库的模型维持原样提交。
     if (!vendor || vendor === "kuaizi") return result;
-    const cache = projectsRef.current.find((item) => item.id === input.projectId)?.assetReviewMap ?? {};
+    const cache =
+      projectsRef.current.find((item) => item.id === input.projectId)?.assetReviewMap ?? {};
     const pending: Array<{ url: string; index: number }> = [];
     input.urls.forEach((url, index) => {
       // 素材接口只接受公网 HTTP(S) URL；blob:/data: 交给服务端转存。
@@ -2753,11 +2744,7 @@ export default function RestyleStudio() {
       (file) => file.id === job.attachmentId,
       (file) => ({ ...file, renderStatus: "running", renderProgress: 15 }),
     );
-    appendRenderLog(
-      projectId,
-      job.attachmentId,
-      `已提交 ${videoModel}，正在等待模型创建任务。`,
-    );
+    appendRenderLog(projectId, job.attachmentId, `已提交 ${videoModel}，正在等待模型创建任务。`);
     const startedAt = Date.now();
     const heartbeat = window.setInterval(() => {
       const seconds = Math.max(1, Math.floor((Date.now() - startedAt) / 1000));
@@ -2810,8 +2797,7 @@ export default function RestyleStudio() {
           }
           const error = result.ok ? "视频模型没有返回任务编号" : result.error;
           // 余额不足（creditsGuard INSUFFICIENT_CREDITS）：不走进降级重投链，强制暂停等用户处理。
-          const resultCode =
-            "code" in result ? (result as { code?: string }).code : undefined;
+          const resultCode = "code" in result ? (result as { code?: string }).code : undefined;
           if (resultCode === "INSUFFICIENT_CREDITS" || isInsufficientCreditsError(error)) {
             submitFailure = error;
             break;
@@ -2891,7 +2877,11 @@ export default function RestyleStudio() {
                 failRenderAttachment(projectId, job.attachmentId, polled.error, submitted.taskId);
                 break;
               }
-              appendRenderLog(projectId, job.attachmentId, `任务查询失败，将自动重试：${polled.error}`);
+              appendRenderLog(
+                projectId,
+                job.attachmentId,
+                `任务查询失败，将自动重试：${polled.error}`,
+              );
               continue;
             }
             if (polled.status === "succeeded") {
@@ -2903,7 +2893,11 @@ export default function RestyleStudio() {
                   submitted.taskId,
                 );
               } else {
-                appendRenderLog(projectId, job.attachmentId, `模型任务 ${submitted.taskId} 返回成功。`);
+                appendRenderLog(
+                  projectId,
+                  job.attachmentId,
+                  `模型任务 ${submitted.taskId} 返回成功。`,
+                );
                 // 模型 TOS 链接约 24h 过期，先转存素材库再写回
                 appendRenderLog(projectId, job.attachmentId, "正在转存视频到素材库…");
                 const persisted = await callPersistRestyleVideo({
@@ -3288,7 +3282,8 @@ export default function RestyleStudio() {
       );
     }
     const assetKind = folderId.match(/^results\/assets\/(character|scene|prop)$/)?.[1] as
-      RestyleAttachment["generatedKind"] | undefined;
+      | RestyleAttachment["generatedKind"]
+      | undefined;
     if (assetKind) return file.generatedKind === assetKind;
     return false;
   }
@@ -3325,7 +3320,10 @@ export default function RestyleStudio() {
       };
     }
     const assetKind = folderId.match(/^results\/assets\/(character|scene|prop)$/)?.[1] as
-      "character" | "scene" | "prop" | undefined;
+      | "character"
+      | "scene"
+      | "prop"
+      | undefined;
     if (assetKind) return { ...file, generatedKind: assetKind };
     return file;
   }
@@ -3383,9 +3381,7 @@ export default function RestyleStudio() {
   }
 
   function insertMention(item: MentionableAttachment) {
-    setChatDraft((current) =>
-      current.replace(/(^|\s)@[a-zA-Z0-9_]*$/, `$1${item.alias} `),
-    );
+    setChatDraft((current) => current.replace(/(^|\s)@[a-zA-Z0-9_]*$/, `$1${item.alias} `));
     setDraftAttachmentIds((current) =>
       current.includes(item.attachment.id) ? current : [...current, item.attachment.id],
     );
@@ -3736,9 +3732,7 @@ export default function RestyleStudio() {
     const message = (overrideMessage ?? chatDraft).trim();
     // 发送时解析文本中的 @imageN / @videoN，把被 @ 的素材一并带上（即使不在附件条里）。
     const mentionedAttachmentIds = resolveMentionedAttachmentIds(message, mentionableAttachments);
-    const outgoingAttachmentIds = [
-      ...new Set([...draftAttachmentIds, ...mentionedAttachmentIds]),
-    ];
+    const outgoingAttachmentIds = [...new Set([...draftAttachmentIds, ...mentionedAttachmentIds])];
     const attachments = activeProject.files.filter((file) =>
       outgoingAttachmentIds.includes(file.id),
     );
@@ -3788,7 +3782,11 @@ export default function RestyleStudio() {
     }
 
     // 方案阶段再说“确认/继续”，等价于确认生成视频。
-    if (shouldContinueToPlan && activeProject.stage === "plan" && activeProject.planEpisodes?.length) {
+    if (
+      shouldContinueToPlan &&
+      activeProject.stage === "plan" &&
+      activeProject.planEpisodes?.length
+    ) {
       submitVideoRender(activeProject, conversationId);
       return;
     }
@@ -4090,11 +4088,7 @@ export default function RestyleStudio() {
           // This gives every asset one stable canvas position instead of piling up variants.
           files: [
             ...project.files.filter(
-              (file) =>
-                !(
-                  file.generatedKind === asset.kind &&
-                  file.sourceAssetId === asset.id
-                ),
+              (file) => !(file.generatedKind === asset.kind && file.sourceAssetId === asset.id),
             ),
             attachment,
           ],
@@ -4113,7 +4107,10 @@ export default function RestyleStudio() {
         updateProject(projectId, (project) => ({ ...project, stage: "plan" }));
         // 环节「全部目标资产图片 / 角色主图与三视图」需人工审核 → 暂停等确认（现状行为）；
         // 否则按当前执行模式继续生成转绘方案（在 finally 收尾后推进）。
-        if (pauseAtGate(projectId, "all_asset_images") || pauseAtGate(projectId, "character_images")) {
+        if (
+          pauseAtGate(projectId, "all_asset_images") ||
+          pauseAtGate(projectId, "character_images")
+        ) {
           appendConversationMessage(projectId, conversationId, {
             role: "assistant",
             content:
@@ -4212,9 +4209,7 @@ export default function RestyleStudio() {
     const characterIds = activeProject.extractedAssets
       .filter((asset) => asset.kind === "character")
       .map((asset) => asset.id);
-    updateCharacterRelations((current) =>
-      withCompletedReverseRelations(current, characterIds),
-    );
+    updateCharacterRelations((current) => withCompletedReverseRelations(current, characterIds));
   }
 
   /** 资产表 skill 自检：生成后自动跑一次，手工编辑后由「重新检查」触发。 */
@@ -4247,7 +4242,9 @@ export default function RestyleStudio() {
   /** 把人物关系文本拼进方案生成指令，分段提示词中的人物互动不得与关系矛盾。 */
   function withRelationBrief(instruction: string): string {
     const brief = buildRelationBrief(relationBriefsRef.current);
-    return brief ? `${instruction}\n${brief}（分段提示词中的人物互动必须与上述关系一致）` : instruction;
+    return brief
+      ? `${instruction}\n${brief}（分段提示词中的人物互动必须与上述关系一致）`
+      : instruction;
   }
 
   /** 「采纳建议」一键写入：仅文本字段可直接写回。 */
@@ -4449,7 +4446,9 @@ export default function RestyleStudio() {
               ))}
             </div>
             <div className="mt-4 border-t border-border pt-3">
-              <p className="mb-2 px-3 text-[11px] font-semibold text-text-muted">转绘资产（可引用）</p>
+              <p className="mb-2 px-3 text-[11px] font-semibold text-text-muted">
+                转绘资产（可引用）
+              </p>
               {canvasGeneratedAttachments.map((attachment) => (
                 <button
                   key={attachment.id}
@@ -5109,8 +5108,7 @@ export default function RestyleStudio() {
                     </div>
                   ) : null}
                   {message.content ? (
-                    message.role === "assistant" &&
-                    extractActionPhrases(message.content).length ? (
+                    message.role === "assistant" && extractActionPhrases(message.content).length ? (
                       // 含动作口令的助手消息升级为待办卡片：口令 chip 点击即发送。
                       <ActionCallout
                         content={message.content}
@@ -5192,11 +5190,7 @@ export default function RestyleStudio() {
                 </div>
               ))}
               {activeRun && activeProjectId ? (
-                <RunProgressCard
-                  run={activeRun}
-                  t={t}
-                  onStop={() => stopRun(activeProjectId)}
-                />
+                <RunProgressCard run={activeRun} t={t} onStop={() => stopRun(activeProjectId)} />
               ) : null}
               {analysisError && !isAnalyzing && (
                 <p className="text-xs text-destructive" role="alert">
@@ -5498,8 +5492,10 @@ export default function RestyleStudio() {
 
         <aside className="hidden min-h-0 flex-col border-l border-border bg-bg-surface xl:flex">
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
-            <div className="flex items-center gap-2">
-              <FolderOpen size={16} className="text-accent" />
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-sm font-semibold text-text-primary truncate">
+                {t.restyle_workbench}
+              </span>
             </div>
             <div className="flex items-center gap-1">
               <button
@@ -5618,8 +5614,9 @@ export default function RestyleStudio() {
                       }}
                       onContextMenuFolder={() => undefined}
                       onChooseFolderAsset={(node) => {
-                        const kind = node.id.match(/^results\/assets\/(character|scene|prop)$/)?.[1] as
-                          RestyleAsset["kind"] | undefined;
+                        const kind = node.id.match(
+                          /^results\/assets\/(character|scene|prop)$/,
+                        )?.[1] as RestyleAsset["kind"] | undefined;
                         if (kind) setAssetPickerKind(kind);
                       }}
                     />
@@ -7017,9 +7014,7 @@ function RunProgressCard({
         ) : (
           <Check size={14} className="text-accent" />
         )}
-        <span className="text-sm font-medium text-text-primary">
-          {t.restyle_run_process_title}
-        </span>
+        <span className="text-sm font-medium text-text-primary">{t.restyle_run_process_title}</span>
         <span className="text-[11px] text-text-muted">
           {run.steps.length}
           {t.restyle_run_steps_count} · {t.restyle_run_elapsed} {elapsed}
@@ -7061,9 +7056,7 @@ function RunProgressCard({
               </span>
               <span className="min-w-0">
                 <span
-                  className={
-                    step.status === "failed" ? "text-destructive" : "text-text-secondary"
-                  }
+                  className={step.status === "failed" ? "text-destructive" : "text-text-secondary"}
                 >
                   {step.label}
                 </span>
