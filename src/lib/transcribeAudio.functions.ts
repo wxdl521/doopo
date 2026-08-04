@@ -1,6 +1,6 @@
 /**
  * 台词稿转写（配音/台词模块）：走 Lovable AI Gateway 官方语音转写端点
- * POST /v1/audio/transcriptions（multipart/form-data，模型 openai/gpt-4o-transcribe）。
+ * POST /v1/audio/transcriptions（multipart/form-data，模型 openai/gpt-4o-mini-transcribe）。
  *
  * 与转绘模块的 transcribeRestyleAudio（chat + input_audio）互不影响：
  * 这里只做「音频 → 纯文本」，句级时间码由前端按片段起点 + 字符占比估算。
@@ -10,7 +10,7 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 
 const GATEWAY_URL = "https://ai.gateway.lovable.dev/v1/audio/transcriptions";
-const ASR_MODEL = "openai/gpt-4o-transcribe";
+const ASR_MODEL = "openai/gpt-4o-mini-transcribe";
 
 const InputSchema = z.object({
   /** 纯 base64（不带 data: 前缀），单片 ≤ 15MB。 */

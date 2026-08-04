@@ -1,6 +1,6 @@
 /**
  * 转绘 v1 音频通道：客户端抽 16k 单声道 WAV 分片，这里走专用转写端点
- * （POST /v1/audio/transcriptions，gpt-4o-transcribe，multipart/form-data）
+ * （POST /v1/audio/transcriptions，gpt-4o-mini-transcribe，multipart/form-data）
  * 逐片识别为带时间码的台词句；说话人归属交给后续视觉通道补。
  * 端点 4xx（不支持音频/参数）时返回 degraded 标记，由前端走「无台词」降级口径。
  */
@@ -9,7 +9,7 @@ import { z } from "zod";
 import { requireSupabaseAuth } from "../integrations/supabase/auth-middleware";
 
 const STT_ENDPOINT = "https://ai.gateway.lovable.dev/v1/audio/transcriptions";
-const STT_MODEL = "openai/gpt-4o-transcribe";
+const STT_MODEL = "openai/gpt-4o-mini-transcribe";
 
 const InputSchema = z.object({
   unitId: z.string().min(1).max(80),
