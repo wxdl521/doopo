@@ -3,7 +3,7 @@
 //
 //  流程骨架：项目选择/新建（标题 + 画风 style_brief）→ 集管理（多集上传，
 //  浏览器端切片/抽帧/提音频/上传）→ 阶段导航（① 分析 → ② 审核 →
-//  ③ 资产映射，阶段 C 置灰待开放）。
+//  ③ 资产映射 → ④ 造型化生图，阶段 C 置灰待开放）。
 //
 //  阶段推进硬闸门：下一阶段按钮调 assertStageApprovedFn，未 user_approved
 //  时置灰并在 tooltip 列出待确认节点（需求文档第五节「闸门硬约束」）。
@@ -47,6 +47,7 @@ import {
 import AnalysisProgressPanel from "./AnalysisProgressPanel";
 import ArtifactApprovalPanel, { type ArtifactIssue } from "./ArtifactApprovalPanel";
 import AssetMappingPanel from "./AssetMappingPanel";
+import ImageGenPanel from "./ImageGenPanel";
 import ReviewPanel from "./ReviewPanel";
 import {
   MAX_SOURCE_FILE_BYTES,
@@ -70,7 +71,7 @@ import {
 // 阶段定义
 // --------------------------------------------------------------------
 
-type StageKey = "analysis" | "review" | "asset_mapping";
+type StageKey = "analysis" | "review" | "asset_mapping" | "image_gen";
 
 interface StageNavItem {
   key: string;
@@ -85,7 +86,8 @@ const STAGE_NAV: StageNavItem[] = [
   { key: "analysis", label: "① 分析", open: true },
   { key: "review", label: "② 审核", gateStage: "analysis", open: true },
   { key: "asset_mapping", label: "③ 资产映射", gateStage: "review", open: true },
-  { key: "stage_c", label: "④ 阶段 C", open: false, note: "阶段 C 待开放" },
+  { key: "image_gen", label: "④ 造型化生图", gateStage: "asset_mapping", open: true },
+  { key: "stage_c", label: "⑤ 阶段 C", open: false, note: "阶段 C 待开放" },
 ];
 
 const PHASE_LABEL: Record<SlicingPhase, string> = {
@@ -222,6 +224,7 @@ export default function RestyleV2Studio() {
     if (!projectId) return;
     void checkGate(projectId, "analysis");
     void checkGate(projectId, "review");
+    void checkGate(projectId, "asset_mapping");
   }, [projectId, checkGate]);
 
   useEffect(() => {
@@ -679,6 +682,10 @@ export default function RestyleV2Studio() {
 
       {project && stage === "asset_mapping" && (
         <AssetMappingPanel projectId={project.id} onArtifactsChanged={refreshGate} />
+      )}
+
+      {project && stage === "image_gen" && (
+        <ImageGenPanel projectId={project.id} onArtifactsChanged={refreshGate} />
       )}
 
       {/* 新建项目对话框 */}
