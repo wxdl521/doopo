@@ -1601,7 +1601,6 @@ export const en: Translations = {
   restyle_new_project: "New restyle project",
   restyle_search: "Search restyle projects…",
   restyle_projects: "Restyle projects",
-  restyle_project_files: "Project files",
   restyle_workbench: "Restyle workbench",
   restyle_canvas: "Canvas",
   restyle_back_to_projects: "Back to projects",
@@ -1746,7 +1745,6 @@ export const en: Translations = {
   restyle_tab_setup: "Settings",
   restyle_tab_process: "Process",
   restyle_tab_files: "Files",
-  restyle_process_panel: "Process & prompts",
   restyle_process_timeline: "Progress",
   restyle_asset_run_pending: "Waiting",
   restyle_asset_run_running: "Generating",
@@ -1791,7 +1789,6 @@ export const en: Translations = {
     "Source footage unavailable (neither the local cache nor the persisted URL works). Please re-upload the source video before analysing.",
 
   // ===== Restyle video workbench (right setup panel + execution logic) =====
-  restyle_setup_title: "Video Restyle Workbench",
   restyle_setup_mode_label: "Execution mode",
   restyle_setup_mode_auto: "Full-auto mode",
   restyle_setup_mode_auto_desc:

@@ -1576,7 +1576,6 @@ export const zh = {
   restyle_new_project: "新建转绘项目",
   restyle_search: "搜索转绘项目…",
   restyle_projects: "转绘项目",
-  restyle_project_files: "项目文件",
   restyle_workbench: "转绘工作台",
   restyle_canvas: "画布",
   restyle_back_to_projects: "返回项目",
@@ -1719,7 +1718,6 @@ export const zh = {
   restyle_tab_setup: "设置",
   restyle_tab_process: "流程",
   restyle_tab_files: "文件",
-  restyle_process_panel: "过程与提示词",
   restyle_process_timeline: "处理过程",
   restyle_asset_run_pending: "等待中",
   restyle_asset_run_running: "生成中",
@@ -1763,7 +1761,6 @@ export const zh = {
     "无法取回原片画面（本地缓存与持久地址均不可用），请重新上传原片后再分析。",
 
   // ===== 视频转绘工作台（右侧选项区 + 执行逻辑联动） =====
-  restyle_setup_title: "视频转绘工作台",
   restyle_setup_mode_label: "执行模式",
   restyle_setup_mode_auto: "极速全自动模式",
   restyle_setup_mode_auto_desc: "确认需求 / 规格 / 模型 / 预算后，分镜到成片全自动执行。",

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { BookOpen, Check, ChevronDown, ChevronRight, ListTree, Loader2, RotateCcw, Wand2 } from "lucide-react";
+import { BookOpen, Check, Loader2, RotateCcw, Wand2 } from "lucide-react";
 import type { Translations } from "../../i18n/zh";
 import type { RestyleExtractedAsset, RestyleProject } from "./restyleStorage";
 import type { RestyleStage } from "./restyleTypes";
@@ -66,7 +66,6 @@ export function RestyleProcessPanel({
   onSegmentPromptChange,
   t,
 }: RestyleProcessPanelProps) {
-  const [collapsed, setCollapsed] = useState(false);
   const [openSkill, setOpenSkill] = useState<string | null>(null);
   if (!project) return null;
 
@@ -78,23 +77,8 @@ export function RestyleProcessPanel({
 
   return (
     <section className="shrink-0 border-b border-border" data-testid="restyle-process-panel">
-      <button
-        type="button"
-        onClick={() => setCollapsed((current) => !current)}
-        aria-expanded={!collapsed}
-        className="flex w-full items-center justify-between px-4 py-3 text-left hover:bg-bg-elevated"
-      >
-        <span className="flex items-center gap-2">
-          <ListTree size={16} className="text-accent" />
-          <span className="text-sm font-semibold text-text-primary">{t.restyle_process_panel}</span>
-        </span>
-        {collapsed ? (
-          <ChevronRight size={15} className="text-text-muted" />
-        ) : (
-          <ChevronDown size={15} className="text-text-muted" />
-        )}
-      </button>
-      {!collapsed && (
+      {/* 标题/折叠层已由右栏 Tab 承担，内容始终展开 */}
+      {
         <div className="space-y-4 px-4 pb-4">
           <div>
             <p className="mb-2 text-xs font-semibold text-text-primary">
@@ -316,7 +300,7 @@ export function RestyleProcessPanel({
             </div>
           )}
         </div>
-      )}
+      }
     </section>
   );
 }

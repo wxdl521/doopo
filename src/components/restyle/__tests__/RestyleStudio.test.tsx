@@ -114,7 +114,8 @@ describe("RestyleStudio prototype", () => {
     renderStudio();
 
     expect(screen.getByTestId("restyle-workbench")).toBeInTheDocument();
-    expect(screen.getByText("项目文件")).toBeInTheDocument();
+    // 顶部栏不再写死「项目文件」标题（已由 Tab 承担），保留图标与按钮位。
+    expect(screen.getByRole("tab", { name: "文件" })).toBeInTheDocument();
     expect(screen.getByPlaceholderText("输入你的转绘需求…")).toBeInTheDocument();
     // 右栏分段 Tab 默认停在「设置」。
     expect(screen.getByRole("tab", { name: "设置" })).toHaveAttribute("aria-selected", "true");

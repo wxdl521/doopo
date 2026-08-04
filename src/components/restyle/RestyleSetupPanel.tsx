@@ -207,10 +207,7 @@ export function RestyleSetupPanel({
 
   return (
     <div className="border-b border-border p-3" data-testid="restyle-setup-panel">
-      <div className="mb-2 flex items-center gap-2">
-        <Gauge size={14} className="text-accent" />
-        <h2 className="text-xs font-semibold text-text-primary">{t.restyle_setup_title}</h2>
-      </div>
+      {/* 标题层已由右栏 Tab 承担，此处不再重复（Gauge 标题行已移除） */}
 
       {/* 1. 执行模式三选一卡片 + 应用按钮 */}
       <div className="space-y-1.5">

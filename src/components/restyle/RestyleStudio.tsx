@@ -5500,7 +5500,6 @@ export default function RestyleStudio() {
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
             <div className="flex items-center gap-2">
               <FolderOpen size={16} className="text-accent" />
-              <h2 className="text-sm font-semibold text-text-primary">{t.restyle_project_files}</h2>
             </div>
             <div className="flex items-center gap-1">
               <button
