@@ -47,6 +47,7 @@ import {
 import AnalysisProgressPanel from "./AnalysisProgressPanel";
 import ArtifactApprovalPanel, { type ArtifactIssue } from "./ArtifactApprovalPanel";
 import AssetMappingPanel from "./AssetMappingPanel";
+import GroupingPanel from "./GroupingPanel";
 import ImageGenPanel from "./ImageGenPanel";
 import ReviewPanel from "./ReviewPanel";
 import {
@@ -71,7 +72,7 @@ import {
 // 阶段定义
 // --------------------------------------------------------------------
 
-type StageKey = "analysis" | "review" | "asset_mapping" | "image_gen";
+type StageKey = "analysis" | "review" | "asset_mapping" | "image_gen" | "grouping";
 
 interface StageNavItem {
   key: string;
@@ -87,7 +88,8 @@ const STAGE_NAV: StageNavItem[] = [
   { key: "review", label: "② 审核", gateStage: "analysis", open: true },
   { key: "asset_mapping", label: "③ 资产映射", gateStage: "review", open: true },
   { key: "image_gen", label: "④ 造型化生图", gateStage: "asset_mapping", open: true },
-  { key: "stage_c", label: "⑤ 阶段 C", open: false, note: "阶段 C 待开放" },
+  { key: "grouping", label: "⑤ 按集分组", gateStage: "image_gen", open: true },
+  { key: "stage_c", label: "⑥ 阶段 C", open: false, note: "阶段 C 待开放" },
 ];
 
 const PHASE_LABEL: Record<SlicingPhase, string> = {
@@ -225,6 +227,7 @@ export default function RestyleV2Studio() {
     void checkGate(projectId, "analysis");
     void checkGate(projectId, "review");
     void checkGate(projectId, "asset_mapping");
+    void checkGate(projectId, "image_gen");
   }, [projectId, checkGate]);
 
   useEffect(() => {
@@ -686,6 +689,10 @@ export default function RestyleV2Studio() {
 
       {project && stage === "image_gen" && (
         <ImageGenPanel projectId={project.id} onArtifactsChanged={refreshGate} />
+      )}
+
+      {project && stage === "grouping" && (
+        <GroupingPanel projectId={project.id} onArtifactsChanged={refreshGate} />
       )}
 
       {/* 新建项目对话框 */}
