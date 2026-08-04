@@ -589,7 +589,7 @@ const VALID_T2I_MODELS = new Set<string>([
   "nagora/gpt-image-2",
   // Lovable gateway 模型
   "lovable/google/gemini-3-flash-preview",
-  "lovable/google/gemini-3.1-flash-preview",
+  "lovable/google/gemini-3.1-flash-image-preview",
   "lovable/openai/gpt-image-2",
 ]);
 
@@ -633,7 +633,7 @@ const VALID_I2I_MODELS = new Set<string>([
   "agentearth/image2",
   "nagora/gpt-image-2",
   "lovable/google/gemini-3-flash-preview",
-  "lovable/google/gemini-3.1-flash-preview",
+  "lovable/google/gemini-3.1-flash-image-preview",
   "lovable/openai/gpt-image-2",
   "claude360/gpt-image-2",
   "shuci/gpt-image-2",
