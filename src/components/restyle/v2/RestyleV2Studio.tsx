@@ -35,7 +35,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { uploadLocalImage } from "@/lib/uploadImage.functions";
-import { createMediaUploadUrl } from "@/lib/restyleMedia.functions";
+import { createMediaUploadUrl, signMediaReadUrl } from "@/lib/restyleMedia.functions";
 import { submitEpisodeAnalysisFn } from "@/lib/restyle/restyleVideoAnalysis.functions";
 import {
   approveArtifactFn,
@@ -118,6 +118,7 @@ const INITIAL_GATE: GateState = { checking: false, ok: false, pending: [] };
 export default function RestyleV2Studio() {
   const callUpload = useServerFn(uploadLocalImage);
   const callCreateUploadUrl = useServerFn(createMediaUploadUrl);
+  const callSignReadUrl = useServerFn(signMediaReadUrl);
   const callSubmitAnalysis = useServerFn(submitEpisodeAnalysisFn);
   const callAssertStage = useServerFn(assertStageApprovedFn);
   const callListArtifacts = useServerFn(listArtifactsFn);
@@ -273,6 +274,7 @@ export default function RestyleV2Studio() {
         episodeId,
         upload: (input) => callUpload({ data: input }),
         createUploadUrl: (input) => callCreateUploadUrl({ data: input }),
+        signReadUrl: (input) => callSignReadUrl({ data: input }),
         onProgress: (event) => {
           setPrepJobs((prev) =>
             prev.map((j) =>

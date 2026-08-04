@@ -30,7 +30,7 @@ function makeDeps(spies: {
     decodeAudio: spies.decodeAudio ?? vi.fn(async (_f: File, _d: number) => null),
     openSession: vi.fn(async (_f: File) => fakeSession),
     captureFrames: vi.fn(async () => ["data:image/jpeg;base64,AAA"]),
-    putBinary: spies.putBinary ?? vi.fn(async () => "https://signed/read.mp4"),
+    putBinary: spies.putBinary ?? vi.fn(async () => {}),
   };
 }
 
@@ -61,8 +61,9 @@ describe("大文件降级（212MB 样例场景）", () => {
       createUploadUrl: vi.fn(async () => ({
         ok: true,
         uploadUrl: "https://signed/upload",
-        readUrl: "https://signed/read.mp4",
+        path: "u1/uploads/restyle-v2/video/ep1.mp4",
       })),
+      signReadUrl: vi.fn(async () => ({ ok: true, url: "https://signed/read.mp4" })),
       deps: makeDeps({ decodeAudio }),
     });
     expect(decodeAudio).not.toHaveBeenCalled();
@@ -74,7 +75,7 @@ describe("大文件降级（212MB 样例场景）", () => {
   });
 
   it("源视频直传收到的是 File/Blob 而不是 base64 字符串", async () => {
-    const putBinary = vi.fn(async (_blob: Blob, _t: { uploadUrl: string; readUrl: string }) => "https://signed/read.mp4");
+    const putBinary = vi.fn(async (_blob: Blob, _t: { uploadUrl: string }) => {});
     const big = fileWithSize(450 * 1024 * 1024);
     await prepareEpisodeMedia(big, {
       episodeId: "ep1",
@@ -82,8 +83,9 @@ describe("大文件降级（212MB 样例场景）", () => {
       createUploadUrl: vi.fn(async () => ({
         ok: true,
         uploadUrl: "https://signed/upload",
-        readUrl: "https://signed/read.mp4",
+        path: "u1/uploads/restyle-v2/video/ep1.mp4",
       })),
+      signReadUrl: vi.fn(async () => ({ ok: true, url: "https://signed/read.mp4" })),
       deps: makeDeps({ putBinary }),
     });
     const arg = putBinary.mock.calls[0][0];

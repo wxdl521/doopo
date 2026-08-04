@@ -26,7 +26,12 @@ export type PrepareUploadUrlFn = (input: {
   id: string;
   kind: "video" | "audio" | "image";
   ext: string;
-}) => Promise<{ ok: boolean; uploadUrl?: string; readUrl?: string; error?: string }>;
+}) => Promise<{ ok: boolean; uploadUrl?: string; path?: string; error?: string }>;
+
+/** 上传完成后签发读地址（对象已存在，签名成功；私有桶可播）。 */
+export type SignReadUrlFn = (input: {
+  path: string;
+}) => Promise<{ ok: boolean; url?: string; error?: string }>;
 
 /** 从文件名/MIME 取扩展名（签名上传路径用）。 */
 export function extFromFile(file: File): string {
@@ -50,6 +55,7 @@ export async function uploadFileDirect(
   file: File,
   id: string,
   prepareUrl: PrepareUploadUrlFn,
+  signRead: SignReadUrlFn,
   onProgress?: (percent: number) => void,
 ): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
   let target: Awaited<ReturnType<PrepareUploadUrlFn>>;
@@ -61,7 +67,7 @@ export async function uploadFileDirect(
       error: `签名上传地址获取失败：${error instanceof Error ? error.message : "网络错误"}`,
     };
   }
-  if (!target.ok || !target.uploadUrl || !target.readUrl) {
+  if (!target.ok || !target.uploadUrl || !target.path) {
     return {
       ok: false,
       error: target.ok
@@ -70,7 +76,7 @@ export async function uploadFileDirect(
     };
   }
   const uploadUrl = target.uploadUrl;
-  const readUrl = target.readUrl;
+  const path = target.path;
   return new Promise((resolve) => {
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", uploadUrl, true);
@@ -80,10 +86,16 @@ export async function uploadFileDirect(
         onProgress(Math.round((event.loaded / event.total) * 100));
       }
     };
-    xhr.onload = () => {
+    xhr.onload = async () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         onProgress?.(100);
-        resolve({ ok: true, url: readUrl });
+        // 上传完成后再签发读地址（对象已存在，签名成功且私有桶可播）
+        const read = await signRead({ path });
+        if (!read.ok || !read.url) {
+          resolve({ ok: false, error: read.ok ? "读取地址签发失败。" : read.error ?? "读取地址签发失败。" });
+          return;
+        }
+        resolve({ ok: true, url: read.url });
       } else if (xhr.status >= 400 && xhr.status < 500) {
         resolve({
           ok: false,

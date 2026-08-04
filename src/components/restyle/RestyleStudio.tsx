@@ -87,7 +87,7 @@ import {
   type RestyleFallbackStage,
 } from "../../lib/videoAssetLibrary";
 import { uploadLocalImage } from "../../lib/uploadImage.functions";
-import { createMediaUploadUrl } from "../../lib/restyleMedia.functions";
+import { createMediaUploadUrl, signMediaReadUrl } from "../../lib/restyleMedia.functions";
 import { persistAssetImage } from "../../lib/workspaceMedia.functions";
 import { persistRestyleVideo } from "../../lib/restyleMedia.functions";
 import { realImageModelOptions, realVideoModels } from "../NewProjectDialog";
@@ -1140,6 +1140,7 @@ export default function RestyleStudio() {
   const callUploadKeyiyunAsset = useServerFn(uploadKeyiyunAsset);
   const callUploadLocalMedia = useServerFn(uploadLocalImage);
   const callCreateMediaUploadUrl = useServerFn(createMediaUploadUrl);
+  const callSignMediaReadUrl = useServerFn(signMediaReadUrl);
   const callPersistAssetImage = useServerFn(persistAssetImage);
   const callPersistRestyleVideo = useServerFn(persistRestyleVideo);
   const callReviewRestyleAssetTable = useServerFn(reviewRestyleAssetTable);
@@ -2269,7 +2270,9 @@ export default function RestyleStudio() {
             localFile,
             source.id,
             (input) => callCreateMediaUploadUrl({ data: input }),
-            (percent) => setAttachmentUpload(source.id, { status: "uploading", progress: percent }),
+            (input) => callSignMediaReadUrl({ data: input }),
+            (percent) =>
+              setAttachmentUpload(source.id, { status: "uploading", progress: percent }),
           );
           if (!direct.ok) return direct;
           url = direct.url;

@@ -67,7 +67,12 @@ export type PrepareUploadUrlFn = (input: {
   id: string;
   kind: "video" | "audio";
   ext: string;
-}) => Promise<{ ok: boolean; uploadUrl?: string; readUrl?: string; error?: string }>;
+}) => Promise<{ ok: boolean; uploadUrl?: string; path?: string; error?: string }>;
+
+/** 上传完成后签发读地址（对象已存在，签名成功；私有桶可播）。 */
+export type SignReadUrlFn = (input: {
+  path: string;
+}) => Promise<{ ok: boolean; url?: string; error?: string }>;
 
 /** 与 submitEpisodeAnalysisFn 入参 units 元素一致。 */
 export interface PreparedUnit {
@@ -283,9 +288,9 @@ export function shouldDecodeAudio(fileSizeBytes: number): boolean {
  */
 export async function putBinaryWithProgress(
   file: Blob,
-  target: { uploadUrl: string; readUrl: string },
+  target: { uploadUrl: string },
   onPercent?: (percent: number) => void,
-): Promise<string> {
+): Promise<void> {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open("PUT", target.uploadUrl, true);
@@ -294,7 +299,7 @@ export async function putBinaryWithProgress(
       if (e.lengthComputable && onPercent) onPercent(Math.round((e.loaded / e.total) * 100));
     };
     xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) resolve(target.readUrl);
+      if (xhr.status >= 200 && xhr.status < 300) resolve();
       else reject(new Error(`直传失败（HTTP ${xhr.status}）：${(xhr.responseText || "").slice(0, 120)}`));
     };
     xhr.onerror = () => reject(new Error("直传网络错误"));
@@ -321,6 +326,8 @@ export async function prepareEpisodeMedia(
     upload: MediaUploadFn;
     /** 大文件（源视频）直传地址获取；不传则回退 base64 旧路径。 */
     createUploadUrl?: PrepareUploadUrlFn;
+    /** 直传完成后签发读地址（与 createUploadUrl 配套）。 */
+    signReadUrl?: SignReadUrlFn;
     onProgress?: OnUnitProgress;
     /** 测试注入点：生产勿传。 */
     deps?: {
@@ -332,7 +339,7 @@ export async function prepareEpisodeMedia(
     };
   },
 ): Promise<PreparedEpisode> {
-  const { episodeId, upload, createUploadUrl, onProgress } = opts;
+  const { episodeId, upload, createUploadUrl, signReadUrl, onProgress } = opts;
   const deps = {
     probe: probeVideoDuration,
     decodeAudio: decodeToMono16k,
@@ -359,14 +366,17 @@ export async function prepareEpisodeMedia(
   if (createUploadUrl) {
     // 二进制直传：不转 base64，大文件不占内存
     const target = await createUploadUrl({ id: episodeId, kind: "video", ext: extFromFile(file) });
-    if (!target.ok || !target.uploadUrl || !target.readUrl) {
+    if (!target.ok || !target.uploadUrl || !target.path) {
       throw new Error(target.ok ? "未获取到上传地址。" : (target.error ?? "获取上传地址失败。"));
     }
-    videoUrl = await deps.putBinary(
-      file,
-      { uploadUrl: target.uploadUrl, readUrl: target.readUrl },
-      (p) => report({ unitIndex: -1, unitId: "", phase: "video_upload", detail: `已上传 ${p}%` }),
+    await deps.putBinary(file, { uploadUrl: target.uploadUrl }, (p) =>
+      report({ unitIndex: -1, unitId: "", phase: "video_upload", detail: `已上传 ${p}%` }),
     );
+    // 上传完成后签发读地址（对象已存在，签名成功；私有桶可播）
+    if (!signReadUrl) throw new Error("缺少读地址签发函数。");
+    const read = await signReadUrl({ path: target.path });
+    if (!read.ok || !read.url) throw new Error(read.ok ? "读取地址签发失败。" : (read.error ?? "读取地址签发失败。"));
+    videoUrl = read.url;
   } else {
     videoUrl = await uploadOrThrow(upload, {
       base64: await fileToDataUrl(file),
