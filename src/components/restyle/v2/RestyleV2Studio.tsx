@@ -2,8 +2,8 @@
 //  转绘 v2 工作台 —— /restyle/v2
 //
 //  流程骨架：项目选择/新建（标题 + 画风 style_brief）→ 集管理（多集上传，
-//  浏览器端切片/抽帧/提音频/上传）→ 阶段导航（① 分析 → ② 审核，
-//  阶段 B/C 置灰待开放）。
+//  浏览器端切片/抽帧/提音频/上传）→ 阶段导航（① 分析 → ② 审核 →
+//  ③ 资产映射，阶段 C 置灰待开放）。
 //
 //  阶段推进硬闸门：下一阶段按钮调 assertStageApprovedFn，未 user_approved
 //  时置灰并在 tooltip 列出待确认节点（需求文档第五节「闸门硬约束」）。
@@ -46,6 +46,7 @@ import {
 } from "@/lib/restyle/restyleArtifacts.functions";
 import AnalysisProgressPanel from "./AnalysisProgressPanel";
 import ArtifactApprovalPanel, { type ArtifactIssue } from "./ArtifactApprovalPanel";
+import AssetMappingPanel from "./AssetMappingPanel";
 import ReviewPanel from "./ReviewPanel";
 import {
   MAX_SOURCE_FILE_BYTES,
@@ -69,7 +70,7 @@ import {
 // 阶段定义
 // --------------------------------------------------------------------
 
-type StageKey = "analysis" | "review";
+type StageKey = "analysis" | "review" | "asset_mapping";
 
 interface StageNavItem {
   key: string;
@@ -83,7 +84,7 @@ interface StageNavItem {
 const STAGE_NAV: StageNavItem[] = [
   { key: "analysis", label: "① 分析", open: true },
   { key: "review", label: "② 审核", gateStage: "analysis", open: true },
-  { key: "stage_b", label: "③ 阶段 B", open: false, note: "阶段 B 待开放" },
+  { key: "asset_mapping", label: "③ 资产映射", gateStage: "review", open: true },
   { key: "stage_c", label: "④ 阶段 C", open: false, note: "阶段 C 待开放" },
 ];
 
@@ -135,7 +136,8 @@ export default function RestyleV2Studio() {
 
   const [episodes, setEpisodes] = useState<RestyleV2Episode[]>([]);
   const [stage, setStage] = useState<StageKey>("analysis");
-  const [gate, setGate] = useState<GateState>(INITIAL_GATE);
+  /** 按前置 stage 分别记录的闸门状态（analysis / review）。 */
+  const [gates, setGates] = useState<Record<string, GateState>>({});
 
   const [prepJobs, setPrepJobs] = useState<PrepJob[]>([]);
   const [analysisRefreshKey, setAnalysisRefreshKey] = useState(0);
@@ -192,17 +194,24 @@ export default function RestyleV2Studio() {
 
   const checkGate = useCallback(
     async (pid: string, gateStage: string) => {
-      setGate((prev) => ({ ...prev, checking: true }));
+      setGates((prev) => ({
+        ...prev,
+        [gateStage]: { ...(prev[gateStage] ?? INITIAL_GATE), checking: true },
+      }));
       try {
         const result = await callAssertStage({ data: { projectId: pid, stage: gateStage } });
-        setGate(
-          result.ok
+        setGates((prev) => ({
+          ...prev,
+          [gateStage]: result.ok
             ? { checking: false, ok: true, pending: [] }
             : { checking: false, ok: false, pending: result.pending ?? [] },
-        );
+        }));
         return result.ok;
       } catch {
-        setGate({ checking: false, ok: false, pending: [] });
+        setGates((prev) => ({
+          ...prev,
+          [gateStage]: { checking: false, ok: false, pending: [] },
+        }));
         return false;
       }
     },
@@ -210,7 +219,9 @@ export default function RestyleV2Studio() {
   );
 
   const refreshGate = useCallback(() => {
-    if (projectId) void checkGate(projectId, "analysis");
+    if (!projectId) return;
+    void checkGate(projectId, "analysis");
+    void checkGate(projectId, "review");
   }, [projectId, checkGate]);
 
   useEffect(() => {
@@ -412,11 +423,15 @@ export default function RestyleV2Studio() {
   // 渲染
   // ------------------------------------------------------------------
 
-  const gateTooltip = gate.ok
-    ? "前置节点已全部确认"
-    : gate.pending.length > 0
-      ? `待确认节点：${gate.pending.join("、")}`
-      : "该阶段暂无已确认产物";
+  const gateTooltipFor = (gateStage: string): string => {
+    const state = gates[gateStage] ?? INITIAL_GATE;
+    return state.ok
+      ? "前置节点已全部确认"
+      : state.pending.length > 0
+        ? `待确认节点：${state.pending.join("、")}`
+        : "该阶段暂无已确认产物";
+  };
+  const analysisGate = gates.analysis ?? INITIAL_GATE;
 
   return (
     <div className="mx-auto max-w-6xl space-y-6 px-4 py-6">
@@ -455,6 +470,7 @@ export default function RestyleV2Studio() {
       <div className="flex flex-wrap items-center gap-2">
         {STAGE_NAV.map((item) => {
           const active = item.key === stage;
+          const itemGate = item.gateStage ? (gates[item.gateStage] ?? INITIAL_GATE) : null;
           return (
             <Tooltip key={item.key}>
               <TooltipTrigger asChild>
@@ -463,7 +479,7 @@ export default function RestyleV2Studio() {
                     type="button"
                     size="sm"
                     variant={active ? "default" : "outline"}
-                    disabled={!item.open || !projectId || (item.gateStage != null && !gate.ok)}
+                    disabled={!item.open || !projectId || (itemGate != null && !itemGate.ok)}
                     onClick={() => void handleEnterStage(item)}
                   >
                     {item.label}
@@ -476,8 +492,8 @@ export default function RestyleV2Studio() {
               <TooltipContent>
                 {!item.open
                   ? item.note
-                  : item.gateStage && !gate.ok
-                    ? gateTooltip
+                  : item.gateStage && itemGate && !itemGate.ok
+                    ? gateTooltipFor(item.gateStage)
                     : item.label}
               </TooltipContent>
             </Tooltip>
@@ -632,24 +648,24 @@ export default function RestyleV2Studio() {
 
           {/* 阶段闸门 */}
           <div className="flex items-center justify-end gap-3 border-t border-border pt-4">
-            {!gate.ok && !gate.checking && (
-              <span className="text-xs text-text-muted">{gateTooltip}</span>
+            {!analysisGate.ok && !analysisGate.checking && (
+              <span className="text-xs text-text-muted">{gateTooltipFor("analysis")}</span>
             )}
             <Tooltip>
               <TooltipTrigger asChild>
                 <span>
                   <Button
                     type="button"
-                    disabled={!gate.ok || gate.checking}
+                    disabled={!analysisGate.ok || analysisGate.checking}
                     onClick={() => void handleEnterStage(STAGE_NAV[1])}
                   >
-                    {gate.checking ? "检查闸门中…" : "下一步：审核"}
+                    {analysisGate.checking ? "检查闸门中…" : "下一步：审核"}
                   </Button>
                 </span>
               </TooltipTrigger>
-              {!gate.ok && (
+              {!analysisGate.ok && (
                 <TooltipContent>
-                  <p>{gateTooltip}</p>
+                  <p>{gateTooltipFor("analysis")}</p>
                 </TooltipContent>
               )}
             </Tooltip>
@@ -659,6 +675,10 @@ export default function RestyleV2Studio() {
 
       {project && stage === "review" && (
         <ReviewPanel projectId={project.id} onArtifactsChanged={refreshGate} />
+      )}
+
+      {project && stage === "asset_mapping" && (
+        <AssetMappingPanel projectId={project.id} onArtifactsChanged={refreshGate} />
       )}
 
       {/* 新建项目对话框 */}
