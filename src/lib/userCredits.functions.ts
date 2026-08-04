@@ -121,45 +121,31 @@ export async function chargeCredits(
     resolution?: string;
     duration?: number;
     description: string;
-    /** 幂等键(如视频 taskId);同一 key 只扣一次 */
+    /** 幂等键(如视频 taskId);同一 key 只扣一次（库级唯一索引原子保证） */
     idempotencyKey?: string;
   },
 ): Promise<{ ok: boolean; balanceAfter: number | null; deduped?: boolean }> {
-  // 幂等键编进流水 description,查询与写入用同一口径
-  const description = params.idempotencyKey
-    ? `${params.description} [ref:${params.idempotencyKey}]`
-    : params.description;
   try {
-    if (params.idempotencyKey) {
-      const { data: existing, error: lookupError } = await supabase
-        .from("user_credit_transactions")
-        .select("id")
-        .eq("user_id", userId)
-        .eq("description", description)
-        .limit(1);
-      if (lookupError) {
-        console.warn(
-          `[chargeCredits] userId=${userId} idempotency lookup failed, charging anyway:`,
-          lookupError,
-        );
-      } else if (existing && existing.length > 0) {
-        return { ok: true, balanceAfter: null, deduped: true };
-      }
-    }
+    // 幂等由 RPC + 唯一索引原子完成（迁移 20260804230000）；不再查 description
     const { data, error } = await supabase.rpc("deduct_user_credits", {
       p_amount: params.amount,
-      p_description: description,
+      p_description: params.description,
       p_model: params.model ?? null,
       p_resolution: params.resolution ?? null,
       p_duration: params.duration ?? null,
+      p_idempotency_key: params.idempotencyKey ?? null,
     });
     if (error) {
       console.error(`[chargeCredits] userId=${userId} RPC failed:`, error);
       return { ok: false, balanceAfter: null };
     }
-    // RPC RETURNS TABLE(ok, balance_after) -> supabase 返回数组
+    // RPC RETURNS TABLE(ok, balance_after, deduped) -> supabase 返回数组
     const row = Array.isArray(data) ? data[0] : data;
-    return { ok: row?.ok === true, balanceAfter: row?.balance_after ?? null };
+    return {
+      ok: row?.ok === true || row?.deduped === true,
+      balanceAfter: row?.balance_after ?? null,
+      deduped: row?.deduped === true,
+    };
   } catch (e) {
     console.error(`[chargeCredits] userId=${userId} exception:`, e);
     return { ok: false, balanceAfter: null };

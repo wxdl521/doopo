@@ -46,7 +46,7 @@ describe("CharacterStage keyboard navigation", () => {
     expect(multi).toHaveAttribute("tabindex", "-1");
   });
 
-  it("cycles selection and focus with ArrowRight / ArrowLeft", async () => {
+  it("cycles selection and focus with ArrowDown / ArrowUp", async () => {
     const user = userEvent.setup();
     render(<CharacterStage character={character} views={views} />);
     const [main, multi] = getTabs();
@@ -54,18 +54,18 @@ describe("CharacterStage keyboard navigation", () => {
     main.focus();
     expect(main).toHaveFocus();
 
-    await user.keyboard("{ArrowRight}");
+    await user.keyboard("{ArrowDown}");
     expect(multi).toHaveAttribute("aria-selected", "true");
     expect(main).toHaveAttribute("aria-selected", "false");
     expect(multi).toHaveFocus();
 
     // Wraps around back to main
-    await user.keyboard("{ArrowRight}");
+    await user.keyboard("{ArrowDown}");
     expect(main).toHaveAttribute("aria-selected", "true");
     expect(main).toHaveFocus();
 
-    // ArrowLeft from first wraps to last
-    await user.keyboard("{ArrowLeft}");
+    // ArrowUp from first wraps to last
+    await user.keyboard("{ArrowUp}");
     expect(multi).toHaveAttribute("aria-selected", "true");
     expect(multi).toHaveFocus();
   });
@@ -113,7 +113,7 @@ describe("CharacterStage keyboard navigation", () => {
     render(<CharacterStage character={character} views={views} />);
     const [main] = getTabs();
     main.focus();
-    await user.keyboard("{ArrowUp}{ArrowDown}{Tab}");
+    await user.keyboard("{ArrowLeft}{ArrowRight}{Tab}");
     expect(main).toHaveAttribute("aria-selected", "true");
   });
 });

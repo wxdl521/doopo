@@ -93,7 +93,24 @@ function installFetchSpy(opts: {
   return { spy, calls };
 }
 
+// pixflow.functions.ts 的 pickPixflowKey 对 gpt-* 模型会优先取
+// OPENAI_API_KEY / PIXFLOW_OPENAI_API_KEY,对 gemini-* 会优先取
+// PIXFLOW_GEMINI_API_KEY;baseUrl 也可被 GOOGLE_GEMINI_BASE_URL 覆盖。
+// 这些变量可能存在于真实 shell env,必须在每个用例前隔离掉,
+// 让测试桩 PIXFLOW_API_KEY / 默认 baseUrl 生效。
+const ISOLATED_ENV_KEYS = [
+  "OPENAI_API_KEY",
+  "PIXFLOW_OPENAI_API_KEY",
+  "PIXFLOW_GEMINI_API_KEY",
+  "GOOGLE_GEMINI_BASE_URL",
+] as const;
+const savedEnv: Record<string, string | undefined> = {};
+
 beforeEach(() => {
+  for (const k of ISOLATED_ENV_KEYS) {
+    savedEnv[k] = process.env[k];
+    delete process.env[k];
+  }
   process.env.PIXFLOW_API_KEY = "test-pixflow-key";
   process.env.LINGMENG_API_KEY = "test-lingmeng-key";
   // 确保 seedream.functions.ts 里的 getArkConfig 看到 key,
@@ -103,6 +120,10 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  for (const k of ISOLATED_ENV_KEYS) {
+    if (savedEnv[k] === undefined) delete process.env[k];
+    else process.env[k] = savedEnv[k];
+  }
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
@@ -166,7 +187,7 @@ describe("generateStoryboardShotImage — 高层路由分发源码不变量", ()
       const next = src.indexOf("export const ", start + 1);
       const block = next > 0 ? src.slice(start, next) : src.slice(start);
 
-      const pixflowIdx = block.indexOf("startsWith('pixflow/')");
+      const pixflowIdx = block.search(/startsWith\(\s*["']pixflow\/["']\s*\)/);
       const callSeedreamIdx = block.indexOf("callSeedreamImages(");
       expect(pixflowIdx, `${handler} 必须有 pixflow 前缀分支`).toBeGreaterThan(0);
       expect(callSeedreamIdx, `${handler} 仍保留 Seedream 兜底`).toBeGreaterThan(0);
@@ -201,6 +222,7 @@ describe("UI 模型清单 —— 不允许裸 openai/gpt-image-2", () => {
         "meridian/",
         "confluo/",
         "lingmeng/",
+        "onetoken/",
         "vapeur/",
         "azure/",
         "azure2/",
@@ -339,9 +361,12 @@ describe("callLingmengImage — 图像路由", () => {
 // ====================================================================
 //  Pixflow gpt-image-* OpenAI 兼容路由 —— 参数策略快照
 //
-//  根据 https://api.pixflow.im/docs:
+//  根据 https://api.pixflow.im/docs + 实测(2026/06,commit 8802704):
 //   - T2I:   POST /v1/images/generations  (JSON)
-//   - I2I:   POST /v1/images/edits        (images[].image_url JSON)
+//   - I2I:   POST /v1/images/edits        (multipart/form-data, image[]=<binary>)
+//     上游严格要求 multipart 文件上传,JSON images[].image_url 会被拒为
+//     "failed to parse multipart form",因此实现会先下载参考图转 Blob 上传;
+//     全部下载失败时退回 /v1/images/generations 纯 T2I。
 //   - quality 必填 auto|low|high,缺省走 auto
 //   - response_format 显式传 url(高稳定分组返回更小)
 //   - 鉴权: Authorization: Bearer <PIXFLOW_API_KEY>
@@ -376,7 +401,25 @@ describe("callPixflowImage — gpt-image-* OpenAI 兼容路由参数策略", () 
     expect(body.images, "T2I 不应携带 images").toBeUndefined();
   });
 
-  it("I2I(有参考图)切换到 /v1/images/edits,以 images[].image_url JSON 引用", async () => {
+  it("I2I(有参考图)切换到 /v1/images/edits,下载参考图后以 multipart image[] 上传", async () => {
+    class TestFormData {
+      private readonly fields = new Map<string, unknown[]>();
+
+      append(name: string, value: unknown) {
+        this.fields.set(name, [...(this.fields.get(name) || []), value]);
+      }
+
+      getAll(name: string) {
+        return this.fields.get(name) || [];
+      }
+
+      get(name: string) {
+        return this.fields.get(name)?.[0];
+      }
+    }
+    // jsdom 的 FormData 与 Node 的 Blob 不共享构造器;仅替换测试收集器,
+    // 断言服务端传给 fetch 的 multipart 字段。
+    vi.stubGlobal("FormData", TestFormData);
     const { calls } = installFetchSpy({ allowOpenAIImages: true });
     const r = await callPixflowImage({
       prompt: "fuse them",
@@ -392,17 +435,20 @@ describe("callPixflowImage — gpt-image-* OpenAI 兼容路由参数策略", () 
     expect(edits, "有参考图必须切到 /v1/images/edits").toBeDefined();
     expect(calls.some((c) => c.url.endsWith("/v1/images/generations"))).toBe(false);
 
-    const body = JSON.parse(edits!.init!.body as string);
-    expect(body.model).toBe("gpt-image-2");
-    expect(body.quality).toBe("high");
-    expect(body.response_format).toBe("url");
-    expect(body.images).toEqual([
-      { image_url: "https://cdn.example.com/a.png" },
-      { image_url: "https://cdn.example.com/b.png" },
-    ]);
+    const headers = edits!.init!.headers as Record<string, string>;
+    expect(headers.Authorization).toBe("Bearer test-pixflow-key");
 
-    // gpt-image-* 走 OpenAI JSON 引用,不应该真去下载参考图
-    expect(calls.some((c) => c.url.startsWith("https://cdn.example.com/"))).toBe(false);
+    const form = edits!.init!.body as unknown as TestFormData;
+    expect(form).toBeInstanceOf(TestFormData);
+    expect(form.get("model")).toBe("gpt-image-2");
+    expect(form.get("prompt")).toBe("fuse them");
+    expect(form.get("quality")).toBe("high");
+    expect(form.get("response_format")).toBe("url");
+    expect(form.getAll("image[]")).toHaveLength(2);
+
+    // 上游要求 multipart 二进制,参考图会先下载再以上传形式注入
+    expect(calls.some((c) => c.url === "https://cdn.example.com/a.png")).toBe(true);
+    expect(calls.some((c) => c.url === "https://cdn.example.com/b.png")).toBe(true);
   });
 });
 
@@ -414,11 +460,13 @@ describe("Pixflow 源码常量快照 —— 防止超时/分组策略悄悄被�
   });
 
   it("gpt-image-* 分支显式下发 quality 与 response_format=url", () => {
-    expect(src).toMatch(/quality:\s*input\.quality\s*\?\?\s*'auto'/);
-    expect(src).toMatch(/response_format:\s*'url'/);
+    expect(src).toMatch(/quality:\s*input\.quality\s*\?\?\s*["']auto["']/);
+    expect(src).toMatch(/response_format:\s*["']url["']/);
   });
 
   it("有参考图时 endpoint 切到 /v1/images/edits", () => {
-    expect(src).toMatch(/hasRefs\s*\?\s*'\/v1\/images\/edits'\s*:\s*'\/v1\/images\/generations'/);
+    expect(src).toMatch(
+      /wantRefs\s*\?\s*["']\/v1\/images\/edits["']\s*:\s*["']\/v1\/images\/generations["']/,
+    );
   });
 });

@@ -17,33 +17,39 @@ function mockSupabase(opts: { lookup: TxLookup; rpcResult?: { data: unknown; err
 const PARAMS = { amount: 5, model: "m1", description: "视频生成", idempotencyKey: "task-123" };
 
 describe("chargeCredits 幂等（idempotencyKey）", () => {
-  it("流水表已有同 key 记录 → 跳过扣费，不调 RPC", async () => {
-    const { supabase, rpc } = mockSupabase({ lookup: { data: [{ id: "tx1" }], error: null } });
+  it("幂等键命中（RPC 返回 deduped）→ 视为成功且不重复扣费", async () => {
+    const { supabase, rpc } = mockSupabase({
+      lookup: { data: [], error: null },
+      rpcResult: { data: [{ ok: false, balance_after: 90, deduped: true }], error: null },
+    });
     const r = await chargeCredits(supabase, "u1", PARAMS);
-    expect(r).toEqual({ ok: true, balanceAfter: null, deduped: true });
-    expect(rpc).not.toHaveBeenCalled();
+    expect(r).toEqual({ ok: true, balanceAfter: 90, deduped: true });
+    expect(rpc).toHaveBeenCalledTimes(1);
   });
 
-  it("无同 key 记录 → 正常扣费，description 带幂等键尾缀", async () => {
-    const { supabase, rpc, eqDescription } = mockSupabase({ lookup: { data: [], error: null } });
+  it("幂等键随 RPC 下传（库级唯一索引原子去重），description 不掺尾缀", async () => {
+    const { supabase, rpc } = mockSupabase({ lookup: { data: [], error: null } });
     const r = await chargeCredits(supabase, "u1", PARAMS);
-    expect(r).toEqual({ ok: true, balanceAfter: 90 });
+    expect(r).toEqual({ ok: true, balanceAfter: 90, deduped: false });
     expect(rpc).toHaveBeenCalledTimes(1);
     expect(rpc).toHaveBeenCalledWith(
       "deduct_user_credits",
-      expect.objectContaining({ p_description: "视频生成 [ref:task-123]" }),
+      expect.objectContaining({
+        p_description: "视频生成",
+        p_idempotency_key: "task-123",
+      }),
     );
-    // 查重与写入用同一 description 口径
-    expect(eqDescription).toHaveBeenCalledWith("description", "视频生成 [ref:task-123]");
   });
 
-  it("查重失败 → 继续扣费（不静默漏扣）", async () => {
-    const { supabase, rpc } = mockSupabase({
-      lookup: { data: null, error: { message: "rls denied" } },
-    });
-    const r = await chargeCredits(supabase, "u1", PARAMS);
+  it("不传幂等键 → p_idempotency_key 为 null，正常扣费", async () => {
+    const { supabase, rpc } = mockSupabase({ lookup: { data: [], error: null } });
+    const { idempotencyKey: _omit, ...noKey } = PARAMS;
+    const r = await chargeCredits(supabase, "u1", noKey);
     expect(r.ok).toBe(true);
-    expect(rpc).toHaveBeenCalledTimes(1);
+    expect(rpc).toHaveBeenCalledWith(
+      "deduct_user_credits",
+      expect.objectContaining({ p_idempotency_key: null }),
+    );
   });
 
   it("不传 idempotencyKey → 不查流水表，description 原样", async () => {
