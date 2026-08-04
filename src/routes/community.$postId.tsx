@@ -20,20 +20,6 @@ export const Route = createFileRoute("/community/$postId")({
   component: PostPage,
 });
 
-function viewerKey(): string {
-  if (typeof window === "undefined") return "ssr";
-  try {
-    const k = "doopoo_viewer_key";
-    const cached = window.localStorage.getItem(k);
-    if (cached) return cached;
-    const fresh = window.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2) + Date.now();
-    window.localStorage.setItem(k, fresh);
-    return fresh;
-  } catch {
-    return "anon";
-  }
-}
-
 function PostPage() {
   const { t } = useLanguage();
   const navigate = useNavigate();
@@ -54,7 +40,7 @@ function PostPage() {
       setPost(p);
       if (p) {
         setLikes(p.likes_count);
-        void view({ data: { postId, viewerKey: viewerKey() } });
+        void view({ data: { postId } });
       }
     });
   }, [postId, fetchPost, view]);

@@ -59,9 +59,10 @@ export const signMediaReadUrl = createServerFn({ method: "POST" })
     if (!data.path.startsWith(`${userId}/`)) {
       return { ok: false as const, error: "只能访问自己的文件。" };
     }
+    // 签名 7 天有效（审计加固：不再签 10 年）；过期后需重新调 signMediaReadUrl 签发
     const { data: read, error } = await supabase.storage
       .from(BUCKET)
-      .createSignedUrl(data.path, 315_360_000);
+      .createSignedUrl(data.path, 604_800);
     if (error || !read?.signedUrl) {
       return { ok: false as const, error: `读取地址签名失败: ${error?.message ?? "no url"}` };
     }
@@ -117,9 +118,10 @@ export const persistRestyleVideo = createServerFn({ method: "POST" })
       .upload(path, new Blob([buf], { type: "video/mp4" }), { contentType: "video/mp4" });
     if (uploadErr) return { ok: false as const, error: `转存失败: ${uploadErr.message}` };
 
+    // 签名 7 天有效（审计加固：不再签 10 年）；过期后需重新转存/签发
     const { data: read, error: signErr } = await supabase.storage
       .from(BUCKET)
-      .createSignedUrl(path, 315_360_000);
+      .createSignedUrl(path, 604_800);
     if (signErr || !read?.signedUrl) return { ok: false as const, error: "读取地址签名失败" };
     return { ok: true as const, url: read.signedUrl };
   });

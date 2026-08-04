@@ -52,9 +52,10 @@ export const uploadLocalImage = createServerFn({ method: "POST" })
       .upload(path, buf, { contentType: mime, upsert: false });
     if (uploadErr) return { ok: false as const, error: uploadErr.message };
 
+    // 签名 7 天有效（审计加固：不再签 10 年）；过期后需重新签发
     const { data: signed } = await supabase.storage
       .from("workspace-media")
-      .createSignedUrl(path, 315360000);
+      .createSignedUrl(path, 604800);
     if (!signed?.signedUrl) return { ok: false as const, error: "no signed url" };
     return { ok: true as const, url: signed.signedUrl };
   });

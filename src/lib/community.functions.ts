@@ -1,7 +1,10 @@
 import { createServerFn } from "@tanstack/react-start";
+import { getRequest } from "@tanstack/react-start/server";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
+import { getOptionalAuthCtx } from "./authContext";
 
 export type PostKind = "script" | "character" | "scene" | "prop" | "comic";
 export type PostVisibility = "public" | "unlisted" | "private";
@@ -203,20 +206,55 @@ export const isLiked = createServerFn({ method: "POST" })
     return { liked: !!row };
   });
 
+// --------------------------------------------------------------------
+// viewerKey —— 服务端生成（2026-08 审计加固：防刷浏览量）
+//   登录用户用 userId；匿名用户用请求 IP + UA 的 sha256。
+//   客户端不再能自选 viewerKey 刷浏览去重。
+// --------------------------------------------------------------------
+
+/** 匿名访客 key：`a:` + sha256(ip|ua) 前 32 位（纯函数，便于测试） */
+export function buildAnonymousViewerKey(ip: string | null | undefined, ua: string | null | undefined): string {
+  const hash = createHash("sha256")
+    .update(`${ip ?? ""}|${ua ?? ""}`)
+    .digest("hex")
+    .slice(0, 32);
+  return `a:${hash}`;
+}
+
+/** 登录 → `u:<userId>`；匿名 → IP+UA 哈希 */
+export async function resolveViewerKey(): Promise<string> {
+  const ctx = await getOptionalAuthCtx();
+  if (ctx) return `u:${ctx.userId}`;
+  let ip: string | null = null;
+  let ua: string | null = null;
+  try {
+    const headers = getRequest()?.headers;
+    // 反代链路优先取 CF / XFF 首跳，取不到退化为仅 UA 哈希
+    ip =
+      headers?.get("cf-connecting-ip") ??
+      headers?.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+      null;
+    ua = headers?.get("user-agent");
+  } catch {
+    // getRequest 在非请求上下文抛错时退化为仅 UA 哈希
+  }
+  return buildAnonymousViewerKey(ip, ua);
+}
+
 export const recordView = createServerFn({ method: "POST" })
   .validator((input) =>
     z
       .object({
         postId: z.string().uuid(),
-        viewerKey: z.string().min(4).max(128),
       })
       .parse(input),
   )
   .handler(async ({ data }) => {
+    const viewerKey = await resolveViewerKey();
     // Use admin to bypass RLS for anonymous views; UNIQUE constraint enforces dedup per day.
     await supabaseAdmin
       .from("post_views")
-      .insert({ post_id: data.postId, viewer_key: data.viewerKey })
+      .insert({ post_id: data.postId, viewer_key: viewerKey })
       .select("id")
       .maybeSingle();
     return { ok: true as const };

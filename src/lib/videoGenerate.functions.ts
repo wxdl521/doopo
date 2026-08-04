@@ -4118,13 +4118,17 @@ async function pollVideoTask(input: PollInput): Promise<PollResult> {
   }
   if (input.backend === "kling") {
     const { callKlingVideoPoll } = await import("./klingVideo.functions");
-    // Kling I2V/T2V 查询端点不同,先试 image2video,404 就 fallback text2video
+    // Kling I2V/T2V 查询端点不同,先试 image2video;仅 404(任务不在该端点下)
+    // 才 fallback text2video,其余错误透传,避免把供应商故障盲退成另一条查询。
     const r = await callKlingVideoPoll({ taskId: input.taskId, endpoint: "image2video" });
     if (r.ok) return r as PollResult;
-    return callKlingVideoPoll({
-      taskId: input.taskId,
-      endpoint: "text2video",
-    }) as Promise<PollResult>;
+    if (r.httpStatus === 404) {
+      return callKlingVideoPoll({
+        taskId: input.taskId,
+        endpoint: "text2video",
+      }) as Promise<PollResult>;
+    }
+    return r as PollResult;
   }
   if (input.backend === "confluo") {
     const { apiKey, baseUrl } = getConfluoVideoConfig();
@@ -4834,6 +4838,7 @@ export const generateVideo = createServerFn({ method: "POST" })
           resolution: data.resolution,
           duration: data.duration,
           description: "视频生成",
+          idempotencyKey: submit.taskId,
         });
       }
       return {
@@ -4902,6 +4907,7 @@ export const generateVideo = createServerFn({ method: "POST" })
             resolution: data.resolution,
             duration: data.duration,
             description: "视频生成",
+            idempotencyKey: submit.taskId,
           });
         }
         console.log(`[video✓] completed backend=${submit.backend} taskId=${submit.taskId}`);

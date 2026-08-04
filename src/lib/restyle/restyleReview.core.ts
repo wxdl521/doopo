@@ -545,17 +545,9 @@ export async function runAiSelfReviewCore(
   }));
   const allDocRows = [...narrativeRows, ...shotMappingRows, ...dialogueFitRows];
 
-  // ---- 7. 替换写 restyle_reviews（先清本轮范围内旧行）----
+  // ---- 7. 替换写 restyle_reviews（先插后删：新行带统一 created_at 批次标记， ----
+  // ---- 插入成功后才删 created_at 早于本批次的旧行；插入失败旧数据不丢）----
   const now = new Date().toISOString();
-  let deleteQuery = supabase
-    .from("restyle_reviews")
-    .delete()
-    .eq("project_id", input.projectId)
-    .in("doc_kind", [...REVIEW_DOC_KINDS]);
-  if (episodeId) deleteQuery = deleteQuery.eq("episode_id", episodeId);
-  const { error: deleteError } = await deleteQuery;
-  if (deleteError) return { ok: false, code: "DB_ERROR", error: deleteError.message };
-
   if (allDocRows.length > 0) {
     const insertRows = allDocRows.map((row) => ({
       id: `rev_${crypto.randomUUID()}`,
@@ -569,6 +561,16 @@ export async function runAiSelfReviewCore(
     const { error: insertError } = await supabase.from("restyle_reviews").insert(insertRows);
     if (insertError) return { ok: false, code: "DB_ERROR", error: insertError.message };
   }
+
+  let deleteQuery = supabase
+    .from("restyle_reviews")
+    .delete()
+    .eq("project_id", input.projectId)
+    .in("doc_kind", [...REVIEW_DOC_KINDS])
+    .lt("created_at", now);
+  if (episodeId) deleteQuery = deleteQuery.eq("episode_id", episodeId);
+  const { error: deleteError } = await deleteQuery;
+  if (deleteError) return { ok: false, code: "DB_ERROR", error: deleteError.message };
 
   // ---- 8. 审核结论 upsert restyle_artifacts（stage="review"）----
   const mergedIssues = mergeIssues([

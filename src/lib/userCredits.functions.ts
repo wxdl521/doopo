@@ -105,6 +105,11 @@ export const rechargeCredits = createServerFn({ method: "POST" })
 //
 //   supabase 参数:用户 token 的 client(中间件注入或 getOptionalAuthCtx)。
 //   RPC 内 auth.uid() 从该 token 取,确保只扣自己的。
+//
+//   幂等(2026-08 审计加固):params.idempotencyKey 传入时,先查流水表是否已有
+//   同 key 记录(description 尾缀 [ref:<key>]),有则跳过扣费直接返回 ok。
+//   流水表无专门幂等列,key 编进 description 是最小改动方案;查重失败时
+//   继续扣费(扣重风险 < 漏扣,与"扣失败不阻断"的既有口径一致),非强一致。
 // ====================================================================
 
 export async function chargeCredits(
@@ -116,12 +121,34 @@ export async function chargeCredits(
     resolution?: string;
     duration?: number;
     description: string;
+    /** 幂等键(如视频 taskId);同一 key 只扣一次 */
+    idempotencyKey?: string;
   },
-): Promise<{ ok: boolean; balanceAfter: number | null }> {
+): Promise<{ ok: boolean; balanceAfter: number | null; deduped?: boolean }> {
+  // 幂等键编进流水 description,查询与写入用同一口径
+  const description = params.idempotencyKey
+    ? `${params.description} [ref:${params.idempotencyKey}]`
+    : params.description;
   try {
+    if (params.idempotencyKey) {
+      const { data: existing, error: lookupError } = await supabase
+        .from("user_credit_transactions")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("description", description)
+        .limit(1);
+      if (lookupError) {
+        console.warn(
+          `[chargeCredits] userId=${userId} idempotency lookup failed, charging anyway:`,
+          lookupError,
+        );
+      } else if (existing && existing.length > 0) {
+        return { ok: true, balanceAfter: null, deduped: true };
+      }
+    }
     const { data, error } = await supabase.rpc("deduct_user_credits", {
       p_amount: params.amount,
-      p_description: params.description,
+      p_description: description,
       p_model: params.model ?? null,
       p_resolution: params.resolution ?? null,
       p_duration: params.duration ?? null,

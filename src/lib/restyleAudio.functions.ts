@@ -86,7 +86,8 @@ export const transcribeRestyleAudio = createServerFn({ method: "POST" })
       response = await fetch(STT_ENDPOINT, {
         method: "POST",
         // multipart/form-data：不手动设 Content-Type，由 runtime 生成 boundary
-        headers: { "Lovable-API-Key": apiKey },
+        // 与 lovableGateway 一致走标准 Bearer 头（网关两种头都收，统一口径便于审计）
+        headers: { Authorization: `Bearer ${apiKey}` },
         body: form,
         signal: AbortSignal.timeout(180_000),
       });

@@ -258,7 +258,7 @@ function makeFakeSupabase(tables: Record<string, FakeTableConfig>) {
       state.method = "select";
       state.columns = typeof cols === "string" ? cols : "";
     });
-    for (const m of ["eq", "in", "is", "order"]) chain(m, () => {});
+    for (const m of ["eq", "in", "is", "order", "lt", "gte"]) chain(m, () => {});
     chain("delete", () => {
       state.method = "delete";
       log.push({ table, method: "delete" });

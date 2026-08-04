@@ -86,7 +86,7 @@ export const transcribeAudioChunk = createServerFn({ method: "POST" })
     try {
       response = await fetch(GATEWAY_URL, {
         method: "POST",
-        headers: { "Lovable-API-Key": apiKey },
+        headers: { Authorization: `Bearer ${apiKey}` },
         body: form,
         signal: AbortSignal.timeout(180_000),
       });

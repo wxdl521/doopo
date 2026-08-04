@@ -595,11 +595,11 @@ async function replaceEpisodeDerivedRows(
   episodeId: string,
   assembled: EpisodeAnalysisAssembled,
 ): Promise<string | null> {
+  // 2026-08 审计加固:先插后删 —— 新行带统一 created_at 作为批次标记,
+  // 全部插入成功后才删除 created_at < 批次的旧行;中途失败回滚本批次新行,
+  // 旧数据不丢(旧逻辑先删后插,插入失败会把该集派生数据清空)。
   const now = new Date().toISOString();
-  for (const table of ["restyle_shots", "restyle_transcripts", "restyle_source_assets"]) {
-    const { error } = await supabase.from(table).delete().eq("episode_id", episodeId);
-    if (error) return `清空 ${table} 失败: ${error.message}`;
-  }
+  const TABLES = ["restyle_shots", "restyle_transcripts", "restyle_source_assets"] as const;
 
   const shotRows = assembled.shots.map((s) => ({
     id: `shot_${crypto.randomUUID()}`,
@@ -618,9 +618,6 @@ async function replaceEpisodeDerivedRows(
     dialogue: typeof s.dialogue === "string" ? s.dialogue : null,
     created_at: now,
   }));
-  const shotError = await batchInsert(supabase, "restyle_shots", shotRows);
-  if (shotError) return `写入 restyle_shots 失败: ${shotError}`;
-
   const transcriptRows = [...assembled.transcript, ...assembled.orphanTranscript].map((s) => ({
     id: `tr_${crypto.randomUUID()}`,
     user_id: userId,
@@ -634,9 +631,6 @@ async function replaceEpisodeDerivedRows(
     confidence: s.confidence ?? null,
     created_at: now,
   }));
-  const transcriptError = await batchInsert(supabase, "restyle_transcripts", transcriptRows);
-  if (transcriptError) return `写入 restyle_transcripts 失败: ${transcriptError}`;
-
   const assetRows = assembled.assets.map((a) => ({
     id: `asset_${crypto.randomUUID()}`,
     user_id: userId,
@@ -653,8 +647,38 @@ async function replaceEpisodeDerivedRows(
     uncertainty: a.uncertainty,
     created_at: now,
   }));
-  const assetError = await batchInsert(supabase, "restyle_source_assets", assetRows);
-  if (assetError) return `写入 restyle_source_assets 失败: ${assetError}`;
+
+  // 1) 插入新批次;任何一步失败,回滚已插入的本批次行,旧数据保持不动
+  const inserts: Array<[(typeof TABLES)[number], Array<Record<string, unknown>>]> = [
+    ["restyle_shots", shotRows],
+    ["restyle_transcripts", transcriptRows],
+    ["restyle_source_assets", assetRows],
+  ];
+  const insertedTables: Array<(typeof TABLES)[number]> = [];
+  for (const [table, rows] of inserts) {
+    const insertError = await batchInsert(supabase, table, rows);
+    if (insertError) {
+      for (const t of insertedTables) {
+        await supabase
+          .from(t)
+          .delete()
+          .eq("episode_id", episodeId)
+          .gte("created_at", now);
+      }
+      return `写入 ${table} 失败: ${insertError}`;
+    }
+    insertedTables.push(table);
+  }
+
+  // 2) 新批次就位后再删旧行(created_at 早于本批次的即旧数据)
+  for (const table of TABLES) {
+    const { error } = await supabase
+      .from(table)
+      .delete()
+      .eq("episode_id", episodeId)
+      .lt("created_at", now);
+    if (error) return `清理 ${table} 旧数据失败: ${error.message}`;
+  }
 
   return null;
 }

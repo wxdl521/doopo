@@ -147,7 +147,7 @@ type KlingPollResult =
       videoUrl: string | null;
       raw: any;
     }
-  | { ok: false; error: string; status?: string; raw?: any };
+  | { ok: false; error: string; status?: string; raw?: any; httpStatus?: number };
 
 async function klingPoll(input: {
   taskId: string;
@@ -171,7 +171,7 @@ async function klingPoll(input: {
 
     const text = await res.text().catch(() => "");
     if (!res.ok) {
-      return { ok: false, error: `[kling] poll ${res.status}: ${text.slice(0, 300)}` };
+      return { ok: false, error: `[kling] poll ${res.status}: ${text.slice(0, 300)}`, httpStatus: res.status };
     }
 
     let json: {

@@ -56,9 +56,10 @@ async function uploadMediaSmart(
     .upload(key, blob, { contentType, upsert: true });
   if (uploadErr) return { ok: false, error: `storage upload failed: ${uploadErr.message}` };
   // workspace-media 为私有 bucket：一律签名下发，绝不使用 public URL。
+  // 签名 7 天有效（审计加固：不再签 10 年）；过期后需重新签发。
   const { data: signed, error: signErr } = await supabase.storage
     .from(BUCKET)
-    .createSignedUrl(key, 315_360_000);
+    .createSignedUrl(key, 604_800);
   if (signErr || !signed?.signedUrl) {
     return { ok: false, error: `storage sign failed: ${signErr?.message ?? "no signed url"}` };
   }
@@ -291,9 +292,10 @@ async function toLongLivedStoryboardUrl(supabase: any, url: string): Promise<str
   if (isSignedWorkspaceMediaUrl(url)) return url;
   const path = getWorkspaceMediaPath(url);
   if (!path) return null;
+  // 签名 7 天有效（审计加固：不再签 10 年）；过期后此函数会重新签发。
   const { data, error } = await supabase.storage
     .from(BUCKET)
-    .createSignedUrl(path, 315_360_000);
+    .createSignedUrl(path, 604_800);
   return error || !data?.signedUrl ? null : data.signedUrl;
 }
 
