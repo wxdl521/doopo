@@ -5498,8 +5498,8 @@ export default function RestyleStudio() {
 
         <aside className="hidden min-h-0 flex-col border-l border-border bg-bg-surface xl:flex">
           <div className="flex items-center justify-between border-b border-border px-4 py-3">
-            <div className="flex items-center gap-2">
-              <FolderOpen size={16} className="text-accent" />
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-sm font-semibold text-text-primary truncate">{t.restyle_workbench}</span>
             </div>
             <div className="flex items-center gap-1">
               <button
