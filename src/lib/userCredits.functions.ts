@@ -89,25 +89,10 @@ export const rechargeCredits = createServerFn({ method: "POST" })
     if (!parsed.success) throw new Error("Invalid amount");
     return parsed.data;
   })
-  .handler(async ({ data, context }) => {
-    const { supabase, userId } = context;
-
-    const { error } = await supabase.rpc("add_user_credits", {
-      p_amount: data.amount,
-    });
-
-    if (error) {
-      console.error("[rechargeCredits] RPC failed:", error);
-      return { ok: false as const, error: error.message };
-    }
-
-    const { data: wallet } = await supabase
-      .from("user_wallets")
-      .select("credits_balance")
-      .eq("user_id", userId)
-      .maybeSingle();
-
-    return { ok: true as const, balance: wallet?.credits_balance ?? 0 };
+  .handler(async () => {
+    // 2026-08：add_user_credits 已撤销 authenticated 执行权（自充漏洞修复，
+    // 见迁移 20260804130000）。接入支付回调前，自助充值返回明确提示。
+    return { ok: false as const, error: "自助充值通道正在升级，请联系管理员发放积分。" };
   });
 
 // ====================================================================

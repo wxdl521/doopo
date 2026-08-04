@@ -4437,6 +4437,8 @@ const PollServerInput = z.object({
     "keyiyun",
     "agentearth",
     "revora",
+    "ycore",
+    "neiwen",
   ]),
 });
 
