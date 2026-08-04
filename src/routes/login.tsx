@@ -6,6 +6,13 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/login")({
+  validateSearch: (search: Record<string, unknown>) => ({
+    // 登录成功后的回跳目标；仅接受站内路径，防开放重定向。
+    redirect:
+      typeof search.redirect === "string" && search.redirect.startsWith("/")
+        ? search.redirect
+        : undefined,
+  }),
   head: () => ({ meta: [{ title: "Sign in — Doopoo" }] }),
   component: Login,
 });
@@ -13,6 +20,7 @@ export const Route = createFileRoute("/login")({
 function Login() {
   const { t } = useLanguage();
   const navigate = useNavigate();
+  const { redirect } = Route.useSearch();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -37,7 +45,7 @@ function Login() {
       return;
     }
     toast.success("登录成功");
-    navigate({ to: "/home" });
+    navigate({ href: redirect ?? "/home" });
   };
   return (
     <div className="min-h-[70vh] flex items-center justify-center animate-fade-in">

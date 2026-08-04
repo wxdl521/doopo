@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DIRECT_UPLOAD_MIN_BYTES,
+  isSourceVideoFile,
+  nextEpisodeLabels,
   shouldUseDirectUpload,
   uploadFileDirect,
 } from "../restyleUpload";
@@ -84,6 +86,63 @@ describe("restyle mentions", () => {  const files: RestyleAttachment[] = [
   it("matches aliases case-insensitively", () => {
     const mentionables = buildMentionables(files);
     expect(resolveMentionedAttachmentIds("@Video2", mentionables)).toEqual(["vid-2"]);
+  });
+});
+
+describe("nextEpisodeLabels", () => {
+  it("空项目从 EP01 开始连排", () => {
+    expect(nextEpisodeLabels([], 3)).toEqual(["EP01", "EP02", "EP03"]);
+  });
+
+  it("在现有最大集号后续排", () => {
+    const existing = [
+      makeFile({ episode: "EP01" }),
+      makeFile({ episode: "EP02" }),
+      makeFile({ episode: "EP03" }),
+    ];
+    expect(nextEpisodeLabels(existing, 2)).toEqual(["EP04", "EP05"]);
+  });
+
+  it("删除中间集后仍取最大序号 +1，不撞号", () => {
+    // 删掉 EP02 后剩 EP01/EP03：旧逻辑按数量会再编出 EP03 撞号。
+    const existing = [makeFile({ episode: "EP01" }), makeFile({ episode: "EP03" })];
+    expect(nextEpisodeLabels(existing, 1)).toEqual(["EP04"]);
+  });
+
+  it("忽略非 EP 编号与非法 episode，位数不足补零", () => {
+    const existing = [
+      makeFile({ episode: undefined }),
+      makeFile({ episode: "segment-3" }),
+      makeFile({ episode: "EP09" }),
+    ];
+    expect(nextEpisodeLabels(existing, 2)).toEqual(["EP10", "EP11"]);
+  });
+
+  it("count 为 0 时返回空数组", () => {
+    expect(nextEpisodeLabels([makeFile({ episode: "EP07" })], 0)).toEqual([]);
+  });
+});
+
+describe("isSourceVideoFile", () => {
+  it("普通上传视频算源片", () => {
+    expect(isSourceVideoFile(makeFile({ type: "video/mp4" }))).toBe(true);
+  });
+
+  it("文件夹占位不算", () => {
+    expect(isSourceVideoFile(makeFile({ type: "video/mp4", isFolder: true }))).toBe(false);
+  });
+
+  it("生成产物（video_clip / final_video）不算源片", () => {
+    expect(isSourceVideoFile(makeFile({ type: "video/mp4", generatedKind: "video_clip" }))).toBe(
+      false,
+    );
+    expect(isSourceVideoFile(makeFile({ type: "video/mp4", generatedKind: "final_video" }))).toBe(
+      false,
+    );
+  });
+
+  it("非视频不算", () => {
+    expect(isSourceVideoFile(makeFile({ type: "image/png" }))).toBe(false);
   });
 });
 

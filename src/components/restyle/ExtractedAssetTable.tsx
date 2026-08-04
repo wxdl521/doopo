@@ -2,7 +2,9 @@
 // 资产表（可编辑版）。五列全部可编辑：类型下拉 / 名称单行 / 描述自适应
 // 多行 / 需要转绘与重要性切换。编辑经 300ms 防抖走 onChange（父级即
 // updateExtractedAssets：同步 project.extractedAssets、清理失效
-// confirmedAssetIds、回写历史消息 assetTable 并持久化）。
+// confirmedAssetIds、回写历史消息 assetTable 并持久化）。防抖提交按资产
+// id 做字段级 merge：只回写用户编辑过的字段，防抖窗口内外部对其它字段的
+// 变更（如「采纳建议」）不被旧快照覆盖。
 // 「+ 新增」与行尾铅笔按钮打开 AssetEditDialog 弹窗，提交后立即落表。
 // 自检结果（reviewRestyleAssetTable 的 issues）以行内警示呈现：
 // 单元格警示描边 + 行尾 ⚠ 说明 + 「采纳建议」一键写入。
@@ -103,26 +105,57 @@ export function ExtractedAssetTable({
   const pendingRef = useRef<RestyleExtractedAsset[] | null>(null);
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
+  // 最近一次外部 assets 快照：防抖提交以它为底做字段级 merge，
+  // 保留外部（如「采纳建议」）对用户未编辑字段的变更。
+  const assetsRef = useRef(assets);
+  // 防抖窗口内用户逐字段编辑的累积补丁：assetId → 被编辑字段的子集。
+  const dirtyRef = useRef<Map<string, Partial<RestyleExtractedAsset>>>(new Map());
   // 资产弹窗：null 关闭；{ asset: null } 新增；否则编辑该资产。
   const [dialogAsset, setDialogAsset] = useState<RestyleExtractedAsset | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
 
-  // 外部变更（AI 自检写入 / 采纳建议 / 删除）直接覆盖本地行；用户输入的
-  // 防抖回合带回来的内容与本地一致，是恒等同步，不会打断输入。
+  // 外部变更（AI 自检写入 / 采纳建议 / 删除）合并进本地行：用户正在编辑的
+  // 字段保留未提交击键，其余字段跟随外部；防抖回合的恒等回显不打断输入。
   useEffect(() => {
-    setRows(assets);
+    assetsRef.current = assets;
+    const dirty = dirtyRef.current;
+    if (!dirty.size) {
+      setRows(assets);
+      return;
+    }
+    setRows(
+      assets.map((asset) => {
+        const patch = dirty.get(asset.id);
+        return patch ? { ...asset, ...patch } : asset;
+      }),
+    );
   }, [assets]);
 
   useEffect(
     () => () => {
       // 卸载时把还在防抖窗口里的编辑落盘，避免切换视图丢失最后一击。
       if (commitTimerRef.current) window.clearTimeout(commitTimerRef.current);
-      const pending = pendingRef.current;
-      pendingRef.current = null;
-      if (pending) onChangeRef.current?.(pending);
+      commitTimerRef.current = null;
+      flushPending();
     },
     [],
   );
+
+  /** 提交防抖窗口里的编辑：按资产 id 把脏字段补丁打到最新外部快照上。 */
+  function flushPending() {
+    const pending = pendingRef.current;
+    pendingRef.current = null;
+    if (!pending) return;
+    const dirty = dirtyRef.current;
+    dirtyRef.current = new Map();
+    // 以最新外部 assets 为底 merge：外部已删除的行随之丢弃，外部对未编辑
+    // 字段的变更不被旧快照覆盖。
+    const merged = assetsRef.current.map((asset) => {
+      const patch = dirty.get(asset.id);
+      return patch ? { ...asset, ...patch } : asset;
+    });
+    onChangeRef.current?.(merged);
+  }
 
   function commit(next: RestyleExtractedAsset[], immediate = false) {
     setRows(next);
@@ -132,18 +165,22 @@ export function ExtractedAssetTable({
     if (immediate) {
       commitTimerRef.current = null;
       pendingRef.current = null;
+      // 立即提交即落盘全部本地状态：脏补丁已随 next 提交，基线推进到 next。
+      dirtyRef.current = new Map();
+      assetsRef.current = next;
       onChangeRef.current(next);
       return;
     }
     commitTimerRef.current = window.setTimeout(() => {
       commitTimerRef.current = null;
-      const pending = pendingRef.current;
-      pendingRef.current = null;
-      if (pending) onChangeRef.current?.(pending);
+      flushPending();
     }, 300);
   }
 
   function patchRow(assetId: string, patch: Partial<RestyleExtractedAsset>) {
+    const dirty = new Map(dirtyRef.current);
+    dirty.set(assetId, { ...dirty.get(assetId), ...patch });
+    dirtyRef.current = dirty;
     commit(rows.map((row) => (row.id === assetId ? { ...row, ...patch } : row)));
   }
 

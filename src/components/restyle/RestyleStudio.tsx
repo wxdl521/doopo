@@ -116,7 +116,13 @@ import {
 import { ExtractedAssetTable } from "./ExtractedAssetTable";
 import { CharacterRelationTable } from "./CharacterRelationTable";
 import { RestyleProcessPanel, type RestyleAssetRunStatus } from "./RestyleProcessPanel";
-import { shouldUseDirectUpload, uploadFileDirect, type DirectUploadState } from "./restyleUpload";
+import {
+  isSourceVideoFile,
+  nextEpisodeLabels,
+  shouldUseDirectUpload,
+  uploadFileDirect,
+  type DirectUploadState,
+} from "./restyleUpload";
 import {
   buildMentionables,
   resolveMentionedAttachmentIds,
@@ -1123,6 +1129,9 @@ export default function RestyleStudio() {
   const reuploadInputRef = useRef<HTMLInputElement>(null);
   const reuploadTargetRef = useRef<{ projectId: string; attachmentId: string } | null>(null);
   const fileObjectsRef = useRef<Record<string, File>>({});
+  // filePreviews 的 ref 镜像：卸载清理与 deleteProject 批量 revoke 时取最新快照用。
+  const filePreviewsRef = useRef<Record<string, string>>({});
+  filePreviewsRef.current = filePreviews;
   const sourceVideoUploadRef = useRef<
     Record<string, Promise<{ ok: true; url: string } | { ok: false; error: string }>>
   >({});
@@ -1304,6 +1313,16 @@ export default function RestyleStudio() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAuthenticated]);
+
+  // 卸载时释放全部本地预览 blob 并丢弃 File 对象引用，避免泄漏。
+  useEffect(
+    () => () => {
+      for (const url of Object.values(filePreviewsRef.current)) URL.revokeObjectURL(url);
+      filePreviewsRef.current = {};
+      fileObjectsRef.current = {};
+    },
+    [],
+  );
 
   const videoPricingRows = useMemo(
     () => pricingRows.filter((row) => row.kind === "video" && row.enabled),
@@ -1789,8 +1808,28 @@ export default function RestyleStudio() {
   }
 
   function deleteProject(projectId: string) {
+    // 删除项目时按文件列表批量释放本地预览 blob，并清掉缩略图 / File 对象引用。
+    const target = projectsRef.current.find((project) => project.id === projectId);
+    if (target) releaseFileBlobs(target.files.map((file) => file.id));
     setProjects((current) => current.filter((project) => project.id !== projectId));
     if (activeProjectId === projectId) setActiveProjectId(null);
+  }
+
+  /** 批量释放附件本地资源：revoke 预览 blob、清缩略图与 fileObjectsRef 对应键。 */
+  function releaseFileBlobs(fileIds: string[]) {
+    for (const id of fileIds) {
+      const url = filePreviewsRef.current[id];
+      if (url) URL.revokeObjectURL(url);
+      delete filePreviewsRef.current[id];
+      delete fileObjectsRef.current[id];
+    }
+    const dropKeys = (current: Record<string, string>) => {
+      const next = { ...current };
+      for (const id of fileIds) delete next[id];
+      return next;
+    };
+    setFilePreviews(dropKeys);
+    setFileThumbnails(dropKeys);
   }
 
   function toggleAsset(assetId: string) {
@@ -1828,9 +1867,12 @@ export default function RestyleStudio() {
       setActiveProjectId(project.id);
     }
     const selectedFiles = Array.from(files);
-    const existingVideoCount = project.files.filter(
-      (file) => file.type.startsWith("video/") && !file.isFolder,
-    ).length;
+    // 集号按现有 EP\d+ 最大序号续排：删除中间集后新上传取 max+1，不与存量集撞号。
+    const episodeLabels = nextEpisodeLabels(
+      project.files,
+      isFolder ? 0 : selectedFiles.filter((file) => file.type.startsWith("video/")).length,
+    );
+    let episodeCursor = 0;
     const attachments: RestyleAttachment[] = isFolder
       ? [
           {
@@ -1844,15 +1886,13 @@ export default function RestyleStudio() {
             fileCount: selectedFiles.length,
           },
         ]
-      : selectedFiles.map((file, index) => ({
+      : selectedFiles.map((file) => ({
           id: crypto.randomUUID(),
           name: file.name,
           size: file.size,
           type: file.type,
           lastModified: file.lastModified,
-          episode: file.type.startsWith("video/")
-            ? `EP${String(existingVideoCount + selectedFiles.slice(0, index).filter((item) => item.type.startsWith("video/")).length + 1).padStart(2, "0")}`
-            : undefined,
+          episode: file.type.startsWith("video/") ? episodeLabels[episodeCursor++] : undefined,
         }));
     const previews = attachments.reduce<Record<string, string>>((current, attachment, index) => {
       const file = selectedFiles[index];
@@ -3570,9 +3610,7 @@ export default function RestyleStudio() {
     const snapshot = projectsRef.current.find((item) => item.id === projectId);
     if (!snapshot) return false;
     // 只分析原始上传：渲染产物（video_clip / final_video）也是 video/*，必须排除。
-    const projectVideoFiles = snapshot.files.filter(
-      (file) => file.type.startsWith("video/") && !file.isFolder && !file.generatedKind,
-    );
+    const projectVideoFiles = snapshot.files.filter(isSourceVideoFile);
     const sourceFiles = options.sourceFiles?.length ? options.sourceFiles : projectVideoFiles;
     if (!sourceFiles.length) return false;
     const isRerun = snapshot.extractedAssets.length > 0;
@@ -3778,7 +3816,7 @@ export default function RestyleStudio() {
       outgoingAttachmentIds.includes(file.id),
     );
     const referenceAttachments = attachments.filter((file) => file.type.startsWith("image/"));
-    const projectVideoFiles = activeProject.files.filter((file) => file.type.startsWith("video/"));
+    const projectVideoFiles = activeProject.files.filter(isSourceVideoFile);
     if (!message && !attachments.length) return;
     const projectId = activeProject.id;
     const conversationId = activeConversation.id;
@@ -4004,7 +4042,7 @@ export default function RestyleStudio() {
       return;
     }
 
-    const selectedVideoFiles = attachments.filter((file) => file.type.startsWith("video/"));
+    const selectedVideoFiles = attachments.filter(isSourceVideoFile);
     const sourceFiles = selectedVideoFiles.length ? selectedVideoFiles : projectVideoFiles;
     if (!sourceFiles.length) return;
 

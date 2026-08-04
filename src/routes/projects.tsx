@@ -1,5 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 import Projects from "../pages/Projects";
+import { RequireAuth } from "../components/RequireAuth";
+
+function ProjectsRoute() {
+  return (
+    <RequireAuth>
+      <Projects />
+    </RequireAuth>
+  );
+}
 
 export const Route = createFileRoute("/projects")({
   head: () => ({
@@ -8,5 +17,5 @@ export const Route = createFileRoute("/projects")({
       { name: "description", content: "Manage your Doopoo creative projects." },
     ],
   }),
-  component: Projects,
+  component: ProjectsRoute,
 });

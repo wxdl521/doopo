@@ -1,4 +1,13 @@
 import { createFileRoute, Outlet } from "@tanstack/react-router";
+import { RequireAuth } from "../components/RequireAuth";
+
+function ScriptsLayout() {
+  return (
+    <RequireAuth>
+      <Outlet />
+    </RequireAuth>
+  );
+}
 
 export const Route = createFileRoute("/scripts")({
   head: () => ({
@@ -7,5 +16,5 @@ export const Route = createFileRoute("/scripts")({
       { name: "description", content: "Generate and edit AI-assisted scripts." },
     ],
   }),
-  component: () => <Outlet />,
+  component: ScriptsLayout,
 });

@@ -1,5 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 import Characters from "../pages/Characters";
+import { RequireAuth } from "../components/RequireAuth";
+
+function CharactersRoute() {
+  return (
+    <RequireAuth>
+      <Characters />
+    </RequireAuth>
+  );
+}
 
 export const Route = createFileRoute("/characters")({
   head: () => ({
@@ -8,5 +17,5 @@ export const Route = createFileRoute("/characters")({
       { name: "description", content: "Design and manage AI characters." },
     ],
   }),
-  component: Characters,
+  component: CharactersRoute,
 });

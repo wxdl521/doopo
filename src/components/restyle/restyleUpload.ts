@@ -21,6 +21,30 @@ export function shouldUseDirectUpload(file: { type: string; size: number }): boo
   return file.size > DIRECT_UPLOAD_MIN_BYTES;
 }
 
+/** 新上传视频的集号续排：按现有 EP\d+ 最大序号 +1，删除中间集后新上传也不撞号。 */
+export function nextEpisodeLabels(
+  existing: Array<{ episode?: string }>,
+  count: number,
+): string[] {
+  let max = 0;
+  for (const file of existing) {
+    const match = /^EP(\d+)$/i.exec(file.episode ?? "");
+    if (match) max = Math.max(max, Number.parseInt(match[1], 10));
+  }
+  return Array.from({ length: count }, (_, index) =>
+    `EP${String(max + index + 1).padStart(2, "0")}`,
+  );
+}
+
+/** 源片判定：用户上传的原片视频；文件夹占位与生成产物（video_clip/final_video 等）不算。 */
+export function isSourceVideoFile(file: {
+  type: string;
+  isFolder?: boolean;
+  generatedKind?: string;
+}): boolean {
+  return file.type.startsWith("video/") && !file.isFolder && !file.generatedKind;
+}
+
 /** createMediaUploadUrl 的最小签名：为二进制直传取签名上传地址。 */
 export type PrepareUploadUrlFn = (input: {
   id: string;

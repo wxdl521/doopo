@@ -56,7 +56,6 @@ import { Route as AccountCreditsRouteImport } from './routes/account.credits'
 import { Route as AccountAssetsRouteImport } from './routes/account.assets'
 import { Route as TeamTeamIdJoinRouteImport } from './routes/team.$teamId.join'
 import { Route as AssetsTabIdRouteImport } from './routes/assets_.$tab.$id'
-import { Route as ApiPublicTestAitokenvibeRouteImport } from './routes/api/public/test-aitokenvibe'
 
 const ZoclawRoute = ZoclawRouteImport.update({
   id: '/zoclaw',
@@ -293,12 +292,6 @@ const AssetsTabIdRoute = AssetsTabIdRouteImport.update({
   path: '/assets/$tab/$id',
   getParentRoute: () => rootRouteImport,
 } as any)
-const ApiPublicTestAitokenvibeRoute =
-  ApiPublicTestAitokenvibeRouteImport.update({
-    id: '/api/public/test-aitokenvibe',
-    path: '/api/public/test-aitokenvibe',
-    getParentRoute: () => rootRouteImport,
-  } as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -346,7 +339,6 @@ export interface FileRoutesByFullPath {
   '/community/': typeof CommunityIndexRoute
   '/scripts/': typeof ScriptsIndexRoute
   '/team/': typeof TeamIndexRoute
-  '/api/public/test-aitokenvibe': typeof ApiPublicTestAitokenvibeRoute
   '/assets/$tab/$id': typeof AssetsTabIdRoute
   '/team/$teamId/join': typeof TeamTeamIdJoinRoute
 }
@@ -391,7 +383,6 @@ export interface FileRoutesByTo {
   '/community': typeof CommunityIndexRoute
   '/scripts': typeof ScriptsIndexRoute
   '/team': typeof TeamIndexRoute
-  '/api/public/test-aitokenvibe': typeof ApiPublicTestAitokenvibeRoute
   '/assets/$tab/$id': typeof AssetsTabIdRoute
   '/team/$teamId/join': typeof TeamTeamIdJoinRoute
 }
@@ -442,7 +433,6 @@ export interface FileRoutesById {
   '/community/': typeof CommunityIndexRoute
   '/scripts/': typeof ScriptsIndexRoute
   '/team/': typeof TeamIndexRoute
-  '/api/public/test-aitokenvibe': typeof ApiPublicTestAitokenvibeRoute
   '/assets_/$tab/$id': typeof AssetsTabIdRoute
   '/team/$teamId/join': typeof TeamTeamIdJoinRoute
 }
@@ -494,7 +484,6 @@ export interface FileRouteTypes {
     | '/community/'
     | '/scripts/'
     | '/team/'
-    | '/api/public/test-aitokenvibe'
     | '/assets/$tab/$id'
     | '/team/$teamId/join'
   fileRoutesByTo: FileRoutesByTo
@@ -539,7 +528,6 @@ export interface FileRouteTypes {
     | '/community'
     | '/scripts'
     | '/team'
-    | '/api/public/test-aitokenvibe'
     | '/assets/$tab/$id'
     | '/team/$teamId/join'
   id:
@@ -589,7 +577,6 @@ export interface FileRouteTypes {
     | '/community/'
     | '/scripts/'
     | '/team/'
-    | '/api/public/test-aitokenvibe'
     | '/assets_/$tab/$id'
     | '/team/$teamId/join'
   fileRoutesById: FileRoutesById
@@ -618,7 +605,6 @@ export interface RootRouteChildren {
   ZoclawRoute: typeof ZoclawRoute
   RestyleV2Route: typeof RestyleV2Route
   WorkspaceWorkspaceIdRoute: typeof WorkspaceWorkspaceIdRoute
-  ApiPublicTestAitokenvibeRoute: typeof ApiPublicTestAitokenvibeRoute
   AssetsTabIdRoute: typeof AssetsTabIdRoute
 }
 
@@ -953,13 +939,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AssetsTabIdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/api/public/test-aitokenvibe': {
-      id: '/api/public/test-aitokenvibe'
-      path: '/api/public/test-aitokenvibe'
-      fullPath: '/api/public/test-aitokenvibe'
-      preLoaderRoute: typeof ApiPublicTestAitokenvibeRouteImport
-      parentRoute: typeof rootRouteImport
-    }
   }
 }
 
@@ -1107,9 +1086,18 @@ const rootRouteChildren: RootRouteChildren = {
   ZoclawRoute: ZoclawRoute,
   RestyleV2Route: RestyleV2Route,
   WorkspaceWorkspaceIdRoute: WorkspaceWorkspaceIdRoute,
-  ApiPublicTestAitokenvibeRoute: ApiPublicTestAitokenvibeRoute,
   AssetsTabIdRoute: AssetsTabIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
+
+import type { getRouter } from './router.tsx'
+import type { startInstance } from './start.ts'
+declare module '@tanstack/react-start' {
+  interface Register {
+    ssr: true
+    router: Awaited<ReturnType<typeof getRouter>>
+    config: Awaited<ReturnType<typeof startInstance.getOptions>>
+  }
+}

@@ -75,7 +75,7 @@ function ForgotPassword() {
         )}
         <div className="text-center text-sm text-text-muted mt-6">
           想起密码了？
-          <Link to="/login" className="text-accent hover:underline">
+          <Link to="/login" search={{ redirect: undefined }} className="text-accent hover:underline">
             返回登录
           </Link>
         </div>

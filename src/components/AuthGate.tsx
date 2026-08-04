@@ -38,7 +38,7 @@ export default function AuthGate({ children }: { children: ReactNode }) {
           首页与社区分享内容无需登录即可浏览。
         </p>
         <div className="flex items-center justify-center gap-2">
-          <Link to="/login" className="btn-primary inline-flex items-center gap-1.5 text-sm">
+          <Link to="/login" search={{ redirect: undefined }} className="btn-primary inline-flex items-center gap-1.5 text-sm">
             <LogIn size={14} /> 登录
           </Link>
           <Link to="/register" className="btn-secondary inline-flex items-center gap-1.5 text-sm">

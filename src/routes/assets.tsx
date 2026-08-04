@@ -1,5 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 import AssetsLibrary from "../pages/AssetsLibrary";
+import { RequireAuth } from "../components/RequireAuth";
+
+function AssetsRoute() {
+  return (
+    <RequireAuth>
+      <AssetsLibrary />
+    </RequireAuth>
+  );
+}
 
 export const Route = createFileRoute("/assets")({
   validateSearch: (search: Record<string, unknown>) => ({
@@ -11,5 +20,5 @@ export const Route = createFileRoute("/assets")({
       { name: "description", content: "统一管理角色、场景、道具资产。" },
     ],
   }),
-  component: AssetsLibrary,
+  component: AssetsRoute,
 });

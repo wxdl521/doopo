@@ -87,7 +87,7 @@ export default function Scripts() {
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            <Link to="/login" className="btn-primary inline-flex items-center gap-1.5 text-sm">
+            <Link to="/login" search={{ redirect: undefined }} className="btn-primary inline-flex items-center gap-1.5 text-sm">
               <LogIn size={14} /> {t.sl_login}
             </Link>
             <Link to="/register" className="text-sm text-accent hover:underline">
@@ -212,7 +212,7 @@ export default function Scripts() {
                             toast(t.sl_share_login, {
                               action: {
                                 label: t.auth_to_signin,
-                                onClick: () => navigate({ to: "/login" }),
+                                onClick: () => navigate({ to: "/login", search: { redirect: undefined } }),
                               },
                             });
                             return;

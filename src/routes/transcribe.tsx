@@ -1,5 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 import Transcribe from "../pages/Transcribe";
+import { RequireAuth } from "../components/RequireAuth";
+
+function TranscribeRoute() {
+  return (
+    <RequireAuth>
+      <Transcribe />
+    </RequireAuth>
+  );
+}
 
 export const Route = createFileRoute("/transcribe")({
   head: () => ({
@@ -18,5 +27,5 @@ export const Route = createFileRoute("/transcribe")({
       { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
-  component: Transcribe,
+  component: TranscribeRoute,
 });

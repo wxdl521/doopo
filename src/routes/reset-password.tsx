@@ -63,7 +63,7 @@ function ResetPassword() {
     setLoading(false);
     toast.success("密码已重置，请使用新密码登录");
     await supabase.auth.signOut();
-    navigate({ to: "/login" });
+    navigate({ to: "/login", search: { redirect: undefined } });
   };
 
   return (
@@ -111,7 +111,7 @@ function ResetPassword() {
           </button>
         </form>
         <div className="text-center text-sm text-text-muted mt-6">
-          <Link to="/login" className="text-accent hover:underline">
+          <Link to="/login" search={{ redirect: undefined }} className="text-accent hover:underline">
             返回登录
           </Link>
         </div>

@@ -80,7 +80,7 @@ export default function HeroPromptInput() {
       );
     } catch {}
     if (!isAuthenticated) {
-      navigate({ to: "/login" });
+      navigate({ to: "/login", search: { redirect: undefined } });
     } else {
       navigate({ to: "/scripts" });
     }

@@ -70,7 +70,7 @@ function PostPage() {
   const onLike = async () => {
     if (!isAuthenticated) {
       toast(t.post_like_login, {
-        action: { label: t.auth_to_signin, onClick: () => navigate({ to: "/login" }) },
+        action: { label: t.auth_to_signin, onClick: () => navigate({ to: "/login", search: { redirect: undefined } }) },
       });
       return;
     }

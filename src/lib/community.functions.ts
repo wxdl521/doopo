@@ -1,6 +1,4 @@
 import { createServerFn } from "@tanstack/react-start";
-import { getRequest } from "@tanstack/react-start/server";
-import { createHash } from "node:crypto";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
@@ -213,12 +211,21 @@ export const isLiked = createServerFn({ method: "POST" })
 // --------------------------------------------------------------------
 
 /** 匿名访客 key：`a:` + sha256(ip|ua) 前 32 位（纯函数，便于测试） */
+// 浏览器/Worker 双端可跑的稳定散列（viewerKey 只需去重，不需要加密强度）
+function fnv1aHex(input: string): string {
+  let out = "";
+  for (let lane = 0; lane < 4; lane += 1) {
+    let h = 0x811c9dc5 ^ (lane * 0x9e3779b9);
+    for (let i = 0; i < input.length; i += 1) {
+      h = Math.imul(h ^ input.charCodeAt(i), 0x01000193 + lane);
+    }
+    out += (h >>> 0).toString(16).padStart(8, "0");
+  }
+  return out;
+}
+
 export function buildAnonymousViewerKey(ip: string | null | undefined, ua: string | null | undefined): string {
-  const hash = createHash("sha256")
-    .update(`${ip ?? ""}|${ua ?? ""}`)
-    .digest("hex")
-    .slice(0, 32);
-  return `a:${hash}`;
+  return `a:${fnv1aHex(`${ip ?? ""}|${ua ?? ""}`)}`;
 }
 
 /** 登录 → `u:<userId>`；匿名 → IP+UA 哈希 */
@@ -228,6 +235,7 @@ export async function resolveViewerKey(): Promise<string> {
   let ip: string | null = null;
   let ua: string | null = null;
   try {
+    const { getRequest } = await import("@tanstack/react-start/server");
     const headers = getRequest()?.headers;
     // 反代链路优先取 CF / XFF 首跳，取不到退化为仅 UA 哈希
     ip =

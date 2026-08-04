@@ -16,21 +16,44 @@ import { useEffect } from "react";
 import { runLegacyMigration } from "../lib/legacyMigrate";
 import { Toaster } from "../components/ui/sonner";
 
+// 404 / 错误页在 LanguageProvider 之外渲染，无法走 i18n context；
+// 按浏览器语言做静态双语判定。
+const prefersZh =
+  typeof navigator !== "undefined" && (navigator.language ?? "").toLowerCase().startsWith("zh");
+
+const fallbackText = prefersZh
+  ? {
+      notFoundTitle: "页面不存在",
+      notFoundDesc: "你要找的页面不存在或已被移动。",
+      goHome: "返回首页",
+      errorTitle: "页面加载失败",
+      errorDesc: "我们这边出了点问题，可以刷新重试或返回首页。",
+      tryAgain: "重试",
+    }
+  : {
+      notFoundTitle: "Page not found",
+      notFoundDesc: "The page you're looking for doesn't exist or has been moved.",
+      goHome: "Go home",
+      errorTitle: "This page didn't load",
+      errorDesc: "Something went wrong on our end. You can try refreshing or head back home.",
+      tryAgain: "Try again",
+    };
+
 function NotFoundComponent() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="max-w-md text-center">
         <h1 className="text-7xl font-bold text-foreground">404</h1>
-        <h2 className="mt-4 text-xl font-semibold text-foreground">Page not found</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
-          The page you're looking for doesn't exist or has been moved.
-        </p>
+        <h2 className="mt-4 text-xl font-semibold text-foreground">
+          {fallbackText.notFoundTitle}
+        </h2>
+        <p className="mt-2 text-sm text-muted-foreground">{fallbackText.notFoundDesc}</p>
         <div className="mt-6">
           <Link
             to="/"
             className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
           >
-            Go home
+            {fallbackText.goHome}
           </Link>
         </div>
       </div>
@@ -46,11 +69,9 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="max-w-md text-center">
         <h1 className="text-xl font-semibold tracking-tight text-foreground">
-          This page didn't load
+          {fallbackText.errorTitle}
         </h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Something went wrong on our end. You can try refreshing or head back home.
-        </p>
+        <p className="mt-2 text-sm text-muted-foreground">{fallbackText.errorDesc}</p>
         <div className="mt-6 flex flex-wrap justify-center gap-2">
           <button
             onClick={() => {
@@ -59,13 +80,13 @@ function ErrorComponent({ error, reset }: { error: Error; reset: () => void }) {
             }}
             className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
           >
-            Try again
+            {fallbackText.tryAgain}
           </button>
           <a
             href="/"
             className="inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent"
           >
-            Go home
+            {fallbackText.goHome}
           </a>
         </div>
       </div>

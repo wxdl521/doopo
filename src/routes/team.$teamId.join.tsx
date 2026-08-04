@@ -57,7 +57,7 @@ function JoinTeamPage() {
         <Users className="w-16 h-16 text-muted-foreground" />
         <h2 className="text-xl font-semibold">{t.team_join_title}</h2>
         <p className="text-muted-foreground">{t.my_team_login_hint}</p>
-        <Button onClick={() => navigate({ to: "/login" })}>{t.my_team_login_required}</Button>
+        <Button onClick={() => navigate({ to: "/login", search: { redirect: undefined } })}>{t.my_team_login_required}</Button>
       </div>
     );
   }

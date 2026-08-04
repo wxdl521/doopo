@@ -218,7 +218,7 @@ export default function Header() {
 
           {!loading && !isAuthenticated ? (
             <Link
-              to="/login"
+              to="/login" search={{ redirect: undefined }}
               className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-sm font-medium border border-accent/40 text-accent bg-accent-dim hover:bg-accent/20 transition flex-shrink-0"
             >
               登录

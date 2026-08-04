@@ -46,7 +46,7 @@ function Register() {
       toast.success(`激活邮件已发送至 ${form.email}，请前往邮箱完成激活后再登录`, {
         duration: 6000,
       });
-      navigate({ to: "/login" });
+      navigate({ to: "/login", search: { redirect: undefined } });
     }
   };
   const typeLabel: Record<"personal" | "team", string> = {
@@ -116,7 +116,7 @@ function Register() {
         </form>
         <div className="text-center text-sm text-text-muted mt-6">
           {t.auth_have_account}{" "}
-          <Link to="/login" className="text-accent hover:underline">
+          <Link to="/login" search={{ redirect: undefined }} className="text-accent hover:underline">
             {t.auth_to_signin}
           </Link>
         </div>

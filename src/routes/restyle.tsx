@@ -1,5 +1,14 @@
 import { createFileRoute } from "@tanstack/react-router";
 import RestyleStudio from "../components/restyle/RestyleStudio";
+import { RequireAuth } from "../components/RequireAuth";
+
+function RestyleRoute() {
+  return (
+    <RequireAuth>
+      <RestyleStudio />
+    </RequireAuth>
+  );
+}
 
 export const Route = createFileRoute("/restyle")({
   head: () => ({
@@ -8,5 +17,5 @@ export const Route = createFileRoute("/restyle")({
       { name: "description", content: "Doopoo 漫剧转绘工作台演示原型。" },
     ],
   }),
-  component: RestyleStudio,
+  component: RestyleRoute,
 });
