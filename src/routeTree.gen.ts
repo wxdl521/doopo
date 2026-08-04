@@ -44,6 +44,7 @@ import { Route as ProjectsProjectIdRouteImport } from './routes/projects.$projec
 import { Route as CommunityPostIdRouteImport } from './routes/community.$postId'
 import { Route as CharactersRelationsRouteImport } from './routes/characters.relations'
 import { Route as CharactersCharacterIdRouteImport } from './routes/characters.$characterId'
+import { Route as AdminProvidersRouteImport } from './routes/admin.providers'
 import { Route as AdminModelsRouteImport } from './routes/admin.models'
 import { Route as AdminCreditsRouteImport } from './routes/admin.credits'
 import { Route as AccountSubscriptionRouteImport } from './routes/account.subscription'
@@ -232,6 +233,11 @@ const CharactersCharacterIdRoute = CharactersCharacterIdRouteImport.update({
   path: '/$characterId',
   getParentRoute: () => CharactersRoute,
 } as any)
+const AdminProvidersRoute = AdminProvidersRouteImport.update({
+  id: '/providers',
+  path: '/providers',
+  getParentRoute: () => AdminRoute,
+} as any)
 const AdminModelsRoute = AdminModelsRouteImport.update({
   id: '/models',
   path: '/models',
@@ -324,6 +330,7 @@ export interface FileRoutesByFullPath {
   '/account/security': typeof AccountSecurityRoute
   '/account/subscription': typeof AccountSubscriptionRoute
   '/admin/credits': typeof AdminCreditsRoute
+  '/admin/providers': typeof AdminProvidersRoute
   '/admin/models': typeof AdminModelsRoute
   '/characters/$characterId': typeof CharactersCharacterIdRoute
   '/characters/relations': typeof CharactersRelationsRoute
@@ -368,6 +375,7 @@ export interface FileRoutesByTo {
   '/account/security': typeof AccountSecurityRoute
   '/account/subscription': typeof AccountSubscriptionRoute
   '/admin/credits': typeof AdminCreditsRoute
+  '/admin/providers': typeof AdminProvidersRoute
   '/admin/models': typeof AdminModelsRoute
   '/characters/$characterId': typeof CharactersCharacterIdRoute
   '/characters/relations': typeof CharactersRelationsRoute
@@ -418,6 +426,7 @@ export interface FileRoutesById {
   '/account/security': typeof AccountSecurityRoute
   '/account/subscription': typeof AccountSubscriptionRoute
   '/admin/credits': typeof AdminCreditsRoute
+  '/admin/providers': typeof AdminProvidersRoute
   '/admin/models': typeof AdminModelsRoute
   '/characters/$characterId': typeof CharactersCharacterIdRoute
   '/characters/relations': typeof CharactersRelationsRoute
@@ -855,6 +864,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof CharactersCharacterIdRouteImport
       parentRoute: typeof CharactersRoute
     }
+    '/admin/providers': {
+      id: '/admin/providers'
+      path: '/providers'
+      fullPath: '/admin/providers'
+      preLoaderRoute: typeof AdminProvidersRouteImport
+      parentRoute: typeof AdminRoute
+    }
     '/admin/models': {
       id: '/admin/models'
       path: '/models'
@@ -971,12 +987,14 @@ const AccountRouteWithChildren =
 
 interface AdminRouteChildren {
   AdminCreditsRoute: typeof AdminCreditsRoute
+  AdminProvidersRoute: typeof AdminProvidersRoute
   AdminModelsRoute: typeof AdminModelsRoute
   AdminIndexRoute: typeof AdminIndexRoute
 }
 
 const AdminRouteChildren: AdminRouteChildren = {
   AdminCreditsRoute: AdminCreditsRoute,
+  AdminProvidersRoute: AdminProvidersRoute,
   AdminModelsRoute: AdminModelsRoute,
   AdminIndexRoute: AdminIndexRoute,
 }

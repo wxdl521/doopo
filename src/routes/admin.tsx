@@ -2,7 +2,7 @@ import { createFileRoute, Outlet } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { Coins, Clapperboard } from "lucide-react";
+import { Coins, Clapperboard, Boxes } from "lucide-react";
 import SectionSidebar from "../components/SectionSidebar";
 import { useLanguage } from "../i18n/LanguageContext";
 import { useAuth } from "../hooks/useAuth";
@@ -46,6 +46,7 @@ function AdminLayout() {
 
   const items = [
     { to: "/admin/credits", label: t.admin_credits, icon: Coins },
+    { to: "/admin/providers", label: t.admin_providers, icon: Boxes },
     { to: "/admin/models", label: t.admin_models_pricing, icon: Clapperboard },
   ];
   if (loading || hasAccess !== true) {

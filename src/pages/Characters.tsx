@@ -22,6 +22,7 @@ import { useLanguage } from "../i18n/LanguageContext";
 import { generateScript } from "../lib/openrouter.functions";
 import { generateImage } from "../lib/seedream.functions";
 import { IMAGE_MODELS } from "../lib/imageModels";
+import { useListedModels } from "../hooks/useListedModels";
 import { logImageMeta } from "../lib/logImageMeta";
 import { ImageReviewBadge } from "../components/ImageReviewBadge";
 import { toast } from "sonner";
@@ -147,6 +148,11 @@ export default function Characters() {
   ];
   const [selectedComposition, setSelectedComposition] = useState("full");
   const [imageModel, setImageModel] = useState<string>("");
+  // 模型目录唯一数据源：已上架 + 启用；接口异常时回落静态 IMAGE_MODELS
+  const { models: listedImageModels } = useListedModels(
+    "image",
+    IMAGE_MODELS.filter((m) => m.key).map((m) => ({ id: m.key, label: m.label, sub: m.sub })),
+  );
   const [generatedImages, setGeneratedImages] = useState<Record<Tab, string>>({
     front: "",
     "side-left": "",
@@ -277,8 +283,7 @@ export default function Characters() {
           if (r.value.url) {
             const view = r.value.v as Tab;
             next[view] = r.value.url;
-          }
-          else if (r.value.error) imgError = r.value.error;
+          } else if (r.value.error) imgError = r.value.error;
         } else imgError = r.reason?.message || imgError;
       });
       setGeneratedImages(next);
@@ -506,8 +511,8 @@ export default function Characters() {
                   onChange={(e) => setImageModel(e.target.value)}
                   className="w-full rounded-lg bg-bg-elevated border border-border text-xs text-text-primary px-3 py-2 focus:outline-none focus:border-accent/50"
                 >
-                  {IMAGE_MODELS.map((m) => (
-                    <option key={m.key} value={m.key}>
+                  {listedImageModels.map((m) => (
+                    <option key={m.id} value={m.id}>
                       {m.label}
                     </option>
                   ))}
@@ -618,9 +623,7 @@ export default function Characters() {
                   <ImageReviewBadge
                     unsupported
                     unsupportedMessage="请在项目工作区选择视频模型后上传素材库。"
-                    onRequestReview={() =>
-                      toast.info("请在项目工作区选择视频模型后上传素材库。")
-                    }
+                    onRequestReview={() => toast.info("请在项目工作区选择视频模型后上传素材库。")}
                   />
                 </>
               ) : (

@@ -94,6 +94,9 @@ const DASHSCOPE_TASK_GET = "https://dashscope.aliyuncs.com/api/v1/tasks/";
  * 模型 id 路由到对应后端。
  *  - ARK (Seedance):doubao-seedance-* 或 seedance-*
  *  - DashScope (HappyHorse / Wan / Wanx):其他视频模型 id 一律 fallback 到 DashScope
+ *  - 动态供应商(后台「供应商管理」登记的 openai_compatible):本函数是同步路由,
+ *    动态兜底在 submitVideoTask / pollVideoTask 的 "dynamic" 分支按目录异步解析,
+ *    前缀命中内置分支的一律不拦截
  */
 export function getVideoBackend(
   modelId: string | null | undefined,
@@ -2589,7 +2592,9 @@ type VideoBackend =
   | "ycore"
   | "neiwen"
   | "agentearth"
-  | "revora";
+  | "revora"
+  // 动态供应商兜底（后台「供应商管理」登记的 OpenAI 兼容供应商）
+  | "dynamic";
 
 // ====================================================================
 // vapeur.ai 端实现 —— 透传火山方舟 ARK Seedance 原生格式
@@ -4026,6 +4031,26 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
       ? { ok: true, taskId: r.taskId, model: input.model, backend: "hongmeng" }
       : { ok: false, error: r.error };
   }
+  // 动态供应商兜底(getVideoBackend 末尾的动态分支:内置前缀全部未命中时,
+  // 查「供应商管理」目录,命中则走通用 OpenAI 兼容视频通道;未命中返回 null,
+  // 继续走 DashScope 兜底,内置行为不变)
+  if (input.model.includes("/")) {
+    const { tryDynamicProviderVideoSubmit } = await import("./dynamicProvider.functions");
+    const dyn = await tryDynamicProviderVideoSubmit({
+      model: input.model,
+      prompt: input.prompt,
+      imageUrl:
+        input.media.find((m) => m.type === "first_frame")?.url ?? input.media[0]?.url,
+      ratio: input.ratio,
+      resolution: input.resolution,
+      duration: input.duration,
+    });
+    if (dyn) {
+      return dyn.ok
+        ? { ok: true, taskId: dyn.taskId, model: input.model, backend: "dynamic" }
+        : { ok: false, error: dyn.error };
+    }
+  }
   // DashScope
   const { apiKey } = getDashScopeConfig();
   if (!apiKey) return { ok: false, error: "Qwen / DASHSCOPE_API_KEY not configured" };
@@ -4043,13 +4068,25 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
     : { ok: false, error: r.error };
 }
 
-type PollInput = { taskId: string; backend: VideoBackend };
+type PollInput = { taskId: string; backend: VideoBackend; model?: string };
 
 type PollResult =
   | { ok: true; status: SeedanceProgress; videoUrl: string | null; raw: any }
   | { ok: false; error: string; status?: SeedanceProgress; raw?: any };
 
 async function pollVideoTask(input: PollInput): Promise<PollResult> {
+  if (input.backend === "dynamic") {
+    // 动态供应商轮询：需要 model 重新解析供应商凭据（密钥不落任务参数）
+    const { tryDynamicProviderVideoPoll } = await import("./dynamicProvider.functions");
+    const dyn = await tryDynamicProviderVideoPoll({ model: input.model, taskId: input.taskId });
+    if (!dyn) return { ok: false, error: "[dynamic] 模型未登记或已停用", status: "failed" };
+    if (!dyn.ok) return { ok: false, error: dyn.error };
+    if (dyn.status === "failed") {
+      return { ok: false, error: dyn.error || "[dynamic] 任务失败", status: "failed" };
+    }
+    // "processing" 归一到 SeedanceProgress 的 "running"
+    return { ok: true, status: dyn.status === "succeeded" ? "succeeded" : "running", videoUrl: dyn.videoUrl, raw: null };
+  }
   if (input.backend === "revora") {
     const { apiKey, baseUrl } = getRevoraVideoConfig();
     if (!apiKey) return { ok: false, error: "REVORA_VIDEO_API_KEY not configured" };
@@ -4443,14 +4480,17 @@ const PollServerInput = z.object({
     "revora",
     "ycore",
     "neiwen",
+    "dynamic",
   ]),
+  // 动态供应商轮询需要 model 重新解析凭据（密钥不进任务参数）
+  model: z.string().max(200).optional(),
 });
 
 export const pollVideoTaskFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((d: unknown) => PollServerInput.parse(d))
   .handler(async ({ data }) => {
-    const r = await pollVideoTask({ taskId: data.taskId, backend: data.backend });
+    const r = await pollVideoTask({ taskId: data.taskId, backend: data.backend, model: data.model });
     if (!r.ok) return { ok: false as const, error: r.error, status: r.status };
     return { ok: true as const, status: r.status, videoUrl: r.videoUrl };
   });
@@ -4857,7 +4897,7 @@ export const generateVideo = createServerFn({ method: "POST" })
     // 不再用本地 5 分钟 deadline 把仍在生成的任务错误标记为失败。
     while (true) {
       await sleep(pollInterval);
-      const poll = await pollVideoTask({ taskId: submit.taskId, backend: submit.backend });
+      const poll = await pollVideoTask({ taskId: submit.taskId, backend: submit.backend, model });
       if (!poll.ok) {
         console.warn(
           `[video×] poll backend=${submit.backend} taskId=${submit.taskId} status=${poll.status || "network"} error=${poll.error}`,

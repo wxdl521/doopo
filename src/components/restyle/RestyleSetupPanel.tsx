@@ -9,7 +9,16 @@
 // ====================================================================
 
 import { useMemo, useState } from "react";
-import { Check, ChevronDown, Clapperboard, Gauge, SlidersHorizontal, Sparkles, X, Zap } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  Clapperboard,
+  Gauge,
+  SlidersHorizontal,
+  Sparkles,
+  X,
+  Zap,
+} from "lucide-react";
 import type { Translations } from "../../i18n/zh";
 import type { ModelPricingRow } from "../../lib/modelPricingCache";
 import { LIGHTING_LUTS, LIGHTING_PRESETS, type Market } from "../../lib/restyle/cameraDirection";
@@ -102,8 +111,10 @@ export function pricingForVideoModel(
 
 /** 库内默认视频模型（is_default 且启用）。 */
 export function defaultVideoPricing(rows: ModelPricingRow[]): ModelPricingRow | undefined {
-  return rows.find((row) => row.enabled && row.isDefault && row.resolution === "720P") ??
-    rows.find((row) => row.enabled && row.isDefault);
+  return (
+    rows.find((row) => row.enabled && row.isDefault && row.resolution === "720P") ??
+    rows.find((row) => row.enabled && row.isDefault)
+  );
 }
 
 function formatCredits(credits: number): string {
@@ -114,6 +125,8 @@ type PanelProps = {
   project: RestyleProject | undefined;
   /** listModelPricing(kind=video) 已启用行。 */
   videoPricing: ModelPricingRow[];
+  /** 已上架视频目录（useListedModels）；未配价的模型以「暂未计费」徽标并入可选项。 */
+  listedVideoModels?: { id: string; label: string; priced: boolean }[];
   /** 当前生效的视频模型 id（含默认值兜底后的结果）。 */
   currentVideoModel: string;
   onPatch: (patch: RestyleSetupPatch) => void;
@@ -189,6 +202,7 @@ function OptionRow<T extends string>({
 export function RestyleSetupPanel({
   project,
   videoPricing,
+  listedVideoModels,
   currentVideoModel,
   onPatch,
   t,
@@ -200,6 +214,14 @@ export function RestyleSetupPanel({
   const currentPricing = useMemo(
     () => pricingForVideoModel(videoPricing, currentVideoModel),
     [videoPricing, currentVideoModel],
+  );
+  // 已上架但还未配价的模型：并入选择弹窗，标注「暂未计费」（动态模型服务端会拒绝提交）
+  const unpricedListed = useMemo(
+    () =>
+      (listedVideoModels ?? []).filter(
+        (m) => !m.priced && !videoPricing.some((row) => row.modelId === m.id),
+      ),
+    [listedVideoModels, videoPricing],
   );
   const currentLabel =
     currentPricing?.label ??
@@ -220,12 +242,13 @@ export function RestyleSetupPanel({
               onClick={() => project && onPatch({ executionMode: mode })}
               aria-pressed={selected}
               className={`flex w-full items-start gap-2 rounded-lg border px-2.5 py-2 text-left ${
-                selected
-                  ? "border-accent bg-accent-dim/60"
-                  : "border-border hover:bg-bg-elevated"
+                selected ? "border-accent bg-accent-dim/60" : "border-border hover:bg-bg-elevated"
               }`}
             >
-              <Icon size={14} className={`mt-0.5 shrink-0 ${selected ? "text-accent" : "text-text-muted"}`} />
+              <Icon
+                size={14}
+                className={`mt-0.5 shrink-0 ${selected ? "text-accent" : "text-text-muted"}`}
+              />
               <span className="min-w-0">
                 <span className="flex items-center gap-1.5 text-xs font-medium text-text-primary">
                   {t[titleKey]}
@@ -335,15 +358,10 @@ export function RestyleSetupPanel({
           }))}
         />
         <p className="mt-1 text-[10px] leading-4 text-text-muted" data-testid="market-preset-desc">
-          {
-            t[
-              LIGHTING_PRESETS[project?.targetMarket ?? "kr"].descriptionKey as keyof Translations
-            ]
-          }
+          {t[LIGHTING_PRESETS[project?.targetMarket ?? "kr"].descriptionKey as keyof Translations]}
         </p>
         <p className="mt-0.5 text-[10px] leading-4 text-text-muted" data-testid="market-lut-brief">
-          {t.restyle_setup_market_lut}：
-          {LIGHTING_LUTS[project?.targetMarket ?? "kr"].join(" · ")}
+          {t.restyle_setup_market_lut}：{LIGHTING_LUTS[project?.targetMarket ?? "kr"].join(" · ")}
         </p>
       </div>
 
@@ -428,7 +446,7 @@ export function RestyleSetupPanel({
               </button>
             </div>
             <div className="max-h-[60vh] overflow-y-auto p-3">
-              {videoPricing.length ? (
+              {videoPricing.length || unpricedListed.length ? (
                 <table className="w-full text-left text-xs">
                   <thead>
                     <tr className="text-[10px] text-text-muted">
@@ -474,6 +492,36 @@ export function RestyleSetupPanel({
                         </tr>
                       );
                     })}
+                    {unpricedListed.map((m) => {
+                      const selected = m.id === currentVideoModel;
+                      return (
+                        <tr
+                          key={`unpriced-${m.id}`}
+                          onClick={() => {
+                            onPatch({ videoModel: m.id });
+                            setModelDialogOpen(false);
+                          }}
+                          className={`cursor-pointer border-t border-border/60 ${
+                            selected ? "bg-accent-dim/50" : "hover:bg-bg-elevated"
+                          }`}
+                        >
+                          <td className="px-2 py-2 font-medium text-text-primary">
+                            <span className="flex items-center gap-1.5">
+                              {selected ? <Check size={12} className="text-accent" /> : null}
+                              {m.label}
+                            </span>
+                          </td>
+                          <td className="px-2 py-2 text-text-secondary">—</td>
+                          <td className="px-2 py-2">
+                            <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-500">
+                              {t.listed_model_unpriced}
+                            </span>
+                          </td>
+                          <td className="px-2 py-2 text-text-muted">—</td>
+                          <td className="px-2 py-2" />
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               ) : (
@@ -496,6 +544,7 @@ export function RestyleSetupPanel({
 export function RestyleSpecCard({
   project,
   videoPricing,
+  listedVideoModels,
   currentVideoModel,
   onPatch,
   onConfirm,
@@ -505,6 +554,10 @@ export function RestyleSpecCard({
   const [open, setOpen] = useState(true);
   const currentPricing = pricingForVideoModel(videoPricing, currentVideoModel);
   const modeTitle = MODE_META.find((item) => item.mode === config.executionMode)?.titleKey;
+  // 已上架但未配价的模型：并入可选项并标注「暂未计费」
+  const unpricedListed = (listedVideoModels ?? []).filter(
+    (m) => !m.priced && !videoPricing.some((row) => row.modelId === m.id),
+  );
 
   return (
     <div
@@ -537,9 +590,7 @@ export function RestyleSpecCard({
             options={RESTYLE_ASPECTS.map((aspect) => ({ value: aspect, label: aspect }))}
           />
           <div>
-            <p className="text-[11px] font-medium text-text-muted">
-              {t.restyle_setup_video_model}
-            </p>
+            <p className="text-[11px] font-medium text-text-muted">{t.restyle_setup_video_model}</p>
             <div className="mt-1 flex flex-wrap gap-1.5">
               {videoPricing.length ? (
                 // 每个模型取 720P 优先档作为可选项；同一模型多档只出现一次。
@@ -576,6 +627,22 @@ export function RestyleSpecCard({
                     : t.restyle_setup_no_pricing}
                 </span>
               )}
+              {unpricedListed.map((m) => (
+                <button
+                  key={`unpriced-${m.id}`}
+                  type="button"
+                  onClick={() => onPatch({ videoModel: m.id })}
+                  aria-pressed={m.id === currentVideoModel}
+                  className={`rounded-md border px-2.5 py-1 text-[11px] ${
+                    m.id === currentVideoModel
+                      ? "border-accent bg-accent-dim text-accent"
+                      : "border-border text-text-secondary hover:bg-bg-elevated"
+                  }`}
+                >
+                  {m.label}
+                  {` · ${t.listed_model_unpriced}`}
+                </button>
+              ))}
             </div>
           </div>
           <div className="flex items-center gap-2 border-t border-border/60 pt-2">

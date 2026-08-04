@@ -180,6 +180,14 @@ import { supabase } from "@/integrations/supabase/client";
 - `onetoken/*` / `otu/*` / `aigcfamily/*` → 对应供应商
 - `qwen-*` / `wan-*` → DashScope
 - 裸 `openai/gpt-image-2` → **自动归一化为 `pixflow/gpt-image-2`**（避免错误路由到 ARK）
+- **动态供应商兜底**：前缀未命中任何内置分支时，查 `ai_providers` 目录（后台「供应商管理」登记的 `openai_compatible` 供应商），命中则走 `dynamicProvider.functions.ts` 通用 OpenAI 兼容通道；视频侧在 `submitVideoTask` 的 DashScope 兜底前同理（`getVideoBackend` 是同步函数，动态分支落在提交/轮询处分发）。动态模型必须有 `model_pricing` 价目行，否则拒绝提交（「该模型暂未定价」）
+
+### 5.1 供应商管理（2026/08）
+
+- 后台 `/admin/providers`（侧栏在「模型定价」上方）：`ai_providers` + `ai_provider_models` 两表，RLS 仅 `is_credit_admin()`
+- 用户端目录：`listListedModels`（`aiProviders.functions.ts`）走 **supabaseAdmin** 读「已上架+启用」脱敏目录，60s 模块缓存（`aiProvidersCache.ts`）；前端统一经 `useListedModels` hook（React Query staleTime 60s，异常回落静态列表）
+- 密钥：AES-256-GCM（`providerSecret.server.ts`，`v1:<iv_b64>:<ct_b64>`），密钥材料来自服务端 env `PROVIDER_KEY_ENC_SECRET`；前端只见 `api_key_hint`（****尾4位）
+- 动态供应商 code 不得与内置路由前缀冲突（`BUILTIN_ROUTE_PREFIXES` in `aiProvidersCache.ts`）；capabilities 强制声明 `edits_protocol`（json|multipart）与 `auth_header`（bearer|x-api-key）
 
 ### 6. 国际化
 

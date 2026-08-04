@@ -8,6 +8,7 @@ import { IMAGE_MODELS } from "../lib/imageModels";
 import { upsertProject } from "../lib/projects.functions";
 import { loadUserPrefs, saveUserPrefs } from "../lib/userPreferences";
 import { useAuth } from "../hooks/useAuth";
+import { useListedModels } from "../hooks/useListedModels";
 import { toast } from "sonner";
 import style3dCg from "../assets/styles/3d-cg.jpg";
 import styleAnimeJp from "../assets/styles/anime-jp.jpg";
@@ -145,8 +146,6 @@ export const realImageModelOptions = imageModelOptions.filter(
   (m) => !m.id.startsWith("__sep") && isVisibleImage(m.id),
 );
 void IMAGE_MODELS;
-const storyboardModels = realImageModelOptions;
-const sceneModels = realImageModelOptions;
 // Video models —— 2026/06 接入双后端:火山方舟 Seedance(已开通,默认走 ARK) + 阿里 DashScope HappyHorse(备用)
 // 详见 docs/seedream.md (Seedance) 和 docs/qwen.md (HappyHorse)
 const videoModels = [
@@ -512,6 +511,14 @@ export function NewProjectDialog({
 
   // 每个用户的最近一次「成功保存」设置。没有历史时才回退到当前项目或硬编码默认。
   const initialPrefs = useMemo(() => loadUserPrefs(userId), [userId]);
+  // 模型目录唯一数据源：已上架 + 启用（60s 缓存）；接口异常时回落静态列表
+  const { models: catalogImageModels } = useListedModels("image", realImageModelOptions);
+  const { models: catalogVideoModels } = useListedModels("video", realVideoModels);
+  // 历史偏好校验：内置可见前缀 或 目录中已上架的模型（含动态供应商）
+  const isKnownImage = (id: string) =>
+    isVisibleImage(id) || catalogImageModels.some((m) => m.id === id);
+  const isKnownVideo = (id: string) =>
+    isVisibleVideo(id) || catalogVideoModels.some((m) => m.id === id);
   const pickScene = () => {
     const candidates = [
       initialPrefs.lastSceneModel,
@@ -522,9 +529,9 @@ export function NewProjectDialog({
       "doubao-seedream-5-0-260128",
     ];
     for (const c of candidates) {
-      if (c && isVisibleImage(c)) return c;
+      if (c && isKnownImage(c)) return c;
     }
-    return realImageModelOptions[0]?.id ?? "doubao-seedream-5-0-260128";
+    return catalogImageModels[0]?.id ?? "doubao-seedream-5-0-260128";
   };
   const pickVideo = () => {
     const candidates = [
@@ -533,9 +540,9 @@ export function NewProjectDialog({
       "doubao-seedance-2-0-260128",
     ];
     for (const c of candidates) {
-      if (c && isVisibleVideo(c)) return c;
+      if (c && isKnownVideo(c)) return c;
     }
-    return realVideoModels[0]?.id ?? "doubao-seedance-2-0-260128";
+    return catalogVideoModels[0]?.id ?? "doubao-seedance-2-0-260128";
   };
   const pickStoryboard = () => {
     const candidates = [
@@ -547,9 +554,9 @@ export function NewProjectDialog({
       "doubao-seedream-5-0-260128",
     ];
     for (const c of candidates) {
-      if (c && isVisibleImage(c)) return c;
+      if (c && isKnownImage(c)) return c;
     }
-    return realImageModelOptions[0]?.id ?? "doubao-seedream-5-0-260128";
+    return catalogImageModels[0]?.id ?? "doubao-seedream-5-0-260128";
   };
   const pickAspect = () => {
     const candidates = [initialPrefs.lastAspect, initial?.aspect, "16:9"];
@@ -616,12 +623,12 @@ export function NewProjectDialog({
     initializedForOpenRef.current = true;
     const prefs = loadUserPrefs(userId);
     const chooseImage = (...candidates: Array<string | undefined>) =>
-      candidates.find((candidate) => candidate && isVisibleImage(candidate)) ??
-      realImageModelOptions[0]?.id ??
+      candidates.find((candidate) => candidate && isKnownImage(candidate)) ??
+      catalogImageModels[0]?.id ??
       "doubao-seedream-5-0-260128";
     const chooseVideo = (...candidates: Array<string | undefined>) =>
-      candidates.find((candidate) => candidate && isVisibleVideo(candidate)) ??
-      realVideoModels[0]?.id ??
+      candidates.find((candidate) => candidate && isKnownVideo(candidate)) ??
+      catalogVideoModels[0]?.id ??
       "doubao-seedance-2-0-260128";
     setAspect(
       [prefs.lastAspect, initial?.aspect, "16:9"].find((value) =>
@@ -700,12 +707,7 @@ export function NewProjectDialog({
     "azure2/",
     "azure0716/",
   ];
-  const VIDEO_RECOMMENDED_PREFIXES = [
-    "revora-",
-    "kuaizi-",
-    "doubao-seedance-",
-    "topenrouter-",
-  ];
+  const VIDEO_RECOMMENDED_PREFIXES = ["revora-", "kuaizi-", "doubao-seedance-", "topenrouter-"];
   const isRecommendedModel = (id: string, prefixes: string[]): boolean =>
     prefixes.some((p) => id.startsWith(p));
   /**
@@ -754,19 +756,19 @@ export function NewProjectDialog({
   // 每次 render 都按"当前 storyboardModel/sceneModel/videoModel"
   // 倒推出"上次用的"用于 _pinned 标记 —— 也就是用户当前正在看 / 改的值就视为最近使用。
   const orderedStoryboardModels = useMemo(
-    () => reorderModels(storyboardModels, storyboardModel, IMAGE_RECOMMENDED_PREFIXES),
+    () => reorderModels(catalogImageModels, storyboardModel, IMAGE_RECOMMENDED_PREFIXES),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [storyboardModel],
+    [storyboardModel, catalogImageModels],
   );
   const orderedSceneModels = useMemo(
-    () => reorderModels(sceneModels, sceneModel, IMAGE_RECOMMENDED_PREFIXES),
+    () => reorderModels(catalogImageModels, sceneModel, IMAGE_RECOMMENDED_PREFIXES),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sceneModel],
+    [sceneModel, catalogImageModels],
   );
   const orderedVideoModels = useMemo(
-    () => reorderModels(realVideoModels, videoModel, VIDEO_RECOMMENDED_PREFIXES),
+    () => reorderModels(catalogVideoModels, videoModel, VIDEO_RECOMMENDED_PREFIXES),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [videoModel],
+    [videoModel, catalogVideoModels],
   );
 
   async function confirm() {

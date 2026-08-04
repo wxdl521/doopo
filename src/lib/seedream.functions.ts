@@ -530,6 +530,16 @@ export const generateImage = createServerFn({ method: "POST" })
       });
       return __afterCall("lingmeng", { url: r.url, error: r.error, model: r.model });
     }
+    // 动态供应商兜底(后台「供应商管理」登记的 OpenAI 兼容供应商;前缀命中内置分支的一律不拦截)
+    if (requested.includes("/")) {
+      const { tryDynamicProviderImage } = await import("./dynamicProvider.functions");
+      const dyn = await tryDynamicProviderImage({
+        model: requested,
+        prompt: appendNegative(data.prompt, data.negativePrompt),
+        size: data.size,
+      });
+      if (dyn) return __afterCall(dyn.provider, dyn);
+    }
     // 委托给 legacy(老 Qwen / OpenRouter 路径)
     if (requested && !isSeedreamModel(requested)) {
       // 动态 import 避免循环引用
@@ -627,6 +637,17 @@ export const generateImageWithReferences = createServerFn({ method: "POST" })
     if (requested.startsWith("revora/")) {
       const r = await (await import("./revoraImage.functions")).callRevoraImage(providerInput);
       return { url: r.url, error: r.error, model: r.model };
+    }
+    // 动态供应商兜底(I2I;未命中内置分支时查「供应商管理」目录)
+    {
+      const { tryDynamicProviderImage } = await import("./dynamicProvider.functions");
+      const dyn = await tryDynamicProviderImage({
+        model: requested,
+        prompt: data.prompt,
+        size: data.size || "2K",
+        referenceImages: refs,
+      });
+      if (dyn) return { url: dyn.url, error: dyn.error, model: dyn.model };
     }
     return { url: "", error: `当前生图模型暂不支持参考图 I2I：${requested}`, model: requested };
   });
@@ -1710,6 +1731,20 @@ export const generateStoryboardShotImage = createServerFn({ method: "POST" })
       if (!r.url) return { ok: false as const, error: r.error || "灵梦未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
     }
+    // 动态供应商兜底(前缀未命中内置分支时查「供应商管理」目录)
+    if (requested.includes("/")) {
+      const { tryDynamicProviderImage } = await import("./dynamicProvider.functions");
+      const dyn = await tryDynamicProviderImage({
+        model: requested,
+        prompt: appendNegative(instruction, negative),
+        size: "2K",
+        referenceImages: images,
+      });
+      if (dyn) {
+        if (!dyn.url) return { ok: false as const, error: dyn.error || "动态供应商未返回图片" };
+        return { ok: true as const, url: dyn.url, model: dyn.model };
+      }
+    }
     // generateStoryboardShotImage: 委托给 legacy(Qwen / Wan / OpenRouter 等)
     if (
       requested &&
@@ -2082,6 +2117,20 @@ export const regenerateStoryboardShot = createServerFn({ method: "POST" })
       });
       if (!r.url) return { ok: false as const, error: r.error || "灵梦未返回图片" };
       return { ok: true as const, url: r.url, model: r.model };
+    }
+    // 动态供应商兜底(前缀未命中内置分支时查「供应商管理」目录)
+    if (requested.includes("/")) {
+      const { tryDynamicProviderImage } = await import("./dynamicProvider.functions");
+      const dyn = await tryDynamicProviderImage({
+        model: requested,
+        prompt: appendNegative(instruction, negative),
+        size: "2K",
+        referenceImages: images,
+      });
+      if (dyn) {
+        if (!dyn.url) return { ok: false as const, error: dyn.error || "动态供应商未返回图片" };
+        return { ok: true as const, url: dyn.url, model: dyn.model };
+      }
     }
     if (requested && !isSeedreamModel(requested)) {
       const { generateImage: legacy } = await import("./openrouterImage.functions");

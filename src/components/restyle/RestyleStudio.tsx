@@ -91,6 +91,7 @@ import { createMediaUploadUrl, signMediaReadUrl } from "../../lib/restyleMedia.f
 import { persistAssetImage } from "../../lib/workspaceMedia.functions";
 import { persistRestyleVideo } from "../../lib/restyleMedia.functions";
 import { realImageModelOptions, realVideoModels } from "../NewProjectDialog";
+import { useListedModels } from "../../hooks/useListedModels";
 import {
   isConfirmIntent,
   isReanalyzeIntent,
@@ -1159,6 +1160,15 @@ export default function RestyleStudio() {
   const callListModelPricing = useServerFn(listModelPricing);
 
   const activeProject = projects.find((project) => project.id === activeProjectId);
+  // 模型目录唯一数据源：已上架 + 启用（60s 缓存）；接口异常时回落静态列表
+  const { models: listedImageModels } = useListedModels("image", realImageModelOptions);
+  const { models: listedVideoModels } = useListedModels("video", realVideoModels);
+  // 支持素材库预审的视频模型排最前（与 RESTYLE_VIDEO_MODELS 同一排序规则）
+  const sortedVideoModels = [...listedVideoModels].sort(
+    (a, b) =>
+      Number(getVideoAssetLibrarySupport(b.id).supported) -
+      Number(getVideoAssetLibrarySupport(a.id).supported),
+  );
   // projects 的最新快照：异步回调按 projectId 取自己项目的字段（如目标画风），
   // 不被「切换到其他项目」影响。渲染期只维护全量快照，不再按激活项目覆盖单份 ref。
   const projectsRef = useRef<RestyleProject[]>(projects);
@@ -2311,8 +2321,7 @@ export default function RestyleStudio() {
             source.id,
             (input) => callCreateMediaUploadUrl({ data: input }),
             (input) => callSignMediaReadUrl({ data: input }),
-            (percent) =>
-              setAttachmentUpload(source.id, { status: "uploading", progress: percent }),
+            (percent) => setAttachmentUpload(source.id, { status: "uploading", progress: percent }),
           );
           if (!direct.ok) return direct;
           url = direct.url;
@@ -2537,7 +2546,7 @@ export default function RestyleStudio() {
         let polled: Awaited<ReturnType<typeof callPollVideoTask>>;
         try {
           polled = await callPollVideoTask({
-            data: { taskId: submitted.taskId, backend: submitted.backend },
+            data: { taskId: submitted.taskId, backend: submitted.backend, model: submitted.model },
           });
         } catch {
           // 轮询幂等，短暂网络抖动不判失败。
@@ -2927,7 +2936,11 @@ export default function RestyleStudio() {
             let polled: Awaited<ReturnType<typeof callPollVideoTask>>;
             try {
               polled = await callPollVideoTask({
-                data: { taskId: submitted.taskId, backend: submitted.backend },
+                data: {
+                  taskId: submitted.taskId,
+                  backend: submitted.backend,
+                  model: submitted.model,
+                },
               });
             } catch (error) {
               // 轮询是幂等的，短暂的 502/网络抖动不应直接把已提交的任务标记失败。
@@ -5089,6 +5102,7 @@ export default function RestyleStudio() {
                 <RestyleSpecCard
                   project={activeProject}
                   videoPricing={videoPricingRows}
+                  listedVideoModels={listedVideoModels}
                   currentVideoModel={currentVideoModel}
                   onPatch={updateProjectSetup}
                   onConfirm={confirmProductionSpecs}
@@ -5502,7 +5516,7 @@ export default function RestyleStudio() {
                   className="max-w-40 rounded-md bg-transparent px-2 py-1 text-xs text-text-secondary outline-none hover:bg-bg"
                   aria-label={t.restyle_image_model}
                 >
-                  {realImageModelOptions.map((model) => (
+                  {listedImageModels.map((model) => (
                     <option key={model.id} value={model.id}>
                       {model.label}
                     </option>
@@ -5523,7 +5537,7 @@ export default function RestyleStudio() {
                   className="max-w-40 rounded-md bg-transparent px-2 py-1 text-xs text-text-secondary outline-none hover:bg-bg"
                   aria-label={t.restyle_video_model}
                 >
-                  {RESTYLE_VIDEO_MODELS.map((model) => (
+                  {sortedVideoModels.map((model) => (
                     <option key={model.id} value={model.id}>
                       {model.label}
                       {getVideoAssetLibrarySupport(model.id).supported
@@ -5648,6 +5662,7 @@ export default function RestyleStudio() {
               <RestyleSetupPanel
                 project={activeProject}
                 videoPricing={videoPricingRows}
+                listedVideoModels={listedVideoModels}
                 currentVideoModel={currentVideoModel}
                 onPatch={updateProjectSetup}
                 t={t}

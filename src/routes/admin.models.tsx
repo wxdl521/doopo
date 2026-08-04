@@ -5,6 +5,8 @@ import { Plus, Star, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import PageHeader from "@/components/PageHeader";
 import { Input } from "@/components/ui/input";
+import { useListedModels } from "@/hooks/useListedModels";
+import { realImageModelOptions, realVideoModels } from "@/components/NewProjectDialog";
 import {
   deleteModelPricing,
   listModelPricing,
@@ -51,6 +53,11 @@ function AdminModels() {
   const [deletedIds, setDeletedIds] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // 已上架目录（供应商管理）：模型 id 可下拉选择，仍可手填
+  const { models: listedImageModels } = useListedModels("image", realImageModelOptions);
+  const { models: listedVideoModels } = useListedModels("video", realVideoModels);
+  // 已上架但未定价提醒条
+  const unpricedListed = [...listedImageModels, ...listedVideoModels].filter((m) => !m.priced);
 
   const loadRows = useCallback(async () => {
     setLoading(true);
@@ -133,6 +140,29 @@ function AdminModels() {
     <div className="space-y-6">
       <PageHeader title={t.admin_models_pricing_title} subtitle={t.admin_models_pricing_sub} />
 
+      {/* 已上架目录下拉（仍可手填模型 id / 前缀） */}
+      <datalist id="pricing-catalog-image">
+        {listedImageModels.map((m) => (
+          <option key={m.id} value={m.id}>
+            {m.label}
+          </option>
+        ))}
+      </datalist>
+      <datalist id="pricing-catalog-video">
+        {listedVideoModels.map((m) => (
+          <option key={m.id} value={m.id}>
+            {m.label}
+          </option>
+        ))}
+      </datalist>
+
+      {unpricedListed.length > 0 ? (
+        <div className="rounded-lg border border-amber-400/60 bg-amber-500/10 px-4 py-3 text-xs text-amber-500">
+          <span className="font-medium">{t.admin_models_unpriced_banner}</span>
+          <span className="ml-1">{unpricedListed.map((m) => m.label).join("、")}</span>
+        </div>
+      ) : null}
+
       <section className="panel overflow-hidden">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border px-5 py-4">
           <button
@@ -211,6 +241,7 @@ function AdminModels() {
                         value={row.modelId}
                         onChange={(event) => patchRow(row.id, { modelId: event.target.value })}
                         placeholder={t.admin_models_model_id_placeholder}
+                        list={`pricing-catalog-${row.kind}`}
                         className="font-mono text-xs"
                       />
                     </td>
@@ -274,7 +305,9 @@ function AdminModels() {
                         step="1"
                         value={String(row.sortOrder)}
                         onChange={(event) =>
-                          patchRow(row.id, { sortOrder: Math.max(0, Math.floor(Number(event.target.value) || 0)) })
+                          patchRow(row.id, {
+                            sortOrder: Math.max(0, Math.floor(Number(event.target.value) || 0)),
+                          })
                         }
                         className="w-20 text-right"
                       />
