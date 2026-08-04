@@ -95,7 +95,7 @@ export function RestyleProcessPanel({
         )}
       </button>
       {!collapsed && (
-        <div className="max-h-[52vh] space-y-4 overflow-y-auto px-4 pb-4">
+        <div className="space-y-4 px-4 pb-4">
           <div>
             <p className="mb-2 text-xs font-semibold text-text-primary">
               {t.restyle_process_timeline}

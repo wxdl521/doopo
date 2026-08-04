@@ -149,6 +149,28 @@ import {
 type AssetLibraryStatus = "idle" | "loading" | "ready" | "error";
 type RestyleView = "workbench" | "canvas";
 
+/** 右栏分段 Tab：设置 / 流程 / 文件，每次只渲染一块内容。 */
+type RestyleRailTab = "setup" | "process" | "files";
+const RESTYLE_RAIL_TAB_STORAGE_KEY = "doopoo:restyle:rail-tab";
+
+/** 读出按 projectId 记忆的右栏 Tab；非法条目丢弃，localStorage 不可用（SSR）时返回空表。 */
+function readRestyleRailTabs(): Record<string, RestyleRailTab> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(RESTYLE_RAIL_TAB_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed: unknown = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    const tabs: Record<string, RestyleRailTab> = {};
+    for (const [projectId, tab] of Object.entries(parsed as Record<string, unknown>)) {
+      if (tab === "setup" || tab === "process" || tab === "files") tabs[projectId] = tab;
+    }
+    return tabs;
+  } catch {
+    return {};
+  }
+}
+
 /** 单个执行步骤：用于把 Agent 的处理过程直接呈现在对话流里。 */
 type RestyleRunStep = {
   id: string;
@@ -1083,6 +1105,28 @@ export default function RestyleStudio() {
   const [assetReviewStale, setAssetReviewStale] = useState(false);
   // 「过程与提示词」面板的逐项资产生成进度，键为 extractedAsset.id。
   const [assetRunStatus, setAssetRunStatus] = useState<Record<string, RestyleAssetRunStatus>>({});
+  // 右栏分段 Tab：按 projectId 记忆最近一次选择，localStorage 持久化（刷新/切项目恢复）。
+  const [railTabs, setRailTabs] = useState<Record<string, RestyleRailTab>>(() =>
+    readRestyleRailTabs(),
+  );
+  // 待确认关卡自动跳到「流程」Tab 后的高亮提示，用户手动点任意 Tab 即清除。
+  const [processTabAttention, setProcessTabAttention] = useState(false);
+  const railTab: RestyleRailTab = railTabs[activeProjectId ?? ""] ?? "setup";
+
+  function selectRailTab(tab: RestyleRailTab) {
+    setProcessTabAttention(false);
+    const key = activeProjectId ?? "";
+    setRailTabs((current) => {
+      if (current[key] === tab) return current;
+      const next = { ...current, [key]: tab };
+      try {
+        window.localStorage.setItem(RESTYLE_RAIL_TAB_STORAGE_KEY, JSON.stringify(next));
+      } catch {
+        // localStorage 不可用时仅保留组件内记忆。
+      }
+      return next;
+    });
+  }
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const reuploadInputRef = useRef<HTMLInputElement>(null);
@@ -1311,6 +1355,11 @@ export default function RestyleStudio() {
   // 当前项目是否在执行。其他项目的任务不会影响这里，因此可以并发发送。
   const isAnalyzing = Boolean(activeRun?.running);
 
+  // 右栏 Tab 角标：流程栏在分析/生图/渲染进行中亮小圆点，文件栏显示文件树节点数。
+  const processTabRunning =
+    isAnalyzing || Object.values(assetRunStatus).some((run) => run.status === "running");
+  const filesTabCount = activeProject ? countTreeLeaves(projectFileTree) : 0;
+
   // ---- 人物关系：表格与画布共用 project.characterRelations 一份数据 ----
   const characterAssets = useMemo(
     () => (activeProject?.extractedAssets ?? []).filter((asset) => asset.kind === "character"),
@@ -1363,6 +1412,19 @@ export default function RestyleStudio() {
     () => findPendingActionPhrase(activeConversation?.messages ?? []),
     [activeConversation?.messages],
   );
+  // 出现待确认关卡（分步护航/自定义干预的暂停点）时自动切到「流程」Tab 并高亮，
+  // 避免用户停在「设置」页错过确认。只在口令「新出现」时触发，不拦用户之后手动切走。
+  const seenPendingPhraseRef = useRef<string | null>(null);
+  useEffect(() => {
+    const key = pendingActionPhrase ? `${activeProjectId ?? ""}:${pendingActionPhrase}` : null;
+    const seen = seenPendingPhraseRef.current;
+    seenPendingPhraseRef.current = key;
+    if (key && key !== seen) {
+      selectRailTab("process");
+      setProcessTabAttention(true);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 仅响应口令变化，railTab 用最新闭包即可。
+  }, [pendingActionPhrase, activeProjectId]);
   // 关系表只挂在最新一条资产表消息下面，避免历史消息里重复出现。
   const lastAssetTableMessageId = useMemo(() => {
     const messages = activeConversation?.messages ?? [];
@@ -5460,60 +5522,115 @@ export default function RestyleStudio() {
               </button>
             </div>
           </div>
-          <RestyleSetupPanel
-            project={activeProject}
-            videoPricing={videoPricingRows}
-            currentVideoModel={currentVideoModel}
-            onPatch={updateProjectSetup}
-            t={t}
-          />
-          <RestyleProcessPanel
-            project={activeProject}
-            isAnalyzing={isAnalyzing}
-            assetRunStatus={assetRunStatus}
-            onStyleBriefChange={handleStyleBriefChange}
-            onAssetPromptChange={handleAssetPromptOverride}
-            onAssetPromptReset={handleAssetPromptReset}
-            onRegenerateAsset={regenerateAssetWithCurrentPrompt}
-            onSegmentPromptChange={handleSegmentPromptChange}
-            t={t}
-          />
-          <div className="min-h-0 flex-1 overflow-y-auto p-3">
-            {activeProject ? (
-              <div>
-                <div className="mb-2 flex items-center gap-2 px-1 text-xs">
-                  <span className="truncate font-semibold text-text-primary">
-                    {activeProject.title}
-                  </span>
-                  <span className="shrink-0 text-[11px] text-accent">跟转绘步骤一一对应</span>
-                </div>
-                <ProjectFileTree
-                  nodes={projectFileTree}
-                  closedPaths={closedFileTreePaths}
-                  selectedPreviewKey={visibleFilePreview?.key ?? ""}
-                  onToggleFolder={toggleFileTreePath}
-                  onOpenFile={openFilePreview}
-                  onDragFile={setDraggedFileId}
-                  dropTarget={fileDropTarget}
-                  onDropTarget={setFileDropTarget}
-                  onCanDropFile={canDropProjectFile}
-                  onDropFile={moveProjectFile}
-                  onContextMenu={(event, preview) => {
-                    event.preventDefault();
-                    setFileContextMenu({ x: event.clientX, y: event.clientY, preview });
-                  }}
-                  onContextMenuFolder={() => undefined}
-                  onChooseFolderAsset={(node) => {
-                    const kind = node.id.match(/^results\/assets\/(character|scene|prop)$/)?.[1] as
-                      RestyleAsset["kind"] | undefined;
-                    if (kind) setAssetPickerKind(kind);
-                  }}
-                />
+          <div
+            className="flex gap-1 border-b border-border p-2"
+            role="tablist"
+            aria-label="右栏面板切换"
+          >
+            {(
+              [
+                { id: "setup", label: t.restyle_tab_setup },
+                { id: "process", label: t.restyle_tab_process },
+                { id: "files", label: t.restyle_tab_files },
+              ] as const
+            ).map((tab) => {
+              const selected = railTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={selected}
+                  onClick={() => selectRailTab(tab.id)}
+                  className={`flex flex-1 items-center justify-center gap-1 rounded-md px-2 py-1.5 text-xs font-medium transition ${
+                    selected
+                      ? "bg-accent text-bg"
+                      : "text-text-secondary hover:bg-bg-elevated hover:text-text-primary"
+                  } ${tab.id === "process" && processTabAttention ? "animate-pulse" : ""}`}
+                >
+                  {tab.label}
+                  {tab.id === "process" && processTabRunning && (
+                    <span
+                      aria-hidden="true"
+                      className={`h-1.5 w-1.5 rounded-full ${selected ? "bg-bg" : "bg-accent"}`}
+                    />
+                  )}
+                  {tab.id === "files" && filesTabCount > 0 && (
+                    <span
+                      aria-hidden="true"
+                      className={`rounded-full px-1 text-[10px] leading-4 ${
+                        selected ? "bg-bg/20 text-bg" : "bg-accent-dim text-accent"
+                      }`}
+                    >
+                      {filesTabCount}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {railTab === "setup" && (
+              <RestyleSetupPanel
+                project={activeProject}
+                videoPricing={videoPricingRows}
+                currentVideoModel={currentVideoModel}
+                onPatch={updateProjectSetup}
+                t={t}
+              />
+            )}
+            {railTab === "process" && (
+              <RestyleProcessPanel
+                project={activeProject}
+                isAnalyzing={isAnalyzing}
+                assetRunStatus={assetRunStatus}
+                onStyleBriefChange={handleStyleBriefChange}
+                onAssetPromptChange={handleAssetPromptOverride}
+                onAssetPromptReset={handleAssetPromptReset}
+                onRegenerateAsset={regenerateAssetWithCurrentPrompt}
+                onSegmentPromptChange={handleSegmentPromptChange}
+                t={t}
+              />
+            )}
+            {railTab === "files" && (
+              <div className="p-3">
+                {activeProject ? (
+                  <div>
+                    <div className="mb-2 flex items-center gap-2 px-1 text-xs">
+                      <span className="truncate font-semibold text-text-primary">
+                        {activeProject.title}
+                      </span>
+                      <span className="shrink-0 text-[11px] text-accent">跟转绘步骤一一对应</span>
+                    </div>
+                    <ProjectFileTree
+                      nodes={projectFileTree}
+                      closedPaths={closedFileTreePaths}
+                      selectedPreviewKey={visibleFilePreview?.key ?? ""}
+                      onToggleFolder={toggleFileTreePath}
+                      onOpenFile={openFilePreview}
+                      onDragFile={setDraggedFileId}
+                      dropTarget={fileDropTarget}
+                      onDropTarget={setFileDropTarget}
+                      onCanDropFile={canDropProjectFile}
+                      onDropFile={moveProjectFile}
+                      onContextMenu={(event, preview) => {
+                        event.preventDefault();
+                        setFileContextMenu({ x: event.clientX, y: event.clientY, preview });
+                      }}
+                      onContextMenuFolder={() => undefined}
+                      onChooseFolderAsset={(node) => {
+                        const kind = node.id.match(/^results\/assets\/(character|scene|prop)$/)?.[1] as
+                          RestyleAsset["kind"] | undefined;
+                        if (kind) setAssetPickerKind(kind);
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <p className="px-2 py-4 text-xs leading-5 text-text-muted">
+                    {t.restyle_select_project_hint}
+                  </p>
+                )}
               </div>
-            ) : (
-              <p className="px-2 py-4 text-xs leading-5 text-text-muted">
-                {t.restyle_select_project_hint}
-              </p>
             )}
           </div>
           {inspectorOpen ? (

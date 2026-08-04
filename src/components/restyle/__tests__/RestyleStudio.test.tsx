@@ -116,7 +116,8 @@ describe("RestyleStudio prototype", () => {
     expect(screen.getByTestId("restyle-workbench")).toBeInTheDocument();
     expect(screen.getByText("项目文件")).toBeInTheDocument();
     expect(screen.getByPlaceholderText("输入你的转绘需求…")).toBeInTheDocument();
-    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+    // 右栏分段 Tab 默认停在「设置」。
+    expect(screen.getByRole("tab", { name: "设置" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("creates a local project without seeded project data", async () => {
@@ -127,12 +128,15 @@ describe("RestyleStudio prototype", () => {
     await user.click(screen.getByRole("button", { name: "新建转绘项目" }));
 
     expect(screen.getByTestId("restyle-workbench")).toBeInTheDocument();
+    // 第 4 处项目标题在右栏「文件」Tab 的文件树头部。
+    await user.click(screen.getByRole("tab", { name: "文件" }));
     expect(screen.getAllByText("未命名转绘项目 1")).toHaveLength(4);
   });
 
   it("uses the conversation as the only task progression surface", async () => {
     renderStudio();
-    expect(screen.queryByRole("tablist")).not.toBeInTheDocument();
+    // 右栏为分段 Tab（设置/流程/文件），默认停在「设置」；任务推进仍只在对话里进行。
+    expect(screen.getByRole("tab", { name: "设置" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByPlaceholderText("输入你的转绘需求…")).toBeInTheDocument();
   });
 
@@ -155,6 +159,8 @@ describe("RestyleStudio prototype", () => {
     await user.click(screen.getByRole("button", { name: "发送" }));
 
     // 首条消息会被记为目标画风，显示在「过程与提示词」面板的画风编辑框里，因此共 4 处。
+    // 该面板在右栏「流程」Tab 下，需先切过去。
+    await user.click(screen.getByRole("tab", { name: "流程" }));
     expect(screen.getAllByText("保留庄园客厅")).toHaveLength(4);
   });
 
@@ -183,6 +189,8 @@ describe("RestyleStudio prototype", () => {
 
     await user.selectOptions(screen.getByLabelText("选择项目"), "__create__");
 
+    // 第 4 处项目标题在右栏「文件」Tab 的文件树头部。
+    await user.click(screen.getByRole("tab", { name: "文件" }));
     expect(screen.getAllByText("未命名转绘项目 1")).toHaveLength(4);
   });
 
@@ -196,8 +204,10 @@ describe("RestyleStudio prototype", () => {
       new File(["source"], "EP01.mp4", { type: "video/mp4" }),
     );
 
+    // 第 2 处文件名在右栏「文件」Tab 的文件树里。
+    await user.click(screen.getByRole("tab", { name: "文件" }));
     expect(screen.getAllByText("EP01.mp4")).toHaveLength(2);
-    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "文件" })).toHaveAttribute("aria-selected", "true");
   });
 
   it("keeps uploaded videos visible after sending them into the conversation", async () => {
@@ -238,6 +248,8 @@ describe("RestyleStudio prototype", () => {
       screen.getByTestId("restyle-file-input"),
       new File(["source"], "EP01.mp4", { type: "video/mp4" }),
     );
+    // 文件树在右栏「文件」Tab 下，需先切过去。
+    await user.click(screen.getByRole("tab", { name: "文件" }));
     await user.click(screen.getByRole("button", { name: "预览文件：EP01.mp4" }));
 
     expect(screen.getByText(/本地视频/)).toBeInTheDocument();
@@ -437,7 +449,8 @@ describe("RestyleStudio prototype", () => {
     ]);
     renderStudio();
 
-    // 打开 A 的视频预览：右侧检查器显示本地视频。
+    // 打开 A 的视频预览：右侧检查器显示本地视频（文件树在「文件」Tab 下）。
+    await user.click(screen.getByRole("tab", { name: "文件" }));
     await user.click(await screen.findByRole("button", { name: "预览文件：EP-A.mp4" }));
     expect(screen.getByText(/本地视频/)).toBeInTheDocument();
 
@@ -495,5 +508,97 @@ describe("RestyleStudio prototype", () => {
     // 默认生图模型 = realImageModelOptions 里第一个可见模型（Seedream 不在可见列表时）。
     expect(imageSelect).toHaveValue("tokenflash/gpt-image-2");
     expect(videoSelect).not.toHaveValue("doubao-seedance-1-0-pro-250528");
+  });
+
+  it("defaults the right rail to the setup tab and renders only the selected panel", async () => {
+    const user = userEvent.setup();
+    saveRestyleProjects("restyle-user", [
+      seedProject({
+        id: "project-a",
+        title: "项目 A",
+        files: [{ id: "video-a", name: "EP-A.mp4", size: 1024, type: "video/mp4", lastModified: 0 }],
+      }),
+    ]);
+    renderStudio();
+
+    // 默认停在「设置」：只渲染选项区，过程面板与文件树不渲染。
+    expect(screen.getByRole("tab", { name: "设置" })).toHaveAttribute("aria-selected", "true");
+    expect(screen.getByTestId("restyle-setup-panel")).toBeInTheDocument();
+    expect(screen.queryByTestId("restyle-process-panel")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "切换文件夹：原片" }),
+    ).not.toBeInTheDocument();
+
+    // 切到「流程」：渲染过程面板，选项区卸载。
+    await user.click(screen.getByRole("tab", { name: "流程" }));
+    expect(screen.queryByTestId("restyle-setup-panel")).not.toBeInTheDocument();
+    expect(screen.getByTestId("restyle-process-panel")).toBeInTheDocument();
+
+    // 切到「文件」：渲染项目文件树，过程面板卸载。
+    await user.click(screen.getByRole("tab", { name: "文件" }));
+    expect(screen.queryByTestId("restyle-process-panel")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "切换文件夹：原片" })).toBeInTheDocument();
+  });
+
+  it("remembers the last selected rail tab per project across remounts", async () => {
+    const user = userEvent.setup();
+    saveRestyleProjects("restyle-user", [seedProject({ id: "project-a", title: "项目 A" })]);
+    const first = renderStudio();
+
+    await user.click(screen.getByRole("tab", { name: "文件" }));
+    expect(screen.getByRole("tab", { name: "文件" })).toHaveAttribute("aria-selected", "true");
+
+    // 模拟刷新：卸载后重新渲染，应从 localStorage 恢复「文件」Tab。
+    first.unmount();
+    renderStudio();
+    expect(await screen.findByRole("tab", { name: "文件" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+  });
+
+  it("shows the file count badge on the files tab", () => {
+    saveRestyleProjects("restyle-user", [
+      seedProject({
+        id: "project-a",
+        title: "项目 A",
+        files: [{ id: "video-a", name: "EP-A.mp4", size: 1024, type: "video/mp4", lastModified: 0 }],
+      }),
+    ]);
+    renderStudio();
+
+    // 角标 = 文件树叶子节点数：源视频 1 个 + 分析产物 source_asset_candidates.json 1 个 = 2。
+    expect(screen.getByRole("tab", { name: "文件" })).toHaveTextContent("2");
+  });
+
+  it("auto-switches to the process tab when a confirmation gate is pending", async () => {
+    saveRestyleProjects("restyle-user", [
+      seedProject({
+        id: "project-a",
+        title: "项目 A",
+        conversations: [
+          {
+            id: "conversation-1",
+            title: "",
+            createdAt: SEED_NOW,
+            updatedAt: SEED_NOW,
+            messages: [
+              {
+                id: "message-1",
+                role: "assistant",
+                content: "资产图片已生成。确认无误后回复“继续下一步”，即可生成转绘方案。",
+                createdAt: SEED_NOW,
+              },
+            ],
+          },
+        ],
+        activeConversationId: "conversation-1",
+      }),
+    ]);
+    renderStudio();
+
+    // 待确认关卡出现：自动切到「流程」Tab 并渲染过程面板。
+    expect(await screen.findByTestId("restyle-process-panel")).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "流程" })).toHaveAttribute("aria-selected", "true");
   });
 });
