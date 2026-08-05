@@ -1736,25 +1736,40 @@ export default function RestyleStudio() {
       (file) => file.type.startsWith("video/") && !file.isFolder,
     );
     const episodeCount = sourceFiles.length || 1;
-    const result = await callGenerateRestylePlan({
-      data: {
-        model: selectedModel,
-        instruction: withTranscript(
-          withRelationBrief(withStyleBrief(project.planNote, styleBrief)),
-          project.transcript,
-        ),
-        sourceFiles: (sourceFiles.length ? sourceFiles : project.files).map((file) => ({
-          id: file.episode ?? file.id,
-          name: file.name,
-          type: file.type,
-          size: file.size,
-        })),
-        assets: project.extractedAssets.map(({ id: _id, ...asset }) => asset),
-        episodeCount,
-        shotSchedule: project.shotSchedule ?? [],
-        targetMarket: project.targetMarket ?? "kr",
-      },
-    });
+    // 服务端函数抛异常（平台断连/5xx/网络中断）时必须有兜底，
+    // 否则 running 态永远清不掉、聊天区无失败提示（历史事故）。
+    let result: Awaited<ReturnType<typeof callGenerateRestylePlan>>;
+    try {
+      result = await callGenerateRestylePlan({
+        data: {
+          model: selectedModel,
+          instruction: withTranscript(
+            withRelationBrief(withStyleBrief(project.planNote, styleBrief)),
+            project.transcript,
+          ),
+          sourceFiles: (sourceFiles.length ? sourceFiles : project.files).map((file) => ({
+            id: file.episode ?? file.id,
+            name: file.name,
+            type: file.type,
+            size: file.size,
+          })),
+          assets: project.extractedAssets.map(({ id: _id, ...asset }) => asset),
+          episodeCount,
+          shotSchedule: project.shotSchedule ?? [],
+          targetMarket: project.targetMarket ?? "kr",
+        },
+      });
+    } catch (error) {
+      if (isRunAborted(projectId)) return false;
+      const detail = error instanceof Error ? error.message : "网络异常";
+      finishRun(projectId, "failed", detail);
+      setAnalysisError(detail);
+      appendConversationMessage(projectId, conversationId, {
+        role: "assistant",
+        content: `转绘方案生成失败：${detail}`,
+      });
+      return false;
+    }
     if (!result.ok) {
       result.error = relabelRestyleError(result.error, selectedModel);
       if (isRunAborted(projectId)) return false;
@@ -3817,7 +3832,31 @@ export default function RestyleStudio() {
     return analysisCompleted;
   }
 
+  /**
+   * 全局兜底：任何分支未预期的异常都落到失败态并提示，
+   * 防止新增分支再次出现「静默卡死」（running 永远清不掉）。
+   */
   async function sendChatMessage(overrideMessage?: string) {
+    try {
+      await sendChatMessageInner(overrideMessage);
+    } catch (error) {
+      const pid = activeProjectId;
+      const detail = error instanceof Error ? error.message : "未知异常";
+      if (pid) {
+        finishRun(pid, "failed", detail);
+        const convId = projectsRef.current.find((item) => item.id === pid)?.activeConversationId;
+        if (convId) {
+          appendConversationMessage(pid, convId, {
+            role: "assistant",
+            content: `操作失败：${detail}。可重试或换种说法。`,
+          });
+        }
+      }
+      setAnalysisError(detail);
+    }
+  }
+
+  async function sendChatMessageInner(overrideMessage?: string) {
     if (!activeProject || !activeConversation) return;
     // 同一项目内串行；不同项目各自独立，可并发执行。
     if (isProjectRunning(activeProject.id)) return;
@@ -3910,26 +3949,37 @@ export default function RestyleStudio() {
       const sourceFiles = activeProject.files.filter(
         (file) => file.type.startsWith("video/") && !file.isFolder,
       );
-      const result = await callGenerateRestylePlan({
-        data: {
-          model: selectedModel,
-          instruction: withTranscript(
-            withRelationBrief(withStyleBrief(message, styleBrief)),
-            activeProject.transcript,
-          ),
-          sourceFiles: (sourceFiles.length ? sourceFiles : activeProject.files).map((file) => ({
-            id: file.episode ?? file.id,
-            name: file.name,
-            type: file.type,
-            size: file.size,
-          })),
-          assets: activeProject.extractedAssets.map(({ id: _id, ...asset }) => asset),
-          episodeCount: activeProject.planEpisodes?.length || sourceFiles.length || 1,
-          existingEpisodes: activeProject.planEpisodes ?? [],
-          shotSchedule: activeProject.shotSchedule ?? [],
-          targetMarket: activeProject.targetMarket ?? "kr",
-        },
-      });
+      let result: Awaited<ReturnType<typeof callGenerateRestylePlan>>;
+      try {
+        result = await callGenerateRestylePlan({
+          data: {
+            model: selectedModel,
+            instruction: withTranscript(
+              withRelationBrief(withStyleBrief(message, styleBrief)),
+              activeProject.transcript,
+            ),
+            sourceFiles: (sourceFiles.length ? sourceFiles : activeProject.files).map((file) => ({
+              id: file.episode ?? file.id,
+              name: file.name,
+              type: file.type,
+              size: file.size,
+            })),
+            assets: activeProject.extractedAssets.map(({ id: _id, ...asset }) => asset),
+            episodeCount: activeProject.planEpisodes?.length || sourceFiles.length || 1,
+            existingEpisodes: activeProject.planEpisodes ?? [],
+            shotSchedule: activeProject.shotSchedule ?? [],
+            targetMarket: activeProject.targetMarket ?? "kr",
+          },
+        });
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : "网络异常";
+        finishRun(projectId, "failed", detail);
+        appendConversationMessage(projectId, conversationId, {
+          role: "assistant",
+          content: `提示词修改失败：${detail}`,
+        });
+        return;
+      }
       if (result.ok) {
         const updatedVideoNames = result.episodes.map((episode) =>
           sourceVideoLabel(episode.episode),
