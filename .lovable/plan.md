@@ -1,53 +1,43 @@
-# 修复转绘视频生成失败：参考视频裁成短片段
+# 修复转绘视频仍然失败：禁止超长原片回退提交
 
-## 问题定位（已核实）
+## 已确认原因
 
-- 失败发生在每段提交的最后一步：`RestyleStudio.tsx` 的 `ensureReferenceVideoUrl` 把**整条原片**当参考视频，交给 `videoGenerate.functions.ts` 的 `topenrouterEnsureAsset({ assetType: "Video" })` 登记素材。
-- TopenRouter 素材库限制参考视频时长 1.8–30.2 秒，原片是分钟级，所以每段都返回 `400 Duration must be between 1.8s and 30.2s`。
-- 图片素材（首帧、参考图 2–5）全部通过审核，说明密钥、素材权限、网络都正常。
-- 成片失败（「以下分段还没有可用视频」）是分段全失败的连带结果。
-- `EP01 U02` 的 `Failed to fetch` 是另一类瞬时网络错误，单独加重试兜底。
-- 现状：分段结构只有 `{ id, prompt }`，没有原片时间区间；但分析阶段已产出逐镜表 `shotSchedule`（带 `startMs`/`endMs`），可作为切分依据。
+- 生产服务日志在 `2026-08-05 09:41–09:42 UTC` 连续记录 TopenRouter `Video` 素材上传 400：`Duration must be between 1.8s and 30.2s`，说明失败仍发生在参考视频入库，而不是视频模型生成阶段。
+- 当前代码虽已接入分段裁剪，但 `ensureSegmentReferenceVideoUrl` 在旧项目缺少 `startMs/endMs`、逐镜表为空或无法估算原片时长时，会把整条原片重新提交；这正好绕过裁剪并复现相同 400。
+- 当前生产日志没有出现裁剪任务信号，和上述回退路径一致；同时需要确认修复版本已发布到用户正在使用的自定义域名。
+- 截图中的 `Unchecked runtime.lastError: Could not establish connection` 来自浏览器扩展 `content.js`，不是 Doopoo 视频生成错误。
+- 页面在分段或成片失败时仍显示“已生成，并按顺序合成整集成片”，属于状态播报不准确，会掩盖真实失败结果。
 
 ## 修复方案
 
-按分段对应的时间区间，在服务端把原片裁成 30 秒以内的 mp4 片段，再登记为参考视频素材。
+### 1. 参考视频采用安全失败策略
 
-### 1. 分段时间区间（新增数据）
+- 修改 `RestyleStudio.tsx`：素材库渠道只有在以下条件之一成立时才携带参考视频：
+  - 已确认原片自身时长在 1.8–30 秒；
+  - 已成功取得 1.8–30 秒的裁剪片段 URL。
+- 无法推算分段区间、原片时长未知、裁剪服务未配置、裁剪失败或超时时，一律降级为“不带参考视频”，不再把整片作为旧行为回退。
+- 非素材库渠道保持现有行为，不扩大改动范围。
 
-- `src/lib/restyleAnalysis.functions.ts`：`PlanEpisodeSchema` 的 segment 增加可选 `startMs` / `endMs`（旧项目缺字段不报错）；提示词要求导演模型对齐 `shotSchedule` 给出每段起止毫秒，并约束单段不超过 30 秒。
-- 服务端后处理兜底：模型没给或区间非法时，用 `shotSchedule` 按分段序号就近推算；仍不可用时按分段数均分原片时长。
-- 统一夹取到 1.8–30 秒，越界向后截断。
-- `src/components/restyle/restyleStorage.ts` 的分段解析与持久化同步补上这两个字段。
+### 2. 补齐旧项目的时间区间兜底
 
-### 2. 服务端裁剪（扩展现有转码服务）
+- 优先使用方案中的 `startMs/endMs`，其次使用 `shotSchedule`。
+- 若旧项目两者都没有，但浏览器仍能读取源视频时长，则按分段数均分并裁剪到 30 秒内。
+- 若连真实时长也不可得，直接走无参考视频降级，保证视频任务仍可提交。
 
-- `src/lib/videoStitch.functions.ts` 新增 `submitVideoTrimJob` / `pollVideoTrimJob`：
-  - `POST {TRANSCODE_API_URL}/trim  { url, startMs, endMs, format: "mp4" } -> { jobId }`
-  - `GET  {TRANSCODE_API_URL}/jobs/{jobId} -> { status, outputUrl?, error? }`
-  - 复用现有 `TRANSCODE_API_URL` / `TRANSCODE_API_KEY`，未配置时返回明确提示。
-- 裁剪结果按 `sourceId|startMs|endMs` 做项目级缓存，同一片段跨集、重跑只裁一次。
+### 3. 增加可核验日志
 
-### 3. 前端接线
+- 每段明确记录参考视频决策：`原片合规`、`裁剪成功`、`命中裁剪缓存`、`无区间而省略`、`裁剪失败而省略`。
+- 服务端裁剪提交与轮询增加不含密钥的结构化日志，记录 `jobId`、起止毫秒、状态和错误，便于区分“未进入裁剪”与“裁剪服务失败”。
 
-- `src/components/restyle/RestyleStudio.tsx`：`runRenderQueue` 把 `ensureReferenceVideoUrl(projectId, job.source)` 换成新的 `ensureSegmentReferenceVideoUrl(projectId, job)`：
-  1. 取回原片持久 URL（沿用现有逻辑）；
-  2. 该段有时间区间且原片超过 30 秒 → 提交裁剪任务、轮询、取回片段 URL；
-  3. 裁剪成功 → 用片段 URL 提交，日志写「已裁剪 12.4s 参考片段」；
-  4. 裁剪不可用或失败 → 降级为**不带参考视频**提交，日志说明原因，不再让整段失败。
-- 素材入库与裁剪轮询增加一次网络重试（退避 2 秒），修掉 `Failed to fetch` 这类瞬时失败。
+### 4. 修正最终状态播报
 
-### 4. 其它渠道
-
-- `src/lib/videoAssetLibrary.ts` 增加时长约束常量；客易云 / 筷子丽帧走素材库时复用同一套裁剪与降级路径，避免同类 400。
-
-## 部署前置
-
-外部转码服务需要先支持 `/trim` 端点。未上线前代码走「不带参考视频」降级，保证仍能出片。
+- 队列结束后统计分段和成片的真实状态。
+- 仅所有目标成片成功时显示“已生成并合成”；存在失败时改为“部分分段/成片失败”，列出对应集与分段，并保留重试入口。
 
 ## 验证
 
-- [ ] 分钟级原片 + 8 段 → 每段参考视频时长落在 1.8–30 秒，素材入库返回 200
-- [ ] 转码服务未配置 → 分段仍成功（日志提示未使用参考视频）
-- [ ] 同一区间重跑 → 命中缓存不重复裁剪
-- [ ] 分段全部成功后 → 成片合成正常
+- 旧项目无时间码 + 分钟级原片：不再出现素材上传时长 400，日志显示已省略参考视频。
+- 新项目有时间码：每段裁剪结果均为 1.8–30 秒，随后素材入库成功。
+- 裁剪服务未配置或失败：视频生成仍能以图片和提示词继续提交。
+- 分段或成片失败：聊天区不再误报全部合成成功。
+- 发布后在自定义域名重新执行一段，并核对生产日志确认不再上传整条原片。
