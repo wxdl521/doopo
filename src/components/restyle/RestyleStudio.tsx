@@ -3010,6 +3010,16 @@ export default function RestyleStudio() {
         // AgentEarth 的异步接口建议每 5 秒查询一次；其它后端也可安全复用这个节奏。
         let submitted: Awaited<ReturnType<typeof callSubmitVideoTask>> | null = null;
         let submitFailure: string | null = null;
+        // 时长按分段的场景区间计算（夹取 2~15s），不再硬编码 5s——
+        // 否则 110s 原片只能产出 8×5s=40s。
+        const segmentForDuration = projectsRef.current
+          .find((item) => item.id === projectId)
+          ?.planEpisodes?.find((item) => item.episode === job.episode)
+          ?.segments.find((item) => item.id === job.segmentId);
+        const segmentDurationSec =
+          segmentForDuration?.endMs != null && segmentForDuration?.startMs != null
+            ? Math.min(15, Math.max(2, Math.round((segmentForDuration.endMs - segmentForDuration.startMs) / 1000)))
+            : 5;
         // 上游时长校验错误（如 Duration must be between）一次性标记：移除参考视频重投
         let referenceDroppedForDuration = false;
         // 被拒降级链：剔除被点名参考图重投 → 只留首帧 → 仅文本 + 参考视频；6 次硬上限防死循环。
@@ -3027,7 +3037,7 @@ export default function RestyleStudio() {
               model: videoModel,
               ratio: projectAspect,
               resolution: "720P",
-              duration: 5,
+              duration: segmentDurationSec,
               generateAudio: true,
               watermark: false,
             },
