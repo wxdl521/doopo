@@ -3,8 +3,7 @@ import {
   clampSegmentRange,
   ensureSegmentReferenceClip,
   estimateSourceDurationMs,
-  rangeFromEvenSplit,
-  rangeFromShots,
+  rangesFromSceneGroups,
   resolveSegmentTimeRange,
   trimCacheKey,
   withBackoffRetry,
@@ -13,14 +12,28 @@ import {
 } from "./segmentReference";
 import type { DirectionShot } from "./cameraDirection";
 
-function shot(startMs: number, endMs: number, shotNo = `SC${startMs}`): DirectionShot {
-  return { shotNo, startMs, endMs, scene: "客厅", shotType: "中景", emotion: "中性" };
+function shot(
+  startMs: number,
+  endMs: number,
+  shotNo = `SC${startMs}`,
+  scene = "客厅",
+): DirectionShot {
+  return { shotNo, startMs, endMs, scene, shotType: "中景", emotion: "中性" };
 }
 
 // 8 镜 × 15s = 120s 原片
 const SHOTS: DirectionShot[] = Array.from({ length: 8 }, (_, i) =>
   shot(i * 15_000, (i + 1) * 15_000, `SC00${i + 1}`),
 );
+
+// 多场景逐镜表：客厅 0–12s（2 镜）→ 街道 12–24s（2 镜）→ 卧室 24–30s（1 镜）
+const MULTI_SCENE_SHOTS: DirectionShot[] = [
+  shot(0, 6_000, "SC001", "客厅"),
+  shot(6_000, 12_000, "SC002", "客厅"),
+  shot(12_000, 18_000, "SC003", "街道"),
+  shot(18_000, 24_000, "SC004", "街道"),
+  shot(24_000, 30_000, "SC005", "卧室"),
+];
 
 describe("clampSegmentRange", () => {
   it("合法区间原样通过（取整）", () => {
@@ -44,94 +57,124 @@ describe("clampSegmentRange", () => {
   });
 });
 
-describe("rangeFromShots · 逐镜表就近推算", () => {
-  it("8 镜 4 段：每段恰好 2 镜（30s，夹取上限内）", () => {
-    expect(rangeFromShots(SHOTS, 0, 4)).toEqual({ startMs: 0, endMs: 30_000 });
-    expect(rangeFromShots(SHOTS, 3, 4)).toEqual({ startMs: 90_000, endMs: 120_000 });
+describe("rangesFromSceneGroups · 场景优先分组", () => {
+  it("多场景逐镜表：分段边界全部落在场景切换处，无场景中间切", () => {
+    const ranges = rangesFromSceneGroups(MULTI_SCENE_SHOTS, 3);
+    expect(ranges).toHaveLength(3);
+    expect(ranges[0]).toMatchObject({
+      startMs: 0,
+      endMs: 12_000,
+      scene: "客厅",
+      firstShotNo: "SC001",
+      lastShotNo: "SC002",
+    });
+    expect(ranges[1]).toMatchObject({
+      startMs: 12_000,
+      endMs: 24_000,
+      scene: "街道",
+      firstShotNo: "SC003",
+      lastShotNo: "SC004",
+    });
+    expect(ranges[2]).toMatchObject({
+      startMs: 24_000,
+      endMs: 30_000,
+      scene: "卧室",
+      firstShotNo: "SC005",
+      lastShotNo: "SC005",
+    });
+    // 每个分段边界（12s、24s）都是场景切换点；组内不出现第二个场景。
+    for (const range of ranges) expect(range.scene).not.toContain("/");
   });
 
-  it("8 镜 8 段：每段 1 镜（15s）", () => {
-    expect(rangeFromShots(SHOTS, 2, 8)).toEqual({ startMs: 30_000, endMs: 45_000 });
+  it("单场景长段不被拆分：分段边界保持完整，仅参考区间被裁到 30s", () => {
+    const ranges = rangesFromSceneGroups([shot(0, 45_000, "SC001", "仓库")], 1);
+    expect(ranges).toHaveLength(1);
+    expect(ranges[0]).toMatchObject({
+      startMs: 0,
+      endMs: 30_000, // clampSegmentRange 只裁参考视频代表性区间
+      scene: "仓库",
+      firstShotNo: "SC001",
+      lastShotNo: "SC001",
+    });
   });
 
-  it("8 镜 2 段：每段 4 镜 60s，夹取截断到 30s", () => {
-    expect(rangeFromShots(SHOTS, 1, 2)).toEqual({ startMs: 60_000, endMs: 90_000 });
+  it("尾部短段并入前组，不单独成段", () => {
+    const ranges = rangesFromSceneGroups(
+      [
+        shot(0, 6_000, "SC001", "客厅"),
+        shot(6_000, 12_000, "SC002", "客厅"),
+        shot(12_000, 18_000, "SC003", "街道"),
+        shot(18_000, 24_000, "SC004", "街道"),
+        shot(24_000, 26_000, "SC005", "卧室"), // 2s 不足最短时长，并入前组
+      ],
+      3,
+    );
+    expect(ranges).toHaveLength(2);
+    expect(ranges[1]).toMatchObject({
+      startMs: 12_000,
+      endMs: 26_000,
+      scene: "街道 / 卧室",
+      firstShotNo: "SC003",
+      lastShotNo: "SC005",
+    });
   });
 
-  it("空逐镜表 / 非法序号返回 undefined", () => {
-    expect(rangeFromShots([], 0, 4)).toBeUndefined();
-    expect(rangeFromShots(SHOTS, -1, 4)).toBeUndefined();
+  it("空逐镜表 / 非法分段数返回空数组", () => {
+    expect(rangesFromSceneGroups([], 3)).toEqual([]);
+    expect(rangesFromSceneGroups(MULTI_SCENE_SHOTS, 0)).toEqual([]);
   });
 });
 
-describe("rangeFromEvenSplit · 均分兜底", () => {
-  it("120s 原片 8 段：每段 15s", () => {
-    expect(rangeFromEvenSplit(120_000, 3, 8)).toEqual({ startMs: 45_000, endMs: 60_000 });
-  });
-
-  it("分钟级原片分段跨度超 30s 时夹取截断", () => {
-    expect(rangeFromEvenSplit(300_000, 0, 4)).toEqual({ startMs: 0, endMs: 30_000 });
-  });
-
-  it("非法时长返回 undefined", () => {
-    expect(rangeFromEvenSplit(0, 0, 4)).toBeUndefined();
-    expect(rangeFromEvenSplit(Number.NaN, 0, 4)).toBeUndefined();
-  });
-});
-
-describe("resolveSegmentTimeRange · 三级推算", () => {
+describe("resolveSegmentTimeRange · 两级推算（无均分兜底）", () => {
   it("模型显式区间优先，且会被夹取", () => {
     expect(
       resolveSegmentTimeRange({
         segmentId: "U01",
         explicit: { startMs: 0, endMs: 90_000 },
-        shots: SHOTS,
-        segmentCount: 4,
+        shots: MULTI_SCENE_SHOTS,
+        segmentCount: 3,
       }),
     ).toEqual({ startMs: 0, endMs: 30_000 });
   });
 
-  it("显式区间非法 → 逐镜表就近推算", () => {
+  it("显式区间非法 → 场景分组推算", () => {
     expect(
       resolveSegmentTimeRange({
         segmentId: "U02",
         explicit: { startMs: 50_000, endMs: 10_000 },
-        shots: SHOTS,
-        segmentCount: 4,
+        shots: MULTI_SCENE_SHOTS,
+        segmentCount: 3,
       }),
-    ).toEqual({ startMs: 30_000, endMs: 60_000 });
+    ).toEqual({ startMs: 12_000, endMs: 24_000 });
   });
 
-  it("缺失显式区间 → 逐镜表就近推算", () => {
-    expect(resolveSegmentTimeRange({ segmentId: "U04", shots: SHOTS, segmentCount: 4 })).toEqual({
-      startMs: 90_000,
-      endMs: 120_000,
-    });
-  });
-
-  it("无逐镜表 → 按分段数均分原片时长", () => {
+  it("缺失显式区间 → 场景分组推算", () => {
     expect(
-      resolveSegmentTimeRange({
-        segmentId: "U02",
-        segmentCount: 4,
-        sourceDurationMs: 120_000,
-      }),
-    ).toEqual({ startMs: 30_000, endMs: 60_000 });
+      resolveSegmentTimeRange({ segmentId: "U03", shots: MULTI_SCENE_SHOTS, segmentCount: 3 }),
+    ).toEqual({ startMs: 24_000, endMs: 30_000 });
+  });
+
+  it("无逐镜表 → undefined（降级路径，不再均分原片时长）", () => {
+    expect(resolveSegmentTimeRange({ segmentId: "U01", segmentCount: 4 })).toBeUndefined();
+    expect(
+      resolveSegmentTimeRange({ segmentId: "U02", shots: [], segmentCount: 4 }),
+    ).toBeUndefined();
+  });
+
+  it("分段序号超出场景组数 → undefined", () => {
+    expect(
+      resolveSegmentTimeRange({ segmentId: "U05", shots: MULTI_SCENE_SHOTS, segmentCount: 5 }),
+    ).toBeUndefined();
   });
 
   it("segmentId 无法解析且没有显式区间 → undefined", () => {
     expect(
       resolveSegmentTimeRange({
         segmentId: "分段一",
-        shots: SHOTS,
-        segmentCount: 4,
-        sourceDurationMs: 120_000,
+        shots: MULTI_SCENE_SHOTS,
+        segmentCount: 3,
       }),
     ).toBeUndefined();
-  });
-
-  it("什么都不可用 → undefined（调用方维持旧行为）", () => {
-    expect(resolveSegmentTimeRange({ segmentId: "U01", segmentCount: 4 })).toBeUndefined();
   });
 });
 

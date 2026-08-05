@@ -5,7 +5,7 @@ import { providerTuning, resolveProvider, INTERNAL_VISION_MODEL } from "./restyl
 import { runAssetAnalysis } from "./restyle/analyzeAssetsCore";
 import { LIGHTING_LUTS, type DirectionShot, type Market } from "./restyle/cameraDirection";
 import { parseShotSchedule } from "./restyle/shotSchedule";
-import { estimateSourceDurationMs, resolveSegmentTimeRange } from "./restyle/segmentReference";
+import { resolveSegmentTimeRange } from "./restyle/segmentReference";
 
 const AssetSchema = z.object({
   kind: z.enum(["character", "scene", "prop"]),
@@ -297,7 +297,7 @@ export const generateRestylePlan = createServerFn({ method: "POST" })
             )
             .join("\n")}`
         : "";
-      const prompt = `用户要求：${data.instruction || "生成转绘方案"}\n视频数量：${data.episodeCount}\n源视频：\n${files}\n已确认资产：${JSON.stringify(data.assets)}\n已有方案（如有，请只修改用户点名的视频和分段，其余保持不变）：${JSON.stringify(data.existingEpisodes)}\n${marketRequirement}${shotBrief}\n\n请为每一个源视频生成或修改分段视频提示词。只输出 JSON，不要 Markdown：{"episodes":[{"episode":"源视频 ID（必须原样使用上方的视频 ID）","segments":[{"id":"U01","prompt":"...","startMs":0,"endMs":12000}]}]}。每段不超过15秒，提示词须包含人物、场景、动作、镜头、光影、节奏和对白/声音要求；不得虚构资产表中不存在的具体人物或地点。每段必须给出 startMs/endMs：该段在原片中的起止毫秒，须与上方逐镜调度表的镜头区间对齐（覆盖该段对应的连续镜头），单段区间不得超过 30000 毫秒。`;
+      const prompt = `用户要求：${data.instruction || "生成转绘方案"}\n视频数量：${data.episodeCount}\n源视频：\n${files}\n已确认资产：${JSON.stringify(data.assets)}\n已有方案（如有，请只修改用户点名的视频和分段，其余保持不变）：${JSON.stringify(data.existingEpisodes)}\n${marketRequirement}${shotBrief}\n\n请为每一个源视频生成或修改分段视频提示词。只输出 JSON，不要 Markdown：{"episodes":[{"episode":"源视频 ID（必须原样使用上方的视频 ID）","segments":[{"id":"U01","prompt":"...","startMs":0,"endMs":12000}]}]}。分段以场景与叙事节拍为第一依据，时长只作为约束：同一场景的连续镜头默认归入同一段，只在场景切换处切段，永不在镜头中间切分、一个镜头不拆进两段；同一场景过长时才在场景内部做二次切分，优先切在动作或对白的停顿处，单段尽量不超过15秒，尾部过短的余量并入前一段而不是单独成段。禁止为凑时长跨场景合并，或在场景中间断开。提示词须包含人物、场景、动作、镜头、光影、节奏和对白/声音要求；不得虚构资产表中不存在的具体人物或地点。每段必须给出 startMs/endMs：该段覆盖的连续镜头区间（首镜 startMs 到末镜 endMs），须与上方逐镜调度表的镜头区间对齐。`;
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 90_000); // 平台约 100s 无字节断连，超时改由服务端返回可读错误
       try {
@@ -349,9 +349,8 @@ export const generateRestylePlan = createServerFn({ method: "POST" })
             }
           );
         });
-        // 分段时间区间兜底：模型没给或区间非法时，按逐镜表就近推算，
-        // 再不行按分段数均分原片时长；统一夹取到素材库允许的 1.8–30 秒。
-        const sourceDurationMs = estimateSourceDurationMs(data.shotSchedule);
+        // 分段时间区间兜底：模型没给或区间非法时按场景分组推算（场景优先，
+        // 不再均分时长）；统一夹取到素材库允许的 1.8–30 秒参考区间。
         const episodesWithRanges = episodes.map((episode) => ({
           ...episode,
           segments: episode.segments.map((segment) => {
@@ -360,7 +359,6 @@ export const generateRestylePlan = createServerFn({ method: "POST" })
               explicit: { startMs: segment.startMs, endMs: segment.endMs },
               shots: data.shotSchedule,
               segmentCount: episode.segments.length,
-              sourceDurationMs,
             });
             return range ? { ...segment, startMs: range.startMs, endMs: range.endMs } : segment;
           }),

@@ -50,7 +50,7 @@ import {
 } from "./restyleStorage";
 import type { RestyleAsset, RestyleStage } from "./restyleTypes";
 import { analyzeRestyleAssets, generateRestylePlan } from "../../lib/restyleAnalysis.functions";
-import { withSegmentDirection } from "../../lib/restyle/shotSchedule";
+import { segmentIndexFromId, withSegmentDirection } from "../../lib/restyle/shotSchedule";
 import { formatLightingParams } from "../../lib/restyle/cameraDirection";
 import {
   mergeInsertClips,
@@ -70,6 +70,7 @@ import {
 import {
   ensureSegmentReferenceClip,
   estimateSourceDurationMs,
+  rangesFromSceneGroups,
   resolveSegmentTimeRange,
   trimCacheKey,
   withBackoffRetry,
@@ -1152,6 +1153,8 @@ export default function RestyleStudio() {
   // 智能补镜产物：`${projectId}:${episode}` → 已生成的补镜片段（含锚点分段），
   // 由 stitchFinalEpisodes 在拼接前并入序列；不落 localStorage，刷新后补镜不补跑。
   const insertClipsRef = useRef<Record<string, InsertClipResult[]>>({});
+  // 逐镜表缺失的一次性对话提示：按 projectId 去重，每个项目每次会话只提示一次。
+  const shotScheduleHintRef = useRef<Set<string>>(new Set());
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const callAnalyzeRestyleAssets = useServerFn(analyzeRestyleAssets);
   const callGenerateRestylePlan = useServerFn(generateRestylePlan);
@@ -2395,14 +2398,18 @@ export default function RestyleStudio() {
    * 分段参考视频：素材库通道（TopenRouter / 客易云 / 筷子）限制参考视频 1.8–30.2 秒，
    * 分钟级原片直接入库会 400。这里按分段时间区间把原片裁成 ≤30s 片段再提交：
    * 1. 沿用 ensureReferenceVideoUrl 取回原片持久 URL；
-   * 2. 非素材库通道、或原片本身不超过 30 秒、或无法推算区间 → 维持整片提交的旧行为；
-   * 3. 有区间 → 提交裁剪任务并轮询取回片段 URL（项目级缓存，同一片段只裁一次）；
-   * 4. 裁剪未配置 / 失败 → 降级为不带参考视频提交（url 为 undefined），不再让整段失败。
+   * 2. 非素材库通道、或原片本身不超过 30 秒 → 维持整片提交的旧行为；
+   * 3. 分段区间 = 模型显式区间 → 场景分组区间（场景优先，不再均分时长）；
+   *    逐镜表缺失/无法判定场景时在对话区一次性提示先做原片分析；
+   * 4. 有区间 → 提交裁剪任务并轮询取回片段 URL（项目级缓存，同一片段只裁一次）；
+   * 5. 无区间 / 裁剪未配置 / 失败 → 降级为不带参考视频提交（url 为 undefined），
+   *    不再把整片作为旧行为回退，也不让整段失败。
    */
   async function ensureSegmentReferenceVideoUrl(
     projectId: string,
     job: { attachmentId: string; source: RestyleAttachment; episode?: string; segmentId?: string },
     videoModel: string,
+    conversationId: string,
   ): Promise<{ ok: true; url?: string } | { ok: false; error: string }> {
     const source = await ensureReferenceVideoUrl(projectId, job.source);
     if (!source.ok) return source;
@@ -2415,23 +2422,49 @@ export default function RestyleStudio() {
     // 原片不超过 30 秒（逐镜表估算）时整片即合规，无需裁剪。
     if (sourceDurationMs !== undefined && sourceDurationMs <= REFERENCE_VIDEO_MAX_MS) {
       appendRenderLog(projectId, job.attachmentId,
-        `原片 ${(sourceDurationMs / 1000).toFixed(1)}s 在素材库时长限制内，直接作为参考视频。`);
+        `原片 ${(sourceDurationMs / 1000).toFixed(1)}s 在素材库时长限制内（原片合规），直接作为参考视频。`);
       return { ok: true, url: source.url };
     }
+    // 逐镜表缺失或完全没有场景信息：无法按场景判定分段边界，在对话区
+    // 一次性提示先做原片分析（不打断渲染），参考视频照旧安全降级。
+    const shots = project?.shotSchedule ?? [];
+    const scenesUndecidable = !shots.length || shots.every((shot) => !shot.scene?.trim());
+    if (scenesUndecidable && !shotScheduleHintRef.current.has(projectId)) {
+      shotScheduleHintRef.current.add(projectId);
+      appendConversationMessage(projectId, conversationId, {
+        role: "assistant",
+        content:
+          "提示：本项目缺少可用的逐镜表（或逐镜表没有场景信息），分段区间无法按场景精确判定，涉及分段将按现有方案处理并安全降级参考视频。建议先完成原片分析生成逐镜表，分段将更准确。",
+      });
+    }
+    const segmentCount = episode?.segments.length ?? 1;
     const range = resolveSegmentTimeRange({
       segmentId: job.segmentId,
       explicit: { startMs: segment?.startMs, endMs: segment?.endMs },
       shots: project?.shotSchedule,
-      segmentCount: episode?.segments.length ?? 1,
-      sourceDurationMs,
+      segmentCount,
     });
-    // 推算不出区间（旧项目无逐镜表/时长未知）：绝不把超长整片回退提交
+    // 推算不出区间（旧项目无逐镜表）：绝不把超长整片回退提交
     // （素材库会 400），降级为不带参考视频。
     if (!range) {
       appendRenderLog(projectId, job.attachmentId,
-        "无法确定该段的原片时间区间，本段不带参考视频提交（避免整片超长被素材库拒绝）。");
+        "无法确定该段的原片时间区间（无区间而省略），本段不带参考视频提交（避免整片超长被素材库拒绝）。");
       return { ok: true };
     }
+    // 分段依据日志：所属场景名 + 覆盖镜头范围 + 参考区间时长。
+    const segmentIndex = segmentIndexFromId(job.segmentId);
+    const groupInfo =
+      segmentIndex === undefined
+        ? undefined
+        : rangesFromSceneGroups(shots, segmentCount)[segmentIndex];
+    const rangeSeconds = ((range.endMs - range.startMs) / 1000).toFixed(1);
+    appendRenderLog(
+      projectId,
+      job.attachmentId,
+      groupInfo
+        ? `分段依据：场景「${groupInfo.scene || "未命名场景"}」，覆盖镜头 ${groupInfo.firstShotNo}–${groupInfo.lastShotNo}，参考区间 ${rangeSeconds}s。`
+        : `分段依据：方案显式时间区间（逐镜表不可用），参考区间 ${rangeSeconds}s。`,
+    );
     const cacheKey = trimCacheKey(job.source.id, range.startMs, range.endMs);
     const clip = await ensureSegmentReferenceClip({
       sourceUrl: source.url,
@@ -2444,15 +2477,16 @@ export default function RestyleStudio() {
       appendRenderLog(
         projectId,
         job.attachmentId,
-        `参考视频裁剪不可用（${clip.error}），本段不带参考视频提交。`,
+        `参考视频裁剪不可用（裁剪失败而省略：${clip.error}），本段不带参考视频提交。`,
       );
       return { ok: true };
     }
-    const seconds = ((range.endMs - range.startMs) / 1000).toFixed(1);
     appendRenderLog(
       projectId,
       job.attachmentId,
-      clip.fromCache ? `命中缓存的 ${seconds}s 参考片段。` : `已裁剪 ${seconds}s 参考片段。`,
+      clip.fromCache
+        ? `命中裁剪缓存的 ${rangeSeconds}s 参考片段。`
+        : `已裁剪 ${rangeSeconds}s 参考片段（裁剪成功）。`,
     );
     if (!clip.fromCache) {
       updateProject(projectId, (current) => ({
@@ -2931,7 +2965,7 @@ export default function RestyleStudio() {
     }, 20_000);
     try {
       appendRenderLog(projectId, job.attachmentId, "正在上传原视频，作为动作、镜头和节奏参考。");
-      const referenceVideo = await ensureSegmentReferenceVideoUrl(projectId, job, videoModel);
+      const referenceVideo = await ensureSegmentReferenceVideoUrl(projectId, job, videoModel, conversationId);
       if (!referenceVideo.ok) {
         failRenderAttachment(projectId, job.attachmentId, referenceVideo.error);
       } else {

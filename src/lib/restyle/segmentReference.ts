@@ -1,9 +1,12 @@
 // ====================================================================
 // segmentReference —— 转绘分段参考视频裁剪（修复素材库 400：
 // 「Duration must be between 1.8s and 30.2s」）。
-// 1. resolveSegmentTimeRange：分段时间区间三级推算 —— 模型显式给出 →
-//    按分段序号在逐镜表上就近划分 → 按分段数均分原片时长；
-//    结果统一夹取到素材库允许的 1.8–30 秒。
+// 1. resolveSegmentTimeRange：分段时间区间两级推算 —— 模型显式给出 →
+//    rangesFromSceneGroups 场景分组（复用 grouping.ts 的场景优先贪心
+//    分组，永不在镜头中间切、场景切换处才切段）；不再有按时间均分的
+//    兜底，逐镜表缺失时返回 undefined 由调用方安全降级。
+//    结果统一夹取到素材库允许的 1.8–30 秒：1.8–30 秒只是参考视频
+//    素材入库的限制，场景分段本身不拆，只裁参考视频的代表性区间。
 // 2. ensureSegmentReferenceClip：提交裁剪任务并轮询取回片段 URL，
 //    命中项目级缓存（sourceId|startMs|endMs）时不重复裁剪。
 // 3. withBackoffRetry：网络瞬时错误（Failed to fetch）退避 2 秒重试一次。
@@ -12,6 +15,7 @@
 
 import { REFERENCE_VIDEO_MAX_MS, REFERENCE_VIDEO_MIN_MS } from "../videoAssetLibrary";
 import type { DirectionShot } from "./cameraDirection";
+import { packShotsIntoGroups, type GroupingShot } from "./grouping";
 import { segmentIndexFromId } from "./shotSchedule";
 
 export type SegmentTimeRange = { startMs: number; endMs: number };
@@ -31,49 +35,74 @@ export function clampSegmentRange(startMs: number, endMs: number): SegmentTimeRa
   return { startMs: start, endMs: end };
 }
 
+/** 场景分组产生的分段参考区间：附带场景名与覆盖镜头范围，供决策日志使用。 */
+export type SceneGroupRange = SegmentTimeRange & {
+  /** 组内场景名（尾部并入前组导致跨场景时拼接，可为空字符串）。 */
+  scene: string;
+  /** 组内首镜 / 末镜编号（覆盖镜头范围）。 */
+  firstShotNo: string;
+  lastShotNo: string;
+  /** packShotsIntoGroups 生成的分组理由。 */
+  reason: string;
+};
+
 /**
- * 按分段序号把逐镜表均分为 segmentCount 组，取第 segmentIndex 组
- * 首镜 startMs 到末镜 endMs 作为该段区间（就近推算兜底）。
+ * 按场景把逐镜表分组（复用 grouping.ts 的场景优先贪心分组）：
+ * 永不在镜头中间切、同场景连续镜头默认同组、场景切换处才切组、
+ * 同场景超过 15s 才二次切分、尾部不足 4s 的余量并入前组。
+ * 分段序号 i → 第 i 组首镜 startMs 到末镜 endMs；组超过 30 秒时
+ * 分段边界不动，只由 clampSegmentRange 裁出参考视频的代表性区间。
+ * segmentCount 仅作入参校验；组数与分段数不一致时由调用方按序号取舍。
  */
-export function rangeFromShots(
+export function rangesFromSceneGroups(
   shots: DirectionShot[],
-  segmentIndex: number,
   segmentCount: number,
-): SegmentTimeRange | undefined {
-  if (!shots.length || segmentIndex < 0 || segmentCount < 1) return undefined;
-  const sorted = [...shots].sort((a, b) => a.startMs - b.startMs);
-  const begin = Math.floor((segmentIndex * sorted.length) / segmentCount);
-  const end = Math.max(begin + 1, Math.floor(((segmentIndex + 1) * sorted.length) / segmentCount));
-  const group = sorted.slice(begin, Math.min(end, sorted.length));
-  if (!group.length) return undefined;
-  return clampSegmentRange(group[0]!.startMs, group[group.length - 1]!.endMs);
-}
-
-/** 按分段数均分原片时长（无逐镜表时的最终兜底）。 */
-export function rangeFromEvenSplit(
-  sourceDurationMs: number,
-  segmentIndex: number,
-  segmentCount: number,
-): SegmentTimeRange | undefined {
-  if (!Number.isFinite(sourceDurationMs) || sourceDurationMs <= 0) return undefined;
-  if (segmentIndex < 0 || segmentCount < 1) return undefined;
-  const per = sourceDurationMs / segmentCount;
-  return clampSegmentRange(segmentIndex * per, (segmentIndex + 1) * per);
+): SceneGroupRange[] {
+  if (!shots.length || segmentCount < 1) return [];
+  // DirectionShot.scene → GroupingShot.sceneType；id 带序号防 shotNo 重复。
+  const packInput: GroupingShot[] = shots.map((shot, index) => ({
+    id: `${shot.shotNo}#${index}`,
+    shotNo: shot.shotNo,
+    startMs: shot.startMs,
+    endMs: shot.endMs,
+    sceneType: shot.scene,
+  }));
+  const { groups } = packShotsIntoGroups(packInput);
+  const shotById = new Map(packInput.map((shot) => [shot.id, shot]));
+  const ranges: SceneGroupRange[] = [];
+  for (const group of groups) {
+    const groupShots = group.shotIds
+      .map((id) => shotById.get(id))
+      .filter((shot): shot is GroupingShot => !!shot);
+    if (!groupShots.length) continue;
+    const range = clampSegmentRange(groupShots[0]!.startMs, groupShots[groupShots.length - 1]!.endMs);
+    if (!range) continue;
+    const scenes = [
+      ...new Set(groupShots.map((shot) => (shot.sceneType ?? "").trim()).filter(Boolean)),
+    ];
+    ranges.push({
+      ...range,
+      scene: scenes.join(" / "),
+      firstShotNo: groupShots[0]!.shotNo,
+      lastShotNo: groupShots[groupShots.length - 1]!.shotNo,
+      reason: group.reason,
+    });
+  }
+  return ranges;
 }
 
 /**
- * 分段时间区间三级推算：
+ * 分段时间区间两级推算（分段以场景为第一依据，时长只作约束）：
  * 1. 模型显式给出的 startMs/endMs（校验 + 夹取）；
- * 2. 逐镜表按分段序号就近划分；
- * 3. 按分段数均分原片时长。
- * 三者都不可用时返回 undefined（调用方维持整片提交的旧行为）。
+ * 2. rangesFromSceneGroups 场景分组，取分段序号对应的组。
+ * 逐镜表缺失、无法判定场景时返回 undefined，由调用方降级为不带参考视频，
+ * 不再按时间均分猜测分段边界。
  */
 export function resolveSegmentTimeRange(input: {
   segmentId?: string;
   explicit?: { startMs?: number; endMs?: number };
   shots?: DirectionShot[];
   segmentCount: number;
-  sourceDurationMs?: number;
 }): SegmentTimeRange | undefined {
   const segmentIndex = segmentIndexFromId(input.segmentId);
   const explicit = input.explicit;
@@ -82,12 +111,8 @@ export function resolveSegmentTimeRange(input: {
     if (range) return range;
   }
   if (segmentIndex === undefined) return undefined;
-  const fromShots = rangeFromShots(input.shots ?? [], segmentIndex, input.segmentCount);
-  if (fromShots) return fromShots;
-  if (input.sourceDurationMs) {
-    return rangeFromEvenSplit(input.sourceDurationMs, segmentIndex, input.segmentCount);
-  }
-  return undefined;
+  const group = rangesFromSceneGroups(input.shots ?? [], input.segmentCount)[segmentIndex];
+  return group ? { startMs: group.startMs, endMs: group.endMs } : undefined;
 }
 
 /** 逐镜表估算原片时长（最后一镜的 endMs）；无逐镜表时返回 undefined。 */
