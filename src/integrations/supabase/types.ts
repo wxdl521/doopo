@@ -29,6 +29,107 @@ export type Database = {
         }
         Relationships: []
       }
+      ai_provider_models: {
+        Row: {
+          capabilities: Json
+          created_at: string | null
+          enabled: boolean
+          id: string
+          is_default: boolean
+          kind: string
+          label: string
+          listed: boolean
+          model_id: string
+          note: string | null
+          provider_id: string
+          sort_order: number
+          updated_at: string | null
+        }
+        Insert: {
+          capabilities?: Json
+          created_at?: string | null
+          enabled?: boolean
+          id?: string
+          is_default?: boolean
+          kind?: string
+          label: string
+          listed?: boolean
+          model_id: string
+          note?: string | null
+          provider_id: string
+          sort_order?: number
+          updated_at?: string | null
+        }
+        Update: {
+          capabilities?: Json
+          created_at?: string | null
+          enabled?: boolean
+          id?: string
+          is_default?: boolean
+          kind?: string
+          label?: string
+          listed?: boolean
+          model_id?: string
+          note?: string | null
+          provider_id?: string
+          sort_order?: number
+          updated_at?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ai_provider_models_provider_id_fkey"
+            columns: ["provider_id"]
+            isOneToOne: false
+            referencedRelation: "ai_providers"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ai_providers: {
+        Row: {
+          api_key_cipher: string | null
+          api_key_hint: string | null
+          base_url: string | null
+          code: string
+          created_at: string | null
+          enabled: boolean
+          env_key_name: string | null
+          id: string
+          kind: string
+          name: string
+          sort_order: number
+          updated_at: string | null
+        }
+        Insert: {
+          api_key_cipher?: string | null
+          api_key_hint?: string | null
+          base_url?: string | null
+          code: string
+          created_at?: string | null
+          enabled?: boolean
+          env_key_name?: string | null
+          id?: string
+          kind?: string
+          name: string
+          sort_order?: number
+          updated_at?: string | null
+        }
+        Update: {
+          api_key_cipher?: string | null
+          api_key_hint?: string | null
+          base_url?: string | null
+          code?: string
+          created_at?: string | null
+          enabled?: boolean
+          env_key_name?: string | null
+          id?: string
+          kind?: string
+          name?: string
+          sort_order?: number
+          updated_at?: string | null
+        }
+        Relationships: []
+      }
       characters: {
         Row: {
           age: number | null
