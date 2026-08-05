@@ -330,8 +330,8 @@ export interface FileRoutesByFullPath {
   '/account/security': typeof AccountSecurityRoute
   '/account/subscription': typeof AccountSubscriptionRoute
   '/admin/credits': typeof AdminCreditsRoute
-  '/admin/providers': typeof AdminProvidersRoute
   '/admin/models': typeof AdminModelsRoute
+  '/admin/providers': typeof AdminProvidersRoute
   '/characters/$characterId': typeof CharactersCharacterIdRoute
   '/characters/relations': typeof CharactersRelationsRoute
   '/community/$postId': typeof CommunityPostIdRoute
@@ -375,8 +375,8 @@ export interface FileRoutesByTo {
   '/account/security': typeof AccountSecurityRoute
   '/account/subscription': typeof AccountSubscriptionRoute
   '/admin/credits': typeof AdminCreditsRoute
-  '/admin/providers': typeof AdminProvidersRoute
   '/admin/models': typeof AdminModelsRoute
+  '/admin/providers': typeof AdminProvidersRoute
   '/characters/$characterId': typeof CharactersCharacterIdRoute
   '/characters/relations': typeof CharactersRelationsRoute
   '/community/$postId': typeof CommunityPostIdRoute
@@ -426,8 +426,8 @@ export interface FileRoutesById {
   '/account/security': typeof AccountSecurityRoute
   '/account/subscription': typeof AccountSubscriptionRoute
   '/admin/credits': typeof AdminCreditsRoute
-  '/admin/providers': typeof AdminProvidersRoute
   '/admin/models': typeof AdminModelsRoute
+  '/admin/providers': typeof AdminProvidersRoute
   '/characters/$characterId': typeof CharactersCharacterIdRoute
   '/characters/relations': typeof CharactersRelationsRoute
   '/community/$postId': typeof CommunityPostIdRoute
@@ -479,6 +479,7 @@ export interface FileRouteTypes {
     | '/account/subscription'
     | '/admin/credits'
     | '/admin/models'
+    | '/admin/providers'
     | '/characters/$characterId'
     | '/characters/relations'
     | '/community/$postId'
@@ -523,6 +524,7 @@ export interface FileRouteTypes {
     | '/account/subscription'
     | '/admin/credits'
     | '/admin/models'
+    | '/admin/providers'
     | '/characters/$characterId'
     | '/characters/relations'
     | '/community/$postId'
@@ -572,6 +574,7 @@ export interface FileRouteTypes {
     | '/account/subscription'
     | '/admin/credits'
     | '/admin/models'
+    | '/admin/providers'
     | '/characters/$characterId'
     | '/characters/relations'
     | '/community/$postId'
@@ -987,15 +990,15 @@ const AccountRouteWithChildren =
 
 interface AdminRouteChildren {
   AdminCreditsRoute: typeof AdminCreditsRoute
-  AdminProvidersRoute: typeof AdminProvidersRoute
   AdminModelsRoute: typeof AdminModelsRoute
+  AdminProvidersRoute: typeof AdminProvidersRoute
   AdminIndexRoute: typeof AdminIndexRoute
 }
 
 const AdminRouteChildren: AdminRouteChildren = {
   AdminCreditsRoute: AdminCreditsRoute,
-  AdminProvidersRoute: AdminProvidersRoute,
   AdminModelsRoute: AdminModelsRoute,
+  AdminProvidersRoute: AdminProvidersRoute,
   AdminIndexRoute: AdminIndexRoute,
 }
 
