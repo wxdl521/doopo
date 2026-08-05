@@ -2414,6 +2414,8 @@ export default function RestyleStudio() {
     const sourceDurationMs = estimateSourceDurationMs(project?.shotSchedule);
     // 原片不超过 30 秒（逐镜表估算）时整片即合规，无需裁剪。
     if (sourceDurationMs !== undefined && sourceDurationMs <= REFERENCE_VIDEO_MAX_MS) {
+      appendRenderLog(projectId, job.attachmentId,
+        `原片 ${(sourceDurationMs / 1000).toFixed(1)}s 在素材库时长限制内，直接作为参考视频。`);
       return { ok: true, url: source.url };
     }
     const range = resolveSegmentTimeRange({
@@ -2423,8 +2425,13 @@ export default function RestyleStudio() {
       segmentCount: episode?.segments.length ?? 1,
       sourceDurationMs,
     });
-    // 推算不出区间（旧项目无逐镜表）：维持整片提交的旧行为。
-    if (!range) return { ok: true, url: source.url };
+    // 推算不出区间（旧项目无逐镜表/时长未知）：绝不把超长整片回退提交
+    // （素材库会 400），降级为不带参考视频。
+    if (!range) {
+      appendRenderLog(projectId, job.attachmentId,
+        "无法确定该段的原片时间区间，本段不带参考视频提交（避免整片超长被素材库拒绝）。");
+      return { ok: true };
+    }
     const cacheKey = trimCacheKey(job.source.id, range.startMs, range.endMs);
     const clip = await ensureSegmentReferenceClip({
       sourceUrl: source.url,
@@ -2585,10 +2592,20 @@ export default function RestyleStudio() {
       if (isRunAborted(projectId)) return;
       updateProject(projectId, (project) => ({ ...project, stage: "review" }));
       const hasFinalVideos = finalEpisodes.length > 0;
+      // 播报必须反映真实结果：分段/成片有失败时不得说「已合成整集成片」。
+      const latestFiles = projectsRef.current.find((item) => item.id === projectId)?.files ?? [];
+      const failedSegments = latestFiles.filter(
+        (file) => (file.generatedKind === "video_clip" || file.generatedKind === "final_video") && file.renderStatus === "failed",
+      );
+      const finalOk = latestFiles.some(
+        (file) => file.generatedKind === "final_video" && file.renderStatus === "succeeded" && Boolean(file.resultUrl ?? file.url),
+      );
       appendConversationMessage(projectId, conversationId, {
         role: "assistant",
         content: hasFinalVideos
-          ? `${finalEpisodes.join("、")} 的分段视频已生成，并按顺序合成整集成片（保留分段自带音轨）。请在右侧“生成状态”查看每段与成片的真实结果，失败任务会保留错误原因并可重试。`
+          ? failedSegments.length || !finalOk
+            ? `渲染结束：${failedSegments.length ? `${failedSegments.map((f) => `${f.episode ?? ""}${f.segmentId ? ` ${f.segmentId}` : ""}`).join("、")} 失败` : "成片合成未成功"}。请在右侧“生成状态”查看原因，可对失败分段点「重试」。`
+            : `${finalEpisodes.join("、")} 的分段视频已生成，并按顺序合成整集成片（保留分段自带音轨）。`
           : "局部返工片段已按队列逐个生成完成。只更新了问题片段，没有重跑整集或整部剧。",
         finalEpisodeLinks: hasFinalVideos ? finalEpisodes : undefined,
       });
