@@ -8,6 +8,11 @@
  * 契约：
  *   POST {base}/jobs   { clips: string[], audioUrl?: string, format: "mp4" } -> { jobId }
  *   GET  {base}/jobs/{jobId}                                                 -> { status, outputUrl?, error? }
+ *
+ * 参考视频裁剪（转绘分段参考片段，修复素材库 1.8–30.2s 时长 400）：
+ *   POST {base}/trim   { url, startMs, endMs, format: "mp4" } -> { jobId }
+ *   GET  {base}/jobs/{jobId}                                 -> { status, outputUrl?, error? }
+ * 轮询与合成共用同一 /jobs/{jobId} 查询端点。
  */
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
@@ -62,7 +67,10 @@ export const submitVideoStitchJob = createServerFn({ method: "POST" })
       });
       if (!response.ok) {
         const detail = (await response.text()).replace(/\s+/g, " ").slice(0, 240);
-        return { ok: false, error: `转码服务提交失败（${response.status}）：${detail || "无详情"}` };
+        return {
+          ok: false,
+          error: `转码服务提交失败（${response.status}）：${detail || "无详情"}`,
+        };
       }
       const payload = (await response.json()) as { jobId?: string; id?: string };
       const jobId = payload.jobId ?? payload.id;
@@ -83,41 +91,122 @@ export const pollVideoStitchJob = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<StitchPollResult> => {
     const config = readConfig();
     if (!config) return { ok: false, status: "failed", error: MISSING_CONFIG };
+    return pollTranscodeJob(config, data.jobId);
+  });
+
+/** 合成与裁剪共用的任务状态查询（GET /jobs/{jobId}）。 */
+async function pollTranscodeJob(
+  config: { baseUrl: string; apiKey: string },
+  jobId: string,
+): Promise<StitchPollResult> {
+  try {
+    const response = await fetch(`${config.baseUrl}/jobs/${encodeURIComponent(jobId)}`, {
+      headers: { Authorization: `Bearer ${config.apiKey}` },
+    });
+    if (!response.ok) {
+      const detail = (await response.text()).replace(/\s+/g, " ").slice(0, 240);
+      return {
+        ok: false,
+        status: "failed",
+        error: `转码任务查询失败（${response.status}）：${detail || "无详情"}`,
+      };
+    }
+    const payload = (await response.json()) as {
+      status?: string;
+      outputUrl?: string;
+      url?: string;
+      error?: string;
+    };
+    const status = (payload.status ?? "running").toLowerCase();
+    if (status === "succeeded" || status === "success" || status === "done") {
+      const videoUrl = payload.outputUrl ?? payload.url;
+      if (!videoUrl) {
+        return { ok: false, status: "failed", error: "转码任务完成但没有返回成片 URL" };
+      }
+      return { ok: true, status: "succeeded", videoUrl };
+    }
+    if (status === "failed" || status === "error" || status === "cancelled") {
+      return { ok: false, status: "failed", error: payload.error ?? "转码任务失败" };
+    }
+    return { ok: true, status: status === "queued" || status === "pending" ? "queued" : "running" };
+  } catch (error) {
+    return {
+      ok: false,
+      status: "failed",
+      error: `转码任务查询请求失败：${error instanceof Error ? error.message : "网络错误"}`,
+    };
+  }
+}
+
+const TrimSubmitSchema = z.object({
+  /** 原片公网 URL。 */
+  url: z.string().url().max(2_000),
+  startMs: z.number().int().nonnegative(),
+  endMs: z.number().int().positive(),
+});
+
+/**
+ * 提交参考视频裁剪任务：把分钟级原片裁成分段对应的短片段，
+ * 使参考视频时长落在素材库允许的 1.8–30 秒内（修复素材入库 400）。
+ */
+export const submitVideoTrimJob = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((input: unknown) => TrimSubmitSchema.parse(input))
+  .handler(async ({ data }): Promise<StitchSubmitResult> => {
+    const config = readConfig();
+    if (!config) {
+      return {
+        ok: false,
+        error:
+          "外部转码服务未配置：请设置 TRANSCODE_API_URL 与 TRANSCODE_API_KEY 后再裁剪参考视频。",
+      };
+    }
     try {
-      const response = await fetch(`${config.baseUrl}/jobs/${encodeURIComponent(data.jobId)}`, {
-        headers: { Authorization: `Bearer ${config.apiKey}` },
+      const response = await fetch(`${config.baseUrl}/trim`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${config.apiKey}`,
+        },
+        body: JSON.stringify({
+          url: data.url,
+          startMs: data.startMs,
+          endMs: data.endMs,
+          format: "mp4",
+        }),
       });
       if (!response.ok) {
         const detail = (await response.text()).replace(/\s+/g, " ").slice(0, 240);
         return {
           ok: false,
-          status: "failed",
-          error: `转码任务查询失败（${response.status}）：${detail || "无详情"}`,
+          error: `参考视频裁剪提交失败（${response.status}）：${detail || "无详情"}`,
         };
       }
-      const payload = (await response.json()) as {
-        status?: string;
-        outputUrl?: string;
-        url?: string;
-        error?: string;
-      };
-      const status = (payload.status ?? "running").toLowerCase();
-      if (status === "succeeded" || status === "success" || status === "done") {
-        const videoUrl = payload.outputUrl ?? payload.url;
-        if (!videoUrl) {
-          return { ok: false, status: "failed", error: "转码任务完成但没有返回成片 URL" };
-        }
-        return { ok: true, status: "succeeded", videoUrl };
-      }
-      if (status === "failed" || status === "error" || status === "cancelled") {
-        return { ok: false, status: "failed", error: payload.error ?? "转码任务失败" };
-      }
-      return { ok: true, status: status === "queued" || status === "pending" ? "queued" : "running" };
+      const payload = (await response.json()) as { jobId?: string; id?: string };
+      const jobId = payload.jobId ?? payload.id;
+      if (!jobId) return { ok: false, error: "转码服务没有返回裁剪任务编号" };
+      return { ok: true, jobId };
     } catch (error) {
       return {
         ok: false,
-        status: "failed",
-        error: `转码任务查询请求失败：${error instanceof Error ? error.message : "网络错误"}`,
+        error: `参考视频裁剪请求失败：${error instanceof Error ? error.message : "网络错误"}`,
       };
     }
+  });
+
+/** 轮询参考视频裁剪任务状态（与合成共用 GET /jobs/{jobId}）。 */
+export const pollVideoTrimJob = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((input: unknown) => PollSchema.parse(input))
+  .handler(async ({ data }): Promise<StitchPollResult> => {
+    const config = readConfig();
+    if (!config) {
+      return {
+        ok: false,
+        status: "failed",
+        error:
+          "外部转码服务未配置：请设置 TRANSCODE_API_URL 与 TRANSCODE_API_KEY 后再裁剪参考视频。",
+      };
+    }
+    return pollTranscodeJob(config, data.jobId);
   });

@@ -61,7 +61,19 @@ import {
   type InsertJob,
 } from "./restyleInserts";
 import { transcribeRestyleAudio } from "../../lib/restyleAudio.functions";
-import { pollVideoStitchJob, submitVideoStitchJob } from "../../lib/videoStitch.functions";
+import {
+  pollVideoStitchJob,
+  pollVideoTrimJob,
+  submitVideoStitchJob,
+  submitVideoTrimJob,
+} from "../../lib/videoStitch.functions";
+import {
+  ensureSegmentReferenceClip,
+  estimateSourceDurationMs,
+  resolveSegmentTimeRange,
+  trimCacheKey,
+  withBackoffRetry,
+} from "../../lib/restyle/segmentReference";
 import { transcribeSourceVideo } from "./restyleTranscript";
 import { reviewRestyleAssetTable } from "../../lib/restyle/restyleAssetReview.functions";
 import type { AssetReviewIssue, AssetReviewVerdict } from "../../lib/restyle/assetReview";
@@ -82,6 +94,7 @@ import {
   getVideoAssetLibrarySupport,
   isSensitiveContentError,
   planRestyleFallback,
+  REFERENCE_VIDEO_MAX_MS,
   RESTYLE_FALLBACK_EXHAUSTED_MESSAGE,
   restyleAssetCacheKey,
   type RestyleFallbackStage,
@@ -1157,6 +1170,8 @@ export default function RestyleStudio() {
   const callTranscribeRestyleAudio = useServerFn(transcribeRestyleAudio);
   const callSubmitVideoStitchJob = useServerFn(submitVideoStitchJob);
   const callPollVideoStitchJob = useServerFn(pollVideoStitchJob);
+  const callSubmitVideoTrimJob = useServerFn(submitVideoTrimJob);
+  const callPollVideoTrimJob = useServerFn(pollVideoTrimJob);
   const callListModelPricing = useServerFn(listModelPricing);
 
   const activeProject = projects.find((project) => project.id === activeProjectId);
@@ -2377,6 +2392,71 @@ export default function RestyleStudio() {
   }
 
   /**
+   * 分段参考视频：素材库通道（TopenRouter / 客易云 / 筷子）限制参考视频 1.8–30.2 秒，
+   * 分钟级原片直接入库会 400。这里按分段时间区间把原片裁成 ≤30s 片段再提交：
+   * 1. 沿用 ensureReferenceVideoUrl 取回原片持久 URL；
+   * 2. 非素材库通道、或原片本身不超过 30 秒、或无法推算区间 → 维持整片提交的旧行为；
+   * 3. 有区间 → 提交裁剪任务并轮询取回片段 URL（项目级缓存，同一片段只裁一次）；
+   * 4. 裁剪未配置 / 失败 → 降级为不带参考视频提交（url 为 undefined），不再让整段失败。
+   */
+  async function ensureSegmentReferenceVideoUrl(
+    projectId: string,
+    job: { attachmentId: string; source: RestyleAttachment; episode?: string; segmentId?: string },
+    videoModel: string,
+  ): Promise<{ ok: true; url?: string } | { ok: false; error: string }> {
+    const source = await ensureReferenceVideoUrl(projectId, job.source);
+    if (!source.ok) return source;
+    // 只有走素材库的通道才有参考视频时长约束；其它后端维持整片提交。
+    if (!assetLibraryVendorForModel(videoModel)) return { ok: true, url: source.url };
+    const project = projectsRef.current.find((item) => item.id === projectId);
+    const episode = project?.planEpisodes?.find((item) => item.episode === job.episode);
+    const segment = episode?.segments.find((item) => item.id === job.segmentId);
+    const sourceDurationMs = estimateSourceDurationMs(project?.shotSchedule);
+    // 原片不超过 30 秒（逐镜表估算）时整片即合规，无需裁剪。
+    if (sourceDurationMs !== undefined && sourceDurationMs <= REFERENCE_VIDEO_MAX_MS) {
+      return { ok: true, url: source.url };
+    }
+    const range = resolveSegmentTimeRange({
+      segmentId: job.segmentId,
+      explicit: { startMs: segment?.startMs, endMs: segment?.endMs },
+      shots: project?.shotSchedule,
+      segmentCount: episode?.segments.length ?? 1,
+      sourceDurationMs,
+    });
+    // 推算不出区间（旧项目无逐镜表）：维持整片提交的旧行为。
+    if (!range) return { ok: true, url: source.url };
+    const cacheKey = trimCacheKey(job.source.id, range.startMs, range.endMs);
+    const clip = await ensureSegmentReferenceClip({
+      sourceUrl: source.url,
+      range,
+      cachedUrl: project?.trimCacheMap?.[cacheKey],
+      submitTrim: (trim) => withBackoffRetry(() => callSubmitVideoTrimJob({ data: trim })),
+      pollTrim: (jobId) => withBackoffRetry(() => callPollVideoTrimJob({ data: { jobId } })),
+    });
+    if (!clip.ok) {
+      appendRenderLog(
+        projectId,
+        job.attachmentId,
+        `参考视频裁剪不可用（${clip.error}），本段不带参考视频提交。`,
+      );
+      return { ok: true };
+    }
+    const seconds = ((range.endMs - range.startMs) / 1000).toFixed(1);
+    appendRenderLog(
+      projectId,
+      job.attachmentId,
+      clip.fromCache ? `命中缓存的 ${seconds}s 参考片段。` : `已裁剪 ${seconds}s 参考片段。`,
+    );
+    if (!clip.fromCache) {
+      updateProject(projectId, (current) => ({
+        ...current,
+        trimCacheMap: { ...current.trimCacheMap, [cacheKey]: clip.url },
+      }));
+    }
+    return { ok: true, url: clip.url };
+  }
+
+  /**
    * 分段全部跑完后合成整集成片：按 segmentId 顺序取本集 video_clip 的结果 URL，
    * 交给外部转码服务 concat（原片音轨随分段视频自带，不做二次混音）。
    * 任一分段缺结果就把成片标记为失败并说明缺哪些段，不做静默拼接。
@@ -2725,12 +2805,18 @@ export default function RestyleStudio() {
       appendRenderLog(input.projectId, input.attachmentId, `${label}素材入库中…`);
       const name = `doopoo-restyle-${Date.now()}-${index + 1}`.slice(0, 200);
       try {
-        const uploaded =
-          vendor === "keyiyun"
-            ? await callUploadKeyiyunAsset({ data: { url, assetType: "Image", name } })
-            : await callUploadTopenrouterAsset({
-                data: { url, assetType: "Image", name, model: input.videoModel },
-              });
+        // 素材入库加一次退避 2 秒重试，治 Failed to fetch 这类瞬时网络错误。
+        type AssetUploadResult =
+          | Awaited<ReturnType<typeof callUploadKeyiyunAsset>>
+          | Awaited<ReturnType<typeof callUploadTopenrouterAsset>>;
+        const uploaded = await withBackoffRetry(
+          (): Promise<AssetUploadResult> =>
+            vendor === "keyiyun"
+              ? callUploadKeyiyunAsset({ data: { url, assetType: "Image", name } })
+              : callUploadTopenrouterAsset({
+                  data: { url, assetType: "Image", name, model: input.videoModel },
+                }),
+        );
         if (uploaded.ok && uploaded.assetUrl) {
           const assetUrl = uploaded.assetUrl;
           result.assetUrls[url] = assetUrl;
@@ -2828,11 +2914,17 @@ export default function RestyleStudio() {
     }, 20_000);
     try {
       appendRenderLog(projectId, job.attachmentId, "正在上传原视频，作为动作、镜头和节奏参考。");
-      const referenceVideo = await ensureReferenceVideoUrl(projectId, job.source);
+      const referenceVideo = await ensureSegmentReferenceVideoUrl(projectId, job, videoModel);
       if (!referenceVideo.ok) {
         failRenderAttachment(projectId, job.attachmentId, referenceVideo.error);
       } else {
-        appendRenderLog(projectId, job.attachmentId, "原视频已就绪，正在提交转绘任务。");
+        appendRenderLog(
+          projectId,
+          job.attachmentId,
+          referenceVideo.url
+            ? "参考视频已就绪，正在提交转绘任务。"
+            : "本段不带参考视频，正在提交转绘任务。",
+        );
         // 素材库预审：首帧图 + 全部参考图先登记为 asset:// 引用（同图跨集/跨段只审一次）；
         // 预审被拒的图直接剔除，从 without-rejected 阶段开始。
         const preChecked = await ensureRestyleAssets({

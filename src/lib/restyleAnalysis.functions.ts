@@ -5,6 +5,7 @@ import { providerTuning, resolveProvider, INTERNAL_VISION_MODEL } from "./restyl
 import { runAssetAnalysis } from "./restyle/analyzeAssetsCore";
 import { LIGHTING_LUTS, type DirectionShot, type Market } from "./restyle/cameraDirection";
 import { parseShotSchedule } from "./restyle/shotSchedule";
+import { estimateSourceDurationMs, resolveSegmentTimeRange } from "./restyle/segmentReference";
 
 const AssetSchema = z.object({
   kind: z.enum(["character", "scene", "prop"]),
@@ -224,7 +225,15 @@ const PlanEpisodeSchema = z.object({
   // Kept as `episode` for backward-compatible persisted projects. Its value is now the source video ID.
   episode: z.string().min(1).max(200),
   segments: z
-    .array(z.object({ id: z.string().min(1).max(40), prompt: z.string().min(1).max(8_000) }))
+    .array(
+      z.object({
+        id: z.string().min(1).max(40),
+        prompt: z.string().min(1).max(8_000),
+        // 该段在原片中的时间区间（毫秒），用于裁剪 ≤30s 参考片段；旧项目缺字段兼容。
+        startMs: z.number().nonnegative().optional(),
+        endMs: z.number().nonnegative().optional(),
+      }),
+    )
     .min(1)
     .max(30),
 });
@@ -288,7 +297,7 @@ export const generateRestylePlan = createServerFn({ method: "POST" })
             )
             .join("\n")}`
         : "";
-      const prompt = `用户要求：${data.instruction || "生成转绘方案"}\n视频数量：${data.episodeCount}\n源视频：\n${files}\n已确认资产：${JSON.stringify(data.assets)}\n已有方案（如有，请只修改用户点名的视频和分段，其余保持不变）：${JSON.stringify(data.existingEpisodes)}\n${marketRequirement}${shotBrief}\n\n请为每一个源视频生成或修改分段视频提示词。只输出 JSON，不要 Markdown：{"episodes":[{"episode":"源视频 ID（必须原样使用上方的视频 ID）","segments":[{"id":"U01","prompt":"..."}]}]}。每段不超过15秒，提示词须包含人物、场景、动作、镜头、光影、节奏和对白/声音要求；不得虚构资产表中不存在的具体人物或地点。`;
+      const prompt = `用户要求：${data.instruction || "生成转绘方案"}\n视频数量：${data.episodeCount}\n源视频：\n${files}\n已确认资产：${JSON.stringify(data.assets)}\n已有方案（如有，请只修改用户点名的视频和分段，其余保持不变）：${JSON.stringify(data.existingEpisodes)}\n${marketRequirement}${shotBrief}\n\n请为每一个源视频生成或修改分段视频提示词。只输出 JSON，不要 Markdown：{"episodes":[{"episode":"源视频 ID（必须原样使用上方的视频 ID）","segments":[{"id":"U01","prompt":"...","startMs":0,"endMs":12000}]}]}。每段不超过15秒，提示词须包含人物、场景、动作、镜头、光影、节奏和对白/声音要求；不得虚构资产表中不存在的具体人物或地点。每段必须给出 startMs/endMs：该段在原片中的起止毫秒，须与上方逐镜调度表的镜头区间对齐（覆盖该段对应的连续镜头），单段区间不得超过 30000 毫秒。`;
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 90_000); // 平台约 100s 无字节断连，超时改由服务端返回可读错误
       try {
@@ -340,6 +349,22 @@ export const generateRestylePlan = createServerFn({ method: "POST" })
             }
           );
         });
+        // 分段时间区间兜底：模型没给或区间非法时，按逐镜表就近推算，
+        // 再不行按分段数均分原片时长；统一夹取到素材库允许的 1.8–30 秒。
+        const sourceDurationMs = estimateSourceDurationMs(data.shotSchedule);
+        const episodesWithRanges = episodes.map((episode) => ({
+          ...episode,
+          segments: episode.segments.map((segment) => {
+            const range = resolveSegmentTimeRange({
+              segmentId: segment.id,
+              explicit: { startMs: segment.startMs, endMs: segment.endMs },
+              shots: data.shotSchedule,
+              segmentCount: episode.segments.length,
+              sourceDurationMs,
+            });
+            return range ? { ...segment, startMs: range.startMs, endMs: range.endMs } : segment;
+          }),
+        }));
         // 成功才扣费（1 分/次，与预校验口径一致）；扣费失败不阻断主流程。
         {
           const { supabase, userId } = context as { supabase: any; userId: string };
@@ -350,7 +375,7 @@ export const generateRestylePlan = createServerFn({ method: "POST" })
             description: "转绘方案生成",
           });
         }
-        return { ok: true, episodes, model };
+        return { ok: true, episodes: episodesWithRanges, model };
       } catch (error) {
         return {
           ok: false,

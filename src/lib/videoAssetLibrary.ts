@@ -35,6 +35,16 @@ export function getVideoAssetLibrarySupport(model: string | undefined): VideoAss
 
 export type VideoAssetVendor = "topenrouter" | "keyiyun" | "kuaizi";
 
+/**
+ * 素材库参考视频时长约束：TopenRouter 素材库要求 1.8–30.2 秒，
+ * 统一按 1.8–30 秒夹取（分钟级原片必须先裁片段再入库，否则 400）。
+ * 客易云 / 筷子丽帧复用同一约束与裁剪降级路径。
+ */
+export const REFERENCE_VIDEO_MIN_SECONDS = 1.8;
+export const REFERENCE_VIDEO_MAX_SECONDS = 30;
+export const REFERENCE_VIDEO_MIN_MS = 1_800;
+export const REFERENCE_VIDEO_MAX_MS = 30_000;
+
 /** 返回模型对应的素材库供应商；不支持素材库时返回 null。 */
 export function assetLibraryVendorForModel(model: string | undefined): VideoAssetVendor | null {
   if (!model?.trim()) return null;

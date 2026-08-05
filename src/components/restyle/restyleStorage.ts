@@ -87,7 +87,13 @@ export type RestyleExtractedAsset = {
 
 export type RestylePlanEpisode = {
   episode: string;
-  segments: Array<{ id: string; prompt: string }>;
+  segments: Array<{
+    id: string;
+    prompt: string;
+    /** 该段在原片中的时间区间（毫秒），用于裁剪 ≤30s 参考片段；旧数据缺省兼容。 */
+    startMs?: number;
+    endMs?: number;
+  }>;
 };
 
 /**
@@ -134,6 +140,8 @@ export type RestyleProject = {
   videoModel?: string;
   /** 素材库预审缓存：`${vendor}\n${url}` -> asset:// 引用；同一张图跨集/跨段只审一次。 */
   assetReviewMap?: Record<string, string>;
+  /** 参考视频裁剪缓存：`${sourceId}|${startMs}|${endMs}` -> 片段 URL；同一片段跨集、重跑只裁一次。 */
+  trimCacheMap?: Record<string, string>;
   /** 人物关系表。空关系表不持久化该字段。 */
   characterRelations?: RestyleCharacterRelation[];
   /** 执行模式：极速全自动 / 分步护航（默认）/ 自定义干预。 */
@@ -439,10 +447,24 @@ function parseProject(value: unknown): RestyleProject | null {
         if (typeof item.episode !== "string" || !Array.isArray(item.segments)) return [];
         const segments = item.segments.flatMap((segment) => {
           if (!segment || typeof segment !== "object") return [];
-          const value = segment as { id?: unknown; prompt?: unknown };
-          return typeof value.id === "string" && typeof value.prompt === "string"
-            ? [{ id: value.id, prompt: value.prompt }]
-            : [];
+          const value = segment as {
+            id?: unknown;
+            prompt?: unknown;
+            startMs?: unknown;
+            endMs?: unknown;
+          };
+          if (typeof value.id !== "string" || typeof value.prompt !== "string") return [];
+          const startMs =
+            typeof value.startMs === "number" &&
+            Number.isFinite(value.startMs) &&
+            value.startMs >= 0
+              ? value.startMs
+              : undefined;
+          const endMs =
+            typeof value.endMs === "number" && Number.isFinite(value.endMs) && value.endMs >= 0
+              ? value.endMs
+              : undefined;
+          return [{ id: value.id, prompt: value.prompt, startMs, endMs }];
         });
         return [{ episode: sourceEpisodeById.get(item.episode) ?? item.episode, segments }];
       })
@@ -549,6 +571,19 @@ function parseProject(value: unknown): RestyleProject | null {
               key.includes("\n") &&
               typeof value === "string" &&
               /^(?:asset|assetId):\/\/[a-zA-Z0-9_-]+$/.test(value)
+                ? [[key, value]]
+                : [],
+            ),
+          )
+        : undefined,
+    trimCacheMap:
+      item.trimCacheMap && typeof item.trimCacheMap === "object"
+        ? Object.fromEntries(
+            Object.entries(item.trimCacheMap).flatMap(([key, value]) =>
+              typeof key === "string" &&
+              /^\S+\|\d+\|\d+$/.test(key) &&
+              typeof value === "string" &&
+              /^https?:\/\//i.test(value)
                 ? [[key, value]]
                 : [],
             ),

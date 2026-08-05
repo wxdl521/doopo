@@ -132,3 +132,43 @@ describe("restyleStorage · 加载时收敛中断的渲染状态", () => {
     expect(loaded!.files[0]!.renderError).toContain("页面刷新中断");
   });
 });
+
+describe("restyleStorage · 分段时间区间与裁剪缓存", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("分段 startMs/endMs 与 trimCacheMap 随项目持久化往返", () => {
+    const project = {
+      ...makePersistedProject([]),
+      planEpisodes: [
+        {
+          episode: "EP01",
+          segments: [
+            { id: "U01", prompt: "甲", startMs: 0, endMs: 12_400 },
+            // 旧数据缺字段：解析后不报错、字段为 undefined。
+            { id: "U02", prompt: "乙" },
+            // 非法字段被丢弃。
+            { id: "U03", prompt: "丙", startMs: "0", endMs: -5 },
+          ],
+        },
+      ],
+      trimCacheMap: {
+        "src-1|0|12400": "https://cdn.example.com/clip.mp4",
+        // 非法键 / 非 http 值被过滤。
+        "bad-key": "https://cdn.example.com/x.mp4",
+        "src-1|0|1": "not-a-url",
+      },
+    };
+    saveRestyleProjects("u1", [project as never]);
+    const [loaded] = loadRestyleProjects("u1");
+    expect(loaded!.planEpisodes![0]!.segments).toEqual([
+      { id: "U01", prompt: "甲", startMs: 0, endMs: 12_400 },
+      { id: "U02", prompt: "乙" },
+      { id: "U03", prompt: "丙" },
+    ]);
+    expect(loaded!.trimCacheMap).toEqual({
+      "src-1|0|12400": "https://cdn.example.com/clip.mp4",
+    });
+  });
+});
