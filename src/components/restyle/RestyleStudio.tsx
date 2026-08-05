@@ -138,6 +138,7 @@ import {
   uploadFileDirect,
   type DirectUploadState,
 } from "./restyleUpload";
+import { probeVideoDuration } from "./v2/mediaSlicing";
 import {
   buildMentionables,
   resolveMentionedAttachmentIds,
@@ -1949,6 +1950,18 @@ export default function RestyleStudio() {
       if (file && !attachment.isFolder) {
         fileObjectsRef.current[attachment.id] = file;
         if (file.type.startsWith("video/")) {
+          // 探测真实媒体时长并持久化（素材库时长校验的权威依据，
+          // 不能用逐镜表覆盖时长代替）
+          void probeVideoDuration(file)
+            .then((sec) => {
+              updateProject(project.id, (current) => ({
+                ...current,
+                files: current.files.map((f) =>
+                  f.id === attachment.id ? { ...f, durationSec: sec } : f,
+                ),
+              }));
+            })
+            .catch(() => {});
           void extractVideoThumbnail(file)
             .then((thumbnail) => {
               if (!thumbnail) return;
@@ -2418,12 +2431,19 @@ export default function RestyleStudio() {
     const project = projectsRef.current.find((item) => item.id === projectId);
     const episode = project?.planEpisodes?.find((item) => item.episode === job.episode);
     const segment = episode?.segments.find((item) => item.id === job.segmentId);
-    const sourceDurationMs = estimateSourceDurationMs(project?.shotSchedule);
-    // 原片不超过 30 秒（逐镜表估算）时整片即合规，无需裁剪。
-    if (sourceDurationMs !== undefined && sourceDurationMs <= REFERENCE_VIDEO_MAX_MS) {
+    // 合规判定只认浏览器探测的真实媒体时长（持久化在附件上）；
+    // 逐镜表覆盖时长只是参考（可能只覆盖部分原片），不得用于直传判定。
+    const realDurationMs =
+      job.source.durationSec != null ? job.source.durationSec * 1000 : undefined;
+    const shotCoverageMs = estimateSourceDurationMs(project?.shotSchedule);
+    if (realDurationMs !== undefined && realDurationMs <= REFERENCE_VIDEO_MAX_MS) {
       appendRenderLog(projectId, job.attachmentId,
-        `原片 ${(sourceDurationMs / 1000).toFixed(1)}s 在素材库时长限制内（原片合规），直接作为参考视频。`);
+        `原片真实时长 ${(realDurationMs / 1000).toFixed(1)}s 在素材库时长限制内（真实原片合规），直接作为参考视频。`);
       return { ok: true, url: source.url };
+    }
+    if (realDurationMs === undefined) {
+      appendRenderLog(projectId, job.attachmentId,
+        `原片真实时长未知${shotCoverageMs !== undefined ? `（逐镜表覆盖 ${(shotCoverageMs / 1000).toFixed(1)}s，仅供参考不作合规判定）` : ""}，不直接整片上传。`);
     }
     // 逐镜表缺失或完全没有场景信息：无法按场景判定分段边界，在对话区
     // 一次性提示先做原片分析（不打断渲染），参考视频照旧安全降级。
@@ -2990,13 +3010,15 @@ export default function RestyleStudio() {
         // AgentEarth 的异步接口建议每 5 秒查询一次；其它后端也可安全复用这个节奏。
         let submitted: Awaited<ReturnType<typeof callSubmitVideoTask>> | null = null;
         let submitFailure: string | null = null;
+        // 上游时长校验错误（如 Duration must be between）一次性标记：移除参考视频重投
+        let referenceDroppedForDuration = false;
         // 被拒降级链：剔除被点名参考图重投 → 只留首帧 → 仅文本 + 参考视频；6 次硬上限防死循环。
         for (let attempt = 0; attempt < 6; attempt++) {
           const keptImages = job.referenceImages.filter((url) => !dropped.includes(url));
           const content = buildRestyleVideoContent({
             prompt: directedPrompt,
             imageUrls: keptImages.map((url) => preChecked.assetUrls[url] ?? url),
-            referenceVideoUrl: referenceVideo.url,
+            referenceVideoUrl: referenceDroppedForDuration ? undefined : referenceVideo.url,
             stage,
           });
           const result = await callSubmitVideoTask({
@@ -3020,6 +3042,20 @@ export default function RestyleStudio() {
           if (resultCode === "INSUFFICIENT_CREDITS" || isInsufficientCreditsError(error)) {
             submitFailure = error;
             break;
+          }
+          // 上游时长校验拒绝：与真人降级链独立，移除参考视频重投一次
+          if (
+            !referenceDroppedForDuration &&
+            referenceVideo.url &&
+            /Duration must be between|duration/i.test(error ?? "")
+          ) {
+            referenceDroppedForDuration = true;
+            appendRenderLog(
+              projectId,
+              job.attachmentId,
+              "参考视频实际时长未通过上游校验，已移除后重投。",
+            );
+            continue;
           }
           const plan = planRestyleFallback({
             stage,

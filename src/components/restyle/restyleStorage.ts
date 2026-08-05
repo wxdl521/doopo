@@ -58,6 +58,8 @@ export type RestyleAttachment = {
   prompt?: string;
   analysisFrame?: boolean;
   analysisEpisode?: string;
+  /** 源视频真实媒体时长（秒），上传时由浏览器 loadedmetadata 探测写入。 */
+  durationSec?: number;
 };
 
 export type RestyleMessage = {
@@ -277,6 +279,8 @@ function parseAttachment(value: unknown): RestyleAttachment | null {
     isFolder: item.isFolder === true,
     fileCount: typeof item.fileCount === "number" ? item.fileCount : undefined,
     url: typeof item.url === "string" ? item.url : undefined,
+    durationSec:
+      typeof item.durationSec === "number" && item.durationSec > 0 ? item.durationSec : undefined,
     generatedKind: ["character", "scene", "prop", "video_clip", "final_video"].includes(
       item.generatedKind ?? "",
     )
