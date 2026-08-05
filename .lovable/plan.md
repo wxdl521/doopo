@@ -1,59 +1,53 @@
-# 修复：生成转绘方案时无报错、一直卡在「生成中」
+# 修复转绘视频生成失败：参考视频裁成短片段
 
-## 现象与定位
+## 问题定位（已核实）
 
-你反馈的不是弹出报错，而是「转绘方案」步骤永远停在生成中。截图里红框的 `inpage.js` MetaMask 报错来自浏览器插件，与本功能无关，可忽略。
-
-定位结果（已核对代码，未修改）：
-
-`src/components/restyle/RestyleStudio.tsx` 的 `runPlanGeneration()`（1727 行起）**没有 try / catch / finally**：
-
-```text
-beginRun(...)                      // 标记 running = true
-result = await callGenerateRestylePlan(...)   // 一旦这里 throw，下面全部跳过
-if (!result.ok) { finishRun("failed"); ... }  // 只处理「服务端返回 ok:false」
-finishRun(...)
-```
-
-只要服务端函数是「抛异常」而不是「返回 ok:false」——例如请求被平台在约 100 秒处切断、502/500、鉴权失败、网络中断——异常会直接冒泡出 `runPlanGeneration`，于是：
-
-- `finishRun` 永远不会被调用 → 进度卡片一直 running（「生成中」）；
-- 不会 `appendConversationMessage` → 聊天区没有任何失败提示；
-- `isProjectRunning()` 恒为 true → 该项目后续消息被「已有任务正在进行中」挡住，只能刷新页面。
-
-对照 `runSourceAnalysis()`（原片分析）就有完整的 try/catch/finally，所以「分析」失败会报错、「方案」失败会静默卡死——与你观察到的现象完全一致。
-
-叠加因素：`src/lib/restyleAnalysis.functions.ts` 的 `generateRestylePlan` 自带 180 秒超时，但它是一次性（非流式）返回，托管平台在约 100 秒无字节时就会切断连接。也就是说方案生成一旦跑满两三分钟，必然走到「客户端抛异常」这条无人接管的路径。
-
-同样缺少异常兜底的还有 3913 行的「分段提示词微调」分支（同一个 `callGenerateRestylePlan` 调用）。其余分支（分析、生图、视频）均已有 try/catch。
+- 失败发生在每段提交的最后一步：`RestyleStudio.tsx` 的 `ensureReferenceVideoUrl` 把**整条原片**当参考视频，交给 `videoGenerate.functions.ts` 的 `topenrouterEnsureAsset({ assetType: "Video" })` 登记素材。
+- TopenRouter 素材库限制参考视频时长 1.8–30.2 秒，原片是分钟级，所以每段都返回 `400 Duration must be between 1.8s and 30.2s`。
+- 图片素材（首帧、参考图 2–5）全部通过审核，说明密钥、素材权限、网络都正常。
+- 成片失败（「以下分段还没有可用视频」）是分段全失败的连带结果。
+- `EP01 U02` 的 `Failed to fetch` 是另一类瞬时网络错误，单独加重试兜底。
+- 现状：分段结构只有 `{ id, prompt }`，没有原片时间区间；但分析阶段已产出逐镜表 `shotSchedule`（带 `startMs`/`endMs`），可作为切分依据。
 
 ## 修复方案
 
-### 1. 给方案生成加异常兜底（根因）
+按分段对应的时间区间，在服务端把原片裁成 30 秒以内的 mp4 片段，再登记为参考视频素材。
 
-`runPlanGeneration()` 改为：
+### 1. 分段时间区间（新增数据）
 
-- 整段调用包进 `try / catch / finally`，与 `runSourceAnalysis()` 保持同一套写法；
-- `catch`：`finishRun(projectId, "failed", detail)` + 在聊天区追加「转绘方案生成失败：<原因>」+ `setAnalysisError`；
-- `finally`：未中止时兜底 `finishRun(projectId)`，保证 running 一定被清掉；
-- 中止（用户点停止）时保持现有 `isRunAborted` 早退语义，不误报失败。
+- `src/lib/restyleAnalysis.functions.ts`：`PlanEpisodeSchema` 的 segment 增加可选 `startMs` / `endMs`（旧项目缺字段不报错）；提示词要求导演模型对齐 `shotSchedule` 给出每段起止毫秒，并约束单段不超过 30 秒。
+- 服务端后处理兜底：模型没给或区间非法时，用 `shotSchedule` 按分段序号就近推算；仍不可用时按分段数均分原片时长。
+- 统一夹取到 1.8–30 秒，越界向后截断。
+- `src/components/restyle/restyleStorage.ts` 的分段解析与持久化同步补上这两个字段。
 
-3913 行「分段提示词微调」分支做同样处理。
+### 2. 服务端裁剪（扩展现有转码服务）
 
-### 2. 避免请求被平台静默切断
+- `src/lib/videoStitch.functions.ts` 新增 `submitVideoTrimJob` / `pollVideoTrimJob`：
+  - `POST {TRANSCODE_API_URL}/trim  { url, startMs, endMs, format: "mp4" } -> { jobId }`
+  - `GET  {TRANSCODE_API_URL}/jobs/{jobId} -> { status, outputUrl?, error? }`
+  - 复用现有 `TRANSCODE_API_URL` / `TRANSCODE_API_KEY`，未配置时返回明确提示。
+- 裁剪结果按 `sourceId|startMs|endMs` 做项目级缓存，同一片段跨集、重跑只裁一次。
 
-`generateRestylePlan` 的 180 秒超时下调到平台切断阈值以内（90 秒），让超时由服务端自己返回可读的 `{ ok:false, error:"方案生成超时，请稍后重试。" }`，而不是连接被切断后在客户端抛异常。
+### 3. 前端接线
 
-### 3. 全局兜底
+- `src/components/restyle/RestyleStudio.tsx`：`runRenderQueue` 把 `ensureReferenceVideoUrl(projectId, job.source)` 换成新的 `ensureSegmentReferenceVideoUrl(projectId, job)`：
+  1. 取回原片持久 URL（沿用现有逻辑）；
+  2. 该段有时间区间且原片超过 30 秒 → 提交裁剪任务、轮询、取回片段 URL；
+  3. 裁剪成功 → 用片段 URL 提交，日志写「已裁剪 12.4s 参考片段」；
+  4. 裁剪不可用或失败 → 降级为**不带参考视频**提交，日志说明原因，不再让整段失败。
+- 素材入库与裁剪轮询增加一次网络重试（退避 2 秒），修掉 `Failed to fetch` 这类瞬时失败。
 
-在 `sendChatMessage()` 外层补一层 `try / catch`：任何未预期异常都落到「失败」态并给出提示，防止以后新增分支再次出现「静默卡死」。
+### 4. 其它渠道
 
-## 涉及文件
+- `src/lib/videoAssetLibrary.ts` 增加时长约束常量；客易云 / 筷子丽帧走素材库时复用同一套裁剪与降级路径，避免同类 400。
 
-- `src/components/restyle/RestyleStudio.tsx`：`runPlanGeneration()`、提示词微调分支、`sendChatMessage()` 兜底
-- `src/lib/restyleAnalysis.functions.ts`：`generateRestylePlan` 超时时长
+## 部署前置
+
+外部转码服务需要先支持 `/trim` 端点。未上线前代码走「不带参考视频」降级，保证仍能出片。
 
 ## 验证
 
-- 断网 / 模拟服务端 500 后触发「继续下一步」：聊天区应出现「转绘方案生成失败：…」，进度卡片变为失败，可继续发下一条消息；
-- 正常链路：方案照常生成，行为不变。
+- [ ] 分钟级原片 + 8 段 → 每段参考视频时长落在 1.8–30 秒，素材入库返回 200
+- [ ] 转码服务未配置 → 分段仍成功（日志提示未使用参考视频）
+- [ ] 同一区间重跑 → 命中缓存不重复裁剪
+- [ ] 分段全部成功后 → 成片合成正常
