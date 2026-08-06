@@ -2,7 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { getOptionalAuthCtx } from "./authContext";
+import { getOptionalAuthCtx } from "./authContext.server";
 
 export type PostKind = "script" | "character" | "scene" | "prop" | "comic";
 export type PostVisibility = "public" | "unlisted" | "private";

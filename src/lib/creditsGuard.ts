@@ -13,7 +13,7 @@
 // 原子扣减仍由 chargeCredits 走 deduct_user_credits RPC 完成。
 // ====================================================================
 
-import { getOptionalAuthCtx } from "./authContext";
+import { getOptionalAuthCtx } from "./authContext.server";
 
 export type CreditsGuardResult =
   | { ok: true }

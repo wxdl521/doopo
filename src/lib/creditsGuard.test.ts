@@ -4,7 +4,7 @@ vi.mock("./authContext", () => ({
   getOptionalAuthCtx: vi.fn(),
 }));
 
-import { getOptionalAuthCtx } from "./authContext";
+import { getOptionalAuthCtx } from "./authContext.server";
 import { ensureEnoughCredits } from "./creditsGuard";
 
 const mockedCtx = vi.mocked(getOptionalAuthCtx);
