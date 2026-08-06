@@ -1,78 +1,33 @@
-# 修复转绘视频时长误判：真实媒体校验 + 场景片段裁剪 + 安全重投
+# 修复：网站打开报「页面加载失败」
 
-## 已确认原因
+## 问题定位（已复现）
 
-- 本次 EP01 U01/U02 都在 TopenRouter `Video` 素材上传阶段返回 400：`Duration must be between 1.8s and 30.2s`；任务尚未进入视频模型生成阶段。
-- 页面显示的“原片 20.0s”并非上传文件的真实媒体时长。当前 `ensureSegmentReferenceVideoUrl` 调用 `estimateSourceDurationMs(project.shotSchedule)`，取逐镜表最后一镜的 `endMs`，随后把 `source.url` 指向的整条原片直接上传。逐镜表只覆盖 20 秒或时间码不完整时，分钟级原片会被误判为 20 秒合规。
-- `RestyleAttachment` 当前没有持久化视频真实时长；虽然浏览器提取关键帧时读取了 `video.duration`，该值没有写入项目数据，刷新后也无法用于入库校验。
-- 上游返回时长错误后，现有降级链只处理真人/敏感内容错误，不会移除参考视频重投，因此 U01、U02 会直接失败。
-- 截图中的 `Unchecked runtime.lastError: Could not establish connection` 来自浏览器扩展 `content.js`，不是 Doopoo 视频生成错误。
-- 页面在分段或成片失败时仍显示“已生成，并按顺序合成整集成片”，属于状态播报不准确，会掩盖真实失败结果。
-- 现有分段区间推算里包含「按分段数均分原片时长」和「把逐镜表按分段数平均切块」两条纯时间兜底，会在场景中间硬切，造成剧情不连贯。
+本地开发服务器访问 `/home` 同样白屏报错，浏览器控制台给出确切原因：
 
-## 分段原则（本次调整重点）
+```
+[vite] Internal Server Error
+[import-protection] Import denied in client environment
+  Denied by specifier pattern: @tanstack/react-start/server
+  Importer: src/lib/community.functions.ts:238
+TypeError: Failed to load dynamically imported module: /src/routes/home.tsx
+```
 
-分段必须以场景为第一依据，时长只作为约束而非切分依据。
+`src/lib/community.functions.ts` 被首页等多个客户端组件直接 import（`Home.tsx`、`CommunityCard.tsx`、`community.index.tsx`、`account.posts.tsx`、`ShareDialog.tsx`）。但该文件里包含只能跑在服务端的代码：
 
-### 1. 按场景切分
+- 第 238 行 `await import("@tanstack/react-start/server")`（`resolveViewerKey` 内取请求头）
+- 第 5 行 `import { getOptionalAuthCtx } from "./authContext"`，而 `authContext.ts` 顶部静态 import 了 `@tanstack/react-start/server`
 
-- 切分依据来自逐镜表 `shotSchedule` 的 `scene` 字段：同一场景的连续镜头默认归入同一段，场景切换处才切段。
-- 永不在镜头中间切分；一个镜头不拆进两段。
-- 复用已有的场景优先贪心分组逻辑（`src/lib/restyle/grouping.ts` 的 `packShotsIntoGroups`），在 v1 转绘链路中按同一规则生成分段。
-- 时长上限只在同一场景过长时才触发二次切分，并优先切在动作或对白节拍的停顿处；尾部过短的余量并入前一段，而不是单独成段。
-- 导演模型提示词同步改为：先按场景与叙事节拍分段，再在场景内部满足时长约束；禁止为凑时长跨场景合并或在场景中间断开。
-
-### 2. 移除纯时间兜底
-
-- 删除「按分段数均分原片时长」这条切分兜底。
-- 逐镜表缺失、无法判定场景时，不再猜测分段边界：保持既有分段不变，并提示用户先完成原片分析生成逐镜表。
-
-### 3. 时长约束的正确位置
-
-- 1.8–30 秒是参考视频素材入库的限制，不是剧情分段的限制。
-- 当某个场景分段超过 30 秒时，不缩短该分段本身，而是只对该段的参考视频裁取其中一段代表性区间；仍不可行时按下文降级为不带参考视频。
+导入保护把整个模块从客户端图里拒掉 → 路由分包加载 500 → 根错误边界渲染「页面加载失败」。控制台里另一条 `Missing Supabase environment variable(s)` 是同一次崩溃链的下游噪音，不是根因。
 
 ## 修复方案
 
-### 1. 参考视频采用安全失败策略
-
-- 在 `RestyleAttachment` 增加并持久化真实媒体时长；上传时从浏览器 `loadedmetadata` 读取，不再把逐镜表末尾时间码当作原片时长。
-- 素材库渠道只有真实媒体时长经过校验且落在安全范围内时，才允许整片直传；旧项目没有真实时长时不判定“原片合规”，优先按场景裁剪。
-- 无法推算场景区间、真实时长未知、裁剪服务未配置、裁剪失败或超时时，一律降级为“不带参考视频”，不再上传未经验证的整片。
-- 非素材库渠道保持现有行为，不扩大改动范围。
-
-### 2. 参考区间来源（不再均分）
-
-- 优先使用分段自带的 `startMs/endMs`（由场景分组产生）。
-- 其次用该分段实际覆盖的镜头区间。
-- 都不可用时不再均分猜测，直接走无参考视频降级，保证视频任务仍可提交。
-
-### 3. 增加可核验日志
-
-- 每段记录分段依据：所属场景名、覆盖镜头范围、时长。
-- 每段明确区分 `真实媒体时长` 与 `逐镜表覆盖时长`，并记录参考视频决策：`真实原片合规`、`裁剪成功`、`命中裁剪缓存`、`无区间而省略`、`裁剪失败而省略`。
-- 服务端裁剪提交与轮询增加不含密钥的结构化日志，记录 `jobId`、起止毫秒、状态和错误，便于区分“未进入裁剪”与“裁剪服务失败”。
-
-### 4. 上游时长错误自动安全重投
-
-- 在转绘提交循环识别 TopenRouter 的 `Duration must be between 1.8s and 30.2s`。
-- 命中时仅移除 `reference_video`，保留文本、首帧和其他参考图，自动重投一次；日志明确写入“参考视频实际时长未通过上游校验，已移除后重投”。
-- 该分支独立于真人素材降级链，且设置一次性标记，避免重复提交死循环。
-
-### 5. 修正最终状态播报
-
-- 队列结束后统计分段和成片的真实状态。
-- 仅所有目标成片成功时显示“已生成并合成”；存在失败时改为“部分分段/成片失败”，列出对应集与分段，并保留重试入口。
+1. 新增 `src/lib/authContext.server.ts`，把 `authContext.ts` 的内容整体搬过去（`.server` 后缀被导入保护按文件名放行）；原 `authContext.ts` 删除，更新全部引用方（`creditsGuard.ts`、各 `*Image.functions.ts`、`tokenflash.functions.ts` 等纯服务端文件）。
+2. 新增 `src/lib/communityViewerKey.ts`（客户端安全的纯函数模块），存放 `fnv1aHex` 与 `buildAnonymousViewerKey`。
+3. 新增 `src/lib/community.server.ts`，存放 `resolveViewerKey`（引用 `authContext.server` 与请求头读取）。
+4. `community.functions.ts`：删除服务端 import 与 `resolveViewerKey`/哈希实现，改为在各 `.handler()` 内部 `await import("./community.server")`；对外仍从 `communityViewerKey.ts` re-export `buildAnonymousViewerKey` 以免破坏调用方。
+5. 更新 `src/lib/__tests__/communityViewerKey.test.ts` 的 import 路径与 mock 目标（改为 `../authContext.server`、`../community.server`、`../communityViewerKey`）。
 
 ## 验证
 
-- 含多场景的原片：分段边界全部落在场景切换处，无场景被从中间切开。
-- 单场景长镜段：分段保持完整，仅参考视频被裁到 30 秒内。
-- 无逐镜表的旧项目：不再产生均分分段，提示先完成原片分析。
-- 旧项目无时间码 + 分钟级原片：不再出现素材上传时长 400，日志显示已省略参考视频。
-- 逐镜表仅覆盖 20 秒、实际原片超过 30 秒：不再显示“原片 20.0s 合规”，而是按场景裁剪或省略参考视频。
-- 新项目有场景与时间码：每段裁剪结果均为 1.8–30 秒，随后素材入库成功。
-- 裁剪服务未配置或失败：视频生成仍能以图片和提示词继续提交。
-- 即使裁剪产物因封装/编码时长偏差被 TopenRouter 拒绝，也会自动去掉参考视频重投，分段不会因此直接失败。
-- 分段或成片失败：聊天区不再误报全部合成成功。
-- 发布后在自定义域名重新执行一段，并核对生产日志确认不再上传整条原片。
+- `bunx vitest run src/lib/__tests__/communityViewerKey.test.ts`
+- Playwright 打开 `/home` 与 `/community`，确认无 import-protection 报错、页面正常渲染。
