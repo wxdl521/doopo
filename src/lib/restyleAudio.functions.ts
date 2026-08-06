@@ -73,7 +73,9 @@ export const transcribeRestyleAudio = createServerFn({ method: "POST" })
 
     const form = new FormData();
     form.append("model", STT_MODEL);
-    form.append("response_format", "verbose_json");
+    // 网关 STT（gpt-4o-mini-transcribe-api-ev3）不支持 verbose_json（400），
+    // 只接受 json/text；句级时间码由 45s 分段偏移兜底（parseSttPayload 的 text 回退）。
+    form.append("response_format", "json");
     form.append(
       "file",
       new Blob([bytes as unknown as BlobPart], { type: MIME_BY_FORMAT[data.format] ?? "audio/wav" }),
@@ -142,7 +144,7 @@ export const transcribeRestyleAudio = createServerFn({ method: "POST" })
     return { ok: true, sentences };
   });
 
-/** STT verbose_json 响应 → 整集绝对毫秒台词句（纯函数，可测）。 */
+/** STT 响应（json 或 verbose_json 兼容解析）→ 整集绝对毫秒台词句（纯函数，可测）。 */
 export function parseSttPayload(
   payload: SttVerbosePayload | null,
   sourceStartSeconds: number,
