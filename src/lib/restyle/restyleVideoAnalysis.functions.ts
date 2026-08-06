@@ -48,7 +48,8 @@ export const UNIT_ANALYSIS_CONCURRENCY = 2;
 // 入参 schema
 // --------------------------------------------------------------------
 
-const UnitInputSchema = z.object({
+// 导出供 v1 单元化分析函数（restyleSourceUnits.functions.ts）复用同一契约。
+export const UnitInputSchema = z.object({
   unitId: z.string().min(1).max(128),
   videoUrl: z.string().url(),
   audioUrl: z.string().url().optional(),
