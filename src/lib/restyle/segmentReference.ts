@@ -21,17 +21,23 @@ import { segmentIndexFromId } from "./shotSchedule";
 export type SegmentTimeRange = { startMs: number; endMs: number };
 
 /**
- * 把区间夹取到素材库允许的 1.8–30 秒：
+ * 把区间夹取到通道允许的时长范围（默认素材库 1.8–30 秒）：
  * - 非法区间（非有限数 / 负起点 / 起点不早于终点）返回 undefined；
- * - 超过 30 秒向后截断；不足 1.8 秒向后补齐。
+ * - 超过上限向后截断；不足下限向后补齐。
  */
-export function clampSegmentRange(startMs: number, endMs: number): SegmentTimeRange | undefined {
+export function clampSegmentRange(
+  startMs: number,
+  endMs: number,
+  limits?: { minMs?: number; maxMs?: number },
+): SegmentTimeRange | undefined {
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return undefined;
+  const minMs = limits?.minMs ?? REFERENCE_VIDEO_MIN_MS;
+  const maxMs = limits?.maxMs ?? REFERENCE_VIDEO_MAX_MS;
   const start = Math.round(startMs);
   let end = Math.round(endMs);
   if (start < 0 || start >= end) return undefined;
-  if (end - start > REFERENCE_VIDEO_MAX_MS) end = start + REFERENCE_VIDEO_MAX_MS;
-  if (end - start < REFERENCE_VIDEO_MIN_MS) end = start + REFERENCE_VIDEO_MIN_MS;
+  if (end - start > maxMs) end = start + maxMs;
+  if (end - start < minMs) end = start + minMs;
   return { startMs: start, endMs: end };
 }
 
@@ -57,6 +63,7 @@ export type SceneGroupRange = SegmentTimeRange & {
 export function rangesFromSceneGroups(
   shots: DirectionShot[],
   segmentCount: number,
+  limits?: { minMs?: number; maxMs?: number },
 ): SceneGroupRange[] {
   if (!shots.length || segmentCount < 1) return [];
   // DirectionShot.scene → GroupingShot.sceneType；id 带序号防 shotNo 重复。
@@ -75,7 +82,7 @@ export function rangesFromSceneGroups(
       .map((id) => shotById.get(id))
       .filter((shot): shot is GroupingShot => !!shot);
     if (!groupShots.length) continue;
-    const range = clampSegmentRange(groupShots[0]!.startMs, groupShots[groupShots.length - 1]!.endMs);
+    const range = clampSegmentRange(groupShots[0]!.startMs, groupShots[groupShots.length - 1]!.endMs, limits);
     if (!range) continue;
     const scenes = [
       ...new Set(groupShots.map((shot) => (shot.sceneType ?? "").trim()).filter(Boolean)),
@@ -103,15 +110,16 @@ export function resolveSegmentTimeRange(input: {
   explicit?: { startMs?: number; endMs?: number };
   shots?: DirectionShot[];
   segmentCount: number;
+  limits?: { minMs?: number; maxMs?: number };
 }): SegmentTimeRange | undefined {
   const segmentIndex = segmentIndexFromId(input.segmentId);
   const explicit = input.explicit;
   if (explicit && typeof explicit.startMs === "number" && typeof explicit.endMs === "number") {
-    const range = clampSegmentRange(explicit.startMs, explicit.endMs);
+    const range = clampSegmentRange(explicit.startMs, explicit.endMs, input.limits);
     if (range) return range;
   }
   if (segmentIndex === undefined) return undefined;
-  const group = rangesFromSceneGroups(input.shots ?? [], input.segmentCount)[segmentIndex];
+  const group = rangesFromSceneGroups(input.shots ?? [], input.segmentCount, input.limits)[segmentIndex];
   return group ? { startMs: group.startMs, endMs: group.endMs } : undefined;
 }
 

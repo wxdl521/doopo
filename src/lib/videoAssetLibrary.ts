@@ -45,12 +45,41 @@ export const REFERENCE_VIDEO_MAX_SECONDS = 30;
 export const REFERENCE_VIDEO_MIN_MS = 1_800;
 export const REFERENCE_VIDEO_MAX_MS = 30_000;
 
+/**
+ * ARK Seedance 直连（doubao-seedance-*，r2v 模式）参考视频限制 2–15 秒，
+ * 与素材库通道（1.8–30 秒）不同：分钟级原片直传会触发上游
+ * 「duration ... not valid ... in r2v」等校验失败，必须先裁片段。
+ */
+export const ARK_R2V_REFERENCE_VIDEO_MIN_MS = 2_000;
+export const ARK_R2V_REFERENCE_VIDEO_MAX_MS = 15_000;
+
 /** 返回模型对应的素材库供应商；不支持素材库时返回 null。 */
 export function assetLibraryVendorForModel(model: string | undefined): VideoAssetVendor | null {
   if (!model?.trim()) return null;
   if (model.startsWith("topenrouter-doubao-seedance-")) return "topenrouter";
   if (model.startsWith("keyiyun-")) return "keyiyun";
   if (model.startsWith("kuaizi-lizhen-")) return "kuaizi";
+  return null;
+}
+
+/** ARK Seedance 直连模型（doubao-seedance-* 无前缀），r2v 参考视频限 2–15 秒。 */
+export function isArkSeedanceDirectModel(model: string | undefined): boolean {
+  return !!model?.trim().startsWith("doubao-seedance-");
+}
+
+/**
+ * 各通道参考视频时长约束：素材库通道 1.8–30s；ARK Seedance 直连 2–15s；
+ * 其它后端无约束（返回 null，维持整片提交的旧行为）。
+ */
+export function referenceVideoLimitsForModel(
+  model: string | undefined,
+): { minMs: number; maxMs: number } | null {
+  if (assetLibraryVendorForModel(model)) {
+    return { minMs: REFERENCE_VIDEO_MIN_MS, maxMs: REFERENCE_VIDEO_MAX_MS };
+  }
+  if (isArkSeedanceDirectModel(model)) {
+    return { minMs: ARK_R2V_REFERENCE_VIDEO_MIN_MS, maxMs: ARK_R2V_REFERENCE_VIDEO_MAX_MS };
+  }
   return null;
 }
 

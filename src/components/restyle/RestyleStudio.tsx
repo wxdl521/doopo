@@ -95,7 +95,7 @@ import {
   getVideoAssetLibrarySupport,
   isSensitiveContentError,
   planRestyleFallback,
-  REFERENCE_VIDEO_MAX_MS,
+  referenceVideoLimitsForModel,
   RESTYLE_FALLBACK_EXHAUSTED_MESSAGE,
   restyleAssetCacheKey,
   type RestyleFallbackStage,
@@ -2442,9 +2442,10 @@ export default function RestyleStudio() {
 
   /**
    * 分段参考视频：素材库通道（TopenRouter / 客易云 / 筷子）限制参考视频 1.8–30.2 秒，
-   * 分钟级原片直接入库会 400。这里按分段时间区间把原片裁成 ≤30s 片段再提交：
+   * ARK Seedance 直连（r2v）限制 2–15 秒；分钟级原片直接提交会 400。
+   * 这里按分段时间区间把原片裁成通道允许时长内的片段再提交：
    * 1. 沿用 ensureReferenceVideoUrl 取回原片持久 URL；
-   * 2. 非素材库通道、或原片本身不超过 30 秒 → 维持整片提交的旧行为；
+   * 2. 无时长约束的后端、或原片本身不超上限 → 维持整片提交的旧行为；
    * 3. 分段区间 = 模型显式区间 → 场景分组区间（场景优先，不再均分时长）；
    *    逐镜表缺失/无法判定场景时在对话区一次性提示先做原片分析；
    * 4. 有区间 → 提交裁剪任务并轮询取回片段 URL（项目级缓存，同一片段只裁一次）；
@@ -2459,8 +2460,10 @@ export default function RestyleStudio() {
   ): Promise<{ ok: true; url?: string } | { ok: false; error: string }> {
     const source = await ensureReferenceVideoUrl(projectId, job.source);
     if (!source.ok) return source;
-    // 只有走素材库的通道才有参考视频时长约束；其它后端维持整片提交。
-    if (!assetLibraryVendorForModel(videoModel)) return { ok: true, url: source.url };
+    // 参考视频时长约束按通道区分：素材库通道 1.8–30s；ARK Seedance 直连
+    // （r2v）2–15s；其它后端无约束，维持整片提交的旧行为。
+    const referenceLimits = referenceVideoLimitsForModel(videoModel);
+    if (!referenceLimits) return { ok: true, url: source.url };
     const project = projectsRef.current.find((item) => item.id === projectId);
     const episode = project?.planEpisodes?.find((item) => item.episode === job.episode);
     const segment = episode?.segments.find((item) => item.id === job.segmentId);
@@ -2469,9 +2472,9 @@ export default function RestyleStudio() {
     const realDurationMs =
       job.source.durationSec != null ? job.source.durationSec * 1000 : undefined;
     const shotCoverageMs = estimateSourceDurationMs(project?.shotSchedule);
-    if (realDurationMs !== undefined && realDurationMs <= REFERENCE_VIDEO_MAX_MS) {
+    if (realDurationMs !== undefined && realDurationMs <= referenceLimits.maxMs) {
       appendRenderLog(projectId, job.attachmentId,
-        `原片真实时长 ${(realDurationMs / 1000).toFixed(1)}s 在素材库时长限制内（真实原片合规），直接作为参考视频。`);
+        `原片真实时长 ${(realDurationMs / 1000).toFixed(1)}s 在参考视频时长限制内（真实原片合规），直接作为参考视频。`);
       return { ok: true, url: source.url };
     }
     if (realDurationMs === undefined) {
@@ -2496,6 +2499,7 @@ export default function RestyleStudio() {
       explicit: { startMs: segment?.startMs, endMs: segment?.endMs },
       shots: project?.shotSchedule,
       segmentCount,
+      limits: referenceLimits,
     });
     // 推算不出区间（旧项目无逐镜表）：绝不把超长整片回退提交
     // （素材库会 400），降级为不带参考视频。
@@ -2509,7 +2513,7 @@ export default function RestyleStudio() {
     const groupInfo =
       segmentIndex === undefined
         ? undefined
-        : rangesFromSceneGroups(shots, segmentCount)[segmentIndex];
+        : rangesFromSceneGroups(shots, segmentCount, referenceLimits)[segmentIndex];
     const rangeSeconds = ((range.endMs - range.startMs) / 1000).toFixed(1);
     appendRenderLog(
       projectId,
@@ -3069,10 +3073,15 @@ export default function RestyleStudio() {
           segmentForDuration?.endMs != null && segmentForDuration?.startMs != null
             ? Math.min(15, Math.max(2, Math.round((segmentForDuration.endMs - segmentForDuration.startMs) / 1000)))
             : 5;
-        // 上游时长校验错误（如 Duration must be between）一次性标记：移除参考视频重投
+        // 上游时长校验拒绝（如 r2v 模式 duration 档位与 t2v 不同、或时长超过
+        // 参考视频实际时长）时的自适应降级：先按 15→10→6→4 降档重投，
+        // 降档穷尽后移除参考视频再重投一次（r2v 校验随之消失）。
+        let durationSec = segmentDurationSec;
+        const durationRetries: number[] = [10, 6, 4];
         let referenceDroppedForDuration = false;
-        // 被拒降级链：剔除被点名参考图重投 → 只留首帧 → 仅文本 + 参考视频；6 次硬上限防死循环。
-        for (let attempt = 0; attempt < 6; attempt++) {
+        // 被拒降级链：剔除被点名参考图重投 → 只留首帧 → 仅文本 + 参考视频；
+        // 加上时长降档（15→10→6→4）与移除参考视频重投，9 次硬上限防死循环。
+        for (let attempt = 0; attempt < 9; attempt++) {
           const keptImages = job.referenceImages.filter((url) => !dropped.includes(url));
           const content = buildRestyleVideoContent({
             prompt: directedPrompt,
@@ -3086,7 +3095,7 @@ export default function RestyleStudio() {
               model: videoModel,
               ratio: projectAspect,
               resolution: "720P",
-              duration: segmentDurationSec,
+              duration: durationSec,
               generateAudio: true,
               watermark: false,
             },
@@ -3102,19 +3111,28 @@ export default function RestyleStudio() {
             submitFailure = error;
             break;
           }
-          // 上游时长校验拒绝：与真人降级链独立，移除参考视频重投一次
-          if (
-            !referenceDroppedForDuration &&
-            referenceVideo.url &&
-            /Duration must be between|duration/i.test(error ?? "")
-          ) {
-            referenceDroppedForDuration = true;
-            appendRenderLog(
-              projectId,
-              job.attachmentId,
-              "参考视频实际时长未通过上游校验，已移除后重投。",
-            );
-            continue;
+          // 上游时长校验拒绝：与真人降级链独立。先降档重投（15→10→6→4），
+          // 降档穷尽后移除参考视频重投一次。
+          if (/Duration must be between|duration|时长/i.test(error ?? "")) {
+            const nextDuration = durationRetries.find((d) => d < durationSec);
+            if (nextDuration !== undefined) {
+              appendRenderLog(
+                projectId,
+                job.attachmentId,
+                `时长 ${durationSec}s 未通过上游校验，降为 ${nextDuration}s 重投。`,
+              );
+              durationSec = nextDuration;
+              continue;
+            }
+            if (!referenceDroppedForDuration && referenceVideo.url) {
+              referenceDroppedForDuration = true;
+              appendRenderLog(
+                projectId,
+                job.attachmentId,
+                "参考视频/时长组合未通过上游校验，已移除参考视频后重投。",
+              );
+              continue;
+            }
           }
           const plan = planRestyleFallback({
             stage,
