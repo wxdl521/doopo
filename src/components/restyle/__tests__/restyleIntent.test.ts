@@ -113,3 +113,68 @@ describe("isReplanIntent", () => {
     }
   });
 });
+
+import { parseSegmentRerunIntent } from "../restyleIntent";
+
+describe("parseSegmentRerunIntent", () => {
+  it("parses episode and segment in various writings", () => {
+    expect(parseSegmentRerunIntent("重新生成第一集01片段")).toEqual({
+      episode: 1,
+      segmentId: "U01",
+      feedback: "重新生成第一集01片段",
+    });
+    expect(parseSegmentRerunIntent("重跑第二集")?.episode).toBe(2);
+    expect(parseSegmentRerunIntent("重跑第二集")?.segmentId).toBeUndefined();
+    expect(parseSegmentRerunIntent("重新生成EP01的U03")).toMatchObject({
+      episode: 1,
+      segmentId: "U03",
+    });
+    expect(parseSegmentRerunIntent("重出第3集片段2")).toMatchObject({
+      episode: 3,
+      segmentId: "U02",
+    });
+    expect(parseSegmentRerunIntent("再生成01集第二段")).toMatchObject({
+      episode: 1,
+      segmentId: "U02",
+    });
+    expect(parseSegmentRerunIntent("重做第十集")?.episode).toBe(10);
+    expect(parseSegmentRerunIntent("redo episode 2 segment 3")).toMatchObject({
+      episode: 2,
+      segmentId: "U03",
+    });
+  });
+
+  it("parses segment without episode (routing falls back to unique/asked episode)", () => {
+    const intent = parseSegmentRerunIntent("重新生成01片段");
+    expect(intent?.segmentId).toBe("U01");
+    expect(intent?.episode).toBeUndefined();
+  });
+
+  it("leaves asset-semantic regenerate requests to the image branch", () => {
+    for (const message of [
+      "重新生成场景图片",
+      "角色不对，重新生成",
+      "重新生成资产表",
+      "道具图不像，重做一张",
+    ]) {
+      expect(parseSegmentRerunIntent(message), message).toBeNull();
+      // 这些说法仍由资产生图纠错分支接管。
+      expect(isRegenerateIntent(message), message).toBe(true);
+    }
+    // 英文资产语义同样豁免（isRegenerateIntent 只覆盖中文说法，不在此断言）。
+    expect(parseSegmentRerunIntent("regenerate the character image")).toBeNull();
+  });
+
+  it("requires both a redo word and video context", () => {
+    for (const message of [
+      "",
+      "重做",
+      "重新分析原片",
+      "重新生成方案",
+      "确认生成视频",
+      "把第一集 U01 光影调整为冷白色调",
+    ]) {
+      expect(parseSegmentRerunIntent(message), message).toBeNull();
+    }
+  });
+});

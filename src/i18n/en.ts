@@ -1856,6 +1856,24 @@ export const en: Translations = {
   restyle_run_step_render: "Rendering restyle videos",
   restyle_run_step_prompt_update: "Updating segment prompts",
   restyle_run_step_fetch_source: "Fetching source video…",
+  restyle_rerun_episode_not_found:
+    "Episode {episode} not found; rerun not started. Available: {list}.",
+  restyle_rerun_segment_not_found:
+    "This episode has no segment {segment}; rerun not started. Available: {list}.",
+  restyle_rerun_which_episode: "Which episode should I rerun{segment}? Available: {list}.",
+  restyle_rerun_segment_submitted:
+    "Submitted a partial rework for {episode} {segment}; only this segment is re-rendered, not the whole episode.",
+  restyle_rerun_episode_submitted:
+    "Submitted a full rerun of {episode}; other episodes are unaffected.",
+  restyle_render_segment_failed: "{label} failed: {error}. {advice}",
+  restyle_render_advice_duration:
+    "Suggestion: the source range for this segment exceeds the model duration limit. Shorten the segment and retry, or resubmit without a reference video.",
+  restyle_render_advice_assets:
+    "Suggestion: missing usable asset/reference images. Reply \"generate asset images\" to build them, then retry.",
+  restyle_render_advice_retry:
+    "Suggestion: click \"Retry\" on this segment in the Render Status panel, or reply \"regenerate episode X segment YY\" to rerun it.",
+  restyle_render_advice_request_id: "Please include the requestId when reporting: {requestId}.",
+  restyle_render_queue_first_error: "First failure ({label}): {error}",
   restyle_reanalyze_button: "Re-analyse source",
   restyle_reanalyze_cached_frames: "Re-analysed from cached key frames this time.",
   restyle_reanalyze_suggest_replan:

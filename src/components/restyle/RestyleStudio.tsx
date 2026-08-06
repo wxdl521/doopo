@@ -112,6 +112,8 @@ import {
   isRegenerateIntent,
   isReplanIntent,
   isVideoRenderIntent,
+  parseSegmentRerunIntent,
+  type SegmentRerunIntent,
 } from "./restyleIntent";
 import {
   buildRelationBrief,
@@ -2319,6 +2321,37 @@ export default function RestyleStudio() {
     );
   }
 
+  /** 单段失败的建议动作：按已知上游错误归类文案，其它错误原样提示重试并附 requestId（若有）。 */
+  function renderFailureAdvice(error: string): string {
+    if (/Duration must be between|duration|时长/i.test(error)) {
+      return t.restyle_render_advice_duration;
+    }
+    if (/资产图|参考图|reference\s*image/i.test(error)) {
+      return t.restyle_render_advice_assets;
+    }
+    const requestId = error.match(/request[\s_-]*id[:：\s]*([A-Za-z0-9-]+)/i)?.[1];
+    return requestId
+      ? `${t.restyle_render_advice_retry}${t.restyle_render_advice_request_id.replace("{requestId}", requestId)}`
+      : t.restyle_render_advice_retry;
+  }
+
+  /** 单段失败的对话播报：集号 + 分段号 + 原始错误文本 + 建议动作。 */
+  function reportRenderSegmentFailure(
+    projectId: string,
+    conversationId: string,
+    job: { episode?: string; segmentId?: string },
+    error: string,
+  ) {
+    const label = [job.episode, job.segmentId].filter(Boolean).join(" ") || "该分段";
+    appendConversationMessage(projectId, conversationId, {
+      role: "assistant",
+      content: t.restyle_render_segment_failed
+        .replace("{label}", label)
+        .replace("{error}", error)
+        .replace("{advice}", renderFailureAdvice(error)),
+    });
+  }
+
   function setAttachmentUpload(attachmentId: string, state: DirectUploadState) {
     setAttachmentUploads((current) => ({ ...current, [attachmentId]: state }));
   }
@@ -2654,11 +2687,22 @@ export default function RestyleStudio() {
       const finalOk = latestFiles.some(
         (file) => file.generatedKind === "final_video" && file.renderStatus === "succeeded" && Boolean(file.resultUrl ?? file.url),
       );
+      // 失败分段的首条错误摘要直接拼进播报，不再只让用户去右侧找原因。
+      const firstFailed = failedSegments[0];
+      const firstErrorSummary = firstFailed?.renderError
+        ? t.restyle_render_queue_first_error
+            .replace(
+              "{label}",
+              [firstFailed.episode, firstFailed.segmentId].filter(Boolean).join(" ") ||
+                firstFailed.name,
+            )
+            .replace("{error}", firstFailed.renderError.slice(0, 160))
+        : "";
       appendConversationMessage(projectId, conversationId, {
         role: "assistant",
         content: hasFinalVideos
           ? failedSegments.length || !finalOk
-            ? `渲染结束：${failedSegments.length ? `${failedSegments.map((f) => `${f.episode ?? ""}${f.segmentId ? ` ${f.segmentId}` : ""}`).join("、")} 失败` : "成片合成未成功"}。请在右侧“生成状态”查看原因，可对失败分段点「重试」。`
+            ? `渲染结束：${failedSegments.length ? `${failedSegments.map((f) => `${f.episode ?? ""}${f.segmentId ? ` ${f.segmentId}` : ""}`).join("、")} 失败` : "成片合成未成功"}。请在右侧“生成状态”查看原因，可对失败分段点「重试」。${firstErrorSummary}`
             : `${finalEpisodes.join("、")} 的分段视频已生成，并按顺序合成整集成片（保留分段自带音轨）。`
           : "局部返工片段已按队列逐个生成完成。只更新了问题片段，没有重跑整集或整部剧。",
         finalEpisodeLinks: hasFinalVideos ? finalEpisodes : undefined,
@@ -2943,6 +2987,11 @@ export default function RestyleStudio() {
       completeRenderQueue(projectId, conversationId, finalEpisodes, videoModel);
       return;
     }
+    // 单段失败统一出口：除写 renderError 外，向对话播报集号+分段号+原始错误+建议动作。
+    const failJob = (error: string, taskId?: string) => {
+      failRenderAttachment(projectId, job.attachmentId, error, taskId);
+      reportRenderSegmentFailure(projectId, conversationId, job, error);
+    };
     // 预算校验：任何模式下累计消耗达上限即强制暂停，不再提交后续分段。
     const estimatedCost = videoJobCost(videoModel);
     if (budgetExceeded(projectId, estimatedCost)) {
@@ -2987,7 +3036,7 @@ export default function RestyleStudio() {
       appendRenderLog(projectId, job.attachmentId, "正在上传原视频，作为动作、镜头和节奏参考。");
       const referenceVideo = await ensureSegmentReferenceVideoUrl(projectId, job, videoModel, conversationId);
       if (!referenceVideo.ok) {
-        failRenderAttachment(projectId, job.attachmentId, referenceVideo.error);
+        failJob(referenceVideo.error);
       } else {
         appendRenderLog(
           projectId,
@@ -3090,17 +3139,19 @@ export default function RestyleStudio() {
           stage = plan.stage;
         }
         if (!submitted) {
-          failRenderAttachment(
-            projectId,
-            job.attachmentId,
-            submitFailure ?? RESTYLE_FALLBACK_EXHAUSTED_MESSAGE,
-          );
-          // 余额不足：在对话里明确播报强制暂停原因，任务不再自动推进。
+          // 余额不足走专属播报（不重复发单段失败消息），任务不再自动推进。
           if (isInsufficientCreditsError(submitFailure)) {
+            failRenderAttachment(
+              projectId,
+              job.attachmentId,
+              submitFailure ?? RESTYLE_FALLBACK_EXHAUSTED_MESSAGE,
+            );
             appendConversationMessage(projectId, conversationId, {
               role: "assistant",
               content: submitFailure ?? "",
             });
+          } else {
+            failJob(submitFailure ?? RESTYLE_FALLBACK_EXHAUSTED_MESSAGE);
           }
         } else {
           appendRenderLog(
@@ -3128,9 +3179,7 @@ export default function RestyleStudio() {
             if (isRunAborted(projectId)) break;
             pollCount += 1;
             if (pollCount > 120) {
-              failRenderAttachment(
-                projectId,
-                job.attachmentId,
+              failJob(
                 "视频生成超时：已等待约 10 分钟仍未完成，请稍后重试该分段。",
                 submitted.taskId,
               );
@@ -3157,7 +3206,7 @@ export default function RestyleStudio() {
             }
             if (!polled.ok) {
               if (polled.status === "failed" || polled.status === "cancelled") {
-                failRenderAttachment(projectId, job.attachmentId, polled.error, submitted.taskId);
+                failJob(polled.error, submitted.taskId);
                 break;
               }
               appendRenderLog(
@@ -3169,12 +3218,7 @@ export default function RestyleStudio() {
             }
             if (polled.status === "succeeded") {
               if (!polled.videoUrl) {
-                failRenderAttachment(
-                  projectId,
-                  job.attachmentId,
-                  "视频任务已完成但没有返回可播放的结果 URL",
-                  submitted.taskId,
-                );
+                failJob("视频任务已完成但没有返回可播放的结果 URL", submitted.taskId);
               } else {
                 appendRenderLog(
                   projectId,
@@ -3199,9 +3243,7 @@ export default function RestyleStudio() {
               break;
             }
             if (polled.status === "failed" || polled.status === "cancelled") {
-              failRenderAttachment(
-                projectId,
-                job.attachmentId,
+              failJob(
                 `视频任务${polled.status === "cancelled" ? "已取消" : "失败"}`,
                 submitted.taskId,
               );
@@ -3222,11 +3264,7 @@ export default function RestyleStudio() {
         }
       }
     } catch (error) {
-      failRenderAttachment(
-        projectId,
-        job.attachmentId,
-        error instanceof Error ? error.message : "视频生成请求失败",
-      );
+      failJob(error instanceof Error ? error.message : "视频生成请求失败");
     } finally {
       window.clearInterval(heartbeat);
     }
@@ -3511,6 +3549,95 @@ export default function RestyleStudio() {
   function rerunVideoSegment(segment: RestyleAttachment) {
     if (!segment.episode || !segment.segmentId) return;
     setRerunTarget(segment);
+  }
+
+  /**
+   * 聊天里的「按集/按片段重跑」入口，等价于右侧「返工」按钮。
+   * 返回 false 表示项目还没有方案也没有渲染产物，交给后续路由分支处理。
+   */
+  function handleSegmentRerunIntent(
+    projectId: string,
+    conversationId: string,
+    intent: SegmentRerunIntent,
+  ): boolean {
+    const project = projectsRef.current.find((item) => item.id === projectId);
+    if (!project) return false;
+    const hasRendered = project.files.some(
+      (file) => file.generatedKind === "video_clip" || file.generatedKind === "final_video",
+    );
+    if (!project.planEpisodes?.length && !hasRendered) return false;
+    // 与 generateRenderedVideos 相同的回落：无方案时每条源片视作一集一段（U01）。
+    const episodes = project.planEpisodes?.length
+      ? project.planEpisodes
+      : project.files
+          .filter((file) => file.type.startsWith("video/") && !file.isFolder)
+          .map((file) => ({
+            episode: file.episode ?? file.id,
+            segments: [{ id: "U01", prompt: "" }],
+          }));
+    if (!episodes.length) return false;
+    const availableList = episodes
+      .map(
+        (item, index) =>
+          `第${index + 1}集（${item.segments.map((segment) => segment.id).join("、")}）`,
+      )
+      .join("；");
+    let target = intent.episode != null ? episodes[intent.episode - 1] : undefined;
+    // 命中集号但项目没有该集：不启动渲染，列出当前可用的集与分段编号。
+    if (intent.episode != null && !target) {
+      appendConversationMessage(projectId, conversationId, {
+        role: "assistant",
+        content: t.restyle_rerun_episode_not_found
+          .replace("{episode}", String(intent.episode))
+          .replace("{list}", availableList),
+      });
+      return true;
+    }
+    if (!target) {
+      // 未给集号：唯一集直接用；给了片段号时取唯一包含该分段的集；否则反问要哪一集。
+      if (episodes.length === 1) {
+        target = episodes[0];
+      } else if (intent.segmentId) {
+        const candidates = episodes.filter((item) =>
+          item.segments.some((segment) => segment.id === intent.segmentId),
+        );
+        if (candidates.length === 1) target = candidates[0];
+      }
+      if (!target) {
+        appendConversationMessage(projectId, conversationId, {
+          role: "assistant",
+          content: t.restyle_rerun_which_episode
+            .replace("{segment}", intent.segmentId ? `的 ${intent.segmentId}` : "")
+            .replace("{list}", availableList),
+        });
+        return true;
+      }
+    }
+    // 命中片段号但该集没有该分段：不启动渲染，列出可用编号。
+    if (intent.segmentId && !target.segments.some((segment) => segment.id === intent.segmentId)) {
+      appendConversationMessage(projectId, conversationId, {
+        role: "assistant",
+        content: t.restyle_rerun_segment_not_found
+          .replace("{segment}", intent.segmentId)
+          .replace("{list}", availableList),
+      });
+      return true;
+    }
+    const episodeLabel = `第${episodes.indexOf(target) + 1}集`;
+    appendConversationMessage(projectId, conversationId, {
+      role: "assistant",
+      content: intent.segmentId
+        ? t.restyle_rerun_segment_submitted
+            .replace("{episode}", episodeLabel)
+            .replace("{segment}", intent.segmentId)
+        : t.restyle_rerun_episode_submitted.replace("{episode}", episodeLabel),
+    });
+    generateRenderedVideos(projectId, conversationId, {
+      episode: target.episode,
+      segmentId: intent.segmentId,
+      feedback: intent.feedback,
+    });
+    return true;
   }
 
   function submitSegmentRerun(segment: RestyleAttachment, feedback: string) {
@@ -4190,6 +4317,17 @@ export default function RestyleStudio() {
         });
       }
       finishRun(projectId, result.ok ? "done" : "failed");
+      return;
+    }
+
+    // 「重新生成第一集01片段」这类按集/按片段的视频重跑：必须排在重分析与
+    // 生图纠错分支之前——「重跑」会命中 isReanalyzeIntent，「重新生成」在已有
+    // 资产图时会被 isCorrection 当成整表重画。命中即等价右侧「返工」，只重跑目标片段。
+    const segmentRerunIntent = parseSegmentRerunIntent(message);
+    if (
+      segmentRerunIntent &&
+      handleSegmentRerunIntent(projectId, conversationId, segmentRerunIntent)
+    ) {
       return;
     }
 

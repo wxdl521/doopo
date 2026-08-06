@@ -60,6 +60,94 @@ export function isReanalyzeIntent(message: string): boolean {
   );
 }
 
+/** 「片段/整集重跑」意图的解析结果。 */
+export type SegmentRerunIntent = {
+  /** 用户口中的集序号（1 起始，「第一集」→ 1）；未指定时为 undefined。 */
+  episode?: number;
+  /** 规范化后的分段编号（如 U01）；未指定表示整集重跑。 */
+  segmentId?: string;
+  /** 用户原话，作为返工反馈透传给 generateRenderedVideos。 */
+  feedback: string;
+};
+
+// 重做词 + 视频语境同时出现才判视频重跑；资产语义（资产表/角色/场景/道具/资产图片）
+// 存在时放行给生图纠错分支，避免抢走「重新生成场景图片」。
+const RERUN_WORD = /(重新生成|重跑|重新跑|重出|重新出|再生成|重新渲染|重做|re-?generate|re-?run|redo|re-?render)/i;
+const VIDEO_CONTEXT = /(片段|分段|成片|视频|U\s*\d|EP\s*\d|集|segment|episode|clip|video)/i;
+const ASSET_SEMANTIC = /(资产表|资产图片|资产图|角色|场景|道具|asset|character|scene|prop)/i;
+
+const CN_DIGITS: Record<string, number> = {
+  一: 1,
+  二: 2,
+  两: 2,
+  三: 3,
+  四: 4,
+  五: 5,
+  六: 6,
+  七: 7,
+  八: 8,
+  九: 9,
+};
+
+/** 中文数字（一 ~ 九十九）转阿拉伯数字，覆盖「第一集」「第十集」「第二段」等说法。 */
+function parseCnNumber(text: string): number | undefined {
+  if (!text) return undefined;
+  if (text === "十") return 10;
+  const tenIndex = text.indexOf("十");
+  if (tenIndex >= 0) {
+    const tens = tenIndex === 0 ? 1 : CN_DIGITS[text[0]];
+    const ones = text.length > tenIndex + 1 ? CN_DIGITS[text[tenIndex + 1]] : 0;
+    if (tens === undefined || ones === undefined) return undefined;
+    return tens * 10 + ones;
+  }
+  return text.length === 1 ? CN_DIGITS[text] : undefined;
+}
+
+/** 集序号：EP01 / 第一集 / 第1集 / 01集 / episode 2（中文数字须带「第」，避免「这一集」误判）。 */
+function parseEpisodeNumber(text: string): number | undefined {
+  const explicit = text.match(/EP\s*0*(\d{1,3})/i) ?? text.match(/episode\s*0*(\d{1,3})/i);
+  if (explicit) return Number(explicit[1]);
+  const ordinal = text.match(/第\s*(\d{1,3}|[一二两三四五六七八九十]{1,3})\s*集/);
+  if (ordinal) return /^\d+$/.test(ordinal[1]) ? Number(ordinal[1]) : parseCnNumber(ordinal[1]);
+  const bare = text.match(/0*(\d{1,3})\s*集/);
+  if (bare) return Number(bare[1]);
+  return undefined;
+}
+
+/** 分段编号：U01 / 01片段 / 片段1 / 第二段 / 第2段，统一规范成 U 开头两位编号。 */
+function parseSegmentId(text: string): string | undefined {
+  const normalize = (raw: string | undefined): string | undefined => {
+    if (raw === undefined) return undefined;
+    const value = /^\d+$/.test(raw) ? Number(raw) : parseCnNumber(raw);
+    return value === undefined ? undefined : `U${String(value).padStart(2, "0")}`;
+  };
+  const u = text.match(/U\s*0*(\d{1,2})(?!\d)/i);
+  if (u) return normalize(u[1]);
+  const prefix = text.match(/0*(\d{1,2})\s*(?:片段|分段)/);
+  if (prefix) return normalize(prefix[1]);
+  const suffix = text.match(/片段\s*0*(\d{1,2})/);
+  if (suffix) return normalize(suffix[1]);
+  const ordinal = text.match(/第\s*(\d{1,2}|[一二两三四五六七八九十]{1,3})\s*(?:段|片段|分段)/);
+  if (ordinal) return normalize(ordinal[1]);
+  const en = text.match(/(?:segment|clip)\s*0*(\d{1,2})/i);
+  if (en) return normalize(en[1]);
+  return undefined;
+}
+
+/**
+ * 用户是否在要求重跑某集/某片段的转绘视频（等价于右侧「返工」按钮）。
+ * 仅在重做词与视频语境同时出现、且未指向资产语义时命中；
+ * 解析出的集/片段是否存在由路由层按项目 planEpisodes 校验。
+ */
+export function parseSegmentRerunIntent(message: string): SegmentRerunIntent | null {
+  const text = message.trim();
+  if (!text) return null;
+  if (!RERUN_WORD.test(text)) return null;
+  if (ASSET_SEMANTIC.test(text)) return null;
+  if (!VIDEO_CONTEXT.test(text)) return null;
+  return { episode: parseEpisodeNumber(text), segmentId: parseSegmentId(text), feedback: text };
+}
+
 /**
  * 用户是否在要求整套重做转绘方案（区别于指出某集某段的局部修改）。
  * 与 isConfirmIntent 互斥（其已有的「重新 / 修改」排除逻辑会把这些说法挡在确认之外）。
