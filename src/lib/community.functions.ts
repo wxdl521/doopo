@@ -206,48 +206,11 @@ export const isLiked = createServerFn({ method: "POST" })
 
 // --------------------------------------------------------------------
 // viewerKey —— 服务端生成（2026-08 审计加固：防刷浏览量）
-//   登录用户用 userId；匿名用户用请求 IP + UA 的 sha256。
-//   客户端不再能自选 viewerKey 刷浏览去重。
+//   纯函数在 communityViewerKey.ts（客户端安全）；依赖请求上下文的
+//   resolveViewerKey 在 community.server.ts，只能在 handler 内动态引入，
+//   否则 @tanstack/react-start/server 会被导入保护拒绝在客户端图。
 // --------------------------------------------------------------------
-
-/** 匿名访客 key：`a:` + sha256(ip|ua) 前 32 位（纯函数，便于测试） */
-// 浏览器/Worker 双端可跑的稳定散列（viewerKey 只需去重，不需要加密强度）
-function fnv1aHex(input: string): string {
-  let out = "";
-  for (let lane = 0; lane < 4; lane += 1) {
-    let h = 0x811c9dc5 ^ (lane * 0x9e3779b9);
-    for (let i = 0; i < input.length; i += 1) {
-      h = Math.imul(h ^ input.charCodeAt(i), 0x01000193 + lane);
-    }
-    out += (h >>> 0).toString(16).padStart(8, "0");
-  }
-  return out;
-}
-
-export function buildAnonymousViewerKey(ip: string | null | undefined, ua: string | null | undefined): string {
-  return `a:${fnv1aHex(`${ip ?? ""}|${ua ?? ""}`)}`;
-}
-
-/** 登录 → `u:<userId>`；匿名 → IP+UA 哈希 */
-export async function resolveViewerKey(): Promise<string> {
-  const ctx = await getOptionalAuthCtx();
-  if (ctx) return `u:${ctx.userId}`;
-  let ip: string | null = null;
-  let ua: string | null = null;
-  try {
-    const { getRequest } = await import("@tanstack/react-start/server");
-    const headers = getRequest()?.headers;
-    // 反代链路优先取 CF / XFF 首跳，取不到退化为仅 UA 哈希
-    ip =
-      headers?.get("cf-connecting-ip") ??
-      headers?.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-      null;
-    ua = headers?.get("user-agent");
-  } catch {
-    // getRequest 在非请求上下文抛错时退化为仅 UA 哈希
-  }
-  return buildAnonymousViewerKey(ip, ua);
-}
+export { buildAnonymousViewerKey } from "./communityViewerKey";
 
 export const recordView = createServerFn({ method: "POST" })
   .validator((input) =>
@@ -258,6 +221,7 @@ export const recordView = createServerFn({ method: "POST" })
       .parse(input),
   )
   .handler(async ({ data }) => {
+    const { resolveViewerKey } = await import("./community.server");
     const viewerKey = await resolveViewerKey();
     // Use admin to bypass RLS for anonymous views; UNIQUE constraint enforces dedup per day.
     await supabaseAdmin
