@@ -170,7 +170,8 @@ describe("RestyleStudio prototype", () => {
     renderStudio();
 
     const model = screen.getByLabelText("选择分析模型");
-    expect(model).toHaveValue("qwen:qwen3.6-plus");
+    // 默认分析模型为 GPT-5.5，可切换回 Qwen。
+    expect(model).toHaveValue("lovable:openai/gpt-5.5");
     await user.selectOptions(model, "qwen:qwen3.6-plus");
     expect(model).toHaveValue("qwen:qwen3.6-plus");
   });
@@ -509,8 +510,8 @@ describe("RestyleStudio prototype", () => {
 
     // B 没设过模型：回落默认值，而不是沿用 A 的选择。
     await user.selectOptions(screen.getByLabelText("选择项目"), "project-b");
-    // 默认生图模型 = realImageModelOptions 里第一个可见模型（Seedream 不在可见列表时）。
-    expect(imageSelect).toHaveValue("tokenflash/gpt-image-2");
+    // 默认生图模型 = Azure gpt-image-2（在可见列表时优先选中）。
+    expect(imageSelect).toHaveValue("azure2/gpt-image-2");
     expect(videoSelect).not.toHaveValue("doubao-seedance-1-0-pro-250528");
   });
 

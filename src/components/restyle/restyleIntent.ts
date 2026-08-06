@@ -62,10 +62,14 @@ export function isReanalyzeIntent(message: string): boolean {
 
 /** 「片段/整集重跑」意图的解析结果。 */
 export type SegmentRerunIntent = {
-  /** 用户口中的集序号（1 起始，「第一集」→ 1）；未指定时为 undefined。 */
+  /** 用户口中的首个集序号（1 起始，「第一集」→ 1）；未指定时为 undefined。即 episodes 首项。 */
   episode?: number;
-  /** 规范化后的分段编号（如 U01）；未指定表示整集重跑。 */
+  /** 一句话点名的全部集序号（去重、升序）；空数组表示未指定集，由路由层按唯一集推断。 */
+  episodes: number[];
+  /** 规范化后的首个分段编号（如 U01）；未指定表示整集重跑。即 segments 首项。 */
   segmentId?: string;
+  /** 一句话点名的全部分段编号（去重、按编号升序）；空数组表示整集重跑。 */
+  segments: string[];
   /** 用户原话，作为返工反馈透传给 generateRenderedVideos。 */
   feedback: string;
 };
@@ -103,35 +107,38 @@ function parseCnNumber(text: string): number | undefined {
   return text.length === 1 ? CN_DIGITS[text] : undefined;
 }
 
-/** 集序号：EP01 / 第一集 / 第1集 / 01集 / episode 2（中文数字须带「第」，避免「这一集」误判）。 */
-function parseEpisodeNumber(text: string): number | undefined {
-  const explicit = text.match(/EP\s*0*(\d{1,3})/i) ?? text.match(/episode\s*0*(\d{1,3})/i);
-  if (explicit) return Number(explicit[1]);
-  const ordinal = text.match(/第\s*(\d{1,3}|[一二两三四五六七八九十]{1,3})\s*集/);
-  if (ordinal) return /^\d+$/.test(ordinal[1]) ? Number(ordinal[1]) : parseCnNumber(ordinal[1]);
-  const bare = text.match(/0*(\d{1,3})\s*集/);
-  if (bare) return Number(bare[1]);
-  return undefined;
+/** 阿拉伯数字或中文数字原始文本转数字。 */
+function parseNumericToken(raw: string | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  return /^\d+$/.test(raw) ? Number(raw) : parseCnNumber(raw);
 }
 
-/** 分段编号：U01 / 01片段 / 片段1 / 第二段 / 第2段，统一规范成 U 开头两位编号。 */
-function parseSegmentId(text: string): string | undefined {
-  const normalize = (raw: string | undefined): string | undefined => {
-    if (raw === undefined) return undefined;
-    const value = /^\d+$/.test(raw) ? Number(raw) : parseCnNumber(raw);
-    return value === undefined ? undefined : `U${String(value).padStart(2, "0")}`;
-  };
-  const u = text.match(/U\s*0*(\d{1,2})(?!\d)/i);
-  if (u) return normalize(u[1]);
-  const prefix = text.match(/0*(\d{1,2})\s*(?:片段|分段)/);
-  if (prefix) return normalize(prefix[1]);
-  const suffix = text.match(/片段\s*0*(\d{1,2})/);
-  if (suffix) return normalize(suffix[1]);
-  const ordinal = text.match(/第\s*(\d{1,2}|[一二两三四五六七八九十]{1,3})\s*(?:段|片段|分段)/);
-  if (ordinal) return normalize(ordinal[1]);
-  const en = text.match(/(?:segment|clip)\s*0*(\d{1,2})/i);
-  if (en) return normalize(en[1]);
-  return undefined;
+// 与原单值解析同一套写法（EP01 / 第一集 / 01集 / episode 2、U01 / 01片段 / 片段1 /
+// 第二段 / segment 1），只是改成全局匹配：一句话里可能点名多集、多个片段
+// （「重新生成EP01 U02片段、EP01 U03片段」「重跑第1集U02、第2集U01」）。
+const EPISODE_GLOBAL_PATTERN =
+  /EP\s*0*(\d{1,3})|episode\s*0*(\d{1,3})|第\s*(\d{1,3}|[一二两三四五六七八九十]{1,3})\s*集|0*(\d{1,3})\s*集/gi;
+const SEGMENT_GLOBAL_PATTERN =
+  /U\s*0*(\d{1,2})(?!\d)|0*(\d{1,2})\s*(?:片段|分段)|片段\s*0*(\d{1,2})|第\s*(\d{1,2}|[一二两三四五六七八九十]{1,3})\s*(?:段|片段|分段)|(?:segment|clip)\s*0*(\d{1,2})/gi;
+
+/** 一句话点名的全部集序号：去重后升序。 */
+function parseEpisodeNumbers(text: string): number[] {
+  const found = new Set<number>();
+  for (const match of text.matchAll(EPISODE_GLOBAL_PATTERN)) {
+    const value = parseNumericToken(match[1] ?? match[2] ?? match[3] ?? match[4]);
+    if (value !== undefined) found.add(value);
+  }
+  return [...found].sort((a, b) => a - b);
+}
+
+/** 一句话点名的全部分段编号：统一规范成 U 开头两位编号，去重后按编号升序。 */
+function parseSegmentIds(text: string): string[] {
+  const found = new Set<string>();
+  for (const match of text.matchAll(SEGMENT_GLOBAL_PATTERN)) {
+    const value = parseNumericToken(match[1] ?? match[2] ?? match[3] ?? match[4] ?? match[5]);
+    if (value !== undefined) found.add(`U${String(value).padStart(2, "0")}`);
+  }
+  return [...found].sort();
 }
 
 /**
@@ -145,7 +152,9 @@ export function parseSegmentRerunIntent(message: string): SegmentRerunIntent | n
   if (!RERUN_WORD.test(text)) return null;
   if (ASSET_SEMANTIC.test(text)) return null;
   if (!VIDEO_CONTEXT.test(text)) return null;
-  return { episode: parseEpisodeNumber(text), segmentId: parseSegmentId(text), feedback: text };
+  const episodes = parseEpisodeNumbers(text);
+  const segments = parseSegmentIds(text);
+  return { episode: episodes[0], episodes, segmentId: segments[0], segments, feedback: text };
 }
 
 /**

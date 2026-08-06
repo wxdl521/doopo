@@ -120,11 +120,14 @@ describe("parseSegmentRerunIntent", () => {
   it("parses episode and segment in various writings", () => {
     expect(parseSegmentRerunIntent("重新生成第一集01片段")).toEqual({
       episode: 1,
+      episodes: [1],
       segmentId: "U01",
+      segments: ["U01"],
       feedback: "重新生成第一集01片段",
     });
     expect(parseSegmentRerunIntent("重跑第二集")?.episode).toBe(2);
     expect(parseSegmentRerunIntent("重跑第二集")?.segmentId).toBeUndefined();
+    expect(parseSegmentRerunIntent("重跑第二集")?.segments).toEqual([]);
     expect(parseSegmentRerunIntent("重新生成EP01的U03")).toMatchObject({
       episode: 1,
       segmentId: "U03",
@@ -142,6 +145,38 @@ describe("parseSegmentRerunIntent", () => {
       episode: 2,
       segmentId: "U03",
     });
+  });
+
+  it("collects every segment named in one message", () => {
+    const intent = parseSegmentRerunIntent("重新生成EP01 U02片段、EP01 U03片段");
+    expect(intent?.segments).toEqual(["U02", "U03"]);
+    // segmentId 保留为兼容首项。
+    expect(intent?.segmentId).toBe("U02");
+    expect(intent?.episodes).toEqual([1]);
+  });
+
+  it("collects every episode named in one message", () => {
+    const intent = parseSegmentRerunIntent("重跑第1集U02、第2集U01");
+    expect(intent?.episodes).toEqual([1, 2]);
+    expect(intent?.episode).toBe(1);
+    expect(intent?.segments).toEqual(["U01", "U02"]);
+  });
+
+  it("parses mixed segment writings in one message", () => {
+    const intent = parseSegmentRerunIntent("重新生成第1集的01片段和第二段，顺带 segment 4");
+    expect(intent?.segments).toEqual(["U01", "U02", "U04"]);
+    expect(intent?.episodes).toEqual([1]);
+  });
+
+  it("dedupes and sorts segments and episodes", () => {
+    expect(parseSegmentRerunIntent("重做U03片段和U02片段，再生成U03")?.segments).toEqual([
+      "U02",
+      "U03",
+    ]);
+    const multiEpisode = parseSegmentRerunIntent("重跑第3集、第1集和第3集");
+    expect(multiEpisode?.episodes).toEqual([1, 3]);
+    expect(multiEpisode?.episode).toBe(1);
+    expect(multiEpisode?.segments).toEqual([]);
   });
 
   it("parses segment without episode (routing falls back to unique/asked episode)", () => {

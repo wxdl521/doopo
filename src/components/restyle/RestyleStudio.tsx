@@ -50,6 +50,13 @@ import {
 } from "./restyleStorage";
 import type { RestyleAsset, RestyleStage } from "./restyleTypes";
 import { analyzeRestyleAssets, generateRestylePlan } from "../../lib/restyleAnalysis.functions";
+import {
+  analyzeRestyleSourceUnits,
+  type RestyleSourceUnitsFileResult,
+} from "../../lib/restyleSourceUnits.functions";
+import { prepareEpisodeMedia } from "./v2/mediaSlicing";
+import { mergeSourceUnitResults, renumberShotSchedule } from "./sourceUnitsMerge";
+import { imageModelFallbackCandidates, isQuotaLikeImageError } from "./imageModelFallback";
 import { segmentIndexFromId, withSegmentDirection } from "../../lib/restyle/shotSchedule";
 import { formatLightingParams } from "../../lib/restyle/cameraDirection";
 import {
@@ -233,23 +240,28 @@ function relabelRestyleError(error: string, model: RestyleModel): string {
 
 type RestyleModel = (typeof RESTYLE_MODELS)[number]["id"];
 
-// 支持素材库预审（真人素材审核）的视频模型排最前并作为默认：真人参考图直接以
+// 支持素材库预审（真人素材审核）的视频模型排最前：真人参考图直接以
 // 公网 URL 提交会触发上游风控，素材库通道（asset:// 引用）是官方规避路径。
 const RESTYLE_VIDEO_MODELS = [...realVideoModels].sort(
   (a, b) =>
     Number(getVideoAssetLibrarySupport(b.id).supported) -
     Number(getVideoAssetLibrarySupport(a.id).supported),
 );
+// 默认视频模型：TopenRouter 中转的 Seedance 2.0（支持素材库预审，真人参考图的
+// 官方规避路径）；取不到时回退任意支持素材库的模型。
 const DEFAULT_RESTYLE_VIDEO_MODEL =
+  RESTYLE_VIDEO_MODELS.find((model) => model.id === "topenrouter-doubao-seedance-2-0-260128")
+    ?.id ??
   RESTYLE_VIDEO_MODELS.find((model) => getVideoAssetLibrarySupport(model.id).supported)?.id ??
   realVideoModels[0]?.id ??
   "doubao-seedance-2-0-260128";
-// 默认显式使用 Seedream：它支持带参考图的图生图；部分中转（tokenflash）不支持 edits 端点。
+// 默认生图模型：Azure gpt-image-2 终结点。tokenflash 渠道曾余额归零导致全量 403，
+// Azure 渠道实测稳定（配额类失败另有 imageModelFallback 自动换渠道兜底）。
 const DEFAULT_RESTYLE_IMAGE_MODEL = realImageModelOptions.some(
-  (model) => model.id === "doubao-seedream-5-0-260128",
+  (model) => model.id === "azure2/gpt-image-2",
 )
-  ? "doubao-seedream-5-0-260128"
-  : (realImageModelOptions[0]?.id ?? "doubao-seedream-5-0-260128");
+  ? "azure2/gpt-image-2"
+  : (realImageModelOptions[0]?.id ?? "azure2/gpt-image-2");
 type RestyleFilePreview =
   | {
       kind: "attachment";
@@ -297,6 +309,16 @@ type RestyleVideoPair = {
   result: RestyleAttachment;
   sourceUrl?: string;
   resultUrl?: string;
+};
+
+/** 一次局部/整集返工请求：聊天点名与右侧「返工/重试」按钮共用。 */
+type RestyleRerunRequest = {
+  episode: string;
+  segmentId?: string;
+  feedback: string;
+  sourceAttachmentId?: string;
+  rerunOfAttachmentId?: string;
+  referenceAssetIds?: string[];
 };
 
 function formatFileSize(size?: number): string {
@@ -601,6 +623,21 @@ function groupedAttachmentNodes(files: RestyleAttachment[]): RestyleFileTreeNode
   ];
 }
 
+/**
+ * 同一 episode + segmentId 只保留最新一条渲染附件：每次返工都会新建一份
+ * video_clip / final_video 附件，结果目录与右侧「分段返工」列表只展示最新那份，
+ * 旧记录统一留在「生成状态」里。lastModified 相同时取列表靠后的（后追加的更新）。
+ */
+function latestRenderAttachments(files: RestyleAttachment[]): RestyleAttachment[] {
+  const bySegment = new Map<string, RestyleAttachment>();
+  for (const file of files) {
+    const key = `${file.episode ?? ""}/${file.segmentId ?? ""}`;
+    const existing = bySegment.get(key);
+    if (!existing || file.lastModified >= existing.lastModified) bySegment.set(key, file);
+  }
+  return [...bySegment.values()];
+}
+
 function buildRestyleFileTree(
   project: RestyleProject | undefined,
   linkedAssets: RestyleAsset[],
@@ -609,11 +646,20 @@ function buildRestyleFileTree(
   const extractedAssets = project?.extractedAssets ?? [];
   const sourceChildren = groupedAttachmentNodes(project?.files ?? []);
   const generatedFiles = (project?.files ?? []).filter((file) => file.generatedKind && file.url);
-  const finalVideoFiles = (project?.files ?? []).filter(
-    (file) => file.generatedKind === "final_video",
+  // 「成片 / 视频片段」只收渲染成功且有结果链接的附件：渲染附件在入队时就以原片的
+  // 名字与体积创建，未完成/失败的占位不进结果目录（统一在右侧「生成状态」展示）；
+  // 同一 episode + segmentId 只保留最新一条，避免返工后出现重复行。
+  const isFinishedRender = (file: RestyleAttachment) =>
+    file.renderStatus === "succeeded" && Boolean(file.resultUrl ?? file.url);
+  const finalVideoFiles = latestRenderAttachments(
+    (project?.files ?? []).filter(
+      (file) => file.generatedKind === "final_video" && isFinishedRender(file),
+    ),
   );
-  const videoClipFiles = (project?.files ?? []).filter(
-    (file) => file.generatedKind === "video_clip",
+  const videoClipFiles = latestRenderAttachments(
+    (project?.files ?? []).filter(
+      (file) => file.generatedKind === "video_clip" && isFinishedRender(file),
+    ),
   );
   const sourceCandidates = makeVirtualPreview(
     "analysis/global/source_asset_candidates.json",
@@ -959,7 +1005,7 @@ function buildRestyleFileTree(
         id: `results/final/${file.id}`,
         label: file.name,
         kind: "file" as const,
-        size: file.size,
+        // 不显示体积：附件上记录的是原片大小，结果文件体积当前没有落库，显示会误导。
         preview: {
           kind: "attachment" as const,
           key: `attachment:${file.id}`,
@@ -977,7 +1023,7 @@ function buildRestyleFileTree(
         id: `results/clips/${file.id}`,
         label: file.name,
         kind: "file" as const,
-        size: file.size,
+        // 不显示体积：附件上记录的是原片大小，结果文件体积当前没有落库，显示会误导。
         preview: {
           kind: "attachment" as const,
           key: `attachment:${file.id}`,
@@ -1097,7 +1143,7 @@ export default function RestyleStudio() {
   } | null>(null);
   const [draggedFileId, setDraggedFileId] = useState<string | null>(null);
   const [fileDropTarget, setFileDropTarget] = useState<RestyleFileDropTarget | null>(null);
-  const [selectedModel, setSelectedModel] = useState<RestyleModel>("qwen:qwen3.6-plus");
+  const [selectedModel, setSelectedModel] = useState<RestyleModel>("lovable:openai/gpt-5.5");
   const [selectedImageModel, setSelectedImageModel] = useState(DEFAULT_RESTYLE_IMAGE_MODEL);
   const [selectedVideoModel, setSelectedVideoModel] = useState(DEFAULT_RESTYLE_VIDEO_MODEL);
   // 模型定价（model_pricing 表）：视频档给工作台选项区与成本预估用，图像档给生图成本预估用。
@@ -1108,7 +1154,15 @@ export default function RestyleStudio() {
   const spendRef = useRef<Record<string, number>>({});
   // 每个转绘项目独立的执行态：切换项目不再互相阻塞，可多项目并发。
   const [projectRuns, setProjectRuns] = useState<Record<string, RestyleRunState>>({});
+  // projectRuns 的 ref 镜像：渲染队列收尾（同一闭包内）紧接着发起下一个任务时，
+  // useState 快照还是旧的 running=true，会误判项目仍在忙；ref 读写即时生效。
+  const projectRunningRef = useRef<Record<string, boolean>>({});
   const runAbortRef = useRef<Record<string, AbortController>>({});
+  // 返工待办队列：项目忙时点名的局部返工（聊天/按钮重试）按项目排队，
+  // 渲染队列收尾后自动取出下一个开跑；点击「停止」时清空。
+  const pendingRerunsRef = useRef<
+    Map<string, Array<{ conversationId: string; rerun: RestyleRerunRequest }>>
+  >(new Map());
   const [analysisError, setAnalysisError] = useState("");
   // 资产表 skill 自检结果（reviewRestyleAssetTable）：仅组件内状态，不落盘。
   const [assetReview, setAssetReview] = useState<{
@@ -1160,6 +1214,7 @@ export default function RestyleStudio() {
   const shotScheduleHintRef = useRef<Set<string>>(new Set());
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const callAnalyzeRestyleAssets = useServerFn(analyzeRestyleAssets);
+  const callAnalyzeRestyleSourceUnits = useServerFn(analyzeRestyleSourceUnits);
   const callGenerateRestylePlan = useServerFn(generateRestylePlan);
   const callGenerateImage = useServerFn(generateImage);
   const callGenerateImageWithReferences = useServerFn(generateImageWithReferences);
@@ -1485,7 +1540,7 @@ export default function RestyleStudio() {
   }, [activeProjectId]);
 
   function isProjectRunning(projectId: string) {
-    return Boolean(projectRuns[projectId]?.running);
+    return Boolean(projectRunningRef.current[projectId]);
   }
 
   function isRunAborted(projectId: string) {
@@ -1496,6 +1551,7 @@ export default function RestyleStudio() {
   function beginRun(projectId: string, label: string) {
     const controller = new AbortController();
     runAbortRef.current[projectId] = controller;
+    projectRunningRef.current[projectId] = true;
     setProjectRuns((current) => ({
       ...current,
       [projectId]: {
@@ -1533,6 +1589,7 @@ export default function RestyleStudio() {
     status: "done" | "failed" | "stopped" = "done",
     detail?: string,
   ) {
+    projectRunningRef.current[projectId] = false;
     setProjectRuns((current) => {
       const run = current[projectId];
       if (!run) return current;
@@ -1561,6 +1618,8 @@ export default function RestyleStudio() {
   function stopRun(projectId: string) {
     if (!isProjectRunning(projectId)) return;
     runAbortRef.current[projectId]?.abort();
+    // 停止同时清空该项目排队中的返工待办，避免停止后又被自动拉起。
+    pendingRerunsRef.current.delete(projectId);
     finishRun(projectId, "stopped", t.restyle_run_stopped_step);
     const project = projectsRef.current.find((item) => item.id === projectId);
     const conversationId = project?.activeConversationId;
@@ -1570,6 +1629,15 @@ export default function RestyleStudio() {
         content: t.restyle_run_stopped_message,
       });
     }
+  }
+
+  /** 渲染队列收尾后取出下一个返工待办自动开跑；没有待办则什么都不做。 */
+  function drainPendingReruns(projectId: string) {
+    const queue = pendingRerunsRef.current.get(projectId);
+    const next = queue?.shift();
+    if (!next) return;
+    if (!queue?.length) pendingRerunsRef.current.delete(projectId);
+    generateRenderedVideos(projectId, next.conversationId, next.rerun);
   }
 
   // Conversations are persisted locally. Always restore the view at the newest message,
@@ -1773,6 +1841,8 @@ export default function RestyleStudio() {
             name: file.name,
             type: file.type,
             size: file.size,
+            // 权威总时长透传：服务端据此输出全片覆盖硬要求并做覆盖兜底。
+            durationSec: file.durationSec,
           })),
           assets: project.extractedAssets.map(({ id: _id, ...asset }) => asset),
           episodeCount,
@@ -1802,6 +1872,11 @@ export default function RestyleStudio() {
       return false;
     }
     if (isRunAborted(projectId)) return false;
+    // 覆盖兜底提示：服务端 ensureFullCoverage 自动补段的区间数随方案播报透出。
+    const coverageFillCount = (result.warnings ?? []).filter((warning) =>
+      warning.includes("已自动补齐未覆盖区间"),
+    ).length;
+    const coverageNote = coverageFillCount ? `已自动补齐 ${coverageFillCount} 个未覆盖区间。` : "";
     const episodeLinks = result.episodes.map((episode) => episode.episode);
     const sourceVideoNames = episodeLinks.map(sourceVideoLabel);
     updateProject(projectId, (current) => ({
@@ -1817,7 +1892,7 @@ export default function RestyleStudio() {
     ) {
       appendConversationMessage(projectId, conversationId, {
         role: "assistant",
-        content: `已确认资产图片，已生成 ${sourceVideoNames.join("、")} 的转绘方案。点击视频文件可打开右侧对应提示词。需要微调时，请直接说明视频和分段，例如“请将第一个视频的 U01 光影调整为冷白色调”。调整完成后回复“确认生成视频”。`,
+        content: `已确认资产图片，已生成 ${sourceVideoNames.join("、")} 的转绘方案。${coverageNote}点击视频文件可打开右侧对应提示词。需要微调时，请直接说明视频和分段，例如“请将第一个视频的 U01 光影调整为冷白色调”。调整完成后回复“确认生成视频”。`,
         episodeLinks,
       });
       return true;
@@ -1825,11 +1900,19 @@ export default function RestyleStudio() {
     if (budgetExceeded(projectId)) {
       appendConversationMessage(projectId, conversationId, {
         role: "assistant",
-        content: `已生成 ${sourceVideoNames.join("、")} 的转绘方案。`,
+        content: `已生成 ${sourceVideoNames.join("、")} 的转绘方案。${coverageNote}`,
         episodeLinks,
       });
       pauseForBudget(projectId, conversationId);
       return true;
+    }
+    // 极速全自动路径没有方案确认播报，覆盖兜底提示单独补一条。
+    if (coverageNote) {
+      appendConversationMessage(projectId, conversationId, {
+        role: "assistant",
+        content: `已生成 ${sourceVideoNames.join("、")} 的转绘方案。${coverageNote}`,
+        episodeLinks,
+      });
     }
     const latest = projectsRef.current.find((item) => item.id === projectId) ?? project;
     submitVideoRender(latest, conversationId);
@@ -2157,9 +2240,12 @@ export default function RestyleStudio() {
     if (!activeProject) return [];
     const episode = attachment.episode;
     if (!episode) return [];
-    return activeProject.files
-      .filter((file) => file.generatedKind === "video_clip" && file.episode === episode)
-      .sort((a, b) => (a.segmentId ?? "").localeCompare(b.segmentId ?? ""));
+    // 与结果目录同一处 dedupe：同一分段多次返工只展示最新一条。
+    return latestRenderAttachments(
+      activeProject.files.filter(
+        (file) => file.generatedKind === "video_clip" && file.episode === episode,
+      ),
+    ).sort((a, b) => (a.segmentId ?? "").localeCompare(b.segmentId ?? ""));
   }
 
   function openFinalEpisode(episode: string) {
@@ -2715,6 +2801,9 @@ export default function RestyleStudio() {
       // 渲染队列状态机收尾：无论拼接/播报是否抛错都结束本次 run；
       // 用户主动停止时 stopRun 已收尾，这里不重复。
       if (!isRunAborted(projectId)) finishRun(projectId);
+      // 收尾后检查返工待办队列：有排队片段则自动开跑下一个
+      // （分段失败/合成结束也走这里；stopRun 已清空待办，不会重复拉起）。
+      drainPendingReruns(projectId);
     }
   }
 
@@ -3292,26 +3381,59 @@ export default function RestyleStudio() {
   function generateRenderedVideos(
     projectId: string,
     conversationId: string,
-    rerun?: {
-      episode: string;
-      segmentId?: string;
-      feedback: string;
-      sourceAttachmentId?: string;
-      rerunOfAttachmentId?: string;
-      referenceAssetIds?: string[];
-    },
+    rerun?: RestyleRerunRequest,
   ) {
     // 必须用 projectsRef 取最新项目：本函数常在多次 await（分析→方案→确认）之后
     // 执行，渲染闭包里的 projects 是发起时的旧快照，可能没有刚写入的源片，
     // 会误报「没有找到可用于生成的视频源文件」。
     const project = projectsRef.current.find((item) => item.id === projectId);
     if (!project) return;
-    // 渲染队列状态机：同一项目同时只允许一个活跃队列，重复发起直接拒绝。
+    // 渲染队列状态机：同一项目同时只允许一个活跃队列。
+    // 局部返工（rerun 指定 segmentId，含聊天点名与按钮重试）忙时进待办队列而不是
+    // 拒绝，渲染队列收尾后自动开跑；整集/全量生成仍保留原来的拒绝提示。
     if (isProjectRunning(projectId)) {
+      if (!rerun?.segmentId) {
+        appendConversationMessage(projectId, conversationId, {
+          role: "assistant",
+          content: "该项目已有任务正在进行中，请等待完成（或点击停止）后再发起新的生成。",
+        });
+        return;
+      }
+      const pending = pendingRerunsRef.current.get(projectId) ?? [];
+      // 队列去重：同 episode + segmentId 已在队列或正在跑时，不重复入队。
+      const alreadyPending = pending.some(
+        (item) => item.rerun.episode === rerun.episode && item.rerun.segmentId === rerun.segmentId,
+      );
+      const alreadyRendering = project.files.some(
+        (file) =>
+          file.generatedKind === "video_clip" &&
+          file.episode === rerun.episode &&
+          file.segmentId === rerun.segmentId &&
+          (file.renderStatus === "queued" || file.renderStatus === "running"),
+      );
+      if (alreadyPending || alreadyRendering) {
+        appendConversationMessage(projectId, conversationId, {
+          role: "assistant",
+          content: `${rerun.episode} ${rerun.segmentId} 该片段已在队列中。`,
+        });
+        return;
+      }
+      pendingRerunsRef.current.set(projectId, [...pending, { conversationId, rerun }]);
       appendConversationMessage(projectId, conversationId, {
         role: "assistant",
-        content: "该项目已有任务正在进行中，请等待完成（或点击停止）后再发起新的生成。",
+        content: `已加入队列，前面还有 ${pending.length} 个任务，完成后自动开始。`,
       });
+      // 把对应片段卡片置为「排队中」，让用户在右侧看到它已排上（仅改失败状态的卡片，
+      // 正在跑的片段不动）。
+      updateRenderAttachments(
+        projectId,
+        (file) =>
+          file.generatedKind === "video_clip" &&
+          file.episode === rerun.episode &&
+          file.segmentId === rerun.segmentId &&
+          file.renderStatus === "failed",
+        (file) => ({ ...file, renderStatus: "queued" as const, renderError: undefined }),
+      );
       return;
     }
     beginRun(projectId, t.restyle_run_step_render);
@@ -3371,6 +3493,8 @@ export default function RestyleStudio() {
         role: "assistant",
         content: `还没有可用的转绘资产图${missing ? `（资产表里待生成：${missing}）` : ""}。请直接回复“生成资产图片”，我会按资产表逐张生成；确认无误后再回复“确认生成视频”。`,
       });
+      // 本次返工提前失败也要继续推进待办队列，避免后续排队片段被卡死。
+      drainPendingReruns(projectId);
       return;
     }
     const attachments: RestyleAttachment[] = planEpisodes.flatMap((episode, episodeIndex) => {
@@ -3437,6 +3561,8 @@ export default function RestyleStudio() {
           ? "原片仍在上传中，请等待上传完成后再确认生成。"
           : "没有找到可用于生成的视频源文件，请先上传原片后再确认生成。",
       });
+      // 本次返工提前失败也要继续推进待办队列，避免后续排队片段被卡死。
+      drainPendingReruns(projectId);
       return;
     }
     const finalEpisodes = attachments
@@ -3600,19 +3726,25 @@ export default function RestyleStudio() {
           `第${index + 1}集（${item.segments.map((segment) => segment.id).join("、")}）`,
       )
       .join("；");
-    let target = intent.episode != null ? episodes[intent.episode - 1] : undefined;
-    // 命中集号但项目没有该集：不启动渲染，列出当前可用的集与分段编号。
-    if (intent.episode != null && !target) {
-      appendConversationMessage(projectId, conversationId, {
-        role: "assistant",
-        content: t.restyle_rerun_episode_not_found
-          .replace("{episode}", String(intent.episode))
-          .replace("{list}", availableList),
-      });
-      return true;
-    }
-    if (!target) {
-      // 未给集号：唯一集直接用；给了片段号时取唯一包含该分段的集；否则反问要哪一集。
+    // 目标集：点名几集就处理几集；未点名时沿用「唯一集直接用 / 唯一包含该片段的集」推断。
+    const targets: Array<{ index: number; episode: (typeof episodes)[number] }> = [];
+    if (intent.episodes.length) {
+      for (const episodeNumber of intent.episodes) {
+        const target = episodes[episodeNumber - 1];
+        // 命中集号但项目没有该集：单独提示并列出可用的集与分段编号，继续处理其余点名的集。
+        if (!target) {
+          appendConversationMessage(projectId, conversationId, {
+            role: "assistant",
+            content: t.restyle_rerun_episode_not_found
+              .replace("{episode}", String(episodeNumber))
+              .replace("{list}", availableList),
+          });
+          continue;
+        }
+        targets.push({ index: episodeNumber - 1, episode: target });
+      }
+    } else {
+      let target: (typeof episodes)[number] | undefined;
       if (episodes.length === 1) {
         target = episodes[0];
       } else if (intent.segmentId) {
@@ -3630,31 +3762,50 @@ export default function RestyleStudio() {
         });
         return true;
       }
+      targets.push({ index: episodes.indexOf(target), episode: target });
     }
-    // 命中片段号但该集没有该分段：不启动渲染，列出可用编号。
-    if (intent.segmentId && !target.segments.some((segment) => segment.id === intent.segmentId)) {
+    for (const { index, episode: target } of targets) {
+      const episodeLabel = `第${index + 1}集`;
+      // 未点名片段：整集重跑。
+      if (!intent.segments.length) {
+        appendConversationMessage(projectId, conversationId, {
+          role: "assistant",
+          content: t.restyle_rerun_episode_submitted.replace("{episode}", episodeLabel),
+        });
+        generateRenderedVideos(projectId, conversationId, {
+          episode: target.episode,
+          feedback: intent.feedback,
+        });
+        continue;
+      }
+      // 逐片段校验：该集不存在的分段单独提示；全部合法片段一次性提交——
+      // 首个立即开跑，其余进返工待办队列（见 generateRenderedVideos 的排队逻辑）。
+      const validSegments: string[] = [];
+      for (const segmentId of intent.segments) {
+        if (target.segments.some((segment) => segment.id === segmentId)) {
+          validSegments.push(segmentId);
+        } else {
+          appendConversationMessage(projectId, conversationId, {
+            role: "assistant",
+            content: t.restyle_rerun_segment_not_found
+              .replace("{segment}", segmentId)
+              .replace("{list}", availableList),
+          });
+        }
+      }
+      if (!validSegments.length) continue;
       appendConversationMessage(projectId, conversationId, {
         role: "assistant",
-        content: t.restyle_rerun_segment_not_found
-          .replace("{segment}", intent.segmentId)
-          .replace("{list}", availableList),
+        content: `已提交 ${episodeLabel} ${validSegments.join("、")} 局部返工，将按队列逐个重跑。`,
       });
-      return true;
+      for (const segmentId of validSegments) {
+        generateRenderedVideos(projectId, conversationId, {
+          episode: target.episode,
+          segmentId,
+          feedback: intent.feedback,
+        });
+      }
     }
-    const episodeLabel = `第${episodes.indexOf(target) + 1}集`;
-    appendConversationMessage(projectId, conversationId, {
-      role: "assistant",
-      content: intent.segmentId
-        ? t.restyle_rerun_segment_submitted
-            .replace("{episode}", episodeLabel)
-            .replace("{segment}", intent.segmentId)
-        : t.restyle_rerun_episode_submitted.replace("{episode}", episodeLabel),
-    });
-    generateRenderedVideos(projectId, conversationId, {
-      episode: target.episode,
-      segmentId: intent.segmentId,
-      feedback: intent.feedback,
-    });
     return true;
   }
 
@@ -3986,8 +4137,98 @@ export default function RestyleStudio() {
       if (sourceFiles.some((file) => !fileObjectsRef.current[file.id])) {
         markRunStep(projectId, t.restyle_run_step_fetch_source);
       }
+      // 单元化分析管线（v2 内核）：逐集 prepareEpisodeMedia（120s 切片、每单元 4 帧、
+      // 单元音频，全部上传 workspace-media 得 URL），再逐单元循环调
+      // analyzeRestyleSourceUnits（每请求 1 单元，避开平台约 100s 无字节断连）。
+      // 任一集失败回退旧「8 帧 + STT」快速分析路径，并在对话中标注降级。
+      const pipelineAnalyses: Array<{
+        file: RestyleAttachment;
+        unitResults: RestyleSourceUnitsFileResult[];
+        frameUrls: string[];
+        durationSec: number;
+      }> = [];
+      const fallbackFiles: RestyleAttachment[] = [];
+      for (const file of sourceFiles) {
+        const episode = file.episode ?? file.id;
+        const resolved = await resolveSourceVideoFile(file, fileObjectsRef.current, (target) =>
+          ensureReferenceVideoUrl(projectId, target),
+        );
+        if (!resolved.ok) {
+          fallbackFiles.push(file);
+          continue;
+        }
+        try {
+          const prepared = await prepareEpisodeMedia(resolved.file, {
+            episodeId: episode,
+            upload: (input) => callUploadLocalMedia({ data: input }),
+            createUploadUrl: (input) => callCreateMediaUploadUrl({ data: input }),
+            signReadUrl: (input) => callSignMediaReadUrl({ data: input }),
+            onProgress: (event) =>
+              markRunStep(
+                projectId,
+                `${t.restyle_run_step_read_source}${event.unitIndex >= 0 ? ` 单元 ${event.unitIndex + 1}` : ""}${event.detail ? `：${event.detail}` : ""}`,
+              ),
+          });
+          // 逐单元分析：幂等键按项目+集派生，同一单元重复成功调用不重复扣费；
+          // 单单元失败记 warning 继续后续单元（部分失败用成功单元继续）。
+          const unitResults: RestyleSourceUnitsFileResult[] = [];
+          for (let i = 0; i < prepared.units.length; i += 1) {
+            if (isRunAborted(projectId)) return false;
+            const unit = prepared.units[i];
+            markRunStep(
+              projectId,
+              `${t.restyle_run_step_analyze} 单元 ${i + 1}/${prepared.units.length}`,
+            );
+            const unitResult = await callAnalyzeRestyleSourceUnits({
+              data: {
+                sourceFiles: [{ id: episode, name: file.name, units: [unit] }],
+                idempotencyKey: `${projectId}:${episode}`,
+              },
+            });
+            const fileResult = unitResult.ok ? unitResult.files[0] : undefined;
+            if (fileResult && fileResult.unitsSucceeded > 0) {
+              unitResults.push(fileResult);
+            } else {
+              unitResults.push({
+                sourceId: episode,
+                sourceName: file.name,
+                shotSchedule: [],
+                transcript: "",
+                evidencePackage: "",
+                warnings: [
+                  unitResult.ok
+                    ? `单元 ${unit.unitId} 分析失败。`
+                    : `单元 ${unit.unitId} 分析请求失败：${unitResult.error}`,
+                ],
+                unitsTotal: 1,
+                unitsSucceeded: 0,
+                unitsFailed: 1,
+                failedUnitIds: [unit.unitId],
+              });
+            }
+          }
+          if (!unitResults.some((result) => result.unitsSucceeded > 0)) {
+            throw new Error("全部单元分析失败");
+          }
+          pipelineAnalyses.push({
+            file,
+            unitResults,
+            frameUrls: prepared.units.flatMap((unit) => unit.frameUrls),
+            durationSec: prepared.durationSec,
+          });
+        } catch (error) {
+          if (isRunAborted(projectId)) return false;
+          // 该集整体回退旧 8 帧 + STT 快速分析路径。
+          fallbackFiles.push(file);
+          appendConversationMessage(projectId, conversationId, {
+            role: "assistant",
+            content: `${file.name} 单元化分析未完成（${error instanceof Error ? error.message : "未知错误"}），已降级为快速分析，长片覆盖可能不完整。`,
+          });
+        }
+      }
+      // 旧快速分析路径（降级）：8 帧抽帧，仅对降级集执行。
       const frameBatches = await Promise.all(
-        sourceFiles.map(async (file) => {
+        fallbackFiles.map(async (file) => {
           const resolved = await resolveSourceVideoFile(file, fileObjectsRef.current, (target) =>
             ensureReferenceVideoUrl(projectId, target),
           );
@@ -4001,10 +4242,10 @@ export default function RestyleStudio() {
       let frameImages = frameBatches.flatMap((batch) => batch.frames).slice(0, 8);
       // 原片取不回时退化为复用首轮持久化的关键帧附件。
       let usedCachedFrames = false;
-      if (!frameImages.length && isRerun) {
+      if (!frameImages.length && isRerun && fallbackFiles.length) {
         const cached = cachedAnalysisFrames(
           snapshot.files,
-          sourceFiles.map((file) => file.episode ?? file.id),
+          fallbackFiles.map((file) => file.episode ?? file.id),
         );
         if (cached.length) {
           frameImages = cached;
@@ -4012,33 +4253,48 @@ export default function RestyleStudio() {
         }
       }
       if (isRunAborted(projectId)) return false;
-      // 音频通道：抽 16k 单声道 WAV 分片走网关 ASR，台词作为分析与方案的可信证据。
+      // 音频通道（仅降级集）：抽 16k 单声道 WAV 分片走网关 ASR，台词作为分析与方案的
+      // 可信证据；新管线的台词已由单元内嵌 ASR 产出，不走这里。
       // 无音轨 / 源片过大 / 网关拒绝 input_audio 时返回空台词并继续，不阻断分析。
-      const transcriptSource = fileObjectsRef.current[sourceFiles[0].id];
-      let transcriptText = "";
-      if (transcriptSource) {
-        markRunStep(projectId, t.restyle_run_step_transcribe);
-        const transcript = await transcribeSourceVideo(
-          transcriptSource,
-          (input) => callTranscribeRestyleAudio(input),
-          {
-            isAborted: () => isRunAborted(projectId),
-            onProgress: (done, total) =>
-              markRunStep(projectId, `${t.restyle_run_step_transcribe} ${done}/${total}`),
-          },
-        );
-        transcriptText = transcript.text;
-        if (!transcriptText && transcript.degradedReason) {
-          appendConversationMessage(projectId, conversationId, {
-            role: "assistant",
-            content: `原片台词识别未产出结果：${transcript.degradedReason} 分析将只依据画面进行，台词相关设定请人工补充。`,
-          });
+      let fallbackTranscript = "";
+      if (fallbackFiles.length) {
+        const transcriptSource = fileObjectsRef.current[fallbackFiles[0].id];
+        if (transcriptSource) {
+          markRunStep(projectId, t.restyle_run_step_transcribe);
+          const transcript = await transcribeSourceVideo(
+            transcriptSource,
+            (input) => callTranscribeRestyleAudio(input),
+            {
+              isAborted: () => isRunAborted(projectId),
+              onProgress: (done, total) =>
+                markRunStep(projectId, `${t.restyle_run_step_transcribe} ${done}/${total}`),
+            },
+          );
+          fallbackTranscript = transcript.text;
+          if (!fallbackTranscript && transcript.degradedReason) {
+            appendConversationMessage(projectId, conversationId, {
+              role: "assistant",
+              content: `原片台词识别未产出结果：${transcript.degradedReason} 分析将只依据画面进行，台词相关设定请人工补充。`,
+            });
+          }
         }
       }
+      // 单元化结果合并：shotNo 跨单元、跨集全局重排；台词直接拼接（集级毫秒时间码）。
+      const perFileMerged = pipelineAnalyses.map((analysis) => ({
+        file: analysis.file,
+        merged: mergeSourceUnitResults(analysis.unitResults),
+      }));
+      const pipelineShotSchedule = renumberShotSchedule(
+        perFileMerged.flatMap(({ merged }) => merged.shotSchedule),
+      );
+      const pipelineWarnings = perFileMerged.flatMap(({ merged }) => merged.warnings);
+      let transcriptText = [...perFileMerged.map(({ merged }) => merged.transcript), fallbackTranscript]
+        .filter(Boolean)
+        .join("\n");
       // 转写不可用（如基于缓存关键帧重跑）时沿用首轮台词。
       if (!transcriptText) transcriptText = snapshot.transcript ?? "";
       if (isRunAborted(projectId)) return false;
-      if (!frameImages.length && !transcriptText) {
+      if (!pipelineAnalyses.length && !frameImages.length && !transcriptText) {
         // 三级都拿不到画面：不静默产出空输入分析，提示重新上传。
         const detail = t.restyle_reanalyze_no_source;
         setAnalysisError(detail);
@@ -4049,6 +4305,24 @@ export default function RestyleStudio() {
         });
         return false;
       }
+      // 资产提炼：有新管线结果走证据包模式（证据包含全片逐镜表与台词）；
+      // 降级集的关键帧与 STT 台词仍按旧契约一并传入，服务端兼容混合输入。
+      const evidenceParts = perFileMerged
+        .filter(({ merged }) => merged.evidencePackage.trim())
+        .map(({ file, merged }) => `【${file.name}】\n${merged.evidencePackage}`);
+      if (fallbackTranscript && evidenceParts.length) {
+        evidenceParts.push(`【降级源视频的台词（快速分析通道）】\n${fallbackTranscript}`);
+      }
+      // evidencePackage schema 上限 60,000 字符，超长截尾（逐单元包内已各有长度控制）。
+      let evidencePackage = evidenceParts.join("\n\n");
+      if (evidencePackage.length > 58_000) {
+        evidencePackage = `${evidencePackage.slice(0, 58_000)}\n…（证据包过长已截尾）`;
+      }
+      const pipelineDurationSec =
+        pipelineAnalyses.reduce(
+          (sum, analysis) => sum + (analysis.durationSec || analysis.file.durationSec || 0),
+          0,
+        ) || undefined;
       markRunStep(projectId, t.restyle_run_step_analyze, selectedModel);
       const result = await callAnalyzeRestyleAssets({
         data: {
@@ -4059,9 +4333,11 @@ export default function RestyleStudio() {
             name: file.name,
             type: file.type,
             size: file.size,
+            durationSec: file.durationSec,
           })),
           frameImages,
           transcript: transcriptText,
+          ...(evidencePackage ? { evidencePackage, durationSec: pipelineDurationSec } : {}),
           existingAssets: options.keepAssets
             ? snapshot.extractedAssets.map(({ id: _id, ...asset }) => asset)
             : [],
@@ -4105,20 +4381,38 @@ export default function RestyleStudio() {
           ];
         },
       );
-      const frameAttachments: RestyleAttachment[] = frameBatches.flatMap(({ file, frames }) => {
-        const episode = file.episode ?? file.id;
-        const videoName = file.name.replace(/\.[^.]+$/, "") || episode;
-        return frames.map((url, index) => ({
-          id: crypto.randomUUID(),
-          name: `${videoName}_frame_${String(index + 1).padStart(2, "0")}.jpg`,
-          size: Math.round(url.length * 0.75),
-          type: "image/jpeg",
-          lastModified: Date.now(),
-          url,
-          analysisFrame: true,
-          analysisEpisode: episode,
-        }));
-      });
+      const frameAttachments: RestyleAttachment[] = [
+        // 单元化管线的单元帧：已上传 workspace-media，附件存 URL 形式（体积未知记 0）。
+        ...pipelineAnalyses.flatMap(({ file, frameUrls }) => {
+          const episode = file.episode ?? file.id;
+          const videoName = file.name.replace(/\.[^.]+$/, "") || episode;
+          return frameUrls.map((url, index) => ({
+            id: crypto.randomUUID(),
+            name: `${videoName}_frame_${String(index + 1).padStart(2, "0")}.jpg`,
+            size: 0,
+            type: "image/jpeg",
+            lastModified: Date.now(),
+            url,
+            analysisFrame: true,
+            analysisEpisode: episode,
+          }));
+        }),
+        // 降级集的 8 帧：仍是 dataURL（体积按 base64 长度估算）。
+        ...frameBatches.flatMap(({ file, frames }) => {
+          const episode = file.episode ?? file.id;
+          const videoName = file.name.replace(/\.[^.]+$/, "") || episode;
+          return frames.map((url, index) => ({
+            id: crypto.randomUUID(),
+            name: `${videoName}_frame_${String(index + 1).padStart(2, "0")}.jpg`,
+            size: Math.round(url.length * 0.75),
+            type: "image/jpeg",
+            lastModified: Date.now(),
+            url,
+            analysisFrame: true,
+            analysisEpisode: episode,
+          }));
+        }),
+      ];
       updateProject(projectId, (project) => ({
         ...project,
         stage: "assets",
@@ -4128,8 +4422,13 @@ export default function RestyleStudio() {
         analysisSections: Object.fromEntries(
           sourceFiles.map((file) => [file.episode ?? file.id, result.analysis]),
         ) as Record<string, RestyleAnalysisSections>,
-        // 逐镜表随本轮分析重建（重分析/增量分析同路径）；模型未产出时缺省。
-        shotSchedule: result.shots?.length ? result.shots : undefined,
+        // 逐镜表随本轮分析重建（重分析/增量分析同路径）：单元化管线产出的全片
+        // 逐镜表优先（跨单元/跨集已全局重排），缺失时回落资产模型的 shots。
+        shotSchedule: pipelineShotSchedule.length
+          ? pipelineShotSchedule
+          : result.shots?.length
+            ? result.shots
+            : undefined,
         confirmedAssetIds: [],
         // 关系表随新一轮资产表重建（角色 id 重新生成，旧边全部失效）。
         characterRelations: relationEdges.length ? relationEdges : undefined,
@@ -4138,9 +4437,17 @@ export default function RestyleStudio() {
           ? project.files
           : [...project.files.filter((file) => !file.analysisFrame), ...frameAttachments],
       }));
+      // §4.6 计费口径变化与单元化分析 warnings 随确认播报透传（最多列 3 条）。
+      const pipelineNotes = [
+        perFileMerged.length ? "分析计费口径：2 分/单元（含 ASR）+ 1 分资产提炼。" : "",
+        ...pipelineWarnings.slice(0, 3),
+        pipelineWarnings.length > 3 ? `另有 ${pipelineWarnings.length - 3} 条分析提示。` : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
       appendConversationMessage(projectId, conversationId, {
         role: "assistant",
-        content: `${result.summary}${result.usedFrames ? ` ${t.restyle_frames_analyzed}` : ""}${usedCachedFrames ? ` ${t.restyle_reanalyze_cached_frames}` : ""}${isRerun && snapshot.planEpisodes?.length ? ` ${t.restyle_reanalyze_suggest_replan}` : ""}`,
+        content: `${result.summary}${result.usedFrames ? ` ${t.restyle_frames_analyzed}` : ""}${pipelineNotes ? ` ${pipelineNotes}` : ""}${usedCachedFrames ? ` ${t.restyle_reanalyze_cached_frames}` : ""}${isRerun && snapshot.planEpisodes?.length ? ` ${t.restyle_reanalyze_suggest_replan}` : ""}`,
         assetTable: extractedAssets,
       });
       // 资产表生成后自动跑一次 skill 自检（1 分/次，与旧分析调用同口径）。
@@ -4297,6 +4604,8 @@ export default function RestyleStudio() {
               name: file.name,
               type: file.type,
               size: file.size,
+              // 权威总时长透传：服务端据此输出全片覆盖硬要求并做覆盖兜底。
+              durationSec: file.durationSec,
             })),
             assets: activeProject.extractedAssets.map(({ id: _id, ...asset }) => asset),
             episodeCount: activeProject.planEpisodes?.length || sourceFiles.length || 1,
@@ -4318,6 +4627,13 @@ export default function RestyleStudio() {
         const updatedVideoNames = result.episodes.map((episode) =>
           sourceVideoLabel(episode.episode),
         );
+        // 覆盖兜底提示：服务端 ensureFullCoverage 自动补段的区间数随方案播报透出。
+        const rerunFillCount = (result.warnings ?? []).filter((warning) =>
+          warning.includes("已自动补齐未覆盖区间"),
+        ).length;
+        const rerunCoverageNote = rerunFillCount
+          ? `已自动补齐 ${rerunFillCount} 个未覆盖区间。`
+          : "";
         updateProject(projectId, (project) => ({
           ...project,
           planEpisodes: result.episodes,
@@ -4325,7 +4641,7 @@ export default function RestyleStudio() {
         }));
         appendConversationMessage(projectId, conversationId, {
           role: "assistant",
-          content: `已根据你的要求更新方案：${result.episodes.map((episode, index) => `${updatedVideoNames[index] ?? episode.episode}（${episode.segments.length} 段）`).join("、")}。请点击对话中的视频文件名检查右侧提示词。`,
+          content: `已根据你的要求更新方案：${result.episodes.map((episode, index) => `${updatedVideoNames[index] ?? episode.episode}（${episode.segments.length} 段）`).join("、")}。${rerunCoverageNote}请点击对话中的视频文件名检查右侧提示词。`,
           episodeLinks: result.episodes.map((episode) => episode.episode),
         });
       } else {
@@ -4483,11 +4799,16 @@ export default function RestyleStudio() {
     let budgetStopped = false;
     let advanceToPlan = false;
     try {
+      // 渠道自动降级：当前生图模型配额/余额类失败时，按上架模型列表顺序换渠道
+      // 重试；切换成功后续资产沿用新渠道，死渠道记入 deadImageModels 不再重试。
+      const availableImageModelIds = listedImageModels.map((model) => model.id);
+      let activeImageModel = imageModel;
+      const deadImageModels = new Set<string>();
       let assetIndex = 0;
       for (const asset of extractedAssets) {
         if (isRunAborted(projectId)) return;
         // 预算校验：任何模式下累计消耗达上限即强制暂停（极速/自定义同样生效）。
-        if (budgetExceeded(projectId, imageJobCost(imageModel))) {
+        if (budgetExceeded(projectId, imageJobCost(activeImageModel))) {
           budgetStopped = true;
           pauseForBudget(projectId, conversationId);
           break;
@@ -4506,11 +4827,30 @@ export default function RestyleStudio() {
           asset.targetName || asset.sourceName,
         );
         const prompt = resolveAssetImagePrompt(asset, styleBrief, instruction, relationBrief);
-        const result = referenceImages.length
-          ? await callGenerateImageWithReferences({
-              data: { prompt, model: imageModel, size: "2K", referenceImages },
-            })
-          : await callGenerateImage({ data: { prompt, model: imageModel, size: "2K" } });
+        // 配额/余额/权限类失败按可用模型列表顺序自动换渠道重试该资产；
+        // 内容审核类失败不换渠道（各渠道审核口径趋同，换了也是同样失败）。
+        const tryGenerate = (model: string) =>
+          referenceImages.length
+            ? callGenerateImageWithReferences({
+                data: { prompt, model, size: "2K", referenceImages },
+              })
+            : callGenerateImage({ data: { prompt, model, size: "2K" } });
+        let result = await tryGenerate(activeImageModel);
+        while (!result.url && isQuotaLikeImageError(result.error)) {
+          deadImageModels.add(activeImageModel);
+          const [nextModel] = imageModelFallbackCandidates(
+            activeImageModel,
+            availableImageModelIds,
+            deadImageModels,
+          );
+          if (!nextModel) break;
+          appendConversationMessage(projectId, conversationId, {
+            role: "assistant",
+            content: `生图渠道 ${activeImageModel} 不可用（${(result.error || "配额/权限错误").slice(0, 80)}），已切换到 ${nextModel} 重试。`,
+          });
+          activeImageModel = nextModel;
+          result = await tryGenerate(activeImageModel);
+        }
         if (!result.url) {
           setAssetRunStatus((current) => ({
             ...current,
@@ -4581,7 +4921,7 @@ export default function RestyleStudio() {
           ],
         }));
         generatedKinds.push(asset.kind);
-        chargeSpend(projectId, imageJobCost(imageModel));
+        chargeSpend(projectId, imageJobCost(activeImageModel));
         setAssetRunStatus((current) => ({ ...current, [asset.id]: { status: "done" } }));
         appendConversationMessage(projectId, conversationId, {
           role: "assistant",
@@ -4613,6 +4953,15 @@ export default function RestyleStudio() {
           });
           advanceToPlan = true;
         }
+      } else if (!assetCategoryLinks.length && !budgetStopped && extractedAssets.length) {
+        // 全败引导：渠道自动降级也用尽时给出可操作指引。阶段停在 assets
+        // （可恢复点），用户切换生图模型后回复「生成资产图片」即可重试，
+        // 不再静默卡死。
+        appendConversationMessage(projectId, conversationId, {
+          role: "assistant",
+          content:
+            "生图渠道均不可用（余额不足或被拒绝），本次没有产出任何资产图片。请在设置中切换生图模型后回复“生成资产图片”重试；资产表与已确认内容都会保留。",
+        });
       }
     } catch (error) {
       const detail = error instanceof Error ? error.message : "未知错误";
