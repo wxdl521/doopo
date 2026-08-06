@@ -1,8 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { supabaseAdmin } from "@/integrations/supabase/client.server";
-import { getOptionalAuthCtx } from "./authContext.server";
 
 export type PostKind = "script" | "character" | "scene" | "prop" | "comic";
 export type PostVisibility = "public" | "unlisted" | "private";
@@ -105,6 +103,7 @@ export const listCommunityPosts = createServerFn({ method: "GET" })
     if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
       return [];
     }
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     let q = supabaseAdmin
       .from("community_posts")
       .select(
@@ -147,6 +146,7 @@ function score(p: { likes_count: number; views_count: number; created_at: string
 export const getPost = createServerFn({ method: "POST" })
   .validator((input) => z.object({ id: z.string().uuid() }).parse(input))
   .handler(async ({ data }) => {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { data: row, error } = await supabaseAdmin
       .from("community_posts")
       .select()
@@ -182,6 +182,7 @@ export const toggleLike = createServerFn({ method: "POST" })
         .insert({ post_id: data.postId, user_id: userId });
       if (error) throw new Error(error.message);
     }
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     const { data: row } = await supabaseAdmin
       .from("community_posts")
       .select("likes_count")
@@ -223,6 +224,7 @@ export const recordView = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     const { resolveViewerKey } = await import("./community.server");
     const viewerKey = await resolveViewerKey();
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     // Use admin to bypass RLS for anonymous views; UNIQUE constraint enforces dedup per day.
     await supabaseAdmin
       .from("post_views")
