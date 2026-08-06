@@ -20,7 +20,7 @@ import "./loadEnv";
 import { isValidHighResImageSize } from "./imageSize";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
-import { getOptionalAuthCtx } from "./authContext";
+import { getOptionalAuthCtx } from "./authContext.server";
 import { chargeCredits } from "./userCredits.functions";
 import { imageCost } from "./creditsCost";
 

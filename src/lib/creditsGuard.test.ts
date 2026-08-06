@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("./authContext", () => ({
+vi.mock("./authContext.server", () => ({
   getOptionalAuthCtx: vi.fn(),
 }));
 
-import { getOptionalAuthCtx } from "./authContext";
+import { getOptionalAuthCtx } from "./authContext.server";
 import { ensureEnoughCredits } from "./creditsGuard";
 
 const mockedCtx = vi.mocked(getOptionalAuthCtx);

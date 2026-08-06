@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../authContext", () => ({
+vi.mock("../authContext.server", () => ({
   getOptionalAuthCtx: vi.fn(),
 }));
 
-import { getOptionalAuthCtx } from "../authContext";
-import { buildAnonymousViewerKey, resolveViewerKey } from "../community.functions";
+import { getOptionalAuthCtx } from "../authContext.server";
+import { buildAnonymousViewerKey } from "../communityViewerKey";
+import { resolveViewerKey } from "../community.server";
 
 const mockedCtx = vi.mocked(getOptionalAuthCtx);
 
