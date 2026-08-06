@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("./authContext", () => ({
+vi.mock("./authContext.server", () => ({
   getOptionalAuthCtx: vi.fn(),
 }));
 
