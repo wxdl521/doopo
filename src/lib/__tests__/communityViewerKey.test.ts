@@ -5,7 +5,8 @@ vi.mock("../authContext.server", () => ({
 }));
 
 import { getOptionalAuthCtx } from "../authContext.server";
-import { buildAnonymousViewerKey, resolveViewerKey } from "../community.functions";
+import { buildAnonymousViewerKey } from "../communityViewerKey";
+import { resolveViewerKey } from "../community.server";
 
 const mockedCtx = vi.mocked(getOptionalAuthCtx);
 
