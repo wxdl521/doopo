@@ -35,7 +35,8 @@ import { KLING_VIDEO_MODELS } from "./klingVideo.functions";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { fetchMedia } from "./workspaceMedia.functions";
 import { chargeCredits } from "./userCredits.functions";
-import { videoCost } from "./creditsCost";
+import { videoCost, videoCostOrFallback } from "./creditsCost";
+import { logGenerationError } from "./errorLogs.server";
 
 // ---------- ARK (Seedance) 配置 ----------
 
@@ -4348,10 +4349,12 @@ export const submitVideoTaskFn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const __t0 = Date.now();
     // ---- 积分预校验:余额不足直接拒绝,避免向外部服务白扣任务额度 ----
+    // 计费口径与成功扣费一致（videoCostOrFallback：前缀模型按同档直连价目、
+    // 无价目默认档兜底）——否则 topenrouter 系模型预校验 0 分放行、成功照价扣。
     {
       const { ensureEnoughCredits } = await import("./creditsGuard");
       const __model = data.model || ARK_DEFAULT_MODEL;
-      const __cost = videoCost(__model, data.resolution, data.duration ?? 10);
+      const __cost = videoCostOrFallback(__model, data.resolution, data.duration ?? 10)?.cost ?? null;
       const __guard = await ensureEnoughCredits(__cost, {
         kind: "video",
         model: __model,
@@ -4484,15 +4487,65 @@ const PollServerInput = z.object({
   ]),
   // 动态供应商轮询需要 model 重新解析凭据（密钥不进任务参数）
   model: z.string().max(200).optional(),
+  // 成功扣费参数（转绘渲染链路）：提交时的分辨率/时长与分段标签；
+  // 缺省则轮询只返回状态不扣费（向后兼容）。
+  resolution: z.enum(["480P", "720P", "1080P"]).optional(),
+  duration: z.number().int().min(1).max(60).optional(),
+  label: z.string().max(120).optional(),
 });
 
 export const pollVideoTaskFn = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((d: unknown) => PollServerInput.parse(d))
-  .handler(async ({ data }) => {
+  .handler(async ({ data, context }) => {
     const r = await pollVideoTask({ taskId: data.taskId, backend: data.backend, model: data.model });
     if (!r.ok) return { ok: false as const, error: r.error, status: r.status };
-    return { ok: true as const, status: r.status, videoUrl: r.videoUrl };
+    // 转绘渲染计费：任务成功（且有可播放结果）才扣费。扣费点只能在这里——
+    // submitVideoTaskFn 只建任务，成功时刻发生在客户端轮询侧（历史漏洞：
+    // 渲染成功但从未扣费）。幂等键 taskId，重复轮询/重放不重复扣。
+    let charged: boolean | undefined;
+    let chargeWarning: string | undefined;
+    if (r.status === "succeeded" && r.videoUrl && data.duration && data.model) {
+      const { supabase, userId } = context as { supabase: any; userId: string };
+      const pricing = videoCostOrFallback(data.model, data.resolution, data.duration);
+      if (pricing) {
+        chargeWarning = pricing.warning;
+        if (pricing.warning) console.warn(`[video$] ${pricing.warning}`);
+        const charge = await chargeCredits(supabase, userId, {
+          amount: pricing.cost,
+          model: data.model,
+          resolution: data.resolution,
+          duration: data.duration,
+          description: `转绘视频生成${data.label ? `（${data.label}）` : ""}`,
+          idempotencyKey: data.taskId,
+        });
+        charged = charge.ok;
+        if (!charge.ok) {
+          // 扣费失败不阻断主流程（既有口径，成片不收回），但上报 errorLogs 可观测
+          console.error(`[video$] charge failed taskId=${data.taskId} amount=${pricing.cost}`);
+          logGenerationError({
+            kind: "video",
+            provider: data.backend,
+            model: data.model,
+            requestPayload: {
+              taskId: data.taskId,
+              resolution: data.resolution,
+              duration: data.duration,
+              label: data.label,
+            },
+            errorMessage: `渲染成功但积分扣减失败（taskId=${data.taskId}，应收 ${pricing.cost}）`,
+            userId,
+          });
+        }
+      }
+    }
+    return {
+      ok: true as const,
+      status: r.status,
+      videoUrl: r.videoUrl,
+      ...(charged !== undefined && { charged }),
+      ...(chargeWarning && { chargeWarning }),
+    };
   });
 
 // ====================================================================

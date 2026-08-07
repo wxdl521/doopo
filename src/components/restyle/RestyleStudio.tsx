@@ -3482,6 +3482,11 @@ export default function RestyleStudio() {
                   taskId: submitted.taskId,
                   backend: submitted.backend,
                   model: submitted.model,
+                  // 成功扣费参数：提交时的分辨率与最终时长（降档重投后为准）；
+                  // 服务端在 succeeded 时刻按价目扣费（幂等键 taskId）。
+                  resolution: "720P",
+                  duration: durationSec,
+                  label: [job.episode, job.segmentId].filter(Boolean).join(" ") || undefined,
                 },
               });
             } catch (error) {
@@ -3506,6 +3511,10 @@ export default function RestyleStudio() {
               continue;
             }
             if (polled.status === "succeeded") {
+              // 计费兜底提示（剥前缀/默认档计价）写渲染日志，可观测不静默。
+              if ("chargeWarning" in polled && polled.chargeWarning) {
+                appendRenderLog(projectId, job.attachmentId, `计费提示：${polled.chargeWarning}`);
+              }
               if (!polled.videoUrl) {
                 failJob("视频任务已完成但没有返回可播放的结果 URL", submitted.taskId);
               } else {

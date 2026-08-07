@@ -103,6 +103,70 @@ export function videoCost(
   return Math.round(unit * (seconds / 10) * 100) / 100;
 }
 
+// --------------------------------------------------------------------
+// videoCostOrFallback —— 转绘渲染计费口径（成功必扣，价目缺失可观测兜底）
+//
+// 回归根因：topenrouter-doubao-seedance-2-0-260128 等「路由前缀 + 直连模型 id」
+// 的模型不在任何价目表（静态表只有 doubao-seedance-2-0-* 直连 id），videoCost
+// 返回 null 被静默跳过 → 渲染成功零扣费。修复：
+//   1. 精确命中（库内 + 静态表）→ 直接返回；
+//   2. 剥路由前缀后命中同档直连模型 → 按直连价目计费并记 warning；
+//   3. 仍无价目 → 默认档兜底并记 warning（不静默零扣，warning 供上报/播报）。
+// videoCost 的 null 语义不变（其它调用方不受影响），本函数只服务计费路径。
+// --------------------------------------------------------------------
+
+/** 视频模型的路由前缀（topenrouter- 等），剥掉后按直连模型 id 重试价目。 */
+const VIDEO_ROUTING_PREFIXES = [
+  "topenrouter-",
+  "confluo-",
+  "keyiyun-",
+  "ycore-",
+  "neiwen-",
+  "hongmeng-",
+  "k99-",
+  "toapis-",
+  "vapeur-",
+  "shuci-",
+  "revora-",
+  "agentearth-",
+];
+
+/** 价目缺失时的默认兜底单价（每 10 秒，与客户端 videoJobCost 预估口径一致）。 */
+export const DEFAULT_VIDEO_UNIT_COST_FALLBACK = 240;
+
+export interface VideoCostFallbackResult {
+  cost: number;
+  /** 走了兜底（剥前缀 / 默认档）时的可读说明；精确命中价目时为 undefined。 */
+  warning?: string;
+}
+
+export function videoCostOrFallback(
+  model: string | undefined | null,
+  resolution: string | undefined | null,
+  duration: number,
+): VideoCostFallbackResult | null {
+  if (!model) return null;
+  const direct = videoCost(model, resolution, duration);
+  if (direct != null) return { cost: direct };
+  const res = (resolution || "720P").toUpperCase();
+  const prefix = VIDEO_ROUTING_PREFIXES.find((item) => model.startsWith(item));
+  if (prefix) {
+    const stripped = model.slice(prefix.length);
+    const strippedCost = videoCost(stripped, resolution, duration);
+    if (strippedCost != null) {
+      return {
+        cost: strippedCost,
+        warning: `模型 ${model} 无独立价目，按同档直连模型 ${stripped} 价目计费`,
+      };
+    }
+  }
+  const seconds = duration > 0 ? duration : 10;
+  return {
+    cost: Math.round(DEFAULT_VIDEO_UNIT_COST_FALLBACK * (seconds / 10) * 100) / 100,
+    warning: `模型 ${model}（${res}）价目缺失，按默认档 ${DEFAULT_VIDEO_UNIT_COST_FALLBACK} 积分/10s 兜底计费`,
+  };
+}
+
 /** 视频模型可选档位的积分范围(下拉框标注用),如 "56-593积分/10s" */
 export function videoCostRange(model: string | undefined | null): string | null {
   if (!model) return null;
