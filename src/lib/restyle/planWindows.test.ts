@@ -240,3 +240,61 @@ describe("applyPlanCoverage", () => {
     expect(segments[segments.length - 1].endMs).toBe(20_000);
   });
 });
+
+
+// --------------------------------------------------------------------
+// 按集隔离 finalize（D1 回归：跨集镜头不得污染他集补段边界）
+// --------------------------------------------------------------------
+
+describe("applyPlanCoverage 按集隔离（D1 回归）", () => {
+  // EP03 的镜头边界取自回归现场（29375/58751/88126，~30s 摘要粒度单镜）
+  const ep3Shots = [
+    { shotNo: "SC001", startMs: 0, endMs: 29_375, scene: "海边", shotType: "全景" as const, emotion: "中性" },
+    { shotNo: "SC002", startMs: 29_375, endMs: 58_751, scene: "海边", shotType: "全景" as const, emotion: "中性" },
+    { shotNo: "SC003", startMs: 58_751, endMs: 88_126, scene: "海边", shotType: "全景" as const, emotion: "中性" },
+  ];
+
+  /** 断言分段链式连续覆盖 [0, durationMs] 且无重叠、全部 ≤15s。 */
+  function expectCleanCoverage(
+    segments: Array<{ startMs?: number; endMs?: number }>,
+    durationMs: number,
+  ) {
+    const ranged = segments
+      .filter((s) => typeof s.startMs === "number" && typeof s.endMs === "number")
+      .sort((a, b) => a.startMs! - b.startMs!);
+    expect(ranged[0].startMs).toBe(0);
+    for (let i = 0; i + 1 < ranged.length; i += 1) {
+      expect(ranged[i].endMs).toBe(ranged[i + 1].startMs);
+    }
+    expect(ranged[ranged.length - 1].endMs).toBe(durationMs);
+    for (const segment of ranged) {
+      expect(segment.endMs! - segment.startMs!).toBeLessThanOrEqual(15_000);
+    }
+  }
+
+  it("降级集（无镜头）单独 finalize：缺口按 ≤15s 均分切补，不借用他集镜头边界", () => {
+    // 修复后的调用方式：每集单独调 finalize，只传该集自己的 shots；
+    // 降级集传空数组（禁止传含 EP03 镜头的整表）。
+    const { episodes } = applyPlanCoverage(
+      [{ episode: "ep1", segments: [{ id: "U01", prompt: "占位段", startMs: 0, endMs: 10_000 }] }],
+      [],
+      () => 88_126,
+    );
+    const segments = episodes[0].segments;
+    expectCleanCoverage(segments, 88_126);
+    // 补段边界不得出现 EP03 的镜头边界（整表调用时的污染特征）
+    for (const segment of segments) {
+      expect([29_375, 58_751]).not.toContain(segment.startMs);
+      expect([29_375, 58_751]).not.toContain(segment.endMs);
+    }
+  });
+
+  it("有镜头的集单独 finalize：补段只用本集镜头，30s 长镜被切到 ≤15s", () => {
+    const { episodes } = applyPlanCoverage(
+      [{ episode: "ep3", segments: [{ id: "U01", prompt: "第一段", startMs: 0, endMs: 29_375 }] }],
+      ep3Shots,
+      () => 88_126,
+    );
+    expectCleanCoverage(episodes[0].segments, 88_126);
+  });
+});

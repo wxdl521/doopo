@@ -160,6 +160,12 @@ export type RestyleProject = {
   aspect?: RestyleAspect;
   /** 分析层产出的轻量逐镜表（导演镜头调度机制）；旧项目缺省兼容。 */
   shotSchedule?: DirectionShot[];
+  /**
+   * 按集分开的逐镜表（episode → 该集自己的镜头，集内相对毫秒时间码）。
+   * 分窗方案生成与 finalize 覆盖兜底必须按集传 shots（整表无集归属，
+   * 跨集借用会污染他集分段边界，D1 回归）；旧项目缺省时回落整表。
+   */
+  shotScheduleByEpisode?: Record<string, DirectionShot[]>;
   /** 目标市场（光照预设 + 俚语本土化口径），默认 kr。 */
   targetMarket?: Market;
   /** ✨ 智能补镜开关：开启后基础渲染完成时自动补情绪特写与空镜（见 restyleInserts）。 */
@@ -411,6 +417,18 @@ function parseCharacterRelations(value: unknown): RestyleCharacterRelation[] | u
   return relations.length ? relations : undefined;
 }
 
+/** 按集逐镜表反序列化：每集独立走 parseShotSchedule，非法集整条丢弃。 */
+function parseShotScheduleByEpisode(
+  value: unknown,
+): Record<string, DirectionShot[]> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const entries = Object.entries(value as Record<string, unknown>).flatMap(([episode, shots]) => {
+    const parsed = parseShotSchedule(shots);
+    return episode && parsed ? [[episode, parsed] as const] : [];
+  });
+  return entries.length ? Object.fromEntries(entries) : undefined;
+}
+
 function parseProject(value: unknown): RestyleProject | null {
   if (!value || typeof value !== "object") return null;
   const item = value as Partial<RestyleProject>;
@@ -564,6 +582,7 @@ function parseProject(value: unknown): RestyleProject | null {
       : undefined,
     aspect: isAspect(item.aspect) ? item.aspect : undefined,
     shotSchedule: parseShotSchedule(item.shotSchedule),
+    shotScheduleByEpisode: parseShotScheduleByEpisode(item.shotScheduleByEpisode),
     targetMarket: isMarket(item.targetMarket) ? item.targetMarket : undefined,
     smartInsert: item.smartInsert === true ? true : undefined,
     customLighting: parseCustomLighting(item.customLighting),

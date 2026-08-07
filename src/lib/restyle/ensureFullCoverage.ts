@@ -133,15 +133,42 @@ function ensureEpisodeCoverage<T extends CoverageEpisode>(
     );
   }
 
+  // 4. 单段时长上限后处理：任何 >15s 的分段（模型产出或单长镜补段）强制
+  //    均分切为 ≤15s 连续子段（prompt 继承原段），均分天然无超短尾段、
+  //    链式连续无缺口。「永不在镜头中间切分」让位于单段 ≤15s 硬约束。
+  //    注意不能在切分前提前返回：纯 30s 段场景（无缺口无重叠）也要切分。
+  const merged = [...fixed, ...fillers].sort((a, b) => a.startMs - b.startMs);
+  const split = splitLongSegments(merged, tag, warnings);
+  if (split.length !== merged.length) changed = true;
+
   if (!changed) return episode;
 
-  // 4. 结构有改动：按时间轴重排段号（U01 起），无区间段排在带区间段之后
-  const merged = [...fixed, ...fillers].sort((a, b) => a.startMs - b.startMs);
-  const segments: CoverageSegment[] = merged.map((segment, index) => ({
+  // 5. 结构有改动：按时间轴重排段号（U01 起），无区间段排在带区间段之后
+  const segments: CoverageSegment[] = split.map((segment, index) => ({
     ...segment,
     id: `U${String(index + 1).padStart(2, "0")}`,
   }));
   return { ...episode, segments: [...segments, ...unranged] };
+}
+
+/**
+ * 把 > MAX_COVERAGE_SEGMENT_MS 的分段均分切为 ≤15s 连续子段（prompt 继承
+ * 原段），并记 warning；不超过上限的分段原样保留。
+ */
+function splitLongSegments(
+  segments: RangedSegment[],
+  tag: string,
+  warnings: string[],
+): RangedSegment[] {
+  return segments.flatMap((segment) => {
+    const durationMs = segment.endMs - segment.startMs;
+    if (durationMs <= MAX_COVERAGE_SEGMENT_MS) return [segment];
+    const parts = splitRangeEvenly(segment.startMs, segment.endMs);
+    warnings.push(
+      `${tag}分段 ${segment.id} 时长 ${(durationMs / 1000).toFixed(1)}s 超过 ${MAX_COVERAGE_SEGMENT_MS / 1000}s 上限，已均分切为 ${parts.length} 段。`,
+    );
+    return parts.map(([startMs, endMs]) => ({ ...segment, startMs, endMs }));
+  });
 }
 
 /**

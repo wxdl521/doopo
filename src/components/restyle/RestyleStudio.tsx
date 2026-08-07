@@ -66,7 +66,7 @@ import { buildPlanWindowJobs, PLAN_WINDOW_SEC } from "../../lib/restyle/planWind
 import { driveWindowedPlanCalls } from "./planWindowDriver";
 import { imageModelFallbackCandidates, isQuotaLikeImageError } from "./imageModelFallback";
 import { segmentIndexFromId, withSegmentDirection } from "../../lib/restyle/shotSchedule";
-import { formatLightingParams } from "../../lib/restyle/cameraDirection";
+import { formatLightingParams, type DirectionShot } from "../../lib/restyle/cameraDirection";
 import {
   mergeInsertClips,
   planInsertJobs,
@@ -1857,6 +1857,15 @@ export default function RestyleStudio() {
       durationSec: file.durationSec,
     });
     const assets = project.extractedAssets.map(({ id: _id, ...asset }) => asset);
+    // 按集取逐镜表：分窗生成与 finalize 都必须只传该集自己的 shots（整表
+    // 无集归属、时间码都是集内相对值，跨集借用会污染他集分段边界，D1 回归）。
+    // 旧项目没有按集字段时回落整表（单集项目等价）；按集字段存在但该集
+    // 缺失（分析降级）时传空数组，缺口按 ≤15s 直接切补，禁止借用他集镜头。
+    const shotsForEpisode = (videoId: string): DirectionShot[] => {
+      const byEpisode = project.shotScheduleByEpisode;
+      if (!byEpisode) return project.shotSchedule ?? [];
+      return byEpisode[videoId] ?? [];
+    };
 
     // ===== 长片分窗：客户端逐窗循环（与分析单元循环同一范式） =====
     if (windowJobs.some((job) => job.windowCount > 1)) {
@@ -1877,7 +1886,8 @@ export default function RestyleStudio() {
                 assets,
                 episodeCount: 1,
                 existingEpisodes: existingEpisodes ?? [],
-                shotSchedule: project.shotSchedule ?? [],
+                // 按集隔离：只传该窗所属集的逐镜表，杜绝跨集镜头泄漏（D1）。
+                shotSchedule: shotsForEpisode(job.videoId),
                 targetMarket: project.targetMarket ?? "kr",
                 window: {
                   startMs: job.window.startMs,
@@ -1920,19 +1930,29 @@ export default function RestyleStudio() {
         };
       });
       // finalize：合并后分段做覆盖兜底（纯计算、无 LLM、不扣费，秒级返回）。
+      // 按集隔离：逐集调 finalize，只传该集分段与该集自己的 shots（D1 回归——
+      // 整表调用时 ensureFullCoverage 无法区分镜头归属，降级集的缺口补段会
+      // 借用他集镜头边界，分段跨集污染/重叠）。
       try {
-        const finalizeRes = await callFinalizeRestylePlanCoverage({
-          data: {
-            sourceFiles: effectiveFiles.map(planFilePayload),
-            episodes: mergedEpisodes,
-            shotSchedule: project.shotSchedule ?? [],
-          },
-        });
-        if (!finalizeRes.ok) return { ok: false, error: finalizeRes.error };
+        const finalizeWarnings: string[] = [];
+        const finalizedEpisodes = await Promise.all(
+          mergedEpisodes.map(async (episode, index) => {
+            const res = await callFinalizeRestylePlanCoverage({
+              data: {
+                sourceFiles: [planFilePayload(effectiveFiles[index])],
+                episodes: [episode],
+                shotSchedule: shotsForEpisode(episode.episode),
+              },
+            });
+            if (!res.ok) throw new Error(res.error);
+            finalizeWarnings.push(...(res.warnings ?? []));
+            return res.episodes[0] ?? episode;
+          }),
+        );
         return {
           ok: true,
-          episodes: finalizeRes.episodes,
-          warnings: [...planWarnings, ...(finalizeRes.warnings ?? [])],
+          episodes: finalizedEpisodes,
+          warnings: [...planWarnings, ...finalizeWarnings],
         };
       } catch (error) {
         return { ok: false, error: error instanceof Error ? error.message : "网络异常" };
@@ -4579,6 +4599,16 @@ export default function RestyleStudio() {
           : result.shots?.length
             ? result.shots
             : undefined,
+        // 按集分开的逐镜表（集内相对毫秒）：分窗方案生成与 finalize 覆盖兜底
+        // 必须按集传 shots，整表无集归属、跨集借用会污染他集分段边界（D1 回归）。
+        shotScheduleByEpisode: perFileMerged.length
+          ? Object.fromEntries(
+              perFileMerged.map(({ file, merged }) => [
+                file.episode ?? file.id,
+                merged.shotSchedule,
+              ]),
+            )
+          : undefined,
         confirmedAssetIds: [],
         // 关系表随新一轮资产表重建（角色 id 重新生成，旧边全部失效）。
         characterRelations: relationEdges.length ? relationEdges : undefined,
@@ -4738,6 +4768,20 @@ export default function RestyleStudio() {
       return;
     }
 
+    // 「重新生成第一集01片段」这类按集/按片段的局部返工：必须排在方案微调
+    // 分支（/U\d+|提示词|…/）与重分析/生图纠错分支之前——点名 U02 会命中
+    // 方案微调分支的 U\d+ 正则而触发全量方案重生成（D4 回归），「重跑」会
+    // 命中 isReanalyzeIntent，「重新生成」在已有资产图时会被 isCorrection
+    // 当成整表重画。命中即等价右侧「返工」，只重跑目标片段；点名的集/段
+    // 不存在时由 handleSegmentRerunIntent 给出提示，同样不落全量重生成。
+    const segmentRerunIntent = parseSegmentRerunIntent(message);
+    if (
+      segmentRerunIntent &&
+      handleSegmentRerunIntent(projectId, conversationId, segmentRerunIntent)
+    ) {
+      return;
+    }
+
     if (activeProject.stage === "plan" && /U\d+|提示词|光影|镜头|台词|节奏/.test(message)) {
       beginRun(projectId, t.restyle_run_step_prompt_update);
       const sourceFiles = activeProject.files.filter(
@@ -4783,17 +4827,6 @@ export default function RestyleStudio() {
         });
       }
       finishRun(projectId, result.ok ? "done" : "failed");
-      return;
-    }
-
-    // 「重新生成第一集01片段」这类按集/按片段的视频重跑：必须排在重分析与
-    // 生图纠错分支之前——「重跑」会命中 isReanalyzeIntent，「重新生成」在已有
-    // 资产图时会被 isCorrection 当成整表重画。命中即等价右侧「返工」，只重跑目标片段。
-    const segmentRerunIntent = parseSegmentRerunIntent(message);
-    if (
-      segmentRerunIntent &&
-      handleSegmentRerunIntent(projectId, conversationId, segmentRerunIntent)
-    ) {
       return;
     }
 

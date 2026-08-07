@@ -186,7 +186,7 @@ describe("ensureFullCoverage", () => {
     expect(warnings).toEqual([]);
   });
 
-  it("无区间分段：原样保留在带区间分段之后", () => {
+  it("无区间分段：原样保留在带区间分段之后（20s 段按上限切分为 2×10s）", () => {
     const episode = makeEpisode([
       seg("U01", 0, 20_000),
       { id: "U02", prompt: "模型没给时间区间的分段" },
@@ -196,7 +196,65 @@ describe("ensureFullCoverage", () => {
       makeShots(20_000),
       constantDuration(20_000),
     );
-    expect(episodes[0].segments).toHaveLength(2);
-    expect(episodes[0].segments[1].prompt).toBe("模型没给时间区间的分段");
+    // 20s 带区间段按 15s 上限均分切成 2 段，无区间段仍排最后
+    expect(episodes[0].segments).toHaveLength(3);
+    expect(episodes[0].segments[2].prompt).toBe("模型没给时间区间的分段");
+  });
+});
+
+
+// --------------------------------------------------------------------
+// 单段 >15s 强制二次切分（D2 回归：30s 摘要粒度单镜直接成段）
+// --------------------------------------------------------------------
+
+describe("ensureFullCoverage 单段时长上限后处理", () => {
+  it("30s 单段（单长镜）均分切成 2×15s，prompt 继承原段", () => {
+    // 30s 一个镜头的逐镜表：补段「不切镜头」会产生 30s 段，后处理必须切开
+    const shots: DirectionShot[] = [
+      {
+        shotNo: "SC001",
+        startMs: 0,
+        endMs: 30_000,
+        scene: "客厅",
+        shotType: "全景",
+        emotion: "中性",
+      },
+    ];
+    const episode = makeEpisode([seg("U01", 0, 30_000)]);
+    const { episodes, warnings } = ensureFullCoverage([episode], shots, constantDuration(30_000));
+    const segments = episodes[0].segments;
+    expect(segments).toHaveLength(2);
+    expect(segments[0]).toMatchObject({ id: "U01", startMs: 0, endMs: 15_000 });
+    expect(segments[1]).toMatchObject({ id: "U02", startMs: 15_000, endMs: 30_000 });
+    expect(segments[0].prompt).toBe(segments[1].prompt);
+    expect(warnings.some((w) => w.includes("超过 15s 上限，已均分切为 2 段"))).toBe(true);
+  });
+
+  it("45s 段切成 3 段，链式连续无缺口", () => {
+    const episode = makeEpisode([seg("U01", 0, 45_000)]);
+    const { episodes } = ensureFullCoverage([episode], [], constantDuration(45_000));
+    const segments = episodes[0].segments;
+    expect(segments).toHaveLength(3);
+    for (const segment of segments) {
+      expect(segment.endMs! - segment.startMs!).toBeLessThanOrEqual(MAX_COVERAGE_SEGMENT_MS);
+    }
+    expectContinuousCoverage(episodes[0], 45_000);
+  });
+
+  it("14.9s 段不动：原样返回、无 warning", () => {
+    const episode = makeEpisode([seg("U01", 0, 14_900)]);
+    const { episodes, warnings } = ensureFullCoverage([episode], [], constantDuration(14_900));
+    expect(episodes[0]).toEqual(episode);
+    expect(warnings).toEqual([]);
+  });
+
+  it("混合场景：30s 段 + 尾段缺口，补段后整集链式连续且全部 ≤15s", () => {
+    const shots = makeShots(40_000);
+    const episode = makeEpisode([seg("U01", 0, 30_000)]);
+    const { episodes } = ensureFullCoverage([episode], shots, constantDuration(40_000));
+    expectContinuousCoverage(episodes[0], 40_000);
+    for (const segment of episodes[0].segments) {
+      expect(segment.endMs! - segment.startMs!).toBeLessThanOrEqual(MAX_COVERAGE_SEGMENT_MS);
+    }
   });
 });

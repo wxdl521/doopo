@@ -365,6 +365,7 @@ export const generateRestylePlan = createServerFn({ method: "POST" })
       // （平台约 100s 无字节断连，超时改由服务端返回可读错误）。
       const requestPlanContent = async (
         requestPrompt: string,
+        maxTokens = 12_000,
       ): Promise<{ ok: true; content: string } | { ok: false; error: string }> => {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 90_000);
@@ -378,7 +379,7 @@ export const generateRestylePlan = createServerFn({ method: "POST" })
             signal: controller.signal,
             body: JSON.stringify({
               model,
-              ...providerTuning(config, 12_000),
+              ...providerTuning(config, maxTokens),
               response_format: { type: "json_object" },
               messages: [
                 {
@@ -446,7 +447,9 @@ export const generateRestylePlan = createServerFn({ method: "POST" })
         const durationMs = durationMsOf(videoId) ?? data.window.endMs;
         const windowRequirement = `\n【分窗生成约束】视频「${videoId}」总时长 ${durationMs}ms，本次只负责第 ${data.window.index + 1}/${data.window.total} 窗：只为 [${data.window.startMs}, ${data.window.endMs}]ms 区间分段——首段 startMs=${data.window.startMs}、末段 endMs=${data.window.endMs}、相邻段首尾相接无缝隙无重叠、分段不得越出该区间、单段时长不超过 15000ms（尾部余量并入前段）。`;
         const windowPrompt = `用户要求：${data.instruction || "生成转绘方案"}\n视频数量：1\n源视频：\n- 视频 ID: ${videoId}; 文件名: ${file.name}\n已确认资产：${JSON.stringify(data.assets)}\n已有方案（如有，请只修改用户点名的分段，其余保持不变）：${JSON.stringify(existingForFile)}\n${marketRequirement}${windowShotBrief}${windowRequirement}\n\n请只为该源视频的本时间窗生成或修改分段视频提示词。只输出 JSON，不要 Markdown：{"episodes":[{"episode":"${videoId}","segments":[{"id":"U01","prompt":"...","startMs":0,"endMs":12000}]}]}。分段以场景与叙事节拍为第一依据，时长只作为约束：同一场景的连续镜头默认归入同一段，只在场景切换处切段，永不在镜头中间切分、一个镜头不拆进两段；同一场景过长时才在场景内部做二次切分，优先切在动作或对白的停顿处。禁止为凑时长跨场景合并，或在场景中间断开。提示词须包含人物、场景、动作、镜头、光影、节奏和对白/声音要求；不得虚构资产表中不存在的具体人物或地点。每段必须给出 startMs/endMs：该段覆盖的连续镜头区间（首镜 startMs 到末镜 endMs），须与上方逐镜调度表的镜头区间对齐，并满足【分窗生成约束】。`;
-        const call = await requestPlanContent(windowPrompt);
+        // 单窗 max_tokens 压到 5_000：单窗段数上限按窗长算约 11 段，5k 足够；
+        // 12k 输出常跑 60-100s 触平台 ~100s 零字节断连（D3 回归实测断连率 ~50%）。
+        const call = await requestPlanContent(windowPrompt, 5_000);
         if (!call.ok) return { ok: false, error: call.error };
         try {
           const parsed = parseJson(call.content) as { episodes?: unknown };
