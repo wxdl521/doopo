@@ -65,6 +65,7 @@ import { mergeSourceUnitResults, renumberShotSchedule } from "./sourceUnitsMerge
 import { buildPlanWindowJobs, PLAN_WINDOW_SEC, resolvePlanWindowDurationMs } from "../../lib/restyle/planWindows";
 import { driveWindowedPlanCalls } from "./planWindowDriver";
 import { isSupersededClipAttachment } from "./rerunAttachments";
+import { outcomeLabel, summarizeRenderRun, type RenderRunOutcome } from "./renderRunSummary";
 import { imageModelFallbackCandidates, isQuotaLikeImageError } from "./imageModelFallback";
 import { segmentIndexFromId, withSegmentDirection } from "../../lib/restyle/shotSchedule";
 import { formatLightingParams, type DirectionShot } from "../../lib/restyle/cameraDirection";
@@ -114,6 +115,7 @@ import {
   referenceVideoLimitsForModel,
   RESTYLE_FALLBACK_EXHAUSTED_MESSAGE,
   restyleAssetCacheKey,
+  r2vDurationRetryLadder,
   type RestyleFallbackStage,
 } from "../../lib/videoAssetLibrary";
 import { uploadLocalImage } from "../../lib/uploadImage.functions";
@@ -1173,6 +1175,13 @@ export default function RestyleStudio() {
   const pendingRerunsRef = useRef<
     Map<string, Array<{ conversationId: string; rerun: RestyleRerunRequest }>>
   >(new Map());
+  /**
+   * 本轮渲染 run 的成败台账（同步写入，不经过 React 状态）：队列收尾播报
+   * 必须按本轮实际成败判定——读 projectsRef 里的 renderStatus 会拿到上一个
+   * 事件循环的旧状态（本轮失败不可见、上一轮失败残留可见，播报自相矛盾）。
+   * 每个 run 在 generateRenderedVideos 里重置，drain 的下一轮各自独立。
+   */
+  const renderRunOutcomesRef = useRef<Map<string, RenderRunOutcome[]>>(new Map());
   const [analysisError, setAnalysisError] = useState("");
   // 资产表 skill 自检结果（reviewRestyleAssetTable）：仅组件内状态，不落盘。
   const [assetReview, setAssetReview] = useState<{
@@ -2517,6 +2526,18 @@ export default function RestyleStudio() {
     updateProject(projectId, (project) => {
       const completed = project.files.find((file) => file.id === attachmentId);
       if (!completed) return project;
+      // 同步记本轮成败台账（队列收尾播报的数据源，不经过 React 状态）
+      const outcomes = renderRunOutcomesRef.current.get(projectId);
+      if (outcomes) {
+        outcomes.push({
+          attachmentId,
+          generatedKind: completed.generatedKind,
+          episode: completed.episode,
+          segmentId: completed.segmentId,
+          ok: true,
+          resultUrl,
+        });
+      }
       return {
         ...project,
         files: project.files.map((file) => {
@@ -2550,17 +2571,31 @@ export default function RestyleStudio() {
     updateRenderAttachments(
       projectId,
       (file) => file.id === attachmentId,
-      (file) => ({
-        ...file,
-        renderTaskId: taskId ?? file.renderTaskId,
-        renderStatus: "failed",
-        renderError: error,
-        renderProgress: 0,
-        renderLog: [
-          ...(file.renderLog ?? []),
-          `${new Date().toLocaleTimeString("zh-CN", { hour12: false })} 任务失败：${error}`,
-        ].slice(-80),
-      }),
+      (file) => {
+        // 同步记本轮成败台账（队列收尾播报的数据源，不经过 React 状态）
+        const outcomes = renderRunOutcomesRef.current.get(projectId);
+        if (outcomes) {
+          outcomes.push({
+            attachmentId,
+            generatedKind: file.generatedKind,
+            episode: file.episode,
+            segmentId: file.segmentId,
+            ok: false,
+            error,
+          });
+        }
+        return {
+          ...file,
+          renderTaskId: taskId ?? file.renderTaskId,
+          renderStatus: "failed" as const,
+          renderError: error,
+          renderProgress: 0,
+          renderLog: [
+            ...(file.renderLog ?? []),
+            `${new Date().toLocaleTimeString("zh-CN", { hour12: false })} 任务失败：${error}`,
+          ].slice(-80),
+        };
+      },
     );
   }
 
@@ -2700,13 +2735,15 @@ export default function RestyleStudio() {
     job: { attachmentId: string; source: RestyleAttachment; episode?: string; segmentId?: string },
     videoModel: string,
     conversationId: string,
-  ): Promise<{ ok: true; url?: string } | { ok: false; error: string }> {
+  ): Promise<{ ok: true; url?: string; durationSec?: number } | { ok: false; error: string }> {
     const source = await ensureReferenceVideoUrl(projectId, job.source);
     if (!source.ok) return source;
     // 参考视频时长约束按通道区分：素材库通道 1.8–30s；ARK Seedance 直连
     // （r2v）2–15s；其它后端无约束，维持整片提交的旧行为。
     const referenceLimits = referenceVideoLimitsForModel(videoModel);
-    if (!referenceLimits) return { ok: true, url: source.url };
+    if (!referenceLimits) {
+      return { ok: true, url: source.url, durationSec: job.source.durationSec };
+    }
     const project = projectsRef.current.find((item) => item.id === projectId);
     const episode = project?.planEpisodes?.find((item) => item.episode === job.episode);
     const segment = episode?.segments.find((item) => item.id === job.segmentId);
@@ -2718,7 +2755,7 @@ export default function RestyleStudio() {
     if (realDurationMs !== undefined && realDurationMs <= referenceLimits.maxMs) {
       appendRenderLog(projectId, job.attachmentId,
         `原片真实时长 ${(realDurationMs / 1000).toFixed(1)}s 在参考视频时长限制内（真实原片合规），直接作为参考视频。`);
-      return { ok: true, url: source.url };
+      return { ok: true, url: source.url, durationSec: realDurationMs / 1000 };
     }
     if (realDurationMs === undefined) {
       appendRenderLog(projectId, job.attachmentId,
@@ -2794,7 +2831,9 @@ export default function RestyleStudio() {
         trimCacheMap: { ...current.trimCacheMap, [cacheKey]: clip.url },
       }));
     }
-    return { ok: true, url: clip.url };
+    // 参考片段实际时长随 URL 返回：r2v 时长降档重投的贴齐档依据
+    // （r2v 生成时长不得超过参考视频时长）。
+    return { ok: true, url: clip.url, durationSec: (range.endMs - range.startMs) / 1000 };
   }
 
   /**
@@ -2926,35 +2965,33 @@ export default function RestyleStudio() {
       if (isRunAborted(projectId)) return;
       updateProject(projectId, (project) => ({ ...project, stage: "review" }));
       const hasFinalVideos = finalEpisodes.length > 0;
-      // 播报必须反映真实结果：分段/成片有失败时不得说「已合成整集成片」。
-      const latestFiles = projectsRef.current.find((item) => item.id === projectId)?.files ?? [];
-      const failedSegments = latestFiles.filter(
-        (file) => (file.generatedKind === "video_clip" || file.generatedKind === "final_video") && file.renderStatus === "failed",
-      );
-      const finalOk = latestFiles.some(
-        (file) => file.generatedKind === "final_video" && file.renderStatus === "succeeded" && Boolean(file.resultUrl ?? file.url),
-      );
-      // 失败分段的首条错误摘要直接拼进播报，不再只让用户去右侧找原因。
+      // 成败判定只认本轮台账（renderRunOutcomesRef，同步记录）：读 files 的
+      // renderStatus 会拿到旧事件循环的状态——本轮失败不可见（误报「全部完成」）、
+      // 上一轮失败残留可见（跨 run 串「首个失败原因」），均已在此回归实证。
+      const summary = summarizeRenderRun(renderRunOutcomesRef.current.get(projectId) ?? [], {
+        hasFinalVideos,
+      });
+      const failedSegments = summary.failedOutcomes;
+      const finalOk = summary.finalOk;
+      // 失败分段的首条错误摘要直接拼进播报（只取本轮 run 产生的错误）。
       const firstFailed = failedSegments[0];
-      const firstErrorSummary = firstFailed?.renderError
+      const firstErrorSummary = firstFailed?.error
         ? t.restyle_render_queue_first_error
-            .replace(
-              "{label}",
-              [firstFailed.episode, firstFailed.segmentId].filter(Boolean).join(" ") ||
-                firstFailed.name,
-            )
-            .replace("{error}", firstFailed.renderError.slice(0, 160))
+            .replace("{label}", outcomeLabel(firstFailed))
+            .replace("{error}", firstFailed.error.slice(0, 160))
         : "";
+      const failureLabel = (f: (typeof failedSegments)[number]) =>
+        `${f.episode ?? ""}${f.segmentId ? ` ${f.segmentId}` : ""}`;
       appendConversationMessage(projectId, conversationId, {
         role: "assistant",
         content: hasFinalVideos
-          ? failedSegments.length || !finalOk
-            ? `渲染结束：${failedSegments.length ? `${failedSegments.map((f) => `${f.episode ?? ""}${f.segmentId ? ` ${f.segmentId}` : ""}`).join("、")} 失败` : "成片合成未成功"}。请在右侧“生成状态”查看原因，可对失败分段点「重试」。${firstErrorSummary}`
+          ? summary.status === "failed"
+            ? `渲染结束：${failedSegments.length ? `${failedSegments.map(failureLabel).join("、")} 失败` : "成片合成未成功"}。请在右侧“生成状态”查看原因，可对失败分段点「重试」。${firstErrorSummary}`
             : `${finalEpisodes.join("、")} 的分段视频已生成，并按顺序合成整集成片（保留分段自带音轨）。`
           : // 局部返工（无整集合成）：完成播报同样必须看实际成败——
             // 有失败时报失败原因，不报「全部完成」（D4 残留）。
             failedSegments.length
-            ? `局部返工结束：${failedSegments.map((f) => `${f.episode ?? ""}${f.segmentId ? ` ${f.segmentId}` : ""}`).join("、")} 生成失败。请在右侧“生成状态”查看原因，可对失败分段点「重试」。${firstErrorSummary}`
+            ? `局部返工结束：${failedSegments.map(failureLabel).join("、")} 生成失败。请在右侧“生成状态”查看原因，可对失败分段点「重试」。${firstErrorSummary}`
             : "局部返工片段已按队列逐个生成完成。只更新了问题片段，没有重跑整集或整部剧。",
         finalEpisodeLinks: hasFinalVideos ? finalEpisodes : undefined,
       });
@@ -3344,10 +3381,14 @@ export default function RestyleStudio() {
             ? Math.min(15, Math.max(2, Math.round((segmentForDuration.endMs - segmentForDuration.startMs) / 1000)))
             : 5;
         // 上游时长校验拒绝（如 r2v 模式 duration 档位与 t2v 不同、或时长超过
-        // 参考视频实际时长）时的自适应降级：先按 15→10→6→4 降档重投，
-        // 降档穷尽后移除参考视频再重投一次（r2v 校验随之消失）。
+        // 参考视频实际时长）时的自适应降级：先按降档序列重投（贴参考片段实际
+        // 时长优先，再按安全离散档下探，部分网关只收离散档），降档穷尽后
+        // 移除参考视频再重投一次（r2v 校验随之消失）。
         let durationSec = segmentDurationSec;
-        const durationRetries: number[] = [10, 6, 4];
+        const durationRetries: number[] = r2vDurationRetryLadder(
+          segmentDurationSec,
+          referenceVideo.ok ? referenceVideo.durationSec : undefined,
+        );
         let referenceDroppedForDuration = false;
         // 被拒降级链：剔除被点名参考图重投 → 只留首帧 → 仅文本 + 参考视频；
         // 加上时长降档（15→10→6→4）与移除参考视频重投，9 次硬上限防死循环。
@@ -3806,6 +3847,9 @@ export default function RestyleStudio() {
         ...attachments,
       ],
     }));
+    // 新一轮渲染 run 开始：重置成败台账（队列收尾播报只认本轮成败，
+    // 跨 run 不串历史失败原因）。
+    renderRunOutcomesRef.current.set(projectId, []);
     void runRenderQueue(projectId, conversationId, jobs, [...new Set(finalEpisodes)], videoModel);
   }
 

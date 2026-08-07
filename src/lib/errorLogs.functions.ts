@@ -39,7 +39,8 @@ export const reportGenerationError = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const { userId } = context as { supabase: any; userId: string };
     const { logGenerationError } = await import("./errorLogs.server");
-    logGenerationError({
+    // 必须 await：CF Workers 响应返回后未完成的异步写入会被回收（实测 insert 静默丢失）
+    await logGenerationError({
       kind: data.kind,
       provider: data.provider,
       model: data.model ?? null,

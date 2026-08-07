@@ -55,8 +55,14 @@ export type LogGenerationErrorInput = {
   userId?: string | null;
 };
 
-export function logGenerationError(input: LogGenerationErrorInput): void {
-  (async () => {
+/**
+ * 写入 generation_error_logs（supabaseAdmin，绕过 RLS；脱敏/截断）。
+ * 返回 Promise：serverFn 处理链路必须 await —— Cloudflare Workers 在响应
+ * 返回后会回收未 waitUntil 的异步任务，fire-and-forget 的 insert 会被静默
+ * 丢弃（errorLogs 页一直为空回归）；确实不在乎完成的调用方可继续忽略返回值。
+ */
+export function logGenerationError(input: LogGenerationErrorInput): Promise<void> {
+  return (async () => {
     try {
       const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
       const userId = input.userId ?? tryGetUserIdFromRequest();

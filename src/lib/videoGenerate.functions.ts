@@ -4427,28 +4427,27 @@ export const submitVideoTaskFn = createServerFn({ method: "POST" })
     });
     if (!r.ok) {
       const backend = getVideoBackend(model);
-      import("./errorLogs.server").then(({ logGenerationError }) =>
-        logGenerationError({
-          kind: "video",
-          provider: backend,
+      // await 写入：响应返回后未完成的异步 insert 会被 CF Workers 回收（静默丢失）
+      await logGenerationError({
+        kind: "video",
+        provider: backend,
+        model,
+        durationMs: Date.now() - __t0,
+        requestPayload: {
           model,
-          durationMs: Date.now() - __t0,
-          requestPayload: {
-            model,
-            prompt,
-            ratio: data.ratio,
-            resolution: data.resolution,
-            duration: data.duration,
-            generateAudio: data.generateAudio,
-            watermark: data.watermark,
-            media,
-            referenceVideoUrl,
-            referenceAudioUrl,
-          },
-          responseBody: r.error,
-          errorMessage: r.error,
-        }),
-      );
+          prompt,
+          ratio: data.ratio,
+          resolution: data.resolution,
+          duration: data.duration,
+          generateAudio: data.generateAudio,
+          watermark: data.watermark,
+          media,
+          referenceVideoUrl,
+          referenceAudioUrl,
+        },
+        responseBody: r.error,
+        errorMessage: r.error,
+      });
       return { ok: false as const, error: r.error };
     }
     return {
@@ -4522,8 +4521,9 @@ export const pollVideoTaskFn = createServerFn({ method: "POST" })
         charged = charge.ok;
         if (!charge.ok) {
           // 扣费失败不阻断主流程（既有口径，成片不收回），但上报 errorLogs 可观测
+          // （await 写入：响应返回后未完成的异步 insert 会被 CF Workers 回收）
           console.error(`[video$] charge failed taskId=${data.taskId} amount=${pricing.cost}`);
-          logGenerationError({
+          await logGenerationError({
             kind: "video",
             provider: data.backend,
             model: data.model,

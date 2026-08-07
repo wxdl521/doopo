@@ -191,6 +191,24 @@ export type RestyleFallbackPlan = {
 };
 
 /**
+ * r2v 时长类 400 的降档序列（TopenRouter 中转 ARK Seedance 的
+ * 「duration not valid in r2v」回归）：
+ * 1. 先贴参考片段实际时长——r2v 模式生成时长不得超过参考视频时长，
+ *    分段时长（≤15s）可能大于裁剪后参考片段（如旧项目 30s 段被裁上限、
+ *    或分段区间被场景分组压缩），贴齐参考时长是最可能合法的档；
+ * 2. 再按安全离散档下探（部分网关只接受离散档，10s 也可能被拒）；
+ * 3. 全部用尽后由调用方走「移除参考视频重投」（既有降级链）。
+ * 返回去重后严格小于 currentSec 的降档序列（已按候选原序排好）。
+ */
+export function r2vDurationRetryLadder(currentSec: number, referenceSec?: number): number[] {
+  const clamp = (value: number) => Math.max(2, Math.min(15, Math.round(value)));
+  const candidates = [referenceSec, 10, 8, 6, 5, 4]
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
+    .map(clamp);
+  return [...new Set(candidates.filter((value) => value < currentSec))];
+}
+
+/**
  * 提交被拒后决定下一步降级动作；返回 null 表示降级链已穷尽，应判失败。
  * 只有真人风控/素材敏感类错误才进入降级链，其它错误由调用方直接判失败。
  */

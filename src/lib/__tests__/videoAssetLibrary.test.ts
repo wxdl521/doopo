@@ -6,6 +6,7 @@ import {
   isSensitiveContentError,
   parseRejectedContentIndexes,
   planRestyleFallback,
+  r2vDurationRetryLadder,
   rejectedImageUrlsFromError,
   restyleAssetCacheKey,
   RESTYLE_FALLBACK_EXHAUSTED_MESSAGE,
@@ -170,5 +171,42 @@ describe("restyleAssetCacheKey", () => {
       restyleAssetCacheKey("keyiyun", url),
     );
     expect(restyleAssetCacheKey("topenrouter", url)).toContain(url);
+  });
+});
+
+
+// --------------------------------------------------------------------
+// r2vDurationRetryLadder（r2v duration 400 降档回归）
+// --------------------------------------------------------------------
+
+describe("r2vDurationRetryLadder", () => {
+  it("参考片段时长优先：15s 段 + 8s 参考片段 → 参考档在前，离散档随后", () => {
+    expect(r2vDurationRetryLadder(15, 8)).toEqual([8, 10, 6, 5, 4]);
+  });
+
+  it("参考片段长于当前时长时不出现（只保留严格更小的档）", () => {
+    expect(r2vDurationRetryLadder(15, 15)).toEqual([10, 8, 6, 5, 4]);
+    expect(r2vDurationRetryLadder(15, 30.2)).toEqual([10, 8, 6, 5, 4]);
+  });
+
+  it("无参考片段时长：纯离散安全档下探", () => {
+    expect(r2vDurationRetryLadder(15)).toEqual([10, 8, 6, 5, 4]);
+    expect(r2vDurationRetryLadder(12)).toEqual([10, 8, 6, 5, 4]);
+  });
+
+  it("参考片段时长与离散档重复时去重，非整数取整", () => {
+    expect(r2vDurationRetryLadder(15, 8.4)).toEqual([8, 10, 6, 5, 4]);
+    expect(r2vDurationRetryLadder(15, 10)).toEqual([10, 8, 6, 5, 4]);
+  });
+
+  it("当前时长 ≤4 时无档可降（交给移除参考视频重投）", () => {
+    expect(r2vDurationRetryLadder(4)).toEqual([]);
+    expect(r2vDurationRetryLadder(4, 3)).toEqual([3]);
+    expect(r2vDurationRetryLadder(5, 4)).toEqual([4]);
+  });
+
+  it("参考片段时长夹到 2-15s 合法域", () => {
+    // 1s 参考片段被夹到 2s 下限
+    expect(r2vDurationRetryLadder(15, 1)).toEqual([2, 10, 8, 6, 5, 4]);
   });
 });
