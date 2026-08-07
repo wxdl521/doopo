@@ -2944,7 +2944,11 @@ export default function RestyleStudio() {
           ? failedSegments.length || !finalOk
             ? `渲染结束：${failedSegments.length ? `${failedSegments.map((f) => `${f.episode ?? ""}${f.segmentId ? ` ${f.segmentId}` : ""}`).join("、")} 失败` : "成片合成未成功"}。请在右侧“生成状态”查看原因，可对失败分段点「重试」。${firstErrorSummary}`
             : `${finalEpisodes.join("、")} 的分段视频已生成，并按顺序合成整集成片（保留分段自带音轨）。`
-          : "局部返工片段已按队列逐个生成完成。只更新了问题片段，没有重跑整集或整部剧。",
+          : // 局部返工（无整集合成）：完成播报同样必须看实际成败——
+            // 有失败时报失败原因，不报「全部完成」（D4 残留）。
+            failedSegments.length
+            ? `局部返工结束：${failedSegments.map((f) => `${f.episode ?? ""}${f.segmentId ? ` ${f.segmentId}` : ""}`).join("、")} 生成失败。请在右侧“生成状态”查看原因，可对失败分段点「重试」。${firstErrorSummary}`
+            : "局部返工片段已按队列逐个生成完成。只更新了问题片段，没有重跑整集或整部剧。",
         finalEpisodeLinks: hasFinalVideos ? finalEpisodes : undefined,
       });
     } finally {
@@ -4331,6 +4335,18 @@ export default function RestyleStudio() {
             if (!isRetryableUploadError(message)) throw firstError;
             markRunStep(projectId, `${t.restyle_run_step_read_source}：网络错误，退避重试`);
             prepared = await prepareEpisodeMedia(resolved.file, prepareOptions);
+          }
+          // 源视频持久 URL 写回（D5）：单元管线内部已把原片直传 workspace-media
+          // 并签发读地址，立即写回附件 url（与 ensureReferenceVideoUrl 写回的
+          // 口径一致——签名读 URL，项目其它持久 url 同口径）；刷新后三级回退
+          // （内存 File → 持久 URL → 缓存帧）才能走到第二级。
+          if (file.url !== prepared.videoUrl) {
+            updateProject(projectId, (project) => ({
+              ...project,
+              files: project.files.map((item) =>
+                item.id === file.id ? { ...item, url: prepared.videoUrl } : item,
+              ),
+            }));
           }
           // 逐单元分析：幂等键按项目+集派生，同一单元重复成功调用不重复扣费；
           // 单单元失败记 warning 继续后续单元（部分失败用成功单元继续）。
