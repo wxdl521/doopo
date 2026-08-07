@@ -7,6 +7,7 @@ import {
   buildPlanWindowJobs,
   mergeWindowSegments,
   PLAN_WINDOW_SEC,
+  resolvePlanWindowDurationMs,
   shotsInWindow,
   splitIntoWindows,
   summarizeWindowCalls,
@@ -296,5 +297,55 @@ describe("applyPlanCoverage 按集隔离（D1 回归）", () => {
       () => 88_126,
     );
     expectCleanCoverage(episodes[0].segments, 88_126);
+  });
+});
+
+
+// --------------------------------------------------------------------
+// resolvePlanWindowDurationMs（窗数异常回归：三集应为 6 窗而非 10 窗）
+// --------------------------------------------------------------------
+
+describe("resolvePlanWindowDurationMs", () => {
+  const ep1Shots = [
+    { shotNo: "SC001", startMs: 0, endMs: 60_000, scene: "a", shotType: "中景" as const, emotion: "" },
+    { shotNo: "SC002", startMs: 60_000, endMs: 125_200, scene: "a", shotType: "中景" as const, emotion: "" },
+  ];
+  const ep2Shots = [
+    { shotNo: "SC001", startMs: 0, endMs: 137_300, scene: "b", shotType: "中景" as const, emotion: "" },
+  ];
+
+  it("durationSec 优先（浏览器探测的权威值）", () => {
+    expect(
+      resolvePlanWindowDurationMs({ durationSec: 125.2, episodeShots: ep1Shots }),
+    ).toBe(125_200);
+  });
+
+  it("durationSec 缺失：用该集自己的逐镜表估算，不用整表", () => {
+    expect(resolvePlanWindowDurationMs({ episodeShots: ep1Shots })).toBe(125_200);
+    // 整表（EP01+EP02 拼接，max 137.3s）不得盖过该集自己的 125.2s
+    expect(
+      resolvePlanWindowDurationMs({
+        episodeShots: ep1Shots,
+        fallbackShots: [...ep1Shots, ...ep2Shots],
+      }),
+    ).toBe(125_200);
+  });
+
+  it("该集无镜头（降级）才回落整表估算", () => {
+    expect(
+      resolvePlanWindowDurationMs({ episodeShots: [], fallbackShots: ep2Shots }),
+    ).toBe(137_300);
+    expect(resolvePlanWindowDurationMs({})).toBeUndefined();
+  });
+
+  it("回归数据：三集 125.2/137.3/117.5s 按 90s 窗 = 6 窗", () => {
+    const files = [
+      { videoId: "EP01", durationMs: resolvePlanWindowDurationMs({ durationSec: 125.2 }) },
+      { videoId: "EP02", durationMs: resolvePlanWindowDurationMs({ durationSec: 137.3 }) },
+      { videoId: "EP03", durationMs: resolvePlanWindowDurationMs({ durationSec: 117.5 }) },
+    ];
+    const jobs = buildPlanWindowJobs(files);
+    expect(jobs).toHaveLength(6);
+    expect(jobs.map((j) => j.windowCount)).toEqual([2, 2, 2, 2, 2, 2]);
   });
 });

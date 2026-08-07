@@ -62,8 +62,9 @@ import {
   type UnitProgressEvent,
 } from "./v2/mediaSlicing";
 import { mergeSourceUnitResults, renumberShotSchedule } from "./sourceUnitsMerge";
-import { buildPlanWindowJobs, PLAN_WINDOW_SEC } from "../../lib/restyle/planWindows";
+import { buildPlanWindowJobs, PLAN_WINDOW_SEC, resolvePlanWindowDurationMs } from "../../lib/restyle/planWindows";
 import { driveWindowedPlanCalls } from "./planWindowDriver";
+import { isSupersededClipAttachment } from "./rerunAttachments";
 import { imageModelFallbackCandidates, isQuotaLikeImageError } from "./imageModelFallback";
 import { segmentIndexFromId, withSegmentDirection } from "../../lib/restyle/shotSchedule";
 import { formatLightingParams, type DirectionShot } from "../../lib/restyle/cameraDirection";
@@ -116,6 +117,7 @@ import {
   type RestyleFallbackStage,
 } from "../../lib/videoAssetLibrary";
 import { uploadLocalImage } from "../../lib/uploadImage.functions";
+import { reportGenerationError } from "../../lib/errorLogs.functions";
 import { createMediaUploadUrl, signMediaReadUrl } from "../../lib/restyleMedia.functions";
 import { persistAssetImage } from "../../lib/workspaceMedia.functions";
 import { persistRestyleVideo } from "../../lib/restyleMedia.functions";
@@ -1236,6 +1238,7 @@ export default function RestyleStudio() {
   const callSignMediaReadUrl = useServerFn(signMediaReadUrl);
   const callPersistAssetImage = useServerFn(persistAssetImage);
   const callPersistRestyleVideo = useServerFn(persistRestyleVideo);
+  const callReportGenerationError = useServerFn(reportGenerationError);
   const callReviewRestyleAssetTable = useServerFn(reviewRestyleAssetTable);
   const callTranscribeRestyleAudio = useServerFn(transcribeRestyleAudio);
   const callSubmitVideoStitchJob = useServerFn(submitVideoStitchJob);
@@ -1838,10 +1841,14 @@ export default function RestyleStudio() {
   > {
     const { projectId, project, sourceFiles, instruction, episodeCount, existingEpisodes } = input;
     const effectiveFiles = sourceFiles.length ? sourceFiles : project.files;
+    // 权威时长解析：durationSec 优先，该集自己的逐镜表估算兜底（不得用整表——
+    // 多集项目整表时间轴混算会把别集时长算进本集窗数，「6 窗变 10 窗」回归）。
     const durationMsOfFile = (file: RestyleAttachment): number | undefined =>
-      file.durationSec
-        ? Math.round(file.durationSec * 1000)
-        : estimateSourceDurationMs(project.shotSchedule);
+      resolvePlanWindowDurationMs({
+        durationSec: file.durationSec,
+        episodeShots: project.shotScheduleByEpisode?.[file.episode ?? file.id],
+        fallbackShots: project.shotSchedule,
+      });
     const windowJobs = buildPlanWindowJobs(
       effectiveFiles.map((file) => ({
         videoId: file.episode ?? file.id,
@@ -1995,9 +2002,9 @@ export default function RestyleStudio() {
     const project = projectsRef.current.find((item) => item.id === projectId);
     if (!project || !project.extractedAssets.length) return false;
     beginRun(projectId, t.restyle_run_step_plan);
-    const sourceFiles = project.files.filter(
-      (file) => file.type.startsWith("video/") && !file.isFolder,
-    );
+    // 只取原始上传源片：渲染产物（video_clip / final_video）也是 video/*，
+    // 混进来会被当成「源视频」生成窗任务与方案集（窗数虚高回归）。
+    const sourceFiles = project.files.filter(isSourceVideoFile);
     const episodeCount = sourceFiles.length || 1;
     // 分窗/单次统一入口内部已兜底网络异常，失败必然收敛为可读错误，
     // 否则 running 态永远清不掉、聊天区无失败提示（历史事故）。
@@ -3238,7 +3245,27 @@ export default function RestyleStudio() {
     const failJob = (error: string, taskId?: string) => {
       failRenderAttachment(projectId, job.attachmentId, error, taskId);
       reportRenderSegmentFailure(projectId, conversationId, job, error);
+      // 视频任务失败接入 errorLogs（fire-and-forget 客户端上报通道，不阻断队列
+      // 推进）：submit/poll 请求本身成功、失败是任务终态时服务端无从记录，
+      // 上游错误细节（含 provider 返回的原始 error）随 errorMessage 写入。
+      void callReportGenerationError({
+        data: {
+          kind: "video",
+          provider: submittedBackend ?? videoModel,
+          model: videoModel,
+          errorMessage: error,
+          durationMs: Date.now() - startedAt,
+          requestPayload: {
+            episode: job.episode ?? null,
+            segmentId: job.segmentId ?? null,
+            taskId: taskId ?? null,
+            prompt: directedPrompt.slice(0, 240),
+          },
+        },
+      });
     };
+    /** 提交成功后记录的后端名（errorLogs 的 provider 字段；未提交成功时用模型 id）。 */
+    let submittedBackend: string | undefined;
     // 预算校验：任何模式下累计消耗达上限即强制暂停，不再提交后续分段。
     const estimatedCost = videoJobCost(videoModel);
     if (budgetExceeded(projectId, estimatedCost)) {
@@ -3415,6 +3442,7 @@ export default function RestyleStudio() {
             failJob(submitFailure ?? RESTYLE_FALLBACK_EXHAUSTED_MESSAGE);
           }
         } else {
+          submittedBackend = submitted.backend ?? undefined;
           appendRenderLog(
             projectId,
             job.attachmentId,
@@ -3757,10 +3785,13 @@ export default function RestyleStudio() {
     updateProject(projectId, (item) => ({
       ...item,
       stage: "render",
+      // 返工开始时移除被取代的旧片段附件（含上一轮失败残留），否则同
+      // (episode, segmentId) 新旧附件并存：汇总播报出现重复条目，且首条
+      // 失败原因会抓到旧附件上的历史错误（本轮失败原因必须只看本轮）。
       files: [
         ...item.files.filter((file) =>
           rerun
-            ? file.id !== rerun.rerunOfAttachmentId
+            ? !isSupersededClipAttachment(file, rerun)
             : file.generatedKind !== "final_video" && file.generatedKind !== "video_clip",
         ),
         ...attachments,
@@ -4800,9 +4831,8 @@ export default function RestyleStudio() {
 
     if (activeProject.stage === "plan" && /U\d+|提示词|光影|镜头|台词|节奏/.test(message)) {
       beginRun(projectId, t.restyle_run_step_prompt_update);
-      const sourceFiles = activeProject.files.filter(
-        (file) => file.type.startsWith("video/") && !file.isFolder,
-      );
+      // 同 runPlanGeneration：只取原始上传源片，排除渲染产物（窗数虚高回归）。
+      const sourceFiles = activeProject.files.filter(isSourceVideoFile);
       // 分窗/单次统一入口：长片逐窗循环（每窗一个请求），短片单次调用。
       const result = await requestPlanEpisodes({
         projectId,

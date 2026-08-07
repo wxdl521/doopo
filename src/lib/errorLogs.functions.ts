@@ -18,6 +18,40 @@ const ListInput = z.object({
   limit: z.number().int().min(1).max(200).default(100),
 });
 
+const ReportInput = z.object({
+  kind: z.enum(["image", "video"]),
+  provider: z.string().min(1).max(120),
+  model: z.string().max(200).optional(),
+  status: z.number().int().nullish(),
+  durationMs: z.number().nonnegative().nullish(),
+  errorMessage: z.string().min(1).max(1_000),
+  requestPayload: z.unknown().optional(),
+});
+
+/**
+ * 客户端上报通道：视频/图片任务的失败在客户端轮询侧发现时（服务端
+ * submit/poll 本身都成功、失败是任务终态），经此写入 generation_error_logs，
+ * 与服务端 logGenerationError 同表同口径（脱敏/截断在 server 侧完成）。
+ */
+export const reportGenerationError = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .inputValidator((d: unknown) => ReportInput.parse(d))
+  .handler(async ({ data, context }) => {
+    const { userId } = context as { supabase: any; userId: string };
+    const { logGenerationError } = await import("./errorLogs.server");
+    logGenerationError({
+      kind: data.kind,
+      provider: data.provider,
+      model: data.model ?? null,
+      status: data.status ?? null,
+      durationMs: data.durationMs ?? null,
+      requestPayload: data.requestPayload ?? null,
+      errorMessage: data.errorMessage,
+      userId,
+    });
+    return { ok: true as const };
+  });
+
 export const listMyGenerationErrors = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => ListInput.parse(d))

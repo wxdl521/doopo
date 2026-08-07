@@ -22,7 +22,7 @@
 
 import type { DirectionShot } from "./cameraDirection";
 import { ensureFullCoverage, type CoverageEpisode } from "./ensureFullCoverage";
-import { resolveSegmentTimeRange } from "./segmentReference";
+import { estimateSourceDurationMs, resolveSegmentTimeRange } from "./segmentReference";
 
 /**
  * 单窗时长（秒）。取值 90：与平台约 100s 无字节断连上限对齐——单窗调用的
@@ -130,6 +130,25 @@ export function mergeWindowSegments(
 // --------------------------------------------------------------------
 // 客户端窗循环：任务清单 / 失败决策 / 结果汇总
 // --------------------------------------------------------------------
+
+/**
+ * 方案分窗的权威时长解析（毫秒）：attachment.durationSec 优先；缺失时用
+ * 该集自己的逐镜表估算；该集无镜头（分析降级）才回落整表估算。
+ * 不得直接用整表逐镜表估算单集时长——多集项目里整表时间轴是各集拼接
+ * （甚至可能跨集累计），会把别集时长算进本集窗数（「6 窗变 10 窗」回归）。
+ */
+export function resolvePlanWindowDurationMs(input: {
+  durationSec?: number;
+  episodeShots?: DirectionShot[];
+  fallbackShots?: DirectionShot[];
+}): number | undefined {
+  if (input.durationSec && input.durationSec > 0) {
+    return Math.round(input.durationSec * 1000);
+  }
+  return (
+    estimateSourceDurationMs(input.episodeShots) ?? estimateSourceDurationMs(input.fallbackShots)
+  );
+}
 
 /** 一个窗调用任务：某集的某个时间窗。 */
 export interface PlanWindowJob {
