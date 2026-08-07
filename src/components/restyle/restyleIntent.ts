@@ -8,11 +8,19 @@ const CONFIRM_PATTERNS: RegExp[] = [
   /^\s*(确认|确定|ok|okay|好的|好了|可以了?|没问题|没毛病|无误)\s*[。!！~]*\s*$/i,
   /确认(资产|无误|没问题|一下)?/,
   /(都|全部)?(可以|没问题|没毛病|通过)了?/,
-  /继续/,
-  /下一步/,
   /(开始|进入|生成|出)(转绘)?方案/,
   /(开始|进行)转绘/,
 ];
+
+/** 裸「继续 / 下一步」判定词（从 CONFIRM_PATTERNS 拆出，便于加对象排除）。 */
+const BARE_CONTINUE_PATTERN = /继续|下一步/;
+
+/**
+ * 裸「继续 / 下一步」的具体动作对象排除：点名了生图 / 分析 / 出片等对象时
+ * 不算确认，交给对应的具体意图分支——「继续生成资产图片」曾被 /继续/ 判成
+ * 确认直接出方案（答非所问回归）。
+ */
+const CONFIRM_OBJECT_EXCLUSION = /(资产图|生图|图片|分析|提取|原片|视频|出片|片段)/;
 
 /** 用户是否在表达“确认当前结果、请继续下一步”。 */
 export function isConfirmIntent(message: string): boolean {
@@ -20,12 +28,26 @@ export function isConfirmIntent(message: string): boolean {
   if (!text) return false;
   // 明确的否定/修改诉求不算确认
   if (/(不对|不行|重做|重新|修改|调整|换成|改成|删掉|去掉)/.test(text)) return false;
-  return CONFIRM_PATTERNS.some((pattern) => pattern.test(text));
+  if (CONFIRM_PATTERNS.some((pattern) => pattern.test(text))) return true;
+  // 裸「继续 / 下一步」：只有没点名具体动作对象时才算确认。
+  return BARE_CONTINUE_PATTERN.test(text) && !CONFIRM_OBJECT_EXCLUSION.test(text);
 }
 
 /** 用户是否在要求开始生成视频。 */
 export function isVideoRenderIntent(message: string): boolean {
   return /确认生成视频|开始生成视频|生成视频|出片|渲染视频/.test(message);
+}
+
+/**
+ * 用户是否在要求生成 / 补齐 / 重试资产图片（含「继续生成资产图片」）。
+ * 点名图片对象（资产图 / 生图 / 图片）且有生成类动作；与出片 / 重分析互斥：
+ * 「确认生成视频」「重新分析原片」不含图片对象，天然不命中。
+ */
+export function isAssetImageIntent(message: string): boolean {
+  const text = message.trim();
+  if (!text) return false;
+  if (!/(资产图|资产图片|生图|图片)/.test(text)) return false;
+  return /(生成|补齐|补充|重试|重画|重新生成|重做|出图|来一张)/.test(text);
 }
 
 /**

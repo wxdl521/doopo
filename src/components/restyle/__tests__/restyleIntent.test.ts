@@ -213,3 +213,51 @@ describe("parseSegmentRerunIntent", () => {
     }
   });
 });
+
+
+// --------------------------------------------------------------------
+// 收紧确认意图 + isAssetImageIntent（「继续生成资产图片」被抢跑回归）
+// --------------------------------------------------------------------
+import { isAssetImageIntent } from "../restyleIntent";
+
+describe("isConfirmIntent 收紧：裸继续点名具体对象不算确认", () => {
+  it("「继续生成资产图片」「继续补齐资产图」不是确认", () => {
+    for (const message of ["继续生成资产图片", "继续补齐资产图"]) {
+      expect(isConfirmIntent(message), message).toBe(false);
+      expect(isAssetImageIntent(message), message).toBe(true);
+    }
+  });
+
+  it("「继续下一步」「确认」「可以了」仍为确认", () => {
+    for (const message of ["继续下一步", "确认", "可以了", "继续"]) {
+      expect(isConfirmIntent(message), message).toBe(true);
+    }
+  });
+
+  it("「继续重新分析原片」走重分析、「继续生成视频」走出片", () => {
+    expect(isConfirmIntent("继续重新分析原片")).toBe(false);
+    expect(isReanalyzeIntent("继续重新分析原片")).toBe(true);
+    expect(isConfirmIntent("继续生成视频")).toBe(false);
+    expect(isVideoRenderIntent("继续生成视频")).toBe(true);
+  });
+});
+
+describe("isAssetImageIntent", () => {
+  it("生成/补齐/重试资产图片类说法命中", () => {
+    for (const message of [
+      "生成资产图片",
+      "继续生成资产图片",
+      "补齐资产图",
+      "重试生成场景图片",
+      "重新生成角色图片",
+    ]) {
+      expect(isAssetImageIntent(message), message).toBe(true);
+    }
+  });
+
+  it("出片 / 重分析 / 裸确认不命中", () => {
+    for (const message of ["确认生成视频", "重新分析原片", "继续", "确认", ""]) {
+      expect(isAssetImageIntent(message), message).toBe(false);
+    }
+  });
+});

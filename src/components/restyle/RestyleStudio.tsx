@@ -129,6 +129,7 @@ import { useListedModels } from "../../hooks/useListedModels";
 import {
   isConfirmIntent,
   isReanalyzeIntent,
+  isAssetImageIntent,
   isRegenerateIntent,
   isReplanIntent,
   isVideoRenderIntent,
@@ -4841,8 +4842,6 @@ export default function RestyleStudio() {
 
   async function sendChatMessageInner(overrideMessage?: string) {
     if (!activeProject || !activeConversation) return;
-    // 同一项目内串行；不同项目各自独立，可并发执行。
-    if (isProjectRunning(activeProject.id)) return;
     const message = (overrideMessage ?? chatDraft).trim();
     // 发送时解析文本中的 @imageN / @videoN，把被 @ 的素材一并带上（即使不在附件条里）。
     const mentionedAttachmentIds = resolveMentionedAttachmentIds(message, mentionableAttachments);
@@ -4880,6 +4879,19 @@ export default function RestyleStudio() {
     setChatDraft("");
     setDraftAttachmentIds([]);
 
+    // 同一项目内串行；不同项目各自独立，可并发执行。忙时不吞消息：
+    // 用户消息已照常上屏，明确回复当前正在执行的步骤（可停止后重发，
+    // 或等本步完成）；返工排队机制（pendingRerunsRef）不受影响。
+    if (isProjectRunning(projectId)) {
+      const runningStep = [...(projectRuns[projectId]?.steps ?? [])]
+        .reverse()
+        .find((step) => step.status === "running");
+      appendConversationMessage(projectId, conversationId, {
+        role: "assistant",
+        content: `正在执行：${runningStep?.label ?? "当前任务"}。可点击「停止」后重发，或等本步完成后再继续。`,
+      });
+      return;
+    }
     // 记住用户描述的目标画风：首轮转绘要求自动沿用，之后再次提到画风则覆盖。
     if (message && (!styleBrief || looksLikeStyleBrief(message))) {
       if (looksLikeStyleBrief(message) || !activeProject.extractedAssets.length) {
@@ -4895,35 +4907,10 @@ export default function RestyleStudio() {
       return;
     }
 
-    // 方案阶段再说“确认/继续”，等价于确认生成视频。
-    if (
-      shouldContinueToPlan &&
-      activeProject.stage === "plan" &&
-      activeProject.planEpisodes?.length
-    ) {
+    // ===== 具体意图优先，泛化确认兜底（顺序即优先级；裸「继续/下一步」
+    // 点名具体对象时已被确认意图排除，会落到对应的具体分支） =====
+    if (isVideoRenderIntent(message)) {
       submitVideoRender(activeProject, conversationId);
-      return;
-    }
-
-    // 资产表已就绪但还没有任何资产图：先补生成资产图，再让用户确认进入方案。
-    if (
-      shouldContinueToPlan &&
-      activeProject.extractedAssets.length > 0 &&
-      generatedAssetFiles.length === 0
-    ) {
-      await generateAssetImages(
-        projectId,
-        conversationId,
-        message || "按资产表生成全部资产图",
-        activeProject.extractedAssets,
-        [],
-        styleBrief,
-      );
-      return;
-    }
-
-    if (shouldContinueToPlan && activeProject.extractedAssets.length > 0) {
-      await runPlanGeneration(projectId, conversationId, styleBrief);
       return;
     }
 
@@ -4938,6 +4925,101 @@ export default function RestyleStudio() {
       segmentRerunIntent &&
       handleSegmentRerunIntent(projectId, conversationId, segmentRerunIntent)
     ) {
+      return;
+    }
+
+    // 资产表已产出后的「重做」入口：重新分析原片 / 整套重做方案。
+    // 必须排在生图纠错分支之前，否则「资产表不对，重新分析」会被 isRegenerateIntent
+    // 当成资产图片重生成而走错分支。
+    if (activeProject.extractedAssets.length > 0 && isReanalyzeIntent(message)) {
+      // 「补充分析 / 漏了 X」增量补全（传 existingAssets）；明说「重新 / 重跑」则全量重建。
+      const keepAssets =
+        /(补充|漏了|遗漏|少了|缺少)/.test(message) && !/重新|重跑|全量|全部/.test(message);
+      // 用户的原话就是最高优先级证据，直接作为分析 instruction。
+      await runSourceAnalysis(projectId, conversationId, message || analysisInstruction, {
+        keepAssets,
+      });
+      return;
+    }
+
+    if (activeProject.extractedAssets.length > 0 && isReplanIntent(message)) {
+      await runPlanGeneration(projectId, conversationId, styleBrief);
+      return;
+    }
+
+    const requestedAssetKinds = getRequestedAssetKinds(message);
+    // 方案微调（plan 阶段 U01/提示词/光影…且未点名图片对象）优先于生图纠错——
+    // 「调整 U01 光影」含「调整」会被 isRegenerateIntent 误判成生图纠错；
+    // 点名了图片对象（「把 U01 的图片重新生成」）仍走生图分支。
+    const isPlanTweak =
+      activeProject.stage === "plan" &&
+      /U\d+|提示词|光影|镜头|台词|节奏/.test(message) &&
+      !/(资产图|生图|图片)/.test(message);
+    // 纠错语句（“场景图片生成不对，请重新生成”）也要进入生图分支，
+    // 否则只会得到一句“已理解…”，用户看到的就是“指正无效”。
+    const isCorrection =
+      !isPlanTweak && generatedAssetFiles.length > 0 && isRegenerateIntent(message);
+    // 资产生图意图（含「继续生成资产图片」——裸继续已被确认意图排除到这里）。
+    const isAssetImageRequest =
+      activeProject.extractedAssets.length > 0 &&
+      !isPlanTweak &&
+      (isAssetImageIntent(message) ||
+        /全部由\s*AI\s*生成|生成(?:全部|这些|资产)?(?:图片|图)|生图/i.test(message) ||
+        (requestedAssetKinds.length > 0 && /生成|图片|图/.test(message)) ||
+        isCorrection ||
+        (generatedAssetFiles.length > 0 && /修改|调整|请将|变得|改成|换成/i.test(message)));
+    if (isAssetImageRequest) {
+      // @imageN 现在按项目内图片统一编号，按解析出的附件 id 过滤参考图。
+      const mentionedImageIds = mentionedAttachmentIds;
+      const uploadedReferenceImages = (
+        await Promise.all(
+          referenceAttachments
+            .filter((file) => !mentionedImageIds.length || mentionedImageIds.includes(file.id))
+            .map((file) => {
+              const local = fileObjectsRef.current[file.id];
+              return local ? fileToDataUrl(local) : Promise.resolve(file.url ?? "");
+            }),
+        )
+      ).filter(Boolean);
+      const generatedReferenceImages = generatedAssetFiles
+        .filter((file) =>
+          activeProject.extractedAssets.some(
+            (asset) => message.includes(asset.targetName) && file.name.includes(asset.targetName),
+          ),
+        )
+        .map((file) => file.url as string);
+      const referenceImages = uploadedReferenceImages.length
+        ? uploadedReferenceImages
+        : generatedReferenceImages;
+      // 指名了资产名时只重生成该资产；其次按类型（角色/场景/道具）过滤；
+      // 都没提到才整表补齐，避免一句“场景不对”把角色和道具也重画一遍。
+      const namedAssets = activeProject.extractedAssets.filter(
+        (asset) =>
+          (asset.targetName && message.includes(asset.targetName)) ||
+          (asset.sourceName && message.includes(asset.sourceName)),
+      );
+      const requestedAssets = namedAssets.length
+        ? namedAssets
+        : requestedAssetKinds.length
+          ? activeProject.extractedAssets.filter((asset) =>
+              requestedAssetKinds.includes(asset.kind),
+            )
+          : activeProject.extractedAssets;
+      if (!requestedAssets.length) {
+        appendConversationMessage(projectId, conversationId, {
+          role: "assistant",
+          content: "当前资产表中没有匹配的角色、场景或道具，暂不生成图片。",
+        });
+        return;
+      }
+      await generateAssetImages(
+        projectId,
+        conversationId,
+        message,
+        requestedAssets,
+        referenceImages,
+        styleBrief,
+      );
       return;
     }
 
@@ -4988,87 +5070,36 @@ export default function RestyleStudio() {
       return;
     }
 
-    // 资产表已产出后的「重做」入口：重新分析原片 / 整套重做方案。
-    // 必须排在生图纠错分支之前，否则「资产表不对，重新分析」会被 isRegenerateIntent
-    // 当成资产图片重生成而走错分支。
-    if (activeProject.extractedAssets.length > 0 && isReanalyzeIntent(message)) {
-      // 「补充分析 / 漏了 X」增量补全（传 existingAssets）；明说「重新 / 重跑」则全量重建。
-      const keepAssets =
-        /(补充|漏了|遗漏|少了|缺少)/.test(message) && !/重新|重跑|全量|全部/.test(message);
-      // 用户的原话就是最高优先级证据，直接作为分析 instruction。
-      await runSourceAnalysis(projectId, conversationId, message || analysisInstruction, {
-        keepAssets,
-      });
+    // 泛化确认（推进下一步）：方案阶段的「确认/继续」等价确认生成视频；
+    // 没有资产图先补图；其余进入方案生成。
+    if (
+      shouldContinueToPlan &&
+      activeProject.stage === "plan" &&
+      activeProject.planEpisodes?.length
+    ) {
+      submitVideoRender(activeProject, conversationId);
       return;
     }
 
-    if (activeProject.extractedAssets.length > 0 && isReplanIntent(message)) {
-      await runPlanGeneration(projectId, conversationId, styleBrief);
-      return;
-    }
-
-    const requestedAssetKinds = getRequestedAssetKinds(message);
-    // 纠错语句（“场景图片生成不对，请重新生成”）也要进入生图分支，
-    // 否则只会得到一句“已理解…”，用户看到的就是“指正无效”。
-    const isCorrection = generatedAssetFiles.length > 0 && isRegenerateIntent(message);
-    const isAssetImageRequest =
+    // 资产表已就绪但还没有任何资产图：先补生成资产图，再让用户确认进入方案。
+    if (
+      shouldContinueToPlan &&
       activeProject.extractedAssets.length > 0 &&
-      (/全部由\s*AI\s*生成|生成(?:全部|这些|资产)?(?:图片|图)|生图/i.test(message) ||
-        (requestedAssetKinds.length > 0 && /生成|图片|图/.test(message)) ||
-        isCorrection ||
-        (generatedAssetFiles.length > 0 && /修改|调整|请将|变得|改成|换成/i.test(message)));
-    if (isAssetImageRequest) {
-      // @imageN 现在按项目内图片统一编号，按解析出的附件 id 过滤参考图。
-      const mentionedImageIds = mentionedAttachmentIds;
-      const uploadedReferenceImages = (
-        await Promise.all(
-          referenceAttachments
-            .filter((file) => !mentionedImageIds.length || mentionedImageIds.includes(file.id))
-            .map((file) => {
-              const local = fileObjectsRef.current[file.id];
-              return local ? fileToDataUrl(local) : Promise.resolve(file.url ?? "");
-            }),
-        )
-      ).filter(Boolean);
-      const generatedReferenceImages = generatedAssetFiles
-        .filter((file) =>
-          activeProject.extractedAssets.some(
-            (asset) => message.includes(asset.targetName) && file.name.includes(asset.targetName),
-          ),
-        )
-        .map((file) => file.url as string);
-      const referenceImages = uploadedReferenceImages.length
-        ? uploadedReferenceImages
-        : generatedReferenceImages;
-      // 指名了资产名时只重生成该资产；其次按类型（角色/场景/道具）过滤；
-      // 都没提到才整表重跑，避免一句“场景不对”把角色和道具也重画一遍。
-      const namedAssets = activeProject.extractedAssets.filter(
-        (asset) =>
-          (asset.targetName && message.includes(asset.targetName)) ||
-          (asset.sourceName && message.includes(asset.sourceName)),
-      );
-      const requestedAssets = namedAssets.length
-        ? namedAssets
-        : requestedAssetKinds.length
-          ? activeProject.extractedAssets.filter((asset) =>
-              requestedAssetKinds.includes(asset.kind),
-            )
-          : activeProject.extractedAssets;
-      if (!requestedAssets.length) {
-        appendConversationMessage(projectId, conversationId, {
-          role: "assistant",
-          content: "当前资产表中没有匹配的角色、场景或道具，暂不生成图片。",
-        });
-        return;
-      }
+      generatedAssetFiles.length === 0
+    ) {
       await generateAssetImages(
         projectId,
         conversationId,
-        message,
-        requestedAssets,
-        referenceImages,
+        message || "按资产表生成全部资产图",
+        activeProject.extractedAssets,
+        [],
         styleBrief,
       );
+      return;
+    }
+
+    if (shouldContinueToPlan && activeProject.extractedAssets.length > 0) {
+      await runPlanGeneration(projectId, conversationId, styleBrief);
       return;
     }
 
