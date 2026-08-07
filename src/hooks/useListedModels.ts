@@ -40,9 +40,17 @@ export function useListedModels(
       queryKey: ["listed-models", kind],
       staleTime: 60_000,
       retry: 1,
+      throwOnError: false,
       queryFn: async () => {
-        const result: any = await callList({ data: { kind } });
-        if (result?.error) throw new Error(result.error);
+        // 未登录 / 网关 401 时服务端中间件会抛出 Response，这里吞掉并回落静态列表，
+        // 否则 Response 会冒泡成 "Error: [object Response]" 导致整页白屏。
+        let result: any;
+        try {
+          result = await callList({ data: { kind } });
+        } catch {
+          return [];
+        }
+        if (result?.error) return [];
         return (result?.models ?? []) as Array<{
           key: string;
           label: string;
