@@ -6,9 +6,11 @@ import {
   MAX_SOURCE_FILE_BYTES,
   encodeWavPcm16,
   extFromFile,
+  isRetryableUploadError,
   prepareEpisodeMedia,
   shouldDecodeAudio,
   sliceUnitWav,
+  withUploadRetry,
   type MediaPrepDeps,
 } from "../mediaSlicing";
 
@@ -125,5 +127,98 @@ describe("PCM/WAV 处理", () => {
     const magic = String.fromCharCode(buf[0], buf[1], buf[2], buf[3]);
     expect(magic).toBe("RIFF");
     expect(wav.type).toBe("audio/wav");
+  });
+});
+
+
+// --------------------------------------------------------------------
+// withUploadRetry / isRetryableUploadError（直传重试回归）
+// --------------------------------------------------------------------
+
+describe("isRetryableUploadError", () => {
+  it("网络错误与 5xx 可重试", () => {
+    expect(isRetryableUploadError("直传网络错误")).toBe(true);
+    expect(isRetryableUploadError("直传失败（HTTP 502）：Bad Gateway")).toBe(true);
+    expect(isRetryableUploadError("Failed to fetch")).toBe(true);
+    expect(isRetryableUploadError("上传超时")).toBe(true);
+  });
+
+  it("4xx 与业务错误不重试", () => {
+    expect(isRetryableUploadError("直传失败（HTTP 403）：Forbidden")).toBe(false);
+    expect(isRetryableUploadError("invalid base64")).toBe(false);
+    expect(isRetryableUploadError("文件超过体积上限")).toBe(false);
+  });
+});
+
+describe("withUploadRetry", () => {
+  const input = { base64: "data:image/jpeg;base64,AAA", id: "f1", kind: "shot" as const };
+  const noSleep = async (_ms: number) => {};
+
+  it("第二次成功：重试一次后返回成功", async () => {
+    let calls = 0;
+    const upload = withUploadRetry(
+      async () => {
+        calls += 1;
+        return calls === 1
+          ? { ok: false, error: "直传网络错误" }
+          : { ok: true, url: "https://signed/frame.jpg" };
+      },
+      { sleep: noSleep },
+    );
+    const result = await upload(input);
+    expect(calls).toBe(2);
+    expect(result.ok).toBe(true);
+  });
+
+  it("4xx 不重试，原样返回失败", async () => {
+    let calls = 0;
+    const upload = withUploadRetry(
+      async () => {
+        calls += 1;
+        return { ok: false, error: "直传失败（HTTP 403）：Forbidden" };
+      },
+      { sleep: noSleep },
+    );
+    const result = await upload(input);
+    expect(calls).toBe(1);
+    expect(result.ok).toBe(false);
+  });
+
+  it("持续网络错误：共 3 次后返回最后一次错误", async () => {
+    let calls = 0;
+    const upload = withUploadRetry(
+      async () => {
+        calls += 1;
+        return { ok: false, error: "直传网络错误" };
+      },
+      { sleep: noSleep },
+    );
+    const result = await upload(input);
+    expect(calls).toBe(3);
+    expect(result).toEqual({ ok: false, error: "直传网络错误" });
+  });
+
+  it("抛出的网络异常同样重试；抛出的 4xx 异常不重试直接抛出", async () => {
+    let calls = 0;
+    const retrying = withUploadRetry(
+      async () => {
+        calls += 1;
+        throw new Error("network reset");
+      },
+      { sleep: noSleep },
+    );
+    await expect(retrying(input)).resolves.toEqual({ ok: false, error: "network reset" });
+    expect(calls).toBe(3);
+
+    let forbiddenCalls = 0;
+    const notRetrying = withUploadRetry(
+      async () => {
+        forbiddenCalls += 1;
+        throw new Error("HTTP 401 Unauthorized");
+      },
+      { sleep: noSleep },
+    );
+    await expect(notRetrying(input)).rejects.toThrow("HTTP 401");
+    expect(forbiddenCalls).toBe(1);
   });
 });

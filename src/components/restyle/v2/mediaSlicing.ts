@@ -283,6 +283,52 @@ export function shouldDecodeAudio(fileSizeBytes: number): boolean {
 }
 
 /**
+ * 可重试的上传错误判定：网络错误 / 5xx 可重试；4xx（签名、权限、参数
+ * 校验）重试无意义，直接判否。供上传重试包装与整调用级重试共用。
+ */
+export function isRetryableUploadError(message: string): boolean {
+  if (/HTTP 5\d{2}|（5\d{2}）|\b5\d{2}\b/.test(message)) return true;
+  if (/HTTP 4\d{2}|（4\d{2}）|\b4\d{2}\b/.test(message)) return false;
+  return /网络|network|fetch|超时|timeout|断开|connection|reset|abort/i.test(message);
+}
+
+/**
+ * 给 MediaUploadFn 包一层指数退避重试（默认共 3 次：首试 + 2 次退避）。
+ * 只对 isRetryableUploadError 判定可重试的失败重试；返回 ok:false 与抛错
+ * 两种失败形态都覆盖。签名与 MediaUploadFn 一致，调用侧无感替换。
+ */
+export function withUploadRetry(
+  upload: MediaUploadFn,
+  options?: {
+    maxAttempts?: number;
+    baseDelayMs?: number;
+    /** 测试注入点：生产勿传。 */
+    sleep?: (ms: number) => Promise<void>;
+  },
+): MediaUploadFn {
+  const maxAttempts = options?.maxAttempts ?? 3;
+  const baseDelayMs = options?.baseDelayMs ?? 1_000;
+  const sleep =
+    options?.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  return async (input) => {
+    let lastError = "上传失败。";
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        const result = await upload(input);
+        if (result.ok) return result;
+        lastError = result.error ?? lastError;
+        if (!isRetryableUploadError(lastError)) return result;
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+        if (!isRetryableUploadError(lastError)) throw error;
+      }
+      if (attempt < maxAttempts) await sleep(baseDelayMs * 2 ** (attempt - 1));
+    }
+    return { ok: false, error: lastError };
+  };
+}
+
+/**
  * 二进制直传：XHR PUT 原始 File 到签名上传地址（不转 base64、不进内存字符串），
  * 带上传进度回调。返回可长效访问的签名读 URL。
  */

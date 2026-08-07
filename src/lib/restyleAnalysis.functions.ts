@@ -9,13 +9,11 @@ import { resolveSegmentTimeRange, estimateSourceDurationMs } from "./restyle/seg
 import { ensureFullCoverage } from "./restyle/ensureFullCoverage";
 import { formatShotBrief } from "./restyle/v1AnalysisAdapter";
 import {
+  applyPlanCoverage,
   mergeWindowSegments,
-  PLAN_WINDOW_SEC,
   shotsInWindow,
-  splitIntoWindows,
   type PlanWindow,
 } from "./restyle/planWindows";
-import { runWithConcurrency } from "./restyle/restyleVideoAnalysis.functions";
 
 const AssetSchema = z.object({
   kind: z.enum(["character", "scene", "prop"]),
@@ -291,6 +289,21 @@ const PlanInputSchema = z.object({
   shotSchedule: z.array(PlanShotSchema).max(600).default([]),
   /** 目标市场：决定光照预设与俚语本土化口径。 */
   targetMarket: z.enum(["kr", "us", "in", "nordic", "hk", "jp"]).default("kr"),
+  /**
+   * 分窗模式（客户端驱动的长片分窗生成）：传入时本请求只负责该时间窗——
+   * 镜头取 shotsInWindow 子集、prompt 带分窗约束、返回窗内分段（夹取到窗
+   * 边界，段号临时，客户端合并重排）；不跑 ensureFullCoverage（留给
+   * finalizeRestylePlanCoverage）。sourceFiles 传该窗所属的单集。
+   * 不传时保持短片单次调用原逻辑（含覆盖兜底），向后兼容。
+   */
+  window: z
+    .object({
+      startMs: z.number().nonnegative(),
+      endMs: z.number().positive(),
+      index: z.number().int().nonnegative(),
+      total: z.number().int().positive(),
+    })
+    .optional(),
 });
 
 export const generateRestylePlan = createServerFn({ method: "POST" })
@@ -324,34 +337,8 @@ export const generateRestylePlan = createServerFn({ method: "POST" })
           ? Math.round(file.durationSec * 1000)
           : estimateSourceDurationMs(data.shotSchedule);
       };
-      // 长片分窗任务清单：任一集权威时长超过 PLAN_WINDOW_SEC（与平台约 100s 无字节
-      // 断连上限对齐）即进入分窗模式，逐集按时间窗拆分导演调用；短片集单窗直通。
-      interface WindowJob {
-        videoId: string;
-        fileName: string;
-        durationMs: number;
-        window: PlanWindow;
-        windowCount: number;
-      }
-      const windowJobs: WindowJob[] = data.sourceFiles.flatMap((file) => {
-        const videoId = file.id || file.name;
-        const durationMs = durationMsOf(videoId);
-        if (!durationMs || durationMs <= 0) return [];
-        const windows = splitIntoWindows(durationMs / 1000, PLAN_WINDOW_SEC);
-        return windows.map((window) => ({
-          videoId,
-          fileName: file.name,
-          durationMs,
-          window,
-          windowCount: windows.length,
-        }));
-      });
-      const windowed = windowJobs.some((job) => job.windowCount > 1);
-      // 预校验按真实 LLM 调用次数（分窗模式 = 总窗数，单次模式 = 1）。
-      const __guard = await ensureEnoughCredits(windowed ? windowJobs.length : 1, {
-        kind: "image",
-        model,
-      });
+      // 每请求一次真实 LLM 调用（分窗模式也是每窗一个请求），预校验 1 分。
+      const __guard = await ensureEnoughCredits(1, { kind: "image", model });
       if (!__guard.ok) {
         return { ok: false, error: __guard.error };
       }
@@ -426,127 +413,77 @@ export const generateRestylePlan = createServerFn({ method: "POST" })
           clearTimeout(timeout);
         }
       };
-      // 分段时间区间推算 + 全片覆盖兜底（分窗合并后与单次产出共用）。
+      // 分段时间区间推算 + 全片覆盖兜底（单次产出路径用；分窗模式留给 finalize）。
       const finalizeEpisodes = (
         episodes: RestylePlanEpisode[],
         planWarnings: string[],
       ): { episodes: RestylePlanEpisode[]; warnings: string[] } => {
-        // 分段时间区间兜底：模型没给或区间非法时按场景分组推算（场景优先，
-        // 不再均分时长）；统一夹取到素材库允许的 1.8–30 秒参考区间。
-        const episodesWithRanges = episodes.map((episode) => ({
-          ...episode,
-          segments: episode.segments.map((segment) => {
-            const range = resolveSegmentTimeRange({
-              segmentId: segment.id,
-              explicit: { startMs: segment.startMs, endMs: segment.endMs },
-              shots: data.shotSchedule,
-              segmentCount: episode.segments.length,
-            });
-            return range ? { ...segment, startMs: range.startMs, endMs: range.endMs } : segment;
-          }),
-        }));
-        // 全片覆盖兜底：越界/重叠修正 + 缺口用 packShotsIntoGroups 确定性补段，
+        // 区间推算 + ensureFullCoverage（越界/重叠修正 + 缺口确定性补段），
         // warnings 随结果返回，客户端在方案播报中提示「已自动补齐 N 个未覆盖区间」。
-        const coverage = ensureFullCoverage(episodesWithRanges, data.shotSchedule, durationMsOf);
+        const coverage = applyPlanCoverage(episodes, data.shotSchedule, durationMsOf);
         return { episodes: coverage.episodes, warnings: [...planWarnings, ...coverage.warnings] };
       };
 
-      // ===== 长片分窗路径：逐窗导演调用（并发 2）→ 合并重排 → 覆盖兜底 =====
-      if (windowed) {
-        const planWarnings: string[] = [
-          `长片分 ${windowJobs.length} 窗生成（单窗 ${PLAN_WINDOW_SEC}s，避开平台约 100s 断连上限）。`,
-        ];
-        // 单窗段数动态上限按窗长算：ceil(90/10)+2 ≈ 11。
-        const maxSegmentsPerWindow = Math.ceil(PLAN_WINDOW_SEC / 10) + 2;
-        const windowResults = await runWithConcurrency(windowJobs, 2, async (job) => {
-          const windowShots = shotsInWindow(data.shotSchedule, job.window);
-          const windowShotBrief = windowShots.length
-            ? `\n原片逐镜调度表（本窗镜头子集，分段提示词的镜头、情绪与景别须与之对齐）：\n${formatShotBrief(windowShots, 12_000)}`
-            : "";
-          const existingForFile = data.existingEpisodes.filter(
-            (episode) => episode.episode === job.videoId,
+      // ===== 分窗模式：客户端驱动的长片分窗，每窗一个请求一次 LLM 调用 =====
+      // （窗循环跑在服务端单请求内会被平台 ~100s 零字节断连，已证明不可行）。
+      // 只返回该窗分段（夹取到窗边界、段号临时，客户端合并重排）；
+      // 不跑 ensureFullCoverage，留给 finalizeRestylePlanCoverage。
+      if (data.window) {
+        const file = data.sourceFiles[0];
+        const videoId = file.id || file.name;
+        const window: PlanWindow = {
+          index: data.window.index,
+          startMs: data.window.startMs,
+          endMs: data.window.endMs,
+        };
+        const windowShots = shotsInWindow(data.shotSchedule, window);
+        const windowShotBrief = windowShots.length
+          ? `\n原片逐镜调度表（本窗镜头子集，分段提示词的镜头、情绪与景别须与之对齐）：\n${formatShotBrief(windowShots, 12_000)}`
+          : "";
+        const existingForFile = data.existingEpisodes.filter(
+          (episode) => episode.episode === videoId,
+        );
+        const durationMs = durationMsOf(videoId) ?? data.window.endMs;
+        const windowRequirement = `\n【分窗生成约束】视频「${videoId}」总时长 ${durationMs}ms，本次只负责第 ${data.window.index + 1}/${data.window.total} 窗：只为 [${data.window.startMs}, ${data.window.endMs}]ms 区间分段——首段 startMs=${data.window.startMs}、末段 endMs=${data.window.endMs}、相邻段首尾相接无缝隙无重叠、分段不得越出该区间、单段时长不超过 15000ms（尾部余量并入前段）。`;
+        const windowPrompt = `用户要求：${data.instruction || "生成转绘方案"}\n视频数量：1\n源视频：\n- 视频 ID: ${videoId}; 文件名: ${file.name}\n已确认资产：${JSON.stringify(data.assets)}\n已有方案（如有，请只修改用户点名的分段，其余保持不变）：${JSON.stringify(existingForFile)}\n${marketRequirement}${windowShotBrief}${windowRequirement}\n\n请只为该源视频的本时间窗生成或修改分段视频提示词。只输出 JSON，不要 Markdown：{"episodes":[{"episode":"${videoId}","segments":[{"id":"U01","prompt":"...","startMs":0,"endMs":12000}]}]}。分段以场景与叙事节拍为第一依据，时长只作为约束：同一场景的连续镜头默认归入同一段，只在场景切换处切段，永不在镜头中间切分、一个镜头不拆进两段；同一场景过长时才在场景内部做二次切分，优先切在动作或对白的停顿处。禁止为凑时长跨场景合并，或在场景中间断开。提示词须包含人物、场景、动作、镜头、光影、节奏和对白/声音要求；不得虚构资产表中不存在的具体人物或地点。每段必须给出 startMs/endMs：该段覆盖的连续镜头区间（首镜 startMs 到末镜 endMs），须与上方逐镜调度表的镜头区间对齐，并满足【分窗生成约束】。`;
+        const call = await requestPlanContent(windowPrompt);
+        if (!call.ok) return { ok: false, error: call.error };
+        try {
+          const parsed = parseJson(call.content) as { episodes?: unknown };
+          const parsedEpisodes = z.array(PlanEpisodeSchema).parse(parsed.episodes ?? []);
+          const episode =
+            parsedEpisodes.find((item) => item.episode === videoId) ?? parsedEpisodes[0];
+          // 窗内夹取 + 临时段号（客户端合并时全局重排）；段数上限按窗长动态算。
+          const maxSegmentsPerWindow = Math.ceil((window.endMs - window.startMs) / 10_000) + 2;
+          const merged = mergeWindowSegments(
+            [{ window, segments: episode?.segments ?? [] }],
+            maxSegmentsPerWindow,
           );
-          const windowRequirement = `\n【分窗生成约束】视频「${job.videoId}」总时长 ${job.durationMs}ms，本次只负责第 ${job.window.index + 1}/${job.windowCount} 窗：只为 [${job.window.startMs}, ${job.window.endMs}]ms 区间分段——首段 startMs=${job.window.startMs}、末段 endMs=${job.window.endMs}、相邻段首尾相接无缝隙无重叠、分段不得越出该区间、单段时长不超过 15000ms（尾部余量并入前段）。`;
-          const windowPrompt = `用户要求：${data.instruction || "生成转绘方案"}\n视频数量：1\n源视频：\n- 视频 ID: ${job.videoId}; 文件名: ${job.fileName}\n已确认资产：${JSON.stringify(data.assets)}\n已有方案（如有，请只修改用户点名的分段，其余保持不变）：${JSON.stringify(existingForFile)}\n${marketRequirement}${windowShotBrief}${windowRequirement}\n\n请只为该源视频的本时间窗生成或修改分段视频提示词。只输出 JSON，不要 Markdown：{"episodes":[{"episode":"${job.videoId}","segments":[{"id":"U01","prompt":"...","startMs":0,"endMs":12000}]}]}。分段以场景与叙事节拍为第一依据，时长只作为约束：同一场景的连续镜头默认归入同一段，只在场景切换处切段，永不在镜头中间切分、一个镜头不拆进两段；同一场景过长时才在场景内部做二次切分，优先切在动作或对白的停顿处。禁止为凑时长跨场景合并，或在场景中间断开。提示词须包含人物、场景、动作、镜头、光影、节奏和对白/声音要求；不得虚构资产表中不存在的具体人物或地点。每段必须给出 startMs/endMs：该段覆盖的连续镜头区间（首镜 startMs 到末镜 endMs），须与上方逐镜调度表的镜头区间对齐，并满足【分窗生成约束】。`;
-          const call = await requestPlanContent(windowPrompt);
-          if (!call.ok) return { job, ok: false as const, error: call.error };
-          try {
-            const parsed = parseJson(call.content) as { episodes?: unknown };
-            const parsedEpisodes = z.array(PlanEpisodeSchema).parse(parsed.episodes ?? []);
-            const episode =
-              parsedEpisodes.find((item) => item.episode === job.videoId) ?? parsedEpisodes[0];
-            return { job, ok: true as const, segments: episode?.segments ?? [] };
-          } catch (error) {
-            return {
-              job,
-              ok: false as const,
-              error: `输出解析失败：${error instanceof Error ? error.message : "未知错误"}`,
-            };
-          }
-        });
-        // 全窗失败多为渠道性故障，不应由兜底补段掩盖，整体报错。
-        if (!windowResults.some((result) => result.ok)) {
-          return {
-            ok: false,
-            error: `方案生成失败：${windowResults[0]?.error ?? "全部时间窗生成失败"}`,
-          };
-        }
-        const episodes: RestylePlanEpisode[] = data.sourceFiles.map((file) => {
-          const videoId = file.id || file.name;
-          const fileResults = windowResults.filter((result) => result.job.videoId === videoId);
-          const okParts = fileResults
-            .filter((result): result is Extract<typeof result, { ok: true }> => result.ok)
-            .map((result) => ({ window: result.job.window, segments: result.segments }));
-          for (const result of fileResults) {
-            if (!result.ok) {
-              planWarnings.push(
-                `「${videoId}」第 ${result.job.window.index + 1}/${result.job.windowCount} 窗生成失败（${result.error}），缺口将由覆盖兜底补段。`,
-              );
-            }
-          }
-          if (!okParts.length) {
-            planWarnings.push(
-              fileResults.length
-                ? `「${videoId}」全部时间窗生成失败，已给出占位分段，请重新生成方案。`
-                : `「${videoId}」权威时长未知，未参与分窗生成，已给出占位分段。`,
-            );
-            return {
-              episode: videoId,
-              segments: [
-                {
-                  id: "U01",
-                  prompt: "保持原视频剧情、动作、站位与音频节奏，结合已确认资产完成转绘。",
-                },
-              ],
-            };
-          }
-          const merged = mergeWindowSegments(okParts, maxSegmentsPerWindow);
-          planWarnings.push(...merged.warnings.map((warning) => `「${videoId}」${warning}`));
-          return { episode: videoId, segments: merged.segments };
-        });
-        const finalized = finalizeEpisodes(episodes, planWarnings);
-        // 扣费：成功窗 ×1，失败窗不扣；幂等键带窗号与输入指纹（断连后整单重发
-        // 不重复扣，输入变化时正常计费）；扣费失败不阻断主流程。
-        {
-          const { supabase, userId } = context as { supabase: any; userId: string };
-          const { chargeCredits } = await import("./userCredits.functions");
-          const scopeFingerprint = `${data.instruction.length}-${data.assets.length}-${data.shotSchedule.length}`;
-          for (const result of windowResults) {
-            if (!result.ok) continue;
+          // 扣费 1 分/窗：幂等键带窗号与输入指纹（断连重发不重复扣，输入变化
+          // 正常计费）；扣费失败不阻断主流程。
+          {
+            const { supabase, userId } = context as { supabase: any; userId: string };
+            const { chargeCredits } = await import("./userCredits.functions");
+            const scopeFingerprint = `${data.instruction.length}-${data.assets.length}-${data.shotSchedule.length}`;
             await chargeCredits(supabase, userId, {
               amount: 1,
               model,
-              description: `转绘方案生成（${result.job.videoId} 第 ${result.job.window.index + 1}/${result.job.windowCount} 窗）`,
-              idempotencyKey: `restyle-plan:${result.job.videoId}:w${result.job.window.index}:${scopeFingerprint}`,
+              description: `转绘方案生成（${videoId} 第 ${data.window.index + 1}/${data.window.total} 窗）`,
+              idempotencyKey: `restyle-plan:${videoId}:w${window.index}:${scopeFingerprint}`,
             });
           }
+          return {
+            ok: true,
+            episodes: [{ episode: videoId, segments: merged.segments }],
+            model,
+            ...(merged.warnings.length ? { warnings: merged.warnings } : {}),
+          };
+        } catch (error) {
+          return {
+            ok: false,
+            error: `方案生成失败：${error instanceof Error ? error.message : "未知错误"}`,
+          };
         }
-        return {
-          ok: true,
-          episodes: finalized.episodes,
-          model,
-          ...(finalized.warnings.length ? { warnings: finalized.warnings } : {}),
-        };
       }
 
       // ===== 短片单次调用路径（原逻辑） =====
@@ -607,3 +544,41 @@ export const generateRestylePlan = createServerFn({ method: "POST" })
       }
     },
   );
+
+
+const FinalizePlanInputSchema = z.object({
+  sourceFiles: PlanInputSchema.shape.sourceFiles,
+  episodes: z.array(PlanEpisodeSchema).min(1),
+  shotSchedule: PlanInputSchema.shape.shotSchedule,
+});
+
+export type FinalizeRestylePlanCoverageResult =
+  | { ok: true; episodes: RestylePlanEpisode[]; warnings: string[] }
+  | { ok: false; error: string };
+
+/**
+ * 分窗方案的收尾（客户端驱动分窗的最后一步）：合并后分段的时间区间推算 +
+ * ensureFullCoverage 全片覆盖兜底（越界/重叠修正 + 缺口确定性补段 + 段号
+ * 重排）。纯计算、无 LLM 调用、不扣费，秒级返回。
+ */
+export const finalizeRestylePlanCoverage = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((input: unknown) => FinalizePlanInputSchema.parse(input))
+  .handler(async ({ data }): Promise<FinalizeRestylePlanCoverageResult> => {
+    try {
+      // 权威总时长：客户端透传的 durationSec 优先，逐镜表估算兜底。
+      const durationMsOf = (videoId: string): number | undefined => {
+        const file = data.sourceFiles.find((f) => (f.id || f.name) === videoId);
+        return file?.durationSec
+          ? Math.round(file.durationSec * 1000)
+          : estimateSourceDurationMs(data.shotSchedule);
+      };
+      const coverage = applyPlanCoverage(data.episodes, data.shotSchedule, durationMsOf);
+      return { ok: true, episodes: coverage.episodes, warnings: coverage.warnings };
+    } catch (error) {
+      return {
+        ok: false,
+        error: `覆盖兜底计算失败：${error instanceof Error ? error.message : "未知错误"}`,
+      };
+    }
+  });

@@ -4,12 +4,25 @@
 // 背景：generateRestylePlan 单次导演模型调用对长片（如 258s）输入输出都大，
 // 线上三次均在 100~101s 被平台 ERR_CONNECTION_CLOSED（约 100s 无字节断连）。
 // 根治：长片按固定时间窗拆分，每窗一次调用（输入只含该窗镜头子集、输出只含
-// 该窗分段），单窗必然远低于平台上限；服务端合并后走 ensureFullCoverage 兜底。
-//   - splitIntoWindows：按窗长切窗，短片（≤窗长）单窗直通；
+// 该窗分段），单窗必然远低于平台上限。
+// 注意（回归修正）：窗循环必须跑在客户端（与分析单元循环同一范式）——
+// 全部窗塞在同一个 serverFn 请求内时，浏览器↔平台响应在循环期间零字节
+// 输出，照样被平台掐断。本模块因此同时供客户端（切窗/合并/失败决策）与
+// 服务端（单窗 shotsInWindow/mergeWindowSegments、finalize 的 applyPlanCoverage）
+// 使用：
+//   - splitIntoWindows / buildPlanWindowJobs：按窗长切窗、生成窗任务清单；
 //   - shotsInWindow：镜头按 startMs 归属时间窗（跨窗镜头归起始窗）；
 //   - mergeWindowSegments：各窗分段夹取到窗边界、按时间排序、U01 起全局
-//     重排段号，窗内段数超动态上限截取并记 warning。
+//     重排段号，窗内段数超动态上限截取并记 warning；
+//   - windowFailureAction / summarizeWindowCalls：客户端窗循环的失败决策
+//     （单窗重试一次、仍败记 warning 继续、全部失败才整体报错）；
+//   - applyPlanCoverage：分窗合并后的区间推算 + ensureFullCoverage 兜底
+//     （finalizeRestylePlanCoverage 与 generateRestylePlan 单次路径共用）。
 // ====================================================================
+
+import type { DirectionShot } from "./cameraDirection";
+import { ensureFullCoverage, type CoverageEpisode } from "./ensureFullCoverage";
+import { resolveSegmentTimeRange } from "./segmentReference";
 
 /**
  * 单窗时长（秒）。取值 90：与平台约 100s 无字节断连上限对齐——单窗调用的
@@ -111,4 +124,99 @@ export function mergeWindowSegments(
     })),
     warnings,
   };
+}
+
+
+// --------------------------------------------------------------------
+// 客户端窗循环：任务清单 / 失败决策 / 结果汇总
+// --------------------------------------------------------------------
+
+/** 一个窗调用任务：某集的某个时间窗。 */
+export interface PlanWindowJob {
+  videoId: string;
+  /** 该集权威总时长（毫秒）。 */
+  durationMs: number;
+  window: PlanWindow;
+  /** 该集总窗数（>1 即长片分窗）。 */
+  windowCount: number;
+}
+
+/**
+ * 生成窗任务清单：每集按其权威时长切窗（短片单窗直通），未知时长的集
+ * 不产生任务（由调用方给占位分段）。客户端据此逐窗调 generateRestylePlan。
+ */
+export function buildPlanWindowJobs(
+  files: Array<{ videoId: string; durationMs?: number }>,
+  windowSec = PLAN_WINDOW_SEC,
+): PlanWindowJob[] {
+  return files.flatMap((file) => {
+    if (!file.durationMs || file.durationMs <= 0) return [];
+    const windows = splitIntoWindows(file.durationMs / 1000, windowSec);
+    return windows.map((window) => ({
+      videoId: file.videoId,
+      durationMs: file.durationMs!,
+      window,
+      windowCount: windows.length,
+    }));
+  });
+}
+
+/** 单窗失败决策：attempt 从 1 起，第一次失败重试，第二次失败记 warning 跳过。 */
+export function windowFailureAction(attempt: number): "retry" | "skip" {
+  return attempt < 2 ? "retry" : "skip";
+}
+
+/** 一次窗调用的结果（客户端驱动器产出）。 */
+export interface WindowCallResult {
+  job: PlanWindowJob;
+  ok: boolean;
+  segments?: WindowedSegment[];
+  error?: string;
+}
+
+/**
+ * 整批窗结果汇总：全部失败需整体报错（渠道性故障不应被兜底补段掩盖）；
+ * 部分失败继续，逐失败窗记 warning（缺口由覆盖兜底补段）。
+ */
+export function summarizeWindowCalls(results: WindowCallResult[]): {
+  allFailed: boolean;
+  warnings: string[];
+} {
+  const warnings: string[] = [];
+  for (const result of results) {
+    if (result.ok) continue;
+    warnings.push(
+      `「${result.job.videoId}」第 ${result.job.window.index + 1}/${result.job.windowCount} 窗生成失败（${result.error ?? "未知错误"}），缺口将由覆盖兜底补段。`,
+    );
+  }
+  return { allFailed: results.length > 0 && results.every((result) => !result.ok), warnings };
+}
+
+// --------------------------------------------------------------------
+// finalize：区间推算 + 全片覆盖兜底（服务端 finalizeRestylePlanCoverage 用）
+// --------------------------------------------------------------------
+
+/**
+ * 分窗合并后的收尾纯计算：逐段 resolveSegmentTimeRange（显式区间优先，
+ * 缺失按场景分组推算）→ ensureFullCoverage（越界/重叠修正 + 缺口确定性
+ * 补段 + 段号重排）。无 LLM 调用，秒级返回。
+ */
+export function applyPlanCoverage<T extends CoverageEpisode>(
+  episodes: T[],
+  shots: DirectionShot[],
+  resolveDurationMs: (episodeId: string) => number | undefined,
+): { episodes: T[]; warnings: string[] } {
+  const episodesWithRanges = episodes.map((episode) => ({
+    ...episode,
+    segments: episode.segments.map((segment) => {
+      const range = resolveSegmentTimeRange({
+        segmentId: segment.id,
+        explicit: { startMs: segment.startMs, endMs: segment.endMs },
+        shots,
+        segmentCount: episode.segments.length,
+      });
+      return range ? { ...segment, startMs: range.startMs, endMs: range.endMs } : segment;
+    }),
+  }));
+  return ensureFullCoverage(episodesWithRanges, shots, resolveDurationMs);
 }

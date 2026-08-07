@@ -50,12 +50,20 @@ import {
 } from "./restyleStorage";
 import type { RestyleAsset, RestyleStage } from "./restyleTypes";
 import { analyzeRestyleAssets, generateRestylePlan } from "../../lib/restyleAnalysis.functions";
+import { finalizeRestylePlanCoverage } from "../../lib/restyleAnalysis.functions";
 import {
   analyzeRestyleSourceUnits,
   type RestyleSourceUnitsFileResult,
 } from "../../lib/restyleSourceUnits.functions";
-import { prepareEpisodeMedia } from "./v2/mediaSlicing";
+import {
+  isRetryableUploadError,
+  prepareEpisodeMedia,
+  withUploadRetry,
+  type UnitProgressEvent,
+} from "./v2/mediaSlicing";
 import { mergeSourceUnitResults, renumberShotSchedule } from "./sourceUnitsMerge";
+import { buildPlanWindowJobs, PLAN_WINDOW_SEC } from "../../lib/restyle/planWindows";
+import { driveWindowedPlanCalls } from "./planWindowDriver";
 import { imageModelFallbackCandidates, isQuotaLikeImageError } from "./imageModelFallback";
 import { segmentIndexFromId, withSegmentDirection } from "../../lib/restyle/shotSchedule";
 import { formatLightingParams } from "../../lib/restyle/cameraDirection";
@@ -1216,6 +1224,7 @@ export default function RestyleStudio() {
   const callAnalyzeRestyleAssets = useServerFn(analyzeRestyleAssets);
   const callAnalyzeRestyleSourceUnits = useServerFn(analyzeRestyleSourceUnits);
   const callGenerateRestylePlan = useServerFn(generateRestylePlan);
+  const callFinalizeRestylePlanCoverage = useServerFn(finalizeRestylePlanCoverage);
   const callGenerateImage = useServerFn(generateImage);
   const callGenerateImageWithReferences = useServerFn(generateImageWithReferences);
   const callSubmitVideoTask = useServerFn(submitVideoTaskFn);
@@ -1809,6 +1818,151 @@ export default function RestyleStudio() {
   }
 
   /**
+   * 方案生成的统一入口：短片（全部集 ≤PLAN_WINDOW_SEC）单次调用原逻辑；
+   * 任一集权威时长超窗长时，客户端逐窗循环调 generateRestylePlan(window)
+   * （每窗一个请求 30-60s，避开平台 ~100s 零字节断连；服务端单请求内跑
+   * 全部窗已证明不可行）→ mergeWindowSegments 合并重排 →
+   * finalizeRestylePlanCoverage 覆盖兜底（纯计算、不扣费）。
+   * 只负责产出 episodes + warnings，播报与收尾由调用方处理。
+   */
+  async function requestPlanEpisodes(input: {
+    projectId: string;
+    project: RestyleProject;
+    sourceFiles: RestyleAttachment[];
+    instruction: string;
+    episodeCount: number;
+    existingEpisodes?: NonNullable<RestyleProject["planEpisodes"]>;
+  }): Promise<
+    | { ok: true; episodes: NonNullable<RestyleProject["planEpisodes"]>; warnings: string[] }
+    | { ok: false; error: string }
+  > {
+    const { projectId, project, sourceFiles, instruction, episodeCount, existingEpisodes } = input;
+    const effectiveFiles = sourceFiles.length ? sourceFiles : project.files;
+    const durationMsOfFile = (file: RestyleAttachment): number | undefined =>
+      file.durationSec
+        ? Math.round(file.durationSec * 1000)
+        : estimateSourceDurationMs(project.shotSchedule);
+    const windowJobs = buildPlanWindowJobs(
+      effectiveFiles.map((file) => ({
+        videoId: file.episode ?? file.id,
+        durationMs: durationMsOfFile(file),
+      })),
+    );
+    const planFilePayload = (file: RestyleAttachment) => ({
+      id: file.episode ?? file.id,
+      name: file.name,
+      type: file.type,
+      size: file.size,
+      // 权威总时长透传：服务端据此输出全片覆盖硬要求并做覆盖兜底。
+      durationSec: file.durationSec,
+    });
+    const assets = project.extractedAssets.map(({ id: _id, ...asset }) => asset);
+
+    // ===== 长片分窗：客户端逐窗循环（与分析单元循环同一范式） =====
+    if (windowJobs.some((job) => job.windowCount > 1)) {
+      const driven = await driveWindowedPlanCalls({
+        jobs: windowJobs,
+        isAborted: () => isRunAborted(projectId),
+        onProgress: (done, total) =>
+          markRunStep(projectId, `${t.restyle_run_step_plan} 第 ${done}/${total} 窗`),
+        callWindow: async (job) => {
+          const file = effectiveFiles.find((item) => (item.episode ?? item.id) === job.videoId);
+          if (!file) return { ok: false as const, error: `找不到源视频 ${job.videoId}` };
+          try {
+            const res = await callGenerateRestylePlan({
+              data: {
+                model: selectedModel,
+                instruction,
+                sourceFiles: [planFilePayload(file)],
+                assets,
+                episodeCount: 1,
+                existingEpisodes: existingEpisodes ?? [],
+                shotSchedule: project.shotSchedule ?? [],
+                targetMarket: project.targetMarket ?? "kr",
+                window: {
+                  startMs: job.window.startMs,
+                  endMs: job.window.endMs,
+                  index: job.window.index,
+                  total: job.windowCount,
+                },
+              },
+            });
+            if (!res.ok) {
+              return { ok: false as const, error: relabelRestyleError(res.error, selectedModel) };
+            }
+            return { ok: true as const, segments: res.episodes[0]?.segments ?? [] };
+          } catch (error) {
+            return { ok: false as const, error: error instanceof Error ? error.message : "网络异常" };
+          }
+        },
+      });
+      if (isRunAborted(projectId)) return { ok: false, error: "已中止" };
+      if (!driven.ok) return { ok: false, error: driven.error };
+      const planWarnings = [
+        `长片分 ${windowJobs.length} 窗生成（单窗 ${PLAN_WINDOW_SEC}s，避开平台约 100s 断连上限）。`,
+        ...driven.warnings,
+      ];
+      // 合并：某集全部窗失败（或无权威时长未参与分窗）时回落占位分段，
+      // 缺口由 finalize 的 ensureFullCoverage 补段。
+      const mergedEpisodes = effectiveFiles.map((file) => {
+        const videoId = file.episode ?? file.id;
+        const segments = driven.segmentsByVideo[videoId];
+        return {
+          episode: videoId,
+          segments: segments?.length
+            ? segments
+            : [
+                {
+                  id: "U01",
+                  prompt: "保持原视频剧情、动作、站位与音频节奏，结合已确认资产完成转绘。",
+                },
+              ],
+        };
+      });
+      // finalize：合并后分段做覆盖兜底（纯计算、无 LLM、不扣费，秒级返回）。
+      try {
+        const finalizeRes = await callFinalizeRestylePlanCoverage({
+          data: {
+            sourceFiles: effectiveFiles.map(planFilePayload),
+            episodes: mergedEpisodes,
+            shotSchedule: project.shotSchedule ?? [],
+          },
+        });
+        if (!finalizeRes.ok) return { ok: false, error: finalizeRes.error };
+        return {
+          ok: true,
+          episodes: finalizeRes.episodes,
+          warnings: [...planWarnings, ...(finalizeRes.warnings ?? [])],
+        };
+      } catch (error) {
+        return { ok: false, error: error instanceof Error ? error.message : "网络异常" };
+      }
+    }
+
+    // ===== 短片单次调用（原逻辑） =====
+    try {
+      const result = await callGenerateRestylePlan({
+        data: {
+          model: selectedModel,
+          instruction,
+          sourceFiles: effectiveFiles.map(planFilePayload),
+          assets,
+          episodeCount,
+          existingEpisodes: existingEpisodes ?? [],
+          shotSchedule: project.shotSchedule ?? [],
+          targetMarket: project.targetMarket ?? "kr",
+        },
+      });
+      if (!result.ok) {
+        return { ok: false, error: relabelRestyleError(result.error, selectedModel) };
+      }
+      return { ok: true, episodes: result.episodes, warnings: result.warnings ?? [] };
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : "网络异常" };
+    }
+  }
+
+  /**
    * 生成转绘方案（目标分镜）。返回是否成功。
    * 成功后按执行模式决定：分步护航 / 自定义勾选环节 → 暂停等确认；
    * 极速全自动（且未勾选视频分组 / 报价环节）→ 直接提交视频生成。
@@ -1825,46 +1979,22 @@ export default function RestyleStudio() {
       (file) => file.type.startsWith("video/") && !file.isFolder,
     );
     const episodeCount = sourceFiles.length || 1;
-    // 服务端函数抛异常（平台断连/5xx/网络中断）时必须有兜底，
+    // 分窗/单次统一入口内部已兜底网络异常，失败必然收敛为可读错误，
     // 否则 running 态永远清不掉、聊天区无失败提示（历史事故）。
-    let result: Awaited<ReturnType<typeof callGenerateRestylePlan>>;
-    try {
-      result = await callGenerateRestylePlan({
-        data: {
-          model: selectedModel,
-          instruction: withTranscript(
-            withRelationBrief(withStyleBrief(project.planNote, styleBrief)),
-            project.transcript,
-          ),
-          sourceFiles: (sourceFiles.length ? sourceFiles : project.files).map((file) => ({
-            id: file.episode ?? file.id,
-            name: file.name,
-            type: file.type,
-            size: file.size,
-            // 权威总时长透传：服务端据此输出全片覆盖硬要求并做覆盖兜底。
-            durationSec: file.durationSec,
-          })),
-          assets: project.extractedAssets.map(({ id: _id, ...asset }) => asset),
-          episodeCount,
-          shotSchedule: project.shotSchedule ?? [],
-          targetMarket: project.targetMarket ?? "kr",
-        },
-      });
-    } catch (error) {
-      if (isRunAborted(projectId)) return false;
-      const detail = error instanceof Error ? error.message : "网络异常";
-      finishRun(projectId, "failed", detail);
-      setAnalysisError(detail);
-      appendConversationMessage(projectId, conversationId, {
-        role: "assistant",
-        content: `转绘方案生成失败：${detail}`,
-      });
-      return false;
-    }
+    const result = await requestPlanEpisodes({
+      projectId,
+      project,
+      sourceFiles,
+      instruction: withTranscript(
+        withRelationBrief(withStyleBrief(project.planNote, styleBrief)),
+        project.transcript,
+      ),
+      episodeCount,
+    });
     if (!result.ok) {
-      result.error = relabelRestyleError(result.error, selectedModel);
       if (isRunAborted(projectId)) return false;
       finishRun(projectId, "failed", result.error);
+      setAnalysisError(result.error);
       appendConversationMessage(projectId, conversationId, {
         role: "assistant",
         content: `转绘方案生成失败：${result.error}`,
@@ -1872,8 +2002,8 @@ export default function RestyleStudio() {
       return false;
     }
     if (isRunAborted(projectId)) return false;
-    // 覆盖兜底提示：服务端 ensureFullCoverage 自动补段的区间数随方案播报透出。
-    const coverageFillCount = (result.warnings ?? []).filter((warning) =>
+    // 覆盖兜底提示：ensureFullCoverage 自动补段的区间数随方案播报透出。
+    const coverageFillCount = result.warnings.filter((warning) =>
       warning.includes("已自动补齐未覆盖区间"),
     ).length;
     const coverageNote = coverageFillCount ? `已自动补齐 ${coverageFillCount} 个未覆盖区间。` : "";
@@ -4158,17 +4288,30 @@ export default function RestyleStudio() {
           continue;
         }
         try {
-          const prepared = await prepareEpisodeMedia(resolved.file, {
+          // 帧图/单元音频上传包指数退避重试（网络错误/5xx 才重试，4xx 不重试）；
+          // 视频二进制直传不经 upload 依赖，整调用级对可重试错误再退避重试一次，
+          // 都不成功才整集降级旧 8 帧路径。
+          const prepareOptions = {
             episodeId: episode,
-            upload: (input) => callUploadLocalMedia({ data: input }),
-            createUploadUrl: (input) => callCreateMediaUploadUrl({ data: input }),
-            signReadUrl: (input) => callSignMediaReadUrl({ data: input }),
-            onProgress: (event) =>
+            upload: withUploadRetry((input) => callUploadLocalMedia({ data: input })),
+            createUploadUrl: (input: { id: string; kind: "video" | "audio"; ext: string }) =>
+              callCreateMediaUploadUrl({ data: input }),
+            signReadUrl: (input: { path: string }) => callSignMediaReadUrl({ data: input }),
+            onProgress: (event: UnitProgressEvent) =>
               markRunStep(
                 projectId,
                 `${t.restyle_run_step_read_source}${event.unitIndex >= 0 ? ` 单元 ${event.unitIndex + 1}` : ""}${event.detail ? `：${event.detail}` : ""}`,
               ),
-          });
+          };
+          let prepared: Awaited<ReturnType<typeof prepareEpisodeMedia>>;
+          try {
+            prepared = await prepareEpisodeMedia(resolved.file, prepareOptions);
+          } catch (firstError) {
+            const message = firstError instanceof Error ? firstError.message : String(firstError);
+            if (!isRetryableUploadError(message)) throw firstError;
+            markRunStep(projectId, `${t.restyle_run_step_read_source}：网络错误，退避重试`);
+            prepared = await prepareEpisodeMedia(resolved.file, prepareOptions);
+          }
           // 逐单元分析：幂等键按项目+集派生，同一单元重复成功调用不重复扣费；
           // 单单元失败记 warning 继续后续单元（部分失败用成功单元继续）。
           const unitResults: RestyleSourceUnitsFileResult[] = [];
@@ -4288,6 +4431,13 @@ export default function RestyleStudio() {
         perFileMerged.flatMap(({ merged }) => merged.shotSchedule),
       );
       const pipelineWarnings = perFileMerged.flatMap(({ merged }) => merged.warnings);
+      // 混合降级：降级集不在全片逐镜表中（资产模型的 result.shots 无集归属，
+      // 无法可靠回补），标注 warning；这些集的分段区间由场景分组推算兜底。
+      if (fallbackFiles.length && pipelineShotSchedule.length) {
+        pipelineWarnings.push(
+          `${fallbackFiles.map((file) => file.name).join("、")} 已降级为快速分析，未纳入全片逐镜表；这些集的分段时间区间将按场景分组推算，长片覆盖可能不完整。`,
+        );
+      }
       let transcriptText = [...perFileMerged.map(({ merged }) => merged.transcript), fallbackTranscript]
         .filter(Boolean)
         .join("\n");
@@ -4439,7 +4589,10 @@ export default function RestyleStudio() {
       }));
       // §4.6 计费口径变化与单元化分析 warnings 随确认播报透传（最多列 3 条）。
       const pipelineNotes = [
-        perFileMerged.length ? "分析计费口径：2 分/单元（含 ASR）+ 1 分资产提炼。" : "",
+        perFileMerged.length
+          ? // 资产提炼扣分与服务端口径一致：有降级集走帧模式（frameImages 非空）2 分，纯证据包模式 1 分
+            `分析计费口径：2 分/单元（含 ASR）+ ${frameImages.length ? 2 : 1} 分资产提炼。`
+          : "",
         ...pipelineWarnings.slice(0, 3),
         pipelineWarnings.length > 3 ? `另有 ${pipelineWarnings.length - 3} 条分析提示。` : "",
       ]
@@ -4590,45 +4743,24 @@ export default function RestyleStudio() {
       const sourceFiles = activeProject.files.filter(
         (file) => file.type.startsWith("video/") && !file.isFolder,
       );
-      let result: Awaited<ReturnType<typeof callGenerateRestylePlan>>;
-      try {
-        result = await callGenerateRestylePlan({
-          data: {
-            model: selectedModel,
-            instruction: withTranscript(
-              withRelationBrief(withStyleBrief(message, styleBrief)),
-              activeProject.transcript,
-            ),
-            sourceFiles: (sourceFiles.length ? sourceFiles : activeProject.files).map((file) => ({
-              id: file.episode ?? file.id,
-              name: file.name,
-              type: file.type,
-              size: file.size,
-              // 权威总时长透传：服务端据此输出全片覆盖硬要求并做覆盖兜底。
-              durationSec: file.durationSec,
-            })),
-            assets: activeProject.extractedAssets.map(({ id: _id, ...asset }) => asset),
-            episodeCount: activeProject.planEpisodes?.length || sourceFiles.length || 1,
-            existingEpisodes: activeProject.planEpisodes ?? [],
-            shotSchedule: activeProject.shotSchedule ?? [],
-            targetMarket: activeProject.targetMarket ?? "kr",
-          },
-        });
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : "网络异常";
-        finishRun(projectId, "failed", detail);
-        appendConversationMessage(projectId, conversationId, {
-          role: "assistant",
-          content: `提示词修改失败：${detail}`,
-        });
-        return;
-      }
+      // 分窗/单次统一入口：长片逐窗循环（每窗一个请求），短片单次调用。
+      const result = await requestPlanEpisodes({
+        projectId,
+        project: activeProject,
+        sourceFiles,
+        instruction: withTranscript(
+          withRelationBrief(withStyleBrief(message, styleBrief)),
+          activeProject.transcript,
+        ),
+        episodeCount: activeProject.planEpisodes?.length || sourceFiles.length || 1,
+        existingEpisodes: activeProject.planEpisodes ?? [],
+      });
       if (result.ok) {
         const updatedVideoNames = result.episodes.map((episode) =>
           sourceVideoLabel(episode.episode),
         );
-        // 覆盖兜底提示：服务端 ensureFullCoverage 自动补段的区间数随方案播报透出。
-        const rerunFillCount = (result.warnings ?? []).filter((warning) =>
+        // 覆盖兜底提示：ensureFullCoverage 自动补段的区间数随方案播报透出。
+        const rerunFillCount = result.warnings.filter((warning) =>
           warning.includes("已自动补齐未覆盖区间"),
         ).length;
         const rerunCoverageNote = rerunFillCount

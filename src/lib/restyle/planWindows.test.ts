@@ -3,10 +3,14 @@
 // ====================================================================
 import { describe, expect, it } from "vitest";
 import {
+  applyPlanCoverage,
+  buildPlanWindowJobs,
   mergeWindowSegments,
   PLAN_WINDOW_SEC,
   shotsInWindow,
   splitIntoWindows,
+  summarizeWindowCalls,
+  windowFailureAction,
   type WindowedSegment,
 } from "./planWindows";
 
@@ -123,5 +127,116 @@ describe("mergeWindowSegments", () => {
     );
     expect(segments.map((s) => s.id)).toEqual(["U01", "U02"]);
     expect(warnings).toEqual([]);
+  });
+});
+
+
+// --------------------------------------------------------------------
+// buildPlanWindowJobs / windowFailureAction / summarizeWindowCalls / applyPlanCoverage
+// --------------------------------------------------------------------
+
+describe("buildPlanWindowJobs", () => {
+  it("长片逐集切窗、短片单窗直通、未知时长不产生任务", () => {
+    const jobs = buildPlanWindowJobs([
+      { videoId: "long", durationMs: 258_000 },
+      { videoId: "short", durationMs: 60_000 },
+      { videoId: "unknown" },
+    ]);
+    expect(jobs).toHaveLength(4);
+    expect(jobs.filter((j) => j.videoId === "long").map((j) => j.windowCount)).toEqual([3, 3, 3]);
+    expect(jobs.filter((j) => j.videoId === "short")).toHaveLength(1);
+    expect(jobs.some((j) => j.videoId === "unknown")).toBe(false);
+    // 窗按集内序号连续、首尾相接
+    const longWindows = jobs.filter((j) => j.videoId === "long").map((j) => j.window);
+    expect(longWindows[0].startMs).toBe(0);
+    expect(longWindows[2].endMs).toBe(258_000);
+  });
+});
+
+describe("windowFailureAction", () => {
+  it("第一次失败重试，第二次起跳过", () => {
+    expect(windowFailureAction(1)).toBe("retry");
+    expect(windowFailureAction(2)).toBe("skip");
+    expect(windowFailureAction(3)).toBe("skip");
+  });
+});
+
+describe("summarizeWindowCalls", () => {
+  const job = (videoId: string, index: number, windowCount: number) => ({
+    videoId,
+    durationMs: 258_000,
+    window: { index, startMs: index * 90_000, endMs: (index + 1) * 90_000 },
+    windowCount,
+  });
+
+  it("全部成功：无 warning、非全败", () => {
+    const summary = summarizeWindowCalls([
+      { job: job("v1", 0, 2), ok: true, segments: [] },
+      { job: job("v1", 1, 2), ok: true, segments: [] },
+    ]);
+    expect(summary.allFailed).toBe(false);
+    expect(summary.warnings).toEqual([]);
+  });
+
+  it("部分失败：继续并逐失败窗记 warning", () => {
+    const summary = summarizeWindowCalls([
+      { job: job("v1", 0, 2), ok: true, segments: [] },
+      { job: job("v1", 1, 2), ok: false, error: "HTTP 500" },
+    ]);
+    expect(summary.allFailed).toBe(false);
+    expect(summary.warnings).toHaveLength(1);
+    expect(summary.warnings[0]).toContain("第 2/2 窗生成失败（HTTP 500）");
+    expect(summary.warnings[0]).toContain("覆盖兜底补段");
+  });
+
+  it("全部失败：allFailed（整体报错，不用兜底掩盖渠道故障）", () => {
+    const summary = summarizeWindowCalls([
+      { job: job("v1", 0, 2), ok: false, error: "超时" },
+      { job: job("v1", 1, 2), ok: false, error: "超时" },
+    ]);
+    expect(summary.allFailed).toBe(true);
+    expect(summary.warnings).toHaveLength(2);
+  });
+});
+
+describe("applyPlanCoverage", () => {
+  const shots = Array.from({ length: 5 }, (_, i) => ({
+    shotNo: `SC${String(i + 1).padStart(3, "0")}`,
+    startMs: i * 4000,
+    endMs: i * 4000 + 4000,
+    scene: "客厅",
+    shotType: "中景" as const,
+    emotion: "中性",
+  }));
+
+  it("显式区间优先 + 缺口由 ensureFullCoverage 补段", () => {
+    const { episodes, warnings } = applyPlanCoverage(
+      [
+        {
+          episode: "v1",
+          segments: [{ id: "U01", prompt: "第一段", startMs: 0, endMs: 8000 }],
+        },
+      ],
+      shots,
+      () => 20_000,
+    );
+    const segments = episodes[0].segments;
+    expect(segments[0]).toMatchObject({ startMs: 0, endMs: 8000 });
+    // 尾部 8s–20s 缺口被补段覆盖
+    expect(segments[segments.length - 1].endMs).toBe(20_000);
+    expect(warnings.some((w) => w.includes("已自动补齐未覆盖区间"))).toBe(true);
+  });
+
+  it("无显式区间时按场景分组推算（>15s 场景拆多组，缺口由覆盖兜底补齐）", () => {
+    const input: Array<{
+      episode: string;
+      segments: Array<{ id: string; prompt: string; startMs?: number; endMs?: number }>;
+    }> = [{ episode: "v1", segments: [{ id: "U01", prompt: "唯一段" }] }];
+    const { episodes } = applyPlanCoverage(input, shots, () => 20_000);
+    const segments = episodes[0].segments;
+    // 5 镜 ×4s=20s 的场景分组按 15s 上限拆成 [0,12s]+[12s,20s] 两组，U01 取第一组
+    expect(segments[0].startMs).toBe(0);
+    expect(segments[0].endMs).toBe(12_000);
+    expect(segments[segments.length - 1].endMs).toBe(20_000);
   });
 });
