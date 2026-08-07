@@ -60,6 +60,12 @@ export type RestyleAttachment = {
   analysisEpisode?: string;
   /** 源视频真实媒体时长（秒），上传时由浏览器 loadedmetadata 探测写入。 */
   durationSec?: number;
+  /**
+   * workspace-media 对象 key（路径）。签名读 URL 7 天过期，持久化 key
+   * 永不过期：读取时经 signMediaReadUrl 现签（7 天签名 URL 过期治理）。
+   * 旧附件只有 url（可能已过期），保持现状可用。
+   */
+  storageKey?: string;
 };
 
 export type RestyleMessage = {
@@ -285,6 +291,7 @@ function parseAttachment(value: unknown): RestyleAttachment | null {
     isFolder: item.isFolder === true,
     fileCount: typeof item.fileCount === "number" ? item.fileCount : undefined,
     url: typeof item.url === "string" ? item.url : undefined,
+    storageKey: typeof item.storageKey === "string" ? item.storageKey : undefined,
     durationSec:
       typeof item.durationSec === "number" && item.durationSec > 0 ? item.durationSec : undefined,
     generatedKind: ["character", "scene", "prop", "video_clip", "final_video"].includes(

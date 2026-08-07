@@ -185,6 +185,22 @@ export function windowFailureAction(attempt: number): "retry" | "skip" {
   return attempt < 2 ? "retry" : "skip";
 }
 
+/**
+ * 分窗扣费幂等键（与 generateRestylePlan 分窗分支同构）。
+ * 退款对账依据：客户端放弃某窗后按同一 key 调用 refundChargedCredits——
+ * 流水里存在该 key 的 consume 记录才退（只退已扣的；滞后入账时本轮查不到，
+ * 由下一次重试收敛，见 refundChargedCredits 注释）。
+ */
+export function restylePlanWindowChargeKey(input: {
+  videoId: string;
+  windowIndex: number;
+  instructionLength: number;
+  assetsCount: number;
+  shotsCount: number;
+}): string {
+  return `restyle-plan:${input.videoId}:w${input.windowIndex}:${input.instructionLength}-${input.assetsCount}-${input.shotsCount}`;
+}
+
 /** 一次窗调用的结果（客户端驱动器产出）。 */
 export interface WindowCallResult {
   job: PlanWindowJob;

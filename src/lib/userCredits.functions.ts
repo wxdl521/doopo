@@ -203,3 +203,98 @@ export const getUserCreditTransactions = createServerFn({ method: "POST" })
     }));
     return { transactions, error: null as string | null };
   });
+
+
+// ====================================================================
+// refundChargedCredits — 按扣费幂等键退款（断连补偿）
+//
+// 场景（D6 回归）：分窗方案生成中客户端与平台断连后放弃某窗（重试仍失败），
+// 服务端那次调用可能已完成并滞后扣费——按同一幂等键退还该窗已扣积分。
+//
+// 安全模型：
+//   - 只退已扣的：先核对本人流水里存在该幂等键的 consume 记录，未扣不退；
+//   - 退款流水以 `refund:{chargeKey}` 为幂等键，库级唯一索引防并发/重复退款；
+//   - 验证用 supabaseAdmin 读本人流水（RLS 下用户态也读得到，admin 只为与
+//     写入同通道）；加余额走 admin upsert（add_user_credits 已撤销
+//     authenticated 执行权，且其内部 auth.uid() 对 service role 为 null 不可用）。
+//
+// 一致性边界（已在回归中接受的取舍，见迁移 20260804230000 的幂等设计）：
+//   - 滞后入账：断连的服务端扣费可能晚于退款请求到账——此时查不到 consume
+//     记录，本轮返回 no_charge 不退；调用方稍后重试即可收敛（幂等键保证
+//     不会退两次），流水里 consume/refund 两条记录可对账；
+//   - 非原子窗口：先写退款流水再补余额，两步之间崩溃会漏补余额（流水已记）。
+//     不加新 RPC（避免新建 DB 函数），窗口极小且流水可对账，接受该边界。
+// ====================================================================
+
+const RefundInput = z.object({
+  chargeIdempotencyKey: z.string().min(1).max(200),
+  amount: z.number().positive().max(10_000),
+  description: z.string().min(1).max(240),
+});
+
+export type RefundChargedCreditsResult =
+  | { ok: true; refunded: boolean; reason: "refunded" | "no_charge" | "deduped" }
+  | { ok: false; error: string };
+
+export const refundChargedCredits = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((input: unknown) => RefundInput.parse(input))
+  .handler(async ({ data, context }): Promise<RefundChargedCreditsResult> => {
+    const { userId } = context as { supabase: any; userId: string };
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+
+    // 只退已扣的：本人流水里必须存在该幂等键的 consume 记录。
+    const { data: chargeRow, error: chargeError } = await supabaseAdmin
+      .from("user_credit_transactions")
+      .select("id, amount")
+      .eq("user_id", userId)
+      .eq("idempotency_key", data.chargeIdempotencyKey)
+      .eq("type", "consume")
+      .maybeSingle();
+    if (chargeError) return { ok: false, error: chargeError.message };
+    if (!chargeRow) return { ok: true, refunded: false, reason: "no_charge" };
+
+    const refundKey = `refund:${data.chargeIdempotencyKey}`;
+    const { data: wallet } = await supabaseAdmin
+      .from("user_wallets")
+      .select("credits_balance")
+      .eq("user_id", userId)
+      .maybeSingle();
+    const balanceAfter = Number(wallet?.credits_balance ?? 0) + data.amount;
+
+    // 退款流水先行登记（幂等键唯一索引兜底并发与重复调用）。
+    const { error: ledgerError } = await supabaseAdmin.from("user_credit_transactions").insert({
+      user_id: userId,
+      type: "refund",
+      amount: data.amount,
+      balance_after: balanceAfter,
+      model: null,
+      resolution: null,
+      duration: null,
+      description: data.description,
+      idempotency_key: refundKey,
+    });
+    if (ledgerError) {
+      if (/unique|duplicate/i.test(ledgerError.message)) {
+        return { ok: true, refunded: false, reason: "deduped" };
+      }
+      return { ok: false, error: ledgerError.message };
+    }
+
+    // 余额回补；失败时补偿删除流水，允许重试（best-effort 原子性）。
+    const { error: walletError } = await supabaseAdmin
+      .from("user_wallets")
+      .upsert(
+        { user_id: userId, credits_balance: balanceAfter, updated_at: new Date().toISOString() },
+        { onConflict: "user_id" },
+      );
+    if (walletError) {
+      await supabaseAdmin
+        .from("user_credit_transactions")
+        .delete()
+        .eq("user_id", userId)
+        .eq("idempotency_key", refundKey);
+      return { ok: false, error: walletError.message };
+    }
+    return { ok: true, refunded: true, reason: "refunded" };
+  });

@@ -8,6 +8,7 @@ import {
   mergeWindowSegments,
   PLAN_WINDOW_SEC,
   resolvePlanWindowDurationMs,
+  restylePlanWindowChargeKey,
   shotsInWindow,
   splitIntoWindows,
   summarizeWindowCalls,
@@ -347,5 +348,40 @@ describe("resolvePlanWindowDurationMs", () => {
     const jobs = buildPlanWindowJobs(files);
     expect(jobs).toHaveLength(6);
     expect(jobs.map((j) => j.windowCount)).toEqual([2, 2, 2, 2, 2, 2]);
+  });
+});
+
+
+// --------------------------------------------------------------------
+// restylePlanWindowChargeKey（D6 断连退款对账：客户端与服务端同构幂等键）
+// --------------------------------------------------------------------
+
+describe("restylePlanWindowChargeKey", () => {
+  it("格式与服务端分窗扣费键一致：restyle-plan:{videoId}:w{index}:{指纹}", () => {
+    expect(
+      restylePlanWindowChargeKey({
+        videoId: "EP02",
+        windowIndex: 1,
+        instructionLength: 12,
+        assetsCount: 5,
+        shotsCount: 60,
+      }),
+    ).toBe("restyle-plan:EP02:w1:12-5-60");
+  });
+
+  it("输入指纹随指令/资产/逐镜表变化（变化时是新的一次扣费，不误退旧账）", () => {
+    const base = {
+      videoId: "EP02",
+      windowIndex: 0,
+      instructionLength: 12,
+      assetsCount: 5,
+      shotsCount: 60,
+    };
+    expect(restylePlanWindowChargeKey(base)).not.toBe(
+      restylePlanWindowChargeKey({ ...base, instructionLength: 13 }),
+    );
+    expect(restylePlanWindowChargeKey(base)).not.toBe(
+      restylePlanWindowChargeKey({ ...base, windowIndex: 1 }),
+    );
   });
 });

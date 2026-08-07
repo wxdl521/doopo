@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   DIRECT_UPLOAD_MIN_BYTES,
+  attachmentReadSource,
   isSourceVideoFile,
   nextEpisodeLabels,
   shouldUseDirectUpload,
@@ -198,7 +199,11 @@ describe("uploadFileDirect · settle 保障", () => {
       ok: true,
       url: "https://storage.example.com/read-signed",
     }));
-    expect(result).toEqual({ ok: true, url: "https://storage.example.com/read-signed" });
+    expect(result).toEqual({
+      ok: true,
+      url: "https://storage.example.com/read-signed",
+      path: "u1/uploads/restyle-v2/video/t-1.mp4",
+    });
   });
 
   it("signRead 抛异常时 resolve({ok:false})，Promise 不悬挂", async () => {
@@ -232,5 +237,34 @@ describe("uploadFileDirect · settle 保障", () => {
     }));
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error).toContain("网络中断");
+  });
+});
+
+
+// --------------------------------------------------------------------
+// attachmentReadSource（7 天签名 URL 过期治理：对象 key 现签优先）
+// --------------------------------------------------------------------
+
+describe("attachmentReadSource", () => {
+  it("有 storageKey：优先现签（url 是否过期不再重要）", () => {
+    expect(
+      attachmentReadSource({
+        storageKey: "uid/uploads/restyle-v2/video/ep01-123.mp4",
+        url: "https://signed.example/expired-token",
+      }),
+    ).toEqual({ type: "storageKey", key: "uid/uploads/restyle-v2/video/ep01-123.mp4" });
+  });
+
+  it("存量附件只有签名 URL：照用 URL（未过期时与现状一致）", () => {
+    expect(attachmentReadSource({ url: "https://cdn.example/ep01.mp4" })).toEqual({
+      type: "url",
+      url: "https://cdn.example/ep01.mp4",
+    });
+  });
+
+  it("blob/data URL 与空附件：返回 null（走上传/回退链）", () => {
+    expect(attachmentReadSource({ url: "blob:http://localhost/abc" })).toBeNull();
+    expect(attachmentReadSource({ url: "data:video/mp4;base64,AAA" })).toBeNull();
+    expect(attachmentReadSource({})).toBeNull();
   });
 });

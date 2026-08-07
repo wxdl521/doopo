@@ -88,6 +88,8 @@ export interface PreparedUnit {
 export interface PreparedEpisode {
   durationSec: number;
   videoUrl: string;
+  /** 源视频对象 key（直传分支）：持久化用，读取时现签（7 天签名 URL 过期治理）。 */
+  videoKey?: string;
   units: PreparedUnit[];
 }
 
@@ -409,6 +411,7 @@ export async function prepareEpisodeMedia(
 
   report({ unitIndex: -1, unitId: "", phase: "video_upload", detail: "准备上传 0%" });
   let videoUrl: string;
+  let videoKey: string | undefined;
   if (createUploadUrl) {
     // 二进制直传：不转 base64，大文件不占内存
     const target = await createUploadUrl({ id: episodeId, kind: "video", ext: extFromFile(file) });
@@ -423,6 +426,7 @@ export async function prepareEpisodeMedia(
     const read = await signReadUrl({ path: target.path });
     if (!read.ok || !read.url) throw new Error(read.ok ? "读取地址签发失败。" : (read.error ?? "读取地址签发失败。"));
     videoUrl = read.url;
+    videoKey = target.path;
   } else {
     videoUrl = await uploadOrThrow(upload, {
       base64: await fileToDataUrl(file),
@@ -493,7 +497,7 @@ export async function prepareEpisodeMedia(
         throw new Error(`单元 ${unit.unitId} 媒体处理失败：${message}`);
       }
     }
-    return { durationSec, videoUrl, units: prepared };
+    return { durationSec, videoUrl, videoKey, units: prepared };
   } finally {
     pcm = null; // 释放整段 PCM 引用，避免常驻数百 MB
     if (session?.url && typeof URL.revokeObjectURL === "function") {

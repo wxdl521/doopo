@@ -24,6 +24,8 @@ export type WindowedPlanDriveResult =
       ok: true;
       /** 按 videoId 合并重排后的分段（未过覆盖兜底，交给 finalize）。 */
       segmentsByVideo: Record<string, WindowedSegment[]>;
+      /** 重试后仍失败的窗（客户端放弃）：调用方按幂等键做断连退款对账（D6）。 */
+      failedJobs: PlanWindowJob[];
       warnings: string[];
     }
   | { ok: false; error: string };
@@ -81,5 +83,6 @@ export async function driveWindowedPlanCalls(input: {
     warnings.push(...merged.warnings.map((warning) => `「${videoId}」${warning}`));
     segmentsByVideo[videoId] = merged.segments;
   }
-  return { ok: true, segmentsByVideo, warnings };
+  const failedJobs = results.filter((result) => !result.ok).map((result) => result.job);
+  return { ok: true, segmentsByVideo, failedJobs, warnings };
 }

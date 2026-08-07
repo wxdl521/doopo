@@ -72,8 +72,22 @@ function uploadKindFor(file: File): "video" | "audio" | "image" {
 }
 
 /**
+ * 附件读取来源决策（7 天签名 URL 过期治理）：
+ * 有 storageKey（对象 key 永不过期）优先现签；存量只有签名 URL 的旧附件
+ * 照用 URL（未过期时可用，过期后只能引导重传，与现状一致）。
+ */
+export function attachmentReadSource(
+  file: { url?: string; storageKey?: string },
+): { type: "storageKey"; key: string } | { type: "url"; url: string } | null {
+  if (file.storageKey) return { type: "storageKey", key: file.storageKey };
+  if (file.url && /^https?:\/\//i.test(file.url)) return { type: "url", url: file.url };
+  return null;
+}
+
+/**
  * 二进制直传：先取签名上传地址，再 XHR PUT 原始 File（不转 base64、不进内存
  * 字符串），带上传进度回调。失败文案区分签名失败 / 网络中断 / 存储 4xx。
+ * 成功返回读 URL 与对象 key（path，持久化用，读取时现签）。
  */
 export async function uploadFileDirect(
   file: File,
@@ -81,7 +95,7 @@ export async function uploadFileDirect(
   prepareUrl: PrepareUploadUrlFn,
   signRead: SignReadUrlFn,
   onProgress?: (percent: number) => void,
-): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
+): Promise<{ ok: true; url: string; path: string } | { ok: false; error: string }> {
   let target: Awaited<ReturnType<PrepareUploadUrlFn>>;
   try {
     target = await prepareUrl({ id, kind: uploadKindFor(file), ext: extFromFile(file) });
@@ -124,7 +138,7 @@ export async function uploadFileDirect(
             resolve({ ok: false, error: read.ok ? "读取地址签发失败。" : read.error ?? "读取地址签发失败。" });
             return;
           }
-          resolve({ ok: true, url: read.url });
+          resolve({ ok: true, url: read.url, path });
         } catch (error) {
           resolve({
             ok: false,

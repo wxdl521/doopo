@@ -60,13 +60,19 @@ export function resolveProvider(modelId: string): RestyleProviderConfig {
 /**
  * 各家对采样/长度参数的要求不同：GPT-5 系列拒绝 temperature 和 max_tokens，
  * 只接受 max_completion_tokens；ARK 需要显式关闭 thinking。
+ * opts.reasoningEffort：仅 lovable 网关透传 reasoning_effort（分窗调用压
+ * 推理延迟用 "low"；缺省不传，保持网关默认行为）。
  */
 export function providerTuning(
   config: RestyleProviderConfig,
   maxTokens: number,
+  opts?: { reasoningEffort?: "none" | "low" },
 ): Record<string, unknown> {
   if (config.provider === "lovable") {
-    return { max_completion_tokens: maxTokens };
+    return {
+      max_completion_tokens: maxTokens,
+      ...(opts?.reasoningEffort ? { reasoning_effort: opts.reasoningEffort } : {}),
+    };
   }
   return {
     ...(config.provider === "ark" ? { thinking: ARK_TEXT_THINKING_DISABLED } : {}),

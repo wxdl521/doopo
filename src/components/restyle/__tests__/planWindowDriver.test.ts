@@ -80,6 +80,8 @@ describe("driveWindowedPlanCalls", () => {
     if (!result.ok) return;
     expect(result.segmentsByVideo["v1"]).toHaveLength(1);
     expect(result.warnings.some((w) => w.includes("第 2/3 窗生成失败（方案生成超时）"))).toBe(true);
+    // 失败窗透出给调用方做断连退款对账（D6）
+    expect(result.failedJobs.map((j) => j.window.index)).toEqual([1]);
   });
 
   it("某集全部窗失败：该集给空分段并记占位 warning，其他集照常", async () => {

@@ -11,6 +11,7 @@ import { formatShotBrief } from "./restyle/v1AnalysisAdapter";
 import {
   applyPlanCoverage,
   mergeWindowSegments,
+  restylePlanWindowChargeKey,
   shotsInWindow,
   type PlanWindow,
 } from "./restyle/planWindows";
@@ -366,6 +367,7 @@ export const generateRestylePlan = createServerFn({ method: "POST" })
       const requestPlanContent = async (
         requestPrompt: string,
         maxTokens = 12_000,
+        reasoningEffort?: "low",
       ): Promise<{ ok: true; content: string } | { ok: false; error: string }> => {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 90_000);
@@ -379,7 +381,7 @@ export const generateRestylePlan = createServerFn({ method: "POST" })
             signal: controller.signal,
             body: JSON.stringify({
               model,
-              ...providerTuning(config, maxTokens),
+              ...providerTuning(config, maxTokens, reasoningEffort ? { reasoningEffort } : undefined),
               response_format: { type: "json_object" },
               messages: [
                 {
@@ -449,7 +451,9 @@ export const generateRestylePlan = createServerFn({ method: "POST" })
         const windowPrompt = `用户要求：${data.instruction || "生成转绘方案"}\n视频数量：1\n源视频：\n- 视频 ID: ${videoId}; 文件名: ${file.name}\n已确认资产：${JSON.stringify(data.assets)}\n已有方案（如有，请只修改用户点名的分段，其余保持不变）：${JSON.stringify(existingForFile)}\n${marketRequirement}${windowShotBrief}${windowRequirement}\n\n请只为该源视频的本时间窗生成或修改分段视频提示词。只输出 JSON，不要 Markdown：{"episodes":[{"episode":"${videoId}","segments":[{"id":"U01","prompt":"...","startMs":0,"endMs":12000}]}]}。分段以场景与叙事节拍为第一依据，时长只作为约束：同一场景的连续镜头默认归入同一段，只在场景切换处切段，永不在镜头中间切分、一个镜头不拆进两段；同一场景过长时才在场景内部做二次切分，优先切在动作或对白的停顿处。禁止为凑时长跨场景合并，或在场景中间断开。提示词须包含人物、场景、动作、镜头、光影、节奏和对白/声音要求；不得虚构资产表中不存在的具体人物或地点。每段必须给出 startMs/endMs：该段覆盖的连续镜头区间（首镜 startMs 到末镜 endMs），须与上方逐镜调度表的镜头区间对齐，并满足【分窗生成约束】。`;
         // 单窗 max_tokens 压到 5_000：单窗段数上限按窗长算约 11 段，5k 足够；
         // 12k 输出常跑 60-100s 触平台 ~100s 零字节断连（D3 回归实测断连率 ~50%）。
-        const call = await requestPlanContent(windowPrompt, 5_000);
+        // lovable 网关再压 reasoning_effort=low（GPT-5.5 推理思考是单窗延迟主因）；
+        // 短片单次路径不传，保持默认推理档。
+        const call = await requestPlanContent(windowPrompt, 5_000, "low");
         if (!call.ok) return { ok: false, error: call.error };
         try {
           const parsed = parseJson(call.content) as { episodes?: unknown };
@@ -463,16 +467,22 @@ export const generateRestylePlan = createServerFn({ method: "POST" })
             maxSegmentsPerWindow,
           );
           // 扣费 1 分/窗：幂等键带窗号与输入指纹（断连重发不重复扣，输入变化
-          // 正常计费）；扣费失败不阻断主流程。
+          // 正常计费）；键由 restylePlanWindowChargeKey 生成，与客户端退款
+          // 对账（refundChargedCredits）保持同一格式。扣费失败不阻断主流程。
           {
             const { supabase, userId } = context as { supabase: any; userId: string };
             const { chargeCredits } = await import("./userCredits.functions");
-            const scopeFingerprint = `${data.instruction.length}-${data.assets.length}-${data.shotSchedule.length}`;
             await chargeCredits(supabase, userId, {
               amount: 1,
               model,
               description: `转绘方案生成（${videoId} 第 ${data.window.index + 1}/${data.window.total} 窗）`,
-              idempotencyKey: `restyle-plan:${videoId}:w${window.index}:${scopeFingerprint}`,
+              idempotencyKey: restylePlanWindowChargeKey({
+                videoId,
+                windowIndex: window.index,
+                instructionLength: data.instruction.length,
+                assetsCount: data.assets.length,
+                shotsCount: data.shotSchedule.length,
+              }),
             });
           }
           return {

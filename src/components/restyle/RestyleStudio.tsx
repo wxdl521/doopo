@@ -62,7 +62,7 @@ import {
   type UnitProgressEvent,
 } from "./v2/mediaSlicing";
 import { mergeSourceUnitResults, renumberShotSchedule } from "./sourceUnitsMerge";
-import { buildPlanWindowJobs, PLAN_WINDOW_SEC, resolvePlanWindowDurationMs } from "../../lib/restyle/planWindows";
+import { buildPlanWindowJobs, PLAN_WINDOW_SEC, resolvePlanWindowDurationMs, restylePlanWindowChargeKey } from "../../lib/restyle/planWindows";
 import { driveWindowedPlanCalls } from "./planWindowDriver";
 import { isSupersededClipAttachment } from "./rerunAttachments";
 import { outcomeLabel, summarizeRenderRun, type RenderRunOutcome } from "./renderRunSummary";
@@ -120,6 +120,7 @@ import {
   type RestyleFallbackStage,
 } from "../../lib/videoAssetLibrary";
 import { uploadLocalImage } from "../../lib/uploadImage.functions";
+import { refundChargedCredits } from "../../lib/userCredits.functions";
 import { reportGenerationError } from "../../lib/errorLogs.functions";
 import { createMediaUploadUrl, signMediaReadUrl } from "../../lib/restyleMedia.functions";
 import { persistAssetImage } from "../../lib/workspaceMedia.functions";
@@ -159,6 +160,7 @@ import {
   nextEpisodeLabels,
   shouldUseDirectUpload,
   uploadFileDirect,
+  attachmentReadSource,
   type DirectUploadState,
 } from "./restyleUpload";
 import { probeVideoDuration } from "./v2/mediaSlicing";
@@ -1250,6 +1252,7 @@ export default function RestyleStudio() {
   const callPersistAssetImage = useServerFn(persistAssetImage);
   const callPersistRestyleVideo = useServerFn(persistRestyleVideo);
   const callReportGenerationError = useServerFn(reportGenerationError);
+  const callRefundChargedCredits = useServerFn(refundChargedCredits);
   const callReviewRestyleAssetTable = useServerFn(reviewRestyleAssetTable);
   const callTranscribeRestyleAudio = useServerFn(transcribeRestyleAudio);
   const callSubmitVideoStitchJob = useServerFn(submitVideoStitchJob);
@@ -1930,6 +1933,29 @@ export default function RestyleStudio() {
         `长片分 ${windowJobs.length} 窗生成（单窗 ${PLAN_WINDOW_SEC}s，避开平台约 100s 断连上限）。`,
         ...driven.warnings,
       ];
+      // 断连补偿（D6）：重试后仍失败的窗，服务端那次调用可能已滞后扣费——
+      // 按同幂等键退款（只退已扣的；滞后入账本轮查不到则由后续重试收敛）。
+      const shotsCount = (project.shotSchedule ?? []).length;
+      for (const failedJob of driven.failedJobs) {
+        const refund = await callRefundChargedCredits({
+          data: {
+            chargeIdempotencyKey: restylePlanWindowChargeKey({
+              videoId: failedJob.videoId,
+              windowIndex: failedJob.window.index,
+              instructionLength: instruction.length,
+              assetsCount: assets.length,
+              shotsCount,
+            }),
+            amount: 1,
+            description: `转绘方案分窗退款（${failedJob.videoId} 第 ${failedJob.window.index + 1}/${failedJob.windowCount} 窗）`,
+          },
+        });
+        if (refund.ok && refund.refunded) {
+          planWarnings.push(
+            `「${failedJob.videoId}」第 ${failedJob.window.index + 1} 窗生成失败，该窗已退款。`,
+          );
+        }
+      }
       // 合并：某集全部窗失败（或无权威时长未参与分窗）时回落占位分段，
       // 缺口由 finalize 的 ensureFullCoverage 补段。
       const mergedEpisodes = effectiveFiles.map((file) => {
@@ -2647,7 +2673,18 @@ export default function RestyleStudio() {
     projectId: string,
     source: RestyleAttachment,
   ): Promise<{ ok: true; url: string } | { ok: false; error: string }> {
-    if (source.url && /^https?:\/\//i.test(source.url)) return { ok: true, url: source.url };
+    // 读取来源决策：storageKey（对象 key 永不过期）优先现签；存量签名 URL 照用。
+    const readSource = attachmentReadSource(source);
+    if (readSource?.type === "storageKey") {
+      const signed = await callSignMediaReadUrl({ data: { path: readSource.key } });
+      if (signed.ok && signed.url) return { ok: true, url: signed.url };
+      // 现签失败（对象被删/网关异常）：回退存量 URL 试一次，再走上传/回退链。
+      if (readSource && source.url && /^https?:\/\//i.test(source.url)) {
+        return { ok: true, url: source.url };
+      }
+    } else if (readSource?.type === "url") {
+      return { ok: true, url: readSource.url };
+    }
     const cached = sourceVideoUploadRef.current[source.id];
     if (cached) return await cached;
     const localFile = fileObjectsRef.current[source.id];
@@ -2661,7 +2698,9 @@ export default function RestyleStudio() {
         updateProject(projectId, (project) => ({
           ...project,
           files: project.files.map((file) =>
-            file.id === source.id ? { ...file, url: fallback.url } : file,
+            file.id === source.id
+              ? { ...file, url: fallback.url, storageKey: fallback.storageKey }
+              : file,
           ),
         }));
         return { ok: true, url: fallback.url };
@@ -2674,6 +2713,7 @@ export default function RestyleStudio() {
     const upload = (async () => {
       try {
         let url: string;
+        let storageKey: string | undefined;
         if (useDirect) {
           const direct = await uploadFileDirect(
             localFile,
@@ -2684,6 +2724,7 @@ export default function RestyleStudio() {
           );
           if (!direct.ok) return direct;
           url = direct.url;
+          storageKey = direct.path;
         } else {
           const base64 = await fileToDataUrl(localFile);
           const result = await callUploadLocalMedia({
@@ -2697,10 +2738,15 @@ export default function RestyleStudio() {
           }
           url = result.url;
         }
-        // readUrl 写回 project.files[].url 并随 projects 持久化，刷新后不再依赖本地预览。
+        // readUrl + 对象 key 写回 project.files 并随 projects 持久化：url 供展示/缓存，
+        // storageKey 供 7 天签名过期后现签（key 永不过期）。
         updateProject(projectId, (project) => ({
           ...project,
-          files: project.files.map((file) => (file.id === source.id ? { ...file, url } : file)),
+          files: project.files.map((file) =>
+            file.id === source.id
+              ? { ...file, url, ...(storageKey ? { storageKey } : {}) }
+              : file,
+          ),
         }));
         if (useDirect) setAttachmentUpload(source.id, { status: "done", progress: 100 });
         return { ok: true as const, url };
@@ -3049,7 +3095,15 @@ export default function RestyleStudio() {
         let polled: Awaited<ReturnType<typeof callPollVideoTask>>;
         try {
           polled = await callPollVideoTask({
-            data: { taskId: submitted.taskId, backend: submitted.backend, model: submitted.model },
+            data: {
+              taskId: submitted.taskId,
+              backend: submitted.backend,
+              model: submitted.model,
+              // 与主渲染链同口径：succeeded 时刻服务端按价目扣费（幂等键 taskId）。
+              resolution: "720P",
+              duration: input.durationSec,
+              label: `补镜 ${input.job.anchorShotNo}`,
+            },
           });
         } catch {
           // 轮询幂等，短暂网络抖动不判失败。
@@ -4480,15 +4534,21 @@ export default function RestyleStudio() {
             markRunStep(projectId, `${t.restyle_run_step_read_source}：网络错误，退避重试`);
             prepared = await prepareEpisodeMedia(resolved.file, prepareOptions);
           }
-          // 源视频持久 URL 写回（D5）：单元管线内部已把原片直传 workspace-media
-          // 并签发读地址，立即写回附件 url（与 ensureReferenceVideoUrl 写回的
-          // 口径一致——签名读 URL，项目其它持久 url 同口径）；刷新后三级回退
-          // （内存 File → 持久 URL → 缓存帧）才能走到第二级。
-          if (file.url !== prepared.videoUrl) {
+          // 源视频持久 URL + 对象 key 写回（D5）：单元管线内部已把原片直传
+          // workspace-media 并签发读地址，立即写回附件 url 与 storageKey
+          // （key 永不过期，7 天签名过期后读取时现签）；刷新后三级回退
+          // （内存 File → 持久 URL/对象 key → 缓存帧）才能走到第二级。
+          if (file.url !== prepared.videoUrl || (prepared.videoKey && file.storageKey !== prepared.videoKey)) {
             updateProject(projectId, (project) => ({
               ...project,
               files: project.files.map((item) =>
-                item.id === file.id ? { ...item, url: prepared.videoUrl } : item,
+                item.id === file.id
+                  ? {
+                      ...item,
+                      url: prepared.videoUrl,
+                      ...(prepared.videoKey ? { storageKey: prepared.videoKey } : {}),
+                    }
+                  : item,
               ),
             }));
           }

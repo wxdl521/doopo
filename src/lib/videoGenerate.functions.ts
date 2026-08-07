@@ -4826,9 +4826,11 @@ export const generateVideo = createServerFn({ method: "POST" })
                       : "happyhorse-1.0-i2v");
 
     // ---- 积分预校验:与 submitVideoTaskFn 同口径,按最终路由 model 计费 ----
+    // （前缀模型按同档直连价目、无价目默认档兜底，与转绘链同一口径）
     {
       const { ensureEnoughCredits } = await import("./creditsGuard");
-      const __cost = videoCost(model, data.resolution, data.duration);
+      const __cost =
+        videoCostOrFallback(model, data.resolution, data.duration ?? 10)?.cost ?? null;
       const __guard = await ensureEnoughCredits(__cost, {
         kind: "video",
         model,
@@ -4931,10 +4933,12 @@ export const generateVideo = createServerFn({ method: "POST" })
         videoUrl: submit.videoUrl,
         backend: submit.backend,
       });
-      const cost = videoCost(submit.model, data.resolution, data.duration);
-      if (cost != null) {
+      const __pricing = videoCostOrFallback(submit.model, data.resolution, data.duration);
+      if (__pricing) {
+        // 前缀模型按同档直连价目 / 无价目默认档兜底（与转绘链同口径），warning 可观测
+        if (__pricing.warning) console.warn(`[video$] ${__pricing.warning}`);
         await chargeCredits(supabase, userId, {
-          amount: cost,
+          amount: __pricing.cost,
           model: submit.model,
           resolution: data.resolution,
           duration: data.duration,
@@ -4999,11 +5003,13 @@ export const generateVideo = createServerFn({ method: "POST" })
           videoUrl: verdict.videoUrl,
           backend: submit.backend,
         });
-        // 成功才扣分(视频积分,按 duration 比例)。不在价目表 -> 不扣;扣失败不阻断
-        const __vCost = videoCost(submit.model, data.resolution, data.duration);
-        if (__vCost != null) {
+        // 成功才扣分(视频积分,按 duration 比例)。前缀模型按同档直连价目 /
+        // 无价目默认档兜底（与转绘链同口径，不再静默零扣）;扣失败不阻断
+        const __vPricing = videoCostOrFallback(submit.model, data.resolution, data.duration);
+        if (__vPricing) {
+          if (__vPricing.warning) console.warn(`[video$] ${__vPricing.warning}`);
           await chargeCredits(supabase, userId, {
-            amount: __vCost,
+            amount: __vPricing.cost,
             model: submit.model,
             resolution: data.resolution,
             duration: data.duration,
