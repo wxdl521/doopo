@@ -110,6 +110,7 @@ import {
   assetLibraryVendorForModel,
   buildRestyleVideoContent,
   getVideoAssetLibrarySupport,
+  isR2vDurationError,
   isSensitiveContentError,
   planRestyleFallback,
   referenceVideoLimitsForModel,
@@ -3285,6 +3286,7 @@ export default function RestyleStudio() {
       // 视频任务失败接入 errorLogs（fire-and-forget 客户端上报通道，不阻断队列
       // 推进）：submit/poll 请求本身成功、失败是任务终态时服务端无从记录，
       // 上游错误细节（含 provider 返回的原始 error）随 errorMessage 写入。
+      // 上报失败写渲染日志可诊断（此前插入静默丢失无从排查）。
       void callReportGenerationError({
         data: {
           kind: "video",
@@ -3299,6 +3301,14 @@ export default function RestyleStudio() {
             prompt: directedPrompt.slice(0, 240),
           },
         },
+      }).then((reported) => {
+        if (reported && typeof reported === "object" && "ok" in reported && !reported.ok) {
+          appendRenderLog(
+            projectId,
+            job.attachmentId,
+            `错误日志上报失败（不影响本次失败记录）：${(reported as { error?: string }).error ?? "未知错误"}`,
+          );
+        }
       });
     };
     /** 提交成功后记录的后端名（errorLogs 的 provider 字段；未提交成功时用模型 id）。 */
@@ -3366,10 +3376,6 @@ export default function RestyleStudio() {
         });
         const dropped: string[] = [...preChecked.rejected];
         let stage: RestyleFallbackStage = dropped.length ? "without-rejected" : "full";
-        // 提交和查询拆成短请求，避免把视频生成时长挂在同一个 Worker 请求上。
-        // AgentEarth 的异步接口建议每 5 秒查询一次；其它后端也可安全复用这个节奏。
-        let submitted: Awaited<ReturnType<typeof callSubmitVideoTask>> | null = null;
-        let submitFailure: string | null = null;
         // 时长按分段的场景区间计算（夹取 2~15s），不再硬编码 5s——
         // 否则 110s 原片只能产出 8×5s=40s。
         const segmentForDuration = projectsRef.current
@@ -3390,8 +3396,106 @@ export default function RestyleStudio() {
           referenceVideo.ok ? referenceVideo.durationSec : undefined,
         );
         let referenceDroppedForDuration = false;
-        // 被拒降级链：剔除被点名参考图重投 → 只留首帧 → 仅文本 + 参考视频；
-        // 加上时长降档（15→10→6→4）与移除参考视频重投，9 次硬上限防死循环。
+
+        /** 单个任务的轮询：返回终态（成功 URL / 带明细的失败 / 中止标记）。 */
+        const pollRenderTask = async (task: {
+          taskId: string;
+          backend: typeof submittedBackend & string;
+          model: string;
+        }): Promise<
+          { ok: true; videoUrl: string } | { ok: false; error: string; aborted?: boolean }
+        > => {
+          // 轮询上限 120 次 × 5s：超限判失败，避免后端任务卡死时前端永久轮询；
+          // 中止时立即退出（由调用方收尾，不播报失败）。
+          let pollCount = 0;
+          while (true) {
+            if (isRunAborted(projectId)) return { ok: false, error: "", aborted: true };
+            pollCount += 1;
+            if (pollCount > 120) {
+              return {
+                ok: false,
+                error: "视频生成超时：已等待约 10 分钟仍未完成，请稍后重试该分段。",
+              };
+            }
+            await new Promise<void>((resolve) => window.setTimeout(resolve, 5_000));
+            let polled: Awaited<ReturnType<typeof callPollVideoTask>>;
+            try {
+              polled = await callPollVideoTask({
+                data: {
+                  taskId: task.taskId,
+                  backend: task.backend,
+                  model: task.model,
+                  // 成功扣费参数：提交时的分辨率与最终时长（降档重投后为准）；
+                  // 服务端在 succeeded 时刻按价目扣费（幂等键 taskId）。
+                  resolution: "720P",
+                  duration: durationSec,
+                  label: [job.episode, job.segmentId].filter(Boolean).join(" ") || undefined,
+                },
+              });
+            } catch (error) {
+              // 轮询是幂等的，短暂的 502/网络抖动不应直接把已提交的任务标记失败。
+              appendRenderLog(
+                projectId,
+                job.attachmentId,
+                `任务查询暂时不可用，将自动重试：${error instanceof Error ? error.message : "网络错误"}`,
+              );
+              continue;
+            }
+            if (!polled.ok) {
+              if (polled.status === "failed" || polled.status === "cancelled") {
+                return { ok: false, error: polled.error };
+              }
+              appendRenderLog(
+                projectId,
+                job.attachmentId,
+                `任务查询失败，将自动重试：${polled.error}`,
+              );
+              continue;
+            }
+            if (polled.status === "succeeded") {
+              // 计费兜底提示（剥前缀/默认档计价）写渲染日志，可观测不静默。
+              if ("chargeWarning" in polled && polled.chargeWarning) {
+                appendRenderLog(projectId, job.attachmentId, `计费提示：${polled.chargeWarning}`);
+              }
+              if (!polled.videoUrl) {
+                return { ok: false, error: "视频任务已完成但没有返回可播放的结果 URL" };
+              }
+              appendRenderLog(projectId, job.attachmentId, `模型任务 ${task.taskId} 返回成功。`);
+              return { ok: true, videoUrl: polled.videoUrl };
+            }
+            if (polled.status === "failed" || polled.status === "cancelled") {
+              // 执行阶段失败：上游明细由服务端从 raw 提取（errorDetail），
+              // 取不到回退状态原文（此前只有「视频任务失败」占位）。
+              return {
+                ok: false,
+                error:
+                  ("errorDetail" in polled && polled.errorDetail) ||
+                  `视频任务${polled.status === "cancelled" ? "已取消" : "失败"}`,
+              };
+            }
+            const progress = polled.status === "running" ? 65 : 40;
+            updateRenderAttachments(
+              projectId,
+              (file) => file.id === job.attachmentId,
+              (file) => ({ ...file, renderStatus: "running" as const, renderProgress: progress }),
+            );
+            appendRenderLog(
+              projectId,
+              job.attachmentId,
+              polled.status === "running" ? "模型正在生成视频。" : "任务正在队列中等待执行。",
+            );
+          }
+        };
+
+        let finalTask: Extract<Awaited<ReturnType<typeof callSubmitVideoTask>>, { ok: true }> | null =
+          null;
+        let finalVideoUrl: string | null = null;
+        let submitFailure: string | null = null;
+        let pollFailure: { error: string; taskId?: string } | null = null;
+        let runAborted = false;
+        // 统一「提交 + 执行」重试入口：提交失败与轮询（执行）阶段失败共用同一条
+        // 时长降档链（执行阶段才爆 r2v duration 400 的回归），9 次硬上限防死循环；
+        // 内容审核类错误不匹配 r2v 特征（isR2vDurationError 排除），只透传原因。
         for (let attempt = 0; attempt < 9; attempt++) {
           const keptImages = job.referenceImages.filter((url) => !dropped.includes(url));
           const content = buildRestyleVideoContent({
@@ -3412,7 +3516,62 @@ export default function RestyleStudio() {
             },
           });
           if (result.ok && result.taskId) {
-            submitted = result;
+            submittedBackend = result.backend ?? undefined;
+            appendRenderLog(
+              projectId,
+              job.attachmentId,
+              `模型任务 ${result.taskId} 已创建，正在后台生成。`,
+            );
+            // 任务提交成功即计入预算消耗（按提交时的单价预估）。
+            chargeSpend(projectId, estimatedCost);
+            updateRenderAttachments(
+              projectId,
+              (file) => file.id === job.attachmentId,
+              (file) => ({
+                ...file,
+                renderTaskId: result.taskId,
+                renderStatus: "running" as const,
+                renderProgress: 25,
+              }),
+            );
+            const polled = await pollRenderTask({
+              taskId: result.taskId,
+              backend: result.backend as typeof submittedBackend & string,
+              model: result.model,
+            });
+            if (polled.ok) {
+              finalTask = result as Extract<typeof result, { ok: true }>;
+              finalVideoUrl = polled.videoUrl;
+              break;
+            }
+            if (polled.aborted) {
+              runAborted = true;
+              break;
+            }
+            // 执行阶段失败的 r2v 时长特征：与提交失败同一降档链（贴参考片段
+            // 实际时长优先，降档穷尽移除参考视频转 t2v）。
+            if (isR2vDurationError(polled.error)) {
+              const nextDuration = durationRetries.find((d) => d < durationSec);
+              if (nextDuration !== undefined) {
+                appendRenderLog(
+                  projectId,
+                  job.attachmentId,
+                  `执行阶段时长校验未通过（${polled.error.slice(0, 120)}），降为 ${nextDuration}s 重投。`,
+                );
+                durationSec = nextDuration;
+                continue;
+              }
+              if (!referenceDroppedForDuration && referenceVideo.url) {
+                referenceDroppedForDuration = true;
+                appendRenderLog(
+                  projectId,
+                  job.attachmentId,
+                  "执行阶段时长校验未通过，已移除参考视频后重投。",
+                );
+                continue;
+              }
+            }
+            pollFailure = { error: polled.error, taskId: result.taskId };
             break;
           }
           const error = result.ok ? "视频模型没有返回任务编号" : result.error;
@@ -3422,7 +3581,7 @@ export default function RestyleStudio() {
             submitFailure = error;
             break;
           }
-          // 上游时长校验拒绝：与真人降级链独立。先降档重投（15→10→6→4），
+          // 上游时长校验拒绝（提交阶段）：与真人降级链独立。先降档重投，
           // 降档穷尽后移除参考视频重投一次。
           if (/Duration must be between|duration|时长/i.test(error ?? "")) {
             const nextDuration = durationRetries.find((d) => d < durationSec);
@@ -3467,9 +3626,9 @@ export default function RestyleStudio() {
           }
           stage = plan.stage;
         }
-        if (!submitted) {
-          // 余额不足走专属播报（不重复发单段失败消息），任务不再自动推进。
-          if (isInsufficientCreditsError(submitFailure)) {
+        if (!runAborted && (!finalTask || !finalVideoUrl)) {
+          if (!pollFailure && isInsufficientCreditsError(submitFailure)) {
+            // 余额不足走专属播报（不重复发单段失败消息），任务不再自动推进。
             failRenderAttachment(
               projectId,
               job.attachmentId,
@@ -3480,126 +3639,26 @@ export default function RestyleStudio() {
               content: submitFailure ?? "",
             });
           } else {
-            failJob(submitFailure ?? RESTYLE_FALLBACK_EXHAUSTED_MESSAGE);
+            failJob(
+              pollFailure?.error ?? submitFailure ?? RESTYLE_FALLBACK_EXHAUSTED_MESSAGE,
+              pollFailure?.taskId,
+            );
           }
-        } else {
-          submittedBackend = submitted.backend ?? undefined;
+        } else if (finalTask && finalVideoUrl) {
+          appendRenderLog(projectId, job.attachmentId, "正在转存视频到素材库…");
+          // 模型 TOS 链接约 24h 过期，先转存素材库再写回
+          const persisted = await callPersistRestyleVideo({
+            data: { url: finalVideoUrl, id: job.attachmentId },
+          });
+          const finalUrl = persisted.ok ? persisted.url : finalVideoUrl;
           appendRenderLog(
             projectId,
             job.attachmentId,
-            `模型任务 ${submitted.taskId} 已创建，正在后台生成。`,
+            persisted.ok
+              ? "已转存素材库，链接长期有效。"
+              : `转存失败（链接可能 24h 后失效）：${persisted.error}`,
           );
-          // 任务提交成功即计入预算消耗（按提交时的单价预估）。
-          chargeSpend(projectId, estimatedCost);
-          updateRenderAttachments(
-            projectId,
-            (file) => file.id === job.attachmentId,
-            (file) => ({
-              ...file,
-              renderTaskId: submitted.taskId,
-              renderStatus: "running" as const,
-              renderProgress: 25,
-            }),
-          );
-
-          // 轮询上限 120 次 × 5s（与 generateInsertVideo 对齐）：超限标 failed 并提示，
-          // 避免后端任务卡死时前端永久轮询；中止时立即退出循环。
-          let pollCount = 0;
-          while (true) {
-            if (isRunAborted(projectId)) break;
-            pollCount += 1;
-            if (pollCount > 120) {
-              failJob(
-                "视频生成超时：已等待约 10 分钟仍未完成，请稍后重试该分段。",
-                submitted.taskId,
-              );
-              break;
-            }
-            await new Promise<void>((resolve) => window.setTimeout(resolve, 5_000));
-            let polled: Awaited<ReturnType<typeof callPollVideoTask>>;
-            try {
-              polled = await callPollVideoTask({
-                data: {
-                  taskId: submitted.taskId,
-                  backend: submitted.backend,
-                  model: submitted.model,
-                  // 成功扣费参数：提交时的分辨率与最终时长（降档重投后为准）；
-                  // 服务端在 succeeded 时刻按价目扣费（幂等键 taskId）。
-                  resolution: "720P",
-                  duration: durationSec,
-                  label: [job.episode, job.segmentId].filter(Boolean).join(" ") || undefined,
-                },
-              });
-            } catch (error) {
-              // 轮询是幂等的，短暂的 502/网络抖动不应直接把已提交的任务标记失败。
-              appendRenderLog(
-                projectId,
-                job.attachmentId,
-                `任务查询暂时不可用，将自动重试：${error instanceof Error ? error.message : "网络错误"}`,
-              );
-              continue;
-            }
-            if (!polled.ok) {
-              if (polled.status === "failed" || polled.status === "cancelled") {
-                failJob(polled.error, submitted.taskId);
-                break;
-              }
-              appendRenderLog(
-                projectId,
-                job.attachmentId,
-                `任务查询失败，将自动重试：${polled.error}`,
-              );
-              continue;
-            }
-            if (polled.status === "succeeded") {
-              // 计费兜底提示（剥前缀/默认档计价）写渲染日志，可观测不静默。
-              if ("chargeWarning" in polled && polled.chargeWarning) {
-                appendRenderLog(projectId, job.attachmentId, `计费提示：${polled.chargeWarning}`);
-              }
-              if (!polled.videoUrl) {
-                failJob("视频任务已完成但没有返回可播放的结果 URL", submitted.taskId);
-              } else {
-                appendRenderLog(
-                  projectId,
-                  job.attachmentId,
-                  `模型任务 ${submitted.taskId} 返回成功。`,
-                );
-                // 模型 TOS 链接约 24h 过期，先转存素材库再写回
-                appendRenderLog(projectId, job.attachmentId, "正在转存视频到素材库…");
-                const persisted = await callPersistRestyleVideo({
-                  data: { url: polled.videoUrl, id: job.attachmentId },
-                });
-                const finalUrl = persisted.ok ? persisted.url : polled.videoUrl;
-                appendRenderLog(
-                  projectId,
-                  job.attachmentId,
-                  persisted.ok
-                    ? "已转存素材库，链接长期有效。"
-                    : `转存失败（链接可能 24h 后失效）：${persisted.error}`,
-                );
-                completeRenderAttachment(projectId, job.attachmentId, finalUrl, submitted.taskId);
-              }
-              break;
-            }
-            if (polled.status === "failed" || polled.status === "cancelled") {
-              failJob(
-                `视频任务${polled.status === "cancelled" ? "已取消" : "失败"}`,
-                submitted.taskId,
-              );
-              break;
-            }
-            const progress = polled.status === "running" ? 65 : 40;
-            updateRenderAttachments(
-              projectId,
-              (file) => file.id === job.attachmentId,
-              (file) => ({ ...file, renderStatus: "running" as const, renderProgress: progress }),
-            );
-            appendRenderLog(
-              projectId,
-              job.attachmentId,
-              polled.status === "running" ? "模型正在生成视频。" : "任务正在队列中等待执行。",
-            );
-          }
+          completeRenderAttachment(projectId, job.attachmentId, finalUrl, finalTask.taskId);
         }
       }
     } catch (error) {

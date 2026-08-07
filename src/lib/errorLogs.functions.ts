@@ -38,19 +38,34 @@ export const reportGenerationError = createServerFn({ method: "POST" })
   .inputValidator((d: unknown) => ReportInput.parse(d))
   .handler(async ({ data, context }) => {
     const { userId } = context as { supabase: any; userId: string };
-    const { logGenerationError } = await import("./errorLogs.server");
-    // 必须 await：CF Workers 响应返回后未完成的异步写入会被回收（实测 insert 静默丢失）
-    await logGenerationError({
-      kind: data.kind,
-      provider: data.provider,
-      model: data.model ?? null,
-      status: data.status ?? null,
-      durationMs: data.durationMs ?? null,
-      requestPayload: data.requestPayload ?? null,
-      errorMessage: data.errorMessage,
-      userId,
-    });
-    return { ok: true as const };
+    // 直接走 service role 插入（supabaseAdmin 绕过 RLS；用户态 context.supabase
+    // 对 generation_error_logs 没有 INSERT 策略，会被 RLS 静默拒绝——上一轮
+    // 经由 logGenerationError 间接层时，任何失败都被内部 try/catch 吞成
+    // console.warn，表现为「200 但插入静默丢失」）。失败必须可诊断：
+    // 错误随响应返回，客户端写渲染日志。
+    try {
+      const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+      const { error } = await supabaseAdmin.from("generation_error_logs").insert({
+        user_id: userId,
+        kind: data.kind,
+        provider: data.provider,
+        model: data.model ?? null,
+        status: data.status ?? null,
+        duration_ms: data.durationMs ?? null,
+        request_payload: (data.requestPayload ?? null) as any,
+        response_body: null,
+        error_message: data.errorMessage.slice(0, 1_000),
+      });
+      if (error) {
+        console.error("[reportGenerationError] insert failed:", error.message);
+        return { ok: false as const, error: error.message };
+      }
+      return { ok: true as const };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error("[reportGenerationError] unexpected:", message);
+      return { ok: false as const, error: message };
+    }
   });
 
 export const listMyGenerationErrors = createServerFn({ method: "POST" })

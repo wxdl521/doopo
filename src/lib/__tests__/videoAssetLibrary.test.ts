@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   assetLibraryVendorForModel,
   buildRestyleVideoContent,
+  extractPollFailureDetail,
   getVideoAssetLibrarySupport,
+  isR2vDurationError,
   isSensitiveContentError,
   parseRejectedContentIndexes,
   planRestyleFallback,
@@ -208,5 +210,65 @@ describe("r2vDurationRetryLadder", () => {
   it("参考片段时长夹到 2-15s 合法域", () => {
     // 1s 参考片段被夹到 2s 下限
     expect(r2vDurationRetryLadder(15, 1)).toEqual([2, 10, 8, 6, 5, 4]);
+  });
+});
+
+
+// --------------------------------------------------------------------
+// isR2vDurationError / extractPollFailureDetail（轮询阶段失败明细回归）
+// --------------------------------------------------------------------
+
+describe("isR2vDurationError", () => {
+  it("r2v + duration 特征命中", () => {
+    expect(
+      isR2vDurationError(
+        "upstream_InvalidParameter: status_code=400, the parameter duration specified in the request is not valid for model doubao-seedance-2-0 in r2v",
+      ),
+    ).toBe(true);
+  });
+
+  it("只有 duration 没有 r2v：不命中（t2v 时长错误走原提交降档）", () => {
+    expect(isR2vDurationError("Duration must be between 2 and 15")).toBe(false);
+  });
+
+  it("内容审核类不误判（不降档重投）", () => {
+    expect(isR2vDurationError("视频包含敏感内容，duration 超限时长 r2v")).toBe(false);
+    expect(isR2vDurationError("InputImageSensitiveContentDetected")).toBe(false);
+  });
+
+  it("普通失败/空值不命中", () => {
+    expect(isR2vDurationError("视频任务失败")).toBe(false);
+    expect(isR2vDurationError(undefined)).toBe(false);
+    expect(isR2vDurationError("")).toBe(false);
+  });
+});
+
+describe("extractPollFailureDetail", () => {
+  it("error.message / fail_reason / message 各结构都能取到", () => {
+    expect(extractPollFailureDetail({ error: { message: "upstream 400 detail" } })).toBe(
+      "upstream 400 detail",
+    );
+    expect(extractPollFailureDetail({ fail_reason: "content rejected" })).toBe("content rejected");
+    expect(extractPollFailureDetail({ message: "plain msg" })).toBe("plain msg");
+    expect(extractPollFailureDetail({ data: { error_message: "nested" } })).toBe("nested");
+    expect(extractPollFailureDetail({ error: "string error" })).toBe("string error");
+  });
+
+  it("深层嵌套（output.error_message / data.fail_reason）", () => {
+    expect(extractPollFailureDetail({ output: { error_message: "deep reason" } })).toBe(
+      "deep reason",
+    );
+    expect(extractPollFailureDetail({ data: { fail_reason: "deep fail" } })).toBe("deep fail");
+  });
+
+  it("无错误语义字段返回 undefined（调用方回退状态原文）", () => {
+    expect(extractPollFailureDetail({ status: "failed", model: "m" })).toBeUndefined();
+    expect(extractPollFailureDetail(null)).toBeUndefined();
+    expect(extractPollFailureDetail("raw string")).toBeUndefined();
+  });
+
+  it("超长明细截断到 300 字符", () => {
+    const detail = extractPollFailureDetail({ message: "x".repeat(500) });
+    expect(detail).toHaveLength(300);
   });
 });

@@ -191,6 +191,47 @@ export type RestyleFallbackPlan = {
 };
 
 /**
+ * r2v 时长类错误（提交或轮询阶段通用判定）：
+ * 「duration not valid ... in r2v」这类 400 在提交时未爆、执行阶段才爆的
+ * 情况也进同一降档链；内容审核类错误不误判（审核类换时长重投无意义）。
+ */
+export function isR2vDurationError(error: string | undefined | null): boolean {
+  if (!error) return false;
+  if (isSensitiveContentError(error)) return false;
+  return /r2v/i.test(error) && /duration|时长/i.test(error);
+}
+
+/**
+ * 轮询原始 payload 的失败明细提取：各后端结构不同（TopenRouter/ARK/即梦），
+ * 按错误语义键（fail_reason / error_message / message / error / msg / reason）
+ * 逐层下探；取不到返回 undefined（调用方回退到任务状态原文）。
+ */
+export function extractPollFailureDetail(raw: unknown): string | undefined {
+  const ERROR_KEYS = ["fail_reason", "failure_reason", "error_message", "message", "error", "msg", "reason"];
+  const visit = (value: unknown, depth: number): string | undefined => {
+    if (depth > 3 || !value || typeof value !== "object") return undefined;
+    const record = value as Record<string, unknown>;
+    for (const key of ERROR_KEYS) {
+      const entry = record[key];
+      if (typeof entry === "string" && entry.trim()) return entry;
+      if (entry && typeof entry === "object") {
+        const nested = visit(entry, depth + 1);
+        if (nested) return nested;
+      }
+    }
+    for (const entry of Object.values(record)) {
+      if (entry && typeof entry === "object") {
+        const nested = visit(entry, depth + 1);
+        if (nested) return nested;
+      }
+    }
+    return undefined;
+  };
+  const detail = visit(raw, 0);
+  return detail ? detail.slice(0, 300) : undefined;
+}
+
+/**
  * r2v 时长类 400 的降档序列（TopenRouter 中转 ARK Seedance 的
  * 「duration not valid in r2v」回归）：
  * 1. 先贴参考片段实际时长——r2v 模式生成时长不得超过参考视频时长，

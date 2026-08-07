@@ -36,6 +36,7 @@ import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { fetchMedia } from "./workspaceMedia.functions";
 import { chargeCredits } from "./userCredits.functions";
 import { videoCost, videoCostOrFallback } from "./creditsCost";
+import { extractPollFailureDetail } from "./videoAssetLibrary";
 import { logGenerationError } from "./errorLogs.server";
 
 // ---------- ARK (Seedance) 配置 ----------
@@ -4499,6 +4500,12 @@ export const pollVideoTaskFn = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const r = await pollVideoTask({ taskId: data.taskId, backend: data.backend, model: data.model });
     if (!r.ok) return { ok: false as const, error: r.error, status: r.status };
+    // 执行阶段失败明细透传：ok:true+failed 时上游原始错误在 raw 里
+    // （TopenRouter/ARK 结构各异，统一提取；取不到由调用方回退状态原文）。
+    const errorDetail =
+      r.status === "failed" || r.status === "cancelled"
+        ? extractPollFailureDetail((r as { raw?: unknown }).raw)
+        : undefined;
     // 转绘渲染计费：任务成功（且有可播放结果）才扣费。扣费点只能在这里——
     // submitVideoTaskFn 只建任务，成功时刻发生在客户端轮询侧（历史漏洞：
     // 渲染成功但从未扣费）。幂等键 taskId，重复轮询/重放不重复扣。
@@ -4543,6 +4550,7 @@ export const pollVideoTaskFn = createServerFn({ method: "POST" })
       ok: true as const,
       status: r.status,
       videoUrl: r.videoUrl,
+      ...(errorDetail && { errorDetail }),
       ...(charged !== undefined && { charged }),
       ...(chargeWarning && { chargeWarning }),
     };
