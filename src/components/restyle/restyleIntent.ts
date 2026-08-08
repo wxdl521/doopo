@@ -180,6 +180,27 @@ export function parseSegmentRerunIntent(message: string): SegmentRerunIntent | n
 }
 
 /**
+ * 忙时（项目正在执行任务）的消息处置决策：
+ * - 片段/整集返工消息 → 进既有排队机制（pendingRerunsRef，队列收尾自动开跑），
+ *   不给忙态回复（「重新生成第2集 U02」）。
+ * - 其余消息（「在吗」「重做方案」等）→ 忙态回复：当前执行步骤 +
+ *   「可点击『停止』后重发，或等本步完成」。
+ */
+export function busyMessageAction(
+  message: string,
+  runningStepLabel?: string,
+):
+  | { kind: "queue_rerun"; intent: SegmentRerunIntent }
+  | { kind: "busy_reply"; content: string } {
+  const intent = parseSegmentRerunIntent(message);
+  if (intent) return { kind: "queue_rerun", intent };
+  return {
+    kind: "busy_reply",
+    content: `正在执行：${runningStepLabel?.trim() || "当前任务"}。可点击「停止」后重发，或等本步完成后再继续。`,
+  };
+}
+
+/**
  * 用户是否在要求整套重做转绘方案（区别于指出某集某段的局部修改）。
  * 与 isConfirmIntent 互斥（其已有的「重新 / 修改」排除逻辑会把这些说法挡在确认之外）。
  */

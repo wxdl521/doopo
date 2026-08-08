@@ -261,3 +261,45 @@ describe("isAssetImageIntent", () => {
     }
   });
 });
+
+
+// --------------------------------------------------------------------
+// busyMessageAction（忙时不吞消息回归：返工排队 vs 忙态回复）
+// --------------------------------------------------------------------
+import { busyMessageAction } from "../restyleIntent";
+
+describe("busyMessageAction", () => {
+  it("片段返工消息进排队机制（不给忙态回复）", () => {
+    const action = busyMessageAction("重新生成第2集 U02", "生成转绘方案 第 1/5 窗");
+    expect(action.kind).toBe("queue_rerun");
+    if (action.kind === "queue_rerun") {
+      expect(action.intent.episodes).toEqual([2]);
+      expect(action.intent.segments).toEqual(["U02"]);
+    }
+  });
+
+  it("整集返工同样进排队", () => {
+    expect(busyMessageAction("重跑第二集", "步骤").kind).toBe("queue_rerun");
+  });
+
+  it("非返工消息给忙态回复并带当前步骤（「重做方案」「在吗」不排队）", () => {
+    for (const message of ["重做方案", "在吗", "继续", "确认"]) {
+      const action = busyMessageAction(message, "生成资产图片");
+      expect(action.kind, message).toBe("busy_reply");
+      if (action.kind === "busy_reply") {
+        expect(action.content).toContain("正在执行：生成资产图片");
+        expect(action.content).toContain("停止");
+      }
+    }
+  });
+
+  it("无步骤标签时回退「当前任务」", () => {
+    const action = busyMessageAction("在吗");
+    expect(action.kind).toBe("busy_reply");
+    if (action.kind === "busy_reply") expect(action.content).toContain("当前任务");
+  });
+
+  it("资产语义的「重新生成」不排队（交由生图纠错，忙时也按忙态回复）", () => {
+    expect(busyMessageAction("重新生成场景图片", "步骤").kind).toBe("busy_reply");
+  });
+});

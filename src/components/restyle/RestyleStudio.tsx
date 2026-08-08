@@ -128,6 +128,7 @@ import { persistRestyleVideo } from "../../lib/restyleMedia.functions";
 import { realImageModelOptions, realVideoModels } from "../NewProjectDialog";
 import { useListedModels } from "../../hooks/useListedModels";
 import {
+  busyMessageAction,
   isConfirmIntent,
   isReanalyzeIntent,
   isAssetImageIntent,
@@ -4940,15 +4941,27 @@ export default function RestyleStudio() {
     setDraftAttachmentIds([]);
 
     // 同一项目内串行；不同项目各自独立，可并发执行。忙时不吞消息：
-    // 用户消息已照常上屏，明确回复当前正在执行的步骤（可停止后重发，
-    // 或等本步完成）；返工排队机制（pendingRerunsRef）不受影响。
+    // 用户消息已照常上屏并持久化——片段返工走既有排队机制（pendingRerunsRef，
+    // 队列收尾自动开跑）；非返工消息明确回复当前执行步骤。
     if (isProjectRunning(projectId)) {
-      const runningStep = [...(projectRuns[projectId]?.steps ?? [])]
-        .reverse()
-        .find((step) => step.status === "running");
+      const action = busyMessageAction(
+        message,
+        [...(projectRuns[projectId]?.steps ?? [])].reverse().find(
+          (step) => step.status === "running",
+        )?.label,
+      );
+      if (action.kind === "queue_rerun") {
+        // 能进排队机制就排队（含集/段不存在的引导提示）；无法处理时退化为忙态回复，不静默。
+        if (handleSegmentRerunIntent(projectId, conversationId, action.intent)) return;
+        appendConversationMessage(projectId, conversationId, {
+          role: "assistant",
+          content: "正在执行：当前任务。可点击「停止」后重发，或等本步完成后再继续。",
+        });
+        return;
+      }
       appendConversationMessage(projectId, conversationId, {
         role: "assistant",
-        content: `正在执行：${runningStep?.label ?? "当前任务"}。可点击「停止」后重发，或等本步完成后再继续。`,
+        content: action.content,
       });
       return;
     }
@@ -6603,10 +6616,12 @@ export default function RestyleStudio() {
                         return;
                       }
                       // Enter 发送、Shift+Enter 换行；中文输入法拼字中（isComposing）不触发发送。
+                      // 执行中也允许发送：由 sendChatMessageInner 的忙态分支上屏 +
+                      // 排队/忙态回复（此前这里 isAnalyzing 直接 return，消息被静默丢弃）。
                       if (event.key !== "Enter" || event.shiftKey) return;
                       if (event.nativeEvent.isComposing) return;
                       event.preventDefault();
-                      if (!activeConversation || isAnalyzing) return;
+                      if (!activeConversation) return;
                       void sendChatMessage();
                     }}
                     placeholder={
@@ -6719,18 +6734,41 @@ export default function RestyleStudio() {
                     </option>
                   ))}
                 </select>
-                <button
-                  type={isAnalyzing ? "button" : "submit"}
-                  onClick={
-                    isAnalyzing && activeProjectId ? () => stopRun(activeProjectId) : undefined
-                  }
-                  disabled={!activeConversation}
-                  className="btn-primary !h-8 !w-8 !justify-center !rounded-lg !p-0"
-                  aria-label={isAnalyzing ? t.restyle_run_stop : t.restyle_send}
-                  title={isAnalyzing ? t.restyle_run_stop : t.restyle_send}
-                >
-                  {isAnalyzing ? <Square size={13} fill="currentColor" /> : <Send size={15} />}
-                </button>
+                {isAnalyzing ? (
+                  // 执行中：发送键保留（走忙态分支上屏 + 排队/忙态回复），
+                  // 停止键独立并列（此前发送键直接变成停止键，忙时消息无从发出）。
+                  <>
+                    <button
+                      type="submit"
+                      disabled={!activeConversation}
+                      className="btn-primary !h-8 !w-8 !justify-center !rounded-lg !p-0"
+                      aria-label={t.restyle_send}
+                      title={t.restyle_send}
+                    >
+                      <Send size={15} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => activeProjectId && stopRun(activeProjectId)}
+                      disabled={!activeProjectId}
+                      className="btn-primary !h-8 !w-8 !justify-center !rounded-lg !p-0"
+                      aria-label={t.restyle_run_stop}
+                      title={t.restyle_run_stop}
+                    >
+                      <Square size={13} fill="currentColor" />
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    type="submit"
+                    disabled={!activeConversation}
+                    className="btn-primary !h-8 !w-8 !justify-center !rounded-lg !p-0"
+                    aria-label={t.restyle_send}
+                    title={t.restyle_send}
+                  >
+                    <Send size={15} />
+                  </button>
+                )}
               </div>
               {!getVideoAssetLibrarySupport(selectedVideoModel).supported && (
                 <p className="mt-2 rounded-md border border-amber-300/70 bg-amber-50 px-2 py-1 text-[11px] leading-4 text-amber-700 dark:border-amber-500/40 dark:bg-amber-500/10 dark:text-amber-300">
