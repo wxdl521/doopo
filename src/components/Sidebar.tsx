@@ -1,32 +1,29 @@
 import { Link } from "@tanstack/react-router";
-import {
-  Home,
-  FolderOpen,
-  Bookmark,
-  Sparkles,
-  WandSparkles,
-  Mail,
-  Headphones,
-  FileText,
-  Library,
-  Palette,
-  AudioLines,
-} from "lucide-react";
+import { Mail, Headphones } from "lucide-react";
+import NavHome from "./icons/NavHome";
+import NavScript from "./icons/NavScript";
+import NavTranscribe from "./icons/NavTranscribe";
+import NavProject from "./icons/NavProject";
+import NavAssets from "./icons/NavAssets";
+import NavBases from "./icons/NavBases";
+import NavRestyle from "./icons/NavRestyle";
+import NavZoclaw from "./icons/NavZoclaw";
+import NavModels from "./icons/NavModels";
 import { useLanguage } from "../i18n/LanguageContext";
 
 export default function Sidebar({ fullHeight = false }: { fullHeight?: boolean }) {
   const { t } = useLanguage();
 
   const items = [
-    { to: "/home", label: t.nav_home, icon: Home },
-    { to: "/scripts", label: t.nav_scripts, icon: FileText },
-    { to: "/transcribe", label: t.nav_transcribe, icon: AudioLines },
-    { to: "/projects", label: t.nav_projects, icon: FolderOpen },
-    { to: "/assets", label: t.nav_assets, icon: Library },
-    { to: "/bases", label: t.nav_bases, icon: Bookmark },
-    { to: "/restyle", label: t.nav_restyle, icon: Palette },
-    { to: "/zoclaw", label: t.nav_zoclaw, icon: WandSparkles },
-    { to: "/models", label: t.nav_models, icon: Sparkles },
+    { to: "/home", label: t.nav_home, icon: NavHome },
+    { to: "/scripts", label: t.nav_scripts, icon: NavScript },
+    { to: "/transcribe", label: t.nav_transcribe, icon: NavTranscribe },
+    { to: "/projects", label: t.nav_projects, icon: NavProject },
+    { to: "/assets", label: t.nav_assets, icon: NavAssets },
+    { to: "/bases", label: t.nav_bases, icon: NavBases },
+    { to: "/restyle", label: t.nav_restyle, icon: NavRestyle },
+    { to: "/zoclaw", label: t.nav_zoclaw, icon: NavZoclaw },
+    { to: "/models", label: t.nav_models, icon: NavModels },
   ];
 
   const footerItems = [
