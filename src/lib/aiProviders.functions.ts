@@ -494,7 +494,6 @@ export async function fetchListedModelsFromDb(): Promise<ListedModelEntry[]> {
 }
 
 export const listListedModels = createServerFn({ method: "POST" })
-  .middleware([requireSupabaseAuth])
   .validator(ListListedModelsInput)
   .handler(async ({ data }) => {
     let rows = getListedModelsCache();
