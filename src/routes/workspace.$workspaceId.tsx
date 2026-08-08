@@ -6887,11 +6887,19 @@ function WorkspacePage() {
         // 视频生成 prompt 才能遵循故事板的镜头动线与人物动线,不止是机位。
         const mov = s.cameraMovement ? ` | 运镜: ${s.cameraMovement}` : "";
         const blk = s.characterBlocking ? ` | 走位: ${s.characterBlocking}` : "";
+        // 2026/08(台词驱动密度规则):每行带出台词归属与镜头角色,
+        // 视频模型据此把台词按 shot 分配(反应镜头不说话)。
+        const role = s.shotRole === "reaction" ? " | 反应镜头" : s.shotRole === "insert" ? " | 插入镜头" : "";
+        const dlg = s.dialogue?.trim()
+          ? ` | 台词:「${s.dialogue.trim()}」`
+          : s.shotRole === "reaction"
+            ? " | 无台词"
+            : "";
         const time =
           s.startSec != null && s.endSec != null
             ? ` [${(s.startSec - groupStart).toFixed(0)}-${(s.endSec - groupStart).toFixed(0)}s]`
             : "";
-        return `Shot ${i + 1}${time} [${s.shotTypeLabel}] ${s.action}${cam}${mov}${blk}`;
+        return `Shot ${i + 1}${time} [${s.shotTypeLabel}] ${s.action}${cam}${mov}${blk}${role}${dlg}`;
       })
       .join("\n");
   }
@@ -7475,6 +7483,9 @@ function WorkspacePage() {
           camera: shot.camera,
           cameraMovement: shot.cameraMovement,
           characterBlocking: shot.characterBlocking,
+          // 台词驱动密度规则:台词归属与镜头角色透传给分镜图 prompt
+          dialogue: shot.dialogue,
+          shotRole: shot.shotRole,
           characterImageUrls: charImageUrls,
           characterNames: charNames,
           sceneImageUrl,
@@ -7819,8 +7830,24 @@ function WorkspacePage() {
   /**
    * 给带配音的视频一个不可歧义的台词轨。仅把引号内的台词交给模型，避免它把
    * 动作/旁白误读为对白，或为了“自然”而改写、调换台词顺序。
+   * 2026/08(台词驱动密度规则):shot 带 dialogue 时按 shot 顺序逐行标注归属
+   * (不再整组一段);无台词的反应/插入镜头显式标注 (no dialogue)。
    */
   function buildDialogueDeliveryInstruction(group: StoryboardGroup): string | null {
+    const hasPerShotDialogue = group.shots.some((s) => s.dialogue?.trim());
+    if (hasPerShotDialogue) {
+      return [
+        "[SPOKEN DIALOGUE — EXACT TRANSCRIPT]",
+        "Speak exactly this Chinese dialogue, assigned to the shots in this order:",
+        ...group.shots.map((s, i) =>
+          s.dialogue?.trim()
+            ? `Shot ${i + 1}: 「${s.dialogue.trim()}」`
+            : `Shot ${i + 1}: (no dialogue — reaction/insert shot, do not speak)`,
+        ),
+        "Do not omit, add, repeat, paraphrase, reorder, merge, or change the pronunciation of any word.",
+        "Keep each line clear and natural with brief pauses at punctuation. Do not speak narration, shot descriptions, or any other text.",
+      ].join("\n");
+    }
     const dialogue = extractDialogue(effectiveShotBreakdown(group)).trim();
     if (!dialogue) return null;
     return [

@@ -38,7 +38,12 @@ import {
   arkTextEndpoint,
   qwenApiKey,
 } from "./arkText";
-import { estimateDialogueSpeechSec, MAX_VIDEO_DURATION_SEC } from "./dialogueDuration";
+import {
+  countDialogueSentences,
+  countSpeakableChars,
+  estimateDialogueSpeechSec,
+  MAX_VIDEO_DURATION_SEC,
+} from "./dialogueDuration";
 
 // --------------------------------------------------------------------
 // 1) generateStoryboardFromPlot —— 文本任务
@@ -134,12 +139,40 @@ export const generateStoryboardFromPlot = createServerFn({ method: "POST" })
 
     // 强制 JSON 输出,避免模型输出自然语言;prompt 里明确告诉模型输出 schema。
     const systemPrompt = `你是一名资深影视分镜师。你的任务是把一集剧本切成若干个**分镜组**,
-每个分镜组 = 一段最长 ${MAX_VIDEO_DURATION_SEC} 秒的视频。**一个分镜组不锁死 1 个 shot**:根据这段剧情的节奏,
-在组内生成 **1~3 个 shot**,每个 shot 2~8 秒,加起来不超过 ${MAX_VIDEO_DURATION_SEC} 秒,把这段剧情表现完整。
+每个分镜组 = 一段最长 ${MAX_VIDEO_DURATION_SEC} 秒的视频。**一个分镜组不锁死 1 个 shot**:
+对话段落按"信息流动"切镜(见下方【对话戏分镜核心原则】),每句完整台词默认 2~3 个 shot;
+非对话段落按动作节拍切。每个 shot 0.5~8 秒,加起来不超过 ${MAX_VIDEO_DURATION_SEC} 秒,
+把这段剧情表现完整。
 组分镜组级字段:该组覆盖的剧情描述(plotText)、场景(sceneId)、角色(characterIds)、
 时间区间(startSec/endSec,整组 ≤${MAX_VIDEO_DURATION_SEC}s)。组内 shots 数组每个元素是一个镜头(shot):
 景别(shotType)、动作(action)、机位(camera)、运镜(cameraMovement)、
-走位(characterBlocking)、时间区间(startSec/endSec)。
+走位(characterBlocking)、台词归属(dialogue)、镜头角色(shotRole)、时间区间(startSec/endSec)。
+
+═══════════════════════════════════════════════════════════
+【对话戏分镜核心原则(对话段落必须遵守)】
+═══════════════════════════════════════════════════════════
+对话戏的灵魂是"反应",不是"说话"——只拍说话的人是最业余的拍法。
+按"信息流动"切镜,不按台词句号切:
+- **密度**:每句完整台词默认 2~3 个 shot(说话人镜头 + 听者反应镜头 + 可选情绪特写/动作特写);
+  反应/反打镜头占比不低于 40%;严禁一句台词"一个镜头到底"。
+- **反应优先**:每句台词至少给 1 个听者反应镜头;关键台词可以先给反应、再给说话人。
+- **动作切镜**:切镜点落在动作发生的瞬间(抬手、攥拳、起身、走动),不在台词停顿处切镜。
+- **信息增量**:每个 shot 必须带来新信息(新表情/新动作/新反应),没有增量的镜头一律删除。
+- **景别递进**:情绪越激烈,景别越近(双人中景→过肩近景→正脸近景→面部特写),
+  随冲突升级逐步推进;情绪最高点可用 0.3~0.5s 快切;长对话中段可插 1 个 0.5~1s 空镜留白。
+- **轴线守恒**:全程保持 180° 轴线同侧拍摄;对话正反打在轴线两侧各机位组内属于常规组合,不算越轴。
+镜头功能与时长参考(对话专用):
+  双人中景(MS) 2~3s —— 开场/转场/人物移动/关系质变;
+  过肩近景(OTS) 1.2~1.8s —— 常规对话、情绪平稳;
+  正脸近景(CU) 1~1.5s —— 关键台词、情绪波动;
+  面部特写(ECU) 0.5~1s —— 情绪爆发、致命反应;
+  动作特写(CU) 0.3~0.8s —— 攥拳、捏杯、擦泪等潜台词小动作;
+  反打(OTS/CU) 0.8~1.2s —— 听者的即时反馈,每句台词说完后必须给。
+三套组合模板(每句台词直接套用):
+  常规对话(情绪平稳):动作特写(0.5s) → 说话人过肩近景(1.5s) → 听者反打近景(1s)
+  关键台词(情绪波动):听者反应近景(0.8s) → 说话人正脸近景(2s) → 动作特写(0.7s)
+  激烈冲突(情绪爆发):说话人面部特写(1s) → 听者面部特写(0.8s) → 双人中景(1.2s)
+非对话段落按动作节拍切(一个动作阶段一个 shot);纯环境段仍按【空镜/环境镜头】规则。
 
 ═══════════════════════════════════════════════════════════
 【第 0 条 —— 剧情覆盖完整性(最高优先级,压倒一切)】
@@ -152,7 +185,7 @@ export const generateStoryboardFromPlot = createServerFn({ method: "POST" })
 
 在输出 JSON 之前,强制执行以下自检:
 1. 把原剧本按动作/台词/场景切换拆成若干段落，每段先计算台词时长再安排画面。
-2. 为每段分配一个分镜组，组内再按节奏拆 1~3 个 shot(每个 2~8s,整组 ≤${MAX_VIDEO_DURATION_SEC}s)。
+2. 为每段分配一个分镜组，组内再按节奏拆 shot(对话段落每句台词 2~3 个,非对话按动作节拍;每个 0.5~8s,整组 ≤${MAX_VIDEO_DURATION_SEC}s)。
 3. 逐个检查:段落 1 → 组[0] 的 plotText 覆盖了吗? 段落 2 → 组[1]? ... 直到结尾。
 4. 任何段落没被覆盖 → **必须补组**,不能合并到相邻组。
 5. 特别检查原剧本的**最后一段**(结尾),必须有专门一组覆盖它,
@@ -184,10 +217,12 @@ export const generateStoryboardFromPlot = createServerFn({ method: "POST" })
 - **空镜组(无台词)**:不受台词预算约束,按原 ~10s 节奏切即可(台词字数=0,预算=0)。
 
 【分镜组与 shot 数量要求】
-- 一个分镜组 = 一段最长 ${MAX_VIDEO_DURATION_SEC}s 视频。组内 **1~3 个 shot**,每个 shot **2~8 秒**,整组 ≤${MAX_VIDEO_DURATION_SEC}s。
-- 组时长由**台词说完所需时长**驱动:台词多的组,组内 shot 时长之和要够说完台词(≤${MAX_VIDEO_DURATION_SEC}s);
-  台词超 ${MAX_VIDEO_DURATION_SEC}s 的段必须拆多组(见【第 0.5 条】)。
-- 按这段剧情的节奏决定 shot 数:简单的静态段落 1 个 shot;有动作切换的 2 个;节奏密集的 3 个。
+- 一个分镜组 = 一段最长 ${MAX_VIDEO_DURATION_SEC}s 视频。组内 shot 数由**台词驱动**:
+  • 对话段落:每句完整台词 2~3 个 shot(说话人镜头 + 听者反应镜头 + 可选情绪/动作特写),
+    反应/反打镜头占比 ≥40%,一句台词严禁一个镜头到底(见【对话戏分镜核心原则】);
+  • 非对话段落:按动作节拍切(一个动作阶段一个 shot);空镜段 1 个 shot。
+- 每个 shot **0.5~8 秒**,整组 ≤${MAX_VIDEO_DURATION_SEC}s;组时长由台词说完所需时长驱动
+  (见【第 0.5 条】)——台词多的组优先**加 shot**(反应镜头撑时长),不要把单个 shot 拉长到 8s 凑数。
 - **禁止整组只给 0 个 shot**;也禁止把整集塞进 1 组。
 - 组数由剧情节奏**与台词密度共同**决定(台词密集处多拆组,不设上限);但**禁止整集只输出 1 组**。
 
@@ -253,7 +288,8 @@ export const generateStoryboardFromPlot = createServerFn({ method: "POST" })
     - 上一分镜结束的机位 ≈ 下一分镜开始的机位；若景别或机位改变，必须是同侧合理切换，不能瞬移到人物另一边。
     - 每个 shot 只推进一个明确动作阶段。不要在同一镜头中塞入“走过去又坐下再拿起道具”等多个结果；需要多个阶段就拆成连续 shots。
     - 输出前逐镜头做“机位物理可执行性”检查：camera 写出的起始位置必须能拍到 action；cameraMovement 的起点必须等于该 camera 位置。人物从左到右移动，不等于摄影机从左到右移动；若是摇镜，机位留在原处，仅改变朝向；若是跟拍/移镜，写明摄影机实际移动路线。任何一项不成立就重写该镜头。
-    - **连续动作机位组规则**：若 Shot N 与 Shot N+1 是同一动作的连续拆解（例如“手指弹后脑勺”→“被弹者捂头回头反应”），默认属于同一个机位组：两镜头的机位必须在同一拍摄侧、相邻位置、朝向连续，俯视图中两个镜头标记应落在同一侧的相邻区域，不能一镜在人物前方、下一镜无理由跳到人物后方。只有剧本明确要求反打/主观镜头/越轴过渡时才可换侧，且 camera 必须明写“反打到…侧”及原因。
+    - **连续动作机位组规则**：若 Shot N 与 Shot N+1 是同一动作的连续拆解（例如“手指弹后脑勺”→“被弹者捂头回头反应”），默认属于同一个机位组：两镜头的机位必须在同一拍摄侧、相邻位置、朝向连续，俯视图中两个镜头标记应落在同一侧的相邻区域，不能一镜在人物前方、下一镜无理由跳到人物后方。
+    - **对话反打规则**：对话镜头**默认允许**说话人/听者正反打——同一 180° 轴线两侧的过肩/反打机位组是常规组合，不算越轴；保持轴线守恒即可。只有明确的人物移动或镜头运动作为越轴理由时才换到另一侧，且 camera 必须明写“反打到…侧”及原因。
 - characterBlocking 用中文描述本镜头中人物的走位/动线路径,
   写清楚"谁从哪移动到哪、经过什么路径、面向哪里、重心/肢体如何变化、与谁/什么道具的关系"；每个有角色镜头都要写状态，不得只写笼统的“走位”:
   • 正确:"林夏从门口(画面左侧)走向窗边座位(画面右侧)"
@@ -266,7 +302,9 @@ export const generateStoryboardFromPlot = createServerFn({ method: "POST" })
 - startSec / endSec 必填:该镜头在当集时间轴上的区间(秒)
   - 必须在 group 的 startSec~endSec 范围内
   - 组内连续 shot 的时间区间要无缝衔接(shot N 的 endSec == shot N+1 的 startSec)
-  - **每个 shot 时长 2~8 秒**;组内所有 shot 时长之和 = 组的 endSec - startSec,整组 ≤${MAX_VIDEO_DURATION_SEC}s
+  - **每个 shot 时长 0.5~8 秒**(反应/特写镜头 0.5~1.2s 是常态,不要硬凑长);组内所有 shot 时长之和 = 组的 endSec - startSec,整组 ≤${MAX_VIDEO_DURATION_SEC}s
+- dialogue:本 shot 说出口的台词原文(完整引用,带角色名前缀,如 林晚:“我翻你东西?”);无台词的 shot(反应/动作特写/空镜)**省略该字段**
+- shotRole:镜头角色三选一——"action"(说话人/主动作镜头) / "reaction"(听者反应、反打镜头) / "insert"(情绪特写、动作特写、空镜等插入镜头);对话组里 reaction+insert 占比应 ≥40%
 - shotType 必填,5 个里选
 
 【空镜 / 环境镜头(重要,务必遵守)】
@@ -282,24 +320,30 @@ export const generateStoryboardFromPlot = createServerFn({ method: "POST" })
 【其他】
 1. **剧情覆盖完整性(最重要)**：严格按剧本顺序切分,**必须覆盖整集全部剧情**,不得遗漏任何段落。
    开头 / 发展 / 高潮 / 结尾都要有对应的分镜组。输出前请逐段对照原剧本自查。
-2. **分镜组与 shot 数**：每组 = 一段最长 ${MAX_VIDEO_DURATION_SEC}s 视频,组内 1~3 个 shot(每个 2~8s,整组 ≤${MAX_VIDEO_DURATION_SEC}s);禁止整集只输出 1 组。
-3. 景别在 [WS 远景 / MS 中景 / CU 近景 / ECU 特写 / OTS 过肩] 中选择,按剧情需要混合使用,**不要所有分镜用同一个景别**。
-4. 时间用秒(startSec / endSec):每个 shot 2~8s,组内 shot 时长之和 ≤${MAX_VIDEO_DURATION_SEC}s;组之间时间区间无缝衔接(组 N 末 shot 的 endSec == 组 N+1 首 shot 的 startSec)。
+2. **分镜组与 shot 数**：每组 = 一段最长 ${MAX_VIDEO_DURATION_SEC}s 视频；对话段落每句台词 2~3 个 shot（说话人 + 听者反应 + 可选特写），非对话段落按动作节拍切（每个 0.5~8s，整组 ≤${MAX_VIDEO_DURATION_SEC}s）；禁止整集只输出 1 组。
+3. 景别在 [WS 远景 / MS 中景 / CU 近景 / ECU 特写 / OTS 过肩] 中选择,按剧情需要混合使用,**不要所有分镜用同一个景别**；情绪越激烈景别越近（景别递进）。
+4. 时间用秒(startSec / endSec):每个 shot 0.5~8s,组内 shot 时长之和 ≤${MAX_VIDEO_DURATION_SEC}s;组之间时间区间无缝衔接(组 N 末 shot 的 endSec == 组 N+1 首 shot 的 startSec)。
     **组内 shot 时长之和 ≥ 该组 spoken 台词字数 × 0.25s + 1s 停顿**(够说完台词),且 ≤${MAX_VIDEO_DURATION_SEC}s;台词超 ${MAX_VIDEO_DURATION_SEC}s 的段必须拆多组(见【第 0.5 条】)。
 5. 角色 ID 必须是传入的角色列表中的 id,场景 ID 必须是传入的场景列表中的 id。
 6. 分镜生成前先列出“已知空间与道具清单”：只使用剧本/场景资料明确给出的建筑边界、门窗、家具、关键道具、人物持物及状态；**不得用常识补设额外的门、伞、家具或剧情动作**。连续镜头沿用同一清单。
 7. 只输出 JSON,不要任何解释、Markdown 包裹、代码块标记。`;
 
     const userPrompt = `请把下面第 ${data.episodeIndex} 集剧本切成若干个**分镜组**,输出 JSON。
-**每个分镜组 = 一段最长 ${MAX_VIDEO_DURATION_SEC}s 的视频**，先按台词预算确定组时长，再按剧情节奏生成 **1~3 个 shot**(每个 2~8s,整组 ≤${MAX_VIDEO_DURATION_SEC}s)。
+**每个分镜组 = 一段最长 ${MAX_VIDEO_DURATION_SEC}s 的视频**，先按台词预算确定组时长，再按剧情节奏拆 shot(每个 0.5~8s,整组 ≤${MAX_VIDEO_DURATION_SEC}s)。
 
 【分镜组与 shot 要求】
-- 一个分镜组 = 一段最长 ${MAX_VIDEO_DURATION_SEC}s 视频。按这段剧情的节奏决定组内 shot 数:
-  • 简单静态段落 → 1 个 shot(2~8s)
-  • 有动作/反应切换 → 2 个 shot
-  • 节奏密集(多句台词+动作) → 3 个 shot
-- 每个 shot **2~8 秒**,组内 shot 时长之和 ≤${MAX_VIDEO_DURATION_SEC}s。
-- 按剧情把整集切成若干段，**不要按固定 10 秒估算组数**；对话密集处自然生成更长的 12~15s 组或更多短组。
+- 一个分镜组 = 一段最长 ${MAX_VIDEO_DURATION_SEC}s 视频。组内 shot 数由**台词驱动**:
+  • 对话段落:每句完整台词 **2~3 个 shot**——说话人镜头(action) + 听者反应镜头(reaction) +
+    可选情绪特写/动作特写(insert);反应/反打镜头占比不低于 40%;严禁一句台词一个镜头到底。
+    三套模板直接套用:
+      常规对话:动作特写(0.5s) → 说话人过肩近景(1.5s) → 听者反打近景(1s)
+      关键台词:听者反应近景(0.8s) → 说话人正脸近景(2s) → 动作特写(0.7s)
+      激烈冲突:说话人面部特写(1s) → 听者面部特写(0.8s) → 双人中景(1.2s)
+  • 非对话段落:按动作节拍切(一个动作阶段一个 shot);纯环境段 1 个空镜 shot。
+- 每个 shot **0.5~8 秒**,组内 shot 时长之和 ≤${MAX_VIDEO_DURATION_SEC}s;反应/特写镜头 0.5~1.2s 是常态。
+- 每个 shot 带 dialogue(本镜头台词原文,无台词省略)与 shotRole(action/reaction/insert)。
+- 切镜点落在动作发生瞬间,不在台词停顿处切;每个 shot 必须有信息增量;情绪越激烈景别越近。
+- 按剧情把整集切成若干段，**不要按固定 10 秒估算组数**；对话密集处自然生成更多组。
 - **禁止整集只输出 1 组**;也禁止把台词时长加 1 秒停顿后超过 ${MAX_VIDEO_DURATION_SEC}s 的剧情塞进一组。
 - 输出 JSON 前请确认:每一段剧情都被分配到了某个分镜组的 plotText 中,没有遗漏。
 
@@ -342,7 +386,7 @@ ${data.episodeText}
   - 单句台词不能被拆到两个组(保持完整落在同一组)。
   - 空镜组(无台词,N=0)跳过此项。
 
-===== 输出 JSON Schema(每组 1~3 个 shot;示例三组分别用了 1/2/3 个 shot,并混合景别) =====
+===== 输出 JSON Schema(shot 数由台词驱动;示例三组分别展示空镜/对话/冲突;shot 带 dialogue 与 shotRole) =====
 {
   "groups": [
     {
@@ -353,7 +397,7 @@ ${data.episodeText}
       "sceneId": "sc-xxx (必须从上面场景列表里挑一个最接近的,没有就 null)",
       "characterIds": ["ch-xxx"],
       "shots": [
-        { "shotType": "WS", "action": "什么人做什么,1~2 句", "camera": "机位/焦段/角度(中文简短,只描述摄像机位置,不重复 shotType)", "cameraMovement": "固定机位,无运镜", "characterBlocking": "人物静止,无走位", "startSec": 0, "endSec": 5 }
+        { "shotType": "WS", "shotRole": "insert", "action": "什么人做什么,1~2 句", "camera": "机位/焦段/角度(中文简短,只描述摄像机位置,不重复 shotType)", "cameraMovement": "固定机位,无运镜", "characterBlocking": "人物静止,无走位", "startSec": 0, "endSec": 5 }
       ]
     },
     {
@@ -364,21 +408,24 @@ ${data.episodeText}
       "sceneId": "sc-xxx",
       "characterIds": ["ch-xxx", "ch-yyy"],
       "shots": [
-        { "shotType": "CU", "action": "什么人做什么", "camera": "...", "cameraMovement": "从全景缓慢推到角色面部特写", "characterBlocking": "林夏从门口走向窗边座位", "startSec": 5, "endSec": 8 },
-        { "shotType": "OTS", "action": "什么人做什么", "camera": "...", "cameraMovement": "固定机位,无运镜", "characterBlocking": "两人原地对话,无走位", "startSec": 8, "endSec": 12 }
+        { "shotType": "OTS", "shotRole": "action", "dialogue": "林晚:“你怎么翻我东西了?”", "action": "从林晚肩后拍陈默,陈默低着头说话", "camera": "...", "cameraMovement": "固定机位,无运镜", "characterBlocking": "两人原地对话,无走位", "startSec": 5, "endSec": 6.5 },
+        { "shotType": "CU", "shotRole": "reaction", "action": "林晚的眼睛猛地睁大,满脸不可置信(听者反应,无台词)", "camera": "...", "cameraMovement": "固定机位,无运镜", "characterBlocking": "两人原地对话,无走位", "startSec": 6.5, "endSec": 7.5 },
+        { "shotType": "CU", "shotRole": "action", "dialogue": "林晚:“我们结婚三年了,你失业两个月居然不告诉我?”", "action": "林晚身体前倾,声音提高质问", "camera": "...", "cameraMovement": "固定机位,无运镜", "characterBlocking": "两人原地对话,无走位", "startSec": 7.5, "endSec": 10 },
+        { "shotType": "CU", "shotRole": "reaction", "action": "陈默的头埋得更低,嘴唇紧抿(听者反应,无台词)", "camera": "...", "cameraMovement": "固定机位,无运镜", "characterBlocking": "两人原地对话,无走位", "startSec": 10, "endSec": 11 },
+        { "shotType": "ECU", "shotRole": "insert", "action": "陈默的手指无意识摩挲杯沿,指甲发白", "camera": "...", "cameraMovement": "固定机位,无运镜", "characterBlocking": "人物静止,无走位", "startSec": 11, "endSec": 12 }
       ]
     },
     {
       "id": "grp-3",
-      "plotText": "该组(约 10s)对应的剧情扩写...",
+      "plotText": "该组(约 3s)对应的剧情扩写(激烈冲突)...",
       "startSec": 12,
-      "endSec": 22,
+      "endSec": 15,
       "sceneId": "sc-xxx",
-      "characterIds": ["ch-xxx"],
+      "characterIds": ["ch-xxx", "ch-yyy"],
       "shots": [
-        { "shotType": "MS", "action": "什么人做什么", "camera": "...", "cameraMovement": "...", "characterBlocking": "...", "startSec": 12, "endSec": 15 },
-        { "shotType": "ECU", "action": "什么人做什么", "camera": "...", "cameraMovement": "...", "characterBlocking": "...", "startSec": 15, "endSec": 19 },
-        { "shotType": "WS", "action": "什么人做什么", "camera": "...", "cameraMovement": "...", "characterBlocking": "...", "startSec": 19, "endSec": 22 }
+        { "shotType": "ECU", "shotRole": "action", "dialogue": "陈默:“我也不想这样!”", "action": "陈默猛地站起来对着林晚大喊", "camera": "...", "cameraMovement": "...", "characterBlocking": "陈默从座位起身", "startSec": 12, "endSec": 13 },
+        { "shotType": "ECU", "shotRole": "reaction", "action": "林晚被吓得后退一步,满脸惊讶(听者反应,无台词)", "camera": "...", "cameraMovement": "...", "characterBlocking": "林晚后退半步", "startSec": 13, "endSec": 13.8 },
+        { "shotType": "MS", "shotRole": "action", "action": "双人中景收住冲突张力,两人对峙而立", "camera": "...", "cameraMovement": "...", "characterBlocking": "...", "startSec": 13.8, "endSec": 15 }
       ]
     }
   ]
@@ -386,14 +433,15 @@ ${data.episodeText}
 
 注意:
 - **剧情覆盖检查(最重要)**：输出 JSON 后请逐段对照原剧本自查 -- 开头、中间每一段、结尾是否都有对应的分镜组。**严禁遗漏任何一段剧情**。
-- **每组 1~3 个 shot**：每组 = 一段最长 ${MAX_VIDEO_DURATION_SEC}s 视频,组内 1~3 个 shot(每个 2~8s,整组 ≤${MAX_VIDEO_DURATION_SEC}s);禁止整集只输出 1 组。
+- **shot 数由台词驱动**：对话段落每句台词 2~3 个 shot(说话人 + 听者反应 + 可选特写,反应/反打占比 ≥40%),非对话段落按动作节拍切;每个 shot 0.5~8s,整组 ≤${MAX_VIDEO_DURATION_SEC}s;禁止整集只输出 1 组。
+- 每个 shot 带 shotRole(action/reaction/insert)与 dialogue(本镜头台词原文,无台词省略);反应镜头(action 里写清"听者反应,无台词")不得编造台词。
 - 组内 shot 时长之和 = 组 endSec - startSec(≤${MAX_VIDEO_DURATION_SEC}s);组之间首尾 shot 的 endSec/startSec 无缝衔接。
 - 没有运镜就写「固定机位,无运镜」;人物没动就写「人物静止,无走位」。**严禁无中生有编造动线**。
 - 严格按照剧本的剧情顺序排分镜组(不要乱序)
 - 所有分镜组的 plotText 按顺序拼接起来,必须完整覆盖原剧本全部内容
 - sceneId 必须在传入的场景列表里;不确定时给最接近的
 - characterIds 必须在传入的角色列表里;没有明确角色时给空数组 [](纯环境/风景描写 = 空镜,必须给 [],严禁分配角色)
-- 镜头组合要有变化,不要所有 shot 都是 MS 中景 -- 按剧情需要混合使用 WS/CU/ECU/OTS
+- 镜头组合要有变化,不要所有 shot 都是 MS 中景 -- 按剧情需要混合使用 WS/CU/ECU/OTS;情绪越激烈景别越近
 - 整集时长应合理。组数由剧情内容量**与台词密度共同**决定(台词密集处多拆组,不设上限)。
 - **台词可说完性**:每组引号内 spoken 台词字数 × 0.25s + 1s 停顿 ≤ 组内 shot 时长之和(≤${MAX_VIDEO_DURATION_SEC}s);超了就拆组。台词多的对话段拆细,不要硬塞进一组。`;
 
@@ -471,8 +519,10 @@ ${data.episodeText}
             // ARK DeepSeek V4 Pro:关闭深度思考,走通用对话快模式
             ...(isArk ? { thinking: ARK_TEXT_THINKING_DISABLED } : {}),
             temperature: 0.6,
-            // plotText 详细扩写 + 强制覆盖完整性,12000 给 prose + shots + 完整覆盖留足空间。
-            max_tokens: 12000,
+            // plotText 详细扩写 + 强制覆盖完整性 + 台词驱动密度(镜头数约翻倍,
+            // 每 shot 带 dialogue/shotRole),12000→24000 给 prose + shots + 完整覆盖留足空间;
+            // 流式输出按 group 逐段解析(StoryboardGroupExtractor),上限提升不影响解析。
+            max_tokens: 24000,
           }),
           signal: controller.signal,
         });
@@ -677,6 +727,8 @@ function normalizeGroup(
   estDialogueSec?: number;
   /** 台词超出单视频 15s 硬上限的秒数(>0 表示该组台词一个视频说不完,需拆组/精简)。 */
   dialogueOverloadSec?: number;
+  /** 台词驱动密度校验警告(台词句数明显多于 shot 数;UI 暂不展示,仅记录)。 */
+  shotDensityWarning?: string;
   shots: Array<{
     id: string;
     shotType: "WS" | "MS" | "CU" | "ECU" | "OTS";
@@ -685,6 +737,10 @@ function normalizeGroup(
     camera: string;
     cameraMovement?: string;
     characterBlocking?: string;
+    /** 本 shot 台词原文(无台词省略)。 */
+    dialogue?: string;
+    /** 镜头角色:说话/动作(action) | 听者反应/反打(reaction) | 特写/空镜插入(insert)。 */
+    shotRole?: "action" | "reaction" | "insert";
     startSec?: number;
     endSec?: number;
   }>;
@@ -720,6 +776,8 @@ function normalizeGroup(
     estDialogueSec + 1 > MAX_VIDEO_DURATION_SEC
       ? Math.ceil(estDialogueSec + 1) - MAX_VIDEO_DURATION_SEC
       : undefined;
+  // 台词驱动密度校验：台词句数明显多于 shot 数时记录警告（UI 暂不展示）。
+  const shotDensityWarning = checkShotDensity(plotText, shots.length);
   return {
     id: `grp-${index + 1}-${Date.now().toString(36)}`,
     index: index + 1,
@@ -729,6 +787,7 @@ function normalizeGroup(
     sceneId,
     estDialogueSec: estDialogueSec || undefined,
     dialogueOverloadSec,
+    shotDensityWarning,
     characterIds,
     shots,
   };
@@ -742,6 +801,49 @@ const SHOT_LABEL_CN: Record<string, string> = {
   ECU: "特写",
   OTS: "过肩",
 };
+
+const SHOT_ROLES = new Set(["action", "reaction", "insert"]);
+
+/**
+ * 台词加权的 shot 时长分配（normalizeShot 的缺省兜底，替代均分）：
+ * 权重 = 该 shot 台词字数 × 0.25s + 0.6s 画面余量；无台词 shot（反应/insert/空镜）
+ * 按基准 0.9s。总和对齐组区间 [groupStartSec, groupEndSec]，返回每 shot 的
+ * [startSec, endSec]（顺序与输入一致，首尾相接）。
+ */
+export function distributeShotDurations(
+  shots: ReadonlyArray<{ dialogue?: unknown }>,
+  groupStartSec: number,
+  groupEndSec: number,
+): Array<[number, number]> {
+  const count = shots.length;
+  if (!count) return [];
+  const span = groupEndSec - groupStartSec;
+  const weights = shots.map((shot) => {
+    const dialogue = typeof shot.dialogue === "string" ? shot.dialogue : "";
+    const chars = countSpeakableChars(dialogue);
+    return chars > 0 ? chars * 0.25 + 0.6 : 0.9;
+  });
+  const total = weights.reduce((sum, w) => sum + w, 0);
+  const result: Array<[number, number]> = [];
+  let cursor = groupStartSec;
+  for (let i = 0; i < count; i += 1) {
+    const end = i === count - 1 ? groupEndSec : cursor + (span * weights[i]) / total;
+    result.push([cursor, end]);
+    cursor = end;
+  }
+  return result;
+}
+
+/**
+ * 分镜密度校验（台词驱动规则的兜底核对）：对话组按「每句台词默认 2~3 个 shot」
+ * 核对 shots 数，明显不足（少于句数 × 2）时返回警告文案；非对话组不校验。
+ */
+export function checkShotDensity(plotText: string, shotCount: number): string | undefined {
+  const sentences = countDialogueSentences(plotText);
+  if (sentences < 2) return undefined;
+  if (shotCount >= sentences * 2) return undefined;
+  return `该组 ${sentences} 句台词但只有 ${shotCount} 个分镜：每句台词默认 2~3 个 shot（说话人 + 听者反应 + 可选特写），反应/反打镜头占比应 ≥40%，建议拆细。`;
+}
 
 function normalizeShot(
   s: any,
@@ -758,6 +860,8 @@ function normalizeShot(
   camera: string;
   cameraMovement?: string;
   characterBlocking?: string;
+  dialogue?: string;
+  shotRole?: "action" | "reaction" | "insert";
   startSec?: number;
   endSec?: number;
 } | null {
@@ -775,22 +879,27 @@ function normalizeShot(
     typeof s.characterBlocking === "string" && s.characterBlocking.trim()
       ? s.characterBlocking.trim().slice(0, 300)
       : undefined;
+  // 台词归属与镜头角色（台词驱动密度规则的产出;无台词 shot 省略 dialogue）。
+  const dialogue =
+    typeof s.dialogue === "string" && s.dialogue.trim() ? s.dialogue.trim().slice(0, 300) : undefined;
+  const shotRole = SHOT_ROLES.has(s.shotRole) ? (s.shotRole as "action" | "reaction" | "insert") : undefined;
   if (!action) return null;
 
   // 2026/06:每个 shot 自己的时间范围(秒,绝对值,在当集时间轴上)
-  // 优先用 AI 给的 startSec / endSec;否则按 group 区间 + shot 个数均分(兜底)
+  // 优先用 AI 给的 startSec / endSec;否则按台词字数加权分配(兜底,2026/08 起不再均分:
+  // 有台词的 shot 按说完所需时长占权重,无台词的反应/insert 镜头按 0.9s 基准)
   let shotStart = Number.isFinite(s.startSec) ? Math.max(groupStartSec, Number(s.startSec)) : null;
   let shotEnd = Number.isFinite(s.endSec) ? Number(s.endSec) : null;
   if (shotStart !== null && shotEnd !== null) {
-    shotEnd = Math.max(shotStart + 1, Math.min(groupEndSec, shotEnd));
+    // 0.5s 是合法最短(反应/特写镜头常态 0.5~1.2s),下限 0.5 而非 1
+    shotEnd = Math.max(shotStart + 0.5, Math.min(groupEndSec, shotEnd));
   } else {
-    // 兜底:均分 group 区间
+    // 兜底:按台词字数加权分配 group 区间(见 distributeShotDurations)
     const validShots = allShots.filter((x) => x && typeof x === "object");
-    const totalCount = Math.max(1, validShots.length);
-    const span = groupEndSec - groupStartSec;
-    const slice = span / totalCount;
-    shotStart = groupStartSec + slice * shotIndex;
-    shotEnd = groupStartSec + slice * (shotIndex + 1);
+    const ranges = distributeShotDurations(validShots, groupStartSec, groupEndSec);
+    const range = ranges[shotIndex] ?? [groupStartSec, groupEndSec];
+    shotStart = range[0];
+    shotEnd = range[1];
   }
 
   return {
@@ -801,6 +910,8 @@ function normalizeShot(
     camera,
     cameraMovement,
     characterBlocking,
+    dialogue,
+    shotRole,
     startSec: shotStart,
     endSec: shotEnd,
   };

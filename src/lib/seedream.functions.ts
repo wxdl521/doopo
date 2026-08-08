@@ -1349,6 +1349,10 @@ const ShotInput = z.object({
   camera: z.string().max(200).default(""),
   cameraMovement: z.string().max(300).optional(),
   characterBlocking: z.string().max(400).optional(),
+  // 2026/08:台词驱动密度规则 —— 本镜头台词原文(无台词省略)与镜头角色,
+  // 拼进 [本镜头] 行供分镜图理解「说话人 / 听者反应 / 插入特写」。
+  dialogue: z.string().max(300).optional(),
+  shotRole: z.enum(["action", "reaction", "insert"]).optional(),
   // 2026/07:按用户要求从 ≤3 拉到 ≤8。Seedream 经验上 ≤4 张稳定,
   // 超过易掉融合质量 / 触发 120s 超时,此处放开但风险自负。
   characterImageUrls: z.array(z.string().url()).max(8).default([]),
@@ -1397,13 +1401,26 @@ function buildShotInstruction(data: ShotInputType, styleSpec: VisualStyleSpec): 
             ? `   - 特写:聚焦环境微观细节(叶脉、苔藓纹理、水滴),质感与光影为主。`
             : `   - 过肩镜头需要人物,本镜头无人物,按近景环境处理。`;
 
+  // 镜头角色/台词归属描述(台词驱动密度规则):反应镜头无台词要明说,避免模型让人物张嘴。
+  const shotRoleDesc =
+    data.shotRole === "reaction"
+      ? "（听者反应/反打镜头，人物不说话）"
+      : data.shotRole === "insert"
+        ? "（情绪/动作特写插入镜头）"
+        : "";
+  const dialogueDesc = data.dialogue?.trim()
+    ? `；本镜头台词：「${data.dialogue.trim()}」`
+    : data.shotRole === "reaction"
+      ? "；听者反应，无台词"
+      : "";
+
   return [
     hasCharacters
       ? `[任务] 生成一张「${data.shotTypeLabel}」分镜图,严格按下面的融合规则。`
       : `[任务] 生成一张「${data.shotTypeLabel}」空镜分镜图(纯场景,NO PEOPLE / landscape only)。**画面中严禁出现任何人物、人影、人体轮廓、手脚、面部——只呈现环境、光影、植被与道具。** 严格按下面的融合规则。`,
     ``,
     `[剧情上下文] ${data.plotText}`,
-    `[本镜头] ${data.shotType} ${data.shotTypeLabel} —— ${data.action}`,
+    `[本镜头] ${data.shotType} ${data.shotTypeLabel}${shotRoleDesc} —— ${data.action}${dialogueDesc}`,
     data.camera ? `[机位] ${data.camera}` : "",
     data.cameraMovement ? `[运镜] ${data.cameraMovement}` : "[运镜] 固定机位,无运镜",
     data.characterBlocking ? `[人物走位] ${data.characterBlocking}` : "[人物走位] 人物静止,无走位",

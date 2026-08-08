@@ -113,3 +113,14 @@ export function estimateDialogueSpeechSec(text: string, rateCps?: number): numbe
   if (chars <= 0) return 0;
   return Math.ceil(chars / rate);
 }
+
+
+/**
+ * 台词句数（按引号内文本的句读切分，纯语气词/标点不计入），
+ * 供分镜密度校验（「每句台词默认 2~3 个 shot」）。
+ */
+export function countDialogueSentences(text: string): number {
+  const dialogue = extractDialogue(text);
+  if (!dialogue) return 0;
+  return dialogue.split(/[。！？!?；;…]+/).filter((s) => countSpeakableChars(s) > 0).length;
+}

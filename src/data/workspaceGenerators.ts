@@ -191,6 +191,17 @@ export type StoryboardShot = {
    */
   startSec?: number;
   endSec?: number;
+  /**
+   * 2026/08(台词驱动密度规则):本 shot 说出口的台词原文(完整引用,带角色名)。
+   * 无台词的 shot(听者反应/动作特写/空镜)省略该字段。
+   */
+  dialogue?: string;
+  /**
+   * 2026/08(台词驱动密度规则):镜头角色——
+   * action=说话人/主动作镜头;reaction=听者反应/反打镜头;insert=情绪特写/动作特写/空镜。
+   * 对话组中 reaction+insert 占比应 ≥40%。
+   */
+  shotRole?: "action" | "reaction" | "insert";
   imageUrl?: string;
   /**
    * 用户在分镜里为该 shot 涉及的每个角色指定的 reference 形象(imageKey)。
@@ -248,6 +259,8 @@ export type StoryboardGroup = {
   estDialogueSec?: number;
   /** 台词超出单视频 15s 硬上限的秒数(>0 表示该组台词一个视频说不完,需拆组/精简)。 */
   dialogueOverloadSec?: number;
+  /** 2026/08:台词驱动密度校验警告(台词句数明显多于 shot 数;UI 暂不展示,仅记录)。 */
+  shotDensityWarning?: string;
 };
 
 export type TimelineClip = {
