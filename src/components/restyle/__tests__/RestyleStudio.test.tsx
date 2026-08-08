@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import RestyleStudio from "../RestyleStudio";
 import { libraryAssetsFromRows } from "../restyleAssetLibrary";
@@ -606,4 +606,202 @@ describe("RestyleStudio prototype", () => {
     expect(await screen.findByTestId("restyle-process-panel")).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "流程" })).toHaveAttribute("aria-selected", "true");
   });
+});
+
+
+// --------------------------------------------------------------------
+// 排队返工在方案 run 结束后自动开跑（drain 覆盖非渲染 run 回归）
+// --------------------------------------------------------------------
+
+/** 可控 serverFn 注册表：useServerFn 按函数对象查表，未注册给统一失败兜底。 */
+const serverFnHandlers = new Map<unknown, (args: { data?: unknown }) => Promise<unknown>>();
+
+vi.mock("@tanstack/react-start", async (importOriginal) => {
+  const mod = await importOriginal<Record<string, unknown>>();
+  return {
+    ...mod,
+    useServerFn:
+      (fn: unknown) =>
+      (args: { data?: unknown }) => {
+        const handler = serverFnHandlers.get(fn);
+        if (handler) return handler(args);
+        return Promise.resolve({ ok: false, error: `unmocked serverFn: ${String(fn)}` });
+      },
+  };
+});
+
+import {
+  analyzeRestyleAssets,
+  finalizeRestylePlanCoverage,
+  generateRestylePlan,
+} from "../../../lib/restyleAnalysis.functions";
+import {
+  pollVideoTaskFn,
+  submitVideoTaskFn,
+  uploadKeyiyunAsset,
+  uploadTopenrouterAsset,
+} from "../../../lib/videoGenerate.functions";
+import {
+  createMediaUploadUrl,
+  persistRestyleVideo,
+  signMediaReadUrl,
+} from "../../../lib/restyleMedia.functions";
+import { analyzeRestyleSourceUnits } from "../../../lib/restyleSourceUnits.functions";
+import { uploadLocalImage } from "../../../lib/uploadImage.functions";
+import { refundChargedCredits } from "../../../lib/userCredits.functions";
+import { reportGenerationError } from "../../../lib/errorLogs.functions";
+import { listListedModels } from "../../../lib/aiProviders.functions";
+import { listModelPricing } from "../../../lib/modelPricing.functions";
+import {
+  generateImage,
+  generateImageWithReferences,
+} from "../../../lib/seedream.functions";
+import { transcribeRestyleAudio } from "../../../lib/restyleAudio.functions";
+import {
+  pollVideoStitchJob,
+  pollVideoTrimJob,
+  submitVideoStitchJob,
+  submitVideoTrimJob,
+} from "../../../lib/videoStitch.functions";
+import { persistAssetImage } from "../../../lib/workspaceMedia.functions";
+import { reviewRestyleAssetTable } from "../../../lib/restyle/restyleAssetReview.functions";
+
+function seedPlanProject(): RestyleProject {
+  const segments = (prefix: string) => [
+    { id: "U01", prompt: `${prefix} 第一段`, startMs: 0, endMs: 5_000 },
+    { id: "U02", prompt: `${prefix} 第二段`, startMs: 5_000, endMs: 10_000 },
+  ];
+  const source = (episode: string): RestyleProject["files"][number] => ({
+    id: `src-${episode}`,
+    name: `${episode}.mp4`,
+    size: 1024,
+    type: "video/mp4",
+    lastModified: 0,
+    url: `https://cdn.example.com/${episode}.mp4`,
+    episode,
+    durationSec: 10,
+  });
+  return seedProject({
+    stage: "plan",
+    videoModel: "kuaizi-lizhen-fast",
+    activeConversationId: "conv-1",
+    conversations: [
+      { id: "conv-1", title: "", createdAt: SEED_NOW, updatedAt: SEED_NOW, messages: [] },
+    ],
+    extractedAssets: [
+      {
+        id: "asset-1",
+        kind: "character",
+        sourceName: "荣玉",
+        sourceDescription: "女主",
+        targetName: "荣玉",
+        targetDescription: "女主",
+        importance: "required",
+        shouldRestyle: true,
+      },
+    ],
+    planEpisodes: [
+      { episode: "EP01", segments: segments("EP01") },
+      { episode: "EP02", segments: segments("EP02") },
+    ],
+    files: [
+      source("EP01"),
+      source("EP02"),
+      {
+        id: "img-1",
+        name: "character_荣玉.png",
+        size: 0,
+        type: "image/png",
+        lastModified: 0,
+        url: "https://cdn.example.com/rongyu.png",
+        generatedKind: "character",
+        sourceAssetId: "asset-1",
+      },
+    ],
+  });
+}
+
+describe("排队返工 drain：方案 run 结束后自动开跑", () => {
+  it("方案重生成运行期间 U02 入队，方案结束后 U02 渲染自动启动", async () => {
+    saveRestyleProjects("restyle-user", [seedPlanProject()]);
+
+    // 方案生成：deferred，控制 run 结束时机
+    let resolvePlan: (value: unknown) => void = () => {};
+    const planGate = new Promise((resolve) => {
+      resolvePlan = resolve;
+    });
+    const planMock = vi.fn(async () => planGate);
+    const submitMock = vi.fn(async () => ({
+      ok: true,
+      taskId: "task-u02",
+      model: "kuaizi-lizhen-fast",
+      backend: "kuaizi",
+    }));
+    serverFnHandlers.set(generateRestylePlan, planMock);
+    serverFnHandlers.set(submitVideoTaskFn, submitMock);
+    serverFnHandlers.set(pollVideoTaskFn, async () => ({
+      ok: true,
+      status: "succeeded",
+      videoUrl: "https://cdn.example.com/u02.mp4",
+    }));
+    serverFnHandlers.set(persistRestyleVideo, async () => ({
+      ok: true,
+      url: "https://cdn.example.com/u02-persisted.mp4",
+    }));
+
+    const { container } = renderStudio();
+    const composer = container.querySelector("textarea");
+    if (!composer) throw new Error("composer textarea not found");
+
+    // 1) 发起方案重生成（run 开始，planGate 悬置 → 保持运行中）
+    await userEvent.type(composer, "重做方案");
+    fireEvent.keyDown(composer, { key: "Enter", shiftKey: false });
+    await waitFor(() => expect(planMock).toHaveBeenCalled());
+
+    // 2) 运行期间点名返工 U02 → 进排队机制（不在本轮直接开跑）
+    await userEvent.clear(composer);
+    await userEvent.type(composer, "重新生成第2集 U02");
+    fireEvent.keyDown(composer, { key: "Enter", shiftKey: false });
+    await screen.findByText(/已加入队列，前面还有 0 个任务/);
+    expect(submitMock).not.toHaveBeenCalled();
+
+    // 3) 方案 run 结束 → finishRun 统一 drain → U02 渲染自动开跑
+    resolvePlan({
+      ok: true,
+      episodes: [
+        {
+          episode: "EP01",
+          segments: [
+            { id: "U01", prompt: "EP01 U01", startMs: 0, endMs: 5_000 },
+            { id: "U02", prompt: "EP01 U02", startMs: 5_000, endMs: 10_000 },
+          ],
+        },
+        {
+          episode: "EP02",
+          segments: [
+            { id: "U01", prompt: "EP02 U01", startMs: 0, endMs: 5_000 },
+            { id: "U02", prompt: "EP02 U02", startMs: 5_000, endMs: 10_000 },
+          ],
+        },
+      ],
+      model: "test-model",
+    });
+    await waitFor(() => expect(submitMock).toHaveBeenCalled(), { timeout: 5_000 });
+
+    // 4) 渲染成功落地：U02 clip 写入项目（轮询成功 → 转存 → 完成）
+    await waitFor(
+      () => {
+        const [stored] = loadRestyleProjects("restyle-user");
+        const clip = stored?.files.find(
+          (file) => file.generatedKind === "video_clip" && file.episode === "EP02" && file.segmentId === "U02",
+        );
+        expect(
+          clip?.renderStatus,
+          `clip renderError: ${clip?.renderError ?? "none"}; log: ${(clip?.renderLog ?? []).join(" | ")}`,
+        ).toBe("succeeded");
+      },
+      // 渲染轮询间隔 5s：首次轮询返回成功需要等待一个轮询周期
+      { timeout: 9_000 },
+    );
+  }, 20_000);
 });

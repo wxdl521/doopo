@@ -64,8 +64,9 @@ import {
 import { mergeSourceUnitResults, renumberShotSchedule } from "./sourceUnitsMerge";
 import { buildPlanWindowJobs, PLAN_WINDOW_SEC, resolvePlanWindowDurationMs, restylePlanWindowChargeKey } from "../../lib/restyle/planWindows";
 import { driveWindowedPlanCalls } from "./planWindowDriver";
-import { isSupersededClipAttachment } from "./rerunAttachments";
+import { isSupersededClipAttachment, withoutSupersededClips } from "./rerunAttachments";
 import { outcomeLabel, summarizeRenderRun, type RenderRunOutcome } from "./renderRunSummary";
+import { isPendingRerun, shiftPendingRerun } from "./pendingReruns";
 import { imageModelFallbackCandidates, isQuotaLikeImageError } from "./imageModelFallback";
 import { segmentIndexFromId, withSegmentDirection } from "../../lib/restyle/shotSchedule";
 import { formatLightingParams, type DirectionShot } from "../../lib/restyle/cameraDirection";
@@ -1639,6 +1640,12 @@ export default function RestyleStudio() {
         },
       };
     });
+    // 任一 run 收尾都尝试拉起排队的返工待办（此前只有渲染类 run 的收尾
+    // 才 drain——方案/生图 run 结束后队列无人唤醒，返工待办 25 分钟不启动）。
+    // 防重入：drain 内 generateRenderedVideos 会重新 beginRun，但其 finishRun
+    // 触发的是下一个待办（队列 FIFO 递减，链式推进不递归）。
+    // stopRun / 预算暂停已在各自路径先清空队列，这里自然空转。
+    drainPendingReruns(projectId);
   }
 
   /** 用户点击停止：中断进行中的请求，并在对话里留下明确说明。 */
@@ -1661,9 +1668,10 @@ export default function RestyleStudio() {
   /** 渲染队列收尾后取出下一个返工待办自动开跑；没有待办则什么都不做。 */
   function drainPendingReruns(projectId: string) {
     const queue = pendingRerunsRef.current.get(projectId);
-    const next = queue?.shift();
+    const { item: next, rest } = shiftPendingRerun(queue);
     if (!next) return;
-    if (!queue?.length) pendingRerunsRef.current.delete(projectId);
+    if (rest.length) pendingRerunsRef.current.set(projectId, rest);
+    else pendingRerunsRef.current.delete(projectId);
     generateRenderedVideos(projectId, next.conversationId, next.rerun);
   }
 
@@ -1768,6 +1776,9 @@ export default function RestyleStudio() {
   }
 
   function pauseForBudget(projectId: string, conversationId: string) {
+    // 预算暂停 = 等人充值/调预算：冻结返工待办（清空队列），
+    // 否则 finishRun 统一 drain 会形成「暂停 → 拉起 → 再预算暂停」循环。
+    pendingRerunsRef.current.delete(projectId);
     appendConversationMessage(projectId, conversationId, {
       role: "assistant",
       content: t.restyle_setup_budget_pause,
@@ -2569,7 +2580,10 @@ export default function RestyleStudio() {
       }
       return {
         ...project,
-        files: project.files.map((file) => {
+        // 新产物成功写回：同 (episode, segmentId) 的其余片段附件（旧成功产物
+        // 与失败占位）从此刻让位移除——成功产物在返工开始时是特意保留的，
+        // 只有新片子真正生成成功后才取代（失败重试不丢已有产物）。
+        files: withoutSupersededClips(project.files, completed).map((file) => {
           if (file.id === attachmentId) {
             return {
               ...file,
@@ -3047,10 +3061,8 @@ export default function RestyleStudio() {
     } finally {
       // 渲染队列状态机收尾：无论拼接/播报是否抛错都结束本次 run；
       // 用户主动停止时 stopRun 已收尾，这里不重复。
+      // 返工待办由 finishRun 统一 drain（不再手动调用，避免双重拉起）。
       if (!isRunAborted(projectId)) finishRun(projectId);
-      // 收尾后检查返工待办队列：有排队片段则自动开跑下一个
-      // （分段失败/合成结束也走这里；stopRun 已清空待办，不会重复拉起）。
-      drainPendingReruns(projectId);
     }
   }
 
@@ -3748,9 +3760,7 @@ export default function RestyleStudio() {
       }
       const pending = pendingRerunsRef.current.get(projectId) ?? [];
       // 队列去重：同 episode + segmentId 已在队列或正在跑时，不重复入队。
-      const alreadyPending = pending.some(
-        (item) => item.rerun.episode === rerun.episode && item.rerun.segmentId === rerun.segmentId,
-      );
+      const alreadyPending = isPendingRerun(pending, rerun);
       const alreadyRendering = project.files.some(
         (file) =>
           file.generatedKind === "video_clip" &&
@@ -3840,8 +3850,8 @@ export default function RestyleStudio() {
         role: "assistant",
         content: `还没有可用的转绘资产图${missing ? `（资产表里待生成：${missing}）` : ""}。请直接回复“生成资产图片”，我会按资产表逐张生成；确认无误后再回复“确认生成视频”。`,
       });
-      // 本次返工提前失败也要继续推进待办队列，避免后续排队片段被卡死。
-      drainPendingReruns(projectId);
+      // 本次返工提前失败也要继续推进待办队列（finishRun 统一 drain，
+      // 不再手动调用，避免双重拉起），避免后续排队片段被卡死。
       return;
     }
     const attachments: RestyleAttachment[] = planEpisodes.flatMap((episode, episodeIndex) => {
@@ -3908,8 +3918,8 @@ export default function RestyleStudio() {
           ? "原片仍在上传中，请等待上传完成后再确认生成。"
           : "没有找到可用于生成的视频源文件，请先上传原片后再确认生成。",
       });
-      // 本次返工提前失败也要继续推进待办队列，避免后续排队片段被卡死。
-      drainPendingReruns(projectId);
+      // 本次返工提前失败也要继续推进待办队列（finishRun 统一 drain，
+      // 不再手动调用，避免双重拉起），避免后续排队片段被卡死。
       return;
     }
     const finalEpisodes = attachments

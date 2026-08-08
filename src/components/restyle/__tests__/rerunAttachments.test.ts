@@ -40,3 +40,77 @@ describe("isSupersededClipAttachment", () => {
     expect(isSupersededClipAttachment(clip(), undefined)).toBe(false);
   });
 });
+
+
+// --------------------------------------------------------------------
+// 成功产物保留（返工不丢已有片子回归）
+// --------------------------------------------------------------------
+import { withoutSupersededClips } from "../rerunAttachments";
+
+const playableClip = (overrides: Partial<ClipAttachmentRef> = {}): ClipAttachmentRef => ({
+  id: "good-1",
+  generatedKind: "video_clip",
+  episode: "EP02",
+  segmentId: "U02",
+  renderStatus: "succeeded",
+  resultUrl: "https://cdn.example.com/good.mp4",
+  ...overrides,
+});
+
+describe("isSupersededClipAttachment · 成功产物保留", () => {
+  it("succeeded 且有 URL 的旧 clip：返工开始时不移除（新旧并存到新产物落地）", () => {
+    expect(isSupersededClipAttachment(playableClip(), { episode: "EP02", segmentId: "U02" })).toBe(false);
+    expect(
+      isSupersededClipAttachment(playableClip(), { rerunOfAttachmentId: "good-1" }),
+    ).toBe(false);
+  });
+
+  it("succeeded 但 URL 缺失（持久化剥离/异常）：按占位处理，仍被取代", () => {
+    expect(
+      isSupersededClipAttachment(
+        playableClip({ resultUrl: undefined, url: undefined }),
+        { episode: "EP02", segmentId: "U02" },
+      ),
+    ).toBe(true);
+  });
+
+  it("failed 占位 clip 的取代逻辑不变", () => {
+    expect(
+      isSupersededClipAttachment(
+        playableClip({ renderStatus: "failed", resultUrl: undefined, url: undefined }),
+        { episode: "EP02", segmentId: "U02" },
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("withoutSupersededClips · 新成功后旧让位", () => {
+  const newClip = playableClip({ id: "new-1", resultUrl: "https://cdn.example.com/new.mp4" });
+
+  it("新产物成功写回：同集同段的旧成功与失败占位全部移除", () => {
+    const files = [
+      playableClip(), // 旧成功
+      playableClip({ id: "bad-1", renderStatus: "failed", resultUrl: undefined, url: undefined }),
+      newClip,
+    ];
+    const result = withoutSupersededClips(files, newClip);
+    expect(result.map((f) => f.id)).toEqual(["new-1"]);
+  });
+
+  it("其他分段/其他集的 clip 与成片、源片不受影响", () => {
+    const files = [
+      playableClip({ segmentId: "U01" }),
+      playableClip({ episode: "EP01" }),
+      playableClip({ generatedKind: "final_video", segmentId: undefined }),
+      newClip,
+    ];
+    const result = withoutSupersededClips(files, newClip);
+    expect(result).toHaveLength(4);
+  });
+
+  it("completed 不是 video_clip（如成片写回）：原样返回", () => {
+    const finalCompleted = playableClip({ id: "final-1", generatedKind: "final_video", segmentId: undefined });
+    const files = [playableClip(), finalCompleted];
+    expect(withoutSupersededClips(files, finalCompleted)).toEqual(files);
+  });
+});
