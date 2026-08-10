@@ -76,8 +76,15 @@ export interface RestyleSourceUnitsFileResult {
 }
 
 export type RestyleSourceUnitsResult =
-  | { ok: true; files: RestyleSourceUnitsFileResult[] }
+  | { ok: true; kernel: string; files: RestyleSourceUnitsFileResult[] }
   | { ok: false; error: string };
+
+/**
+ * 内核版本标记：随响应返回当前生效的分镜提取 skill 清单。
+ * 纯服务端 prompt 改动在客户端 bundle 里探测不到，部署是否含某次 skill
+ * 更新只能靠这个字段自证（2026-08 的教训：b8aa5dc 部署缺失靠猜）。
+ */
+export const ANALYSIS_KERNEL_VERSION = "shot-boundary-extract@2026-08-10";
 
 /**
  * v1 单元化原片分析：逐集跑双通道单元分析并拼回集级时间轴，输出 v1 契约。
@@ -160,5 +167,5 @@ export const analyzeRestyleSourceUnits = createServerFn({ method: "POST" })
         failedUnitIds: failed.map((r) => r.unitId),
       });
     }
-    return { ok: true, files };
+    return { ok: true, kernel: ANALYSIS_KERNEL_VERSION, files };
   });
