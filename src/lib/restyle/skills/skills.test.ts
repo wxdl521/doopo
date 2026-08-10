@@ -3,6 +3,7 @@ import { SKILLS, composePrompt } from "./index";
 
 const EXPECTED_SKILL_IDS = [
   "video-analysis-extract",
+  "shot-boundary-extract",
   "audio-transcript-align",
   "ai-output-review",
   "narrative-consistency-audit",
@@ -13,7 +14,7 @@ const EXPECTED_SKILL_IDS = [
 ];
 
 describe("SKILLS", () => {
-  it("包含全部 8 个 skill，且每个都有非空内容", () => {
+  it("包含全部 9 个 skill，且每个都有非空内容", () => {
     expect(Object.keys(SKILLS).sort()).toEqual([...EXPECTED_SKILL_IDS].sort());
     for (const id of EXPECTED_SKILL_IDS) {
       expect(typeof SKILLS[id]).toBe("string");
@@ -50,5 +51,16 @@ describe("composePrompt", () => {
     expect(contract).toContain("参考图映射行");
     expect(contract).toContain("全局约束行");
     expect(contract).toContain("doopooShot");
+  });
+
+  it("shot-boundary-extract 明写三条铁律与 shot_role 契约", () => {
+    const skill = SKILLS["shot-boundary-extract"];
+    expect(skill).toContain("禁止摘要合并");
+    expect(skill).toContain("反应镜头独立成镜");
+    expect(skill).toContain("切在动作瞬间");
+    expect(skill).toContain("speaker");
+    expect(skill).toContain("reaction");
+    expect(skill).toContain("insert");
+    expect(skill).toContain("long_take");
   });
 });

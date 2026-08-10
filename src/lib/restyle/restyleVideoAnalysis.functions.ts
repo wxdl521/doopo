@@ -102,7 +102,8 @@ const VISION_OUTPUT_CONTRACT = `输出 JSON 顶层字段（所有时间码为单
 - characters：[{ "name", "aliases": string[], "firstSeenSeconds", "lastSeenSeconds", "role", "appearance", "wardrobe", "description", "relationships": [{ "relatedName", "relation" }], "uncertainty": string[] }]（含人设与成对关系，仅文字）
 - scenes：[{ "name", "description", "firstSeenSeconds", "lastSeenSeconds" }]
 - props：[{ "name", "description", "firstSeenSeconds", "lastSeenSeconds" }]（仅文字，不生图）
-- shots：[{ "shot_no"(SC001 起递增), "start_ms", "end_ms", "shot_type", "spatial_anchor", "end_state_action", "scene_type"(环境场面|对白场面|动作场面|高燃场面), "voice_type"(张嘴说话|内心os|旁白|无), "emotion", "characters": string[], "dialogue" }]`;
+- shots：[{ "shot_no"(SC001 起递增), "start_ms", "end_ms", "shot_type", "shot_role"(speaker|reaction|insert|action), "spatial_anchor", "end_state_action", "scene_type"(环境场面|对白场面|动作场面|高燃场面), "voice_type"(张嘴说话|内心os|旁白|无), "emotion", "characters": string[], "dialogue", "long_take": bool(可选) }]
+- shot 粒度与镜头边界规则见 shot-boundary-extract skill：禁止摘要合并、反应镜头独立成镜、对白单镜通常 0.5-3s、硬上限 8s（长镜头须标 long_take）。`;
 
 /** 降级路径追加字段：无独立音轨时由视觉通道顺带产出台词轨。 */
 const DIALOGUE_FALLBACK_CONTRACT = `- dialogue_track：[{ "begin_ms", "end_ms", "text", "speaker" }]（降级路径：本单元无独立音轨，请从关键帧的口型/画面内字幕/上下文推断台词；听不清的片段用 … 占位）`;
@@ -119,7 +120,10 @@ function buildVisionMessages(unit: UnitMediaInput, includeDialogueTrack: boolean
     outputContract:
       VISION_OUTPUT_CONTRACT + (includeDialogueTrack ? `\n${DIALOGUE_FALLBACK_CONTRACT}` : ""),
   };
-  const system = composePrompt(["video-analysis-extract"], JSON.stringify(context, null, 2));
+  const system = composePrompt(
+    ["video-analysis-extract", "shot-boundary-extract"],
+    JSON.stringify(context, null, 2),
+  );
   const userContent: Array<Record<string, unknown>> = [
     {
       type: "text",
@@ -325,7 +329,9 @@ async function analyzeOneUnit(unit: UnitMediaInput, deps: AnalysisDeps): Promise
     const visionRes = await callChat({
       model: visionModel,
       messages: buildVisionMessages(unit, noAudio),
-      maxTokens: 16_000,
+      // 分镜细化（shot-boundary-extract skill）后镜头数约 3 倍，16k 不够装
+      // 「对白 0.5-3s/镜」的 shots 数组，上调避免 JSON 被截断。
+      maxTokens: 32_000,
       timeoutMs: 300_000,
       jsonMode: true,
     });
