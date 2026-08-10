@@ -47,7 +47,7 @@ export default function Sidebar({ fullHeight = false }: { fullHeight?: boolean }
             activeProps={{ className: "nav-item nav-item-active" }}
             style={{ animationDelay: `${i * 60}ms` }}
           >
-            <Icon size={20} />
+            <Icon size={24} />
             <span className="text-[10px] font-medium leading-tight whitespace-pre text-center">
               {label}
             </span>
