@@ -33,6 +33,7 @@ import {
 } from "./restyle/restyleVideoAnalysis.functions";
 import type { AsrSentence, UnitAnalysisJson } from "./restyle/analysisMerge";
 import type { DirectionShot } from "./restyle/cameraDirection";
+import { splitShotsByDialogue } from "./restyle/splitShotsByDialogue";
 import {
   alignedSentencesToTranscript,
   buildEvidencePackage,
@@ -119,7 +120,39 @@ export const analyzeRestyleSourceUnits = createServerFn({ method: "POST" })
         transcriptByUnit,
       );
 
-      const shotSchedule = assembled.shots.map(mergedShotToDirectionShot);
+      // ASR 台词轴确定性细分（r10b 回归：模型粒度规则零遵循，prompt 路线证伪）：
+      // 30s 摘要级粗镜头按台词句边界切成 speaker/reaction 子段，long_take 不切。
+      const allSentences = [...assembled.transcript, ...assembled.orphanTranscript];
+      const split = splitShotsByDialogue(assembled.shots, allSentences);
+      const splitWarnings: string[] = [];
+      if (split.fineCount > assembled.shots.length) {
+        splitWarnings.push(
+          `按台词轴确定性细分：${split.coarseCount} 个粗镜头拆为 ${split.fineCount} 个分镜`,
+        );
+      }
+      // 细分后输出校验（只观测，不重试模型）
+      if (split.shots.length) {
+        const avgMs =
+          split.shots.reduce((sum, s) => sum + (s.end_ms - s.start_ms), 0) / split.shots.length;
+        if (avgMs > 10_000) {
+          splitWarnings.push(
+            `细分后平均单镜 ${(avgMs / 1000).toFixed(1)}s 仍超过 10s（粗粒镜头无台词可切）`,
+          );
+        }
+        const roles = split.shots.map((s) => (s as Record<string, unknown>).shot_role);
+        const hasDialogueScene = split.shots.some(
+          (s) => typeof s.scene_type === "string" && s.scene_type.includes("对白"),
+        );
+        if (
+          hasDialogueScene &&
+          roles.includes("speaker") &&
+          !roles.includes("reaction")
+        ) {
+          splitWarnings.push("对白场面未切出听者反应镜头（全部按说话人处理），反应镜头占比不足");
+        }
+      }
+
+      const shotSchedule = split.shots.map(mergedShotToDirectionShot);
       // 孤儿台词（无镜头归属）一并输出，按 begin_ms 排序后顺序不乱
       const transcript = alignedSentencesToTranscript([
         ...assembled.transcript,
@@ -130,6 +163,7 @@ export const analyzeRestyleSourceUnits = createServerFn({ method: "POST" })
       const failed = results.filter((r) => !r.ok);
       const warnings = [
         ...assembled.warnings,
+        ...splitWarnings,
         ...results
           .filter((r) => r.ok && r.degraded)
           .map((r) =>

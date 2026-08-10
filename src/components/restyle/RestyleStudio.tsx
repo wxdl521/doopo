@@ -4495,6 +4495,10 @@ export default function RestyleStudio() {
     beginRun(projectId, t.restyle_run_step_read_source);
     setAnalysisError("");
     let analysisCompleted = false;
+    // 每次用户触发的分析 run 一个 runId，拼进扣费幂等键——跨 run 复用同一键会
+    // 被 RPC 幂等去重成「重分析永远零扣费」（账目看不出执行）；同一 run 内的
+    // 重试/断连重发仍按同键去重（防重复扣费语义不变）。
+    const analysisRunId = Date.now().toString(36);
     try {
       // 内存映射未命中（页面刷新后）时，先取回持久 URL 上的原片重建 File 再抽帧。
       if (sourceFiles.some((file) => !fileObjectsRef.current[file.id])) {
@@ -4576,7 +4580,7 @@ export default function RestyleStudio() {
             const unitResult = await callAnalyzeRestyleSourceUnits({
               data: {
                 sourceFiles: [{ id: episode, name: file.name, units: [unit] }],
-                idempotencyKey: `${projectId}:${episode}`,
+                idempotencyKey: `${projectId}:${episode}:${analysisRunId}`,
               },
             });
             const fileResult = unitResult.ok ? unitResult.files[0] : undefined;

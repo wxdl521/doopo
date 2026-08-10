@@ -58,6 +58,14 @@ export function normalizeShotType(raw: unknown): ShotType {
 
 /** MergedShot（v2 集级毫秒时间码）→ DirectionShot（v1 调度层契约）。 */
 export function mergedShotToDirectionShot(shot: MergedShot): DirectionShot {
+  // shot_role / long_take：台词轴确定性细分的产出（v2 宽松透传字段），
+  // 下游暂不强消费，供分组利用反应镜头铺路。
+  const rawRole = (shot as Record<string, unknown>).shot_role;
+  const shotRole =
+    typeof rawRole === "string" && ["action", "reaction", "insert", "speaker"].includes(rawRole)
+      ? (rawRole as DirectionShot["shotRole"])
+      : undefined;
+  const rawLongTake = (shot as Record<string, unknown>).long_take;
   return {
     shotNo: shot.shot_no,
     startMs: shot.start_ms,
@@ -67,6 +75,8 @@ export function mergedShotToDirectionShot(shot: MergedShot): DirectionShot {
     emotion: typeof shot.emotion === "string" ? shot.emotion.trim() : "",
     action: typeof shot.end_state_action === "string" ? shot.end_state_action : undefined,
     dialogue: typeof shot.dialogue === "string" ? shot.dialogue : undefined,
+    shotRole,
+    longTake: rawLongTake === true || rawLongTake === "true" ? true : undefined,
   };
 }
 

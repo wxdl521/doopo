@@ -24,6 +24,14 @@ export interface DirectionShot {
   emotion: string;
   action?: string;
   dialogue?: string;
+  /**
+   * 镜头角色（台词轴确定性细分的产出，v1AnalysisAdapter 透传）：
+   * speaker=说话人镜头 / reaction=听者反应（推断）/ action=动作镜头；
+   * 兼容调度层的 insert（特写/空镜插入）。下游暂不强消费，供分组利用反应镜头铺路。
+   */
+  shotRole?: "action" | "reaction" | "insert" | "speaker";
+  /** 长镜头标记（模型判断，细分时尊重不切）。 */
+  longTake?: boolean;
 }
 
 export type Market = "kr" | "us" | "in" | "nordic" | "hk" | "jp";

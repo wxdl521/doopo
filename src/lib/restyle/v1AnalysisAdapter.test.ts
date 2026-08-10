@@ -227,3 +227,29 @@ describe("formatShotBrief", () => {
     expect(text).toContain("SC100 ");
   });
 });
+
+
+// --------------------------------------------------------------------
+// shot_role / long_take 透传（台词轴确定性细分产出，为分组利用反应镜头铺路）
+// --------------------------------------------------------------------
+
+describe("mergedShotToDirectionShot · shot_role/long_take 透传", () => {
+  it("合法 shot_role 与 long_take 透传", () => {
+    const shot = mergedShotToDirectionShot(
+      makeMergedShot({ shot_role: "reaction", long_take: true } as Partial<MergedShot>),
+    );
+    expect(shot.shotRole).toBe("reaction");
+    expect(shot.longTake).toBe(true);
+  });
+
+  it("非法 shot_role 值丢弃；缺省字段为 undefined", () => {
+    const bad = mergedShotToDirectionShot(
+      makeMergedShot({ shot_role: "weird" } as Partial<MergedShot>),
+    );
+    expect(bad.shotRole).toBeUndefined();
+    expect(bad.longTake).toBeUndefined();
+    const plain = mergedShotToDirectionShot(makeMergedShot());
+    expect(plain.shotRole).toBeUndefined();
+    expect(plain.longTake).toBeUndefined();
+  });
+});

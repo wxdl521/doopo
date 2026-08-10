@@ -70,6 +70,13 @@ export function parseShotSchedule(value: unknown): DirectionShot[] | undefined {
       emotion: typeof item.emotion === "string" ? item.emotion.trim() : "",
       action: typeof item.action === "string" ? item.action : undefined,
       dialogue: typeof item.dialogue === "string" ? item.dialogue : undefined,
+      // 台词轴细分字段白名单放行（v1AnalysisAdapter 透传，下游暂不强消费）
+      shotRole:
+        typeof item.shotRole === "string" &&
+        ["action", "reaction", "insert", "speaker"].includes(item.shotRole)
+          ? (item.shotRole as DirectionShot["shotRole"])
+          : undefined,
+      longTake: item.longTake === true ? true : undefined,
     });
     if (shots.length >= MAX_SHOTS) break;
   }
