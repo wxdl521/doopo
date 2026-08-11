@@ -62,6 +62,21 @@ describe("formatModelOptionLabel", () => {
       formatModelOptionLabel({ label: "M", sub: undefined, priced: true, priceRange: "5积分/张" }, LABELS),
     ).toBe("M · 5积分/张");
   });
+
+  it("sub 已含价格文本时不重复拼接 priceRange", () => {
+    expect(
+      formatModelOptionLabel(
+        {
+          label: "Doubao Seedance 2.0",
+          sub: "多模态 · 237.6积分/10s",
+          priced: true,
+          priceRange: "237.6积分/10s",
+          isDefault: true,
+        },
+        LABELS,
+      ),
+    ).toBe("Doubao Seedance 2.0 — 多模态 · 237.6积分/10s · 默认推荐");
+  });
 });
 
 describe("sortListedModels", () => {

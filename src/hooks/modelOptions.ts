@@ -41,7 +41,11 @@ export function formatModelOptionLabel(
   opts?: { assetLibrarySupported?: boolean },
 ): string {
   const head = model.sub ? `${model.label} — ${model.sub}` : model.label;
-  const price = model.priceRange ?? (model.priced ? "" : labels.unpricedLabel);
+  // sub 自带价格文本时（如「多模态 · 237.6积分/10s」）不再重复拼接 priceRange。
+  const price =
+    model.priceRange && head.includes(model.priceRange)
+      ? ""
+      : (model.priceRange ?? (model.priced ? "" : labels.unpricedLabel));
   const badge = !model.priced
     ? "" // 未计费已由价格段承担
     : model.isDefault
