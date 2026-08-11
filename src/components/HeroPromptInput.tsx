@@ -15,34 +15,32 @@ import {
 import { useNavigate } from "@tanstack/react-router";
 import { useLanguage } from "../i18n/LanguageContext";
 import { useAuth } from "../hooks/useAuth";
+import { useListedModels } from "../hooks/useListedModels";
+import {
+  formatModelOptionLabel,
+  resolveDefaultModel,
+  sortListedModels,
+} from "../hooks/modelOptions";
+import { TEXT_MODEL_FALLBACK } from "../lib/textModelOptions";
 import { NewProjectDialog } from "./NewProjectDialog";
 
 export default function HeroPromptInput() {
   const { t, lang } = useLanguage();
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
-  const AI_MODELS = [
-    {
-      id: "ark:deepseek-v4-pro-260425",
-      label: "🟠 DeepSeek V4 Pro (ARK)",
-      desc: lang === "zh" ? "主力·剧本与创意生成" : "Primary · Script & creative generation",
-    },
-    {
-      id: "qwen:qwen3-max",
-      label: "🟣 Qwen3 Max",
-      desc: lang === "zh" ? "旗舰·长文本与复杂创作" : "Flagship · Long-form & complex writing",
-    },
-    {
-      id: "qwen:qwen-plus",
-      label: "🟣 Qwen Plus",
-      desc: lang === "zh" ? "均衡·稳定备用" : "Balanced · Reliable fallback",
-    },
-    {
-      id: "qwen:qwen-turbo",
-      label: "🟣 Qwen Turbo",
-      desc: lang === "zh" ? "高速·轻量任务" : "Fast · Lightweight tasks",
-    },
-  ];
+  // 文本模型目录：统一走 useListedModels("text")，label 用全站统一纯文本后缀
+  // （废除原 🟠/🟣 手工 emoji 与本地硬编码列表，fallback 收敛到 textModelOptions）。
+  // 控件保持现有自定义下拉形态（非原生 select），仅统一数据源与 label 格式。
+  const { models: catalogTextModels } = useListedModels("text", TEXT_MODEL_FALLBACK);
+  const badgeLabels = {
+    unpricedLabel: t.listed_model_unpriced,
+    defaultLabel: t.restyle_setup_col_default,
+  };
+  const AI_MODELS = sortListedModels(catalogTextModels).map((m) => ({
+    id: m.id,
+    label: formatModelOptionLabel(m, badgeLabels),
+    desc: m.sub ?? "",
+  }));
   const placeholders = [
     t.prompt_placeholder_1,
     t.prompt_placeholder_2,
@@ -51,12 +49,25 @@ export default function HeroPromptInput() {
   ];
 
   const [value, setValue] = useState("");
-  const [selectedModel, setSelectedModel] = useState(AI_MODELS[0]);
+  const [selectedModel, setSelectedModel] = useState<(typeof AI_MODELS)[number] | null>(null);
   const [showModels, setShowModels] = useState(false);
   const [loading, setLoading] = useState(false);
   const [response, setResponse] = useState("");
   const [showResponse, setShowResponse] = useState(false);
   const [error, setError] = useState("");
+  // 目录到达前 selectedModel 为 null；用统一默认值链（已保存 → is_default → sortOrder → 兜底）
+  useEffect(() => {
+    if (!AI_MODELS.length) return;
+    setSelectedModel((current) =>
+      current && AI_MODELS.some((m) => m.id === current.id)
+        ? current
+        : AI_MODELS.find(
+            (m) =>
+              m.id === resolveDefaultModel(catalogTextModels, undefined, TEXT_MODEL_FALLBACK[0].id),
+          )!,
+    );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [catalogTextModels]);
   // ⚠️ 必须 SSR-safe:初值用 0(跟服务端 HTML 一致),挂载后再随机。
   // 用 useState(() => Math.random()) 会让 server 渲染一个 placeholder,client
   // 渲染另一个,触发 React hydration mismatch warning。
@@ -151,7 +162,7 @@ export default function HeroPromptInput() {
             <div className="relative" hidden={scriptMode}>
               <button onClick={() => setShowModels((s) => !s)} className="btn-ghost">
                 <RefreshCw size={14} className="text-accent" />
-                {selectedModel.label}
+                {selectedModel?.label ?? AI_MODELS[0]?.label}
                 <ChevronDown size={14} className="opacity-60" />
               </button>
               {showModels && (
@@ -165,7 +176,7 @@ export default function HeroPromptInput() {
                       }}
                       className={`w-full text-left px-3 py-2.5 rounded-lg text-sm transition
                         ${
-                          m.id === selectedModel.id
+                          m.id === selectedModel?.id
                             ? "bg-accent-dim text-accent border border-accent/30"
                             : "text-text-secondary hover:bg-bg-elevated hover:text-text-primary"
                         }`}
@@ -211,7 +222,7 @@ export default function HeroPromptInput() {
             <div className="flex items-center gap-2 text-sm text-text-secondary">
               <MessageCircle size={14} className="text-accent" />
               <span>{t.hero_ai_reply}</span>
-              <span className="text-xs text-text-muted">· {selectedModel.label}</span>
+              <span className="text-xs text-text-muted">· {selectedModel?.label}</span>
             </div>
             <button onClick={closeResponse} className="btn-ghost !px-2 !py-1 text-xs">
               <X size={12} /> {t.hero_close}

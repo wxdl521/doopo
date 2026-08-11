@@ -4,6 +4,9 @@ import { Trash2, MessageSquare, FileText, Cloud, LogIn, Share2 } from "lucide-re
 import { useServerFn } from "@tanstack/react-start";
 import { toast } from "sonner";
 import { useLanguage } from "../i18n/LanguageContext";
+import { useListedModels } from "../hooks/useListedModels";
+import { formatModelOptionLabel, sortListedModels } from "../hooks/modelOptions";
+import { TEXT_MODEL_FALLBACK } from "../lib/textModelOptions";
 import ScriptComposer from "../components/scripts/ScriptComposer";
 import {
   loadScripts,
@@ -26,19 +29,20 @@ const TYPES = [
 const GENRES = ALL_SCRIPT_GENRES;
 const TONES = SCRIPT_TONES;
 
-function getModels(t: ReturnType<typeof useLanguage>["t"]) {
-  return [
-    { id: "ark:deepseek-v4-pro-260425", label: `🟠 DeepSeek V4 Pro (ARK) ${t.sl_model_default}` },
-    { id: "qwen:qwen3-max", label: `🟣 Qwen3 Max ${t.sl_model_flagship}` },
-    { id: "qwen:qwen-plus", label: `🟣 Qwen Plus ${t.sl_model_balanced}` },
-    { id: "qwen:qwen-turbo", label: `🟣 Qwen Turbo ${t.sl_model_high_speed}` },
-  ];
-}
-
 export default function Scripts() {
   const { t } = useLanguage();
   const navigate = useNavigate();
-  const models = getModels(t);
+  // 文本模型目录：统一走 useListedModels("text")，label 用全站统一纯文本后缀
+  // （废除原 🟠/🟣 手工 emoji 与本地硬编码列表，fallback 收敛到 textModelOptions）。
+  const { models: catalogTextModels } = useListedModels("text", TEXT_MODEL_FALLBACK);
+  const badgeLabels = {
+    unpricedLabel: t.listed_model_unpriced,
+    defaultLabel: t.restyle_setup_col_default,
+  };
+  const models = sortListedModels(catalogTextModels).map((m) => ({
+    id: m.id,
+    label: formatModelOptionLabel(m, badgeLabels),
+  }));
   const [scripts, setScripts] = useState<SavedScript[]>([]);
   const { isAuthenticated, loading: authLoading, user, signOut } = useAuth();
   const [shareScript, setShareScript] = useState<SavedScript | null>(null);
@@ -87,7 +91,11 @@ export default function Scripts() {
             </div>
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            <Link to="/login" search={{ redirect: undefined }} className="btn-primary inline-flex items-center gap-1.5 text-sm">
+            <Link
+              to="/login"
+              search={{ redirect: undefined }}
+              className="btn-primary inline-flex items-center gap-1.5 text-sm"
+            >
               <LogIn size={14} /> {t.sl_login}
             </Link>
             <Link to="/register" className="text-sm text-accent hover:underline">
@@ -212,7 +220,8 @@ export default function Scripts() {
                             toast(t.sl_share_login, {
                               action: {
                                 label: t.auth_to_signin,
-                                onClick: () => navigate({ to: "/login", search: { redirect: undefined } }),
+                                onClick: () =>
+                                  navigate({ to: "/login", search: { redirect: undefined } }),
                               },
                             });
                             return;

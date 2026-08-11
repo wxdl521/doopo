@@ -62,7 +62,12 @@ import {
   type UnitProgressEvent,
 } from "./v2/mediaSlicing";
 import { mergeSourceUnitResults, renumberShotSchedule } from "./sourceUnitsMerge";
-import { buildPlanWindowJobs, PLAN_WINDOW_SEC, resolvePlanWindowDurationMs, restylePlanWindowChargeKey } from "../../lib/restyle/planWindows";
+import {
+  buildPlanWindowJobs,
+  PLAN_WINDOW_SEC,
+  resolvePlanWindowDurationMs,
+  restylePlanWindowChargeKey,
+} from "../../lib/restyle/planWindows";
 import { driveWindowedPlanCalls } from "./planWindowDriver";
 import { isSupersededClipAttachment, withoutSupersededClips } from "./rerunAttachments";
 import { outcomeLabel, summarizeRenderRun, type RenderRunOutcome } from "./renderRunSummary";
@@ -129,6 +134,11 @@ import { persistRestyleVideo } from "../../lib/restyleMedia.functions";
 import { realImageModelOptions, realVideoModels } from "../NewProjectDialog";
 import { useListedModels } from "../../hooks/useListedModels";
 import {
+  formatModelOptionLabel,
+  resolveDefaultModel,
+  sortListedModels,
+} from "../../hooks/modelOptions";
+import {
   busyMessageAction,
   isConfirmIntent,
   isReanalyzeIntent,
@@ -177,7 +187,6 @@ import type { ModelPricingRow } from "../../lib/modelPricingCache";
 import {
   RestyleSetupPanel,
   RestyleSpecCard,
-  defaultVideoPricing,
   pricingForVideoModel,
   type RestyleSetupPatch,
 } from "./RestyleSetupPanel";
@@ -268,8 +277,7 @@ const RESTYLE_VIDEO_MODELS = [...realVideoModels].sort(
 // 默认视频模型：TopenRouter 中转的 Seedance 2.0（支持素材库预审，真人参考图的
 // 官方规避路径）；取不到时回退任意支持素材库的模型。
 const DEFAULT_RESTYLE_VIDEO_MODEL =
-  RESTYLE_VIDEO_MODELS.find((model) => model.id === "topenrouter-doubao-seedance-2-0-260128")
-    ?.id ??
+  RESTYLE_VIDEO_MODELS.find((model) => model.id === "topenrouter-doubao-seedance-2-0-260128")?.id ??
   RESTYLE_VIDEO_MODELS.find((model) => getVideoAssetLibrarySupport(model.id).supported)?.id ??
   realVideoModels[0]?.id ??
   "doubao-seedance-2-0-260128";
@@ -1267,12 +1275,26 @@ export default function RestyleStudio() {
   // 模型目录唯一数据源：已上架 + 启用（60s 缓存）；接口异常时回落静态列表
   const { models: listedImageModels } = useListedModels("image", realImageModelOptions);
   const { models: listedVideoModels } = useListedModels("video", realVideoModels);
-  // 支持素材库预审的视频模型排最前（与 RESTYLE_VIDEO_MODELS 同一排序规则）
-  const sortedVideoModels = [...listedVideoModels].sort(
-    (a, b) =>
-      Number(getVideoAssetLibrarySupport(b.id).supported) -
-      Number(getVideoAssetLibrarySupport(a.id).supported),
+  // 分析（文本）模型目录：服务端已支持 text kind；zod 枚举约束见下
+  const { models: catalogTextModels } = useListedModels("text", [...RESTYLE_MODELS]);
+  // 全站统一展示规格（2026/08）：徽标优先级 暂未计费 > 默认 > 素材库预审（转绘视频专属）
+  const modelBadgeLabels = {
+    unpricedLabel: t.listed_model_unpriced,
+    defaultLabel: t.restyle_setup_col_default,
+    assetLibraryLabel: t.restyle_video_model_asset_review,
+  };
+  const sortedImageModels = sortListedModels(listedImageModels);
+  // 排序（全站统一）：素材库预审支持排前（转绘专属附加优先级）→ isDefault 靠前 → sortOrder
+  const sortedVideoModels = sortListedModels(listedVideoModels, (model) =>
+    Number(getVideoAssetLibrarySupport(model.id).supported),
   );
+  // 分析模型选项：文本目录中被服务端 zod 枚举接受的项（restyleAnalysis.functions.ts
+  // 的 model 枚举是固定 6 个 id，目录其它条目提交会被拒），目录未覆盖时回落静态列表。
+  const analysisModelOptions = useMemo(() => {
+    const validIds = new Set<string>(RESTYLE_MODELS.map((model) => model.id));
+    const listed = catalogTextModels.filter((model) => validIds.has(model.id));
+    return listed.length ? listed : [...RESTYLE_MODELS];
+  }, [catalogTextModels]);
   // projects 的最新快照：异步回调按 projectId 取自己项目的字段（如目标画风），
   // 不被「切换到其他项目」影响。渲染期只维护全量快照，不再按激活项目覆盖单份 ref。
   const projectsRef = useRef<RestyleProject[]>(projects);
@@ -1442,22 +1464,42 @@ export default function RestyleStudio() {
     () => pricingRows.filter((row) => row.kind === "video" && row.enabled),
     [pricingRows],
   );
-  // 未选择视频模型时取库内 is_default（Seedance 2.0 720P）；库读不到回落内置默认。
+  // 默认值链（全站统一）：项目/用户已保存值 → 库内 is_default 行 → sortOrder 最前 →
+  // 硬编码常量兜底（DEFAULT_RESTYLE_* 仅作最终兜底，不再直接当默认）。
   const defaultRestyleVideoModel = useMemo(
-    () => defaultVideoPricing(videoPricingRows)?.modelId ?? DEFAULT_RESTYLE_VIDEO_MODEL,
-    [videoPricingRows],
+    () => resolveDefaultModel(sortedVideoModels, undefined, DEFAULT_RESTYLE_VIDEO_MODEL),
+    [sortedVideoModels],
+  );
+  const defaultRestyleImageModel = useMemo(
+    () => resolveDefaultModel(sortedImageModels, undefined, DEFAULT_RESTYLE_IMAGE_MODEL),
+    [sortedImageModels],
   );
 
   // 模型选择随项目走：项目没设过模型时无条件回落默认值，绝不沿用上一个项目的选择。
   // 用户在下拉里改模型时会写回 project.imageModel/videoModel，选择随项目持久化。
   useEffect(() => {
-    setSelectedImageModel(activeProject?.imageModel ?? DEFAULT_RESTYLE_IMAGE_MODEL);
-    setSelectedVideoModel(activeProject?.videoModel ?? defaultRestyleVideoModel);
+    setSelectedImageModel(
+      resolveDefaultModel(
+        sortedImageModels,
+        activeProject?.imageModel,
+        DEFAULT_RESTYLE_IMAGE_MODEL,
+      ),
+    );
+    setSelectedVideoModel(
+      resolveDefaultModel(
+        sortedVideoModels,
+        activeProject?.videoModel,
+        DEFAULT_RESTYLE_VIDEO_MODEL,
+      ),
+    );
   }, [
     activeProject?.id,
     activeProject?.imageModel,
     activeProject?.videoModel,
     defaultRestyleVideoModel,
+    defaultRestyleImageModel,
+    sortedImageModels,
+    sortedVideoModels,
   ]);
 
   // 当前生效的视频模型：项目持久化值优先，未设置时用下拉当前值（已按默认值兜底）。
@@ -1935,7 +1977,10 @@ export default function RestyleStudio() {
             }
             return { ok: true as const, segments: res.episodes[0]?.segments ?? [] };
           } catch (error) {
-            return { ok: false as const, error: error instanceof Error ? error.message : "网络异常" };
+            return {
+              ok: false as const,
+              error: error instanceof Error ? error.message : "网络异常",
+            };
           }
         },
       });
@@ -2758,9 +2803,7 @@ export default function RestyleStudio() {
         updateProject(projectId, (project) => ({
           ...project,
           files: project.files.map((file) =>
-            file.id === source.id
-              ? { ...file, url, ...(storageKey ? { storageKey } : {}) }
-              : file,
+            file.id === source.id ? { ...file, url, ...(storageKey ? { storageKey } : {}) } : file,
           ),
         }));
         if (useDirect) setAttachmentUpload(source.id, { status: "done", progress: 100 });
@@ -2816,13 +2859,19 @@ export default function RestyleStudio() {
       job.source.durationSec != null ? job.source.durationSec * 1000 : undefined;
     const shotCoverageMs = estimateSourceDurationMs(project?.shotSchedule);
     if (realDurationMs !== undefined && realDurationMs <= referenceLimits.maxMs) {
-      appendRenderLog(projectId, job.attachmentId,
-        `原片真实时长 ${(realDurationMs / 1000).toFixed(1)}s 在参考视频时长限制内（真实原片合规），直接作为参考视频。`);
+      appendRenderLog(
+        projectId,
+        job.attachmentId,
+        `原片真实时长 ${(realDurationMs / 1000).toFixed(1)}s 在参考视频时长限制内（真实原片合规），直接作为参考视频。`,
+      );
       return { ok: true, url: source.url, durationSec: realDurationMs / 1000 };
     }
     if (realDurationMs === undefined) {
-      appendRenderLog(projectId, job.attachmentId,
-        `原片真实时长未知${shotCoverageMs !== undefined ? `（逐镜表覆盖 ${(shotCoverageMs / 1000).toFixed(1)}s，仅供参考不作合规判定）` : ""}，不直接整片上传。`);
+      appendRenderLog(
+        projectId,
+        job.attachmentId,
+        `原片真实时长未知${shotCoverageMs !== undefined ? `（逐镜表覆盖 ${(shotCoverageMs / 1000).toFixed(1)}s，仅供参考不作合规判定）` : ""}，不直接整片上传。`,
+      );
     }
     // 逐镜表缺失或完全没有场景信息：无法按场景判定分段边界，在对话区
     // 一次性提示先做原片分析（不打断渲染），参考视频照旧安全降级。
@@ -2847,8 +2896,11 @@ export default function RestyleStudio() {
     // 推算不出区间（旧项目无逐镜表）：绝不把超长整片回退提交
     // （素材库会 400），降级为不带参考视频。
     if (!range) {
-      appendRenderLog(projectId, job.attachmentId,
-        "无法确定该段的原片时间区间（无区间而省略），本段不带参考视频提交（避免整片超长被素材库拒绝）。");
+      appendRenderLog(
+        projectId,
+        job.attachmentId,
+        "无法确定该段的原片时间区间（无区间而省略），本段不带参考视频提交（避免整片超长被素材库拒绝）。",
+      );
       return { ok: true };
     }
     // 分段依据日志：所属场景名 + 覆盖镜头范围 + 参考区间时长。
@@ -3423,7 +3475,12 @@ export default function RestyleStudio() {
     }, 20_000);
     try {
       appendRenderLog(projectId, job.attachmentId, "正在上传原视频，作为动作、镜头和节奏参考。");
-      const referenceVideo = await ensureSegmentReferenceVideoUrl(projectId, job, videoModel, conversationId);
+      const referenceVideo = await ensureSegmentReferenceVideoUrl(
+        projectId,
+        job,
+        videoModel,
+        conversationId,
+      );
       if (!referenceVideo.ok) {
         failJob(referenceVideo.error);
       } else {
@@ -3452,7 +3509,13 @@ export default function RestyleStudio() {
           ?.segments.find((item) => item.id === job.segmentId);
         const segmentDurationSec =
           segmentForDuration?.endMs != null && segmentForDuration?.startMs != null
-            ? Math.min(15, Math.max(2, Math.round((segmentForDuration.endMs - segmentForDuration.startMs) / 1000)))
+            ? Math.min(
+                15,
+                Math.max(
+                  2,
+                  Math.round((segmentForDuration.endMs - segmentForDuration.startMs) / 1000),
+                ),
+              )
             : 5;
         // 上游时长校验拒绝（如 r2v 模式 duration 档位与 t2v 不同、或时长超过
         // 参考视频实际时长）时的自适应降级：先按降档序列重投（贴参考片段实际
@@ -3555,8 +3618,10 @@ export default function RestyleStudio() {
           }
         };
 
-        let finalTask: Extract<Awaited<ReturnType<typeof callSubmitVideoTask>>, { ok: true }> | null =
-          null;
+        let finalTask: Extract<
+          Awaited<ReturnType<typeof callSubmitVideoTask>>,
+          { ok: true }
+        > | null = null;
         let finalVideoUrl: string | null = null;
         let submitFailure: string | null = null;
         let pollFailure: { error: string; taskId?: string } | null = null;
@@ -4553,7 +4618,10 @@ export default function RestyleStudio() {
           // workspace-media 并签发读地址，立即写回附件 url 与 storageKey
           // （key 永不过期，7 天签名过期后读取时现签）；刷新后三级回退
           // （内存 File → 持久 URL/对象 key → 缓存帧）才能走到第二级。
-          if (file.url !== prepared.videoUrl || (prepared.videoKey && file.storageKey !== prepared.videoKey)) {
+          if (
+            file.url !== prepared.videoUrl ||
+            (prepared.videoKey && file.storageKey !== prepared.videoKey)
+          ) {
             updateProject(projectId, (project) => ({
               ...project,
               files: project.files.map((item) =>
@@ -4693,7 +4761,10 @@ export default function RestyleStudio() {
           `${fallbackFiles.map((file) => file.name).join("、")} 已降级为快速分析，未纳入全片逐镜表；这些集的分段时间区间将按场景分组推算，长片覆盖可能不完整。`,
         );
       }
-      let transcriptText = [...perFileMerged.map(({ merged }) => merged.transcript), fallbackTranscript]
+      let transcriptText = [
+        ...perFileMerged.map(({ merged }) => merged.transcript),
+        fallbackTranscript,
+      ]
         .filter(Boolean)
         .join("\n");
       // 转写不可用（如基于缓存关键帧重跑）时沿用首轮台词。
@@ -4960,9 +5031,9 @@ export default function RestyleStudio() {
     if (isProjectRunning(projectId)) {
       const action = busyMessageAction(
         message,
-        [...(projectRuns[projectId]?.steps ?? [])].reverse().find(
-          (step) => step.status === "running",
-        )?.label,
+        [...(projectRuns[projectId]?.steps ?? [])]
+          .reverse()
+          .find((step) => step.status === "running")?.label,
       );
       if (action.kind === "queue_rerun") {
         // 能进排队机制就排队（含集/段不存在的引导提示）；无法处理时退化为忙态回复，不静默。
@@ -6703,9 +6774,9 @@ export default function RestyleStudio() {
                   className="max-w-40 rounded-md bg-transparent px-2 py-1 text-xs text-text-secondary outline-none hover:bg-bg"
                   aria-label={t.restyle_image_model}
                 >
-                  {listedImageModels.map((model) => (
+                  {sortedImageModels.map((model) => (
                     <option key={model.id} value={model.id}>
-                      {model.label}
+                      {formatModelOptionLabel(model, modelBadgeLabels)}
                     </option>
                   ))}
                 </select>
@@ -6726,10 +6797,9 @@ export default function RestyleStudio() {
                 >
                   {sortedVideoModels.map((model) => (
                     <option key={model.id} value={model.id}>
-                      {model.label}
-                      {getVideoAssetLibrarySupport(model.id).supported
-                        ? ` · ${t.restyle_video_model_asset_review}`
-                        : ""}
+                      {formatModelOptionLabel(model, modelBadgeLabels, {
+                        assetLibrarySupported: getVideoAssetLibrarySupport(model.id).supported,
+                      })}
                     </option>
                   ))}
                 </select>
@@ -6742,9 +6812,9 @@ export default function RestyleStudio() {
                   aria-label={t.restyle_select_model}
                   title={t.restyle_analysis_model_hint}
                 >
-                  {RESTYLE_MODELS.map((model) => (
+                  {analysisModelOptions.map((model) => (
                     <option key={model.id} value={model.id}>
-                      {model.label}
+                      {formatModelOptionLabel(model, modelBadgeLabels)}
                     </option>
                   ))}
                 </select>

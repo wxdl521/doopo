@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { Sparkles, Grid3x3, GitBranch, Zap, Video, X, Check, Flame, Clock } from "lucide-react";
+import { Sparkles, Grid3x3, GitBranch, Zap, Video, X, Check, Flame } from "lucide-react";
 import { Dialog, DialogContent, DialogTrigger } from "./ui/dialog";
 import { useLanguage } from "../i18n/LanguageContext";
-import { IMAGE_MODELS } from "../lib/imageModels";
+import {
+  formatModelOptionLabel,
+  resolveDefaultModel,
+  sortListedModels,
+} from "../hooks/modelOptions";
 import { upsertProject } from "../lib/projects.functions";
 import { loadUserPrefs, saveUserPrefs } from "../lib/userPreferences";
 import { useAuth } from "../hooks/useAuth";
@@ -145,7 +149,6 @@ const isVisibleImage = (id: string) =>
 export const realImageModelOptions = imageModelOptions.filter(
   (m) => !m.id.startsWith("__sep") && isVisibleImage(m.id),
 );
-void IMAGE_MODELS;
 // Video models —— 2026/06 接入双后端:火山方舟 Seedance(已开通,默认走 ARK) + 阿里 DashScope HappyHorse(备用)
 // 详见 docs/seedream.md (Seedance) 和 docs/qwen.md (HappyHorse)
 const videoModels = [
@@ -514,6 +517,26 @@ export function NewProjectDialog({
   // 模型目录唯一数据源：已上架 + 启用（60s 缓存）；接口异常时回落静态列表
   const { models: catalogImageModels } = useListedModels("image", realImageModelOptions);
   const { models: catalogVideoModels } = useListedModels("video", realVideoModels);
+  // 模型选择展示（全站统一规格 2026/08）：
+  //   - label 纯文本后缀：价格|暂未计费 · 徽标（默认 > 素材库预审）——
+  //     旧的推荐前缀(IMAGE/VIDEO_RECOMMENDED_PREFIXES)与 ✨/🕐 标记已废除；
+  //   - 排序：isDefault 靠前 → catalog sortOrder（modelOptions.sortListedModels）；
+  //   - 默认值链：用户已保存偏好 → 库内 is_default 行 → sortOrder 最前 → 硬编码兜底。
+  const badgeLabels = useMemo(
+    () => ({
+      unpricedLabel: t.listed_model_unpriced,
+      defaultLabel: t.restyle_setup_col_default,
+    }),
+    [t],
+  );
+  const sortedImageModels = useMemo(
+    () => sortListedModels(catalogImageModels),
+    [catalogImageModels],
+  );
+  const sortedVideoModels = useMemo(
+    () => sortListedModels(catalogVideoModels),
+    [catalogVideoModels],
+  );
   // 历史偏好校验：内置可见前缀 或 目录中已上架的模型（含动态供应商）
   const isKnownImage = (id: string) =>
     isVisibleImage(id) || catalogImageModels.some((m) => m.id === id);
@@ -526,23 +549,18 @@ export function NewProjectDialog({
       initialPrefs.lastImageModel,
       initial?.sceneModel,
       initial?.storyboardModel,
-      "doubao-seedream-5-0-260128",
     ];
     for (const c of candidates) {
       if (c && isKnownImage(c)) return c;
     }
-    return catalogImageModels[0]?.id ?? "doubao-seedream-5-0-260128";
+    // 库内 is_default 行 → sortOrder 最前 → 硬编码兜底（统一默认值链）
+    return resolveDefaultModel(sortedImageModels, undefined, "doubao-seedream-5-0-260128");
   };
   const pickVideo = () => {
-    const candidates = [
-      initialPrefs.lastVideoModel,
-      initial?.videoModel,
-      "doubao-seedance-2-0-260128",
-    ];
-    for (const c of candidates) {
-      if (c && isKnownVideo(c)) return c;
-    }
-    return catalogVideoModels[0]?.id ?? "doubao-seedance-2-0-260128";
+    const saved = [initialPrefs.lastVideoModel, initial?.videoModel].find(
+      (c) => c && isKnownVideo(c),
+    );
+    return resolveDefaultModel(sortedVideoModels, saved, "doubao-seedance-2-0-260128");
   };
   const pickStoryboard = () => {
     const candidates = [
@@ -551,12 +569,11 @@ export function NewProjectDialog({
       initialPrefs.lastImageModel,
       initial?.storyboardModel,
       initial?.sceneModel,
-      "doubao-seedream-5-0-260128",
     ];
     for (const c of candidates) {
       if (c && isKnownImage(c)) return c;
     }
-    return catalogImageModels[0]?.id ?? "doubao-seedream-5-0-260128";
+    return resolveDefaultModel(sortedImageModels, undefined, "doubao-seedream-5-0-260128");
   };
   const pickAspect = () => {
     const candidates = [initialPrefs.lastAspect, initial?.aspect, "16:9"];
@@ -622,14 +639,19 @@ export function NewProjectDialog({
     if (authLoading || initializedForOpenRef.current) return;
     initializedForOpenRef.current = true;
     const prefs = loadUserPrefs(userId);
+    // 默认值链（统一规格）：已保存偏好 → 库内 is_default 行 → sortOrder 最前 → 硬编码兜底
     const chooseImage = (...candidates: Array<string | undefined>) =>
-      candidates.find((candidate) => candidate && isKnownImage(candidate)) ??
-      catalogImageModels[0]?.id ??
-      "doubao-seedream-5-0-260128";
+      resolveDefaultModel(
+        sortedImageModels,
+        candidates.find((candidate) => candidate && isKnownImage(candidate)),
+        "doubao-seedream-5-0-260128",
+      );
     const chooseVideo = (...candidates: Array<string | undefined>) =>
-      candidates.find((candidate) => candidate && isKnownVideo(candidate)) ??
-      catalogVideoModels[0]?.id ??
-      "doubao-seedance-2-0-260128";
+      resolveDefaultModel(
+        sortedVideoModels,
+        candidates.find((candidate) => candidate && isKnownVideo(candidate)),
+        "doubao-seedance-2-0-260128",
+      );
     setAspect(
       [prefs.lastAspect, initial?.aspect, "16:9"].find((value) =>
         aspects.some((item) => item.id === value),
@@ -683,93 +705,6 @@ export function NewProjectDialog({
         ? t.np_resolution_1080p
         : t.np_resolution_720p;
   const resolutionOptions = videoResolutionOptions(videoModel);
-
-  // ====================================================================
-  // 个性化模型选择 UX
-  //   - 推荐项(命中下方 IMAGE/VIDEO_RECOMMENDED_PREFIXES)排最前,带 ✨ _recommended
-  //     · 图片推荐:tokenflash / revora / Azure终结点
-  //     · 视频推荐:丽帧(kuaizi)/ doubao-seedance / TopenRouter
-  //   - "用户上次选的"(lastUsed)带 _pinned 标记(🕐);若不在推荐区,排到推荐区之后
-  //   - 非法 id(用户 pref 里残留但当前 catalog 没了)静默忽略
-  // ====================================================================
-  type ModelOption = {
-    id: string;
-    label: string;
-    sub?: string;
-    _pinned?: boolean;
-    _recommended?: boolean;
-  };
-  // 推荐名单:匹配这些前缀的模型排最前 + 带 ✨
-  const IMAGE_RECOMMENDED_PREFIXES = [
-    "tokenflash/",
-    "onetoken/",
-    "revora/",
-    "azure2/",
-    "azure0716/",
-  ];
-  const VIDEO_RECOMMENDED_PREFIXES = ["revora-", "kuaizi-", "doubao-seedance-", "topenrouter-"];
-  const isRecommendedModel = (id: string, prefixes: string[]): boolean =>
-    prefixes.some((p) => id.startsWith(p));
-  /**
-   * 重排模型列表:
-   *   1) 推荐项(命中 recommendedPrefixes)排最前,按 prefixes 顺序,带 _recommended
-   *   2) 非推荐项保持原顺序在后
-   *   3) lastUsed(最近使用)带 _pinned 标记;若它不在推荐区,排到推荐区之后(非推荐区最前)
-   *   4) 不在合法 catalog 里的 lastUsed 静默忽略
-   */
-  function reorderModels<T extends { id: string; label: string; sub?: string }>(
-    catalog: T[],
-    lastUsedId: string | undefined,
-    recommendedPrefixes: string[],
-  ): ModelOption[] {
-    const base: ModelOption[] = catalog.map((m) => ({
-      ...m,
-      _recommended: isRecommendedModel(m.id, recommendedPrefixes),
-    }));
-    // 推荐区:按 recommendedPrefixes 顺序收集(去重)
-    const recommended: ModelOption[] = [];
-    const seen = new Set<string>();
-    for (const prefix of recommendedPrefixes) {
-      for (const m of base) {
-        if (m.id.startsWith(prefix) && !seen.has(m.id)) {
-          recommended.push(m);
-          seen.add(m.id);
-        }
-      }
-    }
-    const nonRecommended = base.filter((m) => !m._recommended);
-    // lastUsed(_pinned):标记最近使用;非推荐项提到推荐区之后,推荐项保持位置
-    if (lastUsedId) {
-      const pinned = [...recommended, ...nonRecommended].find((m) => m.id === lastUsedId);
-      if (pinned) {
-        pinned._pinned = true;
-        if (!pinned._recommended) {
-          const i = nonRecommended.indexOf(pinned);
-          if (i !== -1) nonRecommended.splice(i, 1);
-          return [...recommended, pinned, ...nonRecommended];
-        }
-      }
-    }
-    return [...recommended, ...nonRecommended];
-  }
-
-  // 每次 render 都按"当前 storyboardModel/sceneModel/videoModel"
-  // 倒推出"上次用的"用于 _pinned 标记 —— 也就是用户当前正在看 / 改的值就视为最近使用。
-  const orderedStoryboardModels = useMemo(
-    () => reorderModels(catalogImageModels, storyboardModel, IMAGE_RECOMMENDED_PREFIXES),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [storyboardModel, catalogImageModels],
-  );
-  const orderedSceneModels = useMemo(
-    () => reorderModels(catalogImageModels, sceneModel, IMAGE_RECOMMENDED_PREFIXES),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [sceneModel, catalogImageModels],
-  );
-  const orderedVideoModels = useMemo(
-    () => reorderModels(catalogVideoModels, videoModel, VIDEO_RECOMMENDED_PREFIXES),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [videoModel, catalogVideoModels],
-  );
 
   async function confirm() {
     // 2026/06:编辑现有项目(initial.id 存在)时,upsert 同 id,不 navigate;
@@ -910,18 +845,20 @@ export function NewProjectDialog({
             hint={t.np_storyboard_model_hint}
             value={storyboardModel}
             onChange={setStoryboardModel}
-            options={orderedStoryboardModels as any}
-            pinnedLabel={t.np_model_recently_used}
-            recommendedLabel={t.np_model_recommended}
+            options={sortedImageModels.map((m) => ({
+              id: m.id,
+              label: formatModelOptionLabel(m, badgeLabels),
+            }))}
           />
           <FieldSelect
             label={t.np_scene_model}
             hint={t.np_scene_model_hint}
             value={sceneModel}
             onChange={setSceneModel}
-            options={orderedSceneModels as any}
-            pinnedLabel={t.np_model_recently_used}
-            recommendedLabel={t.np_model_recommended}
+            options={sortedImageModels.map((m) => ({
+              id: m.id,
+              label: formatModelOptionLabel(m, badgeLabels),
+            }))}
           />
         </div>
 
@@ -931,9 +868,10 @@ export function NewProjectDialog({
             hintClassName="min-h-5"
             value={videoModel}
             onChange={setVideoModel}
-            options={orderedVideoModels as any}
-            pinnedLabel={t.np_model_recently_used}
-            recommendedLabel={t.np_model_recommended}
+            options={sortedVideoModels.map((m) => ({
+              id: m.id,
+              label: formatModelOptionLabel(m, badgeLabels),
+            }))}
           />
           <div className="w-full">
             <div className="text-sm font-semibold">{t.np_audio}</div>
@@ -1085,8 +1023,6 @@ function FieldSelect({
   value,
   onChange,
   options,
-  pinnedLabel,
-  recommendedLabel,
   disabled,
   hintClassName,
 }: {
@@ -1094,9 +1030,7 @@ function FieldSelect({
   hint?: string;
   value: string;
   onChange: (v: string) => void;
-  options: { id: string; label: string; sub?: string; _pinned?: boolean; _recommended?: boolean }[];
-  pinnedLabel?: string;
-  recommendedLabel?: string;
+  options: { id: string; label: string; sub?: string }[];
   disabled?: boolean;
   /** 需要紧凑布局的字段可缩短空说明区，仍保持同一行输入框对齐。 */
   hintClassName?: string;
@@ -1114,44 +1048,18 @@ function FieldSelect({
           disabled={disabled}
           className={`w-full appearance-none bg-bg-elevated border border-border rounded-lg pl-3 pr-8 py-2 text-sm focus:outline-none focus:border-accent ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
         >
-          {options.map((o) => {
-            // 原生 <option> 不支持复杂 markup,只能拼文本,但可以用
-            // 前缀字符 (🕐 / ✨) 让用户在浏览器下拉里直观看到标记。
-            // _pinned 优先于 _recommended —— 同一项是"最近使用 + 推荐"时只显示一个。
-            const prefix = o._pinned ? "🕐 " : o._recommended ? "✨ " : "";
-            return (
-              <option key={o.id} value={o.id}>
-                {prefix}
-                {o.label}
-                {o.sub ? ` — ${o.sub}` : ""}
-              </option>
-            );
-          })}
+          {options.map((o) => (
+            // 原生 <option> 不支持复杂 markup，徽标/价格统一由
+            // formatModelOptionLabel 拼成纯文本后缀（全站统一规格）。
+            <option key={o.id} value={o.id}>
+              {o.label}
+            </option>
+          ))}
         </select>
-        {/* select 右侧的图标:被置顶的项显示"最近使用"提示(仅图标,label 走 title 悬浮),推荐的项显示 sparkle */}
-        {options.find((o) => o.id === value)?._pinned ? (
-          <span
-            title={pinnedLabel}
-            aria-label={pinnedLabel}
-            className="absolute right-3 top-1/2 -translate-y-1/2 inline-flex items-center gap-0.5 text-[10px] text-amber-400 pointer-events-none"
-          >
-            <Clock size={11} />
-          </span>
-        ) : options.find((o) => o.id === value)?._recommended ? (
-          <span
-            title={recommendedLabel}
-            aria-label={recommendedLabel}
-            className="absolute right-3 top-1/2 -translate-y-1/2 inline-flex items-center gap-0.5 text-[10px] text-accent pointer-events-none"
-          >
-            <Sparkles size={11} />
-            <span className="hidden lg:inline">{recommendedLabel}</span>
-          </span>
-        ) : (
-          <Sparkles
-            size={12}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none"
-          />
-        )}
+        <Sparkles
+          size={12}
+          className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none"
+        />
       </div>
     </div>
   );

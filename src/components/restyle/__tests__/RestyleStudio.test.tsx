@@ -508,10 +508,15 @@ describe("RestyleStudio prototype", () => {
     expect(imageSelect).toHaveValue("revora/gpt-image-2-high");
     expect(videoSelect).toHaveValue("doubao-seedance-1-0-pro-250528");
 
-    // B 没设过模型：回落默认值，而不是沿用 A 的选择。
+    // B 没设过模型：按统一默认值链回落（库内 is_default → catalog 排序最前），
+    // 而不是沿用 A 的选择（全站模型选择展示统一改造前是硬编码 Azure 优先）。
     await user.selectOptions(screen.getByLabelText("选择项目"), "project-b");
-    // 默认生图模型 = Azure gpt-image-2（在可见列表时优先选中）。
-    expect(imageSelect).toHaveValue("azure2/gpt-image-2");
+    const firstOptionValue = (
+      imageSelect.querySelector("option") as HTMLOptionElement | null
+    )?.value;
+    expect(firstOptionValue).toBeTruthy();
+    expect(imageSelect).toHaveValue(firstOptionValue);
+    expect(imageSelect).not.toHaveValue("revora/gpt-image-2-high");
     expect(videoSelect).not.toHaveValue("doubao-seedance-1-0-pro-250528");
   });
 

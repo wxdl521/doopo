@@ -19,6 +19,10 @@ export type ListedModelOption = {
   priced: boolean;
   /** 定价范围标注，如 "5积分/张" / "56-593积分/10s" */
   priceRange: string | null;
+  /** 库内 is_default 行（默认值链的一档，见 modelOptions.resolveDefaultModel）。 */
+  isDefault?: boolean;
+  /** catalog 排序权重（升序）。 */
+  sortOrder?: number;
 };
 
 // 无 QueryClientProvider 的环境（如未包 Provider 的组件单测）用的兜底 client，
@@ -30,7 +34,7 @@ function getFallbackQueryClient(): QueryClient {
 }
 
 export function useListedModels(
-  kind: "image" | "video",
+  kind: "image" | "video" | "text",
   fallback: { id: string; label: string; sub?: string }[],
 ): { models: ListedModelOption[]; fromCatalog: boolean } {
   const callList = useServerFn(listListedModels);
@@ -55,6 +59,8 @@ export function useListedModels(
           key: string;
           label: string;
           sub: string | null;
+          isDefault?: boolean;
+          sortOrder?: number;
           pricing: { priced: boolean; range: string | null };
         }>;
       },
@@ -70,6 +76,8 @@ export function useListedModels(
         sub: m.sub ?? undefined,
         priced: m.pricing.priced,
         priceRange: m.pricing.range,
+        isDefault: m.isDefault,
+        sortOrder: m.sortOrder,
       })),
       fromCatalog: true,
     };
