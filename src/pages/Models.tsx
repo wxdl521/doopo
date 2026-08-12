@@ -270,6 +270,16 @@ const VIDEO_MODELS: VideoModel[] = [
     status: "available",
   },
   {
+    id: "jieyun-doubao-seedance-2-0-260128",
+    name: "Seedance 2.0（诘云）",
+    nameEn: "Seedance 2.0 (Jieyun)",
+    vendor: "诘云 · 火山方舟兼容",
+    tagline: "多模态 · 480p/720p",
+    taglineEn: "Multimodal · 480p/720p",
+    gradient: "from-cyan-500 to-blue-600",
+    status: "available",
+  },
+  {
     id: "jimeng-3.0-pro",
     name: "即梦 3.0 Pro",
     nameEn: "Jimeng 3.0 Pro",

@@ -1059,6 +1059,7 @@ export const zh = {
   np_model_recommended: "推荐",
   np_audio: "生成音频",
   np_character_nationality: "角色默认国籍",
+  np_character_nationality_search: "输入关键字搜索国家/地区",
   np_character_nationality_hint: "用于后续角色生成提示词",
   np_workflow: "生成工作流",
   np_workflow_grid: "多宫格分镜生视频",

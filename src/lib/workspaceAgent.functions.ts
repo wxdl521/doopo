@@ -19,6 +19,7 @@ const AgentActionSchema = z.enum([
   "navigate",
   "explain_capabilities",
   "clarify",
+  "regenerate_asset_image",
 ]);
 
 const AgentPlanSchema = z.object({
@@ -69,6 +70,17 @@ const InputSchema = z.object({
     .max(160)
     .optional(),
 });
+
+/**
+ * 「重新生成 XX 的图片/形象」指令解析：返回被点名的资产名，不命中返回 null。
+ * 供 fallbackPlan 路由 regenerate_asset_image（工作区聊天指令补全）。
+ */
+export function matchAssetImageRegen(text: string): string | null {
+  const match = text.match(
+    /(?:重新生成|重画|重做|重新出)(?:一[张张]?|下)?([一-龥A-Za-z0-9 ·_-]{1,16}?)(?:的)?(?:图片|形象图|形象|图)/,
+  );
+  return match?.[1]?.trim() || null;
+}
 
 function fallbackPlan(input: z.infer<typeof InputSchema>): WorkspaceAgentPlan {
   const text = input.instruction.trim();
@@ -132,6 +144,19 @@ function fallbackPlan(input: z.infer<typeof InputSchema>): WorkspaceAgentPlan {
     };
   }
   const normalized = text.replace(/(?:请|帮我|给我|我要|我想|点击|点一下|执行|帮忙)/g, "").trim();
+  // 「重新生成 XX 的图片/形象」：点名资产单独重跑（工作区聊天指令补全，
+  // 与转绘的意图路由同款模式）；executionPrompt 携带资产名，由执行层解析。
+  const assetName = matchAssetImageRegen(text);
+  if (assetName) {
+    return {
+      action: "regenerate_asset_image",
+      targetStage: "character",
+      title: `重新生成 ${assetName} 的图片`,
+      summary: `只重新生成「${assetName}」的资产图，不动其他素材。`,
+      executionPrompt: assetName,
+      requiresCredit: true,
+    };
+  }
   const matchedButton = input.availableActions?.find((item) =>
     normalized.includes(item.label) || item.label.includes(normalized),
   );
@@ -287,7 +312,7 @@ export const planWorkspaceAgentAction = createServerFn({ method: "POST" })
             {
               role: "system",
               content:
-                "你是 Doopoo 工作区执行规划器。只能返回 JSON，不要 markdown。可用 action: produce_outline, produce_script, produce_episode, produce_workspace_content, extract_assets, create_storyboard_groups, modify_content, click_ui, navigate, explain_capabilities, clarify。你是可执行的 Agent，不是命令匹配器：先理解用户意图、目标对象和所需页面，再把操作按依赖顺序执行。availableActions 仅是当前页面快照；若用户要操作其他阶段的左侧按钮，必须推断 targetStage，并返回 click_ui + 该按钮的准确 uiActionLabel（跨阶段 uiActionId 可为空，系统会先切页后重新定位）。需要连续点击时返回 uiSteps（2~5 步，每步包含 targetStage 与 uiActionId 或 uiActionLabel），例如先打开指定素材详情、等待弹窗出现后再点删除。不能仅因按钮不在当前页面就要求用户改用固定命令；只有对象确实缺失或操作有歧义时才 clarify。用户要求点击、打开、保存、编辑、删除、生成可见按钮时优先 click_ui。只有 navigate/explain_capabilities/clarify 不消耗积分；click_ui 的 requiresCredit 必须与所选操作一致，其他 AI 生成 action 必须为 true。上传本地文件需返回 clarify，说明需要用户在文件选择器中选择文件。图片和视频生成未指定具体素材或分镜组时返回 clarify。executionPrompt 必须是能交给现有工作流执行的中文指令。",
+                "你是 Doopoo 工作区执行规划器。只能返回 JSON，不要 markdown。可用 action: produce_outline, produce_script, produce_episode, produce_workspace_content, extract_assets, create_storyboard_groups, modify_content, click_ui, navigate, explain_capabilities, clarify, regenerate_asset_image。你是可执行的 Agent，不是命令匹配器：先理解用户意图、目标对象和所需页面，再把操作按依赖顺序执行。availableActions 仅是当前页面快照；若用户要操作其他阶段的左侧按钮，必须推断 targetStage，并返回 click_ui + 该按钮的准确 uiActionLabel（跨阶段 uiActionId 可为空，系统会先切页后重新定位）。需要连续点击时返回 uiSteps（2~5 步，每步包含 targetStage 与 uiActionId 或 uiActionLabel），例如先打开指定素材详情、等待弹窗出现后再点删除。不能仅因按钮不在当前页面就要求用户改用固定命令；只有对象确实缺失或操作有歧义时才 clarify。用户要求点击、打开、保存、编辑、删除、生成可见按钮时优先 click_ui。只有 navigate/explain_capabilities/clarify 不消耗积分；click_ui 的 requiresCredit 必须与所选操作一致，其他 AI 生成 action 必须为 true。上传本地文件需返回 clarify，说明需要用户在文件选择器中选择文件。图片和视频生成未指定具体素材或分镜组时返回 clarify。executionPrompt 必须是能交给现有工作流执行的中文指令。「重新切分镜/分镜未生成/重新生成分镜」一律 create_storyboard_groups；「重新提取角色/场景/道具」一律 extract_assets；「重新生成某角色/场景/道具的图片（点名具体素材）」用 regenerate_asset_image，executionPrompt 只写素材名。",
             },
             { role: "user", content: JSON.stringify(data) },
           ],

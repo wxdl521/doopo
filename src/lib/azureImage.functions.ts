@@ -25,6 +25,9 @@ import { chargeCredits } from "./userCredits.functions";
 import { imageCost } from "./creditsCost";
 
 const DEFAULT_BASE_URL = "https://ywkjpolandcentral.cognitiveservices.azure.com";
+// Azure0716 端点默认值（与 DEFAULT_BASE_URL 同款——端点 URL 非密钥，
+// 交接文档 docs/交接文档.md 有记录；此前无默认值，env 缺失即全量报错）。
+const AZURE0716_DEFAULT_BASE_URL = "https://aazl-mrn9eqq8-eastus2.cognitiveservices.azure.com";
 const T2I_API_VERSION = "2025-04-01-preview";
 const I2I_API_VERSION = "2025-04-01-preview";
 // Azure0716 generation is provisioned on the stable API, while Azure exposes
@@ -68,7 +71,7 @@ function getAzureConfig(modelId?: string) {
   if (modelId && isAzure0716Model(modelId)) {
     return {
       apiKey: process.env.AZURE0716_API_KEY,
-      baseUrl: (process.env.AZURE0716_BASE_URL || "").replace(/\/+$/, ""),
+      baseUrl: (process.env.AZURE0716_BASE_URL || AZURE0716_DEFAULT_BASE_URL).replace(/\/+$/, ""),
       auth: "bearer" as const,
       t2iApiVersion: AZURE0716_T2I_API_VERSION,
       i2iApiVersion: AZURE0716_I2I_API_VERSION,

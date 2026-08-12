@@ -29,6 +29,8 @@ const VIDEO_CREDITS: Record<string, Record<string, number>> = {
   "kuaizi-lizhen-mini": { "480P": 56, "720P": 120 },
   "doubao-seedance-2-0-fast-260128": { "480P": 192, "720P": 192 },
   "doubao-seedance-2-0-260128": { "480P": 237.6, "720P": 237.6 },
+  // 诘云(ARK 兼容网关)与直连同档同价
+  "jieyun-doubao-seedance-2-0-260128": { "480P": 237.6, "720P": 237.6 },
 };
 
 // 同步扣费路径拿不到请求上下文:缓存过期时用最近注册的登录客户端后台刷新,
@@ -127,6 +129,7 @@ const VIDEO_ROUTING_PREFIXES = [
   "toapis-",
   "vapeur-",
   "shuci-",
+  "jieyun-",
   "revora-",
   "agentearth-",
 ];

@@ -120,13 +120,15 @@ export function getVideoBackend(
   | "ycore"
   | "neiwen"
   | "agentearth"
-  | "revora" {
+  | "revora"
+  | "jieyun" {
   const m = (modelId || "").trim().toLowerCase();
   if (isRevoraVideoModel(m)) return "revora";
   if (isAgentEarthSeedanceModel(m)) return "agentearth";
   if (m.startsWith("dreamina-seedance-")) return "sdreal";
   if (m.startsWith("doubao-seedance-") || m.startsWith("seedance-")) return "ark";
   if (m.startsWith("shuci-")) return "shuci";
+  if (m.startsWith("jieyun-")) return "jieyun";
   if (m.startsWith("jimeng-")) return "jimeng";
   if (m.startsWith("kuaizi-")) return "kuaizi";
   if (m.startsWith("toapis-")) return "toapis";
@@ -194,6 +196,11 @@ export const NEIWEN_VIDEO_MODELS = {
   "neiwen-c-seedance-2-0": "c/seedance-2.0 (内文)",
 } as const;
 
+// 诘云(jieyun.cc,火山方舟 ARK 兼容网关,接口与 ARK 完全同构,仅 baseUrl/密钥不同)
+export const JIEYUN_VIDEO_MODELS = {
+  "jieyun-doubao-seedance-2-0-260128": "Seedance 2.0 (诘云)",
+} as const;
+
 export const SEEDANCE_MODELS = {
   "doubao-seedance-2-0-260128": "Doubao Seedance 2.0",
   "doubao-seedance-2-0-fast-260128": "Doubao Seedance 2.0 Fast (720p)",
@@ -207,6 +214,7 @@ export const SEEDANCE_MODELS = {
   ...KEYYIYUN_VIDEO_MODELS,
   ...YCORE_VIDEO_MODELS,
   ...NEIWEN_VIDEO_MODELS,
+  ...JIEYUN_VIDEO_MODELS,
   ...KLING_VIDEO_MODELS,
   ...REVORA_VIDEO_MODELS,
 } as const;
@@ -306,6 +314,8 @@ async function shuciSubmit(input: {
   referenceAudioUrl?: string;
   apiKey: string;
   baseUrl: string;
+  /** 错误日志标签,缺省 "shuci";诘云等同构网关复用时传自己的标签 */
+  label?: string;
 }): Promise<{ ok: true; taskId: string; model: string } | { ok: false; error: string }> {
   const firstFrameImageUrl = input.media.find((item) => item.type === "first_frame")?.url;
   const lastFrameImageUrl = input.media.find((item) => item.type === "last_frame")?.url;
@@ -328,7 +338,7 @@ async function shuciSubmit(input: {
     watermark: input.watermark,
     apiKey: input.apiKey,
     baseUrl: input.baseUrl,
-    label: "shuci",
+    label: input.label ?? "shuci",
   });
 }
 
@@ -336,8 +346,29 @@ async function shuciPoll(input: {
   taskId: string;
   apiKey: string;
   baseUrl: string;
+  /** 错误日志标签,缺省 "shuci";诘云等同构网关复用时传自己的标签 */
+  label?: string;
 }): Promise<PollResult> {
-  return arkPoll({ ...input, label: "shuci" });
+  const { label = "shuci", ...rest } = input;
+  return arkPoll({ ...rest, label });
+}
+
+// ---------- 诘云(jieyun.cc,ARK 兼容网关) ----------
+// 接口与火山方舟 ARK 完全同构(提交/查询路径、请求体、返回结构一致),
+// 因此提交/轮询直接复用 arkSubmit / arkPoll,仅换 baseUrl 与密钥。
+
+const JIEYUN_DEFAULT_BASE_URL = "https://jieyun.cc/api/v3";
+
+function getJieyunVideoConfig() {
+  return {
+    apiKey: process.env.JIEYUN_API_KEY,
+    baseUrl: (process.env.JIEYUN_BASE_URL || JIEYUN_DEFAULT_BASE_URL).replace(/\/+$/, ""),
+  };
+}
+
+/** 从 model id 剥离 `jieyun-` 前缀,得到上游 ARK 模型名 */
+export function jieyunModelToUpstream(modelId: string): string {
+  return modelId.replace(/^jieyun-/i, "");
 }
 
 // 即梦 3.0 Pro 文生/图生视频统一用同一个 req_key
@@ -2595,6 +2626,7 @@ type VideoBackend =
   | "neiwen"
   | "agentearth"
   | "revora"
+  | "jieyun"
   // 动态供应商兜底（后台「供应商管理」登记的 OpenAI 兼容供应商）
   | "dynamic";
 
@@ -3852,6 +3884,29 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
       ? { ok: true, taskId: r.taskId, model: input.model, backend: "shuci" }
       : { ok: false, error: r.error };
   }
+  if (backend === "jieyun") {
+    const { apiKey, baseUrl } = getJieyunVideoConfig();
+    if (!apiKey) return { ok: false, error: "[jieyun] 缺少 JIEYUN_API_KEY" };
+    // 诘云与 ARK 同构,复用 shuciSubmit 的 media 拆分 + arkSubmit 链路
+    const r = await shuciSubmit({
+      model: jieyunModelToUpstream(input.model),
+      prompt: input.prompt,
+      media: input.media,
+      ratio: input.ratio,
+      resolution: input.resolution,
+      duration: input.duration,
+      generateAudio: input.generateAudio,
+      watermark: input.watermark,
+      referenceVideoUrl: input.referenceVideoUrl,
+      referenceAudioUrl: input.referenceAudioUrl,
+      apiKey,
+      baseUrl,
+      label: "jieyun",
+    });
+    return r.ok
+      ? { ok: true, taskId: r.taskId, model: input.model, backend: "jieyun" }
+      : { ok: false, error: r.error };
+  }
   if (backend === "kling") {
     const { callKlingVideoSubmit } = await import("./klingVideo.functions");
     const firstFrameImageUrl = input.media.find((m) => m.type === "first_frame")?.url;
@@ -4154,6 +4209,11 @@ async function pollVideoTask(input: PollInput): Promise<PollResult> {
     const { apiKey, baseUrl } = getShuciVideoConfig();
     if (!apiKey) return { ok: false, error: "[shuci] 缺少 SHUANCIYUAN_VIDEO_KEY" };
     return shuciPoll({ taskId: input.taskId, apiKey, baseUrl });
+  }
+  if (input.backend === "jieyun") {
+    const { apiKey, baseUrl } = getJieyunVideoConfig();
+    if (!apiKey) return { ok: false, error: "[jieyun] 缺少 JIEYUN_API_KEY" };
+    return shuciPoll({ taskId: input.taskId, apiKey, baseUrl, label: "jieyun" });
   }
   if (input.backend === "kling") {
     const { callKlingVideoPoll } = await import("./klingVideo.functions");
@@ -4481,6 +4541,7 @@ const PollServerInput = z.object({
     "keyiyun",
     "agentearth",
     "revora",
+    "jieyun",
     "ycore",
     "neiwen",
     "dynamic",
@@ -4823,7 +4884,9 @@ export const generateVideo = createServerFn({ method: "POST" })
                     ? "ycore-seedance-2-0-fast"
                     : backend === "neiwen"
                       ? "neiwen-c-seedance-2-0"
-                      : "happyhorse-1.0-i2v");
+                      : backend === "jieyun"
+                        ? "jieyun-doubao-seedance-2-0-260128"
+                        : "happyhorse-1.0-i2v");
 
     // ---- 积分预校验:与 submitVideoTaskFn 同口径,按最终路由 model 计费 ----
     // （前缀模型按同档直连价目、无价目默认档兜底，与转绘链同一口径）

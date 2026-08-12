@@ -1076,6 +1076,7 @@ export const en: Translations = {
   np_model_recommended: "Recommended",
   np_audio: "Audio",
   np_character_nationality: "Default character nationality",
+  np_character_nationality_search: "Type to search countries/regions",
   np_character_nationality_hint: "Added to future character-generation prompts",
   np_workflow: "Workflow",
   np_workflow_grid: "Storyboard grid → video",

@@ -66,12 +66,14 @@ import {
   regenerateStoryboardPitchDeck,
 } from "../lib/storyboard.functions";
 import {
-  generateVideo,
+  pollVideoTaskFn,
+  submitVideoTaskFn,
   uploadKeyiyunAsset,
   uploadTopenrouterAsset,
 } from "../lib/videoGenerate.functions";
 import { getKuaiziAsset, uploadKuaiziAsset } from "../lib/kuaiziAssets.functions";
 import { getVideoAssetLibrarySupport } from "../lib/videoAssetLibrary";
+import { imageCost } from "../lib/creditsCost";
 import { refineStoryboardVideoPrompt } from "../lib/videoPromptRefine.functions";
 import { translateEditablePrompt } from "../lib/promptTranslation.functions";
 import { runStoryboardVideoAgent } from "../lib/storyboardVideoAgent.functions";
@@ -1405,7 +1407,8 @@ function WorkspacePage() {
   const callGenerateStoryboard = useServerFn(generateStoryboardFromPlot);
   const callGenerateShotImage = useServerFn(generateStoryboardShotImage);
   const callRegenShot = useServerFn(regenerateStoryboardShot);
-  const callGenVideo = useServerFn(generateVideo);
+  const callGenVideoSubmit = useServerFn(submitVideoTaskFn);
+  const callGenVideoPoll = useServerFn(pollVideoTaskFn);
   const callRefineVideoPrompt = useServerFn(refineStoryboardVideoPrompt);
   const callTranslateEditablePrompt = useServerFn(translateEditablePrompt);
   const callStoryboardVideoAgent = useServerFn(runStoryboardVideoAgent);
@@ -3727,6 +3730,12 @@ function WorkspacePage() {
     return combined;
   }
 
+  /** 生图成功 toast 的消耗后缀（B 组流程优化②：按价目表单价展示本次实际消耗）。 */
+  function imageCostSuffix(model: string | undefined | null): string {
+    const cost = imageCost(model);
+    return cost == null ? "" : `（消耗 ${cost} 积分）`;
+  }
+
   async function genSceneImage(
     s: GenScene,
     editablePrompt = sceneEditablePrompt(s),
@@ -3781,6 +3790,9 @@ function WorkspacePage() {
           `Location: ${s.slug}`,
           s.location && `${s.location}`,
           `Time: ${s.timeOfDay === "DAY" ? "daytime" : s.timeOfDay === "NIGHT" ? "nighttime" : s.timeOfDay === "DUSK" ? "dusk, golden hour" : "dawn"}`,
+          // 地域约束（此前只进角色 prompt 不进场景——选「美国」却生成
+          // 中文招牌地铁站的回归）：场景的地域属性与画面文字显式对齐项目地区。
+          `[REGION] 场景必须符合「${characterNationality}」的街景、建筑样式、标识与文字语言：画面中出现的任何文字/招牌/路牌/海报一律使用该地区的通用语言文字，严禁出现与该地区不符的文字。`,
           // 场景资料常会叙述角色的行动；它只可用于推断天气、光影等环境线索，
           // 绝不能把其中的人物/动物/生物绘制进场景资产。
           ...(s.action
@@ -3822,7 +3834,8 @@ function WorkspacePage() {
           mode: promptMode,
         });
         if (permResult.ok) {
-          toast.success(`已生成场景图「${s.slug}」`);
+          // 生成成功即显示本次实际消耗（按价目表单价；B 组流程优化②）
+          toast.success(`已生成场景图「${s.slug}」${imageCostSuffix(res.model ?? project?.sceneModel)}`);
         } else {
           toast.warning(`场景「${s.slug}」图片保存失败，临时链接 24h 内有效`);
         }
@@ -3878,6 +3891,8 @@ function WorkspacePage() {
         `Item: ${p.name}`,
         `Description: ${p.description}`,
         `Movement in plot: ${p.movementDescription}`,
+        // 地域约束（与场景图同口径）：道具上的文字/标识对齐项目地区语言文字。
+        `[REGION] 道具上出现的任何文字/标识/铭牌一律使用「${characterNationality}」地区的通用语言文字，不得出现与该地区不符的文字。`,
         "Clean product photography style, solid neutral background, no people, no characters, no hands, no figures.",
         "Isolated object shot, well-lit, detailed texture and material, centered composition, high quality.",
       ]
@@ -3892,7 +3907,7 @@ function WorkspacePage() {
           mode: "initial",
         });
         if (permResult.ok) {
-          toast.success(`已生成道具图「${p.name}」`);
+          toast.success(`已生成道具图「${p.name}」${imageCostSuffix(res.model ?? project?.sceneModel)}`);
         } else {
           toast.warning(`道具「${p.name}」图片保存失败，临时链接 24h 内有效`);
         }
@@ -4675,7 +4690,9 @@ function WorkspacePage() {
             },
           );
           if (permResult.ok) {
-            toast.success(`已生成 ${cardTitle}（${styleSpec.label}）`);
+            toast.success(
+              `已生成 ${cardTitle}（${styleSpec.label}）${imageCostSuffix(res.model ?? project?.sceneModel)}`,
+            );
           } else {
             toast.warning(`「${cardTitle}」图片保存失败，临时链接 24h 内有效`);
           }
@@ -6137,7 +6154,7 @@ function WorkspacePage() {
   ) {
     const instruction =
       mode === "three-view"
-        ? "根据此形象生成标准四视图:同一角色分别从正面、左侧、右侧、背面四个角度展示,头到脚全身,脸/身材/衣服在四个视图里完全一致,左右两侧面中的人物形象必须完全一样。"
+        ? "根据此形象生成角色参考图:第一张为面部特写(头肩近景,五官清晰,作为面部锁定参考),其后为标准四视图——同一角色分别从正面、左侧、右侧、背面四个角度展示,头到脚全身,脸/身材/衣服在所有视图里完全一致,左右两侧面中的人物形象必须完全一样。"
         : "生成完整的【角色多维资产图】:简介(名字+个性)+ 大型主肖像 + 全身四视图(正/左/右/背)+ 6-8 种表情(开心/生气/困倦/惊讶/悲伤/常态…)+ 4-6 种动作姿势(按个性挑)+ 配饰/道具图标,白底,中文标注,保留角色全部特征。";
     await doRegen(c, lookId, mode, instruction);
   }
@@ -8346,26 +8363,99 @@ function WorkspacePage() {
         generateAudio: project?.audio === "on",
         watermark: false,
       };
-      const res =
-        method === "shots"
-          ? await callGenVideo({
+      const firstFrameUrl =
+        method === "shots" && isSelectedImage(payload.firstFrame)
+          ? getVideoImageReference(payload.firstFrame)
+          : undefined;
+      const lastFrameUrl =
+        method === "shots" && isSelectedImage(payload.lastFrame)
+          ? getVideoImageReference(payload.lastFrame)
+          : undefined;
+      // 提交/轮询拆分（与转绘渲染链同口径）：generateVideo 单请求内 60s 间隔
+      // 轮询、零字节输出，视频生成数分钟必然触平台 ~100s 无字节断连（实测
+      // 「生成视频报错」即 Failed to fetch）。改为短请求提交 + 客户端 5s 轮询。
+      const videoContent = [
+        { type: "text", text: commonData.prompt },
+        ...(firstFrameUrl
+          ? [{ type: "image_url", image_url: { url: firstFrameUrl }, role: "first_frame" }]
+          : []),
+        ...(lastFrameUrl
+          ? [{ type: "image_url", image_url: { url: lastFrameUrl }, role: "last_frame" }]
+          : []),
+        ...(commonData.referenceImageUrls ?? []).map((url) => ({
+          type: "image_url",
+          image_url: { url },
+        })),
+        ...(commonData.referenceAudioUrl
+          ? [{ type: "audio_url", audio_url: { url: commonData.referenceAudioUrl } }]
+          : []),
+      ];
+      const submitted = await callGenVideoSubmit({
+        data: {
+          content: videoContent,
+          model: commonData.model,
+          ratio: commonData.ratio,
+          resolution: commonData.resolution,
+          duration: groupVideoDurationSec(group),
+          generateAudio: commonData.generateAudio,
+          watermark: false,
+        },
+      });
+      const res = await (async (): Promise<
+        { ok: true; videoUrl: string | undefined; taskId?: string } | { ok: false; error: string }
+      > => {
+        if (!submitted.ok || !submitted.taskId) {
+          return {
+            ok: false,
+            error: submitted.ok ? "视频模型没有返回任务编号" : submitted.error,
+          };
+        }
+        // 轮询上限 120 次 × 5s（与转绘链对齐）；任务中止（新一轮覆盖）立即退出。
+        for (let pollCount = 0; pollCount < 120; pollCount += 1) {
+          if (videoGenRoundRef.current[groupId] !== myRound) {
+            return { ok: false, error: "已被中止" };
+          }
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 5_000));
+          let polled: Awaited<ReturnType<typeof callGenVideoPoll>>;
+          try {
+            polled = await callGenVideoPoll({
               data: {
-                ...commonData,
-                imageUrl: isSelectedImage(payload.firstFrame)
-                  ? getVideoImageReference(payload.firstFrame)
-                  : undefined,
-                lastFrameImageUrl: isSelectedImage(payload.lastFrame)
-                  ? getVideoImageReference(payload.lastFrame)
-                  : undefined,
+                taskId: submitted.taskId!,
+                backend: submitted.backend!,
+                model: submitted.model,
+                // 成功扣费参数（与转绘链同口径，幂等键 taskId）
+                resolution: commonData.resolution,
                 duration: groupVideoDurationSec(group),
-              },
-            })
-          : await callGenVideo({
-              data: {
-                ...commonData,
-                duration: groupVideoDurationSec(group),
+                label: `工作区 ${groupId}`,
               },
             });
+          } catch {
+            // 轮询幂等，短暂网络抖动不判失败
+            continue;
+          }
+          if (!polled.ok) {
+            if (polled.status === "failed" || polled.status === "cancelled") {
+              return { ok: false, error: polled.error };
+            }
+            continue;
+          }
+          if (polled.status === "succeeded") {
+            if (!polled.videoUrl) {
+              return { ok: false, error: "视频任务已完成但没有返回可播放的结果 URL" };
+            }
+            return { ok: true, videoUrl: polled.videoUrl, taskId: submitted.taskId };
+          }
+          if (polled.status === "failed" || polled.status === "cancelled") {
+            return {
+              ok: false,
+              error:
+                ("errorDetail" in polled && polled.errorDetail) ||
+                `视频任务${polled.status === "cancelled" ? "已取消" : "失败"}`,
+            };
+          }
+        }
+        return { ok: false, error: "视频生成超时：已等待约 10 分钟仍未完成，请稍后重试。" };
+      })();
       if (videoGenRoundRef.current[groupId] !== myRound) return false; // 已被中止或新一轮覆盖,丢弃
       if (res.ok && res.videoUrl) {
         // 供应商视频 URL 会过期；在写入工作区状态前立即转存。
@@ -8417,7 +8507,7 @@ function WorkspacePage() {
         return true;
       } else {
         markVideoFailed(groupId);
-        toast.error(explainVideoError(res?.error));
+        toast.error(explainVideoError(res.ok ? undefined : res.error));
         return false;
       }
     } catch (e) {
@@ -9166,6 +9256,33 @@ function WorkspacePage() {
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.storyboard, autoGen, dataLoaded, imagesRestored]);
+
+  // 进入「角色」阶段即自动提取当集资产（B 组流程优化④）：此前要手动点
+  // 「提取本集角色」按钮。当集有剧本但还没有任何角色/场景/道具时自动触发一次
+  // （与按钮同一 triggerWorkflow 路径）；每个项目+集只自动触发一次，失败/取消
+  // 后仍可手动点按钮重试。
+  const autoExtractRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (tab !== "character" || !dataLoaded) return;
+    const key = `${workspaceId}:${selectedEpisodeIndex}`;
+    if (autoExtractRef.current.has(key)) return;
+    const hasAssets =
+      data.characters.some((c) => c.episodes.includes(selectedEpisodeIndex)) ||
+      data.scenes.some((s) => s.episodeIndex === selectedEpisodeIndex) ||
+      data.props.some((p) => p.episodeIndex === selectedEpisodeIndex);
+    if (hasAssets) return;
+    const hasText = data.episodeTexts.some(
+      (e) => e.epIndex === selectedEpisodeIndex && e.text.trim(),
+    );
+    if (!hasText) return;
+    autoExtractRef.current.add(key);
+    const extractPrompt = `从第 ${selectedEpisodeIndex} 集提取角色、场景和道具`;
+    chatPanelRef.current?.triggerWorkflow("character", () => produce("character", extractPrompt), {
+      jumpAfter: true,
+      userMsg: extractPrompt,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, dataLoaded, selectedEpisodeIndex, data.characters, data.scenes, data.props, data.episodeTexts]);
 
   // 场景 / 道具图片同样按需生成 —— 提取后由用户在各卡片点击"点击生成场景图" /
   // "点击生成道具图"触发(genSceneImage / genPropImage),不再自动批量生成。
@@ -11151,6 +11268,31 @@ function WorkspacePage() {
       await runEnterStoryboard();
       setTab("storyboard");
       return { summary: "已开始按当前剧本切分分镜组。" };
+    }
+    if (plan.action === "regenerate_asset_image") {
+      // 点名资产图单独重跑（工作区聊天指令补全）：按名字精确/包含匹配角色→场景→道具，
+      // 复用各卡片的生成入口；找不到时明确提示而不是整表重画。
+      const name = plan.executionPrompt.trim();
+      const matchName = (candidate: string | undefined) =>
+        Boolean(candidate && (candidate === name || candidate.includes(name) || name.includes(candidate)));
+      const character = data.characters.find((c) => matchName(c.name));
+      if (character) {
+        await genCharImage(character);
+        return { summary: `已开始重新生成角色「${character.name}」的形象图。` };
+      }
+      const scene = data.scenes.find((s) => matchName(s.slug) || matchName(s.location));
+      if (scene) {
+        void genSceneImage(scene);
+        return { summary: `已开始重新生成场景「${scene.slug || scene.location}」的图片。` };
+      }
+      const prop = data.props.find((p) => matchName(p.name));
+      if (prop) {
+        void genPropImage(prop);
+        return { summary: `已开始重新生成道具「${prop.name}」的图片。` };
+      }
+      return {
+        summary: `没有找到名为「${name}」的角色/场景/道具。可先在角色阶段提取本集资产，或直接告诉我卡片上的名称。`,
+      };
     }
     if (plan.action === "modify_content") {
       if (plan.targetStage === "episodes") {

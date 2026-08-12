@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { Sparkles, Grid3x3, GitBranch, Zap, Video, X, Check, Flame } from "lucide-react";
@@ -285,6 +285,14 @@ const videoModels = [
     sub: "数安词源 · 720p · 轻量版",
   },
 
+  // ---- 诘云(jieyun.cc,ARK 兼容网关,需 JIEYUN_API_KEY)----
+  { id: "__video_sep_jieyun__", label: "—— 诘云(ARK 兼容)——", sub: "" },
+  {
+    id: "jieyun-doubao-seedance-2-0-260128",
+    label: "Seedance 2.0 (诘云)",
+    sub: "诘云 · 火山方舟兼容 · 多模态",
+  },
+
   // ---- vapeur.ai(OpenAI 兼容 · Seedance 2.0,需 VAPEUR_API_KEY)----
   { id: "__video_sep_vapeur__", label: "—— vapeur.ai ——", sub: "" },
   {
@@ -384,6 +392,7 @@ const VISIBLE_VIDEO_PREFIXES = [
   "topenrouter-", // TopenRouter 中转 Seedance
   "hongmeng-", // 弘梦 中转 Seedance 2
   "shuci-", // 数安词源
+  "jieyun-", // 诘云(ARK 兼容网关)
   "dreamina-seedance-", // SD Real Max
   "keyiyun-", // 客易云 Seedance 2.0 官方折扣版
   "ycore-", // 爻核云 Seedance 2.0
@@ -420,6 +429,7 @@ const VIDEO_RESOLUTIONS: Record<string, string[]> = {
   "ycore-seedance-2-0-fast": ["480P", "720P"],
   "ycore-seedance-2-0-mini": ["480P", "720P"],
   "neiwen-c-seedance-2-0": ["480P", "720P", "1080P"],
+  "jieyun-doubao-seedance-2-0-260128": ["480P", "720P"],
 };
 function videoResolutionOptions(videoModel: string | undefined): string[] {
   if (!videoModel) return [];
@@ -900,6 +910,8 @@ export function NewProjectDialog({
               id: nationality,
               label: nationality,
             }))}
+            searchable
+            searchPlaceholder={t.np_character_nationality_search}
           />
         </div>
 
@@ -1025,6 +1037,8 @@ function FieldSelect({
   options,
   disabled,
   hintClassName,
+  searchable,
+  searchPlaceholder,
 }: {
   label: string;
   hint?: string;
@@ -1034,33 +1048,69 @@ function FieldSelect({
   disabled?: boolean;
   /** 需要紧凑布局的字段可缩短空说明区，仍保持同一行输入框对齐。 */
   hintClassName?: string;
+  /** 可搜索模式：input + datalist 原生过滤（长列表如国籍/地区，~250 项）。 */
+  searchable?: boolean;
+  searchPlaceholder?: string;
 }) {
+  // 可搜索模式：输入即浏览器原生过滤 datalist；失焦/回车时若输入不是合法选项，
+  // 回退到当前生效值（不出现非法 id 写回）。
+  const listId = useId();
+  const [query, setQuery] = useState<string | null>(null);
+  const shownValue = query ?? value;
   return (
     <div>
       <div className="text-sm font-semibold">{label}</div>
       <div className={`${hintClassName ?? "min-h-[2.75rem]"} mb-1 text-[11px] text-text-muted`}>
         {hint}
       </div>
-      <div className="relative">
-        <select
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          disabled={disabled}
-          className={`w-full appearance-none bg-bg-elevated border border-border rounded-lg pl-3 pr-8 py-2 text-sm focus:outline-none focus:border-accent ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
-        >
-          {options.map((o) => (
-            // 原生 <option> 不支持复杂 markup，徽标/价格统一由
-            // formatModelOptionLabel 拼成纯文本后缀（全站统一规格）。
-            <option key={o.id} value={o.id}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-        <Sparkles
-          size={12}
-          className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none"
-        />
-      </div>
+      {searchable ? (
+        <>
+          <input
+            list={listId}
+            value={shownValue}
+            disabled={disabled}
+            placeholder={searchPlaceholder}
+            onChange={(e) => {
+              const next = e.target.value;
+              setQuery(next);
+              // 精确命中选项才写回；中间输入只是过滤
+              if (options.some((o) => o.id === next || o.label === next)) onChange(next);
+            }}
+            onFocus={() => setQuery(value)}
+            onBlur={() => setQuery(null)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") setQuery(null);
+            }}
+            className={`w-full appearance-none bg-bg-elevated border border-border rounded-lg pl-3 pr-8 py-2 text-sm focus:outline-none focus:border-accent ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
+          />
+          <datalist id={listId}>
+            {options.map((o) => (
+              <option key={o.id} value={o.id} />
+            ))}
+          </datalist>
+        </>
+      ) : (
+        <div className="relative">
+          <select
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            disabled={disabled}
+            className={`w-full appearance-none bg-bg-elevated border border-border rounded-lg pl-3 pr-8 py-2 text-sm focus:outline-none focus:border-accent ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
+          >
+            {options.map((o) => (
+              // 原生 <option> 不支持复杂 markup，徽标/价格统一由
+              // formatModelOptionLabel 拼成纯文本后缀（全站统一规格）。
+              <option key={o.id} value={o.id}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+          <Sparkles
+            size={12}
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted pointer-events-none"
+          />
+        </div>
+      )}
     </div>
   );
 }

@@ -694,84 +694,78 @@ function buildCharacterPrompts(opts: {
 
   if (data.mode === "three-view") {
     const positive = [
-      `Generate ONE standard 4-view character reference sheet of "${cardTitle}" — a ${data.characterRoleLabel}, age ${data.characterAge}. The output is a SINGLE image with EXACTLY 4 panels (panel 1 = front, panel 2 = LEFT side profile, panel 3 = RIGHT side profile, panel 4 = back).`,
+      `Generate ONE standard character reference sheet of "${cardTitle}" — a ${data.characterRoleLabel}, age ${data.characterAge}. The output is a SINGLE image with EXACTLY 5 panels: panel 1 = FACE CLOSE-UP (facial reference, head-and-shoulders), panels 2-5 = full-body turnaround (front, LEFT side profile, RIGHT side profile, back).`,
       ``,
       `You are given TWO sources of truth and BOTH must agree:
   (A) the attached REFERENCE IMAGE — the current approved front-view of "${cardTitle}", and
   (B) the FACE / BODY / OUTFIT text descriptions below.
 If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) exactly.`,
       ``,
-      `[PHYSICAL STATE — must be respected in ALL 4 panels]`,
+      `[PHYSICAL STATE — must be respected in ALL full-body panels]`,
       `The character's body description (bodyDescription) below is the SINGLE SOURCE OF TRUTH for their physical condition.`,
-      `If the body description indicates a permanent physical trait (e.g. uses a wheelchair, missing limb, prosthetic, walking cane, blind, deaf), that trait MUST appear consistently in ALL 4 panels.`,
-      `DO NOT force the character into a "standing upright" pose if they use a wheelchair — show them in their wheelchair in all 4 panels (front/left-side/right-side/back views of the person IN the wheelchair).`,
-      `DO NOT add missing limbs back — if the description says they are missing an arm or leg, all 4 panels must show that limb missing.`,
-      `The camera angle changes between panels (front → left side → right side → back), but the character's physical state, assistive devices, and permanent condition stay identical across all 4 panels.`,
+      `If the body description indicates a permanent physical trait (e.g. uses a wheelchair, missing limb, prosthetic, walking cane, blind, deaf), that trait MUST appear consistently in ALL full-body panels.`,
+      `DO NOT force the character into a "standing upright" pose if they use a wheelchair — show them in their wheelchair in all full-body panels (front/left-side/right-side/back views of the person IN the wheelchair).`,
+      `DO NOT add missing limbs back — if the description says they are missing an arm or leg, all full-body panels must show that limb missing.`,
+      `The camera angle changes between panels, but the character's physical state, assistive devices, and permanent condition stay identical across all panels.`,
       ``,
       `LAYOUT — strict, no exceptions:
-  Output ONE image with EXACTLY 4 horizontal panels, side-by-side, equal width:
-    • PANEL 1 (leftmost)  = FRONT view (the reference image's angle, character facing camera)
-    • PANEL 2             = LEFT SIDE profile (-90° rotation, character's LEFT side facing the camera)
-    • PANEL 3             = RIGHT SIDE profile (+90° rotation, character's RIGHT side facing the camera)
-    • PANEL 4 (rightmost) = BACK view (180° rotation)
-  NO 5th panel. NO diagonal panel. NO detail box. NO labels. NO captions. NO arrows. NO scale indicators. NO text inside the image.`,
+  Output ONE image with EXACTLY 5 horizontal panels, side-by-side, equal width:
+    • PANEL 1 (leftmost)  = FACE CLOSE-UP — head-and-shoulders portrait, face filling the panel,五官清晰(眼睛/眉毛/鼻/嘴/下颌线/肤色), neutral expression, facing camera. This panel is the facial reference for downstream face locks.
+    • PANEL 2             = FRONT view, FULL BODY (character facing camera)
+    • PANEL 3             = LEFT SIDE profile, FULL BODY (-90° rotation, character's LEFT side facing the camera)
+    • PANEL 4             = RIGHT SIDE profile, FULL BODY (+90° rotation, character's RIGHT side facing the camera)
+    • PANEL 5 (rightmost) = BACK view, FULL BODY (180° rotation)
+  NO 6th panel. NO diagonal panel. NO labels. NO captions. NO arrows. NO scale indicators. NO text inside the image.`,
       ``,
-      `CRITICAL — LEFT/RIGHT SIDE SYMMETRY: The LEFT side profile (panel 2) and RIGHT side profile (panel 3) MUST show the EXACT SAME PERSON — identical face shape, identical hairstyle, identical body proportions, identical outfit details, identical accessories, identical physical condition. The ONLY difference between panel 2 and panel 3 is which side of the character faces the camera. If the character has asymmetrical features (e.g. an eyepatch on the right eye, a scar on the left cheek), those features MUST appear correctly on the appropriate side in each profile view.`,
+      `CRITICAL — LEFT/RIGHT SIDE SYMMETRY: The LEFT side profile (panel 3) and RIGHT side profile (panel 4) MUST show the EXACT SAME PERSON — identical face shape, identical hairstyle, identical body proportions, identical outfit details, identical accessories, identical physical condition. The ONLY difference between panel 3 and panel 4 is which side of the character faces the camera. If the character has asymmetrical features (e.g. an eyepatch on the right eye, a scar on the left cheek), those features MUST appear correctly on the appropriate side in each profile view.`,
       ``,
-      `PER-PANEL SHOT TYPE: Each of the 4 panels is a FULL SHOT (FS) / LONG SHOT (LS) / FULL-LENGTH PORTRAIT — the same framing used in character turnaround sheets, model sheets, and costume reference sheets. The character in EACH panel is shown from head to toe (or the full extent of their body, including wheelchair/prosthetic if applicable).`,
+      `PER-PANEL SHOT TYPE: Panel 1 is a HEAD-AND-SHOULDERS FACE CLOSE-UP (面部特写参考). Panels 2-5 are each a FULL SHOT (FS) / LONG SHOT (LS) / FULL-LENGTH PORTRAIT — the same framing used in character turnaround sheets, model sheets, and costume reference sheets. The character in EACH of panels 2-5 is shown from head to toe (or the full extent of their body, including wheelchair/prosthetic if applicable).`,
       ``,
-      `PER-PANEL GEOMETRY: Each panel is portrait-orientation. In each panel, the character occupies 85-95% of the panel's vertical extent — from the top of the head to the lowest point of the body (soles of feet, wheelchair bottom, prosthetic bottom, etc.). Small white margin above the head AND below the body in EACH panel. The character does NOT touch the top or bottom edge of any panel.`,
+      `PER-PANEL GEOMETRY: Each panel is portrait-orientation. In panels 2-5, the character occupies 85-95% of the panel's vertical extent — from the top of the head to the lowest point of the body (soles of feet, wheelchair bottom, prosthetic bottom, etc.). Small white margin above the head AND below the body in EACH full-body panel. The character does NOT touch the top or bottom edge of any panel. In panel 1 (face close-up), the head and shoulders fill the panel with a small margin.`,
       ``,
-      `PER-PANEL COMPOSITION (apply in each of the 4 panels):
-  1. Reserve a portrait-orientation panel.
-  2. Place the character centered horizontally.
-  3. Top of head at the top of the panel (with small margin).
-  4. Lowest body point at the bottom of the panel (with small margin).
-  5. Body fills the vertical axis of the panel — full body, no half-body.
-  6. Both feet visible (if applicable and the character has feet). Hands visible at the sides (if applicable).`,
-      ``,
-      `HARD CONSTRAINTS — the image is REJECTED if ANY of these is true in ANY of the 4 panels:
-  • The panel is a half-body, waist-up, hip-up, chest-up, shoulder-up, knee-up, cowboy shot, or head-and-shoulders crop.
-  • The head or top of the hair is cut off at the top of the panel.
-  • The body or wheelchair/prosthetic is cut off at the bottom of the panel.
-  • The body extends beyond the panel edge.
-  • The character occupies less than 80% of the panel's height.
+      `HARD CONSTRAINTS — the image is REJECTED if ANY of these is true in ANY panel:
+  • Panel 1 is missing, or is a full-body shot instead of a face close-up.
+  • Any of panels 2-5 is a half-body, waist-up, hip-up, chest-up, shoulder-up, knee-up, cowboy shot crop.
+  • The head or top of the hair is cut off at the top of any panel.
+  • The body or wheelchair/prosthetic is cut off at the bottom of any full-body panel.
+  • The character occupies less than 80% of the panel's height in any of panels 2-5.
   • Any side or back panel is tighter than the front panel (this is the #1 most common failure mode — ALL side and back panels must be JUST AS FULL as the front).
-  • The image contains 5+ panels, or fewer than 4 panels.
-  • The character's physical condition (wheelchair, missing limb, etc.) differs between panels — it MUST be identical in all 4.
+  • The image contains 6+ panels, or fewer than 5 panels.
+  • The character's physical condition (wheelchair, missing limb, etc.) differs between panels — it MUST be identical in all.
   • The LEFT and RIGHT side profiles show different face/body/outfit — they MUST show the exact same person, only the camera direction differs.`,
       ``,
-      `CAMERA PER PANEL: Neutral front/left-side/right-side/back views. The ONLY thing that changes between panels is the camera rotation around the vertical axis. NO 3/4 view, NO diagonal, NO action pose, NO walking, NO running, NO hands-on-hips. The character stays in their natural/default state (sitting in wheelchair if applicable, standing if applicable, with their assistive devices as described).`,
+      `CAMERA PER PANEL: Panel 1 = dead-on front face close-up. Panels 2-5 = neutral front/left-side/right-side/back views. The ONLY thing that changes between full-body panels is the camera rotation around the vertical axis. NO 3/4 view, NO diagonal, NO action pose, NO walking, NO running, NO hands-on-hips. The character stays in their natural/default state (sitting in wheelchair if applicable, standing if applicable, with their assistive devices as described).`,
       ``,
-      `EXPRESSION IN ALL 4 PANELS: Neutral, expressionless, like a passport photo. No smile, no frown, no emotion, eyes open looking at the camera.`,
+      `EXPRESSION IN ALL PANELS: Neutral, expressionless, like a passport photo. No smile, no frown, no emotion, eyes open looking at the camera.`,
       ``,
-      `IDENTITY LOCK ACROSS ALL 4 PANELS: Same face, same body, same physical condition, same outfit, same age, same hair, same skin tone, same accessories, same shoes, same wheelchair or prosthetic if applicable. The ONLY difference between panels is the camera angle. The LEFT and RIGHT side profiles (panels 2 and 3) must show the exact same person — mirror the face/hair/body shape, just from opposite sides.`,
-      `SKIN TONE / MATERIAL LOCK (CRITICAL): All exposed skin — face, ears, neck, arms and hands — must retain the same natural warm flesh tone and skin material as the reference image in ALL FOUR PANELS. Skin must never be gray, blue-gray, green-gray, metallic, stone-like, or monochrome. Use one neutral-white soft studio key light with gentle fill; shadows may add depth but must not change the underlying skin color or let the black umbrella cast a colored shadow onto the face or hands.`,
+      `IDENTITY LOCK ACROSS ALL PANELS: Same face, same body, same physical condition, same outfit, same age, same hair, same skin tone, same accessories, same shoes, same wheelchair or prosthetic if applicable. The face close-up (panel 1) and all full-body panels must show the exact same person.`,
+      `SKIN TONE / MATERIAL LOCK (CRITICAL): All exposed skin — face, ears, neck, arms and hands — must retain the same natural warm flesh tone and skin material as the reference image in ALL PANELS. Skin must never be gray, blue-gray, green-gray, metallic, stone-like, or monochrome. Use one neutral-white soft studio key light with gentle fill; shadows may add depth but must not change the underlying skin color or let the black umbrella cast a colored shadow onto the face or hands.`,
       ``,
-      `VISUAL STYLE (MUST match across all 4 panels — no style drift between panels):`,
+      `VISUAL STYLE (MUST match across all panels — no style drift between panels):`,
       `角色国籍：${data.characterNationality ?? "中国"}`,
       buildStyleLock(styleSpec, "reference"),
       ``,
       `CHARACTER (source of truth, alongside the attached reference image):
   Name: ${cardTitle} (${data.characterRoleLabel}, age ${data.characterAge})
-  Face (must remain identical in all 4 panels): ${data.faceDescription || "(use the face shown in the attached reference image)"}
-  Body (must remain identical in all 4 panels — includes physical condition, disabilities, assistive devices): ${data.bodyDescription || "(use the body shown in the attached reference image)"}
-  Outfit (must remain identical in all 4 panels — do NOT change the outfit between panels): ${data.clothingDescription || "(use the outfit shown in the attached reference image)"}`,
+  Face (must remain identical in all panels, and is the sole subject of panel 1): ${data.faceDescription || "(use the face shown in the attached reference image)"}
+  Body (must remain identical in all full-body panels — includes physical condition, disabilities, assistive devices): ${data.bodyDescription || "(use the body shown in the attached reference image)"}
+  Outfit (must remain identical in all full-body panels — do NOT change the outfit between panels): ${data.clothingDescription || "(use the outfit shown in the attached reference image)"}`,
       ``,
       `BACKGROUND: Each panel has a uniform light neutral background (off-white #F5F5F5 / light grey #EEEEEE is OK — this IS a reference sheet, not a final product, so the strict pure-white rule is relaxed). NO scenery, NO floor, NO horizon, NO props, NO environment, NO shadow on the background, NO reflection.`,
       ``,
       `FINAL CHECK — verify every item before submitting. If any is false, REGENERATE the image:
-  [ ] Output is ONE image with EXACTLY 4 panels (front / left side / right side / back) (yes)
-  [ ] All 4 panels show the FULL BODY (including wheelchair/prosthetic if applicable) (yes)
-  [ ] All 4 panels are equally full-body (side and back NOT tighter than front) (yes)
+  [ ] Output is ONE image with EXACTLY 5 panels (face close-up / front / left side / right side / back) (yes)
+  [ ] Panel 1 is a head-and-shoulders face close-up with clear facial features (yes)
+  [ ] Panels 2-5 all show the FULL BODY (including wheelchair/prosthetic if applicable) (yes)
+  [ ] All full-body panels are equally full-body (side and back NOT tighter than front) (yes)
   [ ] LEFT and RIGHT side profiles show identical character (face/body/outfit) (yes)
-  [ ] Same face, body, physical condition, outfit, age in all 4 panels (yes)
-  [ ] Physical disabilities/assistive devices are identical in all 4 panels (yes)
-  [ ] Style matches "${styleSpec.label}" in all 4 panels (yes)
-  [ ] Expression is neutral in all 4 panels (yes)
+  [ ] Same face, body, physical condition, outfit, age in all panels (yes)
+  [ ] Physical disabilities/assistive devices are identical in all panels (yes)
+  [ ] Style matches "${styleSpec.label}" in all panels (yes)
+  [ ] Expression is neutral in all panels (yes)
   [ ] No text, watermark, logo, labels, captions inside the image (yes)`,
       ``,
-      `Begin. Output the 4-view full-body reference sheet.`,
+      `Begin. Output the 5-panel reference sheet (face close-up + 4-view full-body turnaround).`,
     ]
       .filter(Boolean)
       .join("\n");
@@ -785,7 +779,7 @@ If (A) and (B) ever disagree, follow (B). The character identity MUST match (B) 
       "different face, different face shape, different eye shape, different eye color, different nose, different mouth, different eyebrows, different skin tone, different hairstyle, different hair color, different hair length, different facial proportions, age change, different body, different body proportions, different height, different weight, different gender presentation, different outfit, different clothing color, different clothing style, different accessories, different hat, different glasses, different jewelry, different bag, different weapon, different shoes, different makeup, extra clothing item, missing clothing item, outfit change between panels",
       "asymmetric face between left and right side, different face in left vs right profile, inconsistent left vs right side views, left side and right side showing different person, different outfit in left vs right, mirrored incorrectly, face looks different in left profile vs right profile, left side profile mismatch, right side profile mismatch",
       "scenery, furniture, props, ground texture, horizon line, floor, wall, sky, busy background, complex background, detailed background, color cast, gradient background, vignette, shadow on background, floor reflection, environment, room, indoor, outdoor",
-      "watermark, logo, text, signature, label, panel number, caption, annotation, arrow, callout, extra limbs, deformed hands, extra fingers, extra people, multiple characters, bystander, blurred face, low quality, 5 panels, 6 panels, more than 4 views, fewer than 4 views, single panel, 3 panels",
+      "watermark, logo, text, signature, label, panel number, caption, annotation, arrow, callout, extra limbs, deformed hands, extra fingers, extra people, multiple characters, bystander, blurred face, low quality, 6 panels, 7 panels, more than 5 views, fewer than 5 views, single panel, 3 panels, 4 panels without face close-up",
     ].join(", ");
     // Seedream 用 'x' 分隔画幅;四视图横向 4 面板 → 长方形画布
     // 4096x1280 = 5,242,880 像素,稳过 Seedream 3,686,400 的最小要求
