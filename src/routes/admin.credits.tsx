@@ -103,6 +103,9 @@ function AdminCredits() {
     [callStatuses, callTeamOwners],
   );
 
+  const loadStatusesRef = useRef(loadStatuses);
+  loadStatusesRef.current = loadStatuses;
+
   useEffect(() => {
     setSelected(null);
     setAmount("");
