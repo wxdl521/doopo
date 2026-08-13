@@ -184,6 +184,7 @@ export const SDREAL_VIDEO_MODELS = {
 // 客易云 Seedance 2.0 特价版。模型编码由上游完整指定，包含分辨率和套餐类型。
 export const KEYYIYUN_VIDEO_MODELS = {
   "keyiyun-sd-2-0-fast-discount-720p": "Seedance 2.0 官方折扣版（客易云 · 720p）",
+  "keyiyun-seedance-2-5-c1": "Seedance 2.5（客易云）",
 } as const;
 
 export const YCORE_VIDEO_MODELS = {
@@ -3427,6 +3428,193 @@ async function keyiyunPoll(input: {
   }
 }
 
+// ---------- 客易云 model-center(Seedance 2.5,新 API 风格) ----------
+// 与 seedance-special 是两套接口,不混用:
+//   - 创建:POST {base}/v2/model-center/tasks(Bearer 同 KEYYIYUN_API_KEY)
+//     body: model(必填模型 ID seedance-2.5-c1)/prompt/reference_images[]/
+//           reference_videos[]/reference_audios[]/duration(4-30s)/
+//           aspect_ratio(9:16|16:9|1:1)/resolution(必填 720p|480p)
+//   - 查询:GET {base}/v2/model-center/tasks/{id}
+//     status: queued/processing/completed/failed;完成给 result_url/video_url,
+//     失败有 error 字段;另有 amount(消耗积分)/actualDuration。
+// 参考素材直传公网 URL 数组(该 API 无 asset:// 素材体系)。
+
+const KEYYIYUN_MODEL_CENTER_MODEL = "seedance-2.5-c1";
+
+/** 目录模型 id → 是否走 model-center API(目前仅 Seedance 2.5) */
+export function isKeyiyunModelCenterModel(modelId: string | null | undefined): boolean {
+  return (modelId || "").trim().toLowerCase() === "keyiyun-seedance-2-5-c1";
+}
+
+/** model-center resolution 必填小写档:480P→480p,其余(含缺省)→720p */
+export function keyiyunModelCenterResolution(resolution: string | null | undefined): string {
+  return (resolution || "").trim().toLowerCase().startsWith("480") ? "480p" : "720p";
+}
+
+/** aspect_ratio 仅收 9:16|16:9|1:1;其它档位省略,走上游默认 16:9 */
+export function keyiyunModelCenterAspect(ratio: string | null | undefined): string | undefined {
+  const r = (ratio || "").trim();
+  return r === "9:16" || r === "16:9" || r === "1:1" ? r : undefined;
+}
+
+/** duration 夹取 4-30 秒(上游档位);未给则省略 */
+export function keyiyunModelCenterDuration(duration: number | null | undefined): number | undefined {
+  if (typeof duration !== "number" || !Number.isFinite(duration)) return undefined;
+  return Math.min(30, Math.max(4, Math.round(duration)));
+}
+
+/** 组 model-center 创建 body(纯函数,便于单测) */
+export function buildKeyiyunModelCenterBody(input: {
+  prompt: string;
+  media: DashScopeMediaItem[];
+  ratio?: string;
+  resolution?: string;
+  duration?: number;
+  referenceVideoUrl?: string;
+  referenceAudioUrl?: string;
+}): Record<string, unknown> {
+  const firstImage = input.media.find((item) => item.type === "first_frame")?.url;
+  const lastImage = input.media.find((item) => item.type === "last_frame")?.url;
+  const referenceImages = input.media
+    .filter((item) => item.type === "reference_image")
+    .map((item) => item.url);
+  const body: Record<string, unknown> = {
+    model: KEYYIYUN_MODEL_CENTER_MODEL,
+    prompt: input.prompt,
+    // resolution 必填(缺省 720p)
+    resolution: keyiyunModelCenterResolution(input.resolution),
+  };
+  const aspect = keyiyunModelCenterAspect(input.ratio);
+  if (aspect) body.aspect_ratio = aspect;
+  const duration = keyiyunModelCenterDuration(input.duration);
+  if (duration !== undefined) body.duration = duration;
+  if (firstImage) body.first_image = [firstImage];
+  if (lastImage) body.last_image = [lastImage];
+  if (referenceImages.length > 0) body.reference_images = referenceImages;
+  if (input.referenceVideoUrl) body.reference_videos = [input.referenceVideoUrl];
+  if (input.referenceAudioUrl) body.reference_audios = [input.referenceAudioUrl];
+  return body;
+}
+
+/** 从创建响应提取任务 id(兼容 id / task_id / data.* 两种包装) */
+export function parseKeyiyunModelCenterTaskId(raw: unknown): string | null {
+  if (!raw || typeof raw !== "object") return null;
+  const json = raw as Record<string, unknown>;
+  const data = (json.data || json) as Record<string, unknown>;
+  const id = data.id ?? data.task_id ?? data.taskId;
+  return typeof id === "string" && id ? id : null;
+}
+
+/** 从查询响应提取状态/结果 URL/错误(兼容 data 包装与 result_url/video_url) */
+export function parseKeyiyunModelCenterResult(raw: unknown): {
+  status?: string;
+  videoUrl: string | null;
+  error: string;
+} {
+  if (!raw || typeof raw !== "object") return { videoUrl: null, error: "" };
+  const json = raw as Record<string, unknown>;
+  const result = (json.data || json) as Record<string, unknown>;
+  const videoUrl =
+    (typeof result.result_url === "string" && result.result_url) ||
+    (typeof result.video_url === "string" && result.video_url) ||
+    null;
+  return {
+    status: typeof result.status === "string" ? result.status : undefined,
+    videoUrl,
+    error: extractKeyiyunError(result) || extractKeyiyunError(json) || "",
+  };
+}
+
+async function keyiyunModelCenterSubmit(input: {
+  prompt: string;
+  media: DashScopeMediaItem[];
+  ratio?: SeedanceRatio;
+  resolution?: string;
+  duration?: number;
+  referenceVideoUrl?: string;
+  referenceAudioUrl?: string;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<{ ok: true; taskId: string; model: string } | { ok: false; error: string }> {
+  const result = await fetchSubmitWithRetry({
+    url: `${input.baseUrl}/v2/model-center/tasks`,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${input.apiKey}`,
+    },
+    body: JSON.stringify(
+      buildKeyiyunModelCenterBody({
+        prompt: input.prompt,
+        media: input.media,
+        ratio: input.ratio,
+        resolution: input.resolution,
+        duration: input.duration,
+        referenceVideoUrl: input.referenceVideoUrl,
+        referenceAudioUrl: input.referenceAudioUrl,
+      }),
+    ),
+    label: "keyiyun-mc",
+  });
+  if (!result.ok) {
+    return { ok: false, error: `[keyiyun] 创建任务网络错误: ${result.networkError}` };
+  }
+  const { status, text } = result;
+  if (status < 200 || status >= 300)
+    return { ok: false, error: `[keyiyun] 创建任务 ${status}: ${text.slice(0, 500)}` };
+  let json: unknown = {};
+  try {
+    json = JSON.parse(text);
+  } catch {}
+  const taskId = parseKeyiyunModelCenterTaskId(json);
+  if (!taskId) {
+    return { ok: false, error: `[keyiyun] 创建任务未返回 id: ${text.slice(0, 200)}` };
+  }
+  return { ok: true, taskId, model: KEYYIYUN_MODEL_CENTER_MODEL };
+}
+
+async function keyiyunModelCenterPoll(input: {
+  taskId: string;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<PollResult> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const res = await fetch(
+      `${input.baseUrl}/v2/model-center/tasks/${encodeURIComponent(input.taskId)}`,
+      {
+        headers: { Authorization: `Bearer ${input.apiKey}` },
+        signal: controller.signal,
+      },
+    );
+    const text = await res.text().catch(() => "");
+    if (!res.ok)
+      return { ok: false, error: `[keyiyun] 查询任务 ${res.status}: ${text.slice(0, 300)}` };
+    let json: unknown = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    const parsed = parseKeyiyunModelCenterResult(json);
+    // completed → succeeded 由 seedanceStatusToProgress 归一(中转完成态兼容)
+    return {
+      ok: true,
+      status: keyiyunStatusToProgress(parsed.status),
+      videoUrl: parsed.videoUrl,
+      raw: { error: { message: parsed.error }, status: parsed.status },
+    };
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.name === "AbortError"
+          ? "查询任务超时 (30s)"
+          : error.message
+        : "fetch failed";
+    return { ok: false, error: `[keyiyun] 查询任务网络错误: ${message}` };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 async function sdrealCreateImageAsset(input: {
   url: string;
   name: string;
@@ -3878,6 +4066,23 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
         error:
           "[keyiyun] 缺少 KEYYIYUN_API_KEY，请在 Cloudflare Secrets 或 .env.local 中配置后再试。",
       };
+    }
+    // Seedance 2.5 走 model-center 新 API(参考素材直传公网 URL,无素材库登记)
+    if (isKeyiyunModelCenterModel(input.model)) {
+      const r = await keyiyunModelCenterSubmit({
+        prompt: input.prompt,
+        media: input.media,
+        ratio: input.ratio,
+        resolution: input.resolution,
+        duration: input.duration,
+        referenceVideoUrl: input.referenceVideoUrl,
+        referenceAudioUrl: input.referenceAudioUrl,
+        apiKey,
+        baseUrl,
+      });
+      return r.ok
+        ? { ok: true, taskId: r.taskId, model: input.model, backend: "keyiyun" }
+        : { ok: false, error: r.error };
     }
     // 当前接入的是不带 `_with_video_ref` 的折扣模型；参考视频必须改用
     // 带该后缀的上游模型，避免上游返回难懂的参数错误。参考音频可与参考图搭配。
@@ -4476,6 +4681,11 @@ async function pollVideoTask(input: PollInput): Promise<PollResult> {
   if (input.backend === "keyiyun") {
     const { apiKey, baseUrl } = getKeyiyunConfig();
     if (!apiKey) return { ok: false, error: "[keyiyun] 缺少 KEYYIYUN_API_KEY" };
+    // model-center(Seedance 2.5)与 seedance-special 查询端点不同,按 model 区分;
+    // 未带 model 的按旧链兜底(向后兼容)。
+    if (input.model && isKeyiyunModelCenterModel(input.model)) {
+      return keyiyunModelCenterPoll({ taskId: input.taskId, apiKey, baseUrl });
+    }
     return keyiyunPoll({ taskId: input.taskId, apiKey, baseUrl });
   }
   if (input.backend === "ycore") {

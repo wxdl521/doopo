@@ -20,6 +20,7 @@ const IMAGE_CREDITS: { prefix: string; cost: number }[] = [
   { prefix: "azure2/", cost: 9 },
   { prefix: "azure3/", cost: 9 },
   { prefix: "azure0716/", cost: 9 },
+  { prefix: "azure-image2/", cost: 9 },
 ];
 
 // 视频:模型 id -> { 分辨率 -> 每10秒单价 }(兜底表)
@@ -31,6 +32,8 @@ const VIDEO_CREDITS: Record<string, Record<string, number>> = {
   "doubao-seedance-2-0-260128": { "480P": 237.6, "720P": 237.6 },
   // 诘云(ARK 兼容网关)与直连同档同价
   "jieyun-doubao-seedance-2-0-260128": { "480P": 237.6, "720P": 237.6 },
+  // 客易云 Seedance 2.5(model-center):暂按 doubao-seedance-2-0 直连档计价
+  "keyiyun-seedance-2-5-c1": { "480P": 237.6, "720P": 237.6 },
 };
 
 // 同步扣费路径拿不到请求上下文:缓存过期时用最近注册的登录客户端后台刷新,

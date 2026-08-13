@@ -230,6 +230,16 @@ const VIDEO_MODELS: VideoModel[] = [
     status: "available",
   },
   {
+    id: "keyiyun-seedance-2-5-c1",
+    name: "Seedance 2.5（客易云）",
+    nameEn: "Seedance 2.5 (Keyiyun)",
+    vendor: "客易云 · model-center",
+    tagline: "480p/720p · 4-30 秒 · 图片/视频/音频参考",
+    taglineEn: "480p/720p · 4-30s · Image, Video & Audio References",
+    gradient: "from-orange-500 to-red-600",
+    status: "available",
+  },
+  {
     id: "ycore-seedance-2-0",
     name: "Seedance 2.0（爻核云）",
     nameEn: "Seedance 2.0 (Ycore Cloud)",
@@ -443,6 +453,16 @@ const IMAGE_MODELS: ImageModel[] = [
     tagline: "gpt-image-2 · T2I/I2I",
     taglineEn: "gpt-image-2 · T2I/I2I",
     gradient: "from-blue-500 to-cyan-600",
+    status: "available",
+  },
+  {
+    id: "azure-image2/gpt-image-2",
+    name: "GPT Image 2（azure-image2 并发）",
+    nameEn: "GPT Image 2 (azure-image2)",
+    vendor: "晶美 APIM 并发网关",
+    tagline: "gpt-image-2 · 并发 · 仅 T2I",
+    taglineEn: "gpt-image-2 · Concurrent · T2I",
+    gradient: "from-cyan-500 to-teal-600",
     status: "available",
   },
   {

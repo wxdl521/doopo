@@ -39,6 +39,11 @@ const AZURE_PREFIX = "azure/";
 const AZURE2_PREFIX = "azure2/";
 const AZURE3_PREFIX = "azure3/";
 const AZURE0716_PREFIX = "azure0716/";
+// azure-image2 = 晶美 APIM 并发生图网关(jingmeiapimanage.azure-api.net),
+// 走 Azure OpenAI v1 路径(/openai/v1/images/generations,body 带 model),
+// 认证头 api-key(只带 Bearer 会被 APIM 拦 401 missing subscription key)。
+const AZURE_IMAGE2_PREFIX = "azure-image2/";
+const AZURE_IMAGE2_DEFAULT_BASE_URL = "https://jingmeiapimanage.azure-api.net/jingmeiapim";
 
 export function isAzureModel(modelId: string | null | undefined): boolean {
   if (!modelId) return false;
@@ -47,12 +52,17 @@ export function isAzureModel(modelId: string | null | undefined): boolean {
     lower.startsWith(AZURE_PREFIX) ||
     lower.startsWith(AZURE2_PREFIX) ||
     lower.startsWith(AZURE3_PREFIX) ||
-    lower.startsWith(AZURE0716_PREFIX)
+    lower.startsWith(AZURE0716_PREFIX) ||
+    lower.startsWith(AZURE_IMAGE2_PREFIX)
   );
 }
 
 export function stripAzurePrefix(modelId: string): string {
-  return modelId.replace(/^(azure|azure2|azure3|azure0716)\//i, "");
+  return modelId.replace(/^(azure-image2|azure|azure2|azure3|azure0716)\//i, "");
+}
+
+function isAzureImage2Model(modelId: string): boolean {
+  return modelId.toLowerCase().startsWith(AZURE_IMAGE2_PREFIX);
 }
 
 function isAzure2Model(modelId: string): boolean {
@@ -68,6 +78,20 @@ function isAzure0716Model(modelId: string): boolean {
 }
 
 function getAzureConfig(modelId?: string) {
+  if (modelId && isAzureImage2Model(modelId)) {
+    // azure-image2:APIM 网关,v1 路径 + api-key 认证;并发由网关承担,调用侧无需限流
+    return {
+      apiKey: process.env.AZURE_IMAGE2_API_KEY,
+      baseUrl: (process.env.AZURE_IMAGE2_BASE_URL || AZURE_IMAGE2_DEFAULT_BASE_URL).replace(
+        /\/+$/,
+        "",
+      ),
+      auth: "api-key" as const,
+      apiStyle: "v1" as const,
+      supportsPartialImages: false,
+      envName: "AZURE_IMAGE2_API_KEY",
+    };
+  }
   if (modelId && isAzure0716Model(modelId)) {
     return {
       apiKey: process.env.AZURE0716_API_KEY,
@@ -270,14 +294,23 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
     getAzureConfig(input.model);
   const deployment = stripAzurePrefix(input.model) || "gpt-image-2";
   const hasRefs = !!input.referenceImages?.length;
+  // azure-image2 走 Azure OpenAI v1 路径(body 带 model,无 api-version);
+  // 其余 azure 渠道保持 deployment 路径(见下方 azure3 注释)。
+  const isV1Api = isAzureImage2Model(input.model);
   // azure3 与 azure/azure2 一致,走 deployment 路径(/openai/deployments/{dep}/images/...?api-version=)。
   // services.ai.azure.com 虽也支持 /openai/v1/... 新路径,但只有 deployment 路径的调用进 Portal
   // 「Azure OpenAI Requests」指标——对方按该指标对账,v1 路径计量归属另一维度,对方查不到会误以为没调用。
-  const apiVersion = hasRefs ? i2iApiVersion || I2I_API_VERSION : t2iApiVersion || T2I_API_VERSION;
-  const path = hasRefs
-    ? `/openai/deployments/${deployment}/images/edits`
-    : `/openai/deployments/${deployment}/images/generations`;
-  const url = `${baseUrl}${path}?api-version=${apiVersion}`;
+  const apiVersion = isV1Api
+    ? "v1"
+    : hasRefs
+      ? i2iApiVersion || I2I_API_VERSION
+      : t2iApiVersion || T2I_API_VERSION;
+  const path = isV1Api
+    ? "/openai/v1/images/generations"
+    : hasRefs
+      ? `/openai/deployments/${deployment}/images/edits`
+      : `/openai/deployments/${deployment}/images/generations`;
+  const url = isV1Api ? `${baseUrl}${path}` : `${baseUrl}${path}?api-version=${apiVersion}`;
   const size = normalizeAzureSize(input.size, deployment);
   const quality = normalizeAzureQuality(input.quality);
   const streamPartialImages = supportsPartialImages && (input.stream ?? quality === "high");
@@ -305,6 +338,16 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
       url: "",
       urls: [],
       error: `AZURE base url not configured for ${input.model}`,
+      model: deployment,
+      meta: { ...baseMeta, durationMs: 0, status: 0, retries: 0 },
+    };
+  }
+  if (isV1Api && hasRefs) {
+    // azure-image2 只实测了 v1 generations(文生图);图生图未接入,给明确提示而非乱请求
+    return {
+      url: "",
+      urls: [],
+      error: "[azure-image2] 该并发生图网关暂只支持文生图；图生图请改用 azure/ azure2 渠道。",
       model: deployment,
       meta: { ...baseMeta, durationMs: 0, status: 0, retries: 0 },
     };
@@ -367,6 +410,8 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
         n: input.n ?? 1,
         size,
         quality,
+        // v1 路径(deployment 在 body 里);deployment 路径 deployment 在 URL 里
+        ...(isV1Api ? { model: deployment } : {}),
         ...(streamPartialImages ? { stream: true, partial_images: 3 } : {}),
       };
       requestInit = {

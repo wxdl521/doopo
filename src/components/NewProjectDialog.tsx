@@ -130,6 +130,11 @@ const imageModelOptions = [
     label: "Azure0716-gpt-image-2",
     sub: "9积分/张",
   },
+  {
+    id: "azure-image2/gpt-image-2",
+    label: "GPT Image 2 (azure-image2 并发)",
+    sub: "晶美 APIM · 并发 · 仅 T2I · 9积分/张",
+  },
 ];
 // 图下拉只保留指定供应商，避免将未启用渠道展示给用户。
 const VISIBLE_IMAGE_PREFIXES = [
@@ -139,6 +144,7 @@ const VISIBLE_IMAGE_PREFIXES = [
   "revora/",
   "azure2/",
   "azure0716/",
+  "azure-image2/",
   "agentearth/",
   "confluo/",
   "aigcfamily/",
@@ -222,11 +228,16 @@ const videoModels = [
   },
 
   // ---- 客易云（Seedance 2.0 官方折扣版，完整模型编码固定 720p）----
-  { id: "__video_sep_keyiyun__", label: "—— 客易云（Seedance 2.0）——", sub: "" },
+  { id: "__video_sep_keyiyun__", label: "—— 客易云（Seedance 2.0/2.5）——", sub: "" },
   {
     id: "keyiyun-sd-2-0-fast-discount-720p",
     label: "Seedance 2.0 官方折扣版",
     sub: "客易云 · 快速 · 720p · 文本/图片参考",
+  },
+  {
+    id: "keyiyun-seedance-2-5-c1",
+    label: "Seedance 2.5（客易云）",
+    sub: "客易云 · model-center · 480p/720p · 4-30s · 图/视频/音频参考",
   },
 
   // ---- 即梦 3.0 Pro(火山引擎视觉服务,需 AK/SK)----
@@ -430,6 +441,7 @@ const VIDEO_RESOLUTIONS: Record<string, string[]> = {
   "ycore-seedance-2-0-mini": ["480P", "720P"],
   "neiwen-c-seedance-2-0": ["480P", "720P", "1080P"],
   "jieyun-doubao-seedance-2-0-260128": ["480P", "720P"],
+  "keyiyun-seedance-2-5-c1": ["480P", "720P"],
 };
 function videoResolutionOptions(videoModel: string | undefined): string[] {
   if (!videoModel) return [];

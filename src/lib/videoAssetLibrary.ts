@@ -23,7 +23,8 @@ export function getVideoAssetLibrarySupport(model: string | undefined): VideoAss
   if (
     model.startsWith("topenrouter-doubao-seedance-") ||
     model.startsWith("kuaizi-lizhen-") ||
-    model.startsWith("keyiyun-") ||
+    // Seedance 2.5(model-center)参考素材直传公网 URL,无 asset:// 素材体系
+    (model.startsWith("keyiyun-") && !model.startsWith("keyiyun-seedance-2-5")) ||
     model.startsWith("jieyun-")
   ) {
     return { supported: true, message: "" };
@@ -58,7 +59,8 @@ export const ARK_R2V_REFERENCE_VIDEO_MAX_MS = 15_000;
 export function assetLibraryVendorForModel(model: string | undefined): VideoAssetVendor | null {
   if (!model?.trim()) return null;
   if (model.startsWith("topenrouter-doubao-seedance-")) return "topenrouter";
-  if (model.startsWith("keyiyun-")) return "keyiyun";
+  // Seedance 2.5(model-center)直传公网 URL,不走素材库登记
+  if (model.startsWith("keyiyun-") && !model.startsWith("keyiyun-seedance-2-5")) return "keyiyun";
   if (model.startsWith("kuaizi-lizhen-")) return "kuaizi";
   if (model.startsWith("jieyun-")) return "jieyun";
   return null;
