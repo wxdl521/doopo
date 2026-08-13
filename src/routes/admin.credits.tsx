@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Coins, Users, Building2, ChevronLeft, ChevronRight, Search } from "lucide-react";
 import { toast } from "sonner";
 import PageHeader from "@/components/PageHeader";
