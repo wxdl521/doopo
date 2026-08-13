@@ -97,8 +97,13 @@ export const analyzeRestyleSourceUnits = createServerFn({ method: "POST" })
   .handler(async ({ data, context }): Promise<RestyleSourceUnitsResult> => {
     const { supabase, userId } = context as SupabaseContext;
 
-    // 积分预校验：单请求至少 2 分（1 个单元的视觉+ASR 双通道成本）
-    const guard = await ensureEnoughCredits(2, { kind: "image", model: INTERNAL_VISION_MODEL });
+    // 积分预校验：单请求至少 2 分（1 个单元的视觉+ASR 双通道成本）。
+    // 透传中间件上下文：与扣费同一客户端同一用户（同口径）。
+    const guard = await ensureEnoughCredits(
+      2,
+      { kind: "image", model: INTERNAL_VISION_MODEL },
+      { supabase, userId },
+    );
     if (!guard.ok) return { ok: false, error: guard.error };
 
     const files: RestyleSourceUnitsFileResult[] = [];

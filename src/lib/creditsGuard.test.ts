@@ -93,4 +93,22 @@ describe("ensureEnoughCredits（积分预校验口径）", () => {
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toContain("查询异常");
   });
+
+  it("透传中间件上下文（authCtx）→ 直接用该上下文查库，不再 ad-hoc 解析", async () => {
+    // 中间件上下文与 ad-hoc 解析结果不一致时,必须以透传为准（同扣费口径）
+    authed(walletDb({ data: { credits_balance: 0 } }));
+    const middlewareCtx = {
+      userId: "u1",
+      supabase: walletDb({ data: { credits_balance: 1238.6 } }),
+    };
+    const r = await ensureEnoughCredits(237.6, { kind: "video", model: "m" }, middlewareCtx as never);
+    expect(r).toEqual({ ok: true });
+    expect(mockedCtx).not.toHaveBeenCalled();
+  });
+
+  it("authCtx 显式传 null → 回退 ad-hoc 解析（无中间件链路兜底）", async () => {
+    authed(walletDb({ data: { credits_balance: 10 } }));
+    expect(await ensureEnoughCredits(5, undefined, null)).toEqual({ ok: true });
+    expect(mockedCtx).toHaveBeenCalled();
+  });
 });

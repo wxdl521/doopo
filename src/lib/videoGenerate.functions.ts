@@ -4457,10 +4457,16 @@ export const submitVideoTaskFn = createServerFn({ method: "POST" })
       const { ensureEnoughCredits } = await import("./creditsGuard");
       const __model = data.model || ARK_DEFAULT_MODEL;
       const __cost = videoCostOrFallback(__model, data.resolution, data.duration ?? 10)?.cost ?? null;
-      const __guard = await ensureEnoughCredits(__cost, {
-        kind: "video",
-        model: __model,
-      });
+      // 透传中间件上下文：预校验与扣费同一客户端同一用户（同口径）
+      const { supabase: __sb, userId: __uid } = context as { supabase: any; userId: string };
+      const __guard = await ensureEnoughCredits(
+        __cost,
+        {
+          kind: "video",
+          model: __model,
+        },
+        { supabase: __sb, userId: __uid },
+      );
       if (!__guard.ok) {
         console.warn(
           `[video×] insufficient credits model=${__model} required=${__guard.required} balance=${__guard.balance}`,
@@ -4945,10 +4951,15 @@ export const generateVideo = createServerFn({ method: "POST" })
       const { ensureEnoughCredits } = await import("./creditsGuard");
       const __cost =
         videoCostOrFallback(model, data.resolution, data.duration ?? 10)?.cost ?? null;
-      const __guard = await ensureEnoughCredits(__cost, {
-        kind: "video",
-        model,
-      });
+      // 透传中间件上下文：预校验与扣费同一客户端同一用户（同口径）
+      const __guard = await ensureEnoughCredits(
+        __cost,
+        {
+          kind: "video",
+          model,
+        },
+        { supabase, userId },
+      );
       if (!__guard.ok) {
         console.warn(
           `[video×] insufficient credits model=${model} required=${__guard.required} balance=${__guard.balance}`,
