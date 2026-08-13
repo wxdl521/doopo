@@ -38,6 +38,20 @@ describe("jingmei 文本渠道(Azure AI Foundry 项目端点)", () => {
     expect(tuning.max_tokens).toBeUndefined();
   });
 
+  it("providerTuning:jingmei 分窗路径透传 reasoning_effort=low 压推理耗时", () => {
+    const tuning = providerTuning(resolveProvider("jingmei:gpt-5.5"), 5_000, {
+      reasoningEffort: "low",
+    });
+    expect(tuning).toEqual({ max_completion_tokens: 5_000, reasoning_effort: "low" });
+  });
+
+  it("supportsJsonMode:jingmei 省略 response_format(Foundry v1 未实测该参数)", () => {
+    expect(resolveProvider("jingmei:gpt-5.5").supportsJsonMode).toBe(false);
+    expect(resolveProvider("ark:deepseek-v4-pro-260425").supportsJsonMode).toBe(true);
+    expect(resolveProvider("qwen:qwen3.6-plus").supportsJsonMode).toBe(true);
+    expect(resolveProvider("lovable:openai/gpt-5.5").supportsJsonMode).toBe(true);
+  });
+
   it("jingmeiEndpoint 支持 JINGMEI_BASE_URL 覆盖并剥尾斜杠", () => {
     const original = process.env.JINGMEI_BASE_URL;
     try {

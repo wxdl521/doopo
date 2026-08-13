@@ -25,6 +25,12 @@ export type RestyleProviderConfig = {
   apiKey: string | undefined;
   missingKeyError: string;
   label: string;
+  /**
+   * 是否支持 response_format=json_object。jingmei(Foundry v1 项目端点)未实测
+   * 该参数（资产提炼不带它能正常出结果,方案生成带它 16 分钟无响应）——
+   * 对 jingmei 省略,JSON 由 prompt 约束 + parseJson 容错解析兜底。
+   */
+  supportsJsonMode: boolean;
 };
 
 /** 把带前缀的模型 id 解析成上游 provider 配置。process.env 只在 handler 内读取。 */
@@ -38,6 +44,7 @@ export function resolveProvider(modelId: string): RestyleProviderConfig {
       apiKey: jingmeiApiKey(),
       missingKeyError: "jingmei 未配置：请设置 JINGMEI_API_KEY。",
       label: "jingmei",
+      supportsJsonMode: false,
     };
   }
   if (modelId.startsWith("ark:")) {
@@ -48,6 +55,7 @@ export function resolveProvider(modelId: string): RestyleProviderConfig {
       apiKey: arkTextApiKey(),
       missingKeyError: "DeepSeek V4 Pro 未配置：请设置 ARK_API_KEY。",
       label: "DeepSeek",
+      supportsJsonMode: true,
     };
   }
   if (modelId.startsWith("lovable:")) {
@@ -58,6 +66,7 @@ export function resolveProvider(modelId: string): RestyleProviderConfig {
       apiKey: process.env.LOVABLE_API_KEY,
       missingKeyError: "GPT-5.5 未配置：Lovable AI 网关缺少 LOVABLE_API_KEY。",
       label: "GPT-5.5",
+      supportsJsonMode: true,
     };
   }
   return {
@@ -67,6 +76,7 @@ export function resolveProvider(modelId: string): RestyleProviderConfig {
     apiKey: qwenApiKey(),
     missingKeyError: "Qwen 未配置：请设置 Qwen、QWEN_API_KEY 或 DASHSCOPE_API_KEY。",
     label: "Qwen",
+    supportsJsonMode: true,
   };
 }
 
@@ -90,7 +100,12 @@ export function providerTuning(
     };
   }
   if (config.provider === "jingmei") {
-    return { max_completion_tokens: maxTokens };
+    // 推理模型:只发 max_completion_tokens;分窗路径透传 reasoning_effort=low
+    // 压推理耗时(全档推理跑 5k 输出预算会超过 90s 单窗超时,每窗都撞超时)。
+    return {
+      max_completion_tokens: maxTokens,
+      ...(opts?.reasoningEffort ? { reasoning_effort: opts.reasoningEffort } : {}),
+    };
   }
   return {
     ...(config.provider === "ark" ? { thinking: ARK_TEXT_THINKING_DISABLED } : {}),

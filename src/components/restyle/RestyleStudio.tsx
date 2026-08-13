@@ -72,7 +72,11 @@ import { driveWindowedPlanCalls } from "./planWindowDriver";
 import { isSupersededClipAttachment, withoutSupersededClips } from "./rerunAttachments";
 import { outcomeLabel, summarizeRenderRun, type RenderRunOutcome } from "./renderRunSummary";
 import { isPendingRerun, shiftPendingRerun } from "./pendingReruns";
-import { imageModelFallbackCandidates, isQuotaLikeImageError } from "./imageModelFallback";
+import {
+  imageModelFallbackCandidates,
+  isQuotaLikeImageError,
+  isTransientNetworkImageError,
+} from "./imageModelFallback";
 import { segmentIndexFromId, withSegmentDirection } from "../../lib/restyle/shotSchedule";
 import { formatLightingParams, type DirectionShot } from "../../lib/restyle/cameraDirection";
 import {
@@ -5369,7 +5373,30 @@ export default function RestyleStudio() {
                 data: { prompt, model, size: "2K", referenceImages },
               })
             : callGenerateImage({ data: { prompt, model, size: "2K" } });
-        let result = await tryGenerate(activeImageModel);
+        // 网络/网关瞬时失败（含 serverFn 调用本身抛 Failed to fetch）同渠道
+        // 退避重试 2 次；仍失败归一为失败结果，由下方只标记该资产、继续后续
+        // 资产——单资产网络故障不得拖死整个出图阶段（2026-08-14 线上事故：
+        // 裸 await 抛 Failed to fetch 直接跳出循环，整阶段停摆）。
+        type GenerateOutcome = Awaited<ReturnType<typeof tryGenerate>>;
+        const tryGenerateResilient = async (model: string): Promise<GenerateOutcome> => {
+          let lastError = "未知错误";
+          for (let attempt = 1; attempt <= 3; attempt += 1) {
+            try {
+              const outcome = await tryGenerate(model);
+              if (outcome.url || !isTransientNetworkImageError(outcome.error)) return outcome;
+              lastError = outcome.error || lastError;
+            } catch (error) {
+              lastError = error instanceof Error ? error.message : "网络错误";
+              // 非网络类异常重试无意义，直接判该资产失败
+              if (!isTransientNetworkImageError(lastError)) break;
+            }
+            if (attempt < 3) {
+              await new Promise<void>((resolve) => window.setTimeout(resolve, attempt * 2_000));
+            }
+          }
+          return { url: "", error: lastError } as GenerateOutcome;
+        };
+        let result = await tryGenerateResilient(activeImageModel);
         while (!result.url && isQuotaLikeImageError(result.error)) {
           deadImageModels.add(activeImageModel);
           const [nextModel] = imageModelFallbackCandidates(
@@ -5383,7 +5410,7 @@ export default function RestyleStudio() {
             content: `生图渠道 ${activeImageModel} 不可用（${(result.error || "配额/权限错误").slice(0, 80)}），已切换到 ${nextModel} 重试。`,
           });
           activeImageModel = nextModel;
-          result = await tryGenerate(activeImageModel);
+          result = await tryGenerateResilient(activeImageModel);
         }
         if (!result.url) {
           setAssetRunStatus((current) => ({

@@ -387,7 +387,8 @@ export const generateRestylePlan = createServerFn({ method: "POST" })
             body: JSON.stringify({
               model,
               ...providerTuning(config, maxTokens, reasoningEffort ? { reasoningEffort } : undefined),
-              response_format: { type: "json_object" },
+              // jingmei(Foundry v1)未实测 response_format,省略;JSON 靠 prompt 约束
+              ...(config.supportsJsonMode ? { response_format: { type: "json_object" } } : {}),
               messages: [
                 {
                   role: "system",

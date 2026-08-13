@@ -2,7 +2,11 @@
 // imageModelFallback 纯函数测试：错误分类 / fallback 候选顺序
 // ====================================================================
 import { describe, expect, it } from "vitest";
-import { imageModelFallbackCandidates, isQuotaLikeImageError } from "../imageModelFallback";
+import {
+  imageModelFallbackCandidates,
+  isQuotaLikeImageError,
+  isTransientNetworkImageError,
+} from "../imageModelFallback";
 
 describe("isQuotaLikeImageError", () => {
   it("余额/配额/403/401 类判定为可换渠道", () => {
@@ -59,5 +63,26 @@ describe("imageModelFallbackCandidates", () => {
 
   it("空列表返回空", () => {
     expect(imageModelFallbackCandidates("any", [])).toEqual([]);
+  });
+});
+
+describe("isTransientNetworkImageError", () => {
+  it("网络/网关瞬时错误判定为可同渠道退避重试", () => {
+    expect(isTransientNetworkImageError("Failed to fetch")).toBe(true);
+    expect(isTransientNetworkImageError("fetch failed")).toBe(true);
+    expect(isTransientNetworkImageError("[azure gpt-image-2] 502: bad gateway")).toBe(true);
+    expect(isTransientNetworkImageError("[azure gpt-image-2] 504: gateway timeout")).toBe(true);
+    expect(isTransientNetworkImageError("生图超时，请稍后重试。")).toBe(true);
+    expect(isTransientNetworkImageError("NetworkError when attempting to fetch resource")).toBe(
+      true,
+    );
+  });
+
+  it("配额/审核类不判网络重试（各走换渠道/直接失败路径）", () => {
+    expect(isTransientNetworkImageError("HTTP 403: insufficient balance")).toBe(false);
+    expect(isTransientNetworkImageError("输入图片包含敏感内容，未通过审核")).toBe(false);
+    expect(isTransientNetworkImageError("HTTP 403: content policy violation (nsfw)")).toBe(false);
+    expect(isTransientNetworkImageError(undefined)).toBe(false);
+    expect(isTransientNetworkImageError("")).toBe(false);
   });
 });

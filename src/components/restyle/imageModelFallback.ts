@@ -28,6 +28,22 @@ export function isQuotaLikeImageError(error: string | undefined | null): boolean
   return QUOTA_ERROR_PATTERN.test(error);
 }
 
+/** 网络/网关瞬时错误特征（同渠道退避重试可能成功）。 */
+const TRANSIENT_NETWORK_ERROR_PATTERN =
+  /failed to fetch|fetch failed|network|网络错误|网络异常|timed? ?out|超时|502|503|504|econnreset|socket hang/i;
+
+/**
+ * 是否「同渠道退避重试」的网络/网关瞬时失败（含 serverFn 调用本身抛
+ * Failed to fetch）。内容审核/配额类优先判否——前者直接失败、后者走换渠道，
+ * 都不在同渠道空转。
+ */
+export function isTransientNetworkImageError(error: string | undefined | null): boolean {
+  if (!error) return false;
+  if (SENSITIVE_ERROR_PATTERN.test(error)) return false;
+  if (QUOTA_ERROR_PATTERN.test(error)) return false;
+  return TRANSIENT_NETWORK_ERROR_PATTERN.test(error);
+}
+
 /**
  * 按可用模型列表顺序给出 fallback 候选：排除当前模型与 excluded
  * （本轮已判定不可用的渠道），保持列表原始顺序（列表本身已按
