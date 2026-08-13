@@ -109,6 +109,7 @@ import { generateImage, generateImageWithReferences } from "../../lib/seedream.f
 import {
   pollVideoTaskFn,
   submitVideoTaskFn,
+  uploadJieyunAsset,
   uploadKeyiyunAsset,
   uploadTopenrouterAsset,
 } from "../../lib/videoGenerate.functions";
@@ -1256,6 +1257,7 @@ export default function RestyleStudio() {
   const callPollVideoTask = useServerFn(pollVideoTaskFn);
   const callUploadTopenrouterAsset = useServerFn(uploadTopenrouterAsset);
   const callUploadKeyiyunAsset = useServerFn(uploadKeyiyunAsset);
+  const callUploadJieyunAsset = useServerFn(uploadJieyunAsset);
   const callUploadLocalMedia = useServerFn(uploadLocalImage);
   const callCreateMediaUploadUrl = useServerFn(createMediaUploadUrl);
   const callSignMediaReadUrl = useServerFn(signMediaReadUrl);
@@ -3335,14 +3337,17 @@ export default function RestyleStudio() {
         // 素材入库加一次退避 2 秒重试，治 Failed to fetch 这类瞬时网络错误。
         type AssetUploadResult =
           | Awaited<ReturnType<typeof callUploadKeyiyunAsset>>
+          | Awaited<ReturnType<typeof callUploadJieyunAsset>>
           | Awaited<ReturnType<typeof callUploadTopenrouterAsset>>;
         const uploaded = await withBackoffRetry(
           (): Promise<AssetUploadResult> =>
             vendor === "keyiyun"
               ? callUploadKeyiyunAsset({ data: { url, assetType: "Image", name } })
-              : callUploadTopenrouterAsset({
-                  data: { url, assetType: "Image", name, model: input.videoModel },
-                }),
+              : vendor === "jieyun"
+                ? callUploadJieyunAsset({ data: { url, assetType: "Image", name } })
+                : callUploadTopenrouterAsset({
+                    data: { url, assetType: "Image", name, model: input.videoModel },
+                  }),
         );
         if (uploaded.ok && uploaded.assetUrl) {
           const assetUrl = uploaded.assetUrl;

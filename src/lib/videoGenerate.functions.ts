@@ -371,6 +371,249 @@ export function jieyunModelToUpstream(modelId: string): string {
   return modelId.replace(/^jieyun-/i, "");
 }
 
+// ---------- 诘云素材库(火山引擎素材 Action API 兼容) ----------
+// 真人参考图/视频以裸 URL 提交会触发 PrivacyInformation 风控;官方规避路径是
+// 先登记素材(审核 Active)再以 asset://<id> 引用提交(2026-08-13 curl 实测)。
+// 接口形态:`POST {ROOT}/?Action=<X>&Version=2024-01-01`,Bearer 鉴权,JSON body,
+// 错误在 ResponseMetadata.Error,结果在 Result。ROOT 是站点根(不带 /api/v3)。
+
+/** 素材 Action API 根地址：视频 baseUrl 剥掉 /api/v3 后缀(可用 JIEYUN_ASSET_BASE_URL 覆盖) */
+export function jieyunAssetApiBase(videoBaseUrl: string): string {
+  return videoBaseUrl.replace(/\/+$/, "").replace(/\/api\/v3$/i, "");
+}
+
+function getJieyunAssetConfig() {
+  const { apiKey, baseUrl } = getJieyunVideoConfig();
+  return {
+    apiKey,
+    baseUrl: (process.env.JIEYUN_ASSET_BASE_URL || jieyunAssetApiBase(baseUrl)).replace(
+      /\/+$/,
+      "",
+    ),
+  };
+}
+
+type JieyunAssetType = "Image" | "Video" | "Audio";
+
+type JieyunAsset = {
+  id: string;
+  status?: string;
+};
+
+const JIEYUN_ASSET_API_VERSION = "2024-01-01";
+const JIEYUN_ASSET_PROJECT = "default";
+const JIEYUN_ASSET_READY_TIMEOUT_MS = 90_000;
+const JIEYUN_ASSET_POLL_MS = 1_500;
+
+/** 素材组名：同组内素材可互相引用,可用 JIEYUN_ASSET_GROUP_NAME 覆盖 */
+const JIEYUN_ASSET_GROUP_NAME = process.env.JIEYUN_ASSET_GROUP_NAME || "doopoo";
+
+function jieyunAssetUrl(assetId: string): string {
+  return `asset://${assetId}`;
+}
+
+/** 从 Action API 响应体提取 ResponseMetadata.Error 为 "Code: Message";无错误返回 null */
+export function parseJieyunActionError(raw: unknown): string | null {
+  if (!raw || typeof raw !== "object") return null;
+  const err = (raw as { ResponseMetadata?: { Error?: { Code?: string; Message?: string } } })
+    .ResponseMetadata?.Error;
+  if (!err || (!err.Code && !err.Message)) return null;
+  return err.Code && err.Message ? `${err.Code}: ${err.Message}` : String(err.Code || err.Message);
+}
+
+/** 解析 CreateAsset / GetAsset 的 Result（Id + Status）;结构不符返回 null */
+export function normalizeJieyunAssetResult(raw: unknown): JieyunAsset | null {
+  if (!raw || typeof raw !== "object") return null;
+  const value = raw as Record<string, unknown>;
+  const id = value.Id ?? value.id;
+  if (typeof id !== "string" || !id) return null;
+  const status = value.Status ?? value.status;
+  return { id, status: typeof status === "string" ? status : undefined };
+}
+
+/** 素材状态归一:HTTP 200 也可能 Status=Failed,调用方必须看状态而非只码 */
+export function jieyunAssetStatusKind(status: string | undefined): "active" | "failed" | "processing" {
+  const s = (status || "").toLowerCase();
+  if (s === "active") return "active";
+  if (s === "failed") return "failed";
+  return "processing";
+}
+
+/** 调素材 Action API:POST {baseUrl}/?Action=<action>&Version=2024-01-01 */
+async function jieyunCallAssetAction(input: {
+  action: string;
+  body: Record<string, unknown>;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<{ ok: true; result: unknown } | { ok: false; error: string }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const res = await fetch(
+      `${input.baseUrl}/?Action=${input.action}&Version=${JIEYUN_ASSET_API_VERSION}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${input.apiKey}`,
+        },
+        body: JSON.stringify({ ProjectName: JIEYUN_ASSET_PROJECT, ...input.body }),
+        signal: controller.signal,
+      },
+    );
+    clearTimeout(timeout);
+    const text = await res.text().catch(() => "");
+    let json: { Result?: unknown } = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    const actionError = parseJieyunActionError(json);
+    if (!res.ok || actionError) {
+      return {
+        ok: false,
+        error: `[jieyun] asset ${input.action} ${res.status}: ${actionError || text.slice(0, 300)}`,
+      };
+    }
+    return { ok: true, result: json.Result };
+  } catch (e) {
+    clearTimeout(timeout);
+    const message =
+      e instanceof Error && e.name === "AbortError"
+        ? `${input.action} timeout (30s)`
+        : e instanceof Error
+          ? e.message
+          : "fetch failed";
+    return { ok: false, error: `[jieyun] asset ${input.action} network: ${message}` };
+  }
+}
+
+// 素材组按名缓存(模块级,同 isolate 内复用):建组成功后同组登记全部素材。
+let jieyunAssetGroupCache: { name: string; id: string } | null = null;
+
+async function jieyunEnsureAssetGroup(input: {
+  apiKey: string;
+  baseUrl: string;
+}): Promise<{ ok: true; groupId: string } | { ok: false; error: string }> {
+  if (jieyunAssetGroupCache && jieyunAssetGroupCache.name === JIEYUN_ASSET_GROUP_NAME) {
+    return { ok: true, groupId: jieyunAssetGroupCache.id };
+  }
+  const created = await jieyunCallAssetAction({
+    action: "CreateAssetGroup",
+    body: {
+      Name: JIEYUN_ASSET_GROUP_NAME,
+      Description: "doopoo 转绘参考素材(真人风控官方规避路径)",
+      GroupType: "AIGC",
+    },
+    apiKey: input.apiKey,
+    baseUrl: input.baseUrl,
+  });
+  if (!created.ok) return created;
+  const group = normalizeJieyunAssetResult(created.result);
+  if (!group) return { ok: false, error: "[jieyun] CreateAssetGroup 未返回组 Id" };
+  jieyunAssetGroupCache = { name: JIEYUN_ASSET_GROUP_NAME, id: group.id };
+  return { ok: true, groupId: group.id };
+}
+
+/** 将公网素材 URL 登记到诘云素材库(不支持 base64),返回 asset id(未等审核) */
+async function jieyunUploadAsset(input: {
+  url: string;
+  assetType: JieyunAssetType;
+  name: string;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<{ ok: true; asset: JieyunAsset } | { ok: false; error: string }> {
+  const group = await jieyunEnsureAssetGroup({ apiKey: input.apiKey, baseUrl: input.baseUrl });
+  if (!group.ok) return group;
+  const created = await jieyunCallAssetAction({
+    action: "CreateAsset",
+    body: { GroupId: group.groupId, URL: input.url, Name: input.name, AssetType: input.assetType },
+    apiKey: input.apiKey,
+    baseUrl: input.baseUrl,
+  });
+  if (!created.ok) return created;
+  const asset = normalizeJieyunAssetResult(created.result);
+  if (!asset) return { ok: false, error: "[jieyun] CreateAsset 未返回素材 Id" };
+  console.log(`[jieyun asset created] id=${asset.id} status=${asset.status || "Processing"}`);
+  return { ok: true, asset };
+}
+
+async function jieyunGetAsset(input: {
+  assetId: string;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<{ ok: true; asset: JieyunAsset } | { ok: false; error: string }> {
+  const got = await jieyunCallAssetAction({
+    action: "GetAsset",
+    body: { Id: input.assetId },
+    apiKey: input.apiKey,
+    baseUrl: input.baseUrl,
+  });
+  if (!got.ok) return got;
+  const asset = normalizeJieyunAssetResult(got.result);
+  if (!asset) return { ok: false, error: "[jieyun] GetAsset 返回结构异常" };
+  return { ok: true, asset };
+}
+
+/** 等待素材审核入库;只有 Active 才可放进视频 content(实测图片 ~20s 内 Active) */
+async function jieyunWaitForAsset(input: {
+  assetId: string;
+  apiKey: string;
+  baseUrl: string;
+  timeoutMs?: number;
+}): Promise<{ ok: true; asset: JieyunAsset } | { ok: false; error: string }> {
+  const deadline = Date.now() + (input.timeoutMs ?? JIEYUN_ASSET_READY_TIMEOUT_MS);
+  let lastStatus = "unknown";
+  while (Date.now() < deadline) {
+    const result = await jieyunGetAsset(input);
+    if (!result.ok) return result;
+    const kind = jieyunAssetStatusKind(result.asset.status);
+    lastStatus = result.asset.status || lastStatus;
+    if (kind === "active") {
+      console.log(`[jieyun asset✓] id=${input.assetId} status=Active`);
+      return result;
+    }
+    if (kind === "failed") {
+      console.warn(`[jieyun asset×] id=${input.assetId} status=Failed`);
+      return { ok: false, error: `[jieyun] asset ${input.assetId} 入库失败 (Failed)` };
+    }
+    console.log(`[jieyun asset⟳] id=${input.assetId} status=${result.asset.status || "unknown"}`);
+    await sleep(JIEYUN_ASSET_POLL_MS);
+  }
+  return {
+    ok: false,
+    error: `[jieyun] asset ${input.assetId} 等待入库超时，最后状态: ${lastStatus}`,
+  };
+}
+
+/**
+ * 将参考资源转换为诘云的稳定素材引用。
+ * 已是 asset:// 的引用不重复登记(转绘链客户端预审已转换过的直接放行)。
+ */
+async function jieyunEnsureAsset(input: {
+  url?: string;
+  assetType: JieyunAssetType;
+  name: string;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<{ ok: true; url?: string } | { ok: false; error: string }> {
+  if (!input.url || input.url.startsWith("asset://")) return { ok: true, url: input.url };
+  const uploaded = await jieyunUploadAsset({
+    url: input.url,
+    assetType: input.assetType,
+    name: input.name,
+    apiKey: input.apiKey,
+    baseUrl: input.baseUrl,
+  });
+  if (!uploaded.ok) return uploaded;
+  const ready = await jieyunWaitForAsset({
+    assetId: uploaded.asset.id,
+    apiKey: input.apiKey,
+    baseUrl: input.baseUrl,
+  });
+  if (!ready.ok) return ready;
+  return { ok: true, url: jieyunAssetUrl(ready.asset.id) };
+}
+
 // 即梦 3.0 Pro 文生/图生视频统一用同一个 req_key
 const JIMENG_REQ_KEY = "jimeng_ti2v_v30_pro";
 const JIMENG_HOST = "visual.volcengineapi.com";
@@ -3924,17 +4167,56 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
   if (backend === "jieyun") {
     const { apiKey, baseUrl } = getJieyunVideoConfig();
     if (!apiKey) return { ok: false, error: "[jieyun] 缺少 JIEYUN_API_KEY" };
+    const assetConfig = getJieyunAssetConfig();
+    // 真人参考图/视频先登记诘云素材库(Active 后以 asset:// 引用提交)——
+    // 裸 URL 会触发 PrivacyInformation 风控;已是 asset:// 的引用由
+    // jieyunEnsureAsset 直接放行(转绘链客户端预审已转换,不重复登记)。
+    const firstFrameUrl = input.media.find((m) => m.type === "first_frame")?.url;
+    const lastFrameUrl = input.media.find((m) => m.type === "last_frame")?.url;
+    const referenceImageUrls = input.media
+      .filter((m) => m.type === "reference_image")
+      .map((m) => m.url);
+    const assetPrefix = `doopoo-jieyun-${Date.now()}`;
+    const ensured: DashScopeMediaItem[] = [];
+    const imageEntries: Array<{ type: "first_frame" | "last_frame" | "reference_image"; url: string }> = [
+      ...(firstFrameUrl ? [{ type: "first_frame" as const, url: firstFrameUrl }] : []),
+      ...(lastFrameUrl ? [{ type: "last_frame" as const, url: lastFrameUrl }] : []),
+      ...referenceImageUrls.map((url) => ({ type: "reference_image" as const, url })),
+    ];
+    for (const [index, entry] of imageEntries.entries()) {
+      const asset = await jieyunEnsureAsset({
+        url: entry.url,
+        assetType: "Image",
+        name: `${assetPrefix}-image-${index + 1}`,
+        apiKey,
+        baseUrl: assetConfig.baseUrl,
+      });
+      if (!asset.ok) return asset;
+      if (asset.url) ensured.push({ type: entry.type, url: asset.url });
+    }
+    let jieyunReferenceVideoUrl = input.referenceVideoUrl;
+    if (jieyunReferenceVideoUrl && !jieyunReferenceVideoUrl.startsWith("asset://")) {
+      const videoAsset = await jieyunEnsureAsset({
+        url: jieyunReferenceVideoUrl,
+        assetType: "Video",
+        name: `${assetPrefix}-reference-video`,
+        apiKey,
+        baseUrl: assetConfig.baseUrl,
+      });
+      if (!videoAsset.ok) return videoAsset;
+      jieyunReferenceVideoUrl = videoAsset.url;
+    }
     // 诘云与 ARK 同构,复用 shuciSubmit 的 media 拆分 + arkSubmit 链路
     const r = await shuciSubmit({
       model: jieyunModelToUpstream(input.model),
       prompt: input.prompt,
-      media: input.media,
+      media: ensured,
       ratio: input.ratio,
       resolution: input.resolution,
       duration: input.duration,
       generateAudio: input.generateAudio,
       watermark: input.watermark,
-      referenceVideoUrl: input.referenceVideoUrl,
+      referenceVideoUrl: jieyunReferenceVideoUrl,
       referenceAudioUrl: input.referenceAudioUrl,
       apiKey,
       baseUrl,
@@ -4312,6 +4594,48 @@ const KeyiyunAssetUploadInput = z.object({
   assetType: z.enum(["Image", "Video", "Audio"]),
   name: z.string().trim().min(1).max(200).optional(),
 });
+
+const JieyunAssetUploadInput = z.object({
+  // 诘云素材接口只接受公网/签名 URL（不支持 base64），与客易云同一约束。
+  url: z
+    .string()
+    .url()
+    .max(4_000)
+    .refine((value) => /^https?:\/\//i.test(value), "素材 URL 必须为公网 HTTP(S) 地址"),
+  assetType: z.enum(["Image", "Video", "Audio"]),
+  name: z.string().trim().min(1).max(200).optional(),
+});
+
+/**
+ * 手动上传一项诘云素材并等待审核入库（CreateAssetGroup 复用缓存组 →
+ * CreateAsset → GetAsset 轮询 Active）。返回 Active 才表示可将
+ * `asset://assetId` 放进视频 content；真人参考素材借此规避 PrivacyInformation 风控。
+ */
+export const uploadJieyunAsset = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((d: unknown) => JieyunAssetUploadInput.parse(d))
+  .handler(async ({ data }) => {
+    const { apiKey, baseUrl } = getJieyunAssetConfig();
+    if (!apiKey) {
+      return { ok: false as const, error: "[jieyun] 缺少 JIEYUN_API_KEY" };
+    }
+    const uploaded = await jieyunUploadAsset({
+      url: data.url,
+      assetType: data.assetType,
+      name: data.name || `doopoo-asset-${Date.now()}`,
+      apiKey,
+      baseUrl,
+    });
+    if (!uploaded.ok) return { ok: false as const, error: uploaded.error };
+    const ready = await jieyunWaitForAsset({ assetId: uploaded.asset.id, apiKey, baseUrl });
+    if (!ready.ok) return { ok: false as const, error: ready.error, assetId: uploaded.asset.id };
+    return {
+      ok: true as const,
+      assetId: ready.asset.id,
+      assetUrl: jieyunAssetUrl(ready.asset.id),
+      status: ready.asset.status || "Active",
+    };
+  });
 
 /**
  * 将一项素材提交至客易云的 Seedance 素材库。
