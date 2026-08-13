@@ -10,6 +10,15 @@ import {
   grantAdminCredits,
   type AdminCreditRecipient,
 } from "@/lib/adminCredits.functions";
+import {
+  getAdminUserStatuses,
+  getTeamOwnerIds,
+  type AdminUserStatus,
+} from "@/lib/adminUsers.functions";
+import AdminUserActionsDialog, {
+  type AdminUserAction,
+  type AdminUserTarget,
+} from "@/components/admin/AdminUserActionsDialog";
 import { useLanguage } from "@/i18n/LanguageContext";
 
 export const Route = createFileRoute("/admin/credits")({
@@ -22,6 +31,8 @@ function AdminCredits() {
   const { t } = useLanguage();
   const callRecipients = useServerFn(getAdminCreditRecipients);
   const callGrant = useServerFn(grantAdminCredits);
+  const callStatuses = useServerFn(getAdminUserStatuses);
+  const callTeamOwners = useServerFn(getTeamOwnerIds);
   const [kind, setKind] = useState<"user" | "team">("user");
   const [page, setPage] = useState(1);
   const [recipients, setRecipients] = useState<AdminCreditRecipient[]>([]);
@@ -33,6 +44,12 @@ function AdminCredits() {
   const [submitting, setSubmitting] = useState(false);
   const [searchInput, setSearchInput] = useState("");
   const [query, setQuery] = useState("");
+  const [ownerByTeam, setOwnerByTeam] = useState<Record<string, string>>({});
+  const [statusByUser, setStatusByUser] = useState<Record<string, AdminUserStatus>>({});
+  const [userAction, setUserAction] = useState<{
+    action: AdminUserAction;
+    target: AdminUserTarget;
+  } | null>(null);
 
   const loadRecipients = useCallback(async () => {
     setLoading(true);
@@ -49,6 +66,40 @@ function AdminCredits() {
     setRecipients(result?.recipients ?? []);
     setTotal(result?.total ?? 0);
   }, [callRecipients, kind, page, query]);
+
+  const loadStatuses = useCallback(
+    async (rows: AdminCreditRecipient[], currentKind: "user" | "team") => {
+      if (rows.length === 0) {
+        setStatusByUser({});
+        setOwnerByTeam({});
+        return;
+      }
+
+      let userIds: string[] = [];
+      if (currentKind === "user") {
+        userIds = rows.map((row) => row.id);
+        setOwnerByTeam({});
+      } else {
+        const ownerResult: any = await callTeamOwners({
+          data: { teamIds: rows.map((row) => row.id) },
+        });
+        const map: Record<string, string> = {};
+        for (const item of ownerResult?.owners ?? []) map[item.teamId] = item.ownerId;
+        setOwnerByTeam(map);
+        userIds = Object.values(map);
+      }
+
+      if (userIds.length === 0) {
+        setStatusByUser({});
+        return;
+      }
+      const statusResult: any = await callStatuses({ data: { userIds } });
+      const statusMap: Record<string, AdminUserStatus> = {};
+      for (const item of statusResult?.statuses ?? []) statusMap[item.id] = item;
+      setStatusByUser(statusMap);
+    },
+    [callStatuses, callTeamOwners],
+  );
 
   useEffect(() => {
     setSelected(null);
