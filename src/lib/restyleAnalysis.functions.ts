@@ -1,7 +1,12 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "../integrations/supabase/auth-middleware";
-import { providerTuning, resolveProvider, INTERNAL_VISION_MODEL } from "./restyle/lovableGateway";
+import {
+  providerAuthHeaders,
+  providerTuning,
+  resolveProvider,
+  INTERNAL_VISION_MODEL,
+} from "./restyle/lovableGateway";
 import { runAssetAnalysis } from "./restyle/analyzeAssetsCore";
 import { LIGHTING_LUTS, type DirectionShot, type Market } from "./restyle/cameraDirection";
 import { parseShotSchedule } from "./restyle/shotSchedule";
@@ -49,6 +54,8 @@ const InputSchema = z.object({
     "qwen:qwen3.6-flash",
     "qwen:qwen3.7-max",
     "lovable:openai/gpt-5.5",
+    "jingmei:gpt-5.5",
+    "jingmei:gpt-5.6-sol",
   ]),
   sourceFiles: z
     .array(
@@ -374,10 +381,8 @@ export const generateRestylePlan = createServerFn({ method: "POST" })
         try {
           const response = await fetch(config.endpoint, {
             method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${config.apiKey}`,
-            },
+            // jingmei 走 api-key 头,其余 Bearer(由 providerAuthHeaders 按 provider 组包)
+            headers: providerAuthHeaders(config),
             signal: controller.signal,
             body: JSON.stringify({
               model,

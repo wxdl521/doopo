@@ -2,7 +2,14 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { wrapFictionSystem, wrapFictionUser } from "./promptSafety";
 import { pickModel } from "./scriptAgent.functions";
-import { ARK_TEXT_THINKING_DISABLED, arkTextApiKey, arkTextEndpoint, qwenApiKey } from "./arkText";
+import {
+  ARK_TEXT_THINKING_DISABLED,
+  arkTextApiKey,
+  arkTextEndpoint,
+  jingmeiApiKey,
+  jingmeiEndpoint,
+  qwenApiKey,
+} from "./arkText";
 
 // ============================================================
 // 导入剧本：将用户粘贴/上传的剧本文本按"集"边界拆开。
@@ -47,7 +54,7 @@ export type ParseStreamEvent =
 
 // ============= Provider fetch (non-streaming, single shot) =============
 
-type Provider = "lovable" | "qwen" | "openrouter" | "ark";
+type Provider = "lovable" | "qwen" | "openrouter" | "ark" | "jingmei";
 
 const QWEN_ENDPOINT = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
 const LOVABLE_ENDPOINT = "https://ai.gateway.lovable.dev/v1/chat/completions";
@@ -81,7 +88,9 @@ async function fetchChat(opts: {
         ? process.env.OPENROUTER_API_KEY
         : opts.provider === "ark"
           ? arkTextApiKey()
-          : qwenApiKey();
+          : opts.provider === "jingmei"
+            ? jingmeiApiKey()
+            : qwenApiKey();
   if (!apiKey) throw new Error(`${opts.provider} API key missing`);
 
   const endpoint =
@@ -91,10 +100,15 @@ async function fetchChat(opts: {
         ? OPENROUTER_ENDPOINT
         : opts.provider === "ark"
           ? arkTextEndpoint()
-          : QWEN_ENDPOINT;
+          : opts.provider === "jingmei"
+            ? jingmeiEndpoint()
+            : QWEN_ENDPOINT;
 
   const headers: Record<string, string> = {
-    Authorization: `Bearer ${apiKey}`,
+    // jingmei(Azure AI Foundry)用 api-key 认证头,其余 Bearer
+    ...(opts.provider === "jingmei"
+      ? { "api-key": apiKey }
+      : { Authorization: `Bearer ${apiKey}` }),
     "Content-Type": "application/json",
   };
   if (opts.provider === "openrouter") {
@@ -118,7 +132,11 @@ async function fetchChat(opts: {
       body: JSON.stringify({
         model: opts.model,
         // Lovable AI Gateway (GPT-5 family etc.) only accepts default temperature=1.
-        ...(opts.provider === "lovable" ? {} : { temperature: opts.temperature ?? 0.2 }),
+        // jingmei(gpt-5.5/gpt-5.6-sol)同为推理模型,省略 temperature;
+        // 且只认 max_completion_tokens(不认 max_tokens)。
+        ...(opts.provider === "lovable" || opts.provider === "jingmei"
+          ? {}
+          : { temperature: opts.temperature ?? 0.2 }),
         // ark(DeepSeek V4 Pro):关闭深度思考,走通用对话快模式
         ...(opts.provider === "ark" ? { thinking: ARK_TEXT_THINKING_DISABLED } : {}),
         messages,
@@ -133,7 +151,10 @@ async function fetchChat(opts: {
           },
         ],
         tool_choice: { type: "function", function: { name: opts.tool.name } },
-        max_tokens: 32_000,
+        // 推理模型(jingmei)的 reasoning token 也吃这份预算,不能给太小
+        ...(opts.provider === "jingmei"
+          ? { max_completion_tokens: 32_000 }
+          : { max_tokens: 32_000 }),
       }),
       signal: controller.signal,
     });

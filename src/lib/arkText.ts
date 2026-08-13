@@ -40,3 +40,22 @@ export function arkTextEndpoint(): string {
 export function qwenApiKey(): string | undefined {
   return process.env.Qwen || process.env.QWEN_API_KEY || process.env.DASHSCOPE_API_KEY;
 }
+
+// ---------- jingmei(Azure AI Foundry 项目端点) ----------
+// OpenAI v1 兼容:`POST {base}/openai/v1/chat/completions`(无 api-version,
+// /models 与旧版 Foundry 路径均不支持)。认证头 api-key(非 Bearer)。
+// 实测可用模型:gpt-5.5 / gpt-6-sol(目录按用户口径登记 gpt-5.6-sol)。
+
+const JINGMEI_DEFAULT_BASE_URL =
+  "https://admin-1321-resource.services.ai.azure.com/api/projects/admin-1321";
+
+/** jingmei 文本 API key(env: JINGMEI_API_KEY)。未配置返回 undefined。 */
+export function jingmeiApiKey(): string | undefined {
+  return process.env.JINGMEI_API_KEY;
+}
+
+/** jingmei Chat Completions 端点(v1 路径,env: JINGMEI_BASE_URL 可覆盖 base)。 */
+export function jingmeiEndpoint(): string {
+  const base = (process.env.JINGMEI_BASE_URL || JINGMEI_DEFAULT_BASE_URL).replace(/\/+$/, "");
+  return `${base}/openai/v1/chat/completions`;
+}

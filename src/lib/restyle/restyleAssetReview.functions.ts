@@ -8,7 +8,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import { ensureEnoughCredits } from "../creditsGuard";
-import { providerTuning, resolveProvider } from "./lovableGateway";
+import { providerAuthHeaders, providerTuning, resolveProvider } from "./lovableGateway";
 import { composePrompt } from "./skills";
 import {
   ASSET_REVIEW_INSTRUCTION,
@@ -57,7 +57,8 @@ export const reviewRestyleAssetTable = createServerFn({ method: "POST" })
     try {
       const response = await fetch(config.endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${config.apiKey}` },
+        // jingmei 走 api-key 头,其余 Bearer(由 providerAuthHeaders 按 provider 组包)
+        headers: providerAuthHeaders(config),
         signal: controller.signal,
         body: JSON.stringify({
           model: config.model,

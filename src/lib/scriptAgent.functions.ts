@@ -6,6 +6,8 @@ import {
   ARK_TEXT_THINKING_DISABLED,
   arkTextApiKey,
   arkTextEndpoint,
+  jingmeiApiKey,
+  jingmeiEndpoint,
   qwenApiKey,
 } from "./arkText";
 import { buildGuideBlock, GENRE_GUIDES, TONE_GUIDES } from "./scriptGenreGuides";
@@ -28,7 +30,7 @@ const QWEN_ENDPOINT = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/co
 const LOVABLE_ENDPOINT = "https://ai.gateway.lovable.dev/v1/chat/completions";
 const OPENROUTER_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 
-type Provider = "lovable" | "qwen" | "openrouter" | "ark";
+type Provider = "lovable" | "qwen" | "openrouter" | "ark" | "jingmei";
 
 // 解析模型 id 并归一化为目标 provider：
 //   "lovable:xxx"     → Lovable AI Gateway，model = xxx（前端已传完整路径）
@@ -42,6 +44,8 @@ export function pickModel(raw?: string): { provider: Provider; model: string } {
   // ark: / deepseek: 前缀可显式走 DeepSeek V4 Pro。分镜切分单独走 DeepSeek(storyboard.functions.ts)。
   const v = (raw ?? "").trim() || "qwen-plus";
   if (v.startsWith("lovable:")) return { provider: "lovable", model: v.slice(8) };
+  // jingmei(Azure AI Foundry 项目端点):v1 路径 + api-key 认证
+  if (v.startsWith("jingmei:")) return { provider: "jingmei", model: v.slice(8) };
   if (v.startsWith("openrouter:")) return { provider: "openrouter", model: v.slice(11) };
   if (v.startsWith("gemini:")) {
     const m = v.slice(7);
@@ -100,7 +104,9 @@ async function* streamChat(opts: {
         ? process.env.OPENROUTER_API_KEY
         : picked.provider === "ark"
           ? arkTextApiKey()
-          : qwenApiKey();
+          : picked.provider === "jingmei"
+            ? jingmeiApiKey()
+            : qwenApiKey();
   if (!apiKey) {
     // 2026/07:ark(DeepSeek)为主但 key 缺失时,降级到 Qwen 而非直接报错
     if (picked.provider === "ark" && qwenApiKey()) {
@@ -115,7 +121,9 @@ async function* streamChat(opts: {
             ? "OPENROUTER_API_KEY 未配置"
             : picked.provider === "ark"
               ? "ARK_API_KEY 未配置"
-              : "Qwen 密钥未配置",
+              : picked.provider === "jingmei"
+                ? "JINGMEI_API_KEY 未配置"
+                : "Qwen 密钥未配置",
     };
     return;
   }
@@ -185,12 +193,17 @@ async function* streamChat(opts: {
         ? OPENROUTER_ENDPOINT
         : picked.provider === "ark"
           ? arkTextEndpoint()
-          : QWEN_ENDPOINT;
+          : picked.provider === "jingmei"
+            ? jingmeiEndpoint()
+            : QWEN_ENDPOINT;
   try {
     upstream = await fetch(endpoint, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${apiKey}`,
+        // jingmei(Azure AI Foundry)用 api-key 认证头,其余 Bearer
+        ...(picked.provider === "jingmei"
+          ? { "api-key": apiKey }
+          : { Authorization: `Bearer ${apiKey}` }),
         "Content-Type": "application/json",
         ...(picked.provider === "openrouter"
           ? { "HTTP-Referer": "https://doopoo.app", "X-Title": "Doopoo" }

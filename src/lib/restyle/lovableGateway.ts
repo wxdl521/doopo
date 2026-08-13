@@ -10,6 +10,8 @@ import {
   ARK_TEXT_THINKING_DISABLED,
   arkTextApiKey,
   arkTextEndpoint,
+  jingmeiApiKey,
+  jingmeiEndpoint,
   qwenApiKey,
 } from "../arkText";
 
@@ -17,7 +19,7 @@ const QWEN_ENDPOINT = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/co
 const LOVABLE_ENDPOINT = "https://ai.gateway.lovable.dev/v1/chat/completions";
 
 export type RestyleProviderConfig = {
-  provider: "ark" | "qwen" | "lovable";
+  provider: "ark" | "qwen" | "lovable" | "jingmei";
   model: string;
   endpoint: string;
   apiKey: string | undefined;
@@ -27,6 +29,17 @@ export type RestyleProviderConfig = {
 
 /** 把带前缀的模型 id 解析成上游 provider 配置。process.env 只在 handler 内读取。 */
 export function resolveProvider(modelId: string): RestyleProviderConfig {
+  if (modelId.startsWith("jingmei:")) {
+    // jingmei(Azure AI Foundry 项目端点):v1 路径 + api-key 认证(非 Bearer)
+    return {
+      provider: "jingmei",
+      model: modelId.slice(8),
+      endpoint: jingmeiEndpoint(),
+      apiKey: jingmeiApiKey(),
+      missingKeyError: "jingmei 未配置：请设置 JINGMEI_API_KEY。",
+      label: "jingmei",
+    };
+  }
   if (modelId.startsWith("ark:")) {
     return {
       provider: "ark",
@@ -60,6 +73,8 @@ export function resolveProvider(modelId: string): RestyleProviderConfig {
 /**
  * 各家对采样/长度参数的要求不同：GPT-5 系列拒绝 temperature 和 max_tokens，
  * 只接受 max_completion_tokens；ARK 需要显式关闭 thinking。
+ * jingmei(gpt-5.5/gpt-5.6-sol)同为推理模型:只发 max_completion_tokens,
+ * 且预算不能给太小(reasoning token 会撞上限报错,实测 max_completion_tokens=1 即撞)。
  * opts.reasoningEffort：仅 lovable 网关透传 reasoning_effort（分窗调用压
  * 推理延迟用 "low"；缺省不传，保持网关默认行为）。
  */
@@ -74,10 +89,23 @@ export function providerTuning(
       ...(opts?.reasoningEffort ? { reasoning_effort: opts.reasoningEffort } : {}),
     };
   }
+  if (config.provider === "jingmei") {
+    return { max_completion_tokens: maxTokens };
+  }
   return {
     ...(config.provider === "ark" ? { thinking: ARK_TEXT_THINKING_DISABLED } : {}),
     temperature: 0.2,
     max_tokens: maxTokens,
+  };
+}
+
+/** 认证头组包:多数渠道 Bearer;jingmei(Azure AI Foundry)用 api-key(非 Bearer)。 */
+export function providerAuthHeaders(config: RestyleProviderConfig): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    ...(config.provider === "jingmei"
+      ? { "api-key": config.apiKey ?? "" }
+      : { Authorization: `Bearer ${config.apiKey ?? ""}` }),
   };
 }
 

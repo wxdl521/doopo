@@ -28,4 +28,14 @@ export const TEXT_MODEL_FALLBACK: Array<{ id: string; label: string; sub?: strin
     label: "Qwen Turbo",
     sub: "高速 · 轻量任务",
   },
+  {
+    id: "jingmei:gpt-5.5",
+    label: "GPT-5.5 (jingmei)",
+    sub: "推理 · Azure AI Foundry",
+  },
+  {
+    id: "jingmei:gpt-5.6-sol",
+    label: "GPT-5.6 Sol (jingmei)",
+    sub: "旗舰推理 · Azure AI Foundry",
+  },
 ];

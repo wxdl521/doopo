@@ -6,6 +6,8 @@ import {
   ARK_TEXT_THINKING_DISABLED,
   arkTextApiKey,
   arkTextEndpoint,
+  jingmeiApiKey,
+  jingmeiEndpoint,
   qwenApiKey,
 } from "./arkText";
 
@@ -53,7 +55,7 @@ export type PipelineCharacter = z.infer<typeof CharacterSchema>;
 
 // ============= Provider dispatcher (OpenRouter + Lovable AI Gateway) =============
 
-type Provider = "qwen" | "lovable" | "openrouter" | "ark";
+type Provider = "qwen" | "lovable" | "openrouter" | "ark" | "jingmei";
 
 // const OPENROUTER_FALLBACKS = [
 //   'google/gemini-2.5-flash',
@@ -99,6 +101,8 @@ function parseModel(raw: string | undefined): { provider: Provider; model: strin
   const v = raw?.trim();
   if (!v) return { provider: "qwen", model: undefined };
   if (v.startsWith("lovable:")) return { provider: "lovable", model: v.slice(8) };
+  // jingmei(Azure AI Foundry 项目端点):v1 路径 + api-key 认证
+  if (v.startsWith("jingmei:")) return { provider: "jingmei", model: v.slice(8) };
   if (v.startsWith("openrouter:")) return { provider: "openrouter", model: v.slice(11) };
   if (v.startsWith("gemini:")) {
     const m = v.slice(7);
@@ -161,6 +165,9 @@ async function callToolCall<T>(opts: {
     pushSeq("lovable", pickedModel, LOVABLE_FALLBACKS);
   } else if (pickedProvider === "openrouter") {
     pushSeq("openrouter", pickedModel, OPENROUTER_FALLBACKS);
+  } else if (pickedProvider === "jingmei") {
+    // jingmei 无跨模型兜底清单,只试用户指定模型
+    if (pickedModel) attempts.push({ provider: "jingmei", model: pickedModel });
   } else {
     pushSeq("qwen", pickedModel, QWEN_FALLBACKS);
   }
@@ -177,7 +184,9 @@ async function callToolCall<T>(opts: {
           ? process.env.OPENROUTER_API_KEY
           : p === "ark"
             ? arkTextApiKey()
-            : qwenApiKey();
+            : p === "jingmei"
+              ? jingmeiApiKey()
+              : qwenApiKey();
     if (!apiKey) {
       lastError = `${p} API key missing`;
       continue;
@@ -189,9 +198,12 @@ async function callToolCall<T>(opts: {
           ? "https://openrouter.ai/api/v1/chat/completions"
           : p === "ark"
             ? arkTextEndpoint()
-            : "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
+            : p === "jingmei"
+              ? jingmeiEndpoint()
+              : "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions";
     const headers: Record<string, string> = {
-      Authorization: `Bearer ${apiKey}`,
+      // jingmei(Azure AI Foundry)用 api-key 认证头,其余 Bearer
+      ...(p === "jingmei" ? { "api-key": apiKey } : { Authorization: `Bearer ${apiKey}` }),
       "Content-Type": "application/json",
     };
     if (p === "openrouter") {
@@ -207,7 +219,8 @@ async function callToolCall<T>(opts: {
         body: JSON.stringify({
           model: m,
           // Lovable AI Gateway (GPT-5 family etc.) only accepts default temperature=1.
-          ...(p === "lovable" ? {} : { temperature: opts.temperature }),
+          // jingmei(gpt-5.5/gpt-5.6-sol)同为推理模型,省略 temperature。
+          ...(p === "lovable" || p === "jingmei" ? {} : { temperature: opts.temperature }),
           // ark(DeepSeek V4 Pro):关闭深度思考,走通用对话快模式
           ...(p === "ark" ? { thinking: ARK_TEXT_THINKING_DISABLED } : {}),
           messages: [

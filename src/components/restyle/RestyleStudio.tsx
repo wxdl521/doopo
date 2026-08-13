@@ -259,6 +259,8 @@ const RESTYLE_MODELS = [
   { id: "qwen:qwen3.6-flash", label: "Qwen 3.6 Flash · 视觉" },
   { id: "qwen:qwen3.7-max", label: "Qwen 3.7 Max" },
   { id: "lovable:openai/gpt-5.5", label: "GPT-5.5 · 视觉" },
+  { id: "jingmei:gpt-5.5", label: "GPT-5.5 (jingmei)" },
+  { id: "jingmei:gpt-5.6-sol", label: "GPT-5.6 Sol (jingmei)" },
 ] as const;
 
 function relabelRestyleError(error: string, model: RestyleModel): string {

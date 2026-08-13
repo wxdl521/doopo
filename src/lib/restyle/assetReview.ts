@@ -15,6 +15,8 @@ export const ASSET_REVIEW_MODELS = [
   "qwen:qwen3.6-flash",
   "qwen:qwen3.7-max",
   "lovable:openai/gpt-5.5",
+  "jingmei:gpt-5.5",
+  "jingmei:gpt-5.6-sol",
 ] as const;
 
 export const AssetReviewAssetSchema = z.object({
