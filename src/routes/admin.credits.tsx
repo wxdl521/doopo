@@ -430,6 +430,14 @@ function AdminCredits() {
           </div>
         </aside>
       </div>
+
+      <AdminUserActionsDialog
+        open={!!userAction}
+        action={userAction?.action ?? "reset"}
+        target={userAction?.target ?? null}
+        onClose={() => setUserAction(null)}
+        onSuccess={() => void loadRecipients()}
+      />
     </div>
   );
 }
