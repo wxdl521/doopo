@@ -133,7 +133,7 @@ const imageModelOptions = [
   {
     id: "azure-image2/gpt-image-2",
     label: "GPT Image 2 (azure-image2 并发)",
-    sub: "晶美 APIM · 并发 · 仅 T2I · 9积分/张",
+    sub: "晶美 APIM · 并发 · T2I/I2I · 9积分/张",
   },
 ];
 // 图下拉只保留指定供应商，避免将未启用渠道展示给用户。

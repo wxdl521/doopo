@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { imageCost, videoCost } from "../creditsCost";
-import { isAzureModel, stripAzurePrefix } from "../azureImage.functions";
+import { isAzureModel, stripAzurePrefix, azureDeploymentImagePath } from "../azureImage.functions";
 import { assetLibraryVendorForModel, getVideoAssetLibrarySupport } from "../videoAssetLibrary";
 import {
   buildKeyiyunModelCenterBody,
@@ -8,6 +8,7 @@ import {
   keyiyunModelCenterAspect,
   keyiyunModelCenterDuration,
   keyiyunModelCenterResolution,
+  keyiyunModelCenterUpstreamModel,
   parseKeyiyunModelCenterResult,
   parseKeyiyunModelCenterTaskId,
 } from "../videoGenerate.functions";
@@ -65,6 +66,27 @@ describe("客易云 Seedance 2.5(model-center API)", () => {
     expect(body.reference_audios).toBeUndefined();
   });
 
+  it("上游模型名:默认 seedance-2.5-c1,KEYYIYUN_MODEL_CENTER_MODEL 可覆盖", () => {
+    const original = process.env.KEYYIYUN_MODEL_CENTER_MODEL;
+    try {
+      delete process.env.KEYYIYUN_MODEL_CENTER_MODEL;
+      expect(keyiyunModelCenterUpstreamModel()).toBe("seedance-2.5-c1");
+      // 覆盖后组包跟着变(渠道方分组映射变更时免改代码)
+      process.env.KEYYIYUN_MODEL_CENTER_MODEL = "video-2.5-pro";
+      expect(keyiyunModelCenterUpstreamModel()).toBe("video-2.5-pro");
+      expect(
+        buildKeyiyunModelCenterBody({ prompt: "p", media: [] }).model,
+      ).toBe("video-2.5-pro");
+      // 显式入参优先于 env
+      expect(
+        buildKeyiyunModelCenterBody({ prompt: "p", media: [], upstreamModel: "m-x" }).model,
+      ).toBe("m-x");
+    } finally {
+      if (original === undefined) delete process.env.KEYYIYUN_MODEL_CENTER_MODEL;
+      else process.env.KEYYIYUN_MODEL_CENTER_MODEL = original;
+    }
+  });
+
   it("parseKeyiyunModelCenterTaskId 兼容 id / task_id / data 包装", () => {
     expect(parseKeyiyunModelCenterTaskId({ id: "t1" })).toBe("t1");
     expect(parseKeyiyunModelCenterTaskId({ data: { task_id: "t2" } })).toBe("t2");
@@ -104,6 +126,17 @@ describe("azure-image2 并发生图网关", () => {
     expect(stripAzurePrefix("azure-image2/gpt-image-2")).toBe("gpt-image-2");
     // 不被裸 azure/ 前缀误吞(azure-image2/ 不以 azure/ 开头)
     expect("azure-image2/gpt-image-2".startsWith("azure/")).toBe(false);
+  });
+
+  it("生图走经典 deployment 路径(2026-08-14 实测:v1 路径 404,已修正)", () => {
+    const deployment = stripAzurePrefix("azure-image2/gpt-image-2");
+    expect(azureDeploymentImagePath(deployment, false)).toBe(
+      "/openai/deployments/gpt-image-2/images/generations",
+    );
+    // edits 路由实测存在(空 body 400),I2I 同构接上
+    expect(azureDeploymentImagePath(deployment, true)).toBe(
+      "/openai/deployments/gpt-image-2/images/edits",
+    );
   });
 
   it("图像价目:azure-image2/ 与现有 gpt-image-2 档同价 9 积分/张", () => {

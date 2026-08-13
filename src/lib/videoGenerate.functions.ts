@@ -3439,7 +3439,16 @@ async function keyiyunPoll(input: {
 //     失败有 error 字段;另有 amount(消耗积分)/actualDuration。
 // 参考素材直传公网 URL 数组(该 API 无 asset:// 素材体系)。
 
-const KEYYIYUN_MODEL_CENTER_MODEL = "seedance-2.5-c1";
+// 默认上游模型 ID;渠道方分组映射变更时用 KEYYIYUN_MODEL_CENTER_MODEL 覆盖,
+// 不用改代码(2026-08-14:网关曾把 seedance-2.5-c1 映射到未开通分组的 video-2.5)。
+const KEYYIYUN_MODEL_CENTER_DEFAULT_MODEL = "seedance-2.5-c1";
+
+/** model-center 上游模型 ID:env(KEYYIYUN_MODEL_CENTER_MODEL) 优先,缺省 seedance-2.5-c1 */
+export function keyiyunModelCenterUpstreamModel(): string {
+  return (
+    (process.env.KEYYIYUN_MODEL_CENTER_MODEL || "").trim() || KEYYIYUN_MODEL_CENTER_DEFAULT_MODEL
+  );
+}
 
 /** 目录模型 id → 是否走 model-center API(目前仅 Seedance 2.5) */
 export function isKeyiyunModelCenterModel(modelId: string | null | undefined): boolean {
@@ -3463,7 +3472,7 @@ export function keyiyunModelCenterDuration(duration: number | null | undefined):
   return Math.min(30, Math.max(4, Math.round(duration)));
 }
 
-/** 组 model-center 创建 body(纯函数,便于单测) */
+/** 组 model-center 创建 body(纯函数,便于单测);upstreamModel 缺省取 env/默认档 */
 export function buildKeyiyunModelCenterBody(input: {
   prompt: string;
   media: DashScopeMediaItem[];
@@ -3472,6 +3481,7 @@ export function buildKeyiyunModelCenterBody(input: {
   duration?: number;
   referenceVideoUrl?: string;
   referenceAudioUrl?: string;
+  upstreamModel?: string;
 }): Record<string, unknown> {
   const firstImage = input.media.find((item) => item.type === "first_frame")?.url;
   const lastImage = input.media.find((item) => item.type === "last_frame")?.url;
@@ -3479,7 +3489,7 @@ export function buildKeyiyunModelCenterBody(input: {
     .filter((item) => item.type === "reference_image")
     .map((item) => item.url);
   const body: Record<string, unknown> = {
-    model: KEYYIYUN_MODEL_CENTER_MODEL,
+    model: input.upstreamModel || keyiyunModelCenterUpstreamModel(),
     prompt: input.prompt,
     // resolution 必填(缺省 720p)
     resolution: keyiyunModelCenterResolution(input.resolution),
@@ -3536,6 +3546,8 @@ async function keyiyunModelCenterSubmit(input: {
   apiKey: string;
   baseUrl: string;
 }): Promise<{ ok: true; taskId: string; model: string } | { ok: false; error: string }> {
+  // 上游模型名 env 可覆盖(渠道方分组映射变更时免改代码)
+  const upstreamModel = keyiyunModelCenterUpstreamModel();
   const result = await fetchSubmitWithRetry({
     url: `${input.baseUrl}/v2/model-center/tasks`,
     headers: {
@@ -3551,6 +3563,7 @@ async function keyiyunModelCenterSubmit(input: {
         duration: input.duration,
         referenceVideoUrl: input.referenceVideoUrl,
         referenceAudioUrl: input.referenceAudioUrl,
+        upstreamModel,
       }),
     ),
     label: "keyiyun-mc",
@@ -3569,7 +3582,7 @@ async function keyiyunModelCenterSubmit(input: {
   if (!taskId) {
     return { ok: false, error: `[keyiyun] 创建任务未返回 id: ${text.slice(0, 200)}` };
   }
-  return { ok: true, taskId, model: KEYYIYUN_MODEL_CENTER_MODEL };
+  return { ok: true, taskId, model: upstreamModel };
 }
 
 async function keyiyunModelCenterPoll(input: {
