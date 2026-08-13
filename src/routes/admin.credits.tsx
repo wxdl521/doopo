@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Coins, Users, Building2, ChevronLeft, ChevronRight, Search } from "lucide-react";
 import { toast } from "sonner";
 import PageHeader from "@/components/PageHeader";
@@ -10,6 +10,15 @@ import {
   grantAdminCredits,
   type AdminCreditRecipient,
 } from "@/lib/adminCredits.functions";
+import {
+  getAdminUserStatuses,
+  getTeamOwnerIds,
+  type AdminUserStatus,
+} from "@/lib/adminUsers.functions";
+import AdminUserActionsDialog, {
+  type AdminUserAction,
+  type AdminUserTarget,
+} from "@/components/admin/AdminUserActionsDialog";
 import { useLanguage } from "@/i18n/LanguageContext";
 
 export const Route = createFileRoute("/admin/credits")({
@@ -22,6 +31,8 @@ function AdminCredits() {
   const { t } = useLanguage();
   const callRecipients = useServerFn(getAdminCreditRecipients);
   const callGrant = useServerFn(grantAdminCredits);
+  const callStatuses = useServerFn(getAdminUserStatuses);
+  const callTeamOwners = useServerFn(getTeamOwnerIds);
   const [kind, setKind] = useState<"user" | "team">("user");
   const [page, setPage] = useState(1);
   const [recipients, setRecipients] = useState<AdminCreditRecipient[]>([]);
@@ -33,6 +44,12 @@ function AdminCredits() {
   const [submitting, setSubmitting] = useState(false);
   const [searchInput, setSearchInput] = useState("");
   const [query, setQuery] = useState("");
+  const [ownerByTeam, setOwnerByTeam] = useState<Record<string, string>>({});
+  const [statusByUser, setStatusByUser] = useState<Record<string, AdminUserStatus>>({});
+  const [userAction, setUserAction] = useState<{
+    action: AdminUserAction;
+    target: AdminUserTarget;
+  } | null>(null);
 
   const loadRecipients = useCallback(async () => {
     setLoading(true);
@@ -46,9 +63,48 @@ function AdminCredits() {
       setTotal(0);
       return;
     }
-    setRecipients(result?.recipients ?? []);
+    const rows: AdminCreditRecipient[] = result?.recipients ?? [];
+    setRecipients(rows);
     setTotal(result?.total ?? 0);
+    void loadStatusesRef.current?.(rows, kind);
   }, [callRecipients, kind, page, query]);
+
+  const loadStatuses = useCallback(
+    async (rows: AdminCreditRecipient[], currentKind: "user" | "team") => {
+      if (rows.length === 0) {
+        setStatusByUser({});
+        setOwnerByTeam({});
+        return;
+      }
+
+      let userIds: string[] = [];
+      if (currentKind === "user") {
+        userIds = rows.map((row) => row.id);
+        setOwnerByTeam({});
+      } else {
+        const ownerResult: any = await callTeamOwners({
+          data: { teamIds: rows.map((row) => row.id) },
+        });
+        const map: Record<string, string> = {};
+        for (const item of ownerResult?.owners ?? []) map[item.teamId] = item.ownerId;
+        setOwnerByTeam(map);
+        userIds = Object.values(map);
+      }
+
+      if (userIds.length === 0) {
+        setStatusByUser({});
+        return;
+      }
+      const statusResult: any = await callStatuses({ data: { userIds } });
+      const statusMap: Record<string, AdminUserStatus> = {};
+      for (const item of statusResult?.statuses ?? []) statusMap[item.id] = item;
+      setStatusByUser(statusMap);
+    },
+    [callStatuses, callTeamOwners],
+  );
+
+  const loadStatusesRef = useRef(loadStatuses);
+  loadStatusesRef.current = loadStatuses;
 
   useEffect(() => {
     setSelected(null);
@@ -167,23 +223,29 @@ function AdminCredits() {
                     {t.admin_credits_col_balance}
                   </th>
                   <th className="px-5 py-3 text-left font-medium">{t.admin_col_created}</th>
+                  <th className="px-5 py-3 text-left font-medium">{t.admin_user_col_status}</th>
+                  <th className="px-5 py-3 text-right font-medium">{t.admin_user_col_actions}</th>
                 </tr>
               </thead>
               <tbody>
                 {loading ? (
                   <tr>
-                    <td colSpan={3} className="px-5 py-10 text-center text-text-muted">
+                    <td colSpan={5} className="px-5 py-10 text-center text-text-muted">
                       {t.admin_credits_loading}
                     </td>
                   </tr>
                 ) : recipients.length === 0 ? (
                   <tr>
-                    <td colSpan={3} className="px-5 py-10 text-center text-text-muted">
+                    <td colSpan={5} className="px-5 py-10 text-center text-text-muted">
                       {t.admin_credits_empty}
                     </td>
                   </tr>
                 ) : (
-                  recipients.map((recipient) => (
+                  recipients.map((recipient) => {
+                    const accountId =
+                      kind === "user" ? recipient.id : (ownerByTeam[recipient.id] ?? null);
+                    const status = accountId ? statusByUser[accountId] : undefined;
+                    return (
                     <tr
                       key={recipient.id}
                       onClick={() => setSelected(recipient)}
@@ -203,8 +265,74 @@ function AdminCredits() {
                       <td className="whitespace-nowrap px-5 py-3 text-text-muted">
                         {new Date(recipient.createdAt).toLocaleDateString()}
                       </td>
+                      <td className="whitespace-nowrap px-5 py-3">
+                        {!status ? (
+                          <span className="text-text-muted">{t.admin_user_status_unknown}</span>
+                        ) : (
+                          <span
+                            className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                              status.banned
+                                ? "bg-destructive/10 text-destructive"
+                                : "bg-emerald-500/10 text-emerald-600"
+                            }`}
+                          >
+                            {status.banned
+                              ? t.admin_user_status_banned
+                              : t.admin_user_status_active}
+                          </span>
+                        )}
+                      </td>
+                      <td
+                        className="whitespace-nowrap px-5 py-3 text-right"
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            disabled={!accountId}
+                            onClick={() =>
+                              accountId &&
+                              setUserAction({
+                                action: "reset",
+                                target: {
+                                  userId: accountId,
+                                  name: recipient.name,
+                                  email: recipient.email ?? null,
+                                },
+                              })
+                            }
+                            className="rounded-md border border-border px-2.5 py-1 text-xs hover:bg-bg-elevated disabled:opacity-40"
+                          >
+                            {t.admin_user_reset_password}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={!accountId || !status}
+                            onClick={() =>
+                              accountId &&
+                              status &&
+                              setUserAction({
+                                action: status.banned ? "enable" : "disable",
+                                target: {
+                                  userId: accountId,
+                                  name: recipient.name,
+                                  email: recipient.email ?? null,
+                                },
+                              })
+                            }
+                            className={`rounded-md border px-2.5 py-1 text-xs disabled:opacity-40 ${
+                              status?.banned
+                                ? "border-border hover:bg-bg-elevated"
+                                : "border-destructive/40 text-destructive hover:bg-destructive/10"
+                            }`}
+                          >
+                            {status?.banned ? t.admin_user_enable : t.admin_user_disable}
+                          </button>
+                        </div>
+                      </td>
                     </tr>
-                  ))
+                    );
+                  })
                 )}
               </tbody>
             </table>
@@ -302,6 +430,14 @@ function AdminCredits() {
           </div>
         </aside>
       </div>
+
+      <AdminUserActionsDialog
+        open={!!userAction}
+        action={userAction?.action ?? "reset"}
+        target={userAction?.target ?? null}
+        onClose={() => setUserAction(null)}
+        onSuccess={() => void loadRecipients()}
+      />
     </div>
   );
 }
