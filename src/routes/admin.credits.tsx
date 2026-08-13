@@ -63,8 +63,10 @@ function AdminCredits() {
       setTotal(0);
       return;
     }
-    setRecipients(result?.recipients ?? []);
+    const rows: AdminCreditRecipient[] = result?.recipients ?? [];
+    setRecipients(rows);
     setTotal(result?.total ?? 0);
+    void loadStatusesRef.current?.(rows, kind);
   }, [callRecipients, kind, page, query]);
 
   const loadStatuses = useCallback(
