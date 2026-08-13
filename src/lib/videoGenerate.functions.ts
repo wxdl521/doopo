@@ -764,6 +764,43 @@ export function buildArkContent(prompt: string, refs: ArkReferences): ContentIte
   return content;
 }
 
+/**
+ * ARK 系上游拒绝 first/last frame 与参考媒体混用（InvalidParameter:
+ * "first/last frame content cannot be mixed with reference media content",
+ * 部分兼容网关包成 502）。预组装的 content（如转绘链 buildRestyleVideoContent）
+ * 会把首帧标成 first_frame，与参考视频同发即被拒。归一：content 含 video_url
+ * （参考视频）时把 first_frame/last_frame 降级为 reference_image（保持顺序）；
+ * 无参考视频时原样返回，首帧驱动的 i2v 语义保留。
+ */
+export function normalizeArkFamilyContent<T>(content: T[]): T[] {
+  const hasReferenceVideo = content.some(
+    (item) => (item as { type?: string } | null)?.type === "video_url",
+  );
+  if (!hasReferenceVideo) return content;
+  return content.map((item) => {
+    const it = item as { type?: string; role?: string } | null;
+    if (it?.type === "image_url" && (it.role === "first_frame" || it.role === "last_frame")) {
+      return { ...(it as object), role: "reference_image" } as T;
+    }
+    return item;
+  });
+}
+
+// ARK 协议族后端：提交体携带 role 化 content/media（first_frame/last_frame/reference_*），
+// 走 submitVideoTaskFn 预组装 content 时在入口统一应用 normalizeArkFamilyContent。
+//（sdreal/neiwen 各自在 submit 内已把 frame 归一为 reference_image，无需入口处理）
+const ARK_FAMILY_BACKENDS = new Set<VideoBackend>([
+  "ark",
+  "shuci",
+  "jieyun",
+  "vapeur",
+  "topenrouter",
+  "hongmeng",
+  "ycore",
+  "toapis",
+  "keyiyun",
+]);
+
 async function dashscopeSubmit(input: {
   model: string;
   prompt: string;
@@ -4402,6 +4439,10 @@ const SubmitServerInput = z.object({
   duration: z.number().int().min(1).max(60).optional(),
   generateAudio: z.boolean().optional(),
   watermark: z.boolean().optional(),
+  // 转绘链上下文（可选）：仅用于 submit 失败时并入服务端 errorLogs 记录,
+  // 客户端见响应 logged 标记即不再重复上报（同一失败只记一行）
+  episode: z.string().max(120).optional(),
+  segmentId: z.string().max(120).optional(),
 });
 
 export const submitVideoTaskFn = createServerFn({ method: "POST" })
@@ -4427,11 +4468,18 @@ export const submitVideoTaskFn = createServerFn({ method: "POST" })
         return { ok: false as const, error: __guard.error, code: "INSUFFICIENT_CREDITS" };
       }
     }
-    // 把 ARK 风格的 content 数组转成统一 media + ref 形式
+    // 把 ARK 风格的 content 数组转成统一 media + ref 形式。
+    // ARK 协议族后端先做角色归一：预组装 content（转绘链）若同时带 first/last frame
+    // 与参考视频会被上游拒绝（见 normalizeArkFamilyContent 注释）。
+    const model = data.model || ARK_DEFAULT_MODEL;
+    const backend = getVideoBackend(model);
+    const contentItems = ARK_FAMILY_BACKENDS.has(backend)
+      ? normalizeArkFamilyContent(data.content as any[])
+      : (data.content as any[]);
     const media: DashScopeMediaItem[] = [];
     let referenceVideoUrl: string | undefined;
     let referenceAudioUrl: string | undefined;
-    for (const item of data.content as any[]) {
+    for (const item of contentItems) {
       if (item?.type === "image_url" && item?.image_url?.url) {
         const type =
           item.role === "first_frame" || item.role === "last_frame" ? item.role : "reference_image";
@@ -4442,9 +4490,7 @@ export const submitVideoTaskFn = createServerFn({ method: "POST" })
         referenceAudioUrl = item.audio_url.url;
       }
     }
-    const prompt = (data.content as any[]).find((i) => i?.type === "text")?.text || "";
-    const model = data.model || ARK_DEFAULT_MODEL;
-    const backend = getVideoBackend(model);
+    const prompt = contentItems.find((i) => i?.type === "text")?.text || "";
     const { supabase, userId } = context as { supabase: any; userId: string };
 
     // 与 generateVideo 保持一致：浏览器 data URI 不能直接交给上游视频接口。
@@ -4487,7 +4533,6 @@ export const submitVideoTaskFn = createServerFn({ method: "POST" })
       referenceAudioUrl,
     });
     if (!r.ok) {
-      const backend = getVideoBackend(model);
       // await 写入：响应返回后未完成的异步 insert 会被 CF Workers 回收（静默丢失）
       await logGenerationError({
         kind: "video",
@@ -4497,6 +4542,10 @@ export const submitVideoTaskFn = createServerFn({ method: "POST" })
         requestPayload: {
           model,
           prompt,
+          // 转绘链上下文（客户端 submit 入参透传）：并入服务端记录后,
+          // 客户端 failJob 见 logged 标记不再重复上报（避免同一失败双行）
+          episode: data.episode ?? null,
+          segmentId: data.segmentId ?? null,
           ratio: data.ratio,
           resolution: data.resolution,
           duration: data.duration,
@@ -4509,7 +4558,9 @@ export const submitVideoTaskFn = createServerFn({ method: "POST" })
         responseBody: r.error,
         errorMessage: r.error,
       });
-      return { ok: false as const, error: r.error };
+      // logged 标记：submit 阶段失败已由服务端记入 errorLogs,
+      // 客户端 failJob 见此标记不再重复上报（轮询/超时失败仍由客户端补报）
+      return { ok: false as const, error: r.error, logged: true as const };
     }
     return {
       ok: true as const,

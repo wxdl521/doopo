@@ -3400,13 +3400,17 @@ export default function RestyleStudio() {
       return;
     }
     // 单段失败统一出口：除写 renderError 外，向对话播报集号+分段号+原始错误+建议动作。
-    const failJob = (error: string, taskId?: string) => {
+    // alreadyLogged：submit 阶段失败已由 submitVideoTaskFn 服务端记入 errorLogs
+    // （响应带 logged 标记，episode/segmentId 已并入该行），客户端不再重复上报；
+    // 仅「提交成功后的轮询/超时失败」由客户端补报。
+    const failJob = (error: string, taskId?: string, alreadyLogged = false) => {
       failRenderAttachment(projectId, job.attachmentId, error, taskId);
       reportRenderSegmentFailure(projectId, conversationId, job, error);
       // 视频任务失败接入 errorLogs（fire-and-forget 客户端上报通道，不阻断队列
       // 推进）：submit/poll 请求本身成功、失败是任务终态时服务端无从记录，
       // 上游错误细节（含 provider 返回的原始 error）随 errorMessage 写入。
       // 上报失败写渲染日志可诊断（此前插入静默丢失无从排查）。
+      if (alreadyLogged) return;
       void callReportGenerationError({
         data: {
           kind: "video",
@@ -3624,6 +3628,9 @@ export default function RestyleStudio() {
         > | null = null;
         let finalVideoUrl: string | null = null;
         let submitFailure: string | null = null;
+        // submit 阶段失败是否已被服务端记入 errorLogs（响应 logged 标记）：
+        // 已记则 failJob 不再重复上报（轮询/超时失败不受影响，仍由客户端补报）。
+        let submitFailureLogged = false;
         let pollFailure: { error: string; taskId?: string } | null = null;
         let runAborted = false;
         // 统一「提交 + 执行」重试入口：提交失败与轮询（执行）阶段失败共用同一条
@@ -3646,6 +3653,9 @@ export default function RestyleStudio() {
               duration: durationSec,
               generateAudio: true,
               watermark: false,
+              // 转绘链上下文：submit 失败时并入服务端 errorLogs 行（配合 logged 标记）
+              episode: job.episode,
+              segmentId: job.segmentId,
             },
           });
           if (result.ok && result.taskId) {
@@ -3708,6 +3718,8 @@ export default function RestyleStudio() {
             break;
           }
           const error = result.ok ? "视频模型没有返回任务编号" : result.error;
+          // submit 阶段失败且服务端已记 errorLogs（logged 标记）时,最终 failJob 不再重复上报
+          const resultLogged = !result.ok && (result as { logged?: boolean }).logged === true;
           // 余额不足（creditsGuard INSUFFICIENT_CREDITS）：不走进降级重投链，强制暂停等用户处理。
           const resultCode = "code" in result ? (result as { code?: string }).code : undefined;
           if (resultCode === "INSUFFICIENT_CREDITS" || isInsufficientCreditsError(error)) {
@@ -3747,6 +3759,7 @@ export default function RestyleStudio() {
             submitFailure = isSensitiveContentError(error)
               ? RESTYLE_FALLBACK_EXHAUSTED_MESSAGE
               : error;
+            submitFailureLogged = resultLogged;
             break;
           }
           appendRenderLog(projectId, job.attachmentId, plan.message);
@@ -3775,6 +3788,8 @@ export default function RestyleStudio() {
             failJob(
               pollFailure?.error ?? submitFailure ?? RESTYLE_FALLBACK_EXHAUSTED_MESSAGE,
               pollFailure?.taskId,
+              // submit 阶段失败服务端已记 errorLogs 的不再重复上报；轮询/超时失败仍补报
+              !pollFailure && submitFailureLogged,
             );
           }
         } else if (finalTask && finalVideoUrl) {

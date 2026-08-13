@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { videoCost, videoCostOrFallback } from "../creditsCost";
-import { getVideoBackend, jieyunModelToUpstream } from "../videoGenerate.functions";
+import {
+  getVideoBackend,
+  jieyunModelToUpstream,
+  normalizeArkFamilyContent,
+} from "../videoGenerate.functions";
 
 describe("诘云(ARK 兼容网关)渠道", () => {
   it("jieyun- 前缀模型路由到 jieyun 后端", () => {
@@ -30,5 +34,51 @@ describe("诘云(ARK 兼容网关)渠道", () => {
     const r = videoCostOrFallback("jieyun-doubao-seedance-2-0-fast-260128", "720P", 10);
     expect(r?.cost).toBe(192);
     expect(r?.warning).toContain("doubao-seedance-2-0-fast-260128");
+  });
+});
+
+describe("normalizeArkFamilyContent（ARK 系 first/last frame 与参考媒体混用归一）", () => {
+  it("含参考视频时 first_frame 降级为 reference_image（保持顺序）", () => {
+    const content = [
+      { type: "text", text: "p" },
+      { type: "image_url", image_url: { url: "https://a/1.png" }, role: "first_frame" },
+      { type: "image_url", image_url: { url: "https://a/2.png" }, role: "reference_image" },
+      { type: "video_url", video_url: { url: "https://a/v.mp4" }, role: "reference_video" },
+    ];
+    const normalized = normalizeArkFamilyContent(content);
+    expect(normalized.map((item) => (item as { role?: string }).role ?? null)).toEqual([
+      null,
+      "reference_image",
+      "reference_image",
+      "reference_video",
+    ]);
+    // 不改动原数组
+    expect((content[1] as { role: string }).role).toBe("first_frame");
+  });
+
+  it("含参考视频时 last_frame 同样降级", () => {
+    const content = [
+      { type: "text", text: "p" },
+      { type: "image_url", image_url: { url: "https://a/1.png" }, role: "first_frame" },
+      { type: "image_url", image_url: { url: "https://a/2.png" }, role: "last_frame" },
+      { type: "video_url", video_url: { url: "https://a/v.mp4" }, role: "reference_video" },
+    ];
+    const normalized = normalizeArkFamilyContent(content);
+    expect((normalized[1] as { role: string }).role).toBe("reference_image");
+    expect((normalized[2] as { role: string }).role).toBe("reference_image");
+  });
+
+  it("无参考视频时原样返回（首帧驱动 i2v 语义保留）", () => {
+    const content = [
+      { type: "text", text: "p" },
+      { type: "image_url", image_url: { url: "https://a/1.png" }, role: "first_frame" },
+    ];
+    const normalized = normalizeArkFamilyContent(content);
+    expect(normalized).toBe(content);
+    expect((normalized[1] as { role: string }).role).toBe("first_frame");
+  });
+
+  it("空 content 安全返回", () => {
+    expect(normalizeArkFamilyContent([])).toEqual([]);
   });
 });
