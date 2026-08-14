@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import PageHeader from "../components/PageHeader";
+import PasswordInput from "../components/PasswordInput";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { ShieldCheck, KeyRound, History } from "lucide-react";
@@ -133,36 +134,29 @@ function Security() {
           </div>
           <div>
             <label className="text-xs text-text-muted">旧密码</label>
-            <input
-              value={oldPwd}
-              onChange={(e) => setOldPwd(e.target.value)}
-              type="password"
-              required
-              className="mt-1 w-full px-3 py-2 rounded-lg bg-bg-elevated border border-border focus:outline-none focus:border-accent/60"
-            />
+            <PasswordInput value={oldPwd} onChange={(e) => setOldPwd(e.target.value)} required />
           </div>
+
           <div>
             <label className="text-xs text-text-muted">新密码（至少 6 位）</label>
-            <input
+            <PasswordInput
               value={newPwd}
               onChange={(e) => setNewPwd(e.target.value)}
-              type="password"
               required
               minLength={6}
-              className="mt-1 w-full px-3 py-2 rounded-lg bg-bg-elevated border border-border focus:outline-none focus:border-accent/60"
             />
           </div>
+
           <div>
             <label className="text-xs text-text-muted">确认新密码</label>
-            <input
+            <PasswordInput
               value={confirmPwd}
               onChange={(e) => setConfirmPwd(e.target.value)}
-              type="password"
               required
               minLength={6}
-              className="mt-1 w-full px-3 py-2 rounded-lg bg-bg-elevated border border-border focus:outline-none focus:border-accent/60"
             />
           </div>
+
           <button
             type="submit"
             disabled={loading}
