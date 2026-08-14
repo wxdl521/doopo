@@ -462,24 +462,29 @@ export async function prepareEpisodeMedia(
         const wav = pcm ? sliceUnitWav(pcm, unit) : null;
 
         report({ unitIndex: i, unitId: unit.unitId, phase: "upload" });
-        const frameUrls: string[] = [];
-        for (let f = 0; f < frames.length; f += 1) {
-          frameUrls.push(
-            await uploadOrThrow(upload, {
-              base64: frames[f],
-              id: `${episodeId}-${unit.unitId}-f${f + 1}`,
-              kind: "shot",
-            }),
-          );
-        }
-        let audioUrl: string | undefined;
-        if (wav) {
-          audioUrl = await uploadOrThrow(upload, {
-            base64: await blobToDataUrl(wav),
-            id: `${episodeId}-${unit.unitId}-audio`,
-            kind: "character-audio",
-          });
-        }
+        // 4 帧 + 单元音频并发上传（相互独立的 base64 小请求;单元内串行
+        // 上传是媒体准备阶段的大头之一）。Promise.all 保序,任一失败整单元
+        // 判失败（与串行语义一致）。
+        const [frameUrls, audioUrl] = await Promise.all([
+          Promise.all(
+            frames.map((frame, f) =>
+              uploadOrThrow(upload, {
+                base64: frame,
+                id: `${episodeId}-${unit.unitId}-f${f + 1}`,
+                kind: "shot",
+              }),
+            ),
+          ),
+          wav
+            ? blobToDataUrl(wav).then((base64) =>
+                uploadOrThrow(upload, {
+                  base64,
+                  id: `${episodeId}-${unit.unitId}-audio`,
+                  kind: "character-audio",
+                }),
+              )
+            : Promise.resolve(undefined),
+        ]);
 
         prepared.push({
           unitId: unit.unitId,

@@ -501,14 +501,18 @@ describe("analyzeEpisodeUnits 双通道（fetch mock）", () => {
     expect(system.content).toContain("dialogue_track");
   });
 
-  it("视觉通道失败 → 单元 ok:false 且不调用 ASR", async () => {
-    const fetchMock = vi.fn(async () => new Response("upstream boom", { status: 500 }));
+  it("视觉通道失败 → 单元 ok:false（ASR 已并行启动,其结果被忽略）", async () => {
+    const fetchMock = vi.fn(
+      async (_input: RequestInfo | URL) => new Response("upstream boom", { status: 500 }),
+    );
     vi.stubGlobal("fetch", fetchMock);
 
     const [result] = await analyzeEpisodeUnits([makeUnit()]);
     expect(result.ok).toBe(false);
     expect(result.error).toContain("视觉通道失败");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // 2026-08 提速:视觉/ASR 并行启动,视觉失败时 ASR 的音频拉取可能已发出,
+    // 不再断言「不调用 ASR」;首个调用仍是视觉 chat。
+    expect(String(fetchMock.mock.calls[0][0])).toBe(LOVABLE_URL);
   });
 
   it("多单元并发上限为 2", async () => {
@@ -540,7 +544,49 @@ describe("analyzeEpisodeUnits 双通道（fetch mock）", () => {
       "part-003",
       "part-004",
     ]);
-    // 每个单元一次 chat 在飞，上限 2 → chat 并发 <= 2
-    expect(maxActive).toBeLessThanOrEqual(2);
+    // 2026-08 提速:每单元视觉+ASR 两路并行,单元并发上限 2 → chat 并发 <= 4
+    expect(maxActive).toBeLessThanOrEqual(4);
+  });
+});
+
+describe("analyzeOneUnit 视觉/ASR 并行（2026-08 提速）", () => {
+  it("两路通道并发启动：任一未返回时另一路已在途", async () => {
+    const started: string[] = [];
+    const release: Array<() => void> = [];
+    const callChat = (opts: { maxTokens?: number }) => {
+      const tag = opts.maxTokens === 32_000 ? "vision" : "asr";
+      started.push(tag);
+      return new Promise<{ ok: true; text: string; model: string }>((resolve) => {
+        release.push(() =>
+          resolve({
+            ok: true,
+            text: JSON.stringify(tag === "vision" ? VISION_JSON : ASR_JSON),
+            model: "m",
+          }),
+        );
+      });
+    };
+    const fetchFn = (async () =>
+      new Response(new Uint8Array([1]).buffer, { status: 200 })) as typeof fetch;
+    const promise = analyzeEpisodeUnits([makeUnit()], { callChat, fetchFn });
+    // 串行实现下 asr 不会在 vision 返回前启动
+    await vi.waitFor(() => expect(started).toEqual(["vision", "asr"]));
+    for (const done of release) done();
+    const [result] = await promise;
+    expect(result.ok).toBe(true);
+    expect(result.transcript).toHaveLength(1);
+  });
+
+  it("视觉失败提前返回时 ASR 在途 promise 不产生未处理拒绝", async () => {
+    const callChat = (opts: { maxTokens?: number }) =>
+      opts.maxTokens === 32_000
+        ? Promise.resolve({ ok: false as const, error: "视觉网关 500" })
+        : // ASR 一路 reject(音频拉取/调用异常),不应成为 unhandled rejection
+          Promise.reject(new Error("asr boom"));
+    const fetchFn = (async () =>
+      new Response(new Uint8Array([1]).buffer, { status: 200 })) as typeof fetch;
+    const [result] = await analyzeEpisodeUnits([makeUnit()], { callChat, fetchFn });
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("视觉通道失败");
   });
 });

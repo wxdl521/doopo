@@ -326,7 +326,9 @@ async function analyzeOneUnit(unit: UnitMediaInput, deps: AnalysisDeps): Promise
   try {
     // a) 视觉通道。无 audioUrl 时把台词轨要求并入本 prompt（降级路径①）。
     const noAudio = !unit.audioUrl;
-    const visionRes = await callChat({
+    // 视觉与 ASR 相互独立（降级路径②的台词推断用关键帧,不依赖视觉输出），
+    // 有音轨时两路并行：单元耗时由两者之和降为较大者（2026-08 提速）。
+    const visionPromise = callChat({
       model: visionModel,
       messages: buildVisionMessages(unit, noAudio),
       // 分镜细化（shot-boundary-extract skill）后镜头数约 3 倍，16k 不够装
@@ -335,6 +337,22 @@ async function analyzeOneUnit(unit: UnitMediaInput, deps: AnalysisDeps): Promise
       timeoutMs: 300_000,
       jsonMode: true,
     });
+    // ASR 通道与视觉并行启动（含服务端拉音频）；挂一个空 catch 防止视觉
+    // 先失败提前返回时该 promise 成为未处理拒绝，语义仍由下方 await 决定。
+    const asrPromise = noAudio
+      ? null
+      : (async () => {
+          const audio = await fetchAudioBase64(fetchFn, unit.audioUrl!);
+          return callChat({
+            model: visionModel,
+            messages: buildAsrMessages(unit, audio),
+            maxTokens: 8_000,
+            timeoutMs: 300_000,
+            jsonMode: true,
+          });
+        })();
+    asrPromise?.catch(() => {});
+    const visionRes = await visionPromise;
     if (!visionRes.ok) {
       return { unitId: unit.unitId, ok: false, error: `视觉通道失败: ${visionRes.error}` };
     }
@@ -353,20 +371,13 @@ async function analyzeOneUnit(unit: UnitMediaInput, deps: AnalysisDeps): Promise
     let transcript: AsrSentence[] = [];
     let degraded: UnitRunResult["degraded"] = null;
 
-    // b) ASR 通道
+    // b) ASR 通道（有音轨时上面已并行启动，这里只收结果）
     if (noAudio) {
       degraded = "no_audio";
       transcript = parseSentences(analysis.dialogue_track ?? []);
     } else {
       try {
-        const audio = await fetchAudioBase64(fetchFn, unit.audioUrl!);
-        const asrRes = await callChat({
-          model: visionModel,
-          messages: buildAsrMessages(unit, audio),
-          maxTokens: 8_000,
-          timeoutMs: 300_000,
-          jsonMode: true,
-        });
+        const asrRes = await asrPromise!;
         if (asrRes.ok) {
           transcript = parseSentences(extractJson(asrRes.text));
         } else if (isInputAudioRejected(asrRes.error)) {

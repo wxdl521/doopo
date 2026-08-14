@@ -55,6 +55,7 @@ import {
   analyzeRestyleSourceUnits,
   type RestyleSourceUnitsFileResult,
 } from "../../lib/restyleSourceUnits.functions";
+import { runWithConcurrency } from "../../lib/restyle/restyleVideoAnalysis.functions";
 import {
   isRetryableUploadError,
   prepareEpisodeMedia,
@@ -4661,44 +4662,64 @@ export default function RestyleStudio() {
               ),
             }));
           }
-          // 逐单元分析：幂等键按项目+集派生，同一单元重复成功调用不重复扣费；
-          // 单单元失败记 warning 继续后续单元（部分失败用成功单元继续）。
-          const unitResults: RestyleSourceUnitsFileResult[] = [];
-          for (let i = 0; i < prepared.units.length; i += 1) {
-            if (isRunAborted(projectId)) return false;
-            const unit = prepared.units[i];
-            markRunStep(
-              projectId,
-              `${t.restyle_run_step_analyze} 单元 ${i + 1}/${prepared.units.length}`,
-            );
-            const unitResult = await callAnalyzeRestyleSourceUnits({
-              data: {
-                sourceFiles: [{ id: episode, name: file.name, units: [unit] }],
-                idempotencyKey: `${projectId}:${episode}:${analysisRunId}`,
-              },
-            });
-            const fileResult = unitResult.ok ? unitResult.files[0] : undefined;
-            if (fileResult && fileResult.unitsSucceeded > 0) {
-              unitResults.push(fileResult);
-            } else {
-              unitResults.push({
-                sourceId: episode,
-                sourceName: file.name,
-                shotSchedule: [],
-                transcript: "",
-                evidencePackage: "",
-                warnings: [
-                  unitResult.ok
-                    ? `单元 ${unit.unitId} 分析失败。`
-                    : `单元 ${unit.unitId} 分析请求失败：${unitResult.error}`,
-                ],
-                unitsTotal: 1,
-                unitsSucceeded: 0,
-                unitsFailed: 1,
-                failedUnitIds: [unit.unitId],
-              });
-            }
-          }
+          // 逐单元分析：幂等键按项目+集派生（服务端再拼 unitId 到单元粒度），
+          // 同一单元重复成功调用不重复扣费；单单元失败记 warning 继续后续单元
+          // （部分失败用成功单元继续）。
+          // 2026-08 提速：串行循环改并发池（每请求仍是 1 单元，守住平台 ~100s
+          // 无字节断连约束；只把浏览器侧并发上调到 3）。进度按完成数播报。
+          let completedUnits = 0;
+          const unitOutcomes = await runWithConcurrency(
+            prepared.units,
+            3,
+            async (unit): Promise<{ unitId: string; fileResult?: RestyleSourceUnitsFileResult; error?: string }> => {
+              if (isRunAborted(projectId)) return { unitId: unit.unitId, error: "已中止" };
+              try {
+                const unitResult = await callAnalyzeRestyleSourceUnits({
+                  data: {
+                    sourceFiles: [{ id: episode, name: file.name, units: [unit] }],
+                    idempotencyKey: `${projectId}:${episode}:${analysisRunId}`,
+                  },
+                });
+                const fileResult = unitResult.ok ? unitResult.files[0] : undefined;
+                if (fileResult && fileResult.unitsSucceeded > 0) {
+                  return { unitId: unit.unitId, fileResult };
+                }
+                return {
+                  unitId: unit.unitId,
+                  error: unitResult.ok ? "分析失败。" : `分析请求失败：${unitResult.error}`,
+                };
+              } catch (error) {
+                // serverFn 调用本身的网络异常也收敛为单单元失败,不拖死整集
+                return {
+                  unitId: unit.unitId,
+                  error: `分析请求异常：${error instanceof Error ? error.message : "网络错误"}`,
+                };
+              } finally {
+                completedUnits += 1;
+                markRunStep(
+                  projectId,
+                  `${t.restyle_run_step_analyze} 单元 ${completedUnits}/${prepared.units.length}`,
+                );
+              }
+            },
+          );
+          if (isRunAborted(projectId)) return false;
+          const unitResults: RestyleSourceUnitsFileResult[] = unitOutcomes.map((outcome, index) =>
+            outcome.fileResult
+              ? outcome.fileResult
+              : {
+                  sourceId: episode,
+                  sourceName: file.name,
+                  shotSchedule: [],
+                  transcript: "",
+                  evidencePackage: "",
+                  warnings: [`单元 ${outcome.unitId} ${outcome.error ?? "分析失败。"}`],
+                  unitsTotal: 1,
+                  unitsSucceeded: 0,
+                  unitsFailed: 1,
+                  failedUnitIds: [prepared.units[index].unitId],
+                },
+          );
           if (!unitResults.some((result) => result.unitsSucceeded > 0)) {
             throw new Error("全部单元分析失败");
           }
