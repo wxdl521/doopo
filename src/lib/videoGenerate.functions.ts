@@ -2236,7 +2236,10 @@ async function topenrouterUploadAsset(input: {
     `[topenrouter asset→] model=${upstreamModel} type=${input.assetType} name=${input.name || "unnamed"}`,
   );
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30_000);
+  // 30s 太短：该接口是「登记 URL、由对端服务器回源拉取」，Supabase 签名 URL 的
+  // 首个读取或较大的参考视频回源经常超过 30s（keyiyun 通道同款问题已用 120s），
+  // 超时白白浪费一次渲染。放宽到 120s，与客易云素材登记一致。
+  const timeout = setTimeout(() => controller.abort(), 120_000);
   try {
     const res = await fetch(
       `${input.baseUrl}/v1/api/assets/upload?model=${encodeURIComponent(upstreamModel)}`,
@@ -2294,7 +2297,7 @@ async function topenrouterUploadAsset(input: {
     clearTimeout(timeout);
     const message =
       e instanceof Error && e.name === "AbortError"
-        ? "upload timeout (30s)"
+        ? "upload timeout (120s)"
         : e instanceof Error
           ? e.message
           : "fetch failed";
