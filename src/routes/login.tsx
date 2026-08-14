@@ -1,6 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import Logo from "../components/Logo";
+import PasswordInput from "../components/PasswordInput";
 import { useLanguage } from "../i18n/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -33,8 +34,11 @@ function Login() {
         setEmail(p);
         sessionStorage.removeItem("pendingActivationEmail");
       }
-    } catch {}
+    } catch {
+      /* storage unavailable */
+    }
   }, []);
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -75,14 +79,13 @@ function Login() {
           </div>
           <div>
             <label className="text-xs text-text-muted">{t.common_password}</label>
-            <input
+            <PasswordInput
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              type="password"
               required
-              className="mt-1 w-full px-3 py-2 rounded-lg bg-bg-elevated border border-border focus:outline-none focus:border-accent/60"
             />
           </div>
+
           <div className="text-right -mt-2">
             <Link to="/forgot-password" className="text-xs text-accent hover:underline">
               忘记密码？

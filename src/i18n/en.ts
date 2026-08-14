@@ -455,6 +455,9 @@ export const en: Translations = {
   common_name: "Name",
   common_email: "Email",
   common_password: "Password",
+  common_show_password: "Show password",
+  common_hide_password: "Hide password",
+
   common_amount: "Amount",
   common_period: "Period",
   common_date: "Date",

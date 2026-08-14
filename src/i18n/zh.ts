@@ -436,6 +436,9 @@ export const zh = {
   common_name: "名称",
   common_email: "邮箱",
   common_password: "密码",
+  common_show_password: "显示密码",
+  common_hide_password: "隐藏密码",
+
   common_amount: "金额",
   common_period: "周期",
   common_date: "日期",

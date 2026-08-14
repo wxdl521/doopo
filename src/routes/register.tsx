@@ -1,6 +1,7 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import Logo from "../components/Logo";
+import PasswordInput from "../components/PasswordInput";
 import { useLanguage } from "../i18n/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -42,8 +43,11 @@ function Register() {
     } else {
       try {
         sessionStorage.setItem("pendingActivationEmail", form.email);
-      } catch {}
+      } catch {
+        /* storage unavailable */
+      }
       toast.success(`激活邮件已发送至 ${form.email}，请前往邮箱完成激活后再登录`, {
+
         duration: 6000,
       });
       navigate({ to: "/login", search: { redirect: undefined } });
@@ -97,15 +101,14 @@ function Register() {
           </div>
           <div>
             <label className="text-xs text-text-muted">{t.common_password}</label>
-            <input
+            <PasswordInput
               value={form.password}
               onChange={(e) => setForm({ ...form, password: e.target.value })}
-              type="password"
               required
               minLength={6}
-              className="mt-1 w-full px-3 py-2 rounded-lg bg-bg-elevated border border-border focus:outline-none focus:border-accent/60"
             />
           </div>
+
           <button
             type="submit"
             disabled={loading}
@@ -116,7 +119,11 @@ function Register() {
         </form>
         <div className="text-center text-sm text-text-muted mt-6">
           {t.auth_have_account}{" "}
-          <Link to="/login" search={{ redirect: undefined }} className="text-accent hover:underline">
+          <Link
+            to="/login"
+            search={{ redirect: undefined }}
+            className="text-accent hover:underline"
+          >
             {t.auth_to_signin}
           </Link>
         </div>
