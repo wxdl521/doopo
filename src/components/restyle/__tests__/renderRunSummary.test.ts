@@ -4,6 +4,7 @@
 // ====================================================================
 import { describe, expect, it } from "vitest";
 import {
+  episodeRestitchEligibility,
   outcomeLabel,
   summarizeRenderRun,
   type RenderRunOutcome,
@@ -80,5 +81,66 @@ describe("outcomeLabel", () => {
   it("集号+分段号拼接；缺省回退占位", () => {
     expect(outcomeLabel(clip({}))).toBe("EP02 U02");
     expect(outcomeLabel(clip({ episode: undefined, segmentId: undefined }))).toBe("该分段");
+  });
+});
+
+describe("episodeRestitchEligibility（局部返工收尾补合成判定）", () => {
+  const clipFile = (segmentId: string, url?: string) => ({
+    generatedKind: "video_clip",
+    episode: "EP02",
+    segmentId,
+    url,
+    renderStatus: url ? "succeeded" : "failed",
+  });
+  const finalFile = (overrides: { url?: string; renderStatus?: string } = {}) => ({
+    generatedKind: "final_video",
+    episode: "EP02",
+    ...overrides,
+  });
+
+  it("分段齐 + 成片 failed → 可重触发（首轮合成失败的返工补齐场景）", () => {
+    const files = [
+      clipFile("U01", "https://a/1.mp4"),
+      clipFile("U02", "https://a/2.mp4"),
+      finalFile({ renderStatus: "failed" }),
+    ];
+    expect(episodeRestitchEligibility(files, "EP02")).toEqual({ eligible: true });
+  });
+
+  it("分段未齐 → 不触发（原因列出缺失分段）", () => {
+    const files = [
+      clipFile("U01", "https://a/1.mp4"),
+      clipFile("U02"),
+      finalFile({ renderStatus: "failed" }),
+    ];
+    const r = episodeRestitchEligibility(files, "EP02");
+    expect(r.eligible).toBe(false);
+    expect(r.reason).toContain("U02");
+  });
+
+  it("成片合成中（running）→ 不重复触发", () => {
+    const files = [clipFile("U01", "https://a/1.mp4"), finalFile({ renderStatus: "running" })];
+    expect(episodeRestitchEligibility(files, "EP02").eligible).toBe(false);
+  });
+
+  it("已有可用成片（有 URL 且非 failed）→ 不重复触发", () => {
+    const files = [
+      clipFile("U01", "https://a/1.mp4"),
+      finalFile({ renderStatus: "succeeded", url: "https://a/final.mp4" }),
+    ];
+    expect(episodeRestitchEligibility(files, "EP02").eligible).toBe(false);
+  });
+
+  it("成片占位缺失 → 可触发（占位由调用方补建）", () => {
+    const files = [clipFile("U01", "https://a/1.mp4")];
+    expect(episodeRestitchEligibility(files, "EP02").eligible).toBe(true);
+  });
+
+  it("本集没有分段视频 → 不触发；他集附件不干扰", () => {
+    const files = [
+      { generatedKind: "video_clip", episode: "EP01", segmentId: "U01", url: "https://a/1.mp4" },
+    ];
+    expect(episodeRestitchEligibility(files, "EP02").eligible).toBe(false);
+    expect(episodeRestitchEligibility(files, "EP01").eligible).toBe(true);
   });
 });

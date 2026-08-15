@@ -52,3 +52,61 @@ export function summarizeRenderRun(
     failedOutcomes.length > 0 || (options.hasFinalVideos && !finalOk) ? "failed" : "succeeded";
   return { failedOutcomes, finalOk, status };
 }
+
+// --------------------------------------------------------------------
+// 局部返工收尾的「该集可重触发合成」判定
+//
+// 线上缺口：首轮整集渲染分段大量失败时 stitch 失败（final_video 落 failed）；
+// 之后局部返工补齐全部分段，但返工 run 的 finalEpisodes 为空，
+// completeRenderQueue 不再触发该集合成，成片永远停在 failed 且无播报。
+// 判定口径与 stitchFinalEpisodes 的缺段校验同源（分段不齐不合成）。
+// --------------------------------------------------------------------
+
+/** 判定所需的附件最小形状（RestyleAttachment 的子集）。 */
+export interface RestitchFileShape {
+  generatedKind?: string;
+  episode?: string;
+  segmentId?: string;
+  url?: string;
+  renderStatus?: string;
+}
+
+/**
+ * 该集是否可（重新）触发整集合成：
+ * - 本集分段 clips 必须全部有可用 http(s) URL（分段不齐不合成）；
+ * - 成片合成中（renderStatus=running）不重复触发；
+ * - 已有可用成片（有 URL 且非 failed）不重复触发；
+ * - 成片占位缺失 / failed / 无 URL → 可触发（占位缺失由调用方补建）。
+ */
+export function episodeRestitchEligibility(
+  files: RestitchFileShape[],
+  episode: string,
+): { eligible: boolean; reason?: string } {
+  const clips = files.filter(
+    (file) => file.generatedKind === "video_clip" && file.episode === episode,
+  );
+  if (!clips.length) return { eligible: false, reason: "本集没有分段视频" };
+  const missing = clips.filter((clip) => !clip.url || !/^https?:\/\//i.test(clip.url));
+  if (missing.length) {
+    return {
+      eligible: false,
+      reason: `分段未齐：${missing.map((clip) => clip.segmentId ?? "?").join("、")}`,
+    };
+  }
+  const finalVideo = files.find(
+    (file) => file.generatedKind === "final_video" && file.episode === episode,
+  );
+  // 只拦 running（合成在途）；queued 只在本函数触发链里瞬时存在，
+  // 拦它会挡住「停止后重跑」的恢复路径。
+  if (finalVideo?.renderStatus === "running") {
+    return { eligible: false, reason: "成片合成中" };
+  }
+  if (
+    finalVideo?.url &&
+    /^https?:\/\//i.test(finalVideo.url) &&
+    finalVideo.renderStatus !== "failed"
+  ) {
+    return { eligible: false, reason: "已有可用成片" };
+  }
+  return { eligible: true };
+}

@@ -71,7 +71,12 @@ import {
 } from "../../lib/restyle/planWindows";
 import { driveWindowedPlanCalls } from "./planWindowDriver";
 import { isSupersededClipAttachment, withoutSupersededClips } from "./rerunAttachments";
-import { outcomeLabel, summarizeRenderRun, type RenderRunOutcome } from "./renderRunSummary";
+import {
+  episodeRestitchEligibility,
+  outcomeLabel,
+  summarizeRenderRun,
+  type RenderRunOutcome,
+} from "./renderRunSummary";
 import { isPendingRerun, shiftPendingRerun } from "./pendingReruns";
 import {
   imageModelFallbackCandidates,
@@ -2965,7 +2970,13 @@ export default function RestyleStudio() {
    * 交给外部转码服务 concat（原片音轨随分段视频自带，不做二次混音）。
    * 任一分段缺结果就把成片标记为失败并说明缺哪些段，不做静默拼接。
    */
-  async function stitchFinalEpisodes(projectId: string, episodes: string[]) {
+  async function stitchFinalEpisodes(projectId: string, episodes: string[], conversationId?: string) {
+    // 合成结果播报（2026-08：此前只写 renderStatus/渲染日志，失败完全静默）
+    const report = (content: string) => {
+      if (conversationId) {
+        appendConversationMessage(projectId, conversationId, { role: "assistant", content });
+      }
+    };
     for (const episode of episodes) {
       const project = projectsRef.current.find((item) => item.id === projectId);
       const finalAttachment = project?.files.find(
@@ -2977,13 +2988,11 @@ export default function RestyleStudio() {
         .sort((a, b) => (a.segmentId ?? "").localeCompare(b.segmentId ?? "", "zh-Hans-CN"));
       const missing = clips.filter((clip) => !clip.url || !/^https?:\/\//i.test(clip.url));
       if (!clips.length || missing.length) {
-        failRenderAttachment(
-          projectId,
-          finalAttachment.id,
-          clips.length
-            ? `以下分段还没有可用视频，成片未合成：${missing.map((clip) => clip.segmentId ?? clip.name).join("、")}`
-            : "本集没有已生成的分段视频，成片未合成。",
-        );
+        const reason = clips.length
+          ? `以下分段还没有可用视频，成片未合成：${missing.map((clip) => clip.segmentId ?? clip.name).join("、")}`
+          : "本集没有已生成的分段视频，成片未合成。";
+        failRenderAttachment(projectId, finalAttachment.id, reason);
+        report(`「${episode}」成片合成失败：${reason}`);
         continue;
       }
       // 智能补镜并入：补镜片段按锚点分段插入拼接序列，原片分段顺序与剪辑点不变；
@@ -3022,6 +3031,7 @@ export default function RestyleStudio() {
         });
         if (!submitted.ok) {
           failRenderAttachment(projectId, finalAttachment.id, submitted.error);
+          report(`「${episode}」成片合成失败：${submitted.error}`);
           continue;
         }
         const jobId = submitted.jobId;
@@ -3062,13 +3072,15 @@ export default function RestyleStudio() {
             );
           }
           completeRenderAttachment(projectId, finalAttachment.id, finalUrl, jobId);
-        } else failRenderAttachment(projectId, finalAttachment.id, lastError, jobId);
+          report(`「${episode}」成片已合成。`);
+        } else {
+          failRenderAttachment(projectId, finalAttachment.id, lastError, jobId);
+          report(`「${episode}」成片合成失败：${lastError}`);
+        }
       } catch (error) {
-        failRenderAttachment(
-          projectId,
-          finalAttachment.id,
-          error instanceof Error ? error.message : "成片合成请求失败。",
-        );
+        const reason = error instanceof Error ? error.message : "成片合成请求失败。";
+        failRenderAttachment(projectId, finalAttachment.id, reason);
+        report(`「${episode}」成片合成失败：${reason}`);
       }
     }
   }
@@ -3078,13 +3090,73 @@ export default function RestyleStudio() {
     conversationId: string,
     finalEpisodes: string[],
     videoModel: string,
+    // 局部返工 run 涉及的分段所属集（finalEpisodes 为空时用于补触发合成判定）
+    rerunEpisodes: string[] = [],
   ) {
     try {
       if (finalEpisodes.length) {
         // 智能补镜（P2）：基础分段全部渲染完成后、整集 stitch 前执行；
         // 任何补镜失败都只跳过该补镜，不影响主片拼接。
         await runSmartInserts(projectId, finalEpisodes, videoModel);
-        await stitchFinalEpisodes(projectId, finalEpisodes);
+        await stitchFinalEpisodes(projectId, finalEpisodes, conversationId);
+      } else if (
+        rerunEpisodes.length &&
+        // 还有排队返工时不抢着合成——drain 在 finishRun 后拉起下一批,
+        // 只有最后一批的收尾看到空队列,合成在这里才真正触发。
+        !(pendingRerunsRef.current.get(projectId)?.length)
+      ) {
+        // 局部返工收尾补合成（2026-08 线上缺口：返工补齐分段后 finalEpisodes
+        // 为空,首轮失败的成片永远停在 failed 且无播报）。逐集判定「分段已齐
+        // 且无可用成片」,命中才重触发 stitch;合成中/已有成片的集不重复触发。
+        const currentFiles =
+          projectsRef.current.find((item) => item.id === projectId)?.files ?? [];
+        const eligible = rerunEpisodes.filter(
+          (episode) => episodeRestitchEligibility(currentFiles, episode).eligible,
+        );
+        for (const episode of eligible) {
+          // 成片占位缺失时补建（stitch 以占位附件落结果;首轮没整集跑过该集
+          // 的边角情形下占位不存在,不补建会被 stitch 静默跳过）。
+          const filesNow =
+            projectsRef.current.find((item) => item.id === projectId)?.files ?? [];
+          if (
+            filesNow.some(
+              (file) => file.generatedKind === "final_video" && file.episode === episode,
+            )
+          ) {
+            continue;
+          }
+          const anyClip = filesNow.find(
+            (file) => file.generatedKind === "video_clip" && file.episode === episode,
+          );
+          const source = filesNow.find((file) => file.id === anyClip?.sourceAttachmentId);
+          const sourceStem = source?.name.replace(/\.[^.]+$/, "") || "转绘视频";
+          updateProject(projectId, (project) => ({
+            ...project,
+            files: [
+              ...project.files,
+              {
+                id: crypto.randomUUID(),
+                name: `${sourceStem}_转绘.mp4`,
+                size: source?.size ?? 0,
+                type: "video/mp4",
+                lastModified: Date.now(),
+                generatedKind: "final_video" as const,
+                sourceAttachmentId: source?.id,
+                episode,
+                renderTaskId: makeRenderTaskId(episode),
+                renderStatus: "queued" as const,
+                renderProgress: 0,
+              },
+            ],
+          }));
+        }
+        if (eligible.length) {
+          appendConversationMessage(projectId, conversationId, {
+            role: "assistant",
+            content: `返工分段已补齐，正在重新合成整集成片：${eligible.join("、")}。`,
+          });
+          await stitchFinalEpisodes(projectId, eligible, conversationId);
+        }
       }
       if (isRunAborted(projectId)) return;
       updateProject(projectId, (project) => ({ ...project, stage: "review" }));
@@ -3408,7 +3480,11 @@ export default function RestyleStudio() {
     if (isRunAborted(projectId)) return;
     const job = jobs[index];
     if (!job) {
-      completeRenderQueue(projectId, conversationId, finalEpisodes, videoModel);
+      // 队列穷尽收尾;局部返工 run 把涉及的分段所属集传下去,供补触发合成判定
+      const rerunEpisodes = [
+        ...new Set(jobs.map((item) => item.episode).filter(Boolean)),
+      ] as string[];
+      completeRenderQueue(projectId, conversationId, finalEpisodes, videoModel, rerunEpisodes);
       return;
     }
     // 单段失败统一出口：除写 renderError 外，向对话播报集号+分段号+原始错误+建议动作。
