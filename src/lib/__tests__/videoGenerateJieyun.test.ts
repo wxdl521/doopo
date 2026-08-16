@@ -4,6 +4,8 @@ import {
   assetLibraryVendorForModel,
   getVideoAssetLibrarySupport,
   referenceVideoLimitsForModel,
+  r2vDurationLimitsForModel,
+  r2vDurationRetryLadder,
 } from "../videoAssetLibrary";
 import {
   getVideoBackend,
@@ -139,10 +141,42 @@ describe("诘云素材库（Action API 解析纯函数）", () => {
   it("jieyun 模型进入素材库支持清单（vendor=jieyun）", () => {
     expect(assetLibraryVendorForModel("jieyun-doubao-seedance-2-0-260128")).toBe("jieyun");
     expect(getVideoAssetLibrarySupport("jieyun-doubao-seedance-2-0-260128").supported).toBe(true);
-    // 素材库通道参考视频约束与 TopenRouter 同档（1.8-30s）
+    // 诘云素材登记视频限 2-15s（严于 TopenRouter 素材库通道的 1.8-30s）
     expect(referenceVideoLimitsForModel("jieyun-doubao-seedance-2-0-260128")).toEqual({
+      minMs: 2_000,
+      maxMs: 15_000,
+    });
+    // TopenRouter 既有口径不受影响
+    expect(referenceVideoLimitsForModel("topenrouter-doubao-seedance-2-0-260128")).toEqual({
       minMs: 1_800,
       maxMs: 30_000,
     });
+  });
+
+  it("jieyun 的 r2v 时长约束 4-15s（invalid_seconds 实测）,其它渠道 2-15s 不变", () => {
+    expect(r2vDurationLimitsForModel("jieyun-doubao-seedance-2-0-260128")).toEqual({
+      minSec: 4,
+      maxSec: 15,
+    });
+    expect(r2vDurationLimitsForModel("topenrouter-doubao-seedance-2-0-260128")).toEqual({
+      minSec: 2,
+      maxSec: 15,
+    });
+    expect(r2vDurationLimitsForModel("doubao-seedance-2-0-260128")).toEqual({
+      minSec: 2,
+      maxSec: 15,
+    });
+  });
+
+  it("降档阶梯在 jieyun 约束下钳制：参考 18s 夹到 15s,低于 4s 抬到 4s", () => {
+    const jieyun = { minSec: 4, maxSec: 15 };
+    // 参考片段 18s（素材库旧口径可裁到 30s）→ 贴齐档夹到 15
+    expect(r2vDurationRetryLadder(16, 18, jieyun)).toEqual([15, 10, 8, 6, 5, 4]);
+    // 参考 3s 低于下限 → 抬到 4s
+    expect(r2vDurationRetryLadder(15, 3, jieyun)).toEqual([4, 10, 8, 6, 5]);
+    // 当前 5s 被拒时只降不升:候选 4/10/8/6/5/4 中 <5 的只剩 4
+    expect(r2vDurationRetryLadder(5, 3, jieyun)).toEqual([4]);
+    // 缺省口径不变（TopenRouter/ARK 直连）
+    expect(r2vDurationRetryLadder(15, 3)).toEqual([3, 10, 8, 6, 5, 4]);
   });
 });

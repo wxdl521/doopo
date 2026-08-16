@@ -136,6 +136,7 @@ import {
   referenceVideoLimitsForModel,
   RESTYLE_FALLBACK_EXHAUSTED_MESSAGE,
   restyleAssetCacheKey,
+  r2vDurationLimitsForModel,
   r2vDurationRetryLadder,
   type RestyleFallbackStage,
 } from "../../lib/videoAssetLibrary";
@@ -3256,6 +3257,13 @@ export default function RestyleStudio() {
     aspect: RestyleAspect;
   }): Promise<{ ok: boolean; url?: string; error?: string }> {
     try {
+      // 渠道时长钳制：诘云等后端低于 4s 也拒（invalid_seconds），
+      // 补镜「档内最小值 1s」必须先抬到渠道下限；扣费口径与提交一致。
+      const insertDurationLimits = r2vDurationLimitsForModel(input.videoModel);
+      const durationSec = Math.min(
+        insertDurationLimits.maxSec,
+        Math.max(insertDurationLimits.minSec, input.durationSec),
+      );
       const content = [
         { type: "text", text: input.job.prompt },
         {
@@ -3270,7 +3278,7 @@ export default function RestyleStudio() {
           model: input.videoModel,
           ratio: input.aspect,
           resolution: "720P",
-          duration: input.durationSec,
+          duration: durationSec,
           generateAudio: false,
           watermark: false,
         },
@@ -3290,7 +3298,7 @@ export default function RestyleStudio() {
               model: submitted.model,
               // 与主渲染链同口径：succeeded 时刻服务端按价目扣费（幂等键 taskId）。
               resolution: "720P",
-              duration: input.durationSec,
+              duration: durationSec,
               label: `补镜 ${input.job.anchorShotNo}`,
             },
           });
@@ -3635,8 +3643,10 @@ export default function RestyleStudio() {
         });
         const dropped: string[] = [...preChecked.rejected];
         let stage: RestyleFallbackStage = dropped.length ? "without-rejected" : "full";
-        // 时长按分段的场景区间计算（夹取 2~15s），不再硬编码 5s——
+        // 时长按分段的场景区间计算（按渠道分档夹取，缺省 2~15s；
+        // 诘云实测 invalid_seconds 要求 4-15s），不再硬编码 5s——
         // 否则 110s 原片只能产出 8×5s=40s。
+        const durationLimits = r2vDurationLimitsForModel(videoModel);
         const segmentForDuration = projectsRef.current
           .find((item) => item.id === projectId)
           ?.planEpisodes?.find((item) => item.episode === job.episode)
@@ -3644,9 +3654,9 @@ export default function RestyleStudio() {
         const segmentDurationSec =
           segmentForDuration?.endMs != null && segmentForDuration?.startMs != null
             ? Math.min(
-                15,
+                durationLimits.maxSec,
                 Math.max(
-                  2,
+                  durationLimits.minSec,
                   Math.round((segmentForDuration.endMs - segmentForDuration.startMs) / 1000),
                 ),
               )
@@ -3659,6 +3669,7 @@ export default function RestyleStudio() {
         const durationRetries: number[] = r2vDurationRetryLadder(
           segmentDurationSec,
           referenceVideo.ok ? referenceVideo.durationSec : undefined,
+          durationLimits,
         );
         let referenceDroppedForDuration = false;
 

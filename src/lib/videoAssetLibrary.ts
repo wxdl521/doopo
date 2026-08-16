@@ -72,12 +72,17 @@ export function isArkSeedanceDirectModel(model: string | undefined): boolean {
 }
 
 /**
- * 各通道参考视频时长约束：素材库通道 1.8–30s；ARK Seedance 直连 2–15s；
- * 其它后端无约束（返回 null，维持整片提交的旧行为）。
+ * 各通道参考视频时长约束：素材库通道 1.8–30s；诘云素材登记视频限 2–15s
+ * （jieyun 文档,超过会被登记拒,2026-08 实测其 r2v 同口径）；ARK Seedance
+ * 直连 2–15s；其它后端无约束（返回 null，维持整片提交的旧行为）。
  */
 export function referenceVideoLimitsForModel(
   model: string | undefined,
 ): { minMs: number; maxMs: number } | null {
+  // 诘云特例必须先于素材库通用档（其文档约束 2-15s,严于 TopenRouter 的 1.8-30s）
+  if (model?.trim().startsWith("jieyun-")) {
+    return { minMs: JIEYUN_REFERENCE_VIDEO_MIN_MS, maxMs: JIEYUN_REFERENCE_VIDEO_MAX_MS };
+  }
   if (assetLibraryVendorForModel(model)) {
     return { minMs: REFERENCE_VIDEO_MIN_MS, maxMs: REFERENCE_VIDEO_MAX_MS };
   }
@@ -85,6 +90,23 @@ export function referenceVideoLimitsForModel(
     return { minMs: ARK_R2V_REFERENCE_VIDEO_MIN_MS, maxMs: ARK_R2V_REFERENCE_VIDEO_MAX_MS };
   }
   return null;
+}
+
+// 诘云参考视频约束：素材登记与 r2v 生成同口径 2-15s（jieyun 文档/实测）。
+const JIEYUN_REFERENCE_VIDEO_MIN_MS = 2_000;
+const JIEYUN_REFERENCE_VIDEO_MAX_MS = 15_000;
+
+/**
+ * 各通道 r2v 生成时长约束（秒）：默认 2–15s（ARK 直连/TopenRouter 既有口径,
+ * TopenRouter 15.2s 上限夹到 15 不受影响）；诘云实测 invalid_seconds 要求
+ * 4–15s（低于 4 同样拒绝,比 TopenRouter 更严）。
+ */
+export function r2vDurationLimitsForModel(model: string | undefined): {
+  minSec: number;
+  maxSec: number;
+} {
+  if (model?.trim().startsWith("jieyun-")) return { minSec: 4, maxSec: 15 };
+  return { minSec: 2, maxSec: 15 };
 }
 
 /**
@@ -244,12 +266,20 @@ export function extractPollFailureDetail(raw: unknown): string | undefined {
  * 2. 再按安全离散档下探（部分网关只接受离散档，10s 也可能被拒）；
  * 3. 全部用尽后由调用方走「移除参考视频重投」（既有降级链）。
  * 返回去重后严格小于 currentSec 的降档序列（已按候选原序排好）。
+ * limits 按渠道分档（r2vDurationLimitsForModel）：诘云 4-15s（低于 4 也拒），
+ * 缺省 2-15s 保持 TopenRouter/ARK 直连既有口径。
  */
-export function r2vDurationRetryLadder(currentSec: number, referenceSec?: number): number[] {
-  const clamp = (value: number) => Math.max(2, Math.min(15, Math.round(value)));
+export function r2vDurationRetryLadder(
+  currentSec: number,
+  referenceSec?: number,
+  limits: { minSec: number; maxSec: number } = { minSec: 2, maxSec: 15 },
+): number[] {
+  const clamp = (value: number) =>
+    Math.max(limits.minSec, Math.min(limits.maxSec, Math.round(value)));
   const candidates = [referenceSec, 10, 8, 6, 5, 4]
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
-    .map(clamp);
+    .map(clamp)
+    .filter((value) => value >= limits.minSec);
   return [...new Set(candidates.filter((value) => value < currentSec))];
 }
 
