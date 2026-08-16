@@ -72,6 +72,8 @@ import {
 import { driveWindowedPlanCalls } from "./planWindowDriver";
 import { isSupersededClipAttachment, withoutSupersededClips } from "./rerunAttachments";
 import {
+  applyRunOutcomesToFiles,
+  collectRerunEpisodes,
   episodeRestitchEligibility,
   outcomeLabel,
   summarizeRenderRun,
@@ -2979,14 +2981,22 @@ export default function RestyleStudio() {
     };
     for (const episode of episodes) {
       const project = projectsRef.current.find((item) => item.id === projectId);
-      const finalAttachment = project?.files.find(
+      // projectsRef 可能滞后一个渲染帧（本轮最后一段的成功写回尚未进 ref）——
+      // 用同步台账覆盖后再找占位/校验缺段,避免刚补齐的分段被误判缺失。
+      const episodeFiles = applyRunOutcomesToFiles(
+        project?.files ?? [],
+        renderRunOutcomesRef.current.get(projectId) ?? [],
+      );
+      const finalAttachment = episodeFiles.find(
         (file) => file.generatedKind === "final_video" && file.episode === episode,
       );
       if (!finalAttachment) continue;
-      const clips = (project?.files ?? [])
+      const clips = episodeFiles
         .filter((file) => file.generatedKind === "video_clip" && file.episode === episode)
         .sort((a, b) => (a.segmentId ?? "").localeCompare(b.segmentId ?? "", "zh-Hans-CN"));
-      const missing = clips.filter((clip) => !clip.url || !/^https?:\/\//i.test(clip.url));
+      // 可用产物判定 url ?? resultUrl（旧路径/持久化数据可能只写 resultUrl）
+      const clipUrl = (clip: (typeof clips)[number]) => clip.url ?? clip.resultUrl;
+      const missing = clips.filter((clip) => !clipUrl(clip) || !/^https?:\/\//i.test(clipUrl(clip)!));
       if (!clips.length || missing.length) {
         const reason = clips.length
           ? `以下分段还没有可用视频，成片未合成：${missing.map((clip) => clip.segmentId ?? clip.name).join("、")}`
@@ -3027,7 +3037,10 @@ export default function RestyleStudio() {
       );
       try {
         const submitted = await callSubmitVideoStitchJob({
-          data: { episode, clips: mergedClips.map((clip) => clip.url as string) },
+          data: {
+            episode,
+            clips: mergedClips.map((clip) => (clip.url ?? clip.resultUrl) as string),
+          },
         });
         if (!submitted.ok) {
           failRenderAttachment(projectId, finalAttachment.id, submitted.error);
@@ -3108,8 +3121,15 @@ export default function RestyleStudio() {
         // 局部返工收尾补合成（2026-08 线上缺口：返工补齐分段后 finalEpisodes
         // 为空,首轮失败的成片永远停在 failed 且无播报）。逐集判定「分段已齐
         // 且无可用成片」,命中才重触发 stitch;合成中/已有成片的集不重复触发。
-        const currentFiles =
+        const baseFiles =
           projectsRef.current.find((item) => item.id === projectId)?.files ?? [];
+        // projectsRef 滞后一个渲染帧（本轮最后一段的成功写回只走了 setProjects），
+        // 直接读会把刚补齐的分段判成「分段未齐」（78577c8 实证不命中根因）——
+        // 用同步台账覆盖后再判定。
+        const currentFiles = applyRunOutcomesToFiles(
+          baseFiles,
+          renderRunOutcomesRef.current.get(projectId) ?? [],
+        );
         const eligible = rerunEpisodes.filter(
           (episode) => episodeRestitchEligibility(currentFiles, episode).eligible,
         );
@@ -3156,6 +3176,17 @@ export default function RestyleStudio() {
             content: `返工分段已补齐，正在重新合成整集成片：${eligible.join("、")}。`,
           });
           await stitchFinalEpisodes(projectId, eligible, conversationId);
+        } else {
+          // 诊断播报：进入返工收尾分支但没有集被触发时给出逐集原因,
+          // 一次复跑即可定位（此前静默跳过,78577c8 线上无法自证）。
+          const reasons = rerunEpisodes.map(
+            (episode) =>
+              `${episode}：${episodeRestitchEligibility(currentFiles, episode).reason ?? "未知"}`,
+          );
+          appendConversationMessage(projectId, conversationId, {
+            role: "assistant",
+            content: `局部返工收尾：未触发成片合成（${reasons.join("；")}）。`,
+          });
         }
       }
       if (isRunAborted(projectId)) return;
@@ -3481,9 +3512,8 @@ export default function RestyleStudio() {
     const job = jobs[index];
     if (!job) {
       // 队列穷尽收尾;局部返工 run 把涉及的分段所属集传下去,供补触发合成判定
-      const rerunEpisodes = [
-        ...new Set(jobs.map((item) => item.episode).filter(Boolean)),
-      ] as string[];
+      // （聊天点名返工的 jobs 带 file.episode,提取纯函数已测）
+      const rerunEpisodes = collectRerunEpisodes(jobs);
       completeRenderQueue(projectId, conversationId, finalEpisodes, videoModel, rerunEpisodes);
       return;
     }

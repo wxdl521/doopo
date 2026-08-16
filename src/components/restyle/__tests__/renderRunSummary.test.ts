@@ -4,6 +4,8 @@
 // ====================================================================
 import { describe, expect, it } from "vitest";
 import {
+  applyRunOutcomesToFiles,
+  collectRerunEpisodes,
   episodeRestitchEligibility,
   outcomeLabel,
   summarizeRenderRun,
@@ -142,5 +144,93 @@ describe("episodeRestitchEligibility（局部返工收尾补合成判定）", ()
     ];
     expect(episodeRestitchEligibility(files, "EP02").eligible).toBe(false);
     expect(episodeRestitchEligibility(files, "EP01").eligible).toBe(true);
+  });
+});
+
+describe("collectRerunEpisodes / applyRunOutcomesToFiles", () => {
+  it("从 jobs 提取涉及的集：去重、保序、滤空", () => {
+    expect(
+      collectRerunEpisodes([
+        { episode: "EP02" },
+        { episode: undefined },
+        { episode: "EP01" },
+        { episode: "EP02" },
+      ]),
+    ).toEqual(["EP02", "EP01"]);
+    expect(collectRerunEpisodes([])).toEqual([]);
+  });
+
+  it("台账覆盖：stale ref 缺失的本轮成功 url 由同步台账补回（78577c8 根因）", () => {
+    // 模拟渲染帧滞后：ref 里返工片段还没有 url,但台账已同步记录成功
+    const staleFiles = [
+      {
+        id: "clip-u01",
+        generatedKind: "video_clip",
+        episode: "EP02",
+        segmentId: "U01",
+        renderStatus: "running",
+      },
+      {
+        id: "clip-u02",
+        generatedKind: "video_clip",
+        episode: "EP02",
+        segmentId: "U02",
+        url: "https://a/2.mp4",
+        renderStatus: "succeeded",
+      },
+      { id: "final-ep02", generatedKind: "final_video", episode: "EP02", renderStatus: "failed" },
+    ];
+    // 未覆盖前:分段未齐（U01 缺 url）→ 不触发
+    expect(episodeRestitchEligibility(staleFiles, "EP02").eligible).toBe(false);
+    const overlaid = applyRunOutcomesToFiles(staleFiles, [
+      {
+        attachmentId: "clip-u01",
+        generatedKind: "video_clip",
+        episode: "EP02",
+        segmentId: "U01",
+        ok: true,
+        resultUrl: "https://a/1-new.mp4",
+      },
+    ]);
+    // 覆盖后:url 补回、状态 succeeded → 可触发
+    const hit = overlaid.find((file) => file.id === "clip-u01");
+    expect(hit?.url).toBe("https://a/1-new.mp4");
+    expect(hit?.renderStatus).toBe("succeeded");
+    expect(episodeRestitchEligibility(overlaid, "EP02")).toEqual({ eligible: true });
+  });
+
+  it("失败台账不覆盖；他附件台账不串", () => {
+    const files: import("../renderRunSummary").RestitchFileShape[] = [
+      { id: "a", generatedKind: "video_clip", episode: "EP02", segmentId: "U01" },
+    ];
+    const overlaid = applyRunOutcomesToFiles(files, [
+      { attachmentId: "a", ok: false, error: "x" },
+      { attachmentId: "b", ok: true, resultUrl: "https://a/b.mp4" },
+    ]);
+    expect(overlaid[0].url).toBeUndefined();
+  });
+});
+
+describe("episodeRestitchEligibility resultUrl 兼容", () => {
+  it("旧路径只写 resultUrl 的 clip/final 判定不吃假阴性", () => {
+    const files = [
+      {
+        generatedKind: "video_clip",
+        episode: "EP02",
+        segmentId: "U01",
+        resultUrl: "https://a/1.mp4",
+        renderStatus: "succeeded",
+      },
+      {
+        generatedKind: "final_video",
+        episode: "EP02",
+        resultUrl: "https://a/f.mp4",
+        renderStatus: "succeeded",
+      },
+    ];
+    // 成片有可用 resultUrl → 不重复触发
+    expect(episodeRestitchEligibility(files, "EP02").eligible).toBe(false);
+    // 去掉成片:只有 resultUrl 的分段也算「已齐」→ 可触发
+    expect(episodeRestitchEligibility(files.slice(0, 1), "EP02").eligible).toBe(true);
   });
 });

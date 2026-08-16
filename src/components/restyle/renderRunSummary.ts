@@ -64,16 +64,53 @@ export function summarizeRenderRun(
 
 /** 判定所需的附件最小形状（RestyleAttachment 的子集）。 */
 export interface RestitchFileShape {
+  id?: string;
   generatedKind?: string;
   episode?: string;
   segmentId?: string;
   url?: string;
+  resultUrl?: string;
   renderStatus?: string;
+}
+
+/** 附件的可用产物 URL：新路径 url/resultUrl 双写,旧路径可能只有 resultUrl。 */
+function attachmentResultUrl(file: RestitchFileShape): string | undefined {
+  const value = file.url ?? file.resultUrl;
+  return value && /^https?:\/\//i.test(value) ? value : undefined;
+}
+
+/** 从渲染队列 jobs 提取涉及的集（去重、保序）——局部返工收尾补合成判定用。 */
+export function collectRerunEpisodes(
+  jobs: ReadonlyArray<{ episode?: string }>,
+): string[] {
+  return [
+    ...new Set(jobs.map((job) => job.episode).filter((episode): episode is string => !!episode)),
+  ];
+}
+
+/**
+ * 用本轮同步成败台账覆盖附件形状：projectsRef 滞后一个渲染帧（最后一次
+ * completeRenderAttachment 只走 setProjects,ref 要等下一次渲染才同步），
+ * 收尾处直接读 ref 会丢掉本轮刚成功分段的 url（「分段未齐」假阴性,
+ * 78577c8 实证不命中的根因）。台账是同步写入的,以它为准。
+ */
+export function applyRunOutcomesToFiles<T extends RestitchFileShape>(
+  files: T[],
+  outcomes: ReadonlyArray<RenderRunOutcome>,
+): T[] {
+  return files.map((file) => {
+    const hit = outcomes.find(
+      (outcome) => outcome.attachmentId === file.id && outcome.ok && outcome.resultUrl,
+    );
+    return hit
+      ? { ...file, url: hit.resultUrl, resultUrl: hit.resultUrl, renderStatus: "succeeded" }
+      : file;
+  });
 }
 
 /**
  * 该集是否可（重新）触发整集合成：
- * - 本集分段 clips 必须全部有可用 http(s) URL（分段不齐不合成）；
+ * - 本集分段 clips 必须全部有可用产物 URL（url ?? resultUrl;分段不齐不合成）；
  * - 成片合成中（renderStatus=running）不重复触发；
  * - 已有可用成片（有 URL 且非 failed）不重复触发；
  * - 成片占位缺失 / failed / 无 URL → 可触发（占位缺失由调用方补建）。
@@ -86,7 +123,7 @@ export function episodeRestitchEligibility(
     (file) => file.generatedKind === "video_clip" && file.episode === episode,
   );
   if (!clips.length) return { eligible: false, reason: "本集没有分段视频" };
-  const missing = clips.filter((clip) => !clip.url || !/^https?:\/\//i.test(clip.url));
+  const missing = clips.filter((clip) => !attachmentResultUrl(clip));
   if (missing.length) {
     return {
       eligible: false,
@@ -101,11 +138,7 @@ export function episodeRestitchEligibility(
   if (finalVideo?.renderStatus === "running") {
     return { eligible: false, reason: "成片合成中" };
   }
-  if (
-    finalVideo?.url &&
-    /^https?:\/\//i.test(finalVideo.url) &&
-    finalVideo.renderStatus !== "failed"
-  ) {
+  if (finalVideo && attachmentResultUrl(finalVideo) && finalVideo.renderStatus !== "failed") {
     return { eligible: false, reason: "已有可用成片" };
   }
   return { eligible: true };
