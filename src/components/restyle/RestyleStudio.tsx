@@ -79,6 +79,7 @@ import {
   summarizeRenderRun,
   type RenderRunOutcome,
 } from "./renderRunSummary";
+import { createRunOutcomeLedger } from "./runOutcomeLedger";
 import { isPendingRerun, shiftPendingRerun } from "./pendingReruns";
 import {
   imageModelFallbackCandidates,
@@ -1205,12 +1206,14 @@ export default function RestyleStudio() {
     Map<string, Array<{ conversationId: string; rerun: RestyleRerunRequest }>>
   >(new Map());
   /**
-   * 本轮渲染 run 的成败台账（同步写入，不经过 React 状态）：队列收尾播报
-   * 必须按本轮实际成败判定——读 projectsRef 里的 renderStatus 会拿到上一个
-   * 事件循环的旧状态（本轮失败不可见、上一轮失败残留可见，播报自相矛盾）。
-   * 每个 run 在 generateRenderedVideos 里重置，drain 的下一轮各自独立。
+   * 本轮渲染 run 的成败台账（runOutcomeLedger，同步读写，不经过 React 状态）：
+   * 队列收尾播报必须按本轮实际成败判定——读 projectsRef 里的 renderStatus 会
+   * 拿到上一个事件循环的旧状态。记账必须直接调 record（禁止放进 setState
+   * updater：updater 由 React 延迟到渲染阶段执行，收尾同步读取会读空，
+   * 772bbb2「本轮台账：空」根因）。每个 run 在 generateRenderedVideos 里
+   * reset，drain 的下一轮各自独立。
    */
-  const renderRunOutcomesRef = useRef<Map<string, RenderRunOutcome[]>>(new Map());
+  const renderRunOutcomesRef = useRef(createRunOutcomeLedger());
   const [analysisError, setAnalysisError] = useState("");
   // 资产表 skill 自检结果（reviewRestyleAssetTable）：仅组件内状态，不落盘。
   const [assetReview, setAssetReview] = useState<{
@@ -2624,21 +2627,23 @@ export default function RestyleStudio() {
     resultUrl: string,
     taskId?: string,
   ) {
+    // 台账同步记账（先于 setState 直接调 record）：updater 内记账会延迟到
+    // 渲染阶段执行,收尾同步读取读空（772bbb2 根因）。集/段坐标读 projectsRef
+    // （渲染帧滞后读不到新附件时退化为仅 id 记录,id 主键覆盖仍可靠）。
+    const completedNow = projectsRef.current
+      .find((item) => item.id === projectId)
+      ?.files.find((file) => file.id === attachmentId);
+    renderRunOutcomesRef.current.record(projectId, {
+      attachmentId,
+      generatedKind: completedNow?.generatedKind,
+      episode: completedNow?.episode,
+      segmentId: completedNow?.segmentId,
+      ok: true,
+      resultUrl,
+    });
     updateProject(projectId, (project) => {
       const completed = project.files.find((file) => file.id === attachmentId);
       if (!completed) return project;
-      // 同步记本轮成败台账（队列收尾播报的数据源，不经过 React 状态）
-      const outcomes = renderRunOutcomesRef.current.get(projectId);
-      if (outcomes) {
-        outcomes.push({
-          attachmentId,
-          generatedKind: completed.generatedKind,
-          episode: completed.episode,
-          segmentId: completed.segmentId,
-          ok: true,
-          resultUrl,
-        });
-      }
       return {
         ...project,
         // 新产物成功写回：同 (episode, segmentId) 的其余片段附件（旧成功产物
@@ -2672,22 +2677,22 @@ export default function RestyleStudio() {
     error: string,
     taskId?: string,
   ) {
+    // 台账同步记账（同 completeRenderAttachment：禁止放进 setState updater）
+    const failedNow = projectsRef.current
+      .find((item) => item.id === projectId)
+      ?.files.find((file) => file.id === attachmentId);
+    renderRunOutcomesRef.current.record(projectId, {
+      attachmentId,
+      generatedKind: failedNow?.generatedKind,
+      episode: failedNow?.episode,
+      segmentId: failedNow?.segmentId,
+      ok: false,
+      error,
+    });
     updateRenderAttachments(
       projectId,
       (file) => file.id === attachmentId,
       (file) => {
-        // 同步记本轮成败台账（队列收尾播报的数据源，不经过 React 状态）
-        const outcomes = renderRunOutcomesRef.current.get(projectId);
-        if (outcomes) {
-          outcomes.push({
-            attachmentId,
-            generatedKind: file.generatedKind,
-            episode: file.episode,
-            segmentId: file.segmentId,
-            ok: false,
-            error,
-          });
-        }
         return {
           ...file,
           renderTaskId: taskId ?? file.renderTaskId,
@@ -2985,7 +2990,7 @@ export default function RestyleStudio() {
       // 用同步台账覆盖后再找占位/校验缺段,避免刚补齐的分段被误判缺失。
       const episodeFiles = applyRunOutcomesToFiles(
         project?.files ?? [],
-        renderRunOutcomesRef.current.get(projectId) ?? [],
+        renderRunOutcomesRef.current.snapshot(projectId),
       );
       const finalAttachment = episodeFiles.find(
         (file) => file.generatedKind === "final_video" && file.episode === episode,
@@ -3128,7 +3133,7 @@ export default function RestyleStudio() {
         // 用同步台账覆盖后再判定。
         const currentFiles = applyRunOutcomesToFiles(
           baseFiles,
-          renderRunOutcomesRef.current.get(projectId) ?? [],
+          renderRunOutcomesRef.current.snapshot(projectId),
         );
         const eligible = rerunEpisodes.filter(
           (episode) => episodeRestitchEligibility(currentFiles, episode).eligible,
@@ -3183,7 +3188,8 @@ export default function RestyleStudio() {
             (episode) =>
               `${episode}：${episodeRestitchEligibility(currentFiles, episode).reason ?? "未知"}`,
           );
-          const outcomeTags = (renderRunOutcomesRef.current.get(projectId) ?? [])
+          const outcomeTags = renderRunOutcomesRef.current
+            .snapshot(projectId)
             .map(
               (outcome) =>
                 `${outcome.episode ?? "?"}/${outcome.segmentId ?? outcome.generatedKind ?? "?"}${outcome.ok ? "✓" : "×"}`,
@@ -3201,7 +3207,7 @@ export default function RestyleStudio() {
       // 成败判定只认本轮台账（renderRunOutcomesRef，同步记录）：读 files 的
       // renderStatus 会拿到旧事件循环的状态——本轮失败不可见（误报「全部完成」）、
       // 上一轮失败残留可见（跨 run 串「首个失败原因」），均已在此回归实证。
-      const summary = summarizeRenderRun(renderRunOutcomesRef.current.get(projectId) ?? [], {
+      const summary = summarizeRenderRun(renderRunOutcomesRef.current.snapshot(projectId), {
         hasFinalVideos,
       });
       const failedSegments = summary.failedOutcomes;
@@ -4178,7 +4184,7 @@ export default function RestyleStudio() {
     }));
     // 新一轮渲染 run 开始：重置成败台账（队列收尾播报只认本轮成败，
     // 跨 run 不串历史失败原因）。
-    renderRunOutcomesRef.current.set(projectId, []);
+    renderRunOutcomesRef.current.reset(projectId);
     void runRenderQueue(projectId, conversationId, jobs, [...new Set(finalEpisodes)], videoModel);
   }
 
