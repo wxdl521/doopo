@@ -234,3 +234,60 @@ describe("episodeRestitchEligibility resultUrl 兼容", () => {
     expect(episodeRestitchEligibility(files.slice(0, 1), "EP02").eligible).toBe(true);
   });
 });
+
+describe("applyRunOutcomesToFiles 次键匹配（772bbb2 实证 id 错位）", () => {
+  it("台账 id 与附件 id 不一致但 (episode,segmentId) 一致时仍覆盖命中", () => {
+    const files: import("../renderRunSummary").RestitchFileShape[] = [
+      // 返工新建附件 N1（渲染帧滞后,url 未写回 ref）
+      {
+        id: "new-uuid-N1",
+        generatedKind: "video_clip",
+        episode: "EP02",
+        segmentId: "U01",
+        renderStatus: "running",
+      },
+      {
+        id: "clip-u02",
+        generatedKind: "video_clip",
+        episode: "EP02",
+        segmentId: "U02",
+        url: "https://a/2.mp4",
+        renderStatus: "succeeded",
+      },
+      { id: "final-ep02", generatedKind: "final_video", episode: "EP02", renderStatus: "failed" },
+    ];
+    const overlaid = applyRunOutcomesToFiles(files, [
+      // 台账记账 id 与附件 id 错位（返工链换 id），坐标一致
+      {
+        attachmentId: "stale-or-other-id",
+        generatedKind: "video_clip",
+        episode: "EP02",
+        segmentId: "U01",
+        ok: true,
+        resultUrl: "https://a/1-new.mp4",
+      },
+    ]);
+    expect(overlaid[0].url).toBe("https://a/1-new.mp4");
+    expect(episodeRestitchEligibility(overlaid, "EP02")).toEqual({ eligible: true });
+  });
+
+  it("次键限定 video_clip 且需坐标齐全：final_video/他集不误配", () => {
+    const files: import("../renderRunSummary").RestitchFileShape[] = [
+      { id: "f1", generatedKind: "final_video", episode: "EP02", renderStatus: "failed" },
+      { id: "c1", generatedKind: "video_clip", episode: "EP03", segmentId: "U01" },
+    ];
+    const overlaid = applyRunOutcomesToFiles(files, [
+      {
+        attachmentId: "x",
+        generatedKind: "video_clip",
+        episode: "EP02",
+        segmentId: "U01",
+        ok: true,
+        resultUrl: "https://a/1.mp4",
+      },
+    ]);
+    // final_video 不按次键覆盖;EP03 坐标不同不覆盖
+    expect(overlaid[0].url).toBeUndefined();
+    expect(overlaid[1].url).toBeUndefined();
+  });
+});

@@ -3178,14 +3178,20 @@ export default function RestyleStudio() {
           await stitchFinalEpisodes(projectId, eligible, conversationId);
         } else {
           // 诊断播报：进入返工收尾分支但没有集被触发时给出逐集原因,
-          // 一次复跑即可定位（此前静默跳过,78577c8 线上无法自证）。
+          // 并附本轮台账的 (集/段) 成败清单——id 错位类假阴性一次复跑即可定论。
           const reasons = rerunEpisodes.map(
             (episode) =>
               `${episode}：${episodeRestitchEligibility(currentFiles, episode).reason ?? "未知"}`,
           );
+          const outcomeTags = (renderRunOutcomesRef.current.get(projectId) ?? [])
+            .map(
+              (outcome) =>
+                `${outcome.episode ?? "?"}/${outcome.segmentId ?? outcome.generatedKind ?? "?"}${outcome.ok ? "✓" : "×"}`,
+            )
+            .join(" ");
           appendConversationMessage(projectId, conversationId, {
             role: "assistant",
-            content: `局部返工收尾：未触发成片合成（${reasons.join("；")}）。`,
+            content: `局部返工收尾：未触发成片合成（${reasons.join("；")}）。本轮台账：${outcomeTags || "空"}。`,
           });
         }
       }

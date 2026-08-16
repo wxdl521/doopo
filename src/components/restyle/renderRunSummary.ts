@@ -93,15 +93,26 @@ export function collectRerunEpisodes(
  * completeRenderAttachment 只走 setProjects,ref 要等下一次渲染才同步），
  * 收尾处直接读 ref 会丢掉本轮刚成功分段的 url（「分段未齐」假阴性,
  * 78577c8 实证不命中的根因）。台账是同步写入的,以它为准。
+ * 匹配键：attachmentId 为主键,(episode, segmentId) 为次键——772bbb2 实证
+ * 返工链存在 id 错位（新附件 id 与台账记录 id 对不上）,按分段坐标匹配
+ * 天然抗 id 漂移（同 (episode,segmentId) 的旧附件已被取代移除,不会误配）。
  */
 export function applyRunOutcomesToFiles<T extends RestitchFileShape>(
   files: T[],
   outcomes: ReadonlyArray<RenderRunOutcome>,
 ): T[] {
+  const succeeded = outcomes.filter((outcome) => outcome.ok && outcome.resultUrl);
   return files.map((file) => {
-    const hit = outcomes.find(
-      (outcome) => outcome.attachmentId === file.id && outcome.ok && outcome.resultUrl,
-    );
+    const hit =
+      succeeded.find((outcome) => outcome.attachmentId === file.id) ??
+      (file.generatedKind === "video_clip" && file.episode && file.segmentId
+        ? succeeded.find(
+            (outcome) =>
+              outcome.generatedKind === "video_clip" &&
+              outcome.episode === file.episode &&
+              outcome.segmentId === file.segmentId,
+          )
+        : undefined);
     return hit
       ? { ...file, url: hit.resultUrl, resultUrl: hit.resultUrl, renderStatus: "succeeded" }
       : file;
