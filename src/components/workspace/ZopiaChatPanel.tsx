@@ -152,7 +152,13 @@ type Message =
       images: { url: string; label: string }[];
       extra?: Record<string, string>;
       /** 2026/07:本组角色的参考音频候选,供用户在卡片上手选一段传给 Seedance */
-      audioCandidates?: { characterId: string; characterName: string; audioUrl: string }[];
+      audioCandidates?: {
+        characterId: string;
+        characterName: string;
+        audioUrl: string;
+        voiceStyleName?: string;
+        autoAssigned?: boolean;
+      }[];
       /** 2026/07:用户选中的参考音频 URL;"" 或 undefined = 不使用 */
       selectedAudioUrl?: string;
       /** pending=待确认 / generating=生成中 / done=已生成 / failed=失败可重试 / cancelled=已取消 */
@@ -329,7 +335,15 @@ export type ZopiaChatPanelHandle = {
     previewPrompt: string;
     images: { url: string; label: string }[];
     extra?: Record<string, string>;
-    audioCandidates?: { characterId: string; characterName: string; audioUrl: string }[];
+    audioCandidates?: {
+      characterId: string;
+      characterName: string;
+      audioUrl: string;
+      voiceStyleName?: string;
+      autoAssigned?: boolean;
+    }[];
+    /** 2026/08:默认锁定的参考音频（台词量最多角色的音色）;卡片初始选中 */
+    defaultAudioUrl?: string;
   }) => void;
 };
 
@@ -1200,6 +1214,8 @@ const ZopiaChatPanel = forwardRef<
           images: payload.images,
           extra: payload.extra,
           audioCandidates: payload.audioCandidates,
+          // 2026/08:默认锁定台词量最多角色的音色(用户仍可改选/不使用)
+          selectedAudioUrl: payload.defaultAudioUrl,
           status: "pending",
         };
         setMessages((m) => [...m, msg]);
@@ -2129,7 +2145,30 @@ const ZopiaChatPanel = forwardRef<
                   )}
                   {m.audioCandidates && m.audioCandidates.length > 0 && (
                     <div className="space-y-1">
-                      <div className="text-xs text-text-secondary">{t.zp_video_confirm_audio}</div>
+                      <div className="text-xs text-text-secondary">
+                        {t.zp_video_confirm_audio}
+                        {/* 2026/08:默认锁定台词量最多角色的音色,卡片上显式标出 */}
+                        {m.selectedAudioUrl &&
+                          (() => {
+                            const locked = m.audioCandidates!.find(
+                              (ac) => ac.audioUrl === m.selectedAudioUrl,
+                            );
+                            return locked ? (
+                              <span className="text-accent">
+                                {` · ${t.zp_video_confirm_audio_locked.replace("{name}", locked.characterName + (locked.voiceStyleName ? `（${locked.voiceStyleName}）` : ""))}`}
+                              </span>
+                            ) : null;
+                          })()}
+                      </div>
+                      {m.audioCandidates.length > 1 && (
+                        <div className="text-[11px] text-text-muted">
+                          {t.zp_video_confirm_audio_multi.replace(
+                            "{name}",
+                            m.audioCandidates.find((ac) => ac.audioUrl === m.selectedAudioUrl)
+                              ?.characterName ?? m.audioCandidates[0].characterName,
+                          )}
+                        </div>
+                      )}
                       <div className="flex flex-col gap-1">
                         <button
                           type="button"
@@ -2177,6 +2216,9 @@ const ZopiaChatPanel = forwardRef<
                               }`}
                             >
                               {ac.characterName}
+                              {ac.voiceStyleName ? ` · ${ac.voiceStyleName}` : ""}
+                              {/* 自动分配标记：此前未绑定音色,本次按年龄/性别匹配预设并写回角色卡 */}
+                              {ac.autoAssigned ? `（${t.zp_video_confirm_audio_auto}）` : ""}
                             </button>
                             <audio controls src={ac.audioUrl} className="h-6 flex-1 min-w-0" />
                           </div>

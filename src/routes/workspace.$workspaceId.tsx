@@ -47,6 +47,13 @@ import {
   type ShotType,
 } from "../data/workspaceGenerators";
 import { VOICE_STYLES } from "../data/voiceStyles";
+import {
+  attributeShotSpeaker,
+  buildVoiceCastingBlock,
+  matchVoiceStyle,
+  pickDefaultVoiceCandidate,
+  voiceStyleByAudioUrl,
+} from "../lib/voiceCasting";
 import { generateStageAi } from "../lib/aiGenerate.functions";
 import { generateImage, regenerateSceneImage } from "../lib/seedream.functions";
 import { logImageMeta } from "../lib/logImageMeta";
@@ -7814,7 +7821,17 @@ function WorkspacePage() {
     extra: Record<string, string>;
     shotCount?: number;
     /** 2026/07:本组涉及角色的参考音频候选(供确认卡片手选一段传给 Seedance) */
-    audioCandidates: { characterId: string; characterName: string; audioUrl: string }[];
+    audioCandidates: {
+      characterId: string;
+      characterName: string;
+      audioUrl: string;
+      /** 绑定的预设音色显示名（VOICE_STYLES.name;自定义上传音色为空） */
+      voiceStyleName?: string;
+      /** 本次按年龄/性别自动分配的（此前未绑定） */
+      autoAssigned?: boolean;
+    }[];
+    /** 2026/08:默认锁定的参考音频（台词量最多角色的音色）;确认卡初始选中 */
+    defaultAudioUrl?: string;
   };
 
   const charNameOf = (cid: string) => data.characters.find((x) => x.id === cid)?.name ?? cid;
@@ -7851,24 +7868,104 @@ function WorkspacePage() {
   }
 
   /**
+   * 说话角色音色解析（2026/08 音色一致修复）：本组带台词 shot 里出现、
+   * 且尚未绑定 referenceAudioUrl 的角色,按年龄/性别自动匹配 VOICE_STYLES
+   * 最接近的预设音色;首次生成时写回 workspace_data（角色卡持久化,之后
+   * 所有片段/会话沿用同一段参考音频）。返回解析后的角色列表供本次 build
+   * 立即使用（不等 setData 重渲染）。
+   */
+  function resolveGroupVoiceBindings(group: StoryboardGroup): {
+    characters: GenCharacter[];
+    /** 本次自动分配的角色：characterId → 命中的预设音色 */
+    autoAssigned: Map<string, (typeof VOICE_STYLES)[number]>;
+  } {
+    const speakingIds = new Set<string>();
+    for (const s of group.shots) {
+      if (!s.dialogue?.trim()) continue;
+      for (const cid of pickShotCharacterIds(s, group)) speakingIds.add(cid);
+    }
+    const autoAssigned = new Map<string, (typeof VOICE_STYLES)[number]>();
+    const characters = data.characters.map((c) => {
+      if (!speakingIds.has(c.id) || c.referenceAudioUrl) return c;
+      const style = matchVoiceStyle({ age: c.age, gender: c.gender });
+      autoAssigned.set(c.id, style);
+      return { ...c, referenceAudioUrl: style.audioUrl };
+    });
+    if (autoAssigned.size) {
+      // 只回写本次自动分配的字段,不覆盖其它并发编辑
+      setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              characters: prev.characters.map((c) => {
+                const style = autoAssigned.get(c.id);
+                return style && !c.referenceAudioUrl
+                  ? { ...c, referenceAudioUrl: style.audioUrl }
+                  : c;
+              }),
+            }
+          : prev,
+      );
+    }
+    return { characters, autoAssigned };
+  }
+
+  /**
    * 给带配音的视频一个不可歧义的台词轨。仅把引号内的台词交给模型，避免它把
    * 动作/旁白误读为对白，或为了“自然”而改写、调换台词顺序。
    * 2026/08(台词驱动密度规则):shot 带 dialogue 时按 shot 顺序逐行标注归属
    * (不再整组一段);无台词的反应/插入镜头显式标注 (no dialogue)。
+   * 2026/08(音色一致):逐镜台词行加说话人前缀,末尾追加 [VOICE CASTING] 块
+   * （逐说话角色给年龄/性别/音色描述,要求同一角色全片同一音色语速语气）。
    */
-  function buildDialogueDeliveryInstruction(group: StoryboardGroup): string | null {
+  function buildDialogueDeliveryInstruction(
+    group: StoryboardGroup,
+    characters: GenCharacter[] = data.characters,
+  ): string | null {
     const hasPerShotDialogue = group.shots.some((s) => s.dialogue?.trim());
     if (hasPerShotDialogue) {
+      // 归属兜底:组内首个角色（pickShotCharacterIds 已按组 characterIds 兜底）
+      const firstDialogueShot = group.shots.find((s) => s.dialogue?.trim());
+      const fallbackId =
+        group.characterIds?.[0] ??
+        (firstDialogueShot ? pickShotCharacterIds(firstDialogueShot, group)[0] : undefined);
+      const speakerIds: string[] = [];
+      const dialogueLines = group.shots.map((s, i) => {
+        if (!s.dialogue?.trim()) {
+          return `Shot ${i + 1}: (no dialogue — reaction/insert shot, do not speak)`;
+        }
+        const speakerId = attributeShotSpeaker(
+          { characterIds: pickShotCharacterIds(s, group), dialogue: s.dialogue },
+          characters,
+          fallbackId,
+        );
+        const speaker = characters.find((c) => c.id === speakerId);
+        if (speaker && !speakerIds.includes(speaker.id)) speakerIds.push(speaker.id);
+        return speaker
+          ? `Shot ${i + 1}: ${speaker.name} 「${s.dialogue.trim()}」`
+          : `Shot ${i + 1}: 「${s.dialogue.trim()}」`;
+      });
+      const casting = buildVoiceCastingBlock(
+        speakerIds.map((id) => {
+          const c = characters.find((item) => item.id === id)!;
+          return {
+            characterId: c.id,
+            name: c.name,
+            age: c.age,
+            gender: c.gender,
+            roleLabel: c.roleLabel,
+            personality: c.personality,
+            voiceStyleName: voiceStyleByAudioUrl(c.referenceAudioUrl)?.name,
+          };
+        }),
+      );
       return [
         "[SPOKEN DIALOGUE — EXACT TRANSCRIPT]",
         "Speak exactly this Chinese dialogue, assigned to the shots in this order:",
-        ...group.shots.map((s, i) =>
-          s.dialogue?.trim()
-            ? `Shot ${i + 1}: 「${s.dialogue.trim()}」`
-            : `Shot ${i + 1}: (no dialogue — reaction/insert shot, do not speak)`,
-        ),
+        ...dialogueLines,
         "Do not omit, add, repeat, paraphrase, reorder, merge, or change the pronunciation of any word.",
         "Keep each line clear and natural with brief pauses at punctuation. Do not speak narration, shot descriptions, or any other text.",
+        ...(casting ? [casting] : []),
       ].join("\n");
     }
     const dialogue = extractDialogue(effectiveShotBreakdown(group)).trim();
@@ -7979,8 +8076,13 @@ function WorkspacePage() {
 
     // 注入项目视觉风格
     const videoStyleSpec = resolveProjectStyle(projectVisualStyle);
+    // 说话角色音色解析：未绑定的自动匹配预设并写回角色卡（首次生成时）；
+    // 台词归属与候选收集都用解析后的角色列表。
+    const voiceResolved = resolveGroupVoiceBindings(group);
     const dialogueInstruction =
-      project?.audio === "on" ? buildDialogueDeliveryInstruction(group) : null;
+      project?.audio === "on"
+        ? buildDialogueDeliveryInstruction(group, voiceResolved.characters)
+        : null;
     // 2026/07:右侧只展示可编辑的镜头分解和中文风格名；通用生成说明、完整风格锁
     // 与约束只供模型执行。确认生成时，编辑后的这段文本会直接拼入真实请求。
     const parts: { text: string; tech?: boolean }[] = [
@@ -8038,11 +8140,13 @@ function WorkspacePage() {
       .join("\n");
 
     // 2026/07:收集本组角色的参考音频候选(供确认卡片手选一段传给 Seedance)
+    // 2026/08:用音色解析后的角色列表（未绑定音色已被自动匹配预设）,
+    // 并计算默认锁定（台词量最多者优先,确认卡初始选中,用户可改选/不使用）。
     const audioCandidates: VideoGenPayload["audioCandidates"] = [];
     const audioSeen = new Set<string>();
     for (const s of group.shots) {
       for (const cid of pickShotCharacterIds(s, group)) {
-        const ch = data.characters.find((x) => x.id === cid);
+        const ch = voiceResolved.characters.find((x) => x.id === cid);
         if (!ch?.referenceAudioUrl) continue;
         // 相对路径(预设风格来自 public/)拼成绝对 URL,Seedance 云端才能访问
         const abs = ch.referenceAudioUrl.startsWith("/")
@@ -8053,10 +8157,19 @@ function WorkspacePage() {
           characterId: ch.id,
           characterName: ch.name,
           audioUrl: abs,
+          voiceStyleName: voiceStyleByAudioUrl(ch.referenceAudioUrl)?.name,
+          autoAssigned: voiceResolved.autoAssigned.has(ch.id),
         });
         audioSeen.add(abs);
       }
     }
+    const defaultAudioUrl = pickDefaultVoiceCandidate(
+      audioCandidates,
+      group.shots.map((s) => ({
+        characterIds: pickShotCharacterIds(s, group),
+        dialogue: s.dialogue,
+      })),
+    )?.audioUrl;
 
     return {
       prompt,
@@ -8067,6 +8180,7 @@ function WorkspacePage() {
       referenceUrls,
       images,
       audioCandidates,
+      defaultAudioUrl,
       shotCount: shotImagesList.length,
       extra: {
         model: project?.videoModel || "happyhorse-1.0-r2v",
@@ -8170,8 +8284,12 @@ function WorkspacePage() {
 
     // 注入项目视觉风格
     const videoStyleSpec2 = resolveProjectStyle(projectVisualStyle);
+    // 说话角色音色解析（与按分镜图路径同口径,见 buildVideoGenPayloadForShots）
+    const voiceResolved = resolveGroupVoiceBindings(group);
     const dialogueInstruction =
-      project?.audio === "on" ? buildDialogueDeliveryInstruction(group) : null;
+      project?.audio === "on"
+        ? buildDialogueDeliveryInstruction(group, voiceResolved.characters)
+        : null;
     // 2026/07:右侧只展示可编辑的镜头分解和中文风格名；通用故事板生成说明、完整
     // 风格锁与约束只供模型执行。确认生成时，编辑后的这段文本会直接拼入真实请求。
     const parts: { text: string; tech?: boolean }[] = [
@@ -8244,10 +8362,11 @@ function WorkspacePage() {
       .join("\n");
 
     // 2026/07:收集本组角色的参考音频候选(供确认卡片手选一段传给 Seedance)
+    // 2026/08:用音色解析后的角色列表 + 默认锁定（同按分镜图路径口径）
     const audioCandidates: VideoGenPayload["audioCandidates"] = [];
     const audioSeen = new Set<string>();
     for (const cid of unionCharIds) {
-      const ch = data.characters.find((x) => x.id === cid);
+      const ch = voiceResolved.characters.find((x) => x.id === cid);
       if (!ch?.referenceAudioUrl) continue;
       // 相对路径(预设风格来自 public/)拼成绝对 URL,Seedance 云端才能访问
       const abs = ch.referenceAudioUrl.startsWith("/")
@@ -8258,9 +8377,18 @@ function WorkspacePage() {
         characterId: ch.id,
         characterName: ch.name,
         audioUrl: abs,
+        voiceStyleName: voiceStyleByAudioUrl(ch.referenceAudioUrl)?.name,
+        autoAssigned: voiceResolved.autoAssigned.has(ch.id),
       });
       audioSeen.add(abs);
     }
+    const defaultAudioUrl = pickDefaultVoiceCandidate(
+      audioCandidates,
+      group.shots.map((s) => ({
+        characterIds: pickShotCharacterIds(s, group),
+        dialogue: s.dialogue,
+      })),
+    )?.audioUrl;
 
     return {
       prompt,
@@ -8269,6 +8397,7 @@ function WorkspacePage() {
       referenceUrls,
       images,
       audioCandidates,
+      defaultAudioUrl,
       extra: {
         model: project?.videoModel || "happyhorse-1.0-r2v",
         route: `视频(按故事板) · ${modeLabel}`,
@@ -8555,6 +8684,7 @@ function WorkspacePage() {
       images: payload.images,
       extra: payload.extra,
       audioCandidates: payload.audioCandidates,
+      defaultAudioUrl: payload.defaultAudioUrl,
     });
   }
 
@@ -8625,6 +8755,7 @@ function WorkspacePage() {
       images: payload.images,
       extra: payload.extra,
       audioCandidates: payload.audioCandidates,
+      defaultAudioUrl: payload.defaultAudioUrl,
     });
     return {
       ok: true,
@@ -8698,6 +8829,7 @@ function WorkspacePage() {
       images: payload.images,
       extra: payload.extra,
       audioCandidates: payload.audioCandidates,
+      defaultAudioUrl: payload.defaultAudioUrl,
     });
   }
 

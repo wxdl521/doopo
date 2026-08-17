@@ -19,6 +19,10 @@ export type VoiceStyle = {
   description: string;
   /** 音频相对路径(public 静态资源);视频生成时前端拼成绝对 URL */
   audioUrl: string;
+  /** 2026/08 音色自动匹配用结构化标注:性别 */
+  gender: "male" | "female";
+  /** 2026/08 音色自动匹配用结构化标注:年龄段(junior 少年/young 青年/adult 成年/senior 老年) */
+  ageGroup: "junior" | "young" | "adult" | "senior";
 };
 
 export const VOICE_STYLES: VoiceStyle[] = [
@@ -27,35 +31,47 @@ export const VOICE_STYLES: VoiceStyle[] = [
     name: "温暖女声",
     description: "晓晓 · 温暖亲和",
     audioUrl: "/voice-styles/xiaoxiao.mp3",
+    gender: "female",
+    ageGroup: "adult",
   },
   {
     id: "xiaoyi",
     name: "活泼少女",
     description: "晓伊 · 活泼明快",
     audioUrl: "/voice-styles/xiaoyi.mp3",
+    gender: "female",
+    ageGroup: "young",
   },
   {
     id: "yunyang",
     name: "专业男声",
     description: "云扬 · 沉稳播音",
     audioUrl: "/voice-styles/yunyang.mp3",
+    gender: "male",
+    ageGroup: "adult",
   },
   {
     id: "yunxi",
     name: "年轻男声",
     description: "云希 · 清朗年轻",
     audioUrl: "/voice-styles/yunxi.mp3",
+    gender: "male",
+    ageGroup: "young",
   },
   {
     id: "yunjian",
     name: "浑厚男声",
     description: "云健 · 浑厚有力",
     audioUrl: "/voice-styles/yunjian.mp3",
+    gender: "male",
+    ageGroup: "senior",
   },
   {
     id: "yunxia",
     name: "少年男声",
     description: "云夏 · 清亮少年",
     audioUrl: "/voice-styles/yunxia.mp3",
+    gender: "male",
+    ageGroup: "junior",
   },
 ];

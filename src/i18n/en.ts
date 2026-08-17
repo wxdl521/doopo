@@ -1245,6 +1245,10 @@ export const en: Translations = {
   zp_video_confirm_show_prompt: "Show prompt",
   zp_video_confirm_audio: "Reference Audio",
   zp_video_confirm_audio_none: "No reference audio",
+  zp_video_confirm_audio_locked: "Locked: {name}",
+  zp_video_confirm_audio_multi:
+    "Multi-character scene: only {name}'s voice is locked (upstream accepts a single reference audio)",
+  zp_video_confirm_audio_auto: "no voice set — auto-assigned and locked",
   char_audio: "Reference Audio",
   char_audio_add: "Upload Audio",
   char_audio_replace: "Replace Audio",
