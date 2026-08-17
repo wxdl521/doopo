@@ -1,78 +1,81 @@
-# 修复方案：画外音独立为“音频角色”，锁定音色但绝不入镜
+# 修复：离开项目再回来，分镜图 / 故事板全部丢失
 
-## 已确认的问题
+## 现象
 
-当前系统只有一套角色模型 `GenCharacter`，分镜也只用 `characterIds` 表达角色：
+在「分镜」环节做了大量分镜图、故事板后，用户跳出项目去充值 / 分配积分，再点回该项目，分镜相关内容全部消失。
 
-- 角色提取规则会把“有台词的角色”都提取成视觉角色，并要求生成面部、身材、服装，因此“旁白·苍老声音”会被生成普通人物卡和人物图。
-- 分镜的 `group.characterIds` / `shot.characterIds` 同时被用于人物参考图、故事板/视频画面角色和参考音频候选。
-- 视频音色候选也只扫描这些视觉角色；所以不把旁白加入 `characterIds` 就没有参考音频，把旁白加入又会向故事板和视频传入他的角色图，模型自然把老头画进荒原。
-- 现有音色默认锁定只能缓解跨片段音色漂移，无法解决“声音身份”和“画面身份”耦合的根因。
+## 已确认的根因
 
-## 目标数据关系
+工作区的 `workspace_data` 是**整列覆盖式**保存（`src/lib/projects.functions.ts` 的 `saveWorkspaceData` 直接 `.update({ workspace_data })`），而读取被拆成了三段请求：
 
 ```text
-剧本人物 ──> 视觉角色 visualCharacters ──> characterIds ──> 可入镜/可传人物参考图
-       └──> 音频角色 audioRoles ─────────> speakerAudioRoleId ──> 只发声/永不传人物图
+loadWorkspaceData                  → 剧本 / 角色 / 场景 / 道具（不含 storyboard）
+loadWorkspaceStoryboardStructure   → storyboard + storyboardGroups
+loadWorkspaceMedia                 → shotImages / panelImages / groupStoryboards / groupVideos …
 ```
 
-## 修复步骤
+保存前的保护只有两个开关：`workspaceLoadError` 与 `workspaceMediaReady`。**分镜结构这一段没有任何 ready 守卫**（`src/routes/workspace.$workspaceId.tsx` 约 3420-3455 行）：它失败时只弹一句 `toast.warning("分镜结构暂未恢复…")`，随后媒体请求照常成功、`workspaceMediaReady` 置为 `true`，保存闸门被打开。
 
-### 1. 新增独立“音频角色”模型
+于是链路变成：
 
-- 在工作区数据中新增 `audioRoles`，字段包含：稳定 id、名称、类型（旁白/画外音/内心独白）、年龄、性别、音色描述、`referenceAudioUrl`、预设音色 id、出现集数。
-- `StoryboardShot` 新增 `speakerAudioRoleId`（或等价的声音归属字段）；它只表示谁在说话，不参与 `characterIds`。
-- 继续使用现有 `workspace_data` 持久化，不新增数据库表；同一音频角色跨分镜、跨片段、跨刷新始终复用同一音频绑定。
+```text
+分镜结构请求超时 / 失败 → state 里 storyboard = []、storyboardGroups = []
+        ↓（媒体加载成功，保存闸门打开）
+任意一次自动保存（1.5s 防抖 / beforeunload / 阶段完成）
+        ↓
+整列覆盖写回 workspace_data，storyboard 与 storyboardGroups 被写成空数组 → 永久丢失
+```
 
-### 2. 剧本解析时区分“视觉角色”和“音频角色”
+分镜结构正是三段里最容易超时的一段（内容大、与媒体查询抢数据库资源），项目做得越久越容易触发；中途离开再回来会重新走一遍加载，因此恰好在这个场景暴露。
 
-- 修改角色提取 schema 与提示词，明确识别“旁白、画外音、解说、OS、电话外声音、未入镜说话者”。
-- 这类对象输出到 `audioRoles`，不输出为 `GenCharacter`，不要求面部、身材、服装、角色图片。
-- 判定规则以剧本语义为准：明确标注“画外音/旁白/OS/不入镜”的声音默认不可见；只有剧本明确写该人物实体出场时，才另外建立或关联视觉角色。
-- 兼容现有项目：识别已有名称/定位含“旁白、画外音、讲述者、苍老声音”等且没有有效视觉出场的角色，将其迁移为音频角色；保留已绑定音频，但从视觉角色列表和画面角色引用中移除。
+## 修复方案
 
-### 3. 分镜层彻底拆开“入镜角色”和“说话角色”
+### 1. 补齐分镜结构的 ready 守卫（前端，主修复）
 
-- 分镜生成输入同时提供视觉角色列表和音频角色列表。
-- 对旁白镜头：`characterIds` 只包含画面中真实可见的人物，允许为空；`speakerAudioRoleId` 指向旁白。
-- 在分镜生成规则中加入硬约束：音频角色不得写入 `characterIds`、动作、走位、人物构图或参考图；即使旁白持续说话，画面也只能展示剧本指定的环境、道具或可见人物。
-- 逐镜台词归属优先读取明确的声音角色 id，不再靠“镜头有哪些人物”猜说话人。
+- 新增 `storyboardStructureReady` / `storyboardStructureError` 两个状态，只有该段请求成功返回后才置为 ready。
+- `handleSaveWorkspace` 增加与媒体同样的前置拦截：未 ready 时终止保存（静默模式也不写库），非静默模式提示「分镜内容尚未恢复，已停止保存以保护原有数据」。
+- 三处延迟保存 effect（自动保存防抖、beforeunload、阶段完成）的依赖同样加上该守卫。
+- 分镜结构加载失败从 `toast.warning` 升级为持续可见的错误条：「分镜内容未加载，保存已暂停，请刷新重试」，避免用户在残缺状态下继续操作。
 
-### 4. 视频生成分别构建视觉参考与音频参考
+### 2. 加载失败自动重试一次（前端）
 
-- 人物参考图、故事板补充图、首尾帧角色收集只读取 `characterIds`，并再次过滤音频角色，保证旁白没有任何图片进入模型输入。
-- 参考音频候选从 `speakerAudioRoleId` / 本组台词轨收集，不再依赖旁白是否被勾选为画面角色。
-- 同一个音频角色首次出现时自动匹配或要求绑定一个音色，并将绑定写回 `audioRoles`；后续所有片段自动使用同一 `reference_audio`，无需每段重复选择。
-- 提示词增加不可覆盖的声音约束：`OFF-SCREEN NARRATOR / VOICE ONLY / MUST NEVER APPEAR VISUALLY`，同时保留同一声音、语速、语气连续性的要求。
-- 若视频模型一次只支持一条参考音频，多声音片段在确认卡明确提示当前主音频角色；单一旁白场景自动锁定，不能因未点选而静默退回随机音色。
+分镜结构与媒体两段请求各做一次延迟 1.5s 的自动重试，覆盖偶发的语句超时，减少用户手工刷新。
 
-### 5. 调整角色与分镜 UI
+### 3. 保存改为字段级合并，从根上消除「整列覆盖」（后端 + 一条 SQL）
 
-- 角色阶段分为“画面角色”和“音频角色”两类；音频角色卡只展示声音属性、试听、上传/选择音色、适用集数，不显示生成人物图入口。
-- 分镜编辑器把“本镜头角色”与“声音/旁白”拆成两个独立选择区；选择声音角色不会改变画面人物集合。
-- 视频确认卡明确显示“画面角色”和“已锁定音频角色”，旁白使用“仅声音，不入镜”标识；不再让用户用勾选视觉角色的方式换取音色一致性。
+即使守卫失效，也不该让一次保存抹掉未加载的字段。新增按 JSONB 合并的数据库函数：
 
-### 6. 回归测试与验证
+```sql
+create or replace function public.merge_workspace_data(
+  p_project_id text,
+  p_patch jsonb,
+  p_completed_stages text[]
+) returns void
+language sql
+security invoker
+set search_path = public
+as $$
+  update public.projects
+     set workspace_data = coalesce(workspace_data, '{}'::jsonb) || p_patch,
+         completed_stages = p_completed_stages
+   where id = p_project_id;
+$$;
 
-- 角色提取：含“苍老男声画外音”的剧本产生 1 个音频角色，而不是视觉人物卡。
-- 分镜生成：旁白覆盖的空镜 `characterIds=[]`，但 `speakerAudioRoleId` 正确且台词完整。
-- 参考素材：旁白音频会进入视频 payload，旁白人物图永远不会进入首帧、尾帧或 `referenceImages`。
-- 音色持久化：四个连续片段都使用同一音频角色的同一 `reference_audio`，刷新后不变化。
-- 旧项目迁移：原“旁白·苍老声音”卡的参考音频被保留，旧人物图不再用于新分镜/视频。
-- 提示词断言：每个含画外音的请求都包含“仅声音、绝不视觉出现”的硬约束。
+grant execute on function public.merge_workspace_data(text, jsonb, text[]) to authenticated;
+```
 
-## 主要改动范围
+`saveWorkspaceData` 改为调用该 RPC；前端在某段未 ready 时即便走到保存，也只提交自己确实加载成功的键，`storyboard` / `storyboardGroups` 不进入 patch，数据库中的旧值原样保留。RLS 仍由 `projects` 表现有策略生效（函数用 `security invoker`）。
 
-- `src/data/workspaceGenerators.ts`：音频角色与分镜声音归属类型。
-- `src/lib/aiGenerate.functions.ts`：角色/音频角色分类提取 schema 与规则。
-- `src/lib/storyboard.functions.ts`：分镜中视觉角色和声音角色分离。
-- `src/routes/workspace.$workspaceId.tsx`：旧数据迁移、工作区状态、参考图/参考音频收集、提示词和 UI 联动。
-- `src/components/workspace/ZopiaChatPanel.tsx`：视频确认卡的音频角色锁定展示。
-- `src/lib/voiceCasting.ts` 及测试：按音频角色归属和锁定音色，不再依赖镜头人物。
-- `src/i18n/zh.ts`、`src/i18n/en.ts`：音频角色与“仅声音，不入镜”文案。
+> 数据库变更需交由有 Supabase 权限的同学执行上述 SQL（本项目约定不自动执行 `db:push`）。SQL 未执行前，第 1、2 步已经能阻断丢失。
 
-## 技术约束
+## 涉及文件
 
-- 不把“禁止旁白入镜”只交给自然语言提示词；必须先在结构化数据和参考素材层隔离，再用提示词做第二道保险。
-- 不删除用户旧数据；迁移只改变其分类和下游引用，并保留音频 URL。
-- Server Function 文件保持薄包装；新增解析/迁移纯函数放到独立模块并单测。
+- `src/routes/workspace.$workspaceId.tsx`：加载分支置位、保存守卫、失败提示与重试、patch 组装。
+- `src/lib/projects.functions.ts`：`saveWorkspaceData` 改走合并 RPC，输入允许部分字段。
+- `supabase/manual/`：新增待执行的 SQL 文件。
+
+## 验证
+
+- 模拟分镜结构请求失败：确认保存被拦截、出现错误提示、数据库中 storyboard 字段不变。
+- 正常路径：进入项目 → 生成分镜 / 故事板 → 切到积分页 → 返回项目，内容完整。
+- 回归：正常编辑剧本 / 角色 / 道具后保存仍生效，`completed_stages` 正常更新。
