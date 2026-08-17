@@ -74,6 +74,7 @@ import { isSupersededClipAttachment, withoutSupersededClips } from "./rerunAttac
 import {
   applyRunOutcomesToFiles,
   collectRerunEpisodes,
+  dedupeClipsBySegment,
   episodeRestitchEligibility,
   outcomeLabel,
   summarizeRenderRun,
@@ -2997,9 +2998,11 @@ export default function RestyleStudio() {
         (file) => file.generatedKind === "final_video" && file.episode === episode,
       );
       if (!finalAttachment) continue;
-      const clips = episodeFiles
-        .filter((file) => file.generatedKind === "video_clip" && file.episode === episode)
-        .sort((a, b) => (a.segmentId ?? "").localeCompare(b.segmentId ?? "", "zh-Hans-CN"));
+      const clips = dedupeClipsBySegment(
+        episodeFiles
+          .filter((file) => file.generatedKind === "video_clip" && file.episode === episode)
+          .sort((a, b) => (a.segmentId ?? "").localeCompare(b.segmentId ?? "", "zh-Hans-CN")),
+      );
       // 可用产物判定 url ?? resultUrl（旧路径/持久化数据可能只写 resultUrl）
       const clipUrl = (clip: (typeof clips)[number]) => clip.url ?? clip.resultUrl;
       const missing = clips.filter((clip) => !clipUrl(clip) || !/^https?:\/\//i.test(clipUrl(clip)!));

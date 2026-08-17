@@ -71,12 +71,40 @@ export interface RestitchFileShape {
   url?: string;
   resultUrl?: string;
   renderStatus?: string;
+  lastModified?: number;
 }
 
 /** 附件的可用产物 URL：新路径 url/resultUrl 双写,旧路径可能只有 resultUrl。 */
 function attachmentResultUrl(file: RestitchFileShape): string | undefined {
   const value = file.url ?? file.resultUrl;
   return value && /^https?:\/\//i.test(value) ? value : undefined;
+}
+
+/**
+ * 同 (episode,segmentId) 的分段附件去重（可能多条并存：历史失败/无 url 的
+ * 失效占位 + 有产物条目）。有产物条目优先；都有/都无产物时取较新
+ * （lastModified 缺省按 0,并列时列表顺序靠后赢）。
+ * 772bbb2 复跑实证：5 条失效占位让「分段未齐」假阴性,手动清掉才触发合成。
+ */
+export function dedupeClipsBySegment<T extends RestitchFileShape>(clips: T[]): T[] {
+  const bySegment = new Map<string, T>();
+  for (const clip of clips) {
+    const key = clip.segmentId ?? clip.id ?? "?";
+    const prev = bySegment.get(key);
+    if (!prev) {
+      bySegment.set(key, clip);
+      continue;
+    }
+    const prevUsable = Boolean(attachmentResultUrl(prev));
+    const curUsable = Boolean(attachmentResultUrl(clip));
+    if (curUsable !== prevUsable) {
+      // 有产物的赢（占位让位）
+      if (curUsable) bySegment.set(key, clip);
+      continue;
+    }
+    if ((clip.lastModified ?? 0) >= (prev.lastModified ?? 0)) bySegment.set(key, clip);
+  }
+  return [...bySegment.values()];
 }
 
 /** 从渲染队列 jobs 提取涉及的集（去重、保序）——局部返工收尾补合成判定用。 */
@@ -134,7 +162,10 @@ export function episodeRestitchEligibility(
     (file) => file.generatedKind === "video_clip" && file.episode === episode,
   );
   if (!clips.length) return { eligible: false, reason: "本集没有分段视频" };
-  const missing = clips.filter((clip) => !attachmentResultUrl(clip));
+  // 同 (episode,segmentId) 去重：失效占位（历史失败/无 url）不阻断判定,
+  // 同坐标存在有产物条目即视为该段已齐（多条都有产物取最新）。
+  const dedupedClips = dedupeClipsBySegment(clips);
+  const missing = dedupedClips.filter((clip) => !attachmentResultUrl(clip));
   if (missing.length) {
     return {
       eligible: false,

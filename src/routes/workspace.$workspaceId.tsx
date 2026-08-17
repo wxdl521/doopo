@@ -75,6 +75,8 @@ import {
 import { getKuaiziAsset, uploadKuaiziAsset } from "../lib/kuaiziAssets.functions";
 import { getVideoAssetLibrarySupport } from "../lib/videoAssetLibrary";
 import { imageCost } from "../lib/creditsCost";
+import { classifyError } from "../lib/errorClassify";
+import { shouldReplayRawPrompt } from "../lib/promptReplay";
 import { refineStoryboardVideoPrompt } from "../lib/videoPromptRefine.functions";
 import { translateEditablePrompt } from "../lib/promptTranslation.functions";
 import { runStoryboardVideoAgent } from "../lib/storyboardVideoAgent.functions";
@@ -2010,7 +2012,8 @@ function WorkspacePage() {
     [callTranslateEditablePrompt],
   );
 
-  /** 用户只编辑可见版块；提交时逐段翻回英文并覆盖到原始完整 prompt。 */
+  /** 用户只编辑可见版块；提交时逐段翻回英文并覆盖到原始完整 prompt。
+   *  单块翻译失败时用未翻译文本回填该块,不卡死整个重新生成。 */
   const mergePromptEditorBlocksForGeneration = useCallback(
     async (rawPrompt: string, blocks: PromptEditorBlock[], visiblePrompt: string) => {
       const edited = parsePromptEditorBlocks(visiblePrompt, blocks);
@@ -2020,27 +2023,21 @@ function WorkspacePage() {
           // 只有用户没有保留该版块时才沿用原文；保留标题但清空正文是一次有效编辑，
           // 必须真实回填为空，不能悄悄把旧内容重新塞回去。
           if (!Object.prototype.hasOwnProperty.call(edited, block.label)) return block.source;
-          const result = await callTranslateEditablePrompt({ data: { text: draft, target: "en" } });
-          return result.text;
+          try {
+            const result = await callTranslateEditablePrompt({
+              data: { text: draft, target: "en" },
+            });
+            return result.text;
+          } catch {
+            // 翻译是便利性增强：失败时回填未翻译文本,重生成不因此中断。
+            return draft;
+          }
         }),
       );
       return blocks.reduce(
         (merged, block, index) => merged.replace(block.source, translated[index]),
         rawPrompt,
       );
-    },
-    [callTranslateEditablePrompt],
-  );
-
-  /** 普通资产没有可逐段定位的预设模板时，将最新编辑作为原始 prompt 的最高优先级覆盖项。 */
-  const mergeRawPromptWithLatestEdits = useCallback(
-    async (rawPrompt: string, visiblePrompt: string) => {
-      const result = await callTranslateEditablePrompt({
-        data: { text: visiblePrompt, target: "en" },
-      });
-      // 多次重新生成时只保留最后一次编辑，避免历史编辑不断叠加、互相冲突。
-      const base = rawPrompt.replace(/\n*\[LATEST USER EDITS — T2I\][\s\S]*$/m, "").trim();
-      return `${base}\n\n[LATEST USER EDITS — T2I]\n${result.text}`;
     },
     [callTranslateEditablePrompt],
   );
@@ -2713,40 +2710,8 @@ function WorkspacePage() {
       return false;
     }
   }, []);
-  // 错误消息分类:根据 error string 返回用户可读的中文提示
-  const classifyError = useCallback(
-    (error: string | null | undefined, fallback: string): string => {
-      if (!error) return fallback;
-      const e = error.toLowerCase();
-      if (e.includes("timed out") || e.includes("timeout") || e.includes("超时"))
-        return "AI 处理超时，请重试";
-      if (
-        e.includes("401") ||
-        e.includes("auth") ||
-        e.includes("unauthorized") ||
-        e.includes("认证失败")
-      )
-        return "AI 认证失败，请联系管理员";
-      if (
-        e.includes("402") ||
-        e.includes("no_credits") ||
-        e.includes("credits") ||
-        e.includes("insufficient") ||
-        e.includes("额度")
-      )
-        return "AI 额度不足，请充值";
-      if (e.includes("429") || e.includes("rate limit") || e.includes("too many requests"))
-        return "请求过于频繁，请稍后重试";
-      if (e.includes("upload failed")) return `存储上传失败: ${error}`;
-      if (e.includes("upstream fetch") || e.includes("fetch failed") || e.includes("无法获取"))
-        return "图片源已失效，无法转存到存储";
-      if (e.includes("not found") || e.includes("404")) return "图片链接不存在(404)";
-      // 截断过长错误信息(超过 60 字符截断)
-      if (error.length > 60) return `${error.slice(0, 57)}...`;
-      return error;
-    },
-    [],
-  );
+  // 错误消息分类:根据 error string 返回用户可读的中文提示（2026-08 抽到
+  // ../lib/errorClassify 纯函数,便于单测;调用签名不变）
   // 2026 视频生成:每个 storyboard group 一条短视频,key = groupId。
   // 视频用整组所有 shot 的图作 first_frame + reference_image,
   // 涵盖整个分镜组的镜头序列(不再每张分镜单独出视频)。
@@ -5970,17 +5935,16 @@ function WorkspacePage() {
     const currentUrl = history[selectedGenIdx] ?? history.at(-1);
     const currentIndex = currentUrl ? history.indexOf(currentUrl) : -1;
     const record = charImagePromptsRef.current[imageKey]?.[currentIndex];
-    const replayPreset =
-      (record?.mode === "three-view" || record?.mode === "multi-asset") &&
-      !!record.rawPrompt?.trim();
-    const rawApiPrompt = record?.rawPrompt?.trim()
-      ? replayPreset
-        ? await mergePromptEditorBlocksForGeneration(
-            record.rawPrompt,
-            characterPresetEditorBlocks(record.rawPrompt),
-            instruction,
-          )
-        : await mergeRawPromptWithLatestEdits(record.rawPrompt, instruction)
+    // 仅预设模板（three-view/multi-asset）重放历史 rawPrompt 并逐版块回填;
+    // 普通角色一律不传 rawPrompt,由 processCharacter 按当前编辑内容
+    // （editedCharacter）重建——旧「保留全文+末尾追加编辑」会让用户已删除的
+    // 敏感描述随旧主体送审,安全系统反复 400（2026-08 线上事故根因）。
+    const rawApiPrompt = shouldReplayRawPrompt(record, ["three-view", "multi-asset"])
+      ? await mergePromptEditorBlocksForGeneration(
+          record!.rawPrompt!,
+          characterPresetEditorBlocks(record!.rawPrompt!),
+          instruction,
+        )
       : undefined;
     const editedCharacter = applyCharacterAttributeDraft(
       c,
@@ -6604,7 +6568,9 @@ function WorkspacePage() {
     const currentUrl = selectedUrl && history.includes(selectedUrl) ? selectedUrl : history.at(-1);
     const currentIndex = currentUrl ? history.indexOf(currentUrl) : -1;
     const record = sceneImagePromptsRef.current[s.id]?.[currentIndex];
-    const replayMultiView = record?.mode === "multi-view" && !!record.rawPrompt?.trim();
+    // 场景侧同一判定：仅 multi-view 预设模板重放 rawPrompt;普通场景按当前
+    // 编辑重建（与角色路径同一修复口径,见 promptReplay.ts 头注）。
+    const replayMultiView = shouldReplayRawPrompt(record, ["multi-view"]);
     const rawApiPrompt =
       replayMultiView && record?.rawPrompt
         ? await mergePromptEditorBlocksForGeneration(

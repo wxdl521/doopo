@@ -291,3 +291,40 @@ describe("applyRunOutcomesToFiles 次键匹配（772bbb2 实证 id 错位）", (
     expect(overlaid[1].url).toBeUndefined();
   });
 });
+
+describe("episodeRestitchEligibility 同坐标去重（失效占位假阴性）", () => {
+  it("混合：失效占位 + 有产物条目同坐标并存 → 判已齐（占位让位）", () => {
+    const files = [
+      // 历史失败占位（多条）
+      { id: "old1", generatedKind: "video_clip", episode: "EP02", segmentId: "U01", renderStatus: "failed" },
+      { id: "old2", generatedKind: "video_clip", episode: "EP02", segmentId: "U01" },
+      // 本轮成功产物
+      { id: "new1", generatedKind: "video_clip", episode: "EP02", segmentId: "U01", url: "https://a/1.mp4", renderStatus: "succeeded" },
+      { id: "c2", generatedKind: "video_clip", episode: "EP02", segmentId: "U02", resultUrl: "https://a/2.mp4", renderStatus: "succeeded" },
+      { id: "f", generatedKind: "final_video", episode: "EP02", renderStatus: "failed" },
+    ];
+    expect(episodeRestitchEligibility(files, "EP02")).toEqual({ eligible: true });
+  });
+
+  it("纯占位（同坐标全部无产物）→ 仍判未齐", () => {
+    const files = [
+      { id: "old1", generatedKind: "video_clip", episode: "EP02", segmentId: "U01", renderStatus: "failed" },
+      { id: "old2", generatedKind: "video_clip", episode: "EP02", segmentId: "U01" },
+      { id: "f", generatedKind: "final_video", episode: "EP02", renderStatus: "failed" },
+    ];
+    const r = episodeRestitchEligibility(files, "EP02");
+    expect(r.eligible).toBe(false);
+    expect(r.reason).toContain("U01");
+  });
+
+  it("同坐标多条都有产物 → 取最新（lastModified 大者；缺省按列表靠后）", () => {
+    const base = [
+      { id: "v1", generatedKind: "video_clip", episode: "EP02", segmentId: "U01", url: "https://a/v1.mp4", lastModified: 100 },
+      { id: "v2", generatedKind: "video_clip", episode: "EP02", segmentId: "U01", url: "https://a/v2.mp4", lastModified: 200 },
+      { id: "f", generatedKind: "final_video", episode: "EP02", renderStatus: "failed" },
+    ];
+    expect(episodeRestitchEligibility(base, "EP02").eligible).toBe(true);
+    // 倒序也应判齐（靠后的 v2 赢；判定本身不依赖顺序,只要存在有产物条目）
+    expect(episodeRestitchEligibility([...base].reverse(), "EP02").eligible).toBe(true);
+  });
+});
