@@ -87,6 +87,7 @@ import {
   parseAgeDraftInput,
   parseCharacterAge,
   replacePromptFieldLine,
+  upsertPromptAge,
 } from "../lib/characterAttributes";
 import { classifyError } from "../lib/errorClassify";
 import { shouldReplayRawPrompt } from "../lib/promptReplay";
@@ -5109,6 +5110,9 @@ function WorkspacePage() {
         characters: current.characters.map((item) => (item.id === c.id ? { ...item, age } : item)),
       }));
       toast.success("角色年龄已保存");
+      // 显式静默持久化：年龄此前不在自动保存签名里,防抖保存不触发,刷新即丢
+      // （fb6d4f6 实证）。setTimeout 0 等本次 setData 渲染后再存,避免旧快照覆盖。
+      setTimeout(() => void handleSaveWorkspaceRef.current({ silent: true }), 0);
     }
     setEditingCharacterAgeId(null);
     setCharacterAgeDraft("");
@@ -5123,13 +5127,16 @@ function WorkspacePage() {
     const lookId = modPanel.lookId;
     const value = attributeDraft.trim();
     let nextInput: string;
+    let forcedAge: number | undefined;
     if (editingAttributeField === "age") {
       const age = parseAgeDraftInput(value);
       if (age === null) {
         toast.error("年龄需为 0-200 的整数");
         return;
       }
-      nextInput = alignPromptAge(modInput, age);
+      forcedAge = age;
+      // upsert：提示词无年龄行时追加「年龄：NN」（replace-only 会空转,见 upsertPromptAge 注释）
+      nextInput = upsertPromptAge(modInput, age);
     } else {
       if (!value) {
         toast.error("内容不能为空");
@@ -5144,11 +5151,11 @@ function WorkspacePage() {
       nextInput = replacePromptFieldLine(modInput, label, value);
     }
     setModInput(nextInput);
-    const next = applyCharacterAttributeDraft(
-      c,
-      lookId,
-      parseCharacterEditablePrompt(nextInput, c, lookId),
-    );
+    const attributeDraftParsed = parseCharacterEditablePrompt(nextInput, c, lookId);
+    // 双保险：无论提示词解析是否命中,本次修改的年龄都强制落进 draft——
+    // toast 以写回成功为准,不允许「提示成功但值没落」（fb6d4f6 实证反例）。
+    if (forcedAge !== undefined) attributeDraftParsed.age = forcedAge;
+    const next = applyCharacterAttributeDraft(c, lookId, attributeDraftParsed);
     setData((prev) =>
       prev
         ? { ...prev, characters: prev.characters.map((x) => (x.id === c.id ? next : x)) }
@@ -5157,6 +5164,8 @@ function WorkspacePage() {
     setEditingAttributeField(null);
     setAttributeDraft("");
     toast.success("角色属性已保存");
+    // 与卡片路径同口径：显式静默持久化（setTimeout 0 等渲染后再存,避免旧快照覆盖）
+    setTimeout(() => void handleSaveWorkspaceRef.current({ silent: true }), 0);
   }
 
   async function removeScene(s: GenScene) {
@@ -10323,10 +10332,11 @@ function WorkspacePage() {
     scenesHash: data.scenes.map((s) => `${s.id}:${s.action?.length ?? 0}`).join("|"),
     charactersN: data.characters.length,
     // 2026/06:加入角色描述字段哈希,修改描述也能触发自动保存
+    // 2026/08:年龄入哈希——age-only 修改此前不改变签名,防抖保存不触发,刷新即丢
     charsHash: data.characters
       .map(
         (c) =>
-          `${c.id}:${c.name}:${(c.faceDescription?.length ?? 0) + (c.bodyDescription?.length ?? 0) + (c.clothingDescription?.length ?? 0)}`,
+          `${c.id}:${c.name}:${c.age}:${(c.faceDescription?.length ?? 0) + (c.bodyDescription?.length ?? 0) + (c.clothingDescription?.length ?? 0)}`,
       )
       .join("|"),
     propsN: data.props.length,
@@ -13105,6 +13115,10 @@ function WorkspacePage() {
                                               setCharacterAgeDraft(event.target.value)
                                             }
                                             onKeyDown={(event) => {
+                                              // 阻止冒泡：Enter 保存不应触发卡片自身的
+                                              // 「打开详情弹窗」键盘处理（fb6d4f6 实证:
+                                              // Enter 保存后弹窗被顺手打开且带编辑前快照）
+                                              event.stopPropagation();
                                               if (event.key === "Enter") saveCharacterAge(c);
                                               if (event.key === "Escape")
                                                 setEditingCharacterAgeId(null);

@@ -7,6 +7,7 @@ import {
   parseAgeDraftInput,
   parseCharacterAge,
   replacePromptFieldLine,
+  upsertPromptAge,
 } from "../characterAttributes";
 
 describe("parseCharacterAge（2026-08 正则字面量 \\s/\\d 永不命中 bug 修复）", () => {
@@ -72,5 +73,21 @@ describe("parseAgeDraftInput（内联编辑输入校验）", () => {
     expect(parseAgeDraftInput("3.5")).toBeNull();
     expect(parseAgeDraftInput("")).toBeNull();
     expect(parseAgeDraftInput("三十")).toBeNull();
+  });
+});
+
+describe("upsertPromptAge（fb6d4f6：replace-only 空转修复）", () => {
+  it("已有年龄行 → 覆盖（与 alignPromptAge 同口径）", () => {
+    const next = upsertPromptAge("角色：林晚\n年龄：31\n面部特征：温和", 30);
+    expect(next).toContain("年龄：30");
+    expect(next).not.toContain("31");
+    expect(upsertPromptAge("角色：xxx（女主角, age 31）", 30)).toContain("age 30");
+  });
+
+  it("提示词无年龄行 → 末尾追加「年龄：NN」（不再空转）", () => {
+    const next = upsertPromptAge("角色：林晚\n面部特征：温和", 30);
+    expect(next).toBe("角色：林晚\n面部特征：温和\n年龄：30");
+    // 追加后再解析必须能读回新年龄（保存-解析闭环）
+    expect(parseCharacterAge(next)).toBe(30);
   });
 });

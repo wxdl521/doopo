@@ -27,6 +27,17 @@ export function alignPromptAge(input: string, age: number): string {
 }
 
 /**
+ * 年龄 upsert：有年龄字段（年龄：x / age x）就覆盖,没有则在末尾追加
+ * 「年龄：NN」一行（与 replacePromptFieldLine 的「无该行末尾追加」口径一致）。
+ * 属性面板保存用——replace-only 会在提示词无年龄行时空转,属性改了个寂寞
+ * （fb6d4f6 线上实证:toast 照弹但值没落）。
+ */
+export function upsertPromptAge(input: string, age: number): string {
+  if (parseCharacterAge(input) !== undefined) return alignPromptAge(input, age);
+  return `${input.trimEnd()}\n年龄：${age}`;
+}
+
+/**
  * 把可编辑提示词里 `标签：…` 的一整行替换为新值（行首匹配，贪婪到行尾）；
  * 没有该行时在末尾追加。属性面板内联编辑 → 同步提示词文本用，
  * 避免属性与提示词再次脱节。
