@@ -1,26 +1,30 @@
-# 修复：角色详情页「重新生成」没有真正使用用户修改后的提示词
+# 修复：同一角色在不同分镜视频里音色不一致
 
-## 问题
+## 已确认的原因（`src/routes/workspace.$workspaceId.tsx`）
 
-渠道（Azure gpt-image-2）返回 400「被内容安全系统拒绝」后，用户在角色弹窗的「角色提示词（可编辑）」里改掉了敏感/问题描述再点「重新生成」，但送到接口的仍是旧提示词，于是继续报同样的错。
-
-已确认原因（`src/routes/workspace.$workspaceId.tsx`）：
-
-- `submitCharacterDetailT2I` 只要该角色历史图上存在 `record.rawPrompt`，普通角色就会走 `mergeRawPromptWithLatestEdits`：把**旧的完整原始提示词整段保留**，仅在末尾追加一段 `[LATEST USER EDITS — T2I]`。
-- `processCharacter` 收到 `rawPrompt` 后直接原样提交给渠道，不再按用户编辑后的角色属性重建提示词。
-- 结果：用户删除/改写的旧内容依旧在提示词主体里，安全系统再次判定为违规；用户的修改只是一段被主体压过的附加说明。
-- 生成失败时不会写入新的 prompt 记录，所以被复用的 `rawPrompt` 往往还是更早那一版，和用户当前看到的编辑内容脱节。
+1. 每组视频的参考音频要靠用户在确认卡里手选：`buildVideoGenPayloadForShots` / `...ForStoryboard` 只收集 `audioCandidates`（角色的 `referenceAudioUrl`），而 `executeVideoGen(..., selectedAudioUrl)` 默认是 `undefined`，`ZopiaChatPanel` 里 `selectedAudioUrl` 初始为空（默认「不使用」）。所以 4 段视频都没带 `reference_audio`。
+2. 提示词里没有任何音色约束：`buildDialogueDeliveryInstruction` 只规定「逐镜说什么台词」，没有说「谁在说、什么音色」。旁白·苍老声音这种角色，模型每次都自己临时编一个音色。
+3. 结果：同一角色跨片段音色随机漂移。
 
 ## 修复方案
 
-1. **普通角色以用户编辑为唯一来源**：`submitCharacterDetailT2I` 中，仅当当前图是预设模板（`three-view` / `multi-asset`，需要逐版块回填完整模板）时才复用 `record.rawPrompt`；普通角色不再传 `rawPrompt`，让 `processCharacter` 用已解析的 `editedCharacter`（来自用户编辑后的中文提示词）重新拼装 T2I 提示词。
-2. **移除追加式覆盖**：`mergeRawPromptWithLatestEdits` 的「保留旧全文 + 末尾追加编辑」策略不再用于普通角色重新生成（预设模板走的逐版块替换 `mergePromptEditorBlocksForGeneration` 保持不变）。
-3. **失败记录不参与复用**：只有成功出图时写入的 prompt 记录才可作为重放来源；上一轮失败后，重新生成一律按当前编辑内容重建。
-4. **错误提示更明确**：`classifyError` 增加对「safety system / content policy / 400」的识别，提示「提示词被内容安全系统拒绝，请修改敏感描述后重试」，并保留 requestId 便于排查，避免只显示「生成失败」。
-5. **回归测试**：为提示词组装加单测，覆盖「普通角色编辑后重新生成 → 提交内容等于编辑后重建的提示词，且不含旧提示词残留」「预设模板重新生成仍按版块合并」两种情况。
+1. **角色音色默认锁定**
+   - 构建 payload 时，若本组出现的角色已绑定 `referenceAudioUrl`，则把它作为「默认选中」的参考音频写进确认卡（新增 `defaultAudioUrl`），用户仍可改选或选「不使用」。
+   - 单人（或只有一个有音色的角色，如旁白）时直接默认选中；多个候选时默认选中台词量最多的那个角色的音色，并在卡片上标出「已锁定：<角色名>」。
+
+2. **提示词补一段音色说明（voice casting）**
+   - 在 `buildDialogueDeliveryInstruction` 生成的 `[SPOKEN DIALOGUE]` 块后追加 `[VOICE CASTING — KEEP CONSISTENT]`：逐个说话角色列出「角色名 + 年龄/性别/音色描述（取角色卡的年龄、标签、简介，如「旁白·苍老声音，65岁，沉稳苍老的男性叙述者」）」，并明确要求同一角色在所有镜头/所有片段使用同一音色、语速与语气，不得中途更换嗓音。
+   - 逐镜台词行加上说话人前缀：`Shot 3: 旁白·苍老声音 「…」`，让模型知道每句归谁。
+
+3. **音色在项目层持久化**
+   - 角色的音色绑定（`referenceAudioUrl` 或预设 `VOICE_STYLES` 的 id）随 `workspace_data` 保存（已有字段），确保跨片段、跨会话复用同一段参考音频，而不是每次重建时丢失。
+   - 若角色尚未绑定音色，首次生成时按角色属性自动匹配 `VOICE_STYLES` 中最接近的一项并写回该角色，之后所有片段沿用，从根上保证一致。
+
+4. **UI 提示**
+   - 确认卡的音频区显示当前锁定的角色音色名；未绑定音色的说话角色给一条轻提示「未设置音色，将自动分配并锁定」。
 
 ## 影响范围
 
-- `src/routes/workspace.$workspaceId.tsx`（角色详情页重新生成路径、错误提示）
-- 新增单测文件（`src/lib/__tests__/` 或对应组件测试目录）
-- 场景/道具的详情页重新生成沿用相同判定，一并核对，避免同类残留。
+- `src/routes/workspace.$workspaceId.tsx`（payload 构建、台词/音色提示词、默认音频选择、自动绑定写回）
+- `src/components/workspace/ZopiaChatPanel.tsx`（确认卡默认选中与展示）
+- `src/data/voiceStyles.ts`（自动匹配规则所需的性别/年龄标注）
