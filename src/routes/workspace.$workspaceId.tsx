@@ -82,6 +82,12 @@ import {
 import { getKuaiziAsset, uploadKuaiziAsset } from "../lib/kuaiziAssets.functions";
 import { getVideoAssetLibrarySupport } from "../lib/videoAssetLibrary";
 import { imageCost } from "../lib/creditsCost";
+import {
+  alignPromptAge,
+  parseAgeDraftInput,
+  parseCharacterAge,
+  replacePromptFieldLine,
+} from "../lib/characterAttributes";
 import { classifyError } from "../lib/errorClassify";
 import { shouldReplayRawPrompt } from "../lib/promptReplay";
 import { refineStoryboardVideoPrompt } from "../lib/videoPromptRefine.functions";
@@ -1356,6 +1362,14 @@ function WorkspacePage() {
   const [characterAttributesExpanded, setCharacterAttributesExpanded] = useState(false);
   const [editingCharacterNameId, setEditingCharacterNameId] = useState<string | null>(null);
   const [characterNameDraft, setCharacterNameDraft] = useState("");
+  // 角色卡年龄内联编辑（与名称编辑同一 state 模式）
+  const [editingCharacterAgeId, setEditingCharacterAgeId] = useState<string | null>(null);
+  const [characterAgeDraft, setCharacterAgeDraft] = useState("");
+  // 详情弹窗「角色属性」内联编辑（年龄/面部/身材/服装,同一套保存逻辑）
+  const [editingAttributeField, setEditingAttributeField] = useState<
+    "age" | "face" | "body" | "clothing" | null
+  >(null);
+  const [attributeDraft, setAttributeDraft] = useState("");
   // 场景修改输入弹层(2026/06 跟角色修改对齐体验:打开直接输入,Enter 提交)。
   // 跟 modPanel 解耦:角色 modPanel 走的是"打开预览 + 内嵌输入",场景没
   // selectedGenIdx / 多图 history 概念,只需要"打开输入弹层"即可,不需要
@@ -5077,6 +5091,74 @@ function WorkspacePage() {
     setCharacterNameDraft("");
   }
 
+  function startCharacterAgeEdit(c: GenCharacter) {
+    setEditingCharacterAgeId(c.id);
+    setCharacterAgeDraft(String(c.age));
+  }
+
+  /** 角色卡年龄内联编辑保存：0-200 整数校验,写回角色层年龄。 */
+  function saveCharacterAge(c: GenCharacter) {
+    const age = parseAgeDraftInput(characterAgeDraft);
+    if (age === null) {
+      toast.error("年龄需为 0-200 的整数");
+      return;
+    }
+    if (age !== c.age) {
+      setData((current) => ({
+        ...current,
+        characters: current.characters.map((item) => (item.id === c.id ? { ...item, age } : item)),
+      }));
+      toast.success("角色年龄已保存");
+    }
+    setEditingCharacterAgeId(null);
+    setCharacterAgeDraft("");
+  }
+
+  /** 详情弹窗「角色属性」内联编辑保存：先同步提示词对应行（属性预览随
+   *  modInput 即时重算,两者不再脱节）,再按最新提示词解析写回角色属性
+   *  （多 look 时年龄仍写角色层,与 applyCharacterAttributeDraft 既有口径一致）。 */
+  function saveCharacterAttribute() {
+    if (!modPanel || !editingAttributeField) return;
+    const c = modPanel.character;
+    const lookId = modPanel.lookId;
+    const value = attributeDraft.trim();
+    let nextInput: string;
+    if (editingAttributeField === "age") {
+      const age = parseAgeDraftInput(value);
+      if (age === null) {
+        toast.error("年龄需为 0-200 的整数");
+        return;
+      }
+      nextInput = alignPromptAge(modInput, age);
+    } else {
+      if (!value) {
+        toast.error("内容不能为空");
+        return;
+      }
+      const label =
+        editingAttributeField === "face"
+          ? "面部特征"
+          : editingAttributeField === "body"
+            ? "身材体型"
+            : "服装配饰";
+      nextInput = replacePromptFieldLine(modInput, label, value);
+    }
+    setModInput(nextInput);
+    const next = applyCharacterAttributeDraft(
+      c,
+      lookId,
+      parseCharacterEditablePrompt(nextInput, c, lookId),
+    );
+    setData((prev) =>
+      prev
+        ? { ...prev, characters: prev.characters.map((x) => (x.id === c.id ? next : x)) }
+        : prev,
+    );
+    setEditingAttributeField(null);
+    setAttributeDraft("");
+    toast.success("角色属性已保存");
+  }
+
   async function removeScene(s: GenScene) {
     if (
       !(await confirm({
@@ -5241,11 +5323,10 @@ function WorkspacePage() {
     draft.faceDescription = readBlock("面部特征") || draft.faceDescription;
     draft.bodyDescription = readBlock("身材体型") || draft.bodyDescription;
     draft.clothingDescription = readBlock("服装配饰") || draft.clothingDescription;
-    const ageMatch = input.match(/(?:年龄\\s*[：:]\\s*|age\\s*)(\\d{1,3})/i);
-    if (ageMatch) {
-      const age = Number(ageMatch[1]);
-      if (Number.isInteger(age) && age >= 0 && age <= 200) draft.age = age;
-    }
+    // 年龄解析抽到纯函数（2026-08 修复正则字面量 \\s/\\d 永不命中的 bug：
+    // 「年龄：30」「age 30」「（群体角色, age 35）」都能命中）
+    const age = parseCharacterAge(input);
+    if (age !== undefined) draft.age = age;
     return draft;
   }
 
@@ -5932,11 +6013,17 @@ function WorkspacePage() {
     if (!modPanel) return;
     const c = modPanel.character;
     const lookId = modPanel.lookId;
-    const instruction = modInput.trim();
-    if (!instruction) {
+    const instructionRaw = modInput.trim();
+    if (!instructionRaw) {
       setModError("请填写角色提示词");
       return;
     }
+    // 重新生成前年龄对齐：提示词里的年龄与角色属性不一致时以属性为准覆盖,
+    // 避免属性面板改过的年龄被提示词旧值盖回（2026/08 两侧脱节事故）。
+    const instruction =
+      parseCharacterAge(instructionRaw) !== undefined && parseCharacterAge(instructionRaw) !== c.age
+        ? alignPromptAge(instructionRaw, c.age)
+        : instructionRaw;
     const imageKey = modPanel.imageKey;
     const history = charImagesRef.current[imageKey] ?? [];
     const currentUrl = history[selectedGenIdx] ?? history.at(-1);
@@ -13003,9 +13090,50 @@ function WorkspacePage() {
                                           ep{c.episodes.join("/")}
                                         </span>
                                       )}
-                                      <span className="ml-auto text-[10px] text-text-muted tabular-nums shrink-0">
-                                        {c.age}岁
-                                      </span>
+                                      {card.lookId === null && editingCharacterAgeId === c.id ? (
+                                        <span
+                                          className="ml-auto flex items-center gap-1 shrink-0"
+                                          onClick={(event) => event.stopPropagation()}
+                                        >
+                                          <input
+                                            autoFocus
+                                            type="number"
+                                            min={0}
+                                            max={200}
+                                            value={characterAgeDraft}
+                                            onChange={(event) =>
+                                              setCharacterAgeDraft(event.target.value)
+                                            }
+                                            onKeyDown={(event) => {
+                                              if (event.key === "Enter") saveCharacterAge(c);
+                                              if (event.key === "Escape")
+                                                setEditingCharacterAgeId(null);
+                                            }}
+                                            onBlur={() => saveCharacterAge(c)}
+                                            aria-label="编辑角色年龄"
+                                            className="w-14 rounded border border-accent bg-bg-base px-1.5 py-0.5 text-[10px] text-text-primary outline-none tabular-nums"
+                                          />
+                                          <span className="text-[10px] text-text-muted">岁</span>
+                                        </span>
+                                      ) : (
+                                        <span className="ml-auto inline-flex items-center gap-0.5 text-[10px] text-text-muted tabular-nums shrink-0">
+                                          {c.age}岁
+                                          {card.lookId === null && (
+                                            <button
+                                              type="button"
+                                              onClick={(event) => {
+                                                event.stopPropagation();
+                                                startCharacterAgeEdit(c);
+                                              }}
+                                              className="rounded p-0.5 text-text-muted hover:bg-bg-elevated hover:text-accent"
+                                              aria-label="编辑角色年龄"
+                                              title="编辑角色年龄"
+                                            >
+                                              <Pencil size={10} />
+                                            </button>
+                                          )}
+                                        </span>
+                                      )}
                                     </div>
                                     <div className="flex items-center gap-1 flex-wrap">
                                       <span
@@ -14953,25 +15081,95 @@ function WorkspacePage() {
                               characterAttributesExpanded ? "" : "max-h-[9rem]"
                             }`}
                           >
-                            <p>年龄：{draftCharacter.age}</p>
-                            <p className="mt-1.5">
-                              <span className="text-text-muted">面部：</span>
-                              {cleanLegacyUserRequirement(
-                                look?.faceDescription || draftCharacter.faceDescription,
-                              )}
-                            </p>
-                            <p className="mt-1.5">
-                              <span className="text-text-muted">身材：</span>
-                              {cleanLegacyUserRequirement(
-                                look?.bodyDescription || draftCharacter.bodyDescription,
-                              )}
-                            </p>
-                            <p className="mt-1.5">
-                              <span className="text-text-muted">服装：</span>
-                              {cleanLegacyUserRequirement(
-                                look?.clothingDescription || draftCharacter.clothingDescription,
-                              )}
-                            </p>
+                            {/* 年龄/面部/身材/服装:铅笔内联编辑,回车/失焦保存,Esc 取消;
+                                保存同步提示词对应行并写回角色属性(2026/08) */}
+                            {(
+                              [
+                                {
+                                  field: "age" as const,
+                                  label: "年龄",
+                                  display: `${draftCharacter.age}岁`,
+                                  editValue: String(draftCharacter.age),
+                                },
+                                {
+                                  field: "face" as const,
+                                  label: "面部",
+                                  display: cleanLegacyUserRequirement(
+                                    look?.faceDescription || draftCharacter.faceDescription,
+                                  ),
+                                  editValue: look?.faceDescription || draftCharacter.faceDescription,
+                                },
+                                {
+                                  field: "body" as const,
+                                  label: "身材",
+                                  display: cleanLegacyUserRequirement(
+                                    look?.bodyDescription || draftCharacter.bodyDescription,
+                                  ),
+                                  editValue: look?.bodyDescription || draftCharacter.bodyDescription,
+                                },
+                                {
+                                  field: "clothing" as const,
+                                  label: "服装",
+                                  display: cleanLegacyUserRequirement(
+                                    look?.clothingDescription || draftCharacter.clothingDescription,
+                                  ),
+                                  editValue:
+                                    look?.clothingDescription || draftCharacter.clothingDescription,
+                                },
+                              ]
+                            ).map((row) => (
+                              <p key={row.field} className="mt-1.5 first:mt-0">
+                                {editingAttributeField === row.field ? (
+                                  <span className="flex items-start gap-1">
+                                    <span className="text-text-muted shrink-0">{row.label}：</span>
+                                    <textarea
+                                      autoFocus
+                                      rows={row.field === "age" ? 1 : 2}
+                                      value={attributeDraft}
+                                      onChange={(event) => setAttributeDraft(event.target.value)}
+                                      onKeyDown={(event) => {
+                                        if (
+                                          event.key === "Enter" &&
+                                          (row.field === "age" || event.metaKey || event.ctrlKey)
+                                        )
+                                          saveCharacterAttribute();
+                                        if (event.key === "Escape") setEditingAttributeField(null);
+                                      }}
+                                      onBlur={() => saveCharacterAttribute()}
+                                      aria-label={`编辑${row.label}`}
+                                      className="min-w-0 flex-1 rounded border border-accent bg-bg-base px-1.5 py-0.5 text-xs text-text-primary outline-none"
+                                    />
+                                    <button
+                                      type="button"
+                                      onMouseDown={(event) => event.preventDefault()}
+                                      onClick={() => saveCharacterAttribute()}
+                                      className="rounded p-1 text-accent hover:bg-accent-dim shrink-0"
+                                      aria-label={`保存${row.label}`}
+                                      title={`保存${row.label}`}
+                                    >
+                                      <Check size={12} />
+                                    </button>
+                                  </span>
+                                ) : (
+                                  <>
+                                    <span className="text-text-muted">{row.label}：</span>
+                                    {row.display}
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setEditingAttributeField(row.field);
+                                        setAttributeDraft(row.editValue);
+                                      }}
+                                      className="ml-1 inline-flex rounded p-0.5 align-middle text-text-muted hover:bg-bg-elevated hover:text-accent"
+                                      aria-label={`编辑${row.label}`}
+                                      title={`编辑${row.label}`}
+                                    >
+                                      <Pencil size={10} />
+                                    </button>
+                                  </>
+                                )}
+                              </p>
+                            ))}
                           </div>
                         );
                       })()}
