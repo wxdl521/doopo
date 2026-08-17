@@ -45,15 +45,22 @@ import {
   type StoryboardGroup,
   type StoryboardShot,
   type ShotType,
+  type GenAudioRole,
 } from "../data/workspaceGenerators";
 import { VOICE_STYLES } from "../data/voiceStyles";
 import {
   attributeShotSpeaker,
+  buildOffscreenVoiceConstraint,
   buildVoiceCastingBlock,
   matchVoiceStyle,
   pickDefaultVoiceCandidate,
   voiceStyleByAudioUrl,
 } from "../lib/voiceCasting";
+import {
+  mergeAudioRoles,
+  migrateNarrationToAudioRoles,
+  normalizeExtractedAudioRole,
+} from "../lib/audioRoles";
 import { generateStageAi } from "../lib/aiGenerate.functions";
 import { generateImage, regenerateSceneImage } from "../lib/seedream.functions";
 import { logImageMeta } from "../lib/logImageMeta";
@@ -472,6 +479,8 @@ type WorkspaceData = {
   outline: Outline | null;
   scenes: GenScene[];
   characters: GenCharacter[];
+  /** 2026/08:音频角色(画外音/旁白)——只发声、永不入镜,与视觉角色分离 */
+  audioRoles?: GenAudioRole[];
   props: GenProp[];
   storyboard: StoryboardPanel[];
   /**
@@ -3344,6 +3353,42 @@ function WorkspacePage() {
               }
             }
             if (Object.keys(migrated).length) setShotImages(migrated);
+          }
+        }
+        // 2026/08:画外音迁移——旧项目里「旁白/画外音/讲述者」类视觉角色迁移为
+        // 音频角色(保留已绑定音频,从视觉角色与分镜画面引用中移除)。幂等;
+        // 无画外音类角色时 changed=false 不写回。迁移输入先按上方同口径归一化
+        // （episodes/matchKey/episodeIndex 默认值）,避免覆盖丢失归一化结果。
+        {
+          const normalizedCharacters: GenCharacter[] = Array.isArray(wd.characters)
+            ? (wd.characters as any[]).map((c) => {
+                const legacyEp = typeof c.episodeIndex === "number" ? c.episodeIndex : 1;
+                return {
+                  ...c,
+                  episodes: Array.isArray(c.episodes) && c.episodes.length ? c.episodes : [legacyEp],
+                  matchKey: typeof c.matchKey === "string" && c.matchKey.trim() ? c.matchKey : c.id,
+                };
+              })
+            : [];
+          const migration = migrateNarrationToAudioRoles({
+            characters: normalizedCharacters,
+            audioRoles: Array.isArray(wd.audioRoles) ? (wd.audioRoles as GenAudioRole[]) : [],
+            storyboardGroups: Array.isArray(wd.storyboardGroups)
+              ? (wd.storyboardGroups as any[]).map((g) => ({
+                  ...g,
+                  episodeIndex: typeof g.episodeIndex === "number" ? g.episodeIndex : 1,
+                }))
+              : [],
+          });
+          if (migration.changed) {
+            setData((d) => ({
+              ...d,
+              characters: migration.characters,
+              audioRoles: migration.audioRoles,
+              storyboardGroups: Array.isArray(wd.storyboardGroups)
+                ? migration.storyboardGroups
+                : d.storyboardGroups,
+            }));
           }
         }
         if (wd.timeline)
@@ -6911,6 +6956,13 @@ function WorkspacePage() {
           episodeText: epText,
           episodeIndex: selectedEpisodeIndex,
           characterSummaries: charSummaries,
+          // 2026/08:音频角色摘要(画外音)——分镜台词归属用 speakerAudioRoleId
+          audioRoleSummaries: (data.audioRoles ?? []).map((r) => ({
+            id: r.id,
+            name: r.name,
+            kind: r.kind,
+            profile: r.voiceDescription ?? "",
+          })),
           sceneSummaries: sceneSummaries,
           groupCount: 0, // 0 = 不设上限,让 AI 按剧情自行决定
           previousEpisodesText: prevEps || undefined,
@@ -7925,12 +7977,16 @@ function WorkspacePage() {
       voiceStyleName?: string;
       /** 本次按年龄/性别自动分配的（此前未绑定） */
       autoAssigned?: boolean;
+      /** 2026/08:音频角色（画外音/旁白）——仅声音,绝不入镜 */
+      voiceOnly?: boolean;
     }[];
     /** 2026/08:默认锁定的参考音频（台词量最多角色的音色）;确认卡初始选中 */
     defaultAudioUrl?: string;
   };
 
   const charNameOf = (cid: string) => data.characters.find((x) => x.id === cid)?.name ?? cid;
+  /** 2026/08:音频角色(画外音) id 集——参考图/入镜收集处防御性过滤用 */
+  const audioRoleIdSet = new Set((data.audioRoles ?? []).map((r) => r.id));
   const sceneNameOf = (sid: string) => {
     const s = data.scenes.find((x) => x.id === sid);
     return s ? s.location || s.slug || s.id : sid;
@@ -7964,15 +8020,16 @@ function WorkspacePage() {
   }
 
   /**
-   * 说话角色音色解析（2026/08 音色一致修复）：本组带台词 shot 里出现、
-   * 且尚未绑定 referenceAudioUrl 的角色,按年龄/性别自动匹配 VOICE_STYLES
-   * 最接近的预设音色;首次生成时写回 workspace_data（角色卡持久化,之后
-   * 所有片段/会话沿用同一段参考音频）。返回解析后的角色列表供本次 build
-   * 立即使用（不等 setData 重渲染）。
+   * 说话角色音色解析（2026/08 音色一致修复 + 画外音独立）：本组带台词 shot
+   * 里出现的视觉角色、以及 speakerAudioRoleId 引用的音频角色,凡未绑定
+   * referenceAudioUrl 的都按年龄/性别自动匹配 VOICE_STYLES 最接近的预设音色;
+   * 首次生成时写回 workspace_data（角色卡/audioRoles 持久化,之后所有片段/
+   * 会话沿用同一段参考音频）。返回解析后的列表供本次 build 立即使用。
    */
   function resolveGroupVoiceBindings(group: StoryboardGroup): {
     characters: GenCharacter[];
-    /** 本次自动分配的角色：characterId → 命中的预设音色 */
+    audioRoles: GenAudioRole[];
+    /** 本次自动分配的角色/音频角色：id → 命中的预设音色 */
     autoAssigned: Map<string, (typeof VOICE_STYLES)[number]>;
   } {
     const speakingIds = new Set<string>();
@@ -7987,6 +8044,16 @@ function WorkspacePage() {
       autoAssigned.set(c.id, style);
       return { ...c, referenceAudioUrl: style.audioUrl };
     });
+    // 音频角色：本组 speakerAudioRoleId 引用到且未绑定音色的,同样自动匹配
+    const speakingAudioRoleIds = new Set(
+      group.shots.map((s) => s.speakerAudioRoleId).filter(Boolean) as string[],
+    );
+    const audioRoles = (data.audioRoles ?? []).map((r) => {
+      if (!speakingAudioRoleIds.has(r.id) || r.referenceAudioUrl) return r;
+      const style = matchVoiceStyle({ age: r.age, gender: r.gender });
+      autoAssigned.set(r.id, style);
+      return { ...r, referenceAudioUrl: style.audioUrl, voiceStyleId: style.id };
+    });
     if (autoAssigned.size) {
       // 只回写本次自动分配的字段,不覆盖其它并发编辑
       setData((prev) =>
@@ -7999,11 +8066,17 @@ function WorkspacePage() {
                   ? { ...c, referenceAudioUrl: style.audioUrl }
                   : c;
               }),
+              audioRoles: (prev.audioRoles ?? []).map((r) => {
+                const style = autoAssigned.get(r.id);
+                return style && !r.referenceAudioUrl
+                  ? { ...r, referenceAudioUrl: style.audioUrl, voiceStyleId: style.id }
+                  : r;
+              }),
             }
           : prev,
       );
     }
-    return { characters, autoAssigned };
+    return { characters, audioRoles, autoAssigned };
   }
 
   /**
@@ -8017,6 +8090,7 @@ function WorkspacePage() {
   function buildDialogueDeliveryInstruction(
     group: StoryboardGroup,
     characters: GenCharacter[] = data.characters,
+    audioRoles: GenAudioRole[] = data.audioRoles ?? [],
   ): string | null {
     const hasPerShotDialogue = group.shots.some((s) => s.dialogue?.trim());
     if (hasPerShotDialogue) {
@@ -8026,23 +8100,48 @@ function WorkspacePage() {
         group.characterIds?.[0] ??
         (firstDialogueShot ? pickShotCharacterIds(firstDialogueShot, group)[0] : undefined);
       const speakerIds: string[] = [];
+      /** 音频角色说话人（画外音）——收集起来拼 off-screen 硬约束 */
+      const offscreenNames: string[] = [];
       const dialogueLines = group.shots.map((s, i) => {
         if (!s.dialogue?.trim()) {
           return `Shot ${i + 1}: (no dialogue — reaction/insert shot, do not speak)`;
         }
-        const speakerId = attributeShotSpeaker(
-          { characterIds: pickShotCharacterIds(s, group), dialogue: s.dialogue },
-          characters,
-          fallbackId,
-        );
-        const speaker = characters.find((c) => c.id === speakerId);
-        if (speaker && !speakerIds.includes(speaker.id)) speakerIds.push(speaker.id);
-        return speaker
-          ? `Shot ${i + 1}: ${speaker.name} 「${s.dialogue.trim()}」`
+        // speakerAudioRoleId 优先（画外音归属不再靠镜头人物猜）
+        const audioSpeaker = s.speakerAudioRoleId
+          ? audioRoles.find((r) => r.id === s.speakerAudioRoleId)
+          : undefined;
+        const speakerId = audioSpeaker
+          ? audioSpeaker.id
+          : attributeShotSpeaker(
+              { characterIds: pickShotCharacterIds(s, group), dialogue: s.dialogue },
+              characters,
+              fallbackId,
+            );
+        const speakerName =
+          audioSpeaker?.name ?? characters.find((c) => c.id === speakerId)?.name;
+        if (audioSpeaker) {
+          if (!speakerIds.includes(audioSpeaker.id)) speakerIds.push(audioSpeaker.id);
+          if (!offscreenNames.includes(audioSpeaker.name)) offscreenNames.push(audioSpeaker.name);
+        } else if (speakerId && !speakerIds.includes(speakerId)) {
+          speakerIds.push(speakerId);
+        }
+        return speakerName
+          ? `Shot ${i + 1}: ${speakerName} 「${s.dialogue.trim()}」`
           : `Shot ${i + 1}: 「${s.dialogue.trim()}」`;
       });
       const casting = buildVoiceCastingBlock(
         speakerIds.map((id) => {
+          const audioRole = audioRoles.find((r) => r.id === id);
+          if (audioRole) {
+            return {
+              characterId: audioRole.id,
+              name: audioRole.name,
+              age: audioRole.age,
+              gender: audioRole.gender,
+              roleLabel: audioRole.voiceDescription,
+              voiceStyleName: voiceStyleByAudioUrl(audioRole.referenceAudioUrl)?.name,
+            };
+          }
           const c = characters.find((item) => item.id === id)!;
           return {
             characterId: c.id,
@@ -8055,6 +8154,8 @@ function WorkspacePage() {
           };
         }),
       );
+      // 画外音硬约束（第二道保险;第一道是结构化数据/参考素材隔离）
+      const offscreen = buildOffscreenVoiceConstraint(offscreenNames);
       return [
         "[SPOKEN DIALOGUE — EXACT TRANSCRIPT]",
         "Speak exactly this Chinese dialogue, assigned to the shots in this order:",
@@ -8062,6 +8163,7 @@ function WorkspacePage() {
         "Do not omit, add, repeat, paraphrase, reorder, merge, or change the pronunciation of any word.",
         "Keep each line clear and natural with brief pauses at punctuation. Do not speak narration, shot descriptions, or any other text.",
         ...(casting ? [casting] : []),
+        ...(offscreen ? [offscreen] : []),
       ].join("\n");
     }
     const dialogue = extractDialogue(effectiveShotBreakdown(group)).trim();
@@ -8105,7 +8207,7 @@ function WorkspacePage() {
           for (const cid of pickShotCharacterIds(s, group)) set.add(cid);
         }
         return Array.from(set);
-      })();
+      })().filter((cid) => !audioRoleIdSet.has(cid)); // 2026/08:音频角色(画外音)绝不入人物参考图
       for (const cid of unionCharIds) {
         const refShot = group.shots[0];
         const url = pickShotCharImageUrl(refShot, cid);
@@ -8177,7 +8279,7 @@ function WorkspacePage() {
     const voiceResolved = resolveGroupVoiceBindings(group);
     const dialogueInstruction =
       project?.audio === "on"
-        ? buildDialogueDeliveryInstruction(group, voiceResolved.characters)
+        ? buildDialogueDeliveryInstruction(group, voiceResolved.characters, voiceResolved.audioRoles)
         : null;
     // 2026/07:右侧只展示可编辑的镜头分解和中文风格名；通用生成说明、完整风格锁
     // 与约束只供模型执行。确认生成时，编辑后的这段文本会直接拼入真实请求。
@@ -8238,9 +8340,31 @@ function WorkspacePage() {
     // 2026/07:收集本组角色的参考音频候选(供确认卡片手选一段传给 Seedance)
     // 2026/08:用音色解析后的角色列表（未绑定音色已被自动匹配预设）,
     // 并计算默认锁定（台词量最多者优先,确认卡初始选中,用户可改选/不使用）。
+    // 音频角色（speakerAudioRoleId 引用的画外音）始终入候选且标 voiceOnly,
+    // 不依赖其是否被勾为画面角色（画外音独立修复）。
     const audioCandidates: VideoGenPayload["audioCandidates"] = [];
     const audioSeen = new Set<string>();
     for (const s of group.shots) {
+      // 画外音优先：该 shot 的说话音频角色直接入候选
+      if (s.speakerAudioRoleId) {
+        const role = voiceResolved.audioRoles.find((r) => r.id === s.speakerAudioRoleId);
+        if (role?.referenceAudioUrl) {
+          const abs = role.referenceAudioUrl.startsWith("/")
+            ? `${window.location.origin}${role.referenceAudioUrl}`
+            : role.referenceAudioUrl;
+          if (!audioSeen.has(abs)) {
+            audioCandidates.push({
+              characterId: role.id,
+              characterName: role.name,
+              audioUrl: abs,
+              voiceStyleName: voiceStyleByAudioUrl(role.referenceAudioUrl)?.name,
+              autoAssigned: voiceResolved.autoAssigned.has(role.id),
+              voiceOnly: true,
+            });
+            audioSeen.add(abs);
+          }
+        }
+      }
       for (const cid of pickShotCharacterIds(s, group)) {
         const ch = voiceResolved.characters.find((x) => x.id === cid);
         if (!ch?.referenceAudioUrl) continue;
@@ -8261,8 +8385,11 @@ function WorkspacePage() {
     }
     const defaultAudioUrl = pickDefaultVoiceCandidate(
       audioCandidates,
+      // 台词量统计:画外音 shot 记到音频角色头上(speakerAudioRoleId 优先)
       group.shots.map((s) => ({
-        characterIds: pickShotCharacterIds(s, group),
+        characterIds: s.speakerAudioRoleId
+          ? [s.speakerAudioRoleId]
+          : pickShotCharacterIds(s, group),
         dialogue: s.dialogue,
       })),
     )?.audioUrl;
@@ -8330,14 +8457,14 @@ function WorkspacePage() {
       }
     }
 
-    // 3) 人物图(本组各 shot 有效角色并集)
+    // 3) 人物图(本组各 shot 有效角色并集;2026/08 防御:音频角色绝不入人物参考图)
     const unionCharIds = (() => {
       const set = new Set<string>();
       for (const s of group.shots) {
         for (const cid of pickShotCharacterIds(s, group)) set.add(cid);
       }
       return Array.from(set);
-    })();
+    })().filter((cid) => !audioRoleIdSet.has(cid));
     const refShot = group.shots[0];
     for (const cid of unionCharIds) {
       if (referenceUrls.length >= 9) break;
@@ -8384,7 +8511,7 @@ function WorkspacePage() {
     const voiceResolved = resolveGroupVoiceBindings(group);
     const dialogueInstruction =
       project?.audio === "on"
-        ? buildDialogueDeliveryInstruction(group, voiceResolved.characters)
+        ? buildDialogueDeliveryInstruction(group, voiceResolved.characters, voiceResolved.audioRoles)
         : null;
     // 2026/07:右侧只展示可编辑的镜头分解和中文风格名；通用故事板生成说明、完整
     // 风格锁与约束只供模型执行。确认生成时，编辑后的这段文本会直接拼入真实请求。
@@ -8458,9 +8585,28 @@ function WorkspacePage() {
       .join("\n");
 
     // 2026/07:收集本组角色的参考音频候选(供确认卡片手选一段传给 Seedance)
-    // 2026/08:用音色解析后的角色列表 + 默认锁定（同按分镜图路径口径）
+    // 2026/08:用音色解析后的角色列表 + 默认锁定（同按分镜图路径口径）;
+    // 音频角色（speakerAudioRoleId 引用的画外音）始终入候选且标 voiceOnly。
     const audioCandidates: VideoGenPayload["audioCandidates"] = [];
     const audioSeen = new Set<string>();
+    for (const s of group.shots) {
+      if (!s.speakerAudioRoleId) continue;
+      const role = voiceResolved.audioRoles.find((r) => r.id === s.speakerAudioRoleId);
+      if (!role?.referenceAudioUrl) continue;
+      const abs = role.referenceAudioUrl.startsWith("/")
+        ? `${window.location.origin}${role.referenceAudioUrl}`
+        : role.referenceAudioUrl;
+      if (audioSeen.has(abs)) continue;
+      audioCandidates.push({
+        characterId: role.id,
+        characterName: role.name,
+        audioUrl: abs,
+        voiceStyleName: voiceStyleByAudioUrl(role.referenceAudioUrl)?.name,
+        autoAssigned: voiceResolved.autoAssigned.has(role.id),
+        voiceOnly: true,
+      });
+      audioSeen.add(abs);
+    }
     for (const cid of unionCharIds) {
       const ch = voiceResolved.characters.find((x) => x.id === cid);
       if (!ch?.referenceAudioUrl) continue;
@@ -8480,8 +8626,11 @@ function WorkspacePage() {
     }
     const defaultAudioUrl = pickDefaultVoiceCandidate(
       audioCandidates,
+      // 台词量统计:画外音 shot 记到音频角色头上(speakerAudioRoleId 优先)
       group.shots.map((s) => ({
-        characterIds: pickShotCharacterIds(s, group),
+        characterIds: s.speakerAudioRoleId
+          ? [s.speakerAudioRoleId]
+          : pickShotCharacterIds(s, group),
         dialogue: s.dialogue,
       })),
     )?.audioUrl;
@@ -10209,6 +10358,9 @@ function WorkspacePage() {
         outline: data.outline,
         scenes: data.scenes,
         characters: data.characters,
+        // 2026/08:音频角色(画外音)随 workspace_data 持久化——同一角色跨分镜/
+        // 跨片段/跨刷新复用同一音频绑定(音色持久化)
+        audioRoles: data.audioRoles ?? [],
         props: data.props,
         storyboard: data.storyboard,
         storyboardGroups: data.storyboardGroups,
@@ -11314,8 +11466,13 @@ function WorkspacePage() {
             .filter(Boolean),
         }));
         const propsWithEp = propResult?.props?.map((p) => ({ ...p, episodeIndex: extractEpIndex }));
+        // 2026/08:画外音提取——音频角色随 character-extract 产出,归一化后在 setData 合并
+        const extractedAudioRoles = (charResult?.audioRoles ?? [])
+          .map((r: any) => normalizeExtractedAudioRole(r, extractEpIndex))
+          .filter((r: GenAudioRole | null): r is GenAudioRole => r !== null);
         aiPatch = {
           ...(charResult ? { characters: charResult.characters } : {}),
+          ...(extractedAudioRoles.length ? { audioRoles: extractedAudioRoles } : {}),
           ...(sceneResult ? { scenes: scenesWithEp } : {}),
           ...(propResult ? { props: propsWithEp } : {}),
         };
@@ -11335,6 +11492,10 @@ function WorkspacePage() {
             let characters = d.characters;
             let scenes = d.scenes;
             let props = d.props;
+            // 2026/08:音频角色按 id 合并(保留既有音色绑定,集数累计)
+            const audioRoles = aiPatch.audioRoles
+              ? mergeAudioRoles(d.audioRoles ?? [], aiPatch.audioRoles)
+              : (d.audioRoles ?? []);
             if (aiPatch.characters) {
               // 2026/06:跨集合并 —— 按 matchKey > siblingGroupId > name 前缀匹配,
               // 匹配的 GenCharacter 复用(episodes 追加,描述/override 刷新)。
@@ -11358,7 +11519,7 @@ function WorkspacePage() {
                 ...aiPatch.props,
               ];
             }
-            return { ...d, characters, scenes, props };
+            return { ...d, characters, scenes, props, audioRoles };
           }
           if (
             isGenerateScript ||
@@ -11382,6 +11543,10 @@ function WorkspacePage() {
             let characters = d.characters;
             let scenes = d.scenes;
             let props = d.props;
+            // 2026/08:音频角色按 id 合并(保留既有音色绑定,集数累计)
+            const audioRoles = aiPatch.audioRoles
+              ? mergeAudioRoles(d.audioRoles ?? [], aiPatch.audioRoles)
+              : (d.audioRoles ?? []);
             if (aiPatch.characters) {
               // 2026/06:跨集合并 —— 按 matchKey > siblingGroupId > name 前缀匹配,
               // 匹配的 GenCharacter 复用(episodes 追加,描述/override 刷新)。
@@ -11405,7 +11570,7 @@ function WorkspacePage() {
                 ...aiPatch.props,
               ];
             }
-            return { ...d, characters, scenes, props };
+            return { ...d, characters, scenes, props, audioRoles };
           }
           return {
             ...d,
@@ -12717,6 +12882,48 @@ function WorkspacePage() {
                             </button>
                           </div>
                         </div>
+                        {/* 2026/08:音频角色（画外音/旁白）——只发声、永不入镜;
+                            只展示声音属性与试听,不提供生成人物图入口 */}
+                        {(data.audioRoles ?? []).length > 0 && (
+                          <div className="px-6 pb-1">
+                            <div className="rounded-lg border border-border bg-bg-elevated/40 p-3">
+                              <div className="mb-2 text-xs font-semibold text-text-secondary">
+                                音频角色（仅声音 · 不入镜）
+                              </div>
+                              <div className="flex flex-col gap-1.5">
+                                {(data.audioRoles ?? []).map((role) => (
+                                  <div
+                                    key={role.id}
+                                    className="flex items-center gap-2 text-xs text-text-secondary"
+                                  >
+                                    <span className="font-medium shrink-0">{role.name}</span>
+                                    <span className="text-text-muted shrink-0">
+                                      {role.kind === "narrator"
+                                        ? "旁白"
+                                        : role.kind === "voiceover"
+                                          ? "画外音"
+                                          : "内心独白"}
+                                      {role.age != null ? ` · ${role.age}岁` : ""}
+                                      {role.gender ? ` · ${role.gender}` : ""}
+                                      {role.voiceDescription ? ` · ${role.voiceDescription}` : ""}
+                                    </span>
+                                    <span className="text-accent shrink-0">
+                                      {voiceStyleByAudioUrl(role.referenceAudioUrl)?.name ??
+                                        (role.referenceAudioUrl ? "自定义音色" : "待自动分配")}
+                                    </span>
+                                    {role.referenceAudioUrl && (
+                                      <audio
+                                        controls
+                                        src={role.referenceAudioUrl}
+                                        className="h-6 flex-1 min-w-0"
+                                      />
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          </div>
+                        )}
                         <div className="px-6 py-4 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
                           {(() => {
                             // 把"每个角色每个 look"展平成"每张卡片一行",保证同角色

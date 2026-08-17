@@ -66,6 +66,19 @@ const PlotInput = z.object({
     )
     .max(40)
     .default([]),
+  // 2026/08:音频角色(画外音/旁白/内心独白)摘要——只发声、永不入镜;
+  // 分镜用 speakerAudioRoleId 归属台词,严禁写入 characterIds。
+  audioRoleSummaries: z
+    .array(
+      z.object({
+        id: z.string(),
+        name: z.string(),
+        kind: z.string().optional(),
+        profile: z.string().max(400),
+      }),
+    )
+    .max(20)
+    .default([]),
   sceneSummaries: z
     .array(
       z.object({
@@ -128,6 +141,12 @@ export const generateStoryboardFromPlot = createServerFn({ method: "POST" })
           )
           .join("\n")
       : "(无角色信息)";
+    // 2026/08:音频角色列表(画外音)——只供 speakerAudioRoleId 归属,与视觉角色分离
+    const audioRoleList = data.audioRoleSummaries.length
+      ? data.audioRoleSummaries
+          .map((r) => `- id="${r.id}" name="${r.name}"${r.kind ? ` kind="${r.kind}"` : ""}: ${r.profile}`)
+          .join("\n")
+      : "(无音频角色)";
     const sceneList = data.sceneSummaries.length
       ? data.sceneSummaries
           .map(
@@ -317,6 +336,13 @@ export const generateStoryboardFromPlot = createServerFn({ method: "POST" })
 - action 字段描述环境/氛围(如"晨光透过树冠洒在湿地,光斑落在青苔上"),不写人物
 - 禁止把空镜改成"主角走进森林""角色站在树下"之类有人物的镜头
 
+【音频角色(画外音/旁白/内心独白)隔离规则 —— 2026/08,硬约束】
+下方【音频角色列表】里的角色**只发声、永不入镜**:
+- 台词归属:由音频角色说出的台词所在的 shot,把 **speakerAudioRoleId** 设为该音频角色 id;dialogue 文本保持原样(带角色名前缀)。
+- **严禁**把音频角色 id 写入 characterIds;严禁在 action / characterBlocking / plotText 里描述音频角色的人物形象、走位、构图;他们没有任何参考图。
+- 旁白覆盖的镜头(空镜/环境/他人画面) characterIds 只写画面中**真实可见**的视觉角色,允许为空 [];即使旁白在持续说话,画面也只能展示剧本明确指定的环境、道具或可见人物。
+- 只有剧本明确写该人物实体出场时,该人物才作为视觉角色进入 characterIds(此时台词归属仍走 speakerAudioRoleId 或视觉角色名前缀)。
+
 【其他】
 1. **剧情覆盖完整性(最重要)**：严格按剧本顺序切分,**必须覆盖整集全部剧情**,不得遗漏任何段落。
    开头 / 发展 / 高潮 / 结尾都要有对应的分镜组。输出前请逐段对照原剧本自查。
@@ -349,6 +375,9 @@ export const generateStoryboardFromPlot = createServerFn({ method: "POST" })
 
 ===== 角色列表 =====
 ${charList}
+
+===== 音频角色列表(画外音/旁白,只发声永不入镜;台词归属用 speakerAudioRoleId,严禁写入 characterIds) =====
+${audioRoleList}
 
 ===== 场景列表 =====
 ${sceneList}
@@ -741,6 +770,8 @@ function normalizeGroup(
     dialogue?: string;
     /** 镜头角色:说话/动作(action) | 听者反应/反打(reaction) | 特写/空镜插入(insert)。 */
     shotRole?: "action" | "reaction" | "insert";
+    /** 2026/08:说话音频角色 id(画外音/旁白);只表示「谁在说话」,不入镜。 */
+    speakerAudioRoleId?: string;
     startSec?: number;
     endSec?: number;
   }>;
@@ -757,6 +788,9 @@ function normalizeGroup(
   const sceneId =
     typeof g.sceneId === "string" && validSceneIds.has(g.sceneId) ? g.sceneId : undefined;
   const validCharIds = new Set(data.characterSummaries.map((c) => c.id));
+  // 音频角色(画外音)有效 id 集:characterIds 校验只认视觉角色,音频角色 id
+  // 天然进不来(不在 validCharIds);speakerAudioRoleId 单独校验。
+  const validAudioRoleIds = new Set(data.audioRoleSummaries.map((r) => r.id));
   const characterIds: string[] = Array.isArray(g.characterIds)
     ? g.characterIds.filter((x: any) => typeof x === "string" && validCharIds.has(x))
     : [];
@@ -765,7 +799,9 @@ function normalizeGroup(
   // **不设上限**,AI 给几个就保几个。normalizeShot 内部还是会做单条字段
   // 校验(没 action 会丢),所以"多了也不会污染数据"这一点是安全的。
   const shots = rawShots
-    .map((s: any, i: number, arr: any[]) => normalizeShot(s, index, i, startSec, endSec, arr))
+    .map((s: any, i: number, arr: any[]) =>
+      normalizeShot(s, index, i, startSec, endSec, arr, validAudioRoleIds),
+    )
     .filter((s): s is NonNullable<ReturnType<typeof normalizeShot>> => s !== null);
   if (!shots.length) return null;
   // 2026/07:台词可说完性兜底 —— 估算该组 spoken 台词说完需要多少秒。
@@ -803,6 +839,17 @@ const SHOT_LABEL_CN: Record<string, string> = {
 };
 
 const SHOT_ROLES = new Set(["action", "reaction", "insert"]);
+
+/**
+ * speakerAudioRoleId 校验（2026/08 画外音隔离）：仅当引用的是有效音频角色 id
+ * 时保留;视觉角色 id / 无效值一律丢弃（音频角色绝不允许反向流入画面字段）。
+ */
+export function sanitizeSpeakerAudioRoleId(
+  raw: unknown,
+  validAudioRoleIds: ReadonlySet<string>,
+): string | undefined {
+  return typeof raw === "string" && validAudioRoleIds.has(raw) ? raw : undefined;
+}
 
 /**
  * 台词加权的 shot 时长分配（normalizeShot 的缺省兜底，替代均分）：
@@ -852,6 +899,7 @@ function normalizeShot(
   groupStartSec: number,
   groupEndSec: number,
   allShots: any[],
+  validAudioRoleIds: ReadonlySet<string> = new Set(),
 ): {
   id: string;
   shotType: "WS" | "MS" | "CU" | "ECU" | "OTS";
@@ -862,6 +910,7 @@ function normalizeShot(
   characterBlocking?: string;
   dialogue?: string;
   shotRole?: "action" | "reaction" | "insert";
+  speakerAudioRoleId?: string;
   startSec?: number;
   endSec?: number;
 } | null {
@@ -912,6 +961,8 @@ function normalizeShot(
     characterBlocking,
     dialogue,
     shotRole,
+    // 画外音归属:仅保留有效音频角色 id（视觉角色/无效 id 丢弃）
+    speakerAudioRoleId: sanitizeSpeakerAudioRoleId(s.speakerAudioRoleId, validAudioRoleIds),
     startSec: shotStart,
     endSec: shotEnd,
   };

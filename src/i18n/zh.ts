@@ -1227,6 +1227,7 @@ export const zh = {
   zp_video_confirm_audio_locked: "已锁定：{name}",
   zp_video_confirm_audio_multi: "多角色场景仅锁定 {name} 的音色（上游只接受单段参考音频）",
   zp_video_confirm_audio_auto: "未设置音色，已自动分配并锁定",
+  zp_video_confirm_audio_voiceonly: "仅声音 · 不入镜",
   char_audio: "参考音频",
   char_audio_add: "上传音频",
   char_audio_replace: "替换音频",

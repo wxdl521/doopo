@@ -1249,6 +1249,7 @@ export const en: Translations = {
   zp_video_confirm_audio_multi:
     "Multi-character scene: only {name}'s voice is locked (upstream accepts a single reference audio)",
   zp_video_confirm_audio_auto: "no voice set — auto-assigned and locked",
+  zp_video_confirm_audio_voiceonly: "Voice only · never on screen",
   char_audio: "Reference Audio",
   char_audio_add: "Upload Audio",
   char_audio_replace: "Replace Audio",

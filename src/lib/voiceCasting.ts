@@ -23,6 +23,8 @@ export interface VoiceCandidate {
 export interface DialogueShotShape {
   characterIds?: string[];
   dialogue?: string;
+  /** 2026/08:说话音频角色 id（画外音/旁白）——存在时优先于一切视觉归属推断 */
+  speakerAudioRoleId?: string;
 }
 
 /**
@@ -56,6 +58,8 @@ export function pickDefaultVoiceCandidate<T extends VoiceCandidate>(
 
 /**
  * 逐镜台词的说话人归属：
+ * 0. shot 带 speakerAudioRoleId（画外音/旁白）→ 直接返回它（2026/08：明确
+ *    的声音角色 id 优先,不再靠「镜头里有哪些人物」猜说话人）;
  * 1. 台词文本里点名了角色名（「角色名：…」或文中出现角色名）→ 该角色；
  * 2. 该 shot 只有一个角色 → 该角色；
  * 3. 都取不到 → 兜底角色（组内首个角色,调用方传入）。
@@ -68,6 +72,7 @@ export function attributeShotSpeaker(
 ): string | undefined {
   const dialogue = shot.dialogue?.trim();
   if (!dialogue) return undefined;
+  if (shot.speakerAudioRoleId) return shot.speakerAudioRoleId;
   const ids = shot.characterIds ?? [];
   // 名字匹配只在该 shot 出现的角色里找（他集角色同名彩蛋不误判）
   const inShot = characters.filter((c) => ids.includes(c.id));
@@ -163,4 +168,17 @@ export function matchVoiceStyle(input: { age?: number; gender?: string }): Voice
 export function voiceStyleByAudioUrl(audioUrl: string | undefined): VoiceStyle | undefined {
   if (!audioUrl) return undefined;
   return VOICE_STYLES.find((style) => style.audioUrl === audioUrl);
+}
+
+/**
+ * 画外音硬约束提示词块（第二道保险；第一道是结构化数据与参考素材隔离——
+ * 音频角色不进 characterIds、没有任何人物图进入模型输入）。
+ * 含画外音说话角色的请求都必须拼上这段。
+ */
+export function buildOffscreenVoiceConstraint(roleNames: readonly string[]): string {
+  if (!roleNames.length) return "";
+  return [
+    "[OFF-SCREEN VOICE — NEVER ON SCREEN]",
+    `These speakers are OFF-SCREEN VOICE ONLY: ${roleNames.join(" / ")}. They MUST NEVER APPEAR VISUALLY in any frame — do not draw, render or imply their person, face, silhouette, hands or belongings. The picture only shows what the script visibly specifies (environment, props, on-screen characters), even while the voice is speaking.`,
+  ].join("\n");
 }

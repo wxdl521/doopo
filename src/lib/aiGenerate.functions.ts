@@ -201,13 +201,35 @@ function stageSpec(stage: Input["stage"]) {
           '2) 同一真人在新文本里如果明确"换了不同的身份/造型"(同真人多形象):拆成多个独立 character,共享同一个 matchKey + 共享同一个 siblingGroupId。例:"陆深 · 医生" 和 "陆深 · 学生时期" → matchKey 都是 "陆深-001"。' +
           '3) **新真人**(列表里没出现过的)→ 生成 matchKey,格式 `<真名>-<3位hex>`,如 "江野-a3f"。' +
           "4) **matchKey 永远不能空**,每条 character 输出必须有 matchKey 字段。" +
-          '5) **不同形象必须用不同 name**(带 · 后缀,例如 "陆深 · 医生" vs "陆深 · 学生时期")。同形象跨集则用完全相同的 name(客户端按 name 精确匹配合并跨集记录,不同 name = 不同形象 = 独立卡片)。',
+          '5) **不同形象必须用不同 name**(带 · 后缀,例如 "陆深 · 医生" vs "陆深 · 学生时期")。同形象跨集则用完全相同的 name(客户端按 name 精确匹配合并跨集记录,不同 name = 不同形象 = 独立卡片)。' +
+          "6) **画外音不入 characters**(2026/08)：文本中明确标注或语义上属于「旁白、画外音、解说、OS、电话外声音、内心独白、未入镜说话者」的声音,输出到 audioRoles 数组(只发声、永不入镜,不需要外观字段,不要虚构人物外观);" +
+          "每项给 name(如「旁白·苍老声音」)、kind(narrator 旁白/voiceover 画外音/inner_monologue 内心独白)、age/gender/voiceDescription(音色描述,如「沉稳苍老的男性叙述者」)。只有剧本明确写该人物实体出场时才另外建立视觉角色;没有画外音时 audioRoles 给空数组。",
         schema: {
           type: "object",
           properties: {
+            audioRoles: {
+              type: "array",
+              description:
+                "画外音/旁白/内心独白等只发声、永不入镜的音频角色(2026/08)。不输出为 characters,不需要外观字段。",
+              items: {
+                type: "object",
+                properties: {
+                  name: { type: "string" },
+                  kind: { type: "string", enum: ["narrator", "voiceover", "inner_monologue"] },
+                  age: { type: "number" },
+                  gender: { type: "string" },
+                  voiceDescription: {
+                    type: "string",
+                    description: "音色描述,如「沉稳苍老的男性叙述者」",
+                  },
+                },
+                required: ["name", "kind"],
+                additionalProperties: false,
+              },
+            },
             characters: {
               type: "array",
-              minItems: 1,
+              minItems: 0,
               maxItems: 16,
               items: {
                 type: "object",

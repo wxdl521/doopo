@@ -158,6 +158,8 @@ type Message =
         audioUrl: string;
         voiceStyleName?: string;
         autoAssigned?: boolean;
+        /** 2026/08:音频角色（画外音/旁白）——仅声音,绝不入镜 */
+        voiceOnly?: boolean;
       }[];
       /** 2026/07:用户选中的参考音频 URL;"" 或 undefined = 不使用 */
       selectedAudioUrl?: string;
@@ -341,6 +343,8 @@ export type ZopiaChatPanelHandle = {
       audioUrl: string;
       voiceStyleName?: string;
       autoAssigned?: boolean;
+      /** 2026/08:音频角色（画外音/旁白）——仅声音,绝不入镜 */
+      voiceOnly?: boolean;
     }[];
     /** 2026/08:默认锁定的参考音频（台词量最多角色的音色）;卡片初始选中 */
     defaultAudioUrl?: string;
@@ -2219,6 +2223,12 @@ const ZopiaChatPanel = forwardRef<
                               {ac.voiceStyleName ? ` · ${ac.voiceStyleName}` : ""}
                               {/* 自动分配标记：此前未绑定音色,本次按年龄/性别匹配预设并写回角色卡 */}
                               {ac.autoAssigned ? `（${t.zp_video_confirm_audio_auto}）` : ""}
+                              {/* 音频角色标识：仅声音,绝不入镜 */}
+                              {ac.voiceOnly ? (
+                                <span className="ml-1 rounded bg-accent/15 px-1 py-0.5 text-[9px] text-accent">
+                                  {t.zp_video_confirm_audio_voiceonly}
+                                </span>
+                              ) : null}
                             </button>
                             <audio controls src={ac.audioUrl} className="h-6 flex-1 min-w-0" />
                           </div>

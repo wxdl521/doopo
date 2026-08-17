@@ -230,6 +230,36 @@ export type StoryboardShot = {
    * 用途:转场分镜 —— 一帧在室内、下一帧在室外,但还在同一组剧情里。
    */
   sceneId?: string | null;
+  /**
+   * 2026/08:本 shot 的说话音频角色 id（画外音/旁白/内心独白）。
+   * 只表示「谁在说话」,不参与 characterIds、不产生任何人物图引用;
+   * 逐镜台词归属优先读它,不再靠「镜头里有哪些人物」猜说话人。
+   */
+  speakerAudioRoleId?: string;
+};
+
+/**
+ * 2026/08:音频角色（旁白/画外音/内心独白）——只发声、永不入镜。
+ * 与视觉角色 GenCharacter 彻底分离:不进 characterIds、不生成人物图、
+ * 只向视频模型提供 reference_audio（音色克隆）。随 workspace_data 持久化,
+ * 同一音频角色跨分镜/跨片段/跨刷新复用同一音频绑定。
+ */
+export type GenAudioRole = {
+  /** 稳定 id（迁移自旧视觉角色时为 `audio-<原角色 id>`） */
+  id: string;
+  name: string;
+  /** narrator 旁白 / voiceover 画外音 / inner_monologue 内心独白 */
+  kind: "narrator" | "voiceover" | "inner_monologue";
+  age?: number;
+  gender?: string;
+  /** 音色描述（如「沉稳苍老的男性叙述者」） */
+  voiceDescription?: string;
+  /** 绑定的参考音频（签名 URL 或预设 VOICE_STYLES 相对路径） */
+  referenceAudioUrl?: string;
+  /** 预设音色 id（VOICE_STYLES.id,UI 回显用） */
+  voiceStyleId?: string;
+  /** 出现集数 */
+  episodes: number[];
 };
 
 export type StoryboardGroup = {
