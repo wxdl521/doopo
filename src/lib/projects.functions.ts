@@ -341,6 +341,23 @@ export const saveWorkspaceData = createServerFn({ method: "POST" })
   )
   .handler(async ({ data, context }) => {
     const { supabase } = context;
+    // 2026/08:字段级合并（merge_workspace_data RPC,jsonb || patch）——patch 里
+    // 没有的键保留数据库旧值,杜绝「某段未加载 → 整列覆盖成空数组」的丢失。
+    // SQL 在 supabase/manual/20260818060000_merge_workspace_data.sql,需手动执行;
+    // 函数不存在(PGRST202/42883)时回退旧的整列覆盖,前端守卫此时仍阻断丢失。
+    // 函数类型未进生成的 Database 类型(supabase/manual SQL 手动执行后才存在),
+    // 与既有 (supabaseAdmin.from as any) 同款收窄。
+    const merged = await (supabase.rpc as any)("merge_workspace_data", {
+      p_project_id: data.id,
+      p_patch: data.workspaceData as any,
+      p_completed_stages: data.completedStages,
+    }) as { error: { message: string } | null };
+    if (!merged.error) return { ok: true as const, error: null as string | null };
+    const rpcMissing = /PGRST202|42883|does not exist|could not find/i.test(merged.error.message);
+    if (!rpcMissing) return { ok: false as const, error: merged.error.message };
+    console.warn(
+      "[saveWorkspaceData] merge_workspace_data RPC 不存在（SQL 未执行?）,回退整列覆盖",
+    );
     const { error } = await supabase
       .from("projects")
       .update({

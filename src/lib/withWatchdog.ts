@@ -1,5 +1,5 @@
 // ====================================================================
-// withWatchdog —— Promise 看门狗（纯函数,可单测）
+// withWatchdog / withLoadRetry —— Promise 看门狗与加载重试（纯函数,可单测）
 //
 // 根因（2026-08 verify-save-probe 实证）：工作区保存的任一上游调用挂死
 // （persistMedia / saveWorkspaceData 无响应）时,savingWorkspace 互斥标志
@@ -29,4 +29,20 @@ export async function withWatchdog<T>(
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
+}
+
+const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * 加载请求自动重试：返回体无 workspaceData（失败）时延迟 1.5s 自动重试一次
+ * （覆盖分镜结构/媒体两段大查询的偶发语句超时）。sleep 可注入便于测试。
+ */
+export async function withLoadRetry<T extends { workspaceData: unknown }>(
+  load: () => Promise<T>,
+  sleep: (ms: number) => Promise<void> = defaultSleep,
+): Promise<T> {
+  const first = await load();
+  if (first.workspaceData) return first;
+  await sleep(1_500);
+  return load();
 }

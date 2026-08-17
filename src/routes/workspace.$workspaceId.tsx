@@ -61,7 +61,8 @@ import {
   migrateNarrationToAudioRoles,
   normalizeExtractedAudioRole,
 } from "../lib/audioRoles";
-import { withWatchdog } from "../lib/withWatchdog";
+import { withLoadRetry, withWatchdog } from "../lib/withWatchdog";
+import { buildWorkspaceDataPatch } from "../lib/workspaceSavePatch";
 import { generateStageAi } from "../lib/aiGenerate.functions";
 import { generateImage, regenerateSceneImage } from "../lib/seedream.functions";
 import { logImageMeta } from "../lib/logImageMeta";
@@ -2120,6 +2121,11 @@ function WorkspacePage() {
   const [dataLoaded, setDataLoaded] = useState(false);
   const [workspaceLoadError, setWorkspaceLoadError] = useState<string | null>(null);
   const [workspaceMediaReady, setWorkspaceMediaReady] = useState(false);
+  // 2026/08:分镜结构(loadWorkspaceStoryboardStructure)独立的就绪/错误状态——
+  // 该段加载失败此前只 toast 一句,保存闸门照开,整列覆盖保存把 storyboard/
+  // storyboardGroups 写成空数组(离开项目再回来分镜全丢的根因)。
+  const [storyboardStructureReady, setStoryboardStructureReady] = useState(false);
+  const [storyboardStructureError, setStoryboardStructureError] = useState<string | null>(null);
   const [workspaceMediaLoadError, setWorkspaceMediaLoadError] = useState<string | null>(null);
   const [workspaceLoadProgress, setWorkspaceLoadProgress] = useState<WorkspaceLoadProgress>({
     completed: 0,
@@ -3469,12 +3475,15 @@ function WorkspacePage() {
         setDataLoaded(true);
         setWorkspaceMediaReady(false);
         setWorkspaceMediaLoadError(null);
-        const storyboardStructurePromise = callLoadWorkspaceStoryboardStructure({
-          data: { id: workspaceId },
-        }).catch((error) => ({
-          workspaceData: null,
-          error: error instanceof Error ? error.message : "分镜结构无法加载，请刷新后重试",
-        }));
+        setStoryboardStructureReady(false);
+        setStoryboardStructureError(null);
+        // 分镜结构与媒体两段大查询各做一次 1.5s 延迟自动重试(覆盖偶发语句超时)
+        const storyboardStructurePromise = withLoadRetry(() =>
+          callLoadWorkspaceStoryboardStructure({ data: { id: workspaceId } }).catch((error) => ({
+            workspaceData: null,
+            error: error instanceof Error ? error.message : "分镜结构无法加载，请刷新后重试",
+          })),
+        );
         void storyboardStructurePromise.then((structureResult: any) => {
           if (cancelled) return;
           setWorkspaceLoadProgress((current) => ({
@@ -3482,9 +3491,14 @@ function WorkspacePage() {
             completed: Math.min(current.total, current.completed + 1),
           }));
           if (structureResult.error || !structureResult.workspaceData) {
-            toast.warning(`分镜结构暂未恢复：${structureResult.error || "请刷新后重试"}`);
+            // 升级为持续错误条（此前只 toast 一句,保存闸门照开 → 整列覆盖丢分镜）
+            setStoryboardStructureError(
+              structureResult.error || "分镜结构无法加载，请刷新后重试",
+            );
             return;
           }
+          setStoryboardStructureReady(true);
+          setStoryboardStructureError(null);
           const structure = structureResult.workspaceData as Record<string, unknown>;
           if (Array.isArray(structure.storyboard) && structure.storyboard.length) {
             setData((d) => ({ ...d, storyboard: structure.storyboard as StoryboardPanel[] }));
@@ -3513,10 +3527,14 @@ function WorkspacePage() {
         // 分镜结构请求结束后再读取媒体映射，避免两条大 JSON 查询互相抢占数据库资源。
         void storyboardStructurePromise
           .then(() =>
-            callLoadWorkspaceMedia({ data: { id: workspaceId } }).catch((error) => ({
-              workspaceData: null,
-              error: error instanceof Error ? error.message : "项目媒体内容无法加载，请刷新后重试",
-            })),
+            // 与分镜结构同口径:失败延迟 1.5s 自动重试一次
+            withLoadRetry(() =>
+              callLoadWorkspaceMedia({ data: { id: workspaceId } }).catch((error) => ({
+                workspaceData: null,
+                error:
+                  error instanceof Error ? error.message : "项目媒体内容无法加载，请刷新后重试",
+              })),
+            ),
           )
           .then((mediaResult: any) => {
             if (cancelled) return;
@@ -10193,6 +10211,13 @@ function WorkspacePage() {
       if (!silent) toast.error("项目媒体尚未恢复，已停止保存以保护原有数据");
       return;
     }
+    // 分镜结构未恢复时终止保存（含静默模式）——整列覆盖会把未加载的
+    // storyboard/storyboardGroups 写成空数组（离开项目再回来分镜全丢的根因）。
+    // 双保险：字段级合并 patch 在组装处同样剔除未就绪键（buildWorkspaceDataPatch）。
+    if (!storyboardStructureReady) {
+      if (!silent) toast.error("分镜内容尚未恢复，已停止保存以保护原有数据");
+      return;
+    }
     if (savingWorkspace) {
       pendingSaveRef.current = true;
       return;
@@ -10438,12 +10463,17 @@ function WorkspacePage() {
           ]),
         ),
       };
-      // 同看门狗口径：保存主请求挂死不得拖死互斥标志（见上方注释）
+      // 同看门狗口径：保存主请求挂死不得拖死互斥标志（见上方注释）。
+      // 字段级合并:分镜结构未就绪的键不进 patch,数据库旧值原样保留
+      // （显式空数组=用户真实清空,允许覆盖——见 workspaceSavePatch.ts）。
       const res = await withWatchdog(
         callSaveWorkspace({
           data: {
             id: workspaceId,
-            workspaceData,
+            workspaceData: buildWorkspaceDataPatch({
+              workspaceData,
+              storyboardStructureReady,
+            }),
             completedStages: Array.from(completedStages),
           },
         }),
@@ -10584,7 +10614,8 @@ function WorkspacePage() {
   });
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    if (!dataLoaded || workspaceLoadError || !workspaceMediaReady) return;
+    if (!dataLoaded || workspaceLoadError || !workspaceMediaReady || !storyboardStructureReady)
+      return;
     if (!user) return;
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     autoSaveTimerRef.current = setTimeout(() => {
@@ -10596,13 +10627,22 @@ function WorkspacePage() {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoSaveSignature, dataLoaded, workspaceLoadError, workspaceMediaReady]);
+  }, [
+    autoSaveSignature,
+    dataLoaded,
+    workspaceLoadError,
+    workspaceMediaReady,
+    storyboardStructureReady,
+  ]);
 
   // 2026/06:页面卸载前(刷新 / 关闭 tab)强制 flush 一次保存,
   // 避免用户在 debounce 窗口内就刷新页面导致刚生成的图片丢失。
   useEffect(() => {
     if (!dataLoaded || !user || workspaceLoadError || !workspaceMediaReady) return;
     const handler = () => {
+      // 分镜结构未恢复时不写库（双保险的触发侧;保存函数内还有硬拦截）。
+      // 该 effect 依赖含 storyboardStructureReady,闭包随状态翻转重建,不会陈旧。
+      if (!storyboardStructureReady) return;
       if (autoSaveTimerRef.current) {
         clearTimeout(autoSaveTimerRef.current);
         autoSaveTimerRef.current = null;
@@ -10614,18 +10654,19 @@ function WorkspacePage() {
     };
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
-  }, [dataLoaded, user, workspaceLoadError, workspaceMediaReady]);
+  }, [dataLoaded, user, workspaceLoadError, workspaceMediaReady, storyboardStructureReady]);
 
   // Auto-save when all stages are complete (only trigger once)
   const completedKey = ALL_STAGES.map((s) => (completedStages.has(s) ? "1" : "0")).join("");
   useEffect(() => {
     if (autoSavedRef.current) return;
-    if (!dataLoaded || workspaceLoadError || !workspaceMediaReady) return;
+    if (!dataLoaded || workspaceLoadError || !workspaceMediaReady || !storyboardStructureReady)
+      return;
     if (completedKey === "11111") {
       autoSavedRef.current = true;
       void handleSaveWorkspaceRef.current();
     }
-  }, [completedKey, dataLoaded, workspaceLoadError, workspaceMediaReady]);
+  }, [completedKey, dataLoaded, workspaceLoadError, workspaceMediaReady, storyboardStructureReady]);
 
   // 2026/06 二次改造:之前 shots 字段一变就调 composePlotText 重写 plotText,
   // 把 AI 写的详细剧情扩写覆盖成机械的 shot 列表。改 prompt 后 plotText 是
@@ -11808,6 +11849,13 @@ function WorkspacePage() {
       />
       <div className="flex-1 flex min-h-0">
         <main className="relative flex-1 min-w-0 overflow-auto p-6">
+          {/* 分镜结构加载失败的持续错误条（2026/08：此前只 toast 一句,
+              用户在残缺状态下继续操作,保存把分镜写成空数组) */}
+          {storyboardStructureError && (
+            <div className="mb-4 rounded-lg border border-rose-500/50 bg-rose-500/10 px-4 py-2 text-sm text-rose-300">
+              分镜内容未加载，保存已暂停，请刷新重试（{storyboardStructureError}）
+            </div>
+          )}
           {(tab === "character" || tab === "storyboard") &&
             !workspaceMediaReady &&
             !workspaceMediaLoadError && (
