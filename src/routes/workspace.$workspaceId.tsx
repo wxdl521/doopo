@@ -61,6 +61,7 @@ import {
   migrateNarrationToAudioRoles,
   normalizeExtractedAudioRole,
 } from "../lib/audioRoles";
+import { withWatchdog } from "../lib/withWatchdog";
 import { generateStageAi } from "../lib/aiGenerate.functions";
 import { generateImage, regenerateSceneImage } from "../lib/seedream.functions";
 import { logImageMeta } from "../lib/logImageMeta";
@@ -3365,7 +3366,8 @@ function WorkspacePage() {
                 const legacyEp = typeof c.episodeIndex === "number" ? c.episodeIndex : 1;
                 return {
                   ...c,
-                  episodes: Array.isArray(c.episodes) && c.episodes.length ? c.episodes : [legacyEp],
+                  episodes:
+                    Array.isArray(c.episodes) && c.episodes.length ? c.episodes : [legacyEp],
                   matchKey: typeof c.matchKey === "string" && c.matchKey.trim() ? c.matchKey : c.id,
                 };
               })
@@ -5202,9 +5204,7 @@ function WorkspacePage() {
     if (forcedAge !== undefined) attributeDraftParsed.age = forcedAge;
     const next = applyCharacterAttributeDraft(c, lookId, attributeDraftParsed);
     setData((prev) =>
-      prev
-        ? { ...prev, characters: prev.characters.map((x) => (x.id === c.id ? next : x)) }
-        : prev,
+      prev ? { ...prev, characters: prev.characters.map((x) => (x.id === c.id ? next : x)) } : prev,
     );
     setEditingAttributeField(null);
     setAttributeDraft("");
@@ -8117,8 +8117,7 @@ function WorkspacePage() {
               characters,
               fallbackId,
             );
-        const speakerName =
-          audioSpeaker?.name ?? characters.find((c) => c.id === speakerId)?.name;
+        const speakerName = audioSpeaker?.name ?? characters.find((c) => c.id === speakerId)?.name;
         if (audioSpeaker) {
           if (!speakerIds.includes(audioSpeaker.id)) speakerIds.push(audioSpeaker.id);
           if (!offscreenNames.includes(audioSpeaker.name)) offscreenNames.push(audioSpeaker.name);
@@ -8279,7 +8278,11 @@ function WorkspacePage() {
     const voiceResolved = resolveGroupVoiceBindings(group);
     const dialogueInstruction =
       project?.audio === "on"
-        ? buildDialogueDeliveryInstruction(group, voiceResolved.characters, voiceResolved.audioRoles)
+        ? buildDialogueDeliveryInstruction(
+            group,
+            voiceResolved.characters,
+            voiceResolved.audioRoles,
+          )
         : null;
     // 2026/07:右侧只展示可编辑的镜头分解和中文风格名；通用生成说明、完整风格锁
     // 与约束只供模型执行。确认生成时，编辑后的这段文本会直接拼入真实请求。
@@ -8511,7 +8514,11 @@ function WorkspacePage() {
     const voiceResolved = resolveGroupVoiceBindings(group);
     const dialogueInstruction =
       project?.audio === "on"
-        ? buildDialogueDeliveryInstruction(group, voiceResolved.characters, voiceResolved.audioRoles)
+        ? buildDialogueDeliveryInstruction(
+            group,
+            voiceResolved.characters,
+            voiceResolved.audioRoles,
+          )
         : null;
     // 2026/07:右侧只展示可编辑的镜头分解和中文风格名；通用故事板生成说明、完整
     // 风格锁与约束只供模型执行。确认生成时，编辑后的这段文本会直接拼入真实请求。
@@ -10029,7 +10036,13 @@ function WorkspacePage() {
         toast.warning("场景图片保存失败，将以临时链接保存(24h 内有效)");
       }
     }
-    const persistedImages = await persistAssetEntries("scene", s.id, images, coverUrl, permCoverUrl);
+    const persistedImages = await persistAssetEntries(
+      "scene",
+      s.id,
+      images,
+      coverUrl,
+      permCoverUrl,
+    );
     const r = await saveOneScene(s, user.id, permCoverUrl, persistedImages);
     if (!r.ok) {
       toast.error(`保存场景失败:${r.error}`);
@@ -10187,6 +10200,10 @@ function WorkspacePage() {
     setSavingWorkspace(true);
     setSavedWorkspace(false);
     try {
+      // 保存看门狗（2026/08 verify-save-probe 实证根因）：persistMedia /
+      // saveWorkspaceData 任一上游挂死时,savingWorkspace 永不复位——后续保存
+      // 全部被上方互斥早退(零请求)且顶栏「保存中…」常亮。60s 强制 settle,
+      // finally 必然复位;排队保存(pendingSaveRef)随后自动补发。
       // 2026/06:入库 ephemeral 媒体(分镜视频 + 故事板图)。
       // ARK / DashScope / Seedream 三方 URL 24h 过期,服务端下载 → 上传
       // Supabase Storage → 返回永久 URL,替换后写回 workspace_data。
@@ -10258,13 +10275,19 @@ function WorkspacePage() {
       if (hasEphemeralMedia) {
         const toastId = toast.loading("正在将视频 / 故事板图入库到你的存储…");
         try {
-          const persistRes = await callPersistMedia({
-            data: {
-              workspaceId,
-              groupVideos: flattenForPersist(groupVideos),
-              groupStoryboards: flattenForPersistStoryboards(groupStoryboards),
-            },
-          });
+          // 看门狗（2026/08 verify-save-probe 实证）：入库/保存任一上游挂死
+          // 会让 savingWorkspace 永不复位、后续保存全部被互斥早退。60s 强制超时。
+          const persistRes = await withWatchdog(
+            callPersistMedia({
+              data: {
+                workspaceId,
+                groupVideos: flattenForPersist(groupVideos),
+                groupStoryboards: flattenForPersistStoryboards(groupStoryboards),
+              },
+            }),
+            60_000,
+            "workspace save watchdog timeout",
+          );
           const persistedFlat = unflattenPersistVideos(persistRes.groupVideos);
           const merged: Record<string, VideoGenEntry[]> = {};
           for (const gid of Object.keys(groupVideos)) {
@@ -10415,13 +10438,18 @@ function WorkspacePage() {
           ]),
         ),
       };
-      const res = await callSaveWorkspace({
-        data: {
-          id: workspaceId,
-          workspaceData,
-          completedStages: Array.from(completedStages),
-        },
-      });
+      // 同看门狗口径：保存主请求挂死不得拖死互斥标志（见上方注释）
+      const res = await withWatchdog(
+        callSaveWorkspace({
+          data: {
+            id: workspaceId,
+            workspaceData,
+            completedStages: Array.from(completedStages),
+          },
+        }),
+        60_000,
+        "workspace save watchdog timeout",
+      );
       if (res.ok) {
         setSavedWorkspace(true);
         if (!silent) toast.success("工作区已保存");
@@ -10459,7 +10487,11 @@ function WorkspacePage() {
       } else {
         if (!silent) toast.error(res.error || "保存失败");
       }
-    } catch {
+    } catch (error) {
+      // 看门狗超时（上游挂死）单列日志,便于与业务失败区分;静默保存不打扰用户
+      if (error instanceof Error && error.message === "workspace save watchdog timeout") {
+        console.warn("[workspace] save watchdog: 上游保存调用 60s 无响应,已强制复位保存标志");
+      }
       if (!silent) toast.error("保存失败");
     } finally {
       setSavingWorkspace(false);
@@ -15304,41 +15336,39 @@ function WorkspacePage() {
                           >
                             {/* 年龄/面部/身材/服装:铅笔内联编辑,回车/失焦保存,Esc 取消;
                                 保存同步提示词对应行并写回角色属性(2026/08) */}
-                            {(
-                              [
-                                {
-                                  field: "age" as const,
-                                  label: "年龄",
-                                  display: `${draftCharacter.age}岁`,
-                                  editValue: String(draftCharacter.age),
-                                },
-                                {
-                                  field: "face" as const,
-                                  label: "面部",
-                                  display: cleanLegacyUserRequirement(
-                                    look?.faceDescription || draftCharacter.faceDescription,
-                                  ),
-                                  editValue: look?.faceDescription || draftCharacter.faceDescription,
-                                },
-                                {
-                                  field: "body" as const,
-                                  label: "身材",
-                                  display: cleanLegacyUserRequirement(
-                                    look?.bodyDescription || draftCharacter.bodyDescription,
-                                  ),
-                                  editValue: look?.bodyDescription || draftCharacter.bodyDescription,
-                                },
-                                {
-                                  field: "clothing" as const,
-                                  label: "服装",
-                                  display: cleanLegacyUserRequirement(
-                                    look?.clothingDescription || draftCharacter.clothingDescription,
-                                  ),
-                                  editValue:
-                                    look?.clothingDescription || draftCharacter.clothingDescription,
-                                },
-                              ]
-                            ).map((row) => (
+                            {[
+                              {
+                                field: "age" as const,
+                                label: "年龄",
+                                display: `${draftCharacter.age}岁`,
+                                editValue: String(draftCharacter.age),
+                              },
+                              {
+                                field: "face" as const,
+                                label: "面部",
+                                display: cleanLegacyUserRequirement(
+                                  look?.faceDescription || draftCharacter.faceDescription,
+                                ),
+                                editValue: look?.faceDescription || draftCharacter.faceDescription,
+                              },
+                              {
+                                field: "body" as const,
+                                label: "身材",
+                                display: cleanLegacyUserRequirement(
+                                  look?.bodyDescription || draftCharacter.bodyDescription,
+                                ),
+                                editValue: look?.bodyDescription || draftCharacter.bodyDescription,
+                              },
+                              {
+                                field: "clothing" as const,
+                                label: "服装",
+                                display: cleanLegacyUserRequirement(
+                                  look?.clothingDescription || draftCharacter.clothingDescription,
+                                ),
+                                editValue:
+                                  look?.clothingDescription || draftCharacter.clothingDescription,
+                              },
+                            ].map((row) => (
                               <p key={row.field} className="mt-1.5 first:mt-0">
                                 {editingAttributeField === row.field ? (
                                   <span className="flex items-start gap-1">
