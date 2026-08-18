@@ -13734,6 +13734,15 @@ function WorkspacePage() {
                 c.episodes.includes(selectedEpisodeIndex),
               );
               if (epGroups.length === 0) {
+                // 加载期（分镜结构未就绪且无错误）显示加载占位而非空态文案，
+                // 避免「还没有分镜」在数据返回前闪现误导用户（82a9728 守卫已挡保存）。
+                if (!storyboardStructureReady && !storyboardStructureError) {
+                  return (
+                    <div className="max-w-4xl mx-auto panel p-10 text-center space-y-3">
+                      <p className="text-text-muted text-sm">分镜加载中…</p>
+                    </div>
+                  );
+                }
                 const needsChars = !hasEpChars && hasAnyEp;
                 return (
                   <div className="max-w-4xl mx-auto panel p-10 text-center space-y-3">
