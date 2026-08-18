@@ -1835,6 +1835,14 @@ export type Database = {
         Returns: boolean
       }
       join_team_as_self: { Args: { p_team_id: string }; Returns: undefined }
+      merge_workspace_data: {
+        Args: {
+          p_completed_stages: string[]
+          p_patch: Json
+          p_project_id: string
+        }
+        Returns: undefined
+      }
       reclaim_team_credits: {
         Args: {
           p_amount: number
