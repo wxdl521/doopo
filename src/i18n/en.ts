@@ -969,6 +969,8 @@ export const en: Translations = {
   acc_credits_col_desc: "Description",
   acc_credits_col_amount: "Change",
   acc_credits_col_balance: "Balance",
+  acc_credits_col_project: "Project",
+  acc_credits_project_filter_placeholder: "Filter by project name",
   acc_credits_no_records: "No usage records yet",
   acc_credits_prev: "Prev",
   acc_credits_next: "Next",

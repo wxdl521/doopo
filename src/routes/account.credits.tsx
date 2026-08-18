@@ -36,6 +36,9 @@ function AccountCredits() {
   const [customAmount, setCustomAmount] = useState("");
   const [transactions, setTransactions] = useState<any[]>([]);
   const [page, setPage] = useState(0);
+  // 项目名筛选：输入后 400ms 防抖生效，回到第一页
+  const [projectFilterInput, setProjectFilterInput] = useState("");
+  const [projectFilter, setProjectFilter] = useState("");
 
   useEffect(() => {
     callGetBalance({ data: undefined })
@@ -44,10 +47,24 @@ function AccountCredits() {
   }, []);
 
   useEffect(() => {
-    callTransactions({ data: { limit: PAGE_SIZE, offset: page * PAGE_SIZE } })
+    const timer = setTimeout(() => {
+      setProjectFilter(projectFilterInput.trim());
+      setPage(0);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [projectFilterInput]);
+
+  useEffect(() => {
+    callTransactions({
+      data: {
+        limit: PAGE_SIZE,
+        offset: page * PAGE_SIZE,
+        ...(projectFilter ? { projectName: projectFilter } : {}),
+      },
+    })
       .then((r: any) => setTransactions(r?.transactions ?? []))
       .catch(() => setTransactions([]));
-  }, [page]);
+  }, [page, projectFilter]);
 
   const customCredits = parseInt(customAmount, 10);
   const customPrice =
@@ -119,13 +136,22 @@ function AccountCredits() {
 
       {/* 消耗记录 */}
       <section className="panel p-0 overflow-hidden">
-        <div className="px-6 pt-6 pb-3">
+        <div className="px-6 pt-6 pb-3 flex flex-wrap items-center justify-between gap-3">
           <h3 className="font-display text-lg font-bold">{t.acc_credits_history}</h3>
+          <input
+            type="text"
+            value={projectFilterInput}
+            onChange={(e) => setProjectFilterInput(e.target.value)}
+            placeholder={t.acc_credits_project_filter_placeholder}
+            aria-label={t.acc_credits_project_filter_placeholder}
+            className="w-56 text-sm bg-transparent border border-border rounded-lg px-3 py-1.5 outline-none focus:border-accent"
+          />
         </div>
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>{t.acc_credits_col_time}</TableHead>
+              <TableHead>{t.acc_credits_col_project}</TableHead>
               <TableHead>{t.acc_credits_col_desc}</TableHead>
               <TableHead className="text-right">{t.acc_credits_col_amount}</TableHead>
               <TableHead className="text-right">{t.acc_credits_col_balance}</TableHead>
@@ -134,7 +160,7 @@ function AccountCredits() {
           <TableBody>
             {transactions.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={4} className="text-center text-text-muted py-8">
+                <TableCell colSpan={5} className="text-center text-text-muted py-8">
                   {t.acc_credits_no_records}
                 </TableCell>
               </TableRow>
@@ -151,6 +177,9 @@ function AccountCredits() {
                   <TableRow key={tx.id}>
                     <TableCell className="text-sm text-text-muted whitespace-nowrap">
                       {fmtTime}
+                    </TableCell>
+                    <TableCell className="text-sm text-text-muted">
+                      {tx.projectName ?? "-"}
                     </TableCell>
                     <TableCell className="text-sm">
                       {tx.description ?? tx.model ?? "-"}

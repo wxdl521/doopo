@@ -947,6 +947,8 @@ export const zh = {
   acc_credits_col_desc: "说明",
   acc_credits_col_amount: "积分变动",
   acc_credits_col_balance: "余额",
+  acc_credits_col_project: "项目",
+  acc_credits_project_filter_placeholder: "按项目名称筛选",
   acc_credits_no_records: "暂无消耗记录",
   acc_credits_prev: "上一页",
   acc_credits_next: "下一页",

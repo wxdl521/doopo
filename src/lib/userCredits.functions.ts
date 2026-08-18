@@ -183,6 +183,8 @@ export type UserCreditTransactionRow = {
   resolution: string | null;
   duration: number | null;
   description: string | null;
+  /** 项目名称（20260818061000 迁移执行前为 null）。 */
+  projectName: string | null;
   createdAt: string;
 };
 
@@ -193,6 +195,8 @@ export const getUserCreditTransactions = createServerFn({ method: "POST" })
       .object({
         limit: z.number().int().min(1).max(100).optional().default(20),
         offset: z.number().int().min(0).optional().default(0),
+        /** 项目名称模糊筛选（可选）。 */
+        projectName: z.string().trim().max(200).optional(),
       })
       .safeParse(input);
     if (!parsed.success) throw new Error("Invalid input");
@@ -200,13 +204,33 @@ export const getUserCreditTransactions = createServerFn({ method: "POST" })
   })
   .handler(async ({ data, context }) => {
     const { supabase, userId } = context;
-    const { data: rows, error } = await supabase
-      .from("user_credit_transactions")
-      .select("id,type,amount,balance_after,model,resolution,duration,description,created_at")
-      .eq("user_id", userId)
-      .order("created_at", { ascending: false })
-      .range(data.offset, data.offset + data.limit - 1);
-    if (error) return { transactions: [] as UserCreditTransactionRow[], error: error.message };
+    const buildQuery = (withProject: boolean) => {
+      let query = supabase
+        .from("user_credit_transactions")
+        .select(
+          withProject
+            ? "id,type,amount,balance_after,model,resolution,duration,description,project_name,created_at"
+            : "id,type,amount,balance_after,model,resolution,duration,description,created_at",
+        )
+        .eq("user_id", userId)
+        .order("created_at", { ascending: false })
+        .range(data.offset, data.offset + data.limit - 1);
+      // 项目列不存在（迁移未执行）时项目筛选随降级一并跳过，不报错
+      if (withProject && data.projectName) {
+        query = query.ilike("project_name", `%${data.projectName}%`);
+      }
+      return query;
+    };
+    // 项目列是后加的（20260818061000），迁移未执行时 42703 降级为无项目列查询
+    let result = await buildQuery(true);
+    let hasProjectColumns = true;
+    if (result.error && /42703|does not exist/i.test(result.error.message ?? "")) {
+      hasProjectColumns = false;
+      result = await buildQuery(false);
+    }
+    const { data: rows, error } = result;
+    if (error)
+      return { transactions: [] as UserCreditTransactionRow[], error: error.message, hasProjectColumns };
     const transactions: UserCreditTransactionRow[] = (rows ?? []).map((r: any) => ({
       id: r.id,
       type: r.type,
@@ -216,9 +240,10 @@ export const getUserCreditTransactions = createServerFn({ method: "POST" })
       resolution: r.resolution,
       duration: r.duration,
       description: r.description,
+      projectName: r.project_name ?? null,
       createdAt: r.created_at,
     }));
-    return { transactions, error: null as string | null };
+    return { transactions, error: null as string | null, hasProjectColumns };
   });
 
 
