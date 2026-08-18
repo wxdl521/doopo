@@ -8,7 +8,9 @@ import {
 } from "../videoAssetLibrary";
 import {
   getVideoBackend,
+  formatTokenponyActionError,
   parseTokenponyAssetResult,
+  parseTokenponyError,
   parseTokenponyTaskCreate,
   parseTokenponyTaskResult,
   pickTokenponyConfig,
@@ -138,5 +140,53 @@ describe("tokenpony 配置解析（env 优先 → 后台登记回退）", () => 
     );
     expect(config.apiKey).toBe("env-key");
     expect(config.baseUrl).toBe("https://db.example.com");
+  });
+});
+
+describe("tokenpony 素材 Action 错误解析（2026-08 实证:200 业务错误被吞）", () => {
+  it("火山 Action 风格 ResponseMetadata.Error{Code,Message}", () => {
+    const err = parseTokenponyError({
+      ResponseMetadata: { Error: { Code: "AuthorizationLetterNotSigned", Message: "请先签署授权函" } },
+    });
+    expect(err).toEqual({ code: "AuthorizationLetterNotSigned", message: "请先签署授权函" });
+  });
+
+  it("嵌套 {error:{code,message}} 与信封 {code,msg} 变体", () => {
+    expect(parseTokenponyError({ error: { code: "1001", message: "配额不足" } })).toEqual({
+      code: "1001",
+      message: "配额不足",
+    });
+    expect(parseTokenponyError({ code: 400, msg: "缺少参数" })).toEqual({
+      code: "400",
+      message: "缺少参数",
+    });
+    // 成功形态不误判
+    expect(parseTokenponyError({ code: 200, data: { Id: "g-1" } })).toBeNull();
+    expect(parseTokenponyError({ code: 0 })).toBeNull();
+    expect(parseTokenponyError({ data: {} })).toBeNull();
+  });
+
+  it("错误文案格式 + 授权函引导", () => {
+    const text = formatTokenponyActionError(
+      "CreateAssetGroup",
+      { code: "AuthorizationLetterNotSigned", message: "not signed" },
+      200,
+      "{}",
+    );
+    expect(text).toContain("[tokenpony] asset CreateAssetGroup 失败: AuthorizationLetterNotSigned: not signed");
+    expect(text).toContain("签署素材库授权函");
+  });
+
+  it("解析不出错误/无 message → 附原始响应体截 300 字符", () => {
+    const text = formatTokenponyActionError("CreateAsset", null, 200, "x".repeat(400));
+    expect(text).toContain("未知错误码");
+    expect(text).toContain("原始响应: " + "x".repeat(300));
+    expect(text).not.toContain("x".repeat(301));
+    // HTTP 层错误用 HTTP 状态码占位
+    expect(formatTokenponyActionError("GetAsset", null, 500, "boom")).toContain("HTTP 500");
+    // 有完整 code+message 时不附 body
+    expect(
+      formatTokenponyActionError("GetAsset", { code: "404", message: "asset not found" }, 200, "{}"),
+    ).not.toContain("原始响应");
   });
 });

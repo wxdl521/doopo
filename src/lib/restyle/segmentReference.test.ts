@@ -320,3 +320,57 @@ describe("ensureSegmentReferenceClip · runRenderQueue 裁剪三条路径", () =
     if (!result.ok) expect(result.error).toContain("超时");
   });
 });
+
+describe("ensureSegmentReferenceClip 元数据自检（转码流复制 bug 加固）", () => {
+  const noSleep = () => Promise.resolve();
+  const base = {
+    sourceUrl: "https://src/example.mp4",
+    range: { startMs: 0, endMs: 10_000 },
+    sleep: noSleep,
+  };
+
+  it("产物不一致 → 自动重裁一次(新 job),第二次正常则放行", async () => {
+    const submits: string[] = [];
+    const clip = await ensureSegmentReferenceClip({
+      ...base,
+      submitTrim: async () => {
+        submits.push("job");
+        return { ok: true as const, jobId: `job-${submits.length}` };
+      },
+      pollTrim: async (jobId) => ({ ok: true as const, status: "succeeded" as const, videoUrl: `https://cdn/${jobId}.mp4` }),
+      verifyClip: async (url) => ({ ok: !url.includes("job-1"), error: url.includes("job-1") ? "裁剪产物元数据异常（声明 556 帧/实际约 327 帧），请稍后重试或联系转码服务" : undefined }),
+    });
+    expect(submits).toHaveLength(2);
+    expect(clip).toEqual({ ok: true, url: "https://cdn/job-2.mp4", fromCache: false });
+  });
+
+  it("重裁后仍不一致 → 明确报错（坏片段不交给上游）", async () => {
+    let submitCount = 0;
+    const clip = await ensureSegmentReferenceClip({
+      ...base,
+      submitTrim: async () => ({ ok: true as const, jobId: `j${++submitCount}` }),
+      pollTrim: async () => ({ ok: true as const, status: "succeeded" as const, videoUrl: "https://cdn/x.mp4" }),
+      verifyClip: async () => ({ ok: false, error: "裁剪产物元数据异常（声明 556 帧/实际约 327 帧），请稍后重试或联系转码服务" }),
+    });
+    expect(submitCount).toBe(2);
+    expect(clip.ok).toBe(false);
+    if (!clip.ok) expect(clip.error).toContain("元数据异常");
+  });
+
+  it("命中缓存跳过校验;不传 verifyClip 行为同旧版", async () => {
+    const cached = await ensureSegmentReferenceClip({
+      ...base,
+      cachedUrl: "https://cdn/cached.mp4",
+      submitTrim: async () => ({ ok: true as const, jobId: "j" }),
+      pollTrim: async () => ({ ok: true as const, status: "succeeded" as const, videoUrl: "u" }),
+      verifyClip: async () => ({ ok: false, error: "不应被调用" }),
+    });
+    expect(cached).toEqual({ ok: true, url: "https://cdn/cached.mp4", fromCache: true });
+    const legacy = await ensureSegmentReferenceClip({
+      ...base,
+      submitTrim: async () => ({ ok: true as const, jobId: "j" }),
+      pollTrim: async () => ({ ok: true as const, status: "succeeded" as const, videoUrl: "u" }),
+    });
+    expect(legacy.ok).toBe(true);
+  });
+});

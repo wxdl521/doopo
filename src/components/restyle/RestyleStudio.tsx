@@ -112,6 +112,7 @@ import {
   trimCacheKey,
   withBackoffRetry,
 } from "../../lib/restyle/segmentReference";
+import { verifyTrimmedClipMeta } from "../../lib/mp4Probe";
 import { transcribeSourceVideo } from "./restyleTranscript";
 import { reviewRestyleAssetTable } from "../../lib/restyle/restyleAssetReview.functions";
 import type { AssetReviewIssue, AssetReviewVerdict } from "../../lib/restyle/assetReview";
@@ -2951,8 +2952,45 @@ export default function RestyleStudio() {
       cachedUrl: project?.trimCacheMap?.[cacheKey],
       submitTrim: (trim) => withBackoffRetry(() => callSubmitVideoTrimJob({ data: trim })),
       pollTrim: (jobId) => withBackoffRetry(() => callPollVideoTrimJob({ data: { jobId } })),
+      // 2026/08:裁剪产物入库前元数据自检（转码流复制 bug:nb_frames 声明与实际
+      // 不符,上游按声明帧抽帧报 internal error）。不一致自动重裁一次,仍异常
+      // 报错并记 errorLogs——坏片段不交给上游、不进缓存。解析失败放行不阻断。
+      verifyClip: async (clipUrl) => {
+        try {
+          const res = await fetch(clipUrl);
+          if (!res.ok) {
+            return { ok: true, error: undefined }; // 拉取失败按不可判定放行
+          }
+          const verdict = verifyTrimmedClipMeta(
+            await res.arrayBuffer(),
+            (range.endMs - range.startMs) / 1000,
+          );
+          return { ok: verdict.ok, error: verdict.ok ? undefined : verdict.error };
+        } catch {
+          return { ok: true, error: undefined };
+        }
+      },
     });
     if (!clip.ok) {
+      // 元数据异常（重裁后仍不一致）是可定位的转码服务故障,记 errorLogs 供排查;
+      // 其它失败维持原降级口径（不带参考视频提交）。
+      if (/元数据异常|时长异常/.test(clip.error)) {
+        void callReportGenerationError({
+          data: {
+            kind: "video",
+            provider: "transcode",
+            model: videoModel,
+            errorMessage: `裁剪产物自检失败（${job.episode ?? ""} ${job.segmentId ?? ""}）：${clip.error}`,
+            requestPayload: {
+              episode: job.episode ?? null,
+              segmentId: job.segmentId ?? null,
+              sourceId: job.source.id,
+              rangeStartMs: range.startMs,
+              rangeEndMs: range.endMs,
+            },
+          },
+        });
+      }
       appendRenderLog(
         projectId,
         job.attachmentId,

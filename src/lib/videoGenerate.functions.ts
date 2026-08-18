@@ -735,6 +735,71 @@ export function tokenponyEnvelopeError(raw: unknown): string | null {
   return json.msg || json.message || json.error || `服务返回错误码 ${String(json.code)}`;
 }
 
+/**
+ * tokenpony 业务错误解析（2026-08 实证:HTTP 200 也可能业务错误,字段名/层级
+ * 多变,旧信封解析产出「服务返回错误码 undefined」把真因吞了）。覆盖:
+ *   1. 火山 Action 风格 ResponseMetadata.Error{Code,Message};
+ *   2. 嵌套 {error:{code,message}};
+ *   3. 信封 {code 非 200/0/success, msg/message/error 字符串}。
+ * 识别不到错误返回 null。
+ */
+export function parseTokenponyError(
+  raw: unknown,
+): { code: string; message: string } | null {
+  if (!raw || typeof raw !== "object") return null;
+  const json = raw as Record<string, unknown>;
+  const actionError = (json.ResponseMetadata as { Error?: { Code?: unknown; Message?: unknown } } | undefined)?.Error;
+  if (actionError && (actionError.Code !== undefined || actionError.Message)) {
+    return {
+      code: String(actionError.Code ?? ""),
+      message: String(actionError.Message ?? ""),
+    };
+  }
+  const nested = json.error;
+  if (nested && typeof nested === "object") {
+    const record = nested as { code?: unknown; message?: unknown };
+    if (record.code !== undefined || record.message) {
+      return { code: String(record.code ?? ""), message: String(record.message ?? "") };
+    }
+  }
+  const code = json.code as number | string | undefined;
+  const isOk = code === 200 || code === "200" || code === 0 || code === "success";
+  if (code !== undefined && !isOk) {
+    return {
+      code: String(code),
+      message: String(
+        (json.msg as string) ||
+          (json.message as string) ||
+          (typeof json.error === "string" ? json.error : "") ||
+          "",
+      ),
+    };
+  }
+  return null;
+}
+
+/**
+ * 素材 Action 错误文案:[tokenpony] asset {Action} 失败: {Code}: {Message}。
+ * - 授权/未签约类错误码（AuthorizationLetter/NotSigned/授权函/签署/未签）追加
+ *   控制台签署引导（官方文档:首次创建素材组需先签署授权函）;
+ * - 解析不出错误/无 message 时附原始响应体截 300 字符（对齐 arkSubmit 的
+ *   full body 日志风格,下次失败直接可见真因）。
+ */
+export function formatTokenponyActionError(
+  action: string,
+  error: { code: string; message: string } | null,
+  httpStatus: number,
+  rawBody: string,
+): string {
+  const code = error?.code || (httpStatus >= 400 ? `HTTP ${httpStatus}` : "未知错误码");
+  const message = error?.message || "";
+  const guidance = /AuthorizationLetter|NotSigned|授权函|签署|未签/i.test(`${code} ${message}`)
+    ? "。请先到火山/tokenpony 控制台签署素材库授权函"
+    : "";
+  const raw = !error || !error.message ? `（原始响应: ${rawBody.slice(0, 300)}）` : "";
+  return `[tokenpony] asset ${action} 失败: ${code}: ${message}${guidance}${raw}`;
+}
+
 /** 创建响应解析:{code:200, data:{id}} → taskId */
 export function parseTokenponyTaskCreate(raw: unknown): string | null {
   if (!raw || typeof raw !== "object") return null;
@@ -907,11 +972,19 @@ async function tokenponyCallAssetAction(input: {
     try {
       json = JSON.parse(text);
     } catch {}
-    const envelopeError = tokenponyEnvelopeError(json);
-    if (!res.ok || envelopeError) {
+    // 业务错误解析覆盖火山 Action 风格/嵌套 error/信封三种形态（见 parseTokenponyError）;
+    // 解析不出时 formatTokenponyActionError 会附原始响应体,真因不再被吞
+    const actionError = parseTokenponyError(json);
+    if (!res.ok || actionError) {
       return {
         ok: false,
-        error: `[tokenpony] asset ${input.action} ${res.status}: ${envelopeError || text.slice(0, 300)}`,
+        error: formatTokenponyActionError(input.action, actionError, res.status, text),
+      };
+    }
+    if (json.data == null) {
+      return {
+        ok: false,
+        error: `[tokenpony] asset ${input.action} 响应无 data 字段（原始响应: ${text.slice(0, 300)}）`,
       };
     }
     return { ok: true, data: json.data };

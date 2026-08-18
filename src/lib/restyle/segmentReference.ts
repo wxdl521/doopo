@@ -171,25 +171,47 @@ export async function ensureSegmentReferenceClip(input: {
   cachedUrl?: string;
   submitTrim: (trim: { url: string; startMs: number; endMs: number }) => Promise<TrimSubmitResult>;
   pollTrim: (jobId: string) => Promise<TrimPollResult>;
+  /** 产物元数据自检（2026/08 转码流复制 bug 第二层加固;缺省不校验,行为同旧版） */
+  verifyClip?: (url: string) => Promise<{ ok: boolean; error?: string }>;
   sleep?: (ms: number) => Promise<void>;
   pollIntervalMs?: number;
   maxPolls?: number;
 }): Promise<{ ok: true; url: string; fromCache: boolean } | { ok: false; error: string }> {
   if (input.cachedUrl) return { ok: true, url: input.cachedUrl, fromCache: true };
   const sleep = input.sleep ?? defaultSleep;
-  const submitted = await input.submitTrim({
-    url: input.sourceUrl,
-    startMs: input.range.startMs,
-    endMs: input.range.endMs,
-  });
-  if (!submitted.ok) return { ok: false, error: submitted.error };
-  const maxPolls = input.maxPolls ?? 90;
-  const interval = input.pollIntervalMs ?? 2_000;
-  for (let attempt = 0; attempt < maxPolls; attempt++) {
-    await sleep(interval);
-    const poll = await input.pollTrim(submitted.jobId);
-    if (!poll.ok) return { ok: false, error: poll.error };
-    if (poll.status === "succeeded") return { ok: true, url: poll.videoUrl, fromCache: false };
+  // 元数据异常时自动重裁一次:round 0 = 首次,round 1 = 重裁。
+  // 坏片段不进缓存（调用方只在 ok 时写 trimCacheMap;v2 前缀隔离见 trimCacheKey）。
+  for (let round = 0; round < 2; round += 1) {
+    const submitted = await input.submitTrim({
+      url: input.sourceUrl,
+      startMs: input.range.startMs,
+      endMs: input.range.endMs,
+    });
+    if (!submitted.ok) return { ok: false, error: submitted.error };
+    const maxPolls = input.maxPolls ?? 90;
+    const interval = input.pollIntervalMs ?? 2_000;
+    let retryWithNewJob = false;
+    for (let attempt = 0; attempt < maxPolls; attempt += 1) {
+      await sleep(interval);
+      const poll = await input.pollTrim(submitted.jobId);
+      if (!poll.ok) return { ok: false, error: poll.error };
+      if (poll.status !== "succeeded") continue;
+      if (!input.verifyClip) return { ok: true, url: poll.videoUrl, fromCache: false };
+      const verdict = await input.verifyClip(poll.videoUrl);
+      if (verdict.ok) return { ok: true, url: poll.videoUrl, fromCache: false };
+      if (round === 0) {
+        // 首次产物元数据不一致:换新 job 重裁一次
+        retryWithNewJob = true;
+        break;
+      }
+      return {
+        ok: false,
+        error: verdict.error ?? "裁剪产物元数据异常，请稍后重试或联系转码服务",
+      };
+    }
+    if (!retryWithNewJob) {
+      return { ok: false, error: "参考视频裁剪超时：已等待约 3 分钟仍未完成。" };
+    }
   }
   return { ok: false, error: "参考视频裁剪超时：已等待约 3 分钟仍未完成。" };
 }
