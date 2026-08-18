@@ -59,7 +59,7 @@ import {
 import {
   mergeAudioRoles,
   migrateNarrationToAudioRoles,
-  normalizeExtractedAudioRole,
+  normalizeExtractedAudioRoles,
 } from "../lib/audioRoles";
 import { withLoadRetry, withWatchdog } from "../lib/withWatchdog";
 import { buildWorkspaceDataPatch } from "../lib/workspaceSavePatch";
@@ -10878,7 +10878,11 @@ function WorkspacePage() {
                 : {}),
             };
           });
-          return { characters };
+          // 2026/08 P0 修复：audioRoles 随 characters 一起归一化返回——此前
+          // 这里只返回 characters,服务端正确提取的画外音角色在此被丢,
+          // 下游（音频角色区块/分镜归属/确认卡）全部无从发生。
+          const audioRoles = normalizeExtractedAudioRoles(p.audioRoles, epForNew);
+          return { characters, ...(audioRoles.length ? { audioRoles } : {}) };
         }
         case "prop-extract": {
           const epForNew = extractEpIndex ?? 1;
@@ -11541,13 +11545,11 @@ function WorkspacePage() {
             .filter(Boolean),
         }));
         const propsWithEp = propResult?.props?.map((p) => ({ ...p, episodeIndex: extractEpIndex }));
-        // 2026/08:画外音提取——音频角色随 character-extract 产出,归一化后在 setData 合并
-        const extractedAudioRoles = (charResult?.audioRoles ?? [])
-          .map((r: any) => normalizeExtractedAudioRole(r, extractEpIndex))
-          .filter((r: GenAudioRole | null): r is GenAudioRole => r !== null);
+        // 2026/08:画外音提取——音频角色已在 tryAi 内归一化（与 setData 合并端
+        // 同一 normalizeExtractedAudioRole 口径）,这里直接透传,不再二次归一化。
         aiPatch = {
           ...(charResult ? { characters: charResult.characters } : {}),
-          ...(extractedAudioRoles.length ? { audioRoles: extractedAudioRoles } : {}),
+          ...(charResult?.audioRoles?.length ? { audioRoles: charResult.audioRoles } : {}),
           ...(sceneResult ? { scenes: scenesWithEp } : {}),
           ...(propResult ? { props: propsWithEp } : {}),
         };
@@ -11651,6 +11653,10 @@ function WorkspacePage() {
             ...d,
             characters:
               aiPatch?.characters ?? (d.characters.length ? d.characters : generateCharacters()),
+            // 音频角色（画外音）随角色阶段产出,按 id 合并（保留既有音色绑定）
+            ...(aiPatch?.audioRoles?.length
+              ? { audioRoles: mergeAudioRoles(d.audioRoles ?? [], aiPatch.audioRoles) }
+              : {}),
           };
         }
         case "storyboard": {

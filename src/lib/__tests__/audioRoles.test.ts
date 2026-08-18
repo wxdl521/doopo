@@ -10,6 +10,7 @@ import {
   mergeAudioRoles,
   migrateNarrationToAudioRoles,
   normalizeExtractedAudioRole,
+  normalizeExtractedAudioRoles,
 } from "../audioRoles";
 import { sanitizeSpeakerAudioRoleId } from "../storyboard.functions";
 import { attributeShotSpeaker, buildOffscreenVoiceConstraint } from "../voiceCasting";
@@ -182,5 +183,30 @@ describe("audioRoleFromCharacter 类型推断", () => {
     expect(audioRoleFromCharacter(visualChar({ name: "旁白" })).kind).toBe("narrator");
     expect(audioRoleFromCharacter(visualChar({ name: "电话外画外音" })).kind).toBe("voiceover");
     expect(audioRoleFromCharacter(visualChar({ name: "林晚心声" })).kind).toBe("inner_monologue");
+  });
+});
+
+describe("normalizeExtractedAudioRoles（689a418 P0 回归：归一化不丢 audioRoles）", () => {
+  it("character-extract patch 带 audioRoles 时归一化后保留（id/集数/音色描述齐全）", () => {
+    const roles = normalizeExtractedAudioRoles(
+      [
+        { name: "旁白·苍老声音", kind: "narrator", age: 65, gender: "男", voiceDescription: "沉稳苍老" },
+        { name: " ", kind: "narrator" }, // 无名丢弃
+      ],
+      3,
+    );
+    expect(roles).toHaveLength(1);
+    expect(roles[0]).toMatchObject({
+      id: "audio-旁白·苍老声音",
+      name: "旁白·苍老声音",
+      kind: "narrator",
+      episodes: [3],
+    });
+  });
+
+  it("payload 无 audioRoles 字段/非数组 → 空数组（不抛错）", () => {
+    expect(normalizeExtractedAudioRoles(undefined, 1)).toEqual([]);
+    expect(normalizeExtractedAudioRoles(null, 1)).toEqual([]);
+    expect(normalizeExtractedAudioRoles("oops", 1)).toEqual([]);
   });
 });

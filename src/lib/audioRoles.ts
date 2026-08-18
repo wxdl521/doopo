@@ -80,6 +80,17 @@ export function normalizeExtractedAudioRole(
   };
 }
 
+/**
+ * character-extract / character 阶段 payload 的 audioRoles 批量归一化
+ * （tryAi 与 aiPatch 组装的唯一入口——689a418 的 P0 就是归一化分支只返回
+ * characters 把 audioRoles 丢了;回归测试锁定此函数输出不为空）。
+ */
+export function normalizeExtractedAudioRoles(raw: unknown, epIndex: number): GenAudioRole[] {
+  return (Array.isArray(raw) ? raw : [])
+    .map((r) => normalizeExtractedAudioRole(r, epIndex))
+    .filter((r): r is GenAudioRole => r !== null);
+}
+
 /** 合并音频角色：按 id（同名同 id）去重;已存在的条目合并出现集数、保留既有音频绑定。 */
 export function mergeAudioRoles(
   existing: readonly GenAudioRole[],
