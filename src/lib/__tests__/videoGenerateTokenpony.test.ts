@@ -190,3 +190,46 @@ describe("tokenpony 素材 Action 错误解析（2026-08 实证:200 业务错误
     ).not.toContain("原始响应");
   });
 });
+
+describe("tokenpony 素材 Action 的 Result 信封（2026-08 实证:素材库与视频接口信封不同）", () => {
+  it("火山信封 Result{Id} 成功解析（CreateAssetGroup 实证形态）", () => {
+    expect(
+      parseTokenponyAssetResult({
+        ResponseMetadata: { RequestId: "r1" },
+        Result: { Id: "348161951014731776" },
+      }),
+    ).toEqual({ id: "348161951014731776", status: undefined, error: undefined });
+  });
+
+  it("Result{Id,Status,Error}:GetAsset 状态与业务失败原因透出", () => {
+    expect(parseTokenponyAssetResult({ Result: { Id: "a1", Status: "Active" } })).toEqual({
+      id: "a1",
+      status: "Active",
+      error: undefined,
+    });
+    expect(
+      parseTokenponyAssetResult({ Result: { Id: "a2", Status: "Failed", Error: "真人审核未通过" } }),
+    ).toEqual({ id: "a2", status: "Failed", error: "真人审核未通过" });
+  });
+
+  it("data 包裹形态兼容（回退）;Result 优先于 data", () => {
+    expect(parseTokenponyAssetResult({ data: { Id: "d1", Status: "Processing" } })).toEqual({
+      id: "d1",
+      status: "Processing",
+      error: undefined,
+    });
+    expect(
+      parseTokenponyAssetResult({ Result: { Id: "r1" }, data: { Id: "d1" } })?.id,
+    ).toBe("r1");
+  });
+
+  it("ResponseMetadata.Error 失败仍由 parseTokenponyError 拦截（成功判定三件套）", () => {
+    // HTTP 200 + ResponseMetadata.Error 非空 → 业务失败(即便带 Result 也不算成功)
+    expect(
+      parseTokenponyError({
+        ResponseMetadata: { Error: { Code: "InvalidParameter", Message: "GroupType 非法" } },
+        Result: {},
+      }),
+    ).toEqual({ code: "InvalidParameter", message: "GroupType 非法" });
+  });
+});

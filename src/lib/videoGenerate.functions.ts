@@ -831,14 +831,29 @@ export function parseTokenponyTaskResult(raw: unknown): {
   };
 }
 
-/** 素材 Action 响应解析:{code, data:{Id/Status}}(兼容小写键) */
-export function parseTokenponyAssetResult(raw: unknown): { id: string; status?: string } | null {
+/**
+ * 素材 Action 响应解析（2026-08 实证:tokenpony 素材库接口用火山信封
+ * ResponseMetadata+Result,视频生成接口用 data 信封,两套并存）——
+ * Result{Id/Status/Error} 优先,防御性回退 data 包裹;兼容大小写键。
+ * GetAsset 的 Error 字段（业务失败原因）一并透出。
+ */
+export function parseTokenponyAssetResult(raw: unknown): {
+  id: string;
+  status?: string;
+  error?: string;
+} | null {
   if (!raw || typeof raw !== "object") return null;
-  const data = ((raw as { data?: Record<string, unknown> }).data ?? raw) as Record<string, unknown>;
+  const json = raw as Record<string, unknown>;
+  const data = (json.Result ?? json.data ?? json) as Record<string, unknown>;
   const id = data.Id ?? data.id;
   if (typeof id !== "string" || !id) return null;
   const status = data.Status ?? data.status;
-  return { id, status: typeof status === "string" ? status : undefined };
+  const error = data.Error ?? data.error;
+  return {
+    id,
+    status: typeof status === "string" ? status : undefined,
+    error: typeof error === "string" && error ? error : undefined,
+  };
 }
 
 function tokenponyAssetUrl(assetId: string): string {
@@ -981,13 +996,16 @@ async function tokenponyCallAssetAction(input: {
         error: formatTokenponyActionError(input.action, actionError, res.status, text),
       };
     }
-    if (json.data == null) {
+    // 成功判定:HTTP 200 + 无 ResponseMetadata.Error + Result/data 存在。
+    // 素材库接口用火山信封 Result,视频生成接口用 data——Result 优先,回退 data。
+    const payload = (json as Record<string, unknown>).Result ?? json.data;
+    if (payload == null) {
       return {
         ok: false,
-        error: `[tokenpony] asset ${input.action} 响应无 data 字段（原始响应: ${text.slice(0, 300)}）`,
+        error: `[tokenpony] asset ${input.action} 响应无 Result/data 字段（原始响应: ${text.slice(0, 300)}）`,
       };
     }
-    return { ok: true, data: json.data };
+    return { ok: true, data: payload };
   } catch (e) {
     clearTimeout(timeout);
     const message =
@@ -1033,7 +1051,7 @@ async function tokenponyUploadAsset(input: {
   name: string;
   apiKey: string;
   baseUrl: string;
-}): Promise<{ ok: true; asset: { id: string; status?: string } } | { ok: false; error: string }> {
+}): Promise<{ ok: true; asset: { id: string; status?: string; error?: string } } | { ok: false; error: string }> {
   const group = await tokenponyEnsureAssetGroup({ apiKey: input.apiKey, baseUrl: input.baseUrl });
   if (!group.ok) return group;
   const created = await tokenponyCallAssetAction({
@@ -1053,7 +1071,7 @@ async function tokenponyGetAsset(input: {
   assetId: string;
   apiKey: string;
   baseUrl: string;
-}): Promise<{ ok: true; asset: { id: string; status?: string } } | { ok: false; error: string }> {
+}): Promise<{ ok: true; asset: { id: string; status?: string; error?: string } } | { ok: false; error: string }> {
   const got = await tokenponyCallAssetAction({
     action: "GetAsset",
     body: { Id: input.assetId },
@@ -1072,7 +1090,7 @@ async function tokenponyWaitForAsset(input: {
   apiKey: string;
   baseUrl: string;
   timeoutMs?: number;
-}): Promise<{ ok: true; asset: { id: string; status?: string } } | { ok: false; error: string }> {
+}): Promise<{ ok: true; asset: { id: string; status?: string; error?: string } } | { ok: false; error: string }> {
   const deadline = Date.now() + (input.timeoutMs ?? TOKENPONY_ASSET_READY_TIMEOUT_MS);
   let lastStatus = "unknown";
   while (Date.now() < deadline) {
@@ -1086,7 +1104,11 @@ async function tokenponyWaitForAsset(input: {
     }
     if (status === "failed") {
       console.warn(`[tokenpony asset×] id=${input.assetId} status=Failed`);
-      return { ok: false, error: `[tokenpony] asset ${input.assetId} 入库失败 (Failed)` };
+      return {
+        ok: false,
+        // GetAsset Result.Error 带业务失败原因时一并透出
+        error: `[tokenpony] asset ${input.assetId} 入库失败 (Failed)${result.asset.error ? `: ${result.asset.error}` : ""}`,
+      };
     }
     console.log(
       `[tokenpony asset⟳] id=${input.assetId} status=${result.asset.status || "unknown"}`,
