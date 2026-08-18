@@ -189,10 +189,16 @@ describe("estimateSourceDurationMs", () => {
 });
 
 describe("trimCacheKey", () => {
-  it("sourceId|startMs|endMs 格式，同一片段键稳定", () => {
-    expect(trimCacheKey("src-1", 0, 12_400)).toBe("src-1|0|12400");
+  it("v2|sourceId|startMs|endMs 格式，同一片段键稳定", () => {
+    expect(trimCacheKey("src-1", 0, 12_400)).toBe("v2|src-1|0|12400");
     expect(trimCacheKey("src-1", 0, 12_400)).toBe(trimCacheKey("src-1", 0, 12_400));
     expect(trimCacheKey("src-1", 0, 12_400)).not.toBe(trimCacheKey("src-2", 0, 12_400));
+  });
+
+  it("v2 版本隔离：2026-08-16 前流复制 bug 的旧缓存键（无版本前缀）全部失效重裁", () => {
+    // 旧格式 `src-1|0|12400` 与新键不同 → 旧片段元数据（nb_frames 不可信）不再复用
+    expect(trimCacheKey("src-1", 0, 12_400)).not.toBe("src-1|0|12400");
+    expect(trimCacheKey("src-1", 0, 12_400).startsWith("v2|")).toBe(true);
   });
 });
 

@@ -264,14 +264,17 @@ export function extractPollFailureDetail(raw: unknown): string | undefined {
 /**
  * r2v 时长类 400 的降档序列（TopenRouter 中转 ARK Seedance 的
  * 「duration not valid in r2v」回归）：
- * 1. 先贴参考片段实际时长——r2v 模式生成时长不得超过参考视频时长，
- *    分段时长（≤15s）可能大于裁剪后参考片段（如旧项目 30s 段被裁上限、
- *    或分段区间被场景分组压缩），贴齐参考时长是最可能合法的档；
- * 2. 再按安全离散档下探（部分网关只接受离散档，10s 也可能被拒）；
+ * 1. 先贴参考片段时长 **-0.3s 安全边距**——上游按参考视频元数据
+ *    （nb_frames/时长字段）判定时长,而我们拿到的参考时长是按请求区间
+ *    （endMs-startMs）算的名义值;旧转码流复制 bug 的片段元数据虚高/不准
+ *    （2026-08 实测 282 vs 277 帧）,贴齐名义值会与上游看到的对不上。
+ *    边距档保留 0.1s 精度（整数取整会把 0.3s 边距四舍五入掉）,
+ *    并夹到 limits 下限之上;
+ * 2. 再按安全离散档下探（部分网关只接受离散档，10s 也可能被拒）;
  * 3. 全部用尽后由调用方走「移除参考视频重投」（既有降级链）。
  * 返回去重后严格小于 currentSec 的降档序列（已按候选原序排好）。
- * limits 按渠道分档（r2vDurationLimitsForModel）：诘云 4-15s（低于 4 也拒），
- * 缺省 2-15s 保持 TopenRouter/ARK 直连既有口径。
+ * limits 按渠道分档（r2vDurationLimitsForModel）：诘云/tokenpony 4-15s
+ * （低于 4 也拒）,缺省 2-15s 保持 TopenRouter/ARK 直连既有口径。
  */
 export function r2vDurationRetryLadder(
   currentSec: number,
@@ -280,9 +283,17 @@ export function r2vDurationRetryLadder(
 ): number[] {
   const clamp = (value: number) =>
     Math.max(limits.minSec, Math.min(limits.maxSec, Math.round(value)));
-  const candidates = [referenceSec, 10, 8, 6, 5, 4]
+  // 贴齐档:参考时长 - 0.3s 边距,0.1s 精度向下取整后夹到合法域
+  const referenceRung =
+    typeof referenceSec === "number" && Number.isFinite(referenceSec)
+      ? Math.min(
+          limits.maxSec,
+          Math.max(limits.minSec, Math.floor((referenceSec - 0.3) * 10) / 10),
+        )
+      : undefined;
+  const candidates = [referenceRung, 10, 8, 6, 5, 4]
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
-    .map(clamp)
+    .map((value) => (Number.isInteger(value) ? clamp(value) : value))
     .filter((value) => value >= limits.minSec);
   return [...new Set(candidates.filter((value) => value < currentSec))];
 }

@@ -130,9 +130,13 @@ export function estimateSourceDurationMs(shots?: DirectionShot[]): number | unde
   return Number.isFinite(duration) && duration > 0 ? duration : undefined;
 }
 
-/** 项目级裁剪缓存键：同一片段跨集、重跑只裁一次。 */
+/** 项目级裁剪缓存键：同一片段跨集、重跑只裁一次。
+ *  v2 版本前缀（2026-08）：此前转码服务流复制 bug 产出的旧缓存片段,
+ *  其元数据（nb_frames/时长字段）不可信（实测 282 vs 277 帧）——上游 r2v
+ *  时长校验按元数据判定,旧片段会一直误判 400。版本化让 2026-08-16 前的
+ *  旧片段全部失效重裁;服务侧修复后的新产物才进缓存。 */
 export function trimCacheKey(sourceId: string, startMs: number, endMs: number): string {
-  return `${sourceId}|${startMs}|${endMs}`;
+  return `v2|${sourceId}|${startMs}|${endMs}`;
 }
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));

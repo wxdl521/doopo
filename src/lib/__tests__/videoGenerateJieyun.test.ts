@@ -176,7 +176,7 @@ describe("诘云素材库（Action API 解析纯函数）", () => {
     expect(r2vDurationRetryLadder(15, 3, jieyun)).toEqual([4, 10, 8, 6, 5]);
     // 当前 5s 被拒时只降不升:候选 4/10/8/6/5/4 中 <5 的只剩 4
     expect(r2vDurationRetryLadder(5, 3, jieyun)).toEqual([4]);
-    // 缺省口径不变（TopenRouter/ARK 直连）
-    expect(r2vDurationRetryLadder(15, 3)).toEqual([3, 10, 8, 6, 5, 4]);
+    // 缺省口径不变（TopenRouter/ARK 直连）——贴齐档带 0.3s 边距(3→2.7)
+    expect(r2vDurationRetryLadder(15, 3)).toEqual([2.7, 10, 8, 6, 5, 4]);
   });
 });

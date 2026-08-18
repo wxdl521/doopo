@@ -182,12 +182,20 @@ describe("restyleAssetCacheKey", () => {
 // --------------------------------------------------------------------
 
 describe("r2vDurationRetryLadder", () => {
-  it("参考片段时长优先：15s 段 + 8s 参考片段 → 参考档在前，离散档随后", () => {
-    expect(r2vDurationRetryLadder(15, 8)).toEqual([8, 10, 6, 5, 4]);
+  it("参考片段时长优先（-0.3s 安全边距）：15s 段 + 8s 参考 → 7.7s 档在前，离散档随后", () => {
+    expect(r2vDurationRetryLadder(15, 8)).toEqual([7.7, 10, 8, 6, 5, 4]);
   });
 
-  it("参考片段长于当前时长时不出现（只保留严格更小的档）", () => {
-    expect(r2vDurationRetryLadder(15, 15)).toEqual([10, 8, 6, 5, 4]);
+  it("边距档 0.1s 精度向下取整（整数取整会把 0.3s 边距抹掉）", () => {
+    // 15.08s 参考 → 请求 ≤14.8（上游按元数据判定,名义区间可能虚高几百毫秒）
+    expect(r2vDurationRetryLadder(15, 15.08)).toEqual([14.7, 10, 8, 6, 5, 4]);
+    expect(r2vDurationRetryLadder(15, 8.4)).toEqual([8.1, 10, 8, 6, 5, 4]);
+    expect(r2vDurationRetryLadder(15, 10)).toEqual([9.7, 10, 8, 6, 5, 4]);
+  });
+
+  it("参考与当前同长时,边距档仍严格更小可出（15s vs 15s → 14.7s 档）", () => {
+    expect(r2vDurationRetryLadder(15, 15)).toEqual([14.7, 10, 8, 6, 5, 4]);
+    // 远超上限的参考夹到 maxSec 后不小于 currentSec,仍不出现
     expect(r2vDurationRetryLadder(15, 30.2)).toEqual([10, 8, 6, 5, 4]);
   });
 
@@ -196,15 +204,10 @@ describe("r2vDurationRetryLadder", () => {
     expect(r2vDurationRetryLadder(12)).toEqual([10, 8, 6, 5, 4]);
   });
 
-  it("参考片段时长与离散档重复时去重，非整数取整", () => {
-    expect(r2vDurationRetryLadder(15, 8.4)).toEqual([8, 10, 6, 5, 4]);
-    expect(r2vDurationRetryLadder(15, 10)).toEqual([10, 8, 6, 5, 4]);
-  });
-
   it("当前时长 ≤4 时无档可降（交给移除参考视频重投）", () => {
     expect(r2vDurationRetryLadder(4)).toEqual([]);
-    expect(r2vDurationRetryLadder(4, 3)).toEqual([3]);
-    expect(r2vDurationRetryLadder(5, 4)).toEqual([4]);
+    expect(r2vDurationRetryLadder(4, 3)).toEqual([2.7]);
+    expect(r2vDurationRetryLadder(5, 4)).toEqual([3.7, 4]);
   });
 
   it("参考片段时长夹到 2-15s 合法域", () => {

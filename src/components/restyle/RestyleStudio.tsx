@@ -2973,8 +2973,10 @@ export default function RestyleStudio() {
         trimCacheMap: { ...current.trimCacheMap, [cacheKey]: clip.url },
       }));
     }
-    // 参考片段实际时长随 URL 返回：r2v 时长降档重投的贴齐档依据
-    // （r2v 生成时长不得超过参考视频时长）。
+    // 参考片段时长按请求区间（endMs-startMs）的名义值返回——不是转码产物的
+    // 实测时长；r2v 降档阶梯的贴齐档为此预留 0.3s 安全边距
+    // （上游按产物元数据 nb_frames 判定,名义区间与元数据可能差几百毫秒,
+    //  旧流复制 bug 片段偏差更大,见 trimCacheKey 的 v2 注释）。
     return { ok: true, url: clip.url, durationSec: (range.endMs - range.startMs) / 1000 };
   }
 
