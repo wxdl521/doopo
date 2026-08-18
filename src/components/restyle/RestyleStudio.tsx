@@ -125,6 +125,7 @@ import {
   submitVideoTaskFn,
   uploadJieyunAsset,
   uploadKeyiyunAsset,
+  uploadTokenponyAsset,
   uploadTopenrouterAsset,
 } from "../../lib/videoGenerate.functions";
 import {
@@ -1277,6 +1278,7 @@ export default function RestyleStudio() {
   const callUploadTopenrouterAsset = useServerFn(uploadTopenrouterAsset);
   const callUploadKeyiyunAsset = useServerFn(uploadKeyiyunAsset);
   const callUploadJieyunAsset = useServerFn(uploadJieyunAsset);
+  const callUploadTokenponyAsset = useServerFn(uploadTokenponyAsset);
   const callUploadLocalMedia = useServerFn(uploadLocalImage);
   const callCreateMediaUploadUrl = useServerFn(createMediaUploadUrl);
   const callSignMediaReadUrl = useServerFn(signMediaReadUrl);
@@ -3474,6 +3476,7 @@ export default function RestyleStudio() {
         type AssetUploadResult =
           | Awaited<ReturnType<typeof callUploadKeyiyunAsset>>
           | Awaited<ReturnType<typeof callUploadJieyunAsset>>
+          | Awaited<ReturnType<typeof callUploadTokenponyAsset>>
           | Awaited<ReturnType<typeof callUploadTopenrouterAsset>>;
         const uploaded = await withBackoffRetry(
           (): Promise<AssetUploadResult> =>
@@ -3481,9 +3484,11 @@ export default function RestyleStudio() {
               ? callUploadKeyiyunAsset({ data: { url, assetType: "Image", name } })
               : vendor === "jieyun"
                 ? callUploadJieyunAsset({ data: { url, assetType: "Image", name } })
-                : callUploadTopenrouterAsset({
-                    data: { url, assetType: "Image", name, model: input.videoModel },
-                  }),
+                : vendor === "tokenpony"
+                  ? callUploadTokenponyAsset({ data: { url, assetType: "Image", name } })
+                  : callUploadTopenrouterAsset({
+                      data: { url, assetType: "Image", name, model: input.videoModel },
+                    }),
         );
         if (uploaded.ok && uploaded.assetUrl) {
           const assetUrl = uploaded.assetUrl;

@@ -25,7 +25,8 @@ export function getVideoAssetLibrarySupport(model: string | undefined): VideoAss
     model.startsWith("kuaizi-lizhen-") ||
     // Seedance 2.5(model-center)参考素材直传公网 URL,无 asset:// 素材体系
     (model.startsWith("keyiyun-") && !model.startsWith("keyiyun-seedance-2-5")) ||
-    model.startsWith("jieyun-")
+    model.startsWith("jieyun-") ||
+    model.startsWith("tokenpony-")
   ) {
     return { supported: true, message: "" };
   }
@@ -35,7 +36,7 @@ export function getVideoAssetLibrarySupport(model: string | undefined): VideoAss
   };
 }
 
-export type VideoAssetVendor = "topenrouter" | "keyiyun" | "kuaizi" | "jieyun";
+export type VideoAssetVendor = "topenrouter" | "keyiyun" | "kuaizi" | "jieyun" | "tokenpony";
 
 /**
  * 素材库参考视频时长约束：TopenRouter 素材库要求 1.8–30.2 秒，
@@ -63,6 +64,7 @@ export function assetLibraryVendorForModel(model: string | undefined): VideoAsse
   if (model.startsWith("keyiyun-") && !model.startsWith("keyiyun-seedance-2-5")) return "keyiyun";
   if (model.startsWith("kuaizi-lizhen-")) return "kuaizi";
   if (model.startsWith("jieyun-")) return "jieyun";
+  if (model.startsWith("tokenpony-")) return "tokenpony";
   return null;
 }
 
@@ -79,8 +81,8 @@ export function isArkSeedanceDirectModel(model: string | undefined): boolean {
 export function referenceVideoLimitsForModel(
   model: string | undefined,
 ): { minMs: number; maxMs: number } | null {
-  // 诘云特例必须先于素材库通用档（其文档约束 2-15s,严于 TopenRouter 的 1.8-30s）
-  if (model?.trim().startsWith("jieyun-")) {
+  // 诘云/tokenpony 特例必须先于素材库通用档（其文档约束 2-15s,严于 TopenRouter 的 1.8-30s）
+  if (model?.trim().startsWith("jieyun-") || model?.trim().startsWith("tokenpony-")) {
     return { minMs: JIEYUN_REFERENCE_VIDEO_MIN_MS, maxMs: JIEYUN_REFERENCE_VIDEO_MAX_MS };
   }
   if (assetLibraryVendorForModel(model)) {
@@ -92,7 +94,7 @@ export function referenceVideoLimitsForModel(
   return null;
 }
 
-// 诘云参考视频约束：素材登记与 r2v 生成同口径 2-15s（jieyun 文档/实测）。
+// 诘云/tokenpony 参考视频约束：素材登记与 r2v 生成同口径 2-15s（文档/实测）。
 const JIEYUN_REFERENCE_VIDEO_MIN_MS = 2_000;
 const JIEYUN_REFERENCE_VIDEO_MAX_MS = 15_000;
 
@@ -106,6 +108,8 @@ export function r2vDurationLimitsForModel(model: string | undefined): {
   maxSec: number;
 } {
   if (model?.trim().startsWith("jieyun-")) return { minSec: 4, maxSec: 15 };
+  // tokenpony Seedance 2.5:duration 4-15s(官方文档)
+  if (model?.trim().startsWith("tokenpony-")) return { minSec: 4, maxSec: 15 };
   return { minSec: 2, maxSec: 15 };
 }
 

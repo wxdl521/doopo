@@ -34,6 +34,8 @@ const VIDEO_CREDITS: Record<string, Record<string, number>> = {
   "jieyun-doubao-seedance-2-0-260128": { "480P": 237.6, "720P": 237.6 },
   // 客易云 Seedance 2.5(model-center):暂按 doubao-seedance-2-0 直连档计价
   "keyiyun-seedance-2-5-c1": { "480P": 237.6, "720P": 237.6 },
+  // tokenpony Seedance 2.5:暂按 doubao-seedance-2-0 直连档计价
+  "tokenpony-doubao-seedance-2-5-260628": { "480P": 237.6, "720P": 237.6 },
 };
 
 // 同步扣费路径拿不到请求上下文:缓存过期时用最近注册的登录客户端后台刷新,
@@ -133,6 +135,7 @@ const VIDEO_ROUTING_PREFIXES = [
   "vapeur-",
   "shuci-",
   "jieyun-",
+  "tokenpony-",
   "revora-",
   "agentearth-",
 ];

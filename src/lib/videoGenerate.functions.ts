@@ -121,7 +121,8 @@ export function getVideoBackend(
   | "neiwen"
   | "agentearth"
   | "revora"
-  | "jieyun" {
+  | "jieyun"
+  | "tokenpony" {
   const m = (modelId || "").trim().toLowerCase();
   if (isRevoraVideoModel(m)) return "revora";
   if (isAgentEarthSeedanceModel(m)) return "agentearth";
@@ -129,6 +130,7 @@ export function getVideoBackend(
   if (m.startsWith("doubao-seedance-") || m.startsWith("seedance-")) return "ark";
   if (m.startsWith("shuci-")) return "shuci";
   if (m.startsWith("jieyun-")) return "jieyun";
+  if (m.startsWith("tokenpony-")) return "tokenpony";
   if (m.startsWith("jimeng-")) return "jimeng";
   if (m.startsWith("kuaizi-")) return "kuaizi";
   if (m.startsWith("toapis-")) return "toapis";
@@ -202,6 +204,11 @@ export const JIEYUN_VIDEO_MODELS = {
   "jieyun-doubao-seedance-2-0-260128": "Seedance 2.0 (诘云)",
 } as const;
 
+// tokenpony(api.tokenpony.cn,Seedance 2.5 中转,自有信封接口)
+export const TOKENPONY_VIDEO_MODELS = {
+  "tokenpony-doubao-seedance-2-5-260628": "Seedance 2.5 (tokenpony)",
+} as const;
+
 export const SEEDANCE_MODELS = {
   "doubao-seedance-2-0-260128": "Doubao Seedance 2.0",
   "doubao-seedance-2-0-fast-260128": "Doubao Seedance 2.0 Fast (720p)",
@@ -216,6 +223,7 @@ export const SEEDANCE_MODELS = {
   ...YCORE_VIDEO_MODELS,
   ...NEIWEN_VIDEO_MODELS,
   ...JIEYUN_VIDEO_MODELS,
+  ...TOKENPONY_VIDEO_MODELS,
   ...KLING_VIDEO_MODELS,
   ...REVORA_VIDEO_MODELS,
 } as const;
@@ -613,6 +621,379 @@ async function jieyunEnsureAsset(input: {
   });
   if (!ready.ok) return ready;
   return { ok: true, url: jieyunAssetUrl(ready.asset.id) };
+}
+
+// ====================================================================
+// tokenpony(api.tokenpony.cn,Seedance 2.5 中转)
+//
+// 自有信封风格(与 ARK 不同构):
+//   - 创建:POST {BASE}/v1/aigc/video/generate  {code:200, data:{id, status}}
+//     body: model/prompt/resolution(480p 小写)/ratio/duration(4-15s)/
+//           generate_audio/media[{type,url}]
+//     media.type: first_image/last_image/reference_image/reference_video/reference_audio
+//   - 轮询:GET {BASE}/v1/aigc/tasks/{task_id}
+//     data.task_status: PENDING/RUNNING/COMPLETED/FAILED;
+//     完成取 data.result.result(结果 URL),失败读 data.task_status_msg
+//   - 素材库:POST {BASE}/v1/assets/{Action}(CreateAssetGroup/CreateAsset/GetAsset),
+//     Status: Processing/Active/Failed;视频素材限 2-15s <50MB;asset://<id> 引用
+// 认证:Authorization: Bearer {TOKENPONY_API_KEY};BASE 不带路径(/v1/... 在组包拼)。
+// ====================================================================
+
+const TOKENPONY_DEFAULT_BASE_URL = "https://api.tokenpony.cn";
+const TOKENPONY_UPSTREAM_MODEL = "doubao-seedance-2-5-260628";
+
+function getTokenponyConfig() {
+  return {
+    apiKey: process.env.TOKENPONY_API_KEY,
+    baseUrl: (process.env.TOKENPONY_BASE_URL || TOKENPONY_DEFAULT_BASE_URL).replace(/\/+$/, ""),
+  };
+}
+
+/** 内部媒体角色 → tokenpony media.type 枚举 */
+export function tokenponyMediaType(type: string): string {
+  if (type === "first_frame") return "first_image";
+  if (type === "last_frame") return "last_image";
+  return type; // reference_image / reference_video / reference_audio 同名
+}
+
+/** 平台分辨率档(480P/720P/1080P) → tokenpony 小写档 */
+export function tokenponyResolution(resolution: string | null | undefined): string {
+  const r = (resolution || "720P").toUpperCase();
+  return r === "480P" ? "480p" : r === "1080P" ? "1080p" : "720p";
+}
+
+/** tokenpony task_status → 平台统一进度 */
+export function tokenponyStatusToProgress(status: string | undefined): SeedanceProgress {
+  const s = (status || "").toUpperCase();
+  if (s === "COMPLETED") return "succeeded";
+  if (s === "FAILED") return "failed";
+  if (s === "RUNNING") return "running";
+  return "queued"; // PENDING 及其它未知态按排队处理
+}
+
+/** tokenpony 信封错误提取:{code,msg/message/error} 非 200 即错误;200 返回 null */
+export function tokenponyEnvelopeError(raw: unknown): string | null {
+  if (!raw || typeof raw !== "object") return "响应不是 JSON 对象";
+  const json = raw as { code?: number | string; msg?: string; message?: string; error?: string };
+  if (json.code === 200 || json.code === "200") return null;
+  return json.msg || json.message || json.error || `服务返回错误码 ${String(json.code)}`;
+}
+
+/** 创建响应解析:{code:200, data:{id}} → taskId */
+export function parseTokenponyTaskCreate(raw: unknown): string | null {
+  if (!raw || typeof raw !== "object") return null;
+  const data = (raw as { data?: Record<string, unknown> }).data;
+  const id = data?.id ?? data?.task_id ?? data?.taskId;
+  return typeof id === "string" && id ? id : null;
+}
+
+/** 轮询响应解析:状态/结果 URL(data.result.result)/失败原因(task_status_msg) */
+export function parseTokenponyTaskResult(raw: unknown): {
+  status?: string;
+  videoUrl: string | null;
+  error: string;
+} {
+  if (!raw || typeof raw !== "object") return { videoUrl: null, error: "" };
+  const data = ((raw as { data?: Record<string, unknown> }).data ?? {}) as Record<string, unknown>;
+  const result = (data.result ?? {}) as Record<string, unknown>;
+  const videoUrl =
+    (typeof result.result === "string" && result.result) ||
+    (typeof result.video_url === "string" && result.video_url) ||
+    (typeof data.video_url === "string" && (data.video_url as string)) ||
+    null;
+  const statusMsg =
+    typeof data.task_status_msg === "string" ? (data.task_status_msg as string) : "";
+  return {
+    status: typeof data.task_status === "string" ? (data.task_status as string) : undefined,
+    videoUrl,
+    error: statusMsg,
+  };
+}
+
+/** 素材 Action 响应解析:{code, data:{Id/Status}}(兼容小写键) */
+export function parseTokenponyAssetResult(raw: unknown): { id: string; status?: string } | null {
+  if (!raw || typeof raw !== "object") return null;
+  const data = ((raw as { data?: Record<string, unknown> }).data ?? raw) as Record<string, unknown>;
+  const id = data.Id ?? data.id;
+  if (typeof id !== "string" || !id) return null;
+  const status = data.Status ?? data.status;
+  return { id, status: typeof status === "string" ? status : undefined };
+}
+
+function tokenponyAssetUrl(assetId: string): string {
+  return `asset://${assetId}`;
+}
+
+async function tokenponySubmit(input: {
+  prompt: string;
+  media: DashScopeMediaItem[];
+  ratio?: SeedanceRatio;
+  resolution?: string;
+  duration?: number;
+  generateAudio?: boolean;
+  referenceVideoUrl?: string;
+  referenceAudioUrl?: string;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<{ ok: true; taskId: string; model: string } | { ok: false; error: string }> {
+  const media = input.media.map((item) => ({ type: tokenponyMediaType(item.type), url: item.url }));
+  if (input.referenceVideoUrl)
+    media.push({ type: "reference_video", url: input.referenceVideoUrl });
+  if (input.referenceAudioUrl)
+    media.push({ type: "reference_audio", url: input.referenceAudioUrl });
+  const body: Record<string, unknown> = {
+    model: TOKENPONY_UPSTREAM_MODEL,
+    prompt: input.prompt,
+    resolution: tokenponyResolution(input.resolution),
+  };
+  if (input.ratio) body.ratio = input.ratio;
+  if (typeof input.duration === "number") body.duration = input.duration;
+  if (typeof input.generateAudio === "boolean") body.generate_audio = input.generateAudio;
+  if (media.length > 0) body.media = media;
+  const result = await fetchSubmitWithRetry({
+    url: `${input.baseUrl}/v1/aigc/video/generate`,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${input.apiKey}`,
+    },
+    body: JSON.stringify(body),
+    label: "tokenpony",
+  });
+  if (!result.ok) {
+    return { ok: false, error: `[tokenpony] 创建任务网络错误: ${result.networkError}` };
+  }
+  const { status, text } = result;
+  if (status < 200 || status >= 300)
+    return { ok: false, error: `[tokenpony] 创建任务 ${status}: ${text.slice(0, 500)}` };
+  let json: unknown = {};
+  try {
+    json = JSON.parse(text);
+  } catch {}
+  const envelopeError = tokenponyEnvelopeError(json);
+  if (envelopeError) return { ok: false, error: `[tokenpony] 创建任务失败: ${envelopeError}` };
+  const taskId = parseTokenponyTaskCreate(json);
+  if (!taskId) {
+    return { ok: false, error: `[tokenpony] 创建任务未返回 id: ${text.slice(0, 200)}` };
+  }
+  return { ok: true, taskId, model: TOKENPONY_UPSTREAM_MODEL };
+}
+
+async function tokenponyPoll(input: {
+  taskId: string;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<PollResult> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const res = await fetch(
+      `${input.baseUrl}/v1/aigc/tasks/${encodeURIComponent(input.taskId)}`,
+      { headers: { Authorization: `Bearer ${input.apiKey}` }, signal: controller.signal },
+    );
+    const text = await res.text().catch(() => "");
+    if (!res.ok)
+      return { ok: false, error: `[tokenpony] 查询任务 ${res.status}: ${text.slice(0, 300)}` };
+    let json: unknown = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    const envelopeError = tokenponyEnvelopeError(json);
+    if (envelopeError) return { ok: false, error: `[tokenpony] 查询任务失败: ${envelopeError}` };
+    const parsed = parseTokenponyTaskResult(json);
+    return {
+      ok: true,
+      status: tokenponyStatusToProgress(parsed.status),
+      videoUrl: parsed.videoUrl,
+      // 失败明细透传(errorDetail 提取读 raw.error.message 口径)
+      raw: { error: { message: parsed.error }, status: parsed.status },
+    };
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.name === "AbortError"
+          ? "查询任务超时 (30s)"
+          : error.message
+        : "fetch failed";
+    return { ok: false, error: `[tokenpony] 查询任务网络错误: ${message}` };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+// ---------- tokenpony 素材库(/v1/assets/{Action},真人预审同构) ----------
+
+const TOKENPONY_ASSET_READY_TIMEOUT_MS = 90_000;
+const TOKENPONY_ASSET_POLL_MS = 1_500;
+const TOKENPONY_ASSET_GROUP_NAME = process.env.TOKENPONY_ASSET_GROUP_NAME || "doopoo";
+
+/** 调素材 Action:POST {baseUrl}/v1/assets/{action} */
+async function tokenponyCallAssetAction(input: {
+  action: string;
+  body: Record<string, unknown>;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<{ ok: true; data: unknown } | { ok: false; error: string }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const res = await fetch(`${input.baseUrl}/v1/assets/${input.action}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${input.apiKey}`,
+      },
+      body: JSON.stringify(input.body),
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    const text = await res.text().catch(() => "");
+    let json: { data?: unknown } = {};
+    try {
+      json = JSON.parse(text);
+    } catch {}
+    const envelopeError = tokenponyEnvelopeError(json);
+    if (!res.ok || envelopeError) {
+      return {
+        ok: false,
+        error: `[tokenpony] asset ${input.action} ${res.status}: ${envelopeError || text.slice(0, 300)}`,
+      };
+    }
+    return { ok: true, data: json.data };
+  } catch (e) {
+    clearTimeout(timeout);
+    const message =
+      e instanceof Error && e.name === "AbortError"
+        ? `${input.action} timeout (30s)`
+        : e instanceof Error
+          ? e.message
+          : "fetch failed";
+    return { ok: false, error: `[tokenpony] asset ${input.action} network: ${message}` };
+  }
+}
+
+// 素材组按名缓存(模块级,同 isolate 内复用)
+let tokenponyAssetGroupCache: { name: string; id: string } | null = null;
+
+async function tokenponyEnsureAssetGroup(input: {
+  apiKey: string;
+  baseUrl: string;
+}): Promise<{ ok: true; groupId: string } | { ok: false; error: string }> {
+  if (tokenponyAssetGroupCache && tokenponyAssetGroupCache.name === TOKENPONY_ASSET_GROUP_NAME) {
+    return { ok: true, groupId: tokenponyAssetGroupCache.id };
+  }
+  const created = await tokenponyCallAssetAction({
+    action: "CreateAssetGroup",
+    body: {
+      Name: TOKENPONY_ASSET_GROUP_NAME,
+      Description: "doopoo 转绘参考素材(真人风控官方规避路径)",
+      GroupType: "AIGC",
+    },
+    apiKey: input.apiKey,
+    baseUrl: input.baseUrl,
+  });
+  if (!created.ok) return created;
+  const group = parseTokenponyAssetResult({ data: created.data });
+  if (!group) return { ok: false, error: "[tokenpony] CreateAssetGroup 未返回组 Id" };
+  tokenponyAssetGroupCache = { name: TOKENPONY_ASSET_GROUP_NAME, id: group.id };
+  return { ok: true, groupId: group.id };
+}
+
+async function tokenponyUploadAsset(input: {
+  url: string;
+  assetType: "Image" | "Video" | "Audio";
+  name: string;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<{ ok: true; asset: { id: string; status?: string } } | { ok: false; error: string }> {
+  const group = await tokenponyEnsureAssetGroup({ apiKey: input.apiKey, baseUrl: input.baseUrl });
+  if (!group.ok) return group;
+  const created = await tokenponyCallAssetAction({
+    action: "CreateAsset",
+    body: { GroupId: group.groupId, URL: input.url, Name: input.name, AssetType: input.assetType },
+    apiKey: input.apiKey,
+    baseUrl: input.baseUrl,
+  });
+  if (!created.ok) return created;
+  const asset = parseTokenponyAssetResult({ data: created.data });
+  if (!asset) return { ok: false, error: "[tokenpony] CreateAsset 未返回素材 Id" };
+  console.log(`[tokenpony asset created] id=${asset.id} status=${asset.status || "Processing"}`);
+  return { ok: true, asset };
+}
+
+async function tokenponyGetAsset(input: {
+  assetId: string;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<{ ok: true; asset: { id: string; status?: string } } | { ok: false; error: string }> {
+  const got = await tokenponyCallAssetAction({
+    action: "GetAsset",
+    body: { Id: input.assetId },
+    apiKey: input.apiKey,
+    baseUrl: input.baseUrl,
+  });
+  if (!got.ok) return got;
+  const asset = parseTokenponyAssetResult({ data: got.data });
+  if (!asset) return { ok: false, error: "[tokenpony] GetAsset 返回结构异常" };
+  return { ok: true, asset };
+}
+
+/** 等待素材审核入库;只有 Active 才可放进视频 media(图片实测 ~20s 内 Active) */
+async function tokenponyWaitForAsset(input: {
+  assetId: string;
+  apiKey: string;
+  baseUrl: string;
+  timeoutMs?: number;
+}): Promise<{ ok: true; asset: { id: string; status?: string } } | { ok: false; error: string }> {
+  const deadline = Date.now() + (input.timeoutMs ?? TOKENPONY_ASSET_READY_TIMEOUT_MS);
+  let lastStatus = "unknown";
+  while (Date.now() < deadline) {
+    const result = await tokenponyGetAsset(input);
+    if (!result.ok) return result;
+    const status = (result.asset.status || "").toLowerCase();
+    lastStatus = result.asset.status || lastStatus;
+    if (status === "active") {
+      console.log(`[tokenpony asset✓] id=${input.assetId} status=Active`);
+      return result;
+    }
+    if (status === "failed") {
+      console.warn(`[tokenpony asset×] id=${input.assetId} status=Failed`);
+      return { ok: false, error: `[tokenpony] asset ${input.assetId} 入库失败 (Failed)` };
+    }
+    console.log(
+      `[tokenpony asset⟳] id=${input.assetId} status=${result.asset.status || "unknown"}`,
+    );
+    await sleep(TOKENPONY_ASSET_POLL_MS);
+  }
+  return {
+    ok: false,
+    error: `[tokenpony] asset ${input.assetId} 等待入库超时，最后状态: ${lastStatus}`,
+  };
+}
+
+/** 已是 asset:// 的引用不重复登记(转绘链客户端预审已转换过的直接放行)。 */
+async function tokenponyEnsureAsset(input: {
+  url?: string;
+  assetType: "Image" | "Video" | "Audio";
+  name: string;
+  apiKey: string;
+  baseUrl: string;
+}): Promise<{ ok: true; url?: string } | { ok: false; error: string }> {
+  if (!input.url || input.url.startsWith("asset://")) return { ok: true, url: input.url };
+  const uploaded = await tokenponyUploadAsset({
+    url: input.url,
+    assetType: input.assetType,
+    name: input.name,
+    apiKey: input.apiKey,
+    baseUrl: input.baseUrl,
+  });
+  if (!uploaded.ok) return uploaded;
+  const ready = await tokenponyWaitForAsset({
+    assetId: uploaded.asset.id,
+    apiKey: input.apiKey,
+    baseUrl: input.baseUrl,
+  });
+  if (!ready.ok) return ready;
+  return { ok: true, url: tokenponyAssetUrl(ready.asset.id) };
 }
 
 // 即梦 3.0 Pro 文生/图生视频统一用同一个 req_key
@@ -2911,6 +3292,7 @@ type VideoBackend =
   | "agentearth"
   | "revora"
   | "jieyun"
+  | "tokenpony"
   // 动态供应商兜底（后台「供应商管理」登记的 OpenAI 兼容供应商）
   | "dynamic";
 
@@ -4447,6 +4829,52 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
       ? { ok: true, taskId: r.taskId, model: input.model, backend: "jieyun" }
       : { ok: false, error: r.error };
   }
+  if (backend === "tokenpony") {
+    const { apiKey, baseUrl } = getTokenponyConfig();
+    if (!apiKey) return { ok: false, error: "[tokenpony] 缺少 TOKENPONY_API_KEY" };
+    // 真人参考图/参考视频先登记素材库(Active 后以 asset:// 引用提交)——
+    // 裸 URL 会触发真人风控;已是 asset:// 的引用由 tokenponyEnsureAsset 直接放行
+    const ensured: DashScopeMediaItem[] = [];
+    const assetPrefix = `doopoo-tokenpony-${Date.now()}`;
+    for (const [index, item] of input.media.entries()) {
+      const asset = await tokenponyEnsureAsset({
+        url: item.url,
+        assetType: "Image",
+        name: `${assetPrefix}-image-${index + 1}`,
+        apiKey,
+        baseUrl,
+      });
+      if (!asset.ok) return asset;
+      if (asset.url) ensured.push({ type: item.type, url: asset.url });
+    }
+    let referenceVideoUrl = input.referenceVideoUrl;
+    if (referenceVideoUrl && !referenceVideoUrl.startsWith("asset://")) {
+      const videoAsset = await tokenponyEnsureAsset({
+        url: referenceVideoUrl,
+        assetType: "Video",
+        name: `${assetPrefix}-reference-video`,
+        apiKey,
+        baseUrl,
+      });
+      if (!videoAsset.ok) return videoAsset;
+      referenceVideoUrl = videoAsset.url;
+    }
+    const r = await tokenponySubmit({
+      prompt: input.prompt,
+      media: ensured,
+      ratio: input.ratio,
+      resolution: input.resolution,
+      duration: input.duration,
+      generateAudio: input.generateAudio,
+      referenceVideoUrl,
+      referenceAudioUrl: input.referenceAudioUrl,
+      apiKey,
+      baseUrl,
+    });
+    return r.ok
+      ? { ok: true, taskId: r.taskId, model: input.model, backend: "tokenpony" }
+      : { ok: false, error: r.error };
+  }
   if (backend === "kling") {
     const { callKlingVideoSubmit } = await import("./klingVideo.functions");
     const firstFrameImageUrl = input.media.find((m) => m.type === "first_frame")?.url;
@@ -4760,6 +5188,11 @@ async function pollVideoTask(input: PollInput): Promise<PollResult> {
     if (!apiKey) return { ok: false, error: "[jieyun] 缺少 JIEYUN_API_KEY" };
     return shuciPoll({ taskId: input.taskId, apiKey, baseUrl, label: "jieyun" });
   }
+  if (input.backend === "tokenpony") {
+    const { apiKey, baseUrl } = getTokenponyConfig();
+    if (!apiKey) return { ok: false, error: "[tokenpony] 缺少 TOKENPONY_API_KEY" };
+    return tokenponyPoll({ taskId: input.taskId, apiKey, baseUrl });
+  }
   if (input.backend === "kling") {
     const { callKlingVideoPoll } = await import("./klingVideo.functions");
     // Kling I2V/T2V 查询端点不同,先试 image2video;仅 404(任务不在该端点下)
@@ -4859,6 +5292,37 @@ export const uploadJieyunAsset = createServerFn({ method: "POST" })
       ok: true as const,
       assetId: ready.asset.id,
       assetUrl: jieyunAssetUrl(ready.asset.id),
+      status: ready.asset.status || "Active",
+    };
+  });
+
+/**
+ * 手动上传一项 tokenpony 素材并等待审核入库（/v1/assets/{Action}:
+ * CreateAssetGroup 复用缓存组 → CreateAsset → GetAsset 轮询 Active）。
+ * 返回 Active 才表示可将 `asset://assetId` 放进视频 media（真人预审规避风控）。
+ */
+export const uploadTokenponyAsset = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((d: unknown) => JieyunAssetUploadInput.parse(d)) // 与诘云同一入参形状
+  .handler(async ({ data }) => {
+    const { apiKey, baseUrl } = getTokenponyConfig();
+    if (!apiKey) {
+      return { ok: false as const, error: "[tokenpony] 缺少 TOKENPONY_API_KEY" };
+    }
+    const uploaded = await tokenponyUploadAsset({
+      url: data.url,
+      assetType: data.assetType,
+      name: data.name || `doopoo-asset-${Date.now()}`,
+      apiKey,
+      baseUrl,
+    });
+    if (!uploaded.ok) return { ok: false as const, error: uploaded.error };
+    const ready = await tokenponyWaitForAsset({ assetId: uploaded.asset.id, apiKey, baseUrl });
+    if (!ready.ok) return { ok: false as const, error: ready.error, assetId: uploaded.asset.id };
+    return {
+      ok: true as const,
+      assetId: ready.asset.id,
+      assetUrl: tokenponyAssetUrl(ready.asset.id),
       status: ready.asset.status || "Active",
     };
   });
@@ -5149,6 +5613,7 @@ const PollServerInput = z.object({
     "agentearth",
     "revora",
     "jieyun",
+    "tokenpony",
     "ycore",
     "neiwen",
     "dynamic",
@@ -5498,7 +5963,9 @@ export const generateVideo = createServerFn({ method: "POST" })
                       ? "neiwen-c-seedance-2-0"
                       : backend === "jieyun"
                         ? "jieyun-doubao-seedance-2-0-260128"
-                        : "happyhorse-1.0-i2v");
+                        : backend === "tokenpony"
+                          ? "tokenpony-doubao-seedance-2-5-260628"
+                          : "happyhorse-1.0-i2v");
 
     // ---- 积分预校验:与 submitVideoTaskFn 同口径,按最终路由 model 计费 ----
     // （前缀模型按同档直连价目、无价目默认档兜底，与转绘链同一口径）

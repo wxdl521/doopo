@@ -304,6 +304,14 @@ const videoModels = [
     sub: "诘云 · 火山方舟兼容 · 多模态",
   },
 
+  // ---- tokenpony(Seedance 2.5 中转,需 TOKENPONY_API_KEY)----
+  { id: "__video_sep_tokenpony__", label: "—— tokenpony(Seedance 2.5)——", sub: "" },
+  {
+    id: "tokenpony-doubao-seedance-2-5-260628",
+    label: "Seedance 2.5 (tokenpony)",
+    sub: "tokenpony · 480p/720p · 4-15s · 支持真人素材审核",
+  },
+
   // ---- vapeur.ai(OpenAI 兼容 · Seedance 2.0,需 VAPEUR_API_KEY)----
   { id: "__video_sep_vapeur__", label: "—— vapeur.ai ——", sub: "" },
   {
@@ -404,6 +412,7 @@ const VISIBLE_VIDEO_PREFIXES = [
   "hongmeng-", // 弘梦 中转 Seedance 2
   "shuci-", // 数安词源
   "jieyun-", // 诘云(ARK 兼容网关)
+  "tokenpony-", // tokenpony Seedance 2.5
   "dreamina-seedance-", // SD Real Max
   "keyiyun-", // 客易云 Seedance 2.0 官方折扣版
   "ycore-", // 爻核云 Seedance 2.0
@@ -442,6 +451,7 @@ const VIDEO_RESOLUTIONS: Record<string, string[]> = {
   "neiwen-c-seedance-2-0": ["480P", "720P", "1080P"],
   "jieyun-doubao-seedance-2-0-260128": ["480P", "720P"],
   "keyiyun-seedance-2-5-c1": ["480P", "720P"],
+  "tokenpony-doubao-seedance-2-5-260628": ["480P", "720P"],
 };
 function videoResolutionOptions(videoModel: string | undefined): string[] {
   if (!videoModel) return [];

@@ -86,6 +86,7 @@ import {
   submitVideoTaskFn,
   uploadJieyunAsset,
   uploadKeyiyunAsset,
+  uploadTokenponyAsset,
   uploadTopenrouterAsset,
 } from "../lib/videoGenerate.functions";
 import { getKuaiziAsset, uploadKuaiziAsset } from "../lib/kuaiziAssets.functions";
@@ -1470,6 +1471,7 @@ function WorkspacePage() {
   const callPersistAsset = useServerFn(persistAssetImage);
   const callKeyiyunImageReview = useServerFn(uploadKeyiyunAsset);
   const callJieyunImageReview = useServerFn(uploadJieyunAsset);
+  const callTokenponyImageReview = useServerFn(uploadTokenponyAsset);
   const callTopenrouterImageReview = useServerFn(uploadTopenrouterAsset);
   const callKuaiziImageReview = useServerFn(uploadKuaiziAsset);
   const callGetKuaiziAsset = useServerFn(getKuaiziAsset);
@@ -1607,6 +1609,43 @@ function WorkspacePage() {
           });
         return;
       }
+      if (videoModel.startsWith("tokenpony-")) {
+        void callTokenponyImageReview({
+          data: {
+            url,
+            assetType: "Image",
+            name: `doopoo-asset-${Date.now()}-${name}`.slice(0, 200),
+          },
+        })
+          .then((result) => {
+            const error = result.ok ? undefined : result.error || "素材入库失败";
+            const status: ImageReviewStatus = result.ok
+              ? "approved"
+              : /status\s*=\s*failed|入库失败|sensitive/i.test(error || "")
+                ? "rejected"
+                : "error";
+            if (status === "error") imageReviewStartedRef.current.delete(key);
+            setImageReviews((current) => ({
+              ...current,
+              [key]: {
+                status,
+                ...(error ? { error } : {}),
+                ...(result.ok ? { assetUrl: result.assetUrl } : {}),
+              },
+            }));
+          })
+          .catch((error) => {
+            imageReviewStartedRef.current.delete(key);
+            setImageReviews((current) => ({
+              ...current,
+              [key]: {
+                status: "error",
+                error: error instanceof Error ? error.message : "素材入库请求失败",
+              },
+            }));
+          });
+        return;
+      }
       void callTopenrouterImageReview({
         data: {
           url,
@@ -1646,6 +1685,7 @@ function WorkspacePage() {
     [
       callKeyiyunImageReview,
       callJieyunImageReview,
+      callTokenponyImageReview,
       callKuaiziImageReview,
       callTopenrouterImageReview,
       project?.videoModel,

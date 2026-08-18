@@ -260,6 +260,16 @@ const VIDEO_MODELS: VideoModel[] = [
     status: "available",
   },
   {
+    id: "tokenpony-doubao-seedance-2-5-260628",
+    name: "Seedance 2.5（tokenpony）",
+    nameEn: "Seedance 2.5 (tokenpony)",
+    vendor: "tokenpony",
+    tagline: "480p/720p · 4-15 秒 · 支持真人素材审核",
+    taglineEn: "480p/720p · 4-15s · Asset Review Supported",
+    gradient: "from-emerald-500 to-teal-600",
+    status: "available",
+  },
+  {
     id: "ycore-seedance-2-0",
     name: "Seedance 2.0（爻核云）",
     nameEn: "Seedance 2.0 (Ycore Cloud)",
