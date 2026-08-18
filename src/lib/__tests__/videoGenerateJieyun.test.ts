@@ -153,15 +153,18 @@ describe("诘云素材库（Action API 解析纯函数）", () => {
     });
   });
 
-  it("jieyun 的 r2v 时长约束 4-15s（invalid_seconds 实测）,其它渠道 2-15s 不变", () => {
+  it("jieyun 的 r2v 时长约束 4-15s（invalid_seconds 实测）,渠道分档各归其位", () => {
     expect(r2vDurationLimitsForModel("jieyun-doubao-seedance-2-0-260128")).toEqual({
       minSec: 4,
       maxSec: 15,
     });
+    // TopenRouter 渠道方 2026-08 确认 [4,15] + -1 智能档
     expect(r2vDurationLimitsForModel("topenrouter-doubao-seedance-2-0-260128")).toEqual({
-      minSec: 2,
+      minSec: 4,
       maxSec: 15,
+      smartFallback: true,
     });
+    // ARK 直连文档口径 2-15s 不变
     expect(r2vDurationLimitsForModel("doubao-seedance-2-0-260128")).toEqual({
       minSec: 2,
       maxSec: 15,

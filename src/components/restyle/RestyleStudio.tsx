@@ -3679,6 +3679,8 @@ export default function RestyleStudio() {
         // 时长优先，再按安全离散档下探，部分网关只收离散档），降档穷尽后
         // 移除参考视频再重投一次（r2v 校验随之消失）。
         let durationSec = segmentDurationSec;
+        // 降档序列:贴参考时长(-0.3s 边距)优先,离散档随后;TopenRouter 末尾
+        // 还有 -1 智能档兜底(上游自选时长,r2vDurationLimitsForModel 标注)。
         const durationRetries: number[] = r2vDurationRetryLadder(
           segmentDurationSec,
           referenceVideo.ok ? referenceVideo.durationSec : undefined,

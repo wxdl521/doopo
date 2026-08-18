@@ -5450,7 +5450,15 @@ const SubmitServerInput = z.object({
   content: z.array(z.any()).min(1).max(20),
   ratio: z.enum(SUPPORTED_RATIOS).optional(),
   resolution: z.enum(["480P", "720P", "1080P"]).optional(),
-  duration: z.number().int().min(1).max(60).optional(),
+  // -1 是 TopenRouter 的合法特殊值（上游智能选择时长,降档阶梯兜底档）;
+  // 其余取值仍限 1-60,0/负值（除 -1）拒绝
+  duration: z
+    .number()
+    .int()
+    .min(-1)
+    .max(60)
+    .refine((v) => v === -1 || v >= 1, "duration 仅支持 -1（智能）或 1-60 秒")
+    .optional(),
   generateAudio: z.boolean().optional(),
   watermark: z.boolean().optional(),
   // 转绘链上下文（可选）：仅用于 submit 失败时并入服务端 errorLogs 记录,
@@ -5622,8 +5630,16 @@ const PollServerInput = z.object({
   model: z.string().max(200).optional(),
   // 成功扣费参数（转绘渲染链路）：提交时的分辨率/时长与分段标签；
   // 缺省则轮询只返回状态不扣费（向后兼容）。
+  // duration=-1（TopenRouter 智能档）合法;计价按缺省 10s 档（videoCost 对
+  // 非正数时长的既有口径）,智能档实际时长上游决定、事后不可知。
   resolution: z.enum(["480P", "720P", "1080P"]).optional(),
-  duration: z.number().int().min(1).max(60).optional(),
+  duration: z
+    .number()
+    .int()
+    .min(-1)
+    .max(60)
+    .refine((v) => v === -1 || v >= 1, "duration 仅支持 -1（智能）或 1-60 秒")
+    .optional(),
   label: z.string().max(120).optional(),
   /** 2026/08:项目名（积分流水项目维度;可选,不传不写） */
   projectName: z.string().max(200).optional(),

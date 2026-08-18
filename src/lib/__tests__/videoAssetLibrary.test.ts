@@ -8,6 +8,7 @@ import {
   isSensitiveContentError,
   parseRejectedContentIndexes,
   planRestyleFallback,
+  r2vDurationLimitsForModel,
   r2vDurationRetryLadder,
   rejectedImageUrlsFromError,
   restyleAssetCacheKey,
@@ -273,5 +274,45 @@ describe("extractPollFailureDetail", () => {
   it("超长明细截断到 300 字符", () => {
     const detail = extractPollFailureDetail({ message: "x".repeat(500) });
     expect(detail).toHaveLength(300);
+  });
+});
+
+describe("r2vDurationLimitsForModel / 阶梯（TopenRouter 4-15s + 智能档 -1）", () => {
+  const TOPENROUTER = { minSec: 4, maxSec: 15, smartFallback: true } as const;
+
+  it("topenrouter 档 {4,15} 且带智能档标记;jieyun/tokenpony {4,15} 无智能档;缺省 {2,15}", () => {
+    expect(r2vDurationLimitsForModel("topenrouter-doubao-seedance-2-0-260128")).toEqual({
+      minSec: 4,
+      maxSec: 15,
+      smartFallback: true,
+    });
+    expect(r2vDurationLimitsForModel("jieyun-doubao-seedance-2-0-260128")).toEqual({
+      minSec: 4,
+      maxSec: 15,
+    });
+    expect(r2vDurationLimitsForModel("tokenpony-doubao-seedance-2-5-260628")).toEqual({
+      minSec: 4,
+      maxSec: 15,
+    });
+    // ARK 直连文档口径 2-15s 不动
+    expect(r2vDurationLimitsForModel("doubao-seedance-2-0-260128")).toEqual({
+      minSec: 2,
+      maxSec: 15,
+    });
+  });
+
+  it("topenrouter 档下阶梯不产出 <4 的值,末尾追加 -1 智能档", () => {
+    const rungs = r2vDurationRetryLadder(15, 8, TOPENROUTER);
+    expect(rungs.every((v) => v === -1 || v >= 4)).toBe(true);
+    expect(rungs.at(-1)).toBe(-1);
+    // 贴齐档 8-0.3=7.7 保留,离散档 5/4 保留
+    expect(rungs).toEqual([7.7, 10, 8, 6, 5, 4, -1]);
+    // 当前 4s 被拒时实档用尽,只剩 -1
+    expect(r2vDurationRetryLadder(4, 18, TOPENROUTER)).toEqual([-1]);
+  });
+
+  it("其它渠道不产出 -1（jieyun/缺省档）", () => {
+    expect(r2vDurationRetryLadder(15, 8, { minSec: 4, maxSec: 15 })).not.toContain(-1);
+    expect(r2vDurationRetryLadder(15, 8)).not.toContain(-1);
   });
 });

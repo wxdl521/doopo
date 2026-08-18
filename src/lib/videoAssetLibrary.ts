@@ -99,17 +99,24 @@ const JIEYUN_REFERENCE_VIDEO_MIN_MS = 2_000;
 const JIEYUN_REFERENCE_VIDEO_MAX_MS = 15_000;
 
 /**
- * 各通道 r2v 生成时长约束（秒）：默认 2–15s（ARK 直连/TopenRouter 既有口径,
- * TopenRouter 15.2s 上限夹到 15 不受影响）；诘云实测 invalid_seconds 要求
- * 4–15s（低于 4 同样拒绝,比 TopenRouter 更严）。
+ * 各通道 r2v 生成时长约束（秒）：默认 2–15s（ARK 直连文档口径 2-15s 不动）；
+ * 诘云实测 invalid_seconds 要求 4–15s（低于 4 同样拒绝）；
+ * tokenpony Seedance 2.5 官方文档 4-15s；
+ * TopenRouter Seedance 2.0 系列渠道方 2026-08 确认:duration ∈ [4,15] 或
+ * **-1（智能选择）**——smartFallback 标记供降档阶梯在离散档用尽后追加 -1 重投。
  */
 export function r2vDurationLimitsForModel(model: string | undefined): {
   minSec: number;
   maxSec: number;
+  /** true = 该渠道支持 duration=-1（上游智能选择时长）兜底重投 */
+  smartFallback?: boolean;
 } {
   if (model?.trim().startsWith("jieyun-")) return { minSec: 4, maxSec: 15 };
   // tokenpony Seedance 2.5:duration 4-15s(官方文档)
   if (model?.trim().startsWith("tokenpony-")) return { minSec: 4, maxSec: 15 };
+  if (model?.trim().startsWith("topenrouter-")) {
+    return { minSec: 4, maxSec: 15, smartFallback: true };
+  }
   return { minSec: 2, maxSec: 15 };
 }
 
@@ -279,7 +286,10 @@ export function extractPollFailureDetail(raw: unknown): string | undefined {
 export function r2vDurationRetryLadder(
   currentSec: number,
   referenceSec?: number,
-  limits: { minSec: number; maxSec: number } = { minSec: 2, maxSec: 15 },
+  limits: { minSec: number; maxSec: number; smartFallback?: boolean } = {
+    minSec: 2,
+    maxSec: 15,
+  },
 ): number[] {
   const clamp = (value: number) =>
     Math.max(limits.minSec, Math.min(limits.maxSec, Math.round(value)));
@@ -295,7 +305,12 @@ export function r2vDurationRetryLadder(
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value))
     .map((value) => (Number.isInteger(value) ? clamp(value) : value))
     .filter((value) => value >= limits.minSec);
-  return [...new Set(candidates.filter((value) => value < currentSec))];
+  const rungs = [...new Set(candidates.filter((value) => value < currentSec))];
+  // 智能档兜底（TopenRouter:duration=-1 上游智能选择）——离散档用尽后、移除
+  // 参考视频之前的最后一次重投;仅 smartFallback 渠道产出,其它渠道无 -1。
+  // -1 恒小于任何 currentSec,调用方 find(d < durationSec) 的取序天然最后命中。
+  if (limits.smartFallback) rungs.push(-1);
+  return rungs;
 }
 
 /**
