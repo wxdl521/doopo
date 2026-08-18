@@ -1797,6 +1797,8 @@ export type Database = {
           p_duration: number
           p_idempotency_key?: string
           p_model: string
+          p_project_id?: string
+          p_project_name?: string
           p_resolution: string
         }
         Returns: {
