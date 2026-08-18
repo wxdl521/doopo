@@ -11,6 +11,7 @@ import {
   parseTokenponyAssetResult,
   parseTokenponyTaskCreate,
   parseTokenponyTaskResult,
+  pickTokenponyConfig,
   tokenponyEnvelopeError,
   tokenponyMediaType,
   tokenponyResolution,
@@ -102,5 +103,40 @@ describe("tokenpony(Seedance 2.5 中转)渠道", () => {
       minMs: 1_800,
       maxMs: 30_000,
     });
+  });
+});
+
+describe("tokenpony 配置解析（env 优先 → 后台登记回退）", () => {
+  it("env 有 key 时直接用 env,不看 DB", () => {
+    const config = pickTokenponyConfig(
+      { apiKey: "env-key", baseUrl: "https://env.example.com/" },
+      { apiKey: "db-key", baseUrl: "https://db.example.com" },
+    );
+    expect(config.apiKey).toBe("env-key");
+    expect(config.baseUrl).toBe("https://env.example.com"); // 尾斜杠剥掉
+  });
+
+  it("env 缺 key 时回退后台登记（code='tokenpony' 的 builtin 行）", () => {
+    const config = pickTokenponyConfig(
+      { apiKey: undefined, baseUrl: undefined },
+      { apiKey: "db-key", baseUrl: "https://db.example.com" },
+    );
+    expect(config.apiKey).toBe("db-key");
+    expect(config.baseUrl).toBe("https://db.example.com");
+  });
+
+  it("env 与后台都缺 key → apiKey undefined（调用方报「缺少 TOKENPONY_API_KEY 或后台登记密钥」）", () => {
+    const config = pickTokenponyConfig({}, { apiKey: null, baseUrl: null });
+    expect(config.apiKey).toBeUndefined();
+    expect(config.baseUrl).toBe("https://api.tokenpony.cn");
+  });
+
+  it("env 有 key 但无 baseUrl → baseUrl 仍走后台/默认回退", () => {
+    const config = pickTokenponyConfig(
+      { apiKey: "env-key" },
+      { apiKey: null, baseUrl: "https://db.example.com" },
+    );
+    expect(config.apiKey).toBe("env-key");
+    expect(config.baseUrl).toBe("https://db.example.com");
   });
 });

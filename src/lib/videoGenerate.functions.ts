@@ -642,11 +642,67 @@ async function jieyunEnsureAsset(input: {
 const TOKENPONY_DEFAULT_BASE_URL = "https://api.tokenpony.cn";
 const TOKENPONY_UPSTREAM_MODEL = "doubao-seedance-2-5-260628";
 
-function getTokenponyConfig() {
+/**
+ * tokenpony 配置合成（纯函数,可单测）：
+ * apiKey env(TOKENPONY_API_KEY)优先 → 管理后台登记密钥回退;
+ * baseUrl env(TOKENPONY_BASE_URL) → 后台 base_url → 默认值。
+ */
+export function pickTokenponyConfig(
+  env: { apiKey?: string; baseUrl?: string },
+  db: { apiKey: string | null; baseUrl: string | null },
+): { apiKey?: string; baseUrl: string } {
   return {
-    apiKey: process.env.TOKENPONY_API_KEY,
-    baseUrl: (process.env.TOKENPONY_BASE_URL || TOKENPONY_DEFAULT_BASE_URL).replace(/\/+$/, ""),
+    apiKey: env.apiKey || db.apiKey || undefined,
+    baseUrl: (env.baseUrl || db.baseUrl || TOKENPONY_DEFAULT_BASE_URL).replace(/\/+$/, ""),
   };
+}
+
+// 后台「供应商管理」builtin 行（code='tokenpony'）的配置回退查询,
+// 60s 模块级缓存（aiProvidersCache 同款模式）,避免每个视频请求都打一次 DB。
+const TOKENPONY_DB_CACHE_MS = 60_000;
+let tokenponyDbCache: { at: number; apiKey: string | null; baseUrl: string | null } | null = null;
+
+async function resolveTokenponyDbConfig(): Promise<{
+  apiKey: string | null;
+  baseUrl: string | null;
+}> {
+  if (tokenponyDbCache && Date.now() - tokenponyDbCache.at < TOKENPONY_DB_CACHE_MS) {
+    return tokenponyDbCache;
+  }
+  let result = { apiKey: null as string | null, baseUrl: null as string | null };
+  try {
+    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+    const { data, error } = await (supabaseAdmin.from as any)("ai_providers")
+      .select("base_url, api_key_cipher")
+      .eq("code", "tokenpony")
+      .eq("enabled", true)
+      .maybeSingle();
+    if (!error && data) {
+      if (data.api_key_cipher) {
+        try {
+          const { decryptProviderSecret } = await import("./providerSecret.server");
+          result.apiKey = await decryptProviderSecret(data.api_key_cipher);
+        } catch (error) {
+          console.error("[tokenpony] 后台登记密钥解密失败:", error);
+        }
+      }
+      result.baseUrl = typeof data.base_url === "string" && data.base_url ? data.base_url : null;
+    }
+  } catch (error) {
+    console.warn("[tokenpony] 后台供应商配置查询失败:", error);
+  }
+  tokenponyDbCache = { at: Date.now(), ...result };
+  return result;
+}
+
+/** tokenpony 配置解析（异步）:env 优先,后台登记（code='tokenpony'）回退。 */
+export async function resolveTokenponyConfig(): Promise<{
+  apiKey?: string;
+  baseUrl: string;
+}> {
+  const env = { apiKey: process.env.TOKENPONY_API_KEY, baseUrl: process.env.TOKENPONY_BASE_URL };
+  if (env.apiKey) return pickTokenponyConfig(env, { apiKey: null, baseUrl: null });
+  return pickTokenponyConfig(env, await resolveTokenponyDbConfig());
 }
 
 /** 内部媒体角色 → tokenpony media.type 枚举 */
@@ -4830,8 +4886,12 @@ async function submitVideoTask(input: SubmitInput): Promise<SubmitResult> {
       : { ok: false, error: r.error };
   }
   if (backend === "tokenpony") {
-    const { apiKey, baseUrl } = getTokenponyConfig();
-    if (!apiKey) return { ok: false, error: "[tokenpony] 缺少 TOKENPONY_API_KEY" };
+    const { apiKey, baseUrl } = await resolveTokenponyConfig();
+    if (!apiKey)
+      return {
+        ok: false,
+        error: "[tokenpony] 缺少 TOKENPONY_API_KEY（或在后台「供应商管理」登记 tokenpony 密钥）",
+      };
     // 真人参考图/参考视频先登记素材库(Active 后以 asset:// 引用提交)——
     // 裸 URL 会触发真人风控;已是 asset:// 的引用由 tokenponyEnsureAsset 直接放行
     const ensured: DashScopeMediaItem[] = [];
@@ -5189,8 +5249,12 @@ async function pollVideoTask(input: PollInput): Promise<PollResult> {
     return shuciPoll({ taskId: input.taskId, apiKey, baseUrl, label: "jieyun" });
   }
   if (input.backend === "tokenpony") {
-    const { apiKey, baseUrl } = getTokenponyConfig();
-    if (!apiKey) return { ok: false, error: "[tokenpony] 缺少 TOKENPONY_API_KEY" };
+    const { apiKey, baseUrl } = await resolveTokenponyConfig();
+    if (!apiKey)
+      return {
+        ok: false,
+        error: "[tokenpony] 缺少 TOKENPONY_API_KEY（或在后台「供应商管理」登记 tokenpony 密钥）",
+      };
     return tokenponyPoll({ taskId: input.taskId, apiKey, baseUrl });
   }
   if (input.backend === "kling") {
@@ -5305,9 +5369,12 @@ export const uploadTokenponyAsset = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((d: unknown) => JieyunAssetUploadInput.parse(d)) // 与诘云同一入参形状
   .handler(async ({ data }) => {
-    const { apiKey, baseUrl } = getTokenponyConfig();
+    const { apiKey, baseUrl } = await resolveTokenponyConfig();
     if (!apiKey) {
-      return { ok: false as const, error: "[tokenpony] 缺少 TOKENPONY_API_KEY" };
+      return {
+        ok: false as const,
+        error: "[tokenpony] 缺少 TOKENPONY_API_KEY（或在后台「供应商管理」登记 tokenpony 密钥）",
+      };
     }
     const uploaded = await tokenponyUploadAsset({
       url: data.url,
