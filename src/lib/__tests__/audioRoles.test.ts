@@ -8,6 +8,7 @@ import {
   inferAudioRoleKind,
   isNarrationLikeCharacter,
   mergeAudioRoles,
+  mergeLoadedAudioRoles,
   migrateNarrationToAudioRoles,
   normalizeExtractedAudioRole,
   normalizeExtractedAudioRoles,
@@ -208,5 +209,30 @@ describe("normalizeExtractedAudioRoles（689a418 P0 回归：归一化不丢 aud
     expect(normalizeExtractedAudioRoles(undefined, 1)).toEqual([]);
     expect(normalizeExtractedAudioRoles(null, 1)).toEqual([]);
     expect(normalizeExtractedAudioRoles("oops", 1)).toEqual([]);
+  });
+});
+
+describe("mergeLoadedAudioRoles（刷新后区块消失的 P0 回归）", () => {
+  it("changed=false（无待迁移角色）但加载数据含 audioRoles → 仍写入 store", () => {
+    // 已拆好的数据:视觉角色无画外音类,迁移 changed=false,
+    // 迁移输出 audioRoles 原样返回 —— 加载应用必须照样写入
+    const existing = [
+      { id: "audio-旁白", name: "旁白", kind: "narrator" as const, episodes: [1] },
+    ];
+    const migration = migrateNarrationToAudioRoles({
+      characters: [visualChar({})],
+      audioRoles: existing,
+    });
+    expect(migration.changed).toBe(false);
+    expect(mergeLoadedAudioRoles(existing, migration.audioRoles)).toEqual(existing);
+  });
+
+  it("加载数据无 audioRoles 键（旧版数据）→ undefined,不动 store", () => {
+    expect(mergeLoadedAudioRoles(undefined, [])).toBeUndefined();
+    expect(mergeLoadedAudioRoles(undefined, [{ id: "a" } as never])).toBeUndefined();
+  });
+
+  it("加载数据带空数组键 → 写入空数组（真实状态,允许覆盖）", () => {
+    expect(mergeLoadedAudioRoles([], [])).toEqual([]);
   });
 });

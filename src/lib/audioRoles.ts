@@ -172,3 +172,16 @@ export function migrateNarrationToAudioRoles(input: {
   }));
   return { characters, audioRoles, storyboardGroups, changed: true };
 }
+
+/**
+ * 加载应用的 audioRoles 写入决策（纯函数,回归测试用）：
+ * 加载数据带 audioRoles 键（数组）时无条件返回迁移结果——含 changed=false
+ * 的已拆好数据;此前写入被迁移门控包住,刷新后音频角色区块消失（P0）。
+ * 加载数据没有该键（旧版数据）返回 undefined,调用方不动 store。
+ */
+export function mergeLoadedAudioRoles(
+  loaded: unknown,
+  migrated: GenAudioRole[],
+): GenAudioRole[] | undefined {
+  return Array.isArray(loaded) ? migrated : undefined;
+}

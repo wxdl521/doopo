@@ -58,6 +58,7 @@ import {
 } from "../lib/voiceCasting";
 import {
   mergeAudioRoles,
+  mergeLoadedAudioRoles,
   migrateNarrationToAudioRoles,
   normalizeExtractedAudioRoles,
 } from "../lib/audioRoles";
@@ -3404,8 +3405,10 @@ function WorkspacePage() {
         }
         // 2026/08:画外音迁移——旧项目里「旁白/画外音/讲述者」类视觉角色迁移为
         // 音频角色(保留已绑定音频,从视觉角色与分镜画面引用中移除)。幂等;
-        // 无画外音类角色时 changed=false 不写回。迁移输入先按上方同口径归一化
-        // （episodes/matchKey/episodeIndex 默认值）,避免覆盖丢失归一化结果。
+        // 迁移输入先按上方同口径归一化（episodes/matchKey/episodeIndex 默认值）。
+        // 注意:audioRoles 在加载数据里存在时**无条件**写入 store——迁移门控
+        // （changed=false）只管 characters/分镜;此前整段被门控包住,已拆好
+        // 的数据（无待迁移角色）audioRoles 被丢弃,刷新后区块消失（P0 回归）。
         {
           const normalizedCharacters: GenCharacter[] = Array.isArray(wd.characters)
             ? (wd.characters as any[]).map((c) => {
@@ -3428,16 +3431,27 @@ function WorkspacePage() {
                 }))
               : [],
           });
-          if (migration.changed) {
-            setData((d) => ({
-              ...d,
-              characters: migration.characters,
-              audioRoles: migration.audioRoles,
-              storyboardGroups: Array.isArray(wd.storyboardGroups)
-                ? migration.storyboardGroups
-                : d.storyboardGroups,
-            }));
-          }
+          setData((d) => ({
+            ...d,
+            // 加载数据带 audioRoles 键即写入（含 changed=false 的已拆好数据）;
+            // mergeLoadedAudioRoles 返回 undefined = 旧版数据无此键,不动 store
+            ...(() => {
+              const loadedAudioRoles = mergeLoadedAudioRoles(
+                wd.audioRoles,
+                migration.audioRoles,
+              );
+              return loadedAudioRoles ? { audioRoles: loadedAudioRoles } : {};
+            })(),
+            // 视觉角色/分镜引用只在确有迁移时改写
+            ...(migration.changed
+              ? {
+                  characters: migration.characters,
+                  storyboardGroups: Array.isArray(wd.storyboardGroups)
+                    ? migration.storyboardGroups
+                    : d.storyboardGroups,
+                }
+              : {}),
+          }));
         }
         if (wd.timeline)
           setData((d) => ({ ...d, timeline: wd.timeline as WorkspaceData["timeline"] }));
