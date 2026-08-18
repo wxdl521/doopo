@@ -8832,6 +8832,8 @@ function WorkspacePage() {
                 resolution: commonData.resolution,
                 duration: groupVideoDurationSec(group),
                 label: `工作区 ${groupId}`,
+                // 项目维度（后台按项目名查明细）
+                projectName: project?.name,
               },
             });
           } catch {

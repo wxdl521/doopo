@@ -123,18 +123,35 @@ export async function chargeCredits(
     description: string;
     /** 幂等键(如视频 taskId);同一 key 只扣一次（库级唯一索引原子保证） */
     idempotencyKey?: string;
+    /** 2026/08:项目维度（后台按项目名查明细）;SQL 未执行时自动回退旧签名 */
+    projectId?: string;
+    projectName?: string;
   },
 ): Promise<{ ok: boolean; balanceAfter: number | null; deduped?: boolean }> {
   try {
     // 幂等由 RPC + 唯一索引原子完成（迁移 20260804230000）；不再查 description
-    const { data, error } = await supabase.rpc("deduct_user_credits", {
-      p_amount: params.amount,
-      p_description: params.description,
-      p_model: params.model ?? null,
-      p_resolution: params.resolution ?? null,
-      p_duration: params.duration ?? null,
-      p_idempotency_key: params.idempotencyKey ?? null,
-    });
+    const callRpc = (withProject: boolean) =>
+      supabase.rpc("deduct_user_credits", {
+        p_amount: params.amount,
+        p_description: params.description,
+        p_model: params.model ?? null,
+        p_resolution: params.resolution ?? null,
+        p_duration: params.duration ?? null,
+        p_idempotency_key: params.idempotencyKey ?? null,
+        ...(withProject
+          ? { p_project_id: params.projectId ?? null, p_project_name: params.projectName ?? null }
+          : {}),
+      });
+    let { data, error } = await callRpc(true);
+    // SQL(supabase/manual/20260818061000)未执行时,新参数/函数签名不存在:
+    // PGRST202(函数缺失)/PGRST204(参数缺失)/42883 回退旧 6 参签名重试一次。
+    if (
+      error &&
+      /PGRST202|PGRST204|42883|does not exist|could not find/i.test(error.message ?? "")
+    ) {
+      console.warn("[chargeCredits] deduct_user_credits 新签名不可用（SQL 未执行?）,回退旧签名");
+      ({ data, error } = await callRpc(false));
+    }
     if (error) {
       console.error(`[chargeCredits] userId=${userId} RPC failed:`, error);
       return { ok: false, balanceAfter: null };

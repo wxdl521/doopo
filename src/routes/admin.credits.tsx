@@ -7,8 +7,10 @@ import PageHeader from "@/components/PageHeader";
 import { Input } from "@/components/ui/input";
 import {
   getAdminCreditRecipients,
+  getAdminCreditTransactions,
   grantAdminCredits,
   type AdminCreditRecipient,
+  type AdminCreditTransaction,
 } from "@/lib/adminCredits.functions";
 import {
   getAdminUserStatuses,
@@ -50,6 +52,39 @@ function AdminCredits() {
     action: AdminUserAction;
     target: AdminUserTarget;
   } | null>(null);
+  // 2026/08:积分消耗明细（项目维度）——独立筛选与分页,与上方用户搜索并存
+  const callTransactions = useServerFn(getAdminCreditTransactions);
+  const [txnProjectInput, setTxnProjectInput] = useState("");
+  const [txnProject, setTxnProject] = useState("");
+  const [txnPage, setTxnPage] = useState(1);
+  const [transactions, setTransactions] = useState<AdminCreditTransaction[]>([]);
+  const [txnLoading, setTxnLoading] = useState(false);
+  const [txnHasProjectColumns, setTxnHasProjectColumns] = useState(true);
+
+  const loadTransactions = useCallback(async () => {
+    setTxnLoading(true);
+    const result: any = await callTransactions({
+      data: {
+        page: txnPage,
+        pageSize: 20,
+        projectName: txnProject,
+        // 左侧选中用户时联动过滤其流水（团队选中不按 owner 过滤,保持简单）
+        userId: kind === "user" ? selected?.id : undefined,
+      },
+    });
+    setTxnLoading(false);
+    if (result?.error) {
+      toast.error(result.error);
+      setTransactions([]);
+      return;
+    }
+    setTransactions(result?.transactions ?? []);
+    setTxnHasProjectColumns(result?.hasProjectColumns !== false);
+  }, [callTransactions, txnPage, txnProject, kind, selected]);
+
+  useEffect(() => {
+    void loadTransactions();
+  }, [loadTransactions]);
 
   const loadRecipients = useCallback(async () => {
     setLoading(true);
@@ -438,6 +473,135 @@ function AdminCredits() {
         onClose={() => setUserAction(null)}
         onSuccess={() => void loadRecipients()}
       />
+
+      {/* 2026/08:积分消耗明细（按项目名称维度查询） */}
+      <section className="panel overflow-hidden">
+        <div className="flex flex-col gap-3 border-b border-border px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <h2 className="font-display font-bold">{t.admin_credits_txn_title}</h2>
+          <div className="flex min-w-[240px] gap-2">
+            <Input
+              value={txnProjectInput}
+              onChange={(event) => setTxnProjectInput(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  setTxnPage(1);
+                  setTxnProject(txnProjectInput.trim());
+                }
+              }}
+              placeholder={t.admin_credits_txn_project_placeholder}
+              aria-label={t.admin_credits_txn_col_project}
+            />
+            <button
+              onClick={() => {
+                setTxnPage(1);
+                setTxnProject(txnProjectInput.trim());
+              }}
+              className="btn-ghost shrink-0 !px-3"
+              aria-label={t.admin_credits_search}
+            >
+              <Search size={16} />
+            </button>
+          </div>
+        </div>
+        {!txnHasProjectColumns && (
+          <div className="border-b border-amber-500/40 bg-amber-500/10 px-5 py-2 text-xs text-amber-600">
+            {t.admin_credits_txn_no_columns}
+          </div>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-bg-elevated/60 text-text-muted">
+              <tr>
+                <th className="px-5 py-3 text-left font-medium">
+                  {t.admin_credits_txn_col_time}
+                </th>
+                <th className="px-5 py-3 text-left font-medium">
+                  {t.admin_credits_txn_col_user}
+                </th>
+                <th className="px-5 py-3 text-right font-medium">
+                  {t.admin_credits_txn_col_amount}
+                </th>
+                <th className="px-5 py-3 text-right font-medium">
+                  {t.admin_credits_txn_col_balance}
+                </th>
+                <th className="px-5 py-3 text-left font-medium">
+                  {t.admin_credits_txn_col_model}
+                </th>
+                <th className="px-5 py-3 text-left font-medium">
+                  {t.admin_credits_txn_col_project}
+                </th>
+                <th className="px-5 py-3 text-left font-medium">
+                  {t.admin_credits_txn_col_desc}
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {txnLoading ? (
+                <tr>
+                  <td colSpan={7} className="px-5 py-10 text-center text-text-muted">
+                    {t.admin_credits_loading}
+                  </td>
+                </tr>
+              ) : transactions.length === 0 ? (
+                <tr>
+                  <td colSpan={7} className="px-5 py-10 text-center text-text-muted">
+                    {t.admin_credits_txn_empty}
+                  </td>
+                </tr>
+              ) : (
+                transactions.map((txn) => (
+                  <tr key={txn.id} className="border-t border-border">
+                    <td className="whitespace-nowrap px-5 py-2.5 text-text-muted">
+                      {new Date(txn.createdAt).toLocaleString()}
+                    </td>
+                    <td className="max-w-40 truncate px-5 py-2.5 font-mono text-xs text-text-muted">
+                      {txn.userId.slice(0, 8)}…
+                    </td>
+                    <td
+                      className={`whitespace-nowrap px-5 py-2.5 text-right font-mono font-medium ${
+                        txn.amount < 0 ? "text-rose-500" : "text-emerald-600"
+                      }`}
+                    >
+                      {txn.amount > 0 ? `+${txn.amount.toLocaleString()}` : txn.amount.toLocaleString()}
+                    </td>
+                    <td className="whitespace-nowrap px-5 py-2.5 text-right font-mono text-text-secondary">
+                      {txn.balanceAfter == null ? "-" : txn.balanceAfter.toLocaleString()}
+                    </td>
+                    <td className="max-w-48 truncate px-5 py-2.5 text-text-muted">
+                      {txn.model ?? "-"}
+                    </td>
+                    <td className="max-w-40 truncate px-5 py-2.5 text-text-secondary">
+                      {txn.projectName ?? "-"}
+                    </td>
+                    <td className="max-w-64 truncate px-5 py-2.5 text-text-muted">
+                      {txn.description ?? "-"}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+        <div className="flex items-center justify-end gap-3 border-t border-border px-5 py-3">
+          <button
+            onClick={() => setTxnPage((current) => Math.max(1, current - 1))}
+            disabled={txnPage === 1 || txnLoading}
+            className="rounded-md border border-border p-1.5 text-text-secondary disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label={t.acc_credits_prev}
+          >
+            <ChevronLeft size={16} />
+          </button>
+          <span className="text-xs text-text-muted">{txnPage}</span>
+          <button
+            onClick={() => setTxnPage((current) => current + 1)}
+            disabled={transactions.length < 20 || txnLoading}
+            className="rounded-md border border-border p-1.5 text-text-secondary disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label={t.acc_credits_next}
+          >
+            <ChevronRight size={16} />
+          </button>
+        </div>
+      </section>
     </div>
   );
 }

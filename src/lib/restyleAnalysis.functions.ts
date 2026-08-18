@@ -74,6 +74,8 @@ const InputSchema = z.object({
   frameImages: z.array(z.string().startsWith("data:image/").max(500_000)).max(24).default([]),
   /** ASR 通道产出的整集台词（带时间码）。为空表示无音轨或识别降级。 */
   transcript: z.string().max(20_000).default(""),
+  /** 2026/08:项目名（积分流水项目维度;可选,不传不写） */
+  projectName: z.string().max(200).optional(),
   /**
    * 证据包模式：单元化管线（analyzeRestyleSourceUnits）产出的全片证据文本
    * （概览 + 全片逐镜表 + 台词）。存在时不再要求 frameImages，userText 由
@@ -249,6 +251,7 @@ export const analyzeRestyleAssets = createServerFn({ method: "POST" })
         amount: __cost,
         model: INTERNAL_VISION_MODEL,
         description: "转绘资产分析",
+        projectName: data.projectName,
       });
     }
     return result;
@@ -297,6 +300,8 @@ const PlanInputSchema = z.object({
   shotSchedule: z.array(PlanShotSchema).max(600).default([]),
   /** 目标市场：决定光照预设与俚语本土化口径。 */
   targetMarket: z.enum(["kr", "us", "in", "nordic", "hk", "jp"]).default("kr"),
+  /** 2026/08:项目名（积分流水项目维度;可选,不传不写） */
+  projectName: z.string().max(200).optional(),
   /**
    * 分窗模式（客户端驱动的长片分窗生成）：传入时本请求只负责该时间窗——
    * 镜头取 shotsInWindow 子集、prompt 带分窗约束、返回窗内分段（夹取到窗
@@ -489,6 +494,7 @@ export const generateRestylePlan = createServerFn({ method: "POST" })
                 assetsCount: data.assets.length,
                 shotsCount: data.shotSchedule.length,
               }),
+              projectName: data.projectName,
             });
           }
           return {
@@ -547,6 +553,7 @@ export const generateRestylePlan = createServerFn({ method: "POST" })
             amount: 1,
             model,
             description: "转绘方案生成",
+            projectName: data.projectName,
           });
         }
         return {

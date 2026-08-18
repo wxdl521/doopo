@@ -63,3 +63,55 @@ describe("chargeCredits 幂等（idempotencyKey）", () => {
     );
   });
 });
+
+describe("chargeCredits 项目维度（2026/08 project_name）", () => {
+  it("传 projectId/projectName → 新签名 RPC 参数下传", async () => {
+    const { supabase, rpc } = mockSupabase({ lookup: { data: [], error: null } });
+    const r = await chargeCredits(supabase, "u1", {
+      ...PARAMS,
+      projectId: "proj-1",
+      projectName: "未命名转绘项目 3",
+    });
+    expect(r.ok).toBe(true);
+    expect(rpc).toHaveBeenCalledWith(
+      "deduct_user_credits",
+      expect.objectContaining({
+        p_project_id: "proj-1",
+        p_project_name: "未命名转绘项目 3",
+      }),
+    );
+  });
+
+  it("不传项目参数 → p_project_* 为 null（列存在时写入 NULL,无兼容问题）", async () => {
+    const { supabase, rpc } = mockSupabase({ lookup: { data: [], error: null } });
+    await chargeCredits(supabase, "u1", PARAMS);
+    expect(rpc).toHaveBeenCalledWith(
+      "deduct_user_credits",
+      expect.objectContaining({ p_project_id: null, p_project_name: null }),
+    );
+  });
+
+  it("SQL 未执行（PGRST204 参数缺失）→ 回退旧 6 参签名重试一次", async () => {
+    const rpc = vi
+      .fn()
+      .mockResolvedValueOnce({
+        data: null,
+        error: { message: "PGRST204: Could not find the 'p_project_id' parameter" },
+      })
+      .mockResolvedValueOnce({ data: [{ ok: true, balance_after: 88 }], error: null });
+    const supabase = { rpc } as never;
+    const r = await chargeCredits(supabase, "u1", { ...PARAMS, projectName: "剧集A" });
+    expect(r).toEqual({ ok: true, balanceAfter: 88, deduped: false });
+    expect(rpc).toHaveBeenCalledTimes(2);
+    // 回退调用不带项目参数
+    expect(rpc.mock.calls[1][1]).not.toHaveProperty("p_project_name");
+  });
+
+  it("非兼容性错误（如余额约束 23514）不回退,直接报错", async () => {
+    const rpc = vi.fn(async () => ({ data: null, error: { message: "23514 check violation" } }));
+    const supabase = { rpc } as never;
+    const r = await chargeCredits(supabase, "u1", { ...PARAMS, projectName: "剧集A" });
+    expect(r.ok).toBe(false);
+    expect(rpc).toHaveBeenCalledTimes(1);
+  });
+});

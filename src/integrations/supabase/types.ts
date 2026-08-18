@@ -1668,6 +1668,8 @@ export type Database = {
           id: string
           idempotency_key: string | null
           model: string | null
+          project_id: string | null
+          project_name: string | null
           resolution: string | null
           type: string
           user_id: string
@@ -1681,6 +1683,8 @@ export type Database = {
           id?: string
           idempotency_key?: string | null
           model?: string | null
+          project_id?: string | null
+          project_name?: string | null
           resolution?: string | null
           type?: string
           user_id: string
@@ -1694,6 +1698,8 @@ export type Database = {
           id?: string
           idempotency_key?: string | null
           model?: string | null
+          project_id?: string | null
+          project_name?: string | null
           resolution?: string | null
           type?: string
           user_id?: string

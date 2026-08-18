@@ -1985,6 +1985,7 @@ export default function RestyleStudio() {
                 // 按集隔离：只传该窗所属集的逐镜表，杜绝跨集镜头泄漏（D1）。
                 shotSchedule: shotsForEpisode(job.videoId),
                 targetMarket: project.targetMarket ?? "kr",
+                projectName: project.title,
                 window: {
                   startMs: job.window.startMs,
                   endMs: job.window.endMs,
@@ -2093,6 +2094,7 @@ export default function RestyleStudio() {
           existingEpisodes: existingEpisodes ?? [],
           shotSchedule: project.shotSchedule ?? [],
           targetMarket: project.targetMarket ?? "kr",
+          projectName: project.title,
         },
       });
       if (!result.ok) {
@@ -3303,6 +3305,7 @@ export default function RestyleStudio() {
               resolution: "720P",
               duration: durationSec,
               label: `补镜 ${input.job.anchorShotNo}`,
+              projectName: projectsRef.current.find((item) => item.id === input.projectId)?.title,
             },
           });
         } catch {
@@ -3709,6 +3712,8 @@ export default function RestyleStudio() {
                   resolution: "720P",
                   duration: durationSec,
                   label: [job.episode, job.segmentId].filter(Boolean).join(" ") || undefined,
+                  // 项目维度（后台按项目名查明细）;取当前项目标题
+                  projectName: projectsRef.current.find((item) => item.id === projectId)?.title,
                 },
               });
             } catch (error) {
@@ -4810,6 +4815,8 @@ export default function RestyleStudio() {
                   data: {
                     sourceFiles: [{ id: episode, name: file.name, units: [unit] }],
                     idempotencyKey: `${projectId}:${episode}:${analysisRunId}`,
+                    // 项目维度（后台按项目名查明细）
+                    projectName: snapshot.title,
                   },
                 });
                 const fileResult = unitResult.ok ? unitResult.files[0] : undefined;

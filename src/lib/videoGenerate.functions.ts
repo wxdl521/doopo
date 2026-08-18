@@ -5160,6 +5160,8 @@ const PollServerInput = z.object({
   resolution: z.enum(["480P", "720P", "1080P"]).optional(),
   duration: z.number().int().min(1).max(60).optional(),
   label: z.string().max(120).optional(),
+  /** 2026/08:项目名（积分流水项目维度;可选,不传不写） */
+  projectName: z.string().max(200).optional(),
 });
 
 export const pollVideoTaskFn = createServerFn({ method: "POST" })
@@ -5192,6 +5194,7 @@ export const pollVideoTaskFn = createServerFn({ method: "POST" })
           duration: data.duration,
           description: `转绘视频生成${data.label ? `（${data.label}）` : ""}`,
           idempotencyKey: data.taskId,
+          projectName: data.projectName,
         });
         charged = charge.ok;
         if (!charge.ok) {
@@ -5462,6 +5465,8 @@ const GenerateVideoInput = z.object({
   resolution: z.enum(["480P", "720P", "1080P"]).default("720P"),
   generateAudio: z.boolean().optional(),
   watermark: z.boolean().optional(),
+  /** 2026/08:项目名（积分流水项目维度;可选,不传不写） */
+  projectName: z.string().max(200).optional(),
   onProgress: z.function().optional(),
 });
 
@@ -5619,6 +5624,7 @@ export const generateVideo = createServerFn({ method: "POST" })
           duration: data.duration,
           description: "视频生成",
           idempotencyKey: submit.taskId,
+          projectName: data.projectName,
         });
       }
       return {
@@ -5690,6 +5696,7 @@ export const generateVideo = createServerFn({ method: "POST" })
             duration: data.duration,
             description: "视频生成",
             idempotencyKey: submit.taskId,
+            projectName: data.projectName,
           });
         }
         console.log(`[video✓] completed backend=${submit.backend} taskId=${submit.taskId}`);

@@ -58,6 +58,8 @@ const InputSchema = z.object({
    * 调用不重复扣费；不传则每次成功都扣（与 v2 缺省口径一致）。
    */
   idempotencyKey: z.string().min(1).max(200).optional(),
+  /** 2026/08:项目名（积分流水项目维度;可选,不传不写） */
+  projectName: z.string().max(200).optional(),
 });
 
 export interface RestyleSourceUnitsFileResult {
@@ -190,6 +192,7 @@ export const analyzeRestyleSourceUnits = createServerFn({ method: "POST" })
           idempotencyKey: data.idempotencyKey
             ? `restyle-source-units:${data.idempotencyKey}:${r.unitId}`
             : undefined,
+          projectName: data.projectName,
         });
       }
 
