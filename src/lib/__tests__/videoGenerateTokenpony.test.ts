@@ -80,12 +80,18 @@ describe("tokenpony(Seedance 2.5 中转)渠道", () => {
     expect(parseTokenponyTaskCreate({ code: 200, data: {} })).toBeNull();
   });
 
-  it("轮询结果:COMPLETED 取 data.result.result;FAILED 读 task_status_msg", () => {
+  it("轮询结果:COMPLETED 取 result.output（2.5 实测形态）;FAILED 读 task_status_msg", () => {
     expect(
       parseTokenponyTaskResult({
-        data: { task_status: "COMPLETED", result: { result: "https://cdn/x.mp4" } },
+        data: { task_status: "COMPLETED", result: { output: "https://cdn/x.mp4", status: "success" } },
       }),
     ).toEqual({ status: "COMPLETED", videoUrl: "https://cdn/x.mp4", error: "" });
+    // 文档示例形态 result.result 兼容
+    expect(
+      parseTokenponyTaskResult({
+        data: { task_status: "COMPLETED", result: { result: "https://cdn/y.mp4" } },
+      }).videoUrl,
+    ).toBe("https://cdn/y.mp4");
     expect(
       parseTokenponyTaskResult({ data: { task_status: "FAILED", task_status_msg: "风控拒绝" } }),
     ).toEqual({ status: "FAILED", videoUrl: null, error: "风控拒绝" });

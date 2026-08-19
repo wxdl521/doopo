@@ -830,6 +830,9 @@ export function parseTokenponyTaskResult(raw: unknown): {
   const result = (data.result ?? {}) as Record<string, unknown>;
   const videoUrl =
     (typeof result.result === "string" && result.result) ||
+    // 实测（2026/08 seedance 2.5）：2.5 任务的结果字段是 result.output（文档示例
+    // 写的是 result.result，与实际响应不符），output 优先于 video_url。
+    (typeof result.output === "string" && result.output) ||
     (typeof result.video_url === "string" && result.video_url) ||
     (typeof data.video_url === "string" && (data.video_url as string)) ||
     null;
