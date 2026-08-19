@@ -7,6 +7,7 @@ import {
   r2vDurationLimitsForModel,
 } from "../videoAssetLibrary";
 import {
+  buildTokenponyVideoBody,
   getVideoBackend,
   formatTokenponyActionError,
   isTokenponyDuplicateGroupError,
@@ -16,6 +17,7 @@ import {
   parseTokenponyTaskCreate,
   parseTokenponyTaskResult,
   pickTokenponyConfig,
+  TOKENPONY_VIDEO_BODY_FIELDS,
   tokenponyEnvelopeError,
   tokenponyMediaType,
   tokenponyResolution,
@@ -266,5 +268,44 @@ describe("tokenpony 建组幂等与错误透出（2026-08 实证第二轮）", (
     ).toEqual({ code: "E100", message: "bad" });
     // 旧模板函数保留但已 deprecated（兼容期）,新代码不再调用
     expect(tokenponyEnvelopeError({ code: 200 })).toBeNull();
+  });
+});
+
+describe("tokenpony 视频创建请求体契约（10108 schema 校验实证）", () => {
+  it("组包字段与契约白名单完全一致（多一个字段即失败）", () => {
+    const body = buildTokenponyVideoBody({
+      prompt: "p",
+      media: [{ type: "first_image", url: "asset://a1" }],
+      ratio: "9:16",
+      resolution: "720P",
+      duration: 8,
+      generateAudio: true,
+    });
+    expect(Object.keys(body).sort()).toEqual([...TOKENPONY_VIDEO_BODY_FIELDS].sort());
+    // safety_identifier / callback_url / watermark 等契约外字段绝不允许出现
+    for (const banned of ["safety_identifier", "callback_url", "watermark"]) {
+      expect(body).not.toHaveProperty(banned);
+    }
+  });
+
+  it("duration 必须是 int:小数（降档贴齐档 7.7）四舍五入、夹到 4-15s", () => {
+    expect(buildTokenponyVideoBody({ prompt: "p", media: [], duration: 7.7 }).duration).toBe(8);
+    expect(buildTokenponyVideoBody({ prompt: "p", media: [], duration: 2 }).duration).toBe(4);
+    expect(buildTokenponyVideoBody({ prompt: "p", media: [], duration: 20 }).duration).toBe(15);
+    // 非正数（如 -1 智能档,属 TopenRouter 专有）直接省略
+    expect(buildTokenponyVideoBody({ prompt: "p", media: [], duration: -1 })).not.toHaveProperty(
+      "duration",
+    );
+  });
+
+  it("resolution 小写档;media.type 枚举值正确;空 media 不带该字段", () => {
+    const body = buildTokenponyVideoBody({ prompt: "p", media: [], resolution: "1080P" });
+    expect(body.resolution).toBe("1080p");
+    expect(body).not.toHaveProperty("media");
+    const withMedia = buildTokenponyVideoBody({
+      prompt: "p",
+      media: [{ type: "reference_video", url: "asset://v1" }],
+    });
+    expect(withMedia.media).toEqual([{ type: "reference_video", url: "asset://v1" }]);
   });
 });

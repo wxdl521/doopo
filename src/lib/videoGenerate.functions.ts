@@ -863,6 +863,44 @@ function tokenponyAssetUrl(assetId: string): string {
   return `asset://${assetId}`;
 }
 
+/**
+ * 视频创建请求体组包（2026-08 实证:契约白名单外的字段会被 10108
+ * 「Parameter schema validation failed」拒绝,一个都不能多）。
+ * duration 契约是 int 秒:降档阶梯的贴齐档带 0.1s 小数（如 7.7）,
+ * 四舍五入并夹到 4-15s;非正数（TopenRouter 专有的 -1 智能档不该到这里）省略。
+ */
+export const TOKENPONY_VIDEO_BODY_FIELDS = [
+  "model",
+  "prompt",
+  "resolution",
+  "ratio",
+  "duration",
+  "generate_audio",
+  "media",
+] as const;
+
+export function buildTokenponyVideoBody(input: {
+  prompt: string;
+  media: { type: string; url: string }[];
+  ratio?: string;
+  resolution?: string;
+  duration?: number;
+  generateAudio?: boolean;
+}): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    model: TOKENPONY_UPSTREAM_MODEL,
+    prompt: input.prompt,
+    resolution: tokenponyResolution(input.resolution),
+  };
+  if (input.ratio) body.ratio = input.ratio;
+  if (typeof input.duration === "number" && input.duration > 0) {
+    body.duration = Math.min(15, Math.max(4, Math.round(input.duration)));
+  }
+  if (typeof input.generateAudio === "boolean") body.generate_audio = input.generateAudio;
+  if (input.media.length > 0) body.media = input.media;
+  return body;
+}
+
 async function tokenponySubmit(input: {
   prompt: string;
   media: DashScopeMediaItem[];
@@ -880,15 +918,14 @@ async function tokenponySubmit(input: {
     media.push({ type: "reference_video", url: input.referenceVideoUrl });
   if (input.referenceAudioUrl)
     media.push({ type: "reference_audio", url: input.referenceAudioUrl });
-  const body: Record<string, unknown> = {
-    model: TOKENPONY_UPSTREAM_MODEL,
+  const body = buildTokenponyVideoBody({
     prompt: input.prompt,
-    resolution: tokenponyResolution(input.resolution),
-  };
-  if (input.ratio) body.ratio = input.ratio;
-  if (typeof input.duration === "number") body.duration = input.duration;
-  if (typeof input.generateAudio === "boolean") body.generate_audio = input.generateAudio;
-  if (media.length > 0) body.media = media;
+    media,
+    ratio: input.ratio,
+    resolution: input.resolution,
+    duration: input.duration,
+    generateAudio: input.generateAudio,
+  });
   const result = await fetchSubmitWithRetry({
     url: `${input.baseUrl}/v1/aigc/video/generate`,
     headers: {
@@ -911,8 +948,18 @@ async function tokenponySubmit(input: {
   const taskError = parseTokenponyError(json);
   // 统一走 parseTokenponyError（真实 Code:Message）;旧「服务返回错误码 undefined」
   // 信封模板已废弃（2026-08 实证它吞掉真因）
-  if (taskError)
-    return { ok: false, error: `[tokenpony] 创建任务失败: ${taskError.code}: ${taskError.message}` };
+  if (taskError) {
+    // schema 校验失败（10108）时打出请求体——下次一次定位多带/错名/错型字段
+    if (/10108|schema/i.test(`${taskError.code} ${taskError.message}`)) {
+      console.warn(
+        `[tokenpony] 创建任务 schema 校验失败,请求体: ${JSON.stringify(body).slice(0, 1000)}`,
+      );
+    }
+    return {
+      ok: false,
+      error: `[tokenpony] 创建任务失败: ${taskError.code}: ${taskError.message}`,
+    };
+  }
   const taskId = parseTokenponyTaskCreate(json);
   if (!taskId) {
     return { ok: false, error: `[tokenpony] 创建任务未返回 id: ${text.slice(0, 200)}` };
