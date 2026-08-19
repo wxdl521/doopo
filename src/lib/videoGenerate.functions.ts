@@ -727,7 +727,10 @@ export function tokenponyStatusToProgress(status: string | undefined): SeedanceP
   return "queued"; // PENDING 及其它未知态按排队处理
 }
 
-/** tokenpony 信封错误提取:{code,msg/message/error} 非 200 即错误;200 返回 null */
+/** tokenpony 信封错误提取:{code,msg/message/error} 非 200 即错误;200 返回 null
+ *  @deprecated 2026-08 起统一走 parseTokenponyError（本函数保留仅为兼容,
+ *  新代码勿用——它产出过「服务返回错误码 undefined」吞真因）
+ */
 export function tokenponyEnvelopeError(raw: unknown): string | null {
   if (!raw || typeof raw !== "object") return "响应不是 JSON 对象";
   const json = raw as { code?: number | string; msg?: string; message?: string; error?: string };
@@ -905,8 +908,11 @@ async function tokenponySubmit(input: {
   try {
     json = JSON.parse(text);
   } catch {}
-  const envelopeError = tokenponyEnvelopeError(json);
-  if (envelopeError) return { ok: false, error: `[tokenpony] 创建任务失败: ${envelopeError}` };
+  const taskError = parseTokenponyError(json);
+  // 统一走 parseTokenponyError（真实 Code:Message）;旧「服务返回错误码 undefined」
+  // 信封模板已废弃（2026-08 实证它吞掉真因）
+  if (taskError)
+    return { ok: false, error: `[tokenpony] 创建任务失败: ${taskError.code}: ${taskError.message}` };
   const taskId = parseTokenponyTaskCreate(json);
   if (!taskId) {
     return { ok: false, error: `[tokenpony] 创建任务未返回 id: ${text.slice(0, 200)}` };
@@ -933,8 +939,12 @@ async function tokenponyPoll(input: {
     try {
       json = JSON.parse(text);
     } catch {}
-    const envelopeError = tokenponyEnvelopeError(json);
-    if (envelopeError) return { ok: false, error: `[tokenpony] 查询任务失败: ${envelopeError}` };
+    const taskError = parseTokenponyError(json);
+    if (taskError)
+      return {
+        ok: false,
+        error: `[tokenpony] 查询任务失败: ${taskError.code}: ${taskError.message}`,
+      };
     const parsed = parseTokenponyTaskResult(json);
     return {
       ok: true,
@@ -1018,8 +1028,57 @@ async function tokenponyCallAssetAction(input: {
   }
 }
 
+/** 素材组列表解析:Result.Items/Groups/AssetGroups 或 data 数组,大小写键兼容 */
+export function parseTokenponyAssetGroupList(raw: unknown): { id: string; name: string }[] {
+  if (!raw || typeof raw !== "object") return [];
+  const json = raw as Record<string, unknown>;
+  const result = (json.Result ?? json.data ?? json) as Record<string, unknown>;
+  const items = result.Items ?? result.Groups ?? result.AssetGroups ?? result;
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((item: unknown) => {
+      const record = (item ?? {}) as Record<string, unknown>;
+      const id = record.Id ?? record.id;
+      const name = record.Name ?? record.name;
+      return {
+        id: typeof id === "string" || typeof id === "number" ? String(id) : "",
+        name: typeof name === "string" ? name : "",
+      };
+    })
+    .filter((item) => item.id);
+}
+
+/** 建组幂等判定:同名组已存在类错误（duplicate/already exists/已存在/冲突） */
+export function isTokenponyDuplicateGroupError(error: string): boolean {
+  return /already exist|duplicate|已存在|同名|conflict/i.test(error);
+}
+
 // 素材组按名缓存(模块级,同 isolate 内复用)
 let tokenponyAssetGroupCache: { name: string; id: string } | null = null;
+
+/** 按组名查已有素材组（CreateAssetGroup 同名被拒后的幂等复用路径） */
+async function tokenponyFindAssetGroupByName(input: {
+  apiKey: string;
+  baseUrl: string;
+}): Promise<{ ok: true; groupId: string } | { ok: false; error: string }> {
+  const listed = await tokenponyCallAssetAction({
+    action: "ListAssetGroups",
+    body: { Name: TOKENPONY_ASSET_GROUP_NAME },
+    apiKey: input.apiKey,
+    baseUrl: input.baseUrl,
+  });
+  if (!listed.ok) return listed;
+  const hit = parseTokenponyAssetGroupList(listed.data).find(
+    (group) => group.name === TOKENPONY_ASSET_GROUP_NAME,
+  );
+  if (!hit) {
+    return {
+      ok: false,
+      error: `[tokenpony] 同名素材组已存在但列表未返回（组名 ${TOKENPONY_ASSET_GROUP_NAME}）`,
+    };
+  }
+  return { ok: true, groupId: hit.id };
+}
 
 async function tokenponyEnsureAssetGroup(input: {
   apiKey: string;
@@ -1038,7 +1097,19 @@ async function tokenponyEnsureAssetGroup(input: {
     apiKey: input.apiKey,
     baseUrl: input.baseUrl,
   });
-  if (!created.ok) return created;
+  if (!created.ok) {
+    // 建组幂等（2026-08 实证:首次建组成功后,第二次同名建组被 duplicate 拒绝）——
+    // 识别冲突类错误后按名查已有组复用,不当失败处理
+    if (isTokenponyDuplicateGroupError(created.error)) {
+      const reused = await tokenponyFindAssetGroupByName(input);
+      if (!reused.ok) {
+        return { ok: false, error: `${created.error}；按名复用也失败: ${reused.error}` };
+      }
+      tokenponyAssetGroupCache = { name: TOKENPONY_ASSET_GROUP_NAME, id: reused.groupId };
+      return reused;
+    }
+    return created;
+  }
   const group = parseTokenponyAssetResult({ data: created.data });
   if (!group) return { ok: false, error: "[tokenpony] CreateAssetGroup 未返回组 Id" };
   tokenponyAssetGroupCache = { name: TOKENPONY_ASSET_GROUP_NAME, id: group.id };

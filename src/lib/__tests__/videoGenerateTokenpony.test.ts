@@ -9,6 +9,8 @@ import {
 import {
   getVideoBackend,
   formatTokenponyActionError,
+  isTokenponyDuplicateGroupError,
+  parseTokenponyAssetGroupList,
   parseTokenponyAssetResult,
   parseTokenponyError,
   parseTokenponyTaskCreate,
@@ -231,5 +233,38 @@ describe("tokenpony 素材 Action 的 Result 信封（2026-08 实证:素材库�
         Result: {},
       }),
     ).toEqual({ code: "InvalidParameter", message: "GroupType 非法" });
+  });
+});
+
+describe("tokenpony 建组幂等与错误透出（2026-08 实证第二轮）", () => {
+  it("素材组列表解析:Result.Items / Groups / data 数组兼容", () => {
+    expect(
+      parseTokenponyAssetGroupList({ Result: { Items: [{ Id: "348", Name: "doopoo" }] } }),
+    ).toEqual([{ id: "348", name: "doopoo" }]);
+    expect(
+      parseTokenponyAssetGroupList({ Result: { Groups: [{ id: "g1", name: "doopoo" }] } }),
+    ).toEqual([{ id: "g1", name: "doopoo" }]);
+    expect(parseTokenponyAssetGroupList({ data: [{ Id: 123, Name: "x" }] })).toEqual([
+      { id: "123", name: "x" },
+    ]);
+    expect(parseTokenponyAssetGroupList({ Result: {} })).toEqual([]);
+    expect(parseTokenponyAssetGroupList(null)).toEqual([]);
+  });
+
+  it("建组 duplicate/已存在类错误识别为幂等复用信号", () => {
+    expect(isTokenponyDuplicateGroupError("already exists")).toBe(true);
+    expect(isTokenponyDuplicateGroupError("Duplicate group name")).toBe(true);
+    expect(isTokenponyDuplicateGroupError("同名素材组已存在")).toBe(true);
+    expect(isTokenponyDuplicateGroupError("AssetGroup name conflict")).toBe(true);
+    expect(isTokenponyDuplicateGroupError("缺少参数")).toBe(false);
+  });
+
+  it("submit/poll 错误透出真实 Code:Message（旧「服务返回错误码 undefined」模板废弃）", () => {
+    // 提交/查询统一走 parseTokenponyError:火山 Action 风格也能解出
+    expect(
+      parseTokenponyError({ ResponseMetadata: { Error: { Code: "E100", Message: "bad" } } }),
+    ).toEqual({ code: "E100", message: "bad" });
+    // 旧模板函数保留但已 deprecated（兼容期）,新代码不再调用
+    expect(tokenponyEnvelopeError({ code: 200 })).toBeNull();
   });
 });
