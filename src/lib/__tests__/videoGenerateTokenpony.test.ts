@@ -309,15 +309,25 @@ describe("tokenpony 视频创建请求体契约（10108 schema 校验实证）",
     );
   });
 
-  it("resolution 大写档;media.type 枚举值正确;空 media 不带该字段", () => {
+  it("resolution 大写档;媒体走 content[]（ARK 风格带 role）;空 media 不带该字段", () => {
     const body = buildTokenponyVideoBody({ prompt: "p", media: [], resolution: "1080P" });
     expect(body.resolution).toBe("1080P");
-    expect(body).not.toHaveProperty("media");
+    expect(body).not.toHaveProperty("content");
     const withMedia = buildTokenponyVideoBody({
       prompt: "p",
-      media: [{ type: "reference_video", url: "asset://v1" }],
+      media: [
+        { type: "first_image", url: "asset://f1" },
+        { type: "reference_video", url: "asset://v1" },
+        { type: "reference_audio", url: "asset://a1" },
+      ],
     });
-    expect(withMedia.media).toEqual([{ type: "reference_video", url: "asset://v1" }]);
+    // asset:// 首帧必须保留 role（media[] 形态会被网关丢 role，curl 实证）
+    expect(withMedia.content).toEqual([
+      { type: "text", text: "p" },
+      { type: "image_url", image_url: { url: "asset://f1" }, role: "first_frame" },
+      { type: "video_url", video_url: { url: "asset://v1" }, role: "reference_video" },
+      { type: "audio_url", audio_url: { url: "asset://a1" }, role: "reference_audio" },
+    ]);
   });
 
   it("含首/尾帧时 ratio 强制 adaptive；纯参考媒体保留请求比例", () => {

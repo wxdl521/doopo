@@ -884,7 +884,8 @@ export const TOKENPONY_VIDEO_BODY_FIELDS = [
   "ratio",
   "duration",
   "generate_audio",
-  "media",
+  // 实测用 content[]（ARK 风格带 role）提交，media[] 在 asset:// 首帧场景丢 role
+  "content",
 ] as const;
 
 export function buildTokenponyVideoBody(input: {
@@ -908,7 +909,30 @@ export function buildTokenponyVideoBody(input: {
     body.duration = Math.min(15, Math.max(4, Math.round(input.duration)));
   }
   if (typeof input.generateAudio === "boolean") body.generate_audio = input.generateAudio;
-  if (input.media.length > 0) body.media = input.media;
+  // 实测：media[] 形态下 asset:// 的首/尾帧会被网关在 content 转换时丢 role
+  // （task generation failed: role must be specified for image contents）；
+  // content[] 形态（ARK 风格、自带 role）两类 URL 都完整保留 role。
+  if (input.media.length > 0) {
+    const ROLE_BY_TYPE: Record<string, string> = {
+      first_image: "first_frame",
+      last_image: "last_frame",
+      reference_image: "reference_image",
+      reference_video: "reference_video",
+      reference_audio: "reference_audio",
+    };
+    const content: Record<string, unknown>[] = [{ type: "text", text: input.prompt }];
+    for (const item of input.media) {
+      const role = ROLE_BY_TYPE[item.type] ?? "reference_image";
+      const key =
+        item.type === "reference_video"
+          ? "video_url"
+          : item.type === "reference_audio"
+            ? "audio_url"
+            : "image_url";
+      content.push({ type: key, [key]: { url: item.url }, role });
+    }
+    body.content = content;
+  }
   return body;
 }
 
@@ -5932,6 +5956,8 @@ const PollServerInput = z.object({
     .refine((v) => v === -1 || v >= 1, "duration 仅支持 -1（智能）或 1-60 秒")
     .optional(),
   label: z.string().max(120).optional(),
+  /** 流水说明前缀（默认「转绘视频生成」）；工作区链传「工作区视频生成」。 */
+  descPrefix: z.string().max(40).optional(),
   /** 2026/08:项目名（积分流水项目维度;可选,不传不写） */
   projectName: z.string().max(200).optional(),
 });
@@ -5964,7 +5990,7 @@ export const pollVideoTaskFn = createServerFn({ method: "POST" })
           model: data.model,
           resolution: data.resolution,
           duration: data.duration,
-          description: `转绘视频生成${data.label ? `（${data.label}）` : ""}`,
+          description: `${data.descPrefix ?? "转绘视频生成"}${data.label ? `（${data.label}）` : ""}`,
           idempotencyKey: data.taskId,
           projectName: data.projectName,
         });

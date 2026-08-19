@@ -8882,10 +8882,12 @@ function WorkspacePage() {
                 taskId: submitted.taskId!,
                 backend: submitted.backend!,
                 model: submitted.model,
-                // 成功扣费参数（与转绘链同口径，幂等键 taskId）
+                // 成功扣费参数（与转绘链同口径，幂等键 taskId）；
+                // descPrefix 区分工作区成片与转绘渲染的流水标签
                 resolution: commonData.resolution,
                 duration: groupVideoDurationSec(group),
                 label: `工作区 ${groupId}`,
+                descPrefix: "工作区视频生成",
                 // 项目维度（后台按项目名查明细）
                 projectName: project?.name,
               },
