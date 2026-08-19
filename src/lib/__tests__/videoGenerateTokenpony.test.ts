@@ -319,4 +319,21 @@ describe("tokenpony 视频创建请求体契约（10108 schema 校验实证）",
     });
     expect(withMedia.media).toEqual([{ type: "reference_video", url: "asset://v1" }]);
   });
+
+  it("含首/尾帧时 ratio 强制 adaptive；纯参考媒体保留请求比例", () => {
+    const withFirst = buildTokenponyVideoBody({
+      prompt: "p",
+      media: [{ type: "first_image", url: "https://a.com/f.png" }],
+      ratio: "9:16",
+    });
+    expect(withFirst.ratio).toBe("adaptive");
+    const refOnly = buildTokenponyVideoBody({
+      prompt: "p",
+      media: [{ type: "reference_image", url: "https://a.com/r.png" }],
+      ratio: "9:16",
+    });
+    expect(refOnly.ratio).toBe("9:16");
+    const noRatio = buildTokenponyVideoBody({ prompt: "p", media: [] });
+    expect(noRatio.ratio).toBe("adaptive");
+  });
 });

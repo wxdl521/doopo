@@ -900,7 +900,10 @@ export function buildTokenponyVideoBody(input: {
     prompt: input.prompt,
     resolution: tokenponyResolution(input.resolution),
   };
-  if (input.ratio) body.ratio = input.ratio;
+  // 实测（2026/08 curl）：媒体含首/尾帧时 ratio 只收 'adaptive'
+  // （10108: params.ratio must equal 'adaptive'）；纯参考媒体时具体比例可过。
+  const hasFrame = input.media.some((m) => m.type === "first_image" || m.type === "last_image");
+  body.ratio = hasFrame ? "adaptive" : input.ratio || "adaptive";
   if (typeof input.duration === "number" && input.duration > 0) {
     body.duration = Math.min(15, Math.max(4, Math.round(input.duration)));
   }
