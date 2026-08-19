@@ -77,11 +77,21 @@ function authHeaders(caps: ModelCapabilities | undefined, apiKey: string): Recor
 /**
  * 供 testProviderConnection 使用：按 provider id 解析 baseUrl + 认证头。
  * auth_header 取该供应商任一已登记模型的声明，缺省 bearer。
+ * 2026-08:缺密钥不再判失败——返回 keyMissing 标记 + 空认证头,
+ * 由调用方降级为「仅验证连通性」（AK/SK 签名/未配密钥渠道）。
  */
 export async function resolveProviderCredentials(
   providerId: string,
 ): Promise<
-  { ok: true; baseUrl: string; headers: Record<string, string> } | { ok: false; error: string }
+  | {
+      ok: true;
+      baseUrl: string;
+      headers: Record<string, string>;
+      code: string;
+      /** 密钥缺失（未登记密文且 env 未配置）——调用方降级连通性探测 */
+      keyMissing: boolean;
+    }
+  | { ok: false; error: string }
 > {
   const { data: provider, error } = await (supabaseAdmin.from as any)("ai_providers")
     .select("id, code, name, kind, base_url, api_key_cipher, env_key_name, enabled")
@@ -92,14 +102,6 @@ export async function resolveProviderCredentials(
   if (!provider.base_url) return { ok: false as const, error: "未配置接口地址 base_url" };
 
   const apiKey = await resolveApiKey(provider);
-  if (!apiKey) {
-    return {
-      ok: false as const,
-      error: provider.env_key_name
-        ? `未读取到密钥（${provider.env_key_name} 未配置，且未登记密钥）`
-        : "未登记 API 密钥",
-    };
-  }
 
   const { data: model } = await (supabaseAdmin.from as any)("ai_provider_models")
     .select("capabilities")
@@ -111,7 +113,9 @@ export async function resolveProviderCredentials(
   return {
     ok: true as const,
     baseUrl: String(provider.base_url).replace(/\/+$/, ""),
-    headers: authHeaders(caps, apiKey),
+    headers: apiKey ? authHeaders(caps, apiKey) : {},
+    code: String(provider.code),
+    keyMissing: !apiKey,
   };
 }
 

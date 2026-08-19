@@ -18,6 +18,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { classifyProbeStatus, probePlanFor } from "./providerProbe";
 import { supabaseAdmin } from "@/integrations/supabase/client.server";
 import { invalidateModelPricingCache } from "./modelPricingCache";
 import { fetchModelPricingFromDb } from "./modelPricing.functions";
@@ -421,29 +422,41 @@ export const testProviderConnection = createServerFn({ method: "POST" })
     const creds = await resolveProviderCredentials(data.id);
     if (!creds.ok) return { ok: false as const, error: creds.error };
 
+    // 分型探测（2026-08 误报修复）：固定 /v1/models 只适配 OpenAI 兼容网关,
+    // 按 provider code 走各自的路径/认证约定;策略表见 providerProbe.ts。
+    const plan = probePlanFor(creds.code, creds.baseUrl);
+    // 拿不到密钥的供应商降级为连通性探测（不带认证头）,并明确提示
+    const reachabilityOnly = plan.reachabilityOnly || creds.keyMissing;
+    const headers = creds.keyMissing ? {} : creds.headers;
+
     const startedAt = Date.now();
     try {
-      // 最小请求：OpenAI 兼容网关普遍提供 GET /v1/models
-      const res = await fetch(`${creds.baseUrl}/v1/models`, {
-        headers: creds.headers,
+      const res = await fetch(plan.url, {
+        headers,
         signal: AbortSignal.timeout(TEST_PROVIDER_TIMEOUT_MS),
       });
       const durationMs = Date.now() - startedAt;
-      // 只消费状态码，不记录响应体（可能含账户信息）
+      // 只消费状态码,不记录响应体（可能含账户信息）
       await res.arrayBuffer().catch(() => {});
-      const ok = res.status >= 200 && res.status < 300;
+      const verdict = classifyProbeStatus(res.status, reachabilityOnly);
+      const notes = [
+        creds.keyMissing && !plan.reachabilityOnly ? "未配置密钥，仅验证连通性" : undefined,
+        plan.note,
+      ].filter(Boolean);
       return {
-        ok: ok as boolean,
+        ok: (verdict.outcome === "ok") as boolean,
         status: res.status,
         durationMs,
-        error: ok ? null : `上游返回 HTTP ${res.status}`,
+        error: verdict.outcome === "ok" ? null : verdict.message,
+        ...(notes.length ? { note: notes.join("；") } : {}),
+        ...(verdict.outcome === "ok" && verdict.message ? { note: verdict.message } : {}),
       };
     } catch (error) {
       const durationMs = Date.now() - startedAt;
       const message =
         (error as Error)?.name === "TimeoutError" || (error as Error)?.name === "AbortError"
-          ? `连接超时（>${TEST_PROVIDER_TIMEOUT_MS / 1000}s）`
-          : `网络错误: ${(error as Error)?.message ?? "fetch failed"}`;
+          ? `连接超时（>${TEST_PROVIDER_TIMEOUT_MS / 1000}s）——请检查接口地址`
+          : `网络错误: ${(error as Error)?.message ?? "fetch failed"}——请检查接口地址`;
       return { ok: false as const, status: null, durationMs, error: message };
     }
   });

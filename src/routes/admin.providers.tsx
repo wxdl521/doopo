@@ -695,8 +695,11 @@ function AdminProviders() {
           .replace("{status}", String(result.status))
           .replace("{ms}", String(result.durationMs)),
       );
+      // 分型探测的附带说明（未配置密钥仅验连通性/端点未实测等）
+      if (result?.note) toast.message(result.note);
     } else {
       toast.error(`${t.admin_providers_test_fail}: ${result?.error ?? ""}`);
+      if (result?.note) toast.message(result.note);
     }
   }
 
