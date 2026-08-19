@@ -40,10 +40,21 @@ describe("tokenpony(Seedance 2.5 中转)渠道", () => {
     expect(tokenponyMediaType("reference_audio")).toBe("reference_audio");
   });
 
-  it("resolution 小写档(720p 缺省)", () => {
-    expect(tokenponyResolution("480P")).toBe("480p");
-    expect(tokenponyResolution("1080P")).toBe("1080p");
-    expect(tokenponyResolution(undefined)).toBe("720p");
+  it("resolution 大写档(720P 缺省)——实测小写会被 10108 拒", () => {
+    expect(tokenponyResolution("480P")).toBe("480P");
+    expect(tokenponyResolution("1080P")).toBe("1080P");
+    expect(tokenponyResolution("720p")).toBe("720P");
+    expect(tokenponyResolution(undefined)).toBe("720P");
+  });
+
+  it("10108 信封带 data.errors 字段明细", () => {
+    const err = parseTokenponyError({
+      code: 10108,
+      message: "Invalid request: Parameter schema validation failed",
+      data: { errors: [{ path: "params.resolution", message: "must be one of: '480P'" }] },
+    });
+    expect(err?.code).toBe("10108");
+    expect(err?.message).toContain("params.resolution");
   });
 
   it("task_status 状态映射:PENDING/RUNNING/COMPLETED/FAILED", () => {
@@ -298,9 +309,9 @@ describe("tokenpony 视频创建请求体契约（10108 schema 校验实证）",
     );
   });
 
-  it("resolution 小写档;media.type 枚举值正确;空 media 不带该字段", () => {
+  it("resolution 大写档;media.type 枚举值正确;空 media 不带该字段", () => {
     const body = buildTokenponyVideoBody({ prompt: "p", media: [], resolution: "1080P" });
-    expect(body.resolution).toBe("1080p");
+    expect(body.resolution).toBe("1080P");
     expect(body).not.toHaveProperty("media");
     const withMedia = buildTokenponyVideoBody({
       prompt: "p",

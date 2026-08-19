@@ -714,8 +714,10 @@ export function tokenponyMediaType(type: string): string {
 
 /** 平台分辨率档(480P/720P/1080P) → tokenpony 小写档 */
 export function tokenponyResolution(resolution: string | null | undefined): string {
+  // 实测（2026/08 curl 实证）：tokenpony 只收大写档（480P/720P/1080P），
+  // 小写会被 10108 schema 校验拒绝（data.errors[].path 有字段明细）。
   const r = (resolution || "720P").toUpperCase();
-  return r === "480P" ? "480p" : r === "1080P" ? "1080p" : "720p";
+  return r === "480P" ? "480P" : r === "1080P" ? "1080P" : "720P";
 }
 
 /** tokenpony task_status → 平台统一进度 */
@@ -768,14 +770,20 @@ export function parseTokenponyError(
   const code = json.code as number | string | undefined;
   const isOk = code === 200 || code === "200" || code === 0 || code === "success";
   if (code !== undefined && !isOk) {
+    // 10108 参数校验失败时明细在 data.errors[]（如 params.resolution 取值非法），带上它一次定位。
+    const details = (json.data as { errors?: Array<{ path?: string; message?: string }> } | undefined)
+      ?.errors;
+    const detailText = Array.isArray(details)
+      ? details.map((e) => `${e.path ?? ""} ${e.message ?? ""}`.trim()).filter(Boolean).join("；")
+      : "";
+    const base =
+      (json.msg as string) ||
+      (json.message as string) ||
+      (typeof json.error === "string" ? json.error : "") ||
+      "";
     return {
       code: String(code),
-      message: String(
-        (json.msg as string) ||
-          (json.message as string) ||
-          (typeof json.error === "string" ? json.error : "") ||
-          "",
-      ),
+      message: detailText ? `${base}（${detailText}）` : base,
     };
   }
   return null;
