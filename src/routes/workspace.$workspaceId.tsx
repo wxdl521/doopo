@@ -8869,8 +8869,9 @@ function WorkspacePage() {
             error: submitted.ok ? "视频模型没有返回任务编号" : submitted.error,
           };
         }
-        // 轮询上限 120 次 × 5s（与转绘链对齐）；任务中止（新一轮覆盖）立即退出。
-        for (let pollCount = 0; pollCount < 120; pollCount += 1) {
+        // 轮询上限 240 次 × 5s = 20 分钟（与转绘链对齐；tokenpony 2.5 大负载
+        // 实测超 13 分钟，10 分钟上限会误判超时）；任务中止（新一轮覆盖）立即退出。
+        for (let pollCount = 0; pollCount < 240; pollCount += 1) {
           if (videoGenRoundRef.current[groupId] !== myRound) {
             return { ok: false, error: "已被中止" };
           }
@@ -8917,7 +8918,7 @@ function WorkspacePage() {
             };
           }
         }
-        return { ok: false, error: "视频生成超时：已等待约 10 分钟仍未完成，请稍后重试。" };
+        return { ok: false, error: "视频生成超时：已等待约 20 分钟仍未完成，请稍后重试。" };
       })();
       if (videoGenRoundRef.current[groupId] !== myRound) return false; // 已被中止或新一轮覆盖,丢弃
       if (res.ok && res.videoUrl) {

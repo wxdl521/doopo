@@ -3103,7 +3103,8 @@ export default function RestyleStudio() {
         const jobId = submitted.jobId;
         let stitched = "";
         let lastError = "合成服务未在预期时间内返回成片。";
-        for (let attempt = 0; attempt < 120; attempt += 1) {
+        // 合成轮询同样放宽到 20 分钟（大文件拼接慢于 10 分钟上限的场景已实证）。
+        for (let attempt = 0; attempt < 240; attempt += 1) {
           if (isRunAborted(projectId)) return;
           await new Promise((resolve) => setTimeout(resolve, 5_000));
           const polled = await callPollVideoStitchJob({ data: { jobId } });
@@ -3333,7 +3334,9 @@ export default function RestyleStudio() {
       if (!submitted.ok || !submitted.taskId) {
         return { ok: false, error: submitted.ok ? "视频模型没有返回任务编号" : submitted.error };
       }
-      for (let attempt = 0; attempt < 120; attempt += 1) {
+      // 轮询上限 240 次 × 5s = 20 分钟（tokenpony Seedance 2.5 的 720P 大负载
+      // 实测超过 13 分钟，10 分钟上限会把快完成的任务误判超时）。
+      for (let attempt = 0; attempt < 240; attempt += 1) {
         if (isRunAborted(input.projectId)) return { ok: false, error: "任务已中止" };
         await new Promise((resolve) => setTimeout(resolve, 5_000));
         let polled: Awaited<ReturnType<typeof callPollVideoTask>>;
@@ -3743,7 +3746,7 @@ export default function RestyleStudio() {
             if (pollCount > 120) {
               return {
                 ok: false,
-                error: "视频生成超时：已等待约 10 分钟仍未完成，请稍后重试该分段。",
+                error: "视频生成超时：已等待约 20 分钟仍未完成，请稍后重试该分段。",
               };
             }
             await new Promise<void>((resolve) => window.setTimeout(resolve, 5_000));
