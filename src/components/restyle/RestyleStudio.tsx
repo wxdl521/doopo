@@ -146,6 +146,7 @@ import {
 import { uploadLocalImage } from "../../lib/uploadImage.functions";
 import { refundChargedCredits } from "../../lib/userCredits.functions";
 import { reportGenerationError } from "../../lib/errorLogs.functions";
+import { resignRestyleMedia, resignSingleUrl } from "./resignMediaClient";
 import { createMediaUploadUrl, signMediaReadUrl } from "../../lib/restyleMedia.functions";
 import { persistAssetImage } from "../../lib/workspaceMedia.functions";
 import { persistRestyleVideo } from "../../lib/restyleMedia.functions";
