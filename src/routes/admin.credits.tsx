@@ -9,6 +9,7 @@ import {
   getAdminCreditRecipients,
   getAdminCreditTransactions,
   grantAdminCredits,
+  revokeAdminCredits,
   type AdminCreditRecipient,
   type AdminCreditTransaction,
 } from "@/lib/adminCredits.functions";
