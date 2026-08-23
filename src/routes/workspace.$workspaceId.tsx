@@ -120,7 +120,10 @@ import {
   saveOneStoryboard,
   saveOneVideo,
   persistAssetImage,
+  refreshMediaUrls,
 } from "../lib/workspaceMedia.functions";
+import { isWorkspaceMediaUrl } from "../lib/mediaUrl";
+
 import { urlToBase64 } from "../lib/imageToBase64";
 import {
   streamSynopsis,
