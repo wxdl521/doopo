@@ -6405,6 +6405,7 @@ export default function RestyleStudio() {
 
   return (
     <section
+      ref={workbenchRef}
       className="relative flex h-[100dvh] min-h-[640px] flex-col overflow-hidden bg-bg"
       data-testid="restyle-workbench"
       onDragOver={handleWorkspaceDragOver}
