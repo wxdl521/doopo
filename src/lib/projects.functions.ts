@@ -260,16 +260,20 @@ export const listMyProjects = createServerFn({ method: "POST" })
       // 团队/组成员能看到共享给自己的项目。
       .order("updated_at", { ascending: false });
     if (error) return { projects: [] as ProjectListItem[], error: error.message };
-    const projects: ProjectListItem[] = (data ?? []).map((row) => ({
-      id: row.id,
-      name: row.name,
-      customCover: row.custom_cover,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      completedStages: row.completed_stages ?? [],
-      status: inferStatus({ completed_stages: row.completed_stages ?? [] }),
-      thumbnail: null,
-    }));
+    // 封面统一重签（私有 bucket 的签名 URL 7 天过期，历史项目会裂图）。
+    const projects: ProjectListItem[] = await Promise.all(
+      (data ?? []).map(async (row) => ({
+        id: row.id,
+        name: row.name,
+        customCover: await resignCover(supabase, row.custom_cover),
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        completedStages: row.completed_stages ?? [],
+        status: inferStatus({ completed_stages: row.completed_stages ?? [] }),
+        thumbnail: null,
+      })),
+    );
+
     return { projects, error: null as string | null };
   });
 
