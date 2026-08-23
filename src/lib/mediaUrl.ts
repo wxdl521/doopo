@@ -49,3 +49,22 @@ export function collectWorkspaceMediaUrls(value: unknown, limit = 300): string[]
   walk(value, 0);
   return Array.from(found);
 }
+
+/** 深度遍历替换：把结构里的 workspace-media 链接按映射换成新签名 URL。 */
+export function replaceWorkspaceMediaUrls<T>(value: T, map: Record<string, string>): T {
+  if (!map || Object.keys(map).length === 0) return value;
+  const walk = (node: unknown, depth: number): unknown => {
+    if (depth > 8 || node == null) return node;
+    if (typeof node === "string") return map[node] ?? node;
+    if (Array.isArray(node)) return node.map((item) => walk(item, depth + 1));
+    if (typeof node === "object") {
+      const out: Record<string, unknown> = {};
+      for (const [k, v] of Object.entries(node as Record<string, unknown>)) {
+        out[k] = walk(v, depth + 1);
+      }
+      return out;
+    }
+    return node;
+  };
+  return walk(value, 0) as T;
+}
