@@ -4,7 +4,42 @@ import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Database } from "@/integrations/supabase/types";
-import { getWorkspaceMediaPath, WORKSPACE_MEDIA_BUCKET } from "./mediaUrl";
+import {
+  collectWorkspaceMediaUrls,
+  getWorkspaceMediaPath,
+  replaceWorkspaceMediaUrls,
+  WORKSPACE_MEDIA_BUCKET,
+} from "./mediaUrl";
+
+/**
+ * 深度重签：把结构里所有 workspace-media 链接重新签发（7 天有效），
+ * 让历史项目里已过期的图片/视频链接在读取时自愈。
+ */
+async function resignMediaDeep<T>(supabase: any, value: T): Promise<T> {
+  const urls = collectWorkspaceMediaUrls(value, 800);
+  if (urls.length === 0) return value;
+  const map: Record<string, string> = {};
+  const CHUNK = 50;
+  for (let i = 0; i < urls.length; i += CHUNK) {
+    const chunk = urls.slice(i, i + CHUNK);
+    await Promise.all(
+      chunk.map(async (url) => {
+        const path = getWorkspaceMediaPath(url);
+        if (!path) return;
+        try {
+          const { data, error } = await supabase.storage
+            .from(WORKSPACE_MEDIA_BUCKET)
+            .createSignedUrl(path, 604_800);
+          if (!error && data?.signedUrl) map[url] = data.signedUrl as string;
+        } catch {
+          /* 单条失败不阻断其余链接 */
+        }
+      }),
+    );
+  }
+  return replaceWorkspaceMediaUrls(value, map);
+}
+
 
 /**
  * 封面自愈：workspace-media 是私有 bucket，库里存的签名 URL 7 天后过期会裂图。
