@@ -23,6 +23,7 @@ import AdminUserActionsDialog, {
   type AdminUserTarget,
 } from "@/components/admin/AdminUserActionsDialog";
 import { useLanguage } from "@/i18n/LanguageContext";
+import { useConfirmDialog } from "@/hooks/useConfirmDialog";
 
 export const Route = createFileRoute("/admin/credits")({
   component: AdminCredits,
