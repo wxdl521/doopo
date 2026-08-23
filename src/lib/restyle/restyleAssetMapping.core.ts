@@ -31,6 +31,7 @@ import {
   type GatewayChatResult,
 } from "./lovableGateway";
 import { composePrompt } from "./skills";
+import { resignMediaDeep } from "../mediaResign.server";
 import { extractJson } from "./restyleVideoAnalysis.functions";
 import {
   createInitialArtifact,
