@@ -34,6 +34,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { useMediaSelfHeal } from "../useMediaSelfHeal";
 import { uploadLocalImage } from "@/lib/uploadImage.functions";
 import { createMediaUploadUrl, signMediaReadUrl } from "@/lib/restyleMedia.functions";
 import { submitEpisodeAnalysisFn } from "@/lib/restyle/restyleVideoAnalysis.functions";
@@ -121,6 +122,9 @@ interface GateState {
 const INITIAL_GATE: GateState = { checking: false, ok: false, pending: [] };
 
 export default function RestyleV2Studio() {
+  // 媒体加载失败时先重签（workspace-media 签名 7 天过期）再判定失效。
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  useMediaSelfHeal(rootRef);
   const callUpload = useServerFn(uploadLocalImage);
   const callCreateUploadUrl = useServerFn(createMediaUploadUrl);
   const callSignReadUrl = useServerFn(signMediaReadUrl);
@@ -440,7 +444,7 @@ export default function RestyleV2Studio() {
   const analysisGate = gates.analysis ?? INITIAL_GATE;
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 px-4 py-6">
+    <div ref={rootRef} className="mx-auto max-w-6xl space-y-6 px-4 py-6">
       {/* 页头：项目选择 / 新建 */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>

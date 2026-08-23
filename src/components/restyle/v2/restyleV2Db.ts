@@ -8,6 +8,7 @@
 // ====================================================================
 
 import { supabase } from "@/integrations/supabase/client";
+import { resignRestyleMedia } from "../resignMediaClient";
 
 export interface RestyleV2Project {
   id: string;
@@ -84,7 +85,9 @@ export async function listV2Episodes(
     .eq("project_id", projectId)
     .order("episode_no", { ascending: true });
   if (error) return { ok: false, error: errMessage(error) };
-  return { ok: true, data: (data ?? []) as RestyleV2Episode[] };
+  // source_media_url 是 7 天签名 URL，过期后原片打不开：读时重签自愈。
+  const rows = await resignRestyleMedia((data ?? []) as RestyleV2Episode[]);
+  return { ok: true, data: rows };
 }
 
 export async function createV2Episode(

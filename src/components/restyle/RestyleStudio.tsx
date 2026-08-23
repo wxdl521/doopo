@@ -146,6 +146,8 @@ import {
 import { uploadLocalImage } from "../../lib/uploadImage.functions";
 import { refundChargedCredits } from "../../lib/userCredits.functions";
 import { reportGenerationError } from "../../lib/errorLogs.functions";
+import { resignRestyleMedia } from "./resignMediaClient";
+import { useMediaSelfHeal } from "./useMediaSelfHeal";
 import { createMediaUploadUrl, signMediaReadUrl } from "../../lib/restyleMedia.functions";
 import { persistAssetImage } from "../../lib/workspaceMedia.functions";
 import { persistRestyleVideo } from "../../lib/restyleMedia.functions";
@@ -1144,6 +1146,9 @@ export function pickEpisodeSourceFallback(
 export default function RestyleStudio() {
   const { t } = useLanguage();
   const { user, isAuthenticated } = useAuth();
+  // 媒体加载失败时先尝试重签（签名 7 天过期），避免误判为"文件已失效"。
+  const workbenchRef = useRef<HTMLElement | null>(null);
+  useMediaSelfHeal(workbenchRef);
   const [view, setView] = useState<RestyleView>("workbench");
   const [assets, setAssets] = useState<RestyleAsset[]>([]);
   const [assetLibraryStatus, setAssetLibraryStatus] = useState<AssetLibraryStatus>("idle");
@@ -1444,6 +1449,15 @@ export default function RestyleStudio() {
     setProjects(stored);
     setActiveProjectId((current) => current ?? stored[0]?.id ?? null);
     setStorageReady(true);
+    // 会话里的附件/成片链接是 7 天签名 URL，过期后打不开：载入后批量重签自愈。
+    let active = true;
+    void resignRestyleMedia(stored).then((healed) => {
+      if (!active || healed === stored) return;
+      setProjects(healed);
+    });
+    return () => {
+      active = false;
+    };
   }, [user?.id]);
 
   useEffect(() => {
@@ -6395,6 +6409,7 @@ export default function RestyleStudio() {
 
   return (
     <section
+      ref={workbenchRef}
       className="relative flex h-[100dvh] min-h-[640px] flex-col overflow-hidden bg-bg"
       data-testid="restyle-workbench"
       onDragOver={handleWorkspaceDragOver}
