@@ -146,7 +146,8 @@ import {
 import { uploadLocalImage } from "../../lib/uploadImage.functions";
 import { refundChargedCredits } from "../../lib/userCredits.functions";
 import { reportGenerationError } from "../../lib/errorLogs.functions";
-import { resignRestyleMedia, resignSingleUrl } from "./resignMediaClient";
+import { resignRestyleMedia } from "./resignMediaClient";
+import { useMediaSelfHeal } from "./useMediaSelfHeal";
 import { createMediaUploadUrl, signMediaReadUrl } from "../../lib/restyleMedia.functions";
 import { persistAssetImage } from "../../lib/workspaceMedia.functions";
 import { persistRestyleVideo } from "../../lib/restyleMedia.functions";
@@ -1145,6 +1146,9 @@ export function pickEpisodeSourceFallback(
 export default function RestyleStudio() {
   const { t } = useLanguage();
   const { user, isAuthenticated } = useAuth();
+  // 媒体加载失败时先尝试重签（签名 7 天过期），避免误判为"文件已失效"。
+  const workbenchRef = useRef<HTMLElement | null>(null);
+  useMediaSelfHeal(workbenchRef);
   const [view, setView] = useState<RestyleView>("workbench");
   const [assets, setAssets] = useState<RestyleAsset[]>([]);
   const [assetLibraryStatus, setAssetLibraryStatus] = useState<AssetLibraryStatus>("idle");
