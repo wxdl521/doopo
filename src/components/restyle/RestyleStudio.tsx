@@ -3737,13 +3737,13 @@ export default function RestyleStudio() {
         }): Promise<
           { ok: true; videoUrl: string } | { ok: false; error: string; aborted?: boolean }
         > => {
-          // 轮询上限 120 次 × 5s：超限判失败，避免后端任务卡死时前端永久轮询；
+          // 轮询上限 240 次 × 5s：超限判失败，避免后端任务卡死时前端永久轮询；
           // 中止时立即退出（由调用方收尾，不播报失败）。
           let pollCount = 0;
           while (true) {
             if (isRunAborted(projectId)) return { ok: false, error: "", aborted: true };
             pollCount += 1;
-            if (pollCount > 120) {
+            if (pollCount > 240) {
               return {
                 ok: false,
                 error: "视频生成超时：已等待约 20 分钟仍未完成，请稍后重试该分段。",
