@@ -279,13 +279,8 @@ function getWorkspaceMediaPath(url: string): string | null {
   }
 }
 
-function isSignedWorkspaceMediaUrl(url: string): boolean {
-  try {
-    return /\/storage\/v1\/object\/sign\/workspace-media\//i.test(new URL(url).pathname);
-  } catch {
-    return false;
-  }
-}
+
+
 
 /**
  * public URL 即使 bucket 为私有也能被拼出，但浏览器不可读；统一改成签名 URL。
