@@ -2793,16 +2793,40 @@ function WorkspacePage() {
   //      Seedream 临时 URL 加载失败只是静默隐藏(不显示"已失效")，
   //      因为临时 URL 可能因 CORS/签名校验短暂失败，等自动持久化完成后会被替换。
   const [brokenCharImages, setBrokenCharImages] = useState<Set<string>>(new Set());
-  const markCharImageBroken = useCallback((key: string, url: string) => {
-    // 只有已持久化的 Supabase 永久 URL 加载失败才标记为"已失效"
-    if (!isPersistedUrl(url)) return;
-    setBrokenCharImages((s) => {
-      if (s.has(key)) return s;
-      const next = new Set(s);
-      next.add(key);
-      return next;
-    });
-  }, []);
+  const markCharImageBroken = useCallback(
+    (key: string, url: string) => {
+      // 只有已持久化的 Supabase 永久 URL 加载失败才标记为"已失效"
+      if (!isPersistedUrl(url)) return;
+      void (async () => {
+        // 先尝试重签自愈（签名 URL 过期是最常见原因）
+        const healed = await tryHealMediaUrl(url);
+        if (healed) {
+          setCharImages((m) => {
+            const next: Record<string, string[]> = {};
+            let changed = false;
+            for (const [k, list] of Object.entries(m)) {
+              if (list?.includes(url)) {
+                next[k] = list.map((u) => (u === url ? healed : u));
+                changed = true;
+              } else {
+                next[k] = list;
+              }
+            }
+            return changed ? next : m;
+          });
+          return;
+        }
+        setBrokenCharImages((s) => {
+          if (s.has(key)) return s;
+          const nextSet = new Set(s);
+          nextSet.add(key);
+          return nextSet;
+        });
+      })();
+    },
+    [tryHealMediaUrl],
+  );
+
   const clearCharImageBroken = useCallback((key: string) => {
     setBrokenCharImages((s) => {
       if (!s.has(key)) return s;
