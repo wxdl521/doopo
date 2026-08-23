@@ -507,9 +507,11 @@ export const loadWorkspaceStoryboardStructure = createServerFn({ method: "POST" 
       return { workspaceData: null as Record<string, any> | null, error: error.message };
     }
     return {
-      workspaceData: (row ?? {}) as Record<string, any>,
+      // 历史签名链接过期会裂图，读取时统一重签自愈。
+      workspaceData: (await resignMediaDeep(supabase, row ?? {})) as Record<string, any>,
       error: null as string | null,
     };
+
   });
 
 /**
