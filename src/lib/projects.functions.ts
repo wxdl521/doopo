@@ -4,6 +4,71 @@ import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Database } from "@/integrations/supabase/types";
+import {
+  collectWorkspaceMediaUrls,
+  getWorkspaceMediaPath,
+  replaceWorkspaceMediaUrls,
+  WORKSPACE_MEDIA_BUCKET,
+} from "./mediaUrl";
+
+/**
+ * 深度重签：把结构里所有 workspace-media 链接重新签发（7 天有效），
+ * 让历史项目里已过期的图片/视频链接在读取时自愈。
+ */
+async function resignMediaDeep<T>(supabase: any, value: T): Promise<T> {
+  const urls = collectWorkspaceMediaUrls(value, 800);
+  if (urls.length === 0) return value;
+  const pathByUrl = new Map<string, string>();
+  for (const url of urls) {
+    const path = getWorkspaceMediaPath(url);
+    if (path) pathByUrl.set(url, path);
+  }
+  if (pathByUrl.size === 0) return value;
+  const map: Record<string, string> = {};
+  const entries = Array.from(pathByUrl.entries());
+  const CHUNK = 100;
+  for (let i = 0; i < entries.length; i += CHUNK) {
+    const chunk = entries.slice(i, i + CHUNK);
+    try {
+      // createSignedUrls：一次请求批量签发，避免上百次串行 HTTP。
+      const { data, error } = await supabase.storage
+        .from(WORKSPACE_MEDIA_BUCKET)
+        .createSignedUrls(
+          chunk.map(([, path]) => path),
+          604_800,
+        );
+      if (error || !Array.isArray(data)) continue;
+      data.forEach((item: any, idx: number) => {
+        const entry = chunk[idx];
+        if (entry && item?.signedUrl) map[entry[0]] = item.signedUrl as string;
+      });
+    } catch {
+      /* 批次失败不阻断其余链接 */
+    }
+  }
+  return replaceWorkspaceMediaUrls(value, map);
+
+}
+
+
+/**
+ * 封面自愈：workspace-media 是私有 bucket，库里存的签名 URL 7 天后过期会裂图。
+ * 读取时按对象路径重新签发；解析不出路径的三方临时链接原样返回（前端自行回落）。
+ */
+async function resignCover(supabase: any, url: string | null): Promise<string | null> {
+  const path = getWorkspaceMediaPath(url);
+  if (!path) return url ?? null;
+  try {
+    const { data, error } = await supabase.storage
+      .from(WORKSPACE_MEDIA_BUCKET)
+      .createSignedUrl(path, 604_800);
+    if (error || !data?.signedUrl) return null;
+    return data.signedUrl as string;
+  } catch {
+    return null;
+  }
+}
+
 
 const ProjectInput = z.object({
   id: z.string().min(1).max(64),
@@ -98,7 +163,8 @@ export const getProject = createServerFn({ method: "POST" })
       workflow: row.workflow,
       style: row.style,
       customStyle: row.custom_style ?? null,
-      customCover: row.custom_cover,
+      customCover: await resignCover(supabase, row.custom_cover),
+
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
@@ -239,16 +305,20 @@ export const listMyProjects = createServerFn({ method: "POST" })
       // 团队/组成员能看到共享给自己的项目。
       .order("updated_at", { ascending: false });
     if (error) return { projects: [] as ProjectListItem[], error: error.message };
-    const projects: ProjectListItem[] = (data ?? []).map((row) => ({
-      id: row.id,
-      name: row.name,
-      customCover: row.custom_cover,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      completedStages: row.completed_stages ?? [],
-      status: inferStatus({ completed_stages: row.completed_stages ?? [] }),
-      thumbnail: null,
-    }));
+    // 封面统一重签（私有 bucket 的签名 URL 7 天过期，历史项目会裂图）。
+    const projects: ProjectListItem[] = await Promise.all(
+      (data ?? []).map(async (row) => ({
+        id: row.id,
+        name: row.name,
+        customCover: await resignCover(supabase, row.custom_cover),
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        completedStages: row.completed_stages ?? [],
+        status: inferStatus({ completed_stages: row.completed_stages ?? [] }),
+        thumbnail: null,
+      })),
+    );
+
     return { projects, error: null as string | null };
   });
 
@@ -437,9 +507,11 @@ export const loadWorkspaceStoryboardStructure = createServerFn({ method: "POST" 
       return { workspaceData: null as Record<string, any> | null, error: error.message };
     }
     return {
-      workspaceData: (row ?? {}) as Record<string, any>,
+      // 历史签名链接过期会裂图，读取时统一重签自愈。
+      workspaceData: (await resignMediaDeep(supabase, row ?? {})) as Record<string, any>,
       error: null as string | null,
     };
+
   });
 
 /**
@@ -469,7 +541,9 @@ export const loadWorkspaceMedia = createServerFn({ method: "POST" })
     }
     const fields = row as unknown as Record<string, any>;
     return {
-      workspaceData: fields,
+      // 图片/视频链接读取时统一重签（私有 bucket 签名 7 天过期）。
+      workspaceData: await resignMediaDeep(supabase, fields),
       error: null as string | null,
     };
+
   });

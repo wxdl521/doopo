@@ -279,25 +279,54 @@ function getWorkspaceMediaPath(url: string): string | null {
   }
 }
 
-function isSignedWorkspaceMediaUrl(url: string): boolean {
-  try {
-    return /\/storage\/v1\/object\/sign\/workspace-media\//i.test(new URL(url).pathname);
-  } catch {
-    return false;
-  }
-}
 
-/** public URL 即使 bucket 为私有也能被拼出，但浏览器不可读；统一改成长效签名 URL。 */
+
+
+/**
+ * public URL 即使 bucket 为私有也能被拼出，但浏览器不可读；统一改成签名 URL。
+ * 注意：签名 URL 也会在 7 天后过期，因此**不能**因为「已经是签名 URL」就跳过，
+ * 必须按对象路径重新签发，历史链接才能自愈（否则永远裂图）。
+ */
 async function toLongLivedStoryboardUrl(supabase: any, url: string): Promise<string | null> {
-  if (isSignedWorkspaceMediaUrl(url)) return url;
   const path = getWorkspaceMediaPath(url);
   if (!path) return null;
-  // 签名 7 天有效（审计加固：不再签 10 年）；过期后此函数会重新签发。
+  // 签名 7 天有效（审计加固：不再签 10 年）；读取时会重新签发。
   const { data, error } = await supabase.storage
     .from(BUCKET)
     .createSignedUrl(path, 604_800);
   return error || !data?.signedUrl ? null : data.signedUrl;
 }
+
+// ====================================================================
+// refreshMediaUrls —— 读取时批量重签 workspace-media 链接。
+// 历史数据里存的是 7 天有效期的签名 URL，过期后前端裂图（"图片已失效"）。
+// 这里按对象路径重新签发，解析不出路径的三方 URL 原样返回。
+// ====================================================================
+
+const RefreshMediaUrlsInput = z.object({
+  urls: z.array(z.string().max(4000)).max(300),
+});
+
+export const refreshMediaUrls = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator((input: unknown) => RefreshMediaUrlsInput.parse(input))
+  .handler(async ({ data, context }): Promise<{ map: Record<string, string> }> => {
+    const { supabase } = context as { supabase: any };
+    const unique = Array.from(new Set(data.urls.filter(Boolean)));
+    const map: Record<string, string> = {};
+    await Promise.all(
+      unique.map(async (url) => {
+        const path = getWorkspaceMediaPath(url);
+        if (!path) return; // 三方 URL / COS CDN：保持原样
+        const { data: signed, error } = await supabase.storage
+          .from(BUCKET)
+          .createSignedUrl(path, 604_800);
+        if (!error && signed?.signedUrl) map[url] = signed.signedUrl;
+      }),
+    );
+    return { map };
+  });
+
 
 const EXT_BY_KIND: Record<"video" | "storyboard", string> = {
   video: "mp4",
