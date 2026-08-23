@@ -2729,14 +2729,56 @@ function WorkspacePage() {
   //     "已生成" 这个 badge 不应该出现在图片实际打不开的镜头上。
   //   - 不持久化:刷新页面图片会重新尝试加载。
   const [brokenShotImages, setBrokenShotImages] = useState<Set<string>>(new Set());
-  const markShotImageBroken = useCallback((key: string) => {
-    setBrokenShotImages((s) => {
-      if (s.has(key)) return s;
-      const next = new Set(s);
-      next.add(key);
-      return next;
-    });
-  }, []);
+  // 已尝试过重签自愈的 URL，避免 onError → 换 URL → 再 onError 的死循环。
+  const healedUrlsRef = useRef<Set<string>>(new Set());
+  const callRefreshMediaUrls = useServerFn(refreshMediaUrls);
+  /**
+   * 私有 bucket 的签名 URL 有效期 7 天，历史链接过期后 <img> 会 403。
+   * 加载失败时先尝试按对象路径重新签发，成功则原地替换 URL，失败才标记失效。
+   */
+  const tryHealMediaUrl = useCallback(
+    async (url: string | undefined | null): Promise<string | null> => {
+      if (!url || healedUrlsRef.current.has(url) || !isWorkspaceMediaUrl(url)) return null;
+      healedUrlsRef.current.add(url);
+      try {
+        const res: any = await callRefreshMediaUrls({ data: { urls: [url] } });
+        const next = res?.map?.[url];
+        return typeof next === "string" && next !== url ? next : null;
+      } catch {
+        return null;
+      }
+    },
+    [callRefreshMediaUrls],
+  );
+  const markShotImageBroken = useCallback(
+    (key: string) => {
+      // 先尝试重签自愈
+      void (async () => {
+        let current: string | undefined;
+        setShotImages((m) => {
+          current = m[key]?.[0];
+          return m;
+        });
+        const healed = await tryHealMediaUrl(current);
+        if (healed) {
+          setShotImages((m) => {
+            const list = m[key];
+            if (!list?.length) return m;
+            return { ...m, [key]: list.map((u) => (u === current ? healed : u)) };
+          });
+          return;
+        }
+        setBrokenShotImages((s) => {
+          if (s.has(key)) return s;
+          const next = new Set(s);
+          next.add(key);
+          return next;
+        });
+      })();
+    },
+    [tryHealMediaUrl],
+  );
+
   const clearShotImageBroken = useCallback((key: string) => {
     setBrokenShotImages((s) => {
       if (!s.has(key)) return s;
