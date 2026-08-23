@@ -25,6 +25,7 @@ import { z } from "zod";
 import { ensureEnoughCredits } from "../creditsGuard";
 import { imageCost, videoCost } from "../creditsCost";
 import { logGenerationError } from "../errorLogs.server";
+import { resignMediaDeep } from "../mediaResign.server";
 import {
   callLovableChat,
   INTERNAL_DIRECTOR_FALLBACK_MODEL,
@@ -1983,12 +1984,18 @@ export async function listImageGenCore(
   const firstError = looksArtifact.error ?? promptsArtifact.error ?? voiceArtifact.error;
   if (firstError) return { ok: false, error: firstError };
 
+  // 读时重签：库里存的签名 URL 7 天过期，过期后前端裂图。
+  const [resignedCharacters, resignedLooks] = await Promise.all([
+    resignMediaDeep(supabase, characters as ImageGenCharacterRow[]),
+    resignMediaDeep(supabase, looks),
+  ]);
+
   return {
     ok: true,
     error: null,
     data: {
-      characters: characters as ImageGenCharacterRow[],
-      looks,
+      characters: resignedCharacters,
+      looks: resignedLooks,
       looksArtifact: looksArtifact.info,
       promptsArtifact: promptsArtifact.info,
       voiceArtifact: voiceArtifact.info,
