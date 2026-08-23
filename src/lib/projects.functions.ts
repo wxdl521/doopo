@@ -541,7 +541,9 @@ export const loadWorkspaceMedia = createServerFn({ method: "POST" })
     }
     const fields = row as unknown as Record<string, any>;
     return {
-      workspaceData: fields,
+      // 图片/视频链接读取时统一重签（私有 bucket 签名 7 天过期）。
+      workspaceData: await resignMediaDeep(supabase, fields),
       error: null as string | null,
     };
+
   });
