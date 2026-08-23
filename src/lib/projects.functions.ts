@@ -118,7 +118,8 @@ export const getProject = createServerFn({ method: "POST" })
       workflow: row.workflow,
       style: row.style,
       customStyle: row.custom_style ?? null,
-      customCover: row.custom_cover,
+      customCover: await resignCover(supabase, row.custom_cover),
+
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
