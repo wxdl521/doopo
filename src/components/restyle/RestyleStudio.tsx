@@ -1444,6 +1444,15 @@ export default function RestyleStudio() {
     setProjects(stored);
     setActiveProjectId((current) => current ?? stored[0]?.id ?? null);
     setStorageReady(true);
+    // 会话里的附件/成片链接是 7 天签名 URL，过期后打不开：载入后批量重签自愈。
+    let active = true;
+    void resignRestyleMedia(stored).then((healed) => {
+      if (!active || healed === stored) return;
+      setProjects(healed);
+    });
+    return () => {
+      active = false;
+    };
   }, [user?.id]);
 
   useEffect(() => {
