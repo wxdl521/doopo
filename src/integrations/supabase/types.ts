@@ -1776,6 +1776,17 @@ export type Database = {
           total_count: number
         }[]
       }
+      admin_revoke_credits: {
+        Args: {
+          p_amount: number
+          p_description?: string
+          p_target_id: string
+          p_target_type: string
+        }
+        Returns: {
+          balance_after: number
+        }[]
+      }
       allocate_team_credits: {
         Args: {
           p_amount: number
