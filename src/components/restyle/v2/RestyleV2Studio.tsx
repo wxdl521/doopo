@@ -440,7 +440,7 @@ export default function RestyleV2Studio() {
   const analysisGate = gates.analysis ?? INITIAL_GATE;
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 px-4 py-6">
+    <div ref={rootRef} className="mx-auto max-w-6xl space-y-6 px-4 py-6">
       {/* 页头：项目选择 / 新建 */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
