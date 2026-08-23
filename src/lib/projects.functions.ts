@@ -18,26 +18,36 @@ import {
 async function resignMediaDeep<T>(supabase: any, value: T): Promise<T> {
   const urls = collectWorkspaceMediaUrls(value, 800);
   if (urls.length === 0) return value;
+  const pathByUrl = new Map<string, string>();
+  for (const url of urls) {
+    const path = getWorkspaceMediaPath(url);
+    if (path) pathByUrl.set(url, path);
+  }
+  if (pathByUrl.size === 0) return value;
   const map: Record<string, string> = {};
-  const CHUNK = 50;
-  for (let i = 0; i < urls.length; i += CHUNK) {
-    const chunk = urls.slice(i, i + CHUNK);
-    await Promise.all(
-      chunk.map(async (url) => {
-        const path = getWorkspaceMediaPath(url);
-        if (!path) return;
-        try {
-          const { data, error } = await supabase.storage
-            .from(WORKSPACE_MEDIA_BUCKET)
-            .createSignedUrl(path, 604_800);
-          if (!error && data?.signedUrl) map[url] = data.signedUrl as string;
-        } catch {
-          /* 单条失败不阻断其余链接 */
-        }
-      }),
-    );
+  const entries = Array.from(pathByUrl.entries());
+  const CHUNK = 100;
+  for (let i = 0; i < entries.length; i += CHUNK) {
+    const chunk = entries.slice(i, i + CHUNK);
+    try {
+      // createSignedUrls：一次请求批量签发，避免上百次串行 HTTP。
+      const { data, error } = await supabase.storage
+        .from(WORKSPACE_MEDIA_BUCKET)
+        .createSignedUrls(
+          chunk.map(([, path]) => path),
+          604_800,
+        );
+      if (error || !Array.isArray(data)) continue;
+      data.forEach((item: any, idx: number) => {
+        const entry = chunk[idx];
+        if (entry && item?.signedUrl) map[entry[0]] = item.signedUrl as string;
+      });
+    } catch {
+      /* 批次失败不阻断其余链接 */
+    }
   }
   return replaceWorkspaceMediaUrls(value, map);
+
 }
 
 
