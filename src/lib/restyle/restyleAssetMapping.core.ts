@@ -888,14 +888,21 @@ export async function listAssetMappingCore(
     }));
   }
 
+  // 读时重签：库里存的是 7 天签名 URL，过期后会裂图。
+  const [resignedCharacters, resignedScenes, resignedProps] = await Promise.all([
+    resignMediaDeep(supabase, characters),
+    resignMediaDeep(supabase, (scenesRes.data ?? []) as MappingNamedAssetRow[]),
+    resignMediaDeep(supabase, (propsRes.data ?? []) as MappingNamedAssetRow[]),
+  ]);
+
   return {
     ok: true,
     error: null,
     data: {
-      characters,
+      characters: resignedCharacters,
       relations,
-      scenes: (scenesRes.data ?? []) as MappingNamedAssetRow[],
-      props: (propsRes.data ?? []) as MappingNamedAssetRow[],
+      scenes: resignedScenes,
+      props: resignedProps,
       ignoredAssets: (ignoredRes.data ?? []) as MappingIgnoredRow[],
       artifact: (artifactRes.data as MappingArtifactInfo | null) ?? null,
     },
