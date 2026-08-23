@@ -4,6 +4,26 @@ import { createClient } from "@supabase/supabase-js";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 import type { Database } from "@/integrations/supabase/types";
+import { getWorkspaceMediaPath, WORKSPACE_MEDIA_BUCKET } from "./mediaUrl";
+
+/**
+ * 封面自愈：workspace-media 是私有 bucket，库里存的签名 URL 7 天后过期会裂图。
+ * 读取时按对象路径重新签发；解析不出路径的三方临时链接原样返回（前端自行回落）。
+ */
+async function resignCover(supabase: any, url: string | null): Promise<string | null> {
+  const path = getWorkspaceMediaPath(url);
+  if (!path) return url ?? null;
+  try {
+    const { data, error } = await supabase.storage
+      .from(WORKSPACE_MEDIA_BUCKET)
+      .createSignedUrl(path, 604_800);
+    if (error || !data?.signedUrl) return null;
+    return data.signedUrl as string;
+  } catch {
+    return null;
+  }
+}
+
 
 const ProjectInput = z.object({
   id: z.string().min(1).max(64),
