@@ -35,6 +35,9 @@ function AdminCredits() {
   const { t } = useLanguage();
   const callRecipients = useServerFn(getAdminCreditRecipients);
   const callGrant = useServerFn(grantAdminCredits);
+  const callRevoke = useServerFn(revokeAdminCredits);
+  const { confirm, ConfirmDialog } = useConfirmDialog();
+  const [creditMode, setCreditMode] = useState<"grant" | "revoke">("grant");
   const callStatuses = useServerFn(getAdminUserStatuses);
   const callTeamOwners = useServerFn(getTeamOwnerIds);
   const [kind, setKind] = useState<"user" | "team">("user");
