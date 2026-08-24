@@ -162,7 +162,8 @@ function AdminCredits() {
     setQuery(searchInput.trim());
   };
 
-  const grant = async () => {
+  // 发放与回收共用同一表单，仅切换调用的服务端函数与文案；回收前二次确认。
+  const submitCredits = async () => {
     const numericAmount = Number(amount);
     if (!selected) {
       toast.error(t.admin_credits_choose_target);
@@ -173,24 +174,43 @@ function AdminCredits() {
       return;
     }
 
+    const isRevoke = creditMode === "revoke";
+    if (isRevoke) {
+      const confirmed = await confirm({
+        title: t.admin_credits_revoke_confirm_title,
+        description: t.admin_credits_revoke_confirm_desc
+          .replace("{name}", selected.name)
+          .replace("{amount}", numericAmount.toLocaleString()),
+        confirmText: t.admin_credits_revoke,
+        danger: true,
+      });
+      if (!confirmed) return;
+    }
+
     setSubmitting(true);
-    const result: any = await callGrant({
+    const payload = {
       data: {
         kind,
         targetId: selected.id,
         amount: numericAmount,
         description: description.trim() || undefined,
       },
-    });
+    };
+    const result: any = isRevoke ? await callRevoke(payload) : await callGrant(payload);
     setSubmitting(false);
 
     if (!result?.ok) {
-      toast.error(result?.error || t.admin_credits_grant_error);
+      toast.error(
+        result?.error || (isRevoke ? t.admin_credits_revoke_error : t.admin_credits_grant_error),
+      );
       return;
     }
 
     toast.success(
-      t.admin_credits_grant_success.replace("{amount}", numericAmount.toLocaleString()),
+      (isRevoke ? t.admin_credits_revoke_success : t.admin_credits_grant_success).replace(
+        "{amount}",
+        numericAmount.toLocaleString(),
+      ),
     );
     setAmount("");
     setDescription("");
