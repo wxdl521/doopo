@@ -9,6 +9,7 @@ import {
   getAdminCreditRecipients,
   getAdminCreditTransactions,
   grantAdminCredits,
+  revokeAdminCredits,
   type AdminCreditRecipient,
   type AdminCreditTransaction,
 } from "@/lib/adminCredits.functions";
@@ -22,6 +23,7 @@ import AdminUserActionsDialog, {
   type AdminUserTarget,
 } from "@/components/admin/AdminUserActionsDialog";
 import { useLanguage } from "@/i18n/LanguageContext";
+import { useConfirmDialog } from "@/hooks/useConfirmDialog";
 
 export const Route = createFileRoute("/admin/credits")({
   component: AdminCredits,
@@ -33,6 +35,9 @@ function AdminCredits() {
   const { t } = useLanguage();
   const callRecipients = useServerFn(getAdminCreditRecipients);
   const callGrant = useServerFn(grantAdminCredits);
+  const callRevoke = useServerFn(revokeAdminCredits);
+  const { confirm, ConfirmDialog } = useConfirmDialog();
+  const [creditMode, setCreditMode] = useState<"grant" | "revoke">("grant");
   const callStatuses = useServerFn(getAdminUserStatuses);
   const callTeamOwners = useServerFn(getTeamOwnerIds);
   const [kind, setKind] = useState<"user" | "team">("user");
@@ -157,7 +162,8 @@ function AdminCredits() {
     setQuery(searchInput.trim());
   };
 
-  const grant = async () => {
+  // 发放与回收共用同一表单，仅切换调用的服务端函数与文案；回收前二次确认。
+  const submitCredits = async () => {
     const numericAmount = Number(amount);
     if (!selected) {
       toast.error(t.admin_credits_choose_target);
@@ -168,24 +174,43 @@ function AdminCredits() {
       return;
     }
 
+    const isRevoke = creditMode === "revoke";
+    if (isRevoke) {
+      const confirmed = await confirm({
+        title: t.admin_credits_revoke_confirm_title,
+        description: t.admin_credits_revoke_confirm_desc
+          .replace("{name}", selected.name)
+          .replace("{amount}", numericAmount.toLocaleString()),
+        confirmText: t.admin_credits_revoke,
+        danger: true,
+      });
+      if (!confirmed) return;
+    }
+
     setSubmitting(true);
-    const result: any = await callGrant({
+    const payload = {
       data: {
         kind,
         targetId: selected.id,
         amount: numericAmount,
         description: description.trim() || undefined,
       },
-    });
+    };
+    const result: any = isRevoke ? await callRevoke(payload) : await callGrant(payload);
     setSubmitting(false);
 
     if (!result?.ok) {
-      toast.error(result?.error || t.admin_credits_grant_error);
+      toast.error(
+        result?.error || (isRevoke ? t.admin_credits_revoke_error : t.admin_credits_grant_error),
+      );
       return;
     }
 
     toast.success(
-      t.admin_credits_grant_success.replace("{amount}", numericAmount.toLocaleString()),
+      (isRevoke ? t.admin_credits_revoke_success : t.admin_credits_grant_success).replace(
+        "{amount}",
+        numericAmount.toLocaleString(),
+      ),
     );
     setAmount("");
     setDescription("");
@@ -404,12 +429,32 @@ function AdminCredits() {
               <Coins size={20} />
             </span>
             <div>
-              <h2 className="font-display font-bold">{t.admin_credits_grant_title}</h2>
-              <p className="text-xs text-text-muted">{t.admin_credits_grant_hint}</p>
+              <h2 className="font-display font-bold">
+                {creditMode === "revoke" ? t.admin_credits_revoke_title : t.admin_credits_grant_title}
+              </h2>
+              <p className="text-xs text-text-muted">
+                {creditMode === "revoke" ? t.admin_credits_revoke_hint : t.admin_credits_grant_hint}
+              </p>
             </div>
           </div>
 
           <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-2 rounded-md border border-border bg-bg-elevated p-1">
+              {(["grant", "revoke"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setCreditMode(mode)}
+                  className={`rounded px-3 py-1.5 text-sm font-medium transition ${
+                    creditMode === mode
+                      ? "bg-accent text-white"
+                      : "text-text-secondary hover:text-text-primary"
+                  }`}
+                >
+                  {mode === "grant" ? t.admin_credits_mode_grant : t.admin_credits_mode_revoke}
+                </button>
+              ))}
+            </div>
             <div>
               <label className="mb-1.5 block text-sm font-medium">{t.admin_credits_selected}</label>
               <div className="min-h-10 rounded-md border border-border bg-bg-elevated px-3 py-2 text-sm text-text-secondary">
@@ -456,11 +501,17 @@ function AdminCredits() {
               />
             </div>
             <button
-              onClick={() => void grant()}
+              onClick={() => void submitCredits()}
               disabled={!selected || submitting}
               className="btn-primary w-full disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {submitting ? t.admin_credits_granting : t.admin_credits_grant}
+              {creditMode === "revoke"
+                ? submitting
+                  ? t.admin_credits_revoking
+                  : t.admin_credits_revoke
+                : submitting
+                  ? t.admin_credits_granting
+                  : t.admin_credits_grant}
             </button>
           </div>
         </aside>
@@ -473,6 +524,8 @@ function AdminCredits() {
         onClose={() => setUserAction(null)}
         onSuccess={() => void loadRecipients()}
       />
+
+      <ConfirmDialog />
 
       {/* 2026/08:积分消耗明细（按项目名称维度查询） */}
       <section className="panel overflow-hidden">

@@ -108,6 +108,42 @@ export const grantAdminCredits = createServerFn({ method: "POST" })
   });
 
 // ====================================================================
+// revokeAdminCredits —— 后台积分回收（与发放对称）
+// 用户：从其钱包扣除；团队：从团队所有者钱包扣除并写团队流水。
+// 余额不足时 RPC 抛错，这里翻译成可读提示。
+// ====================================================================
+export const revokeAdminCredits = createServerFn({ method: "POST" })
+  .middleware([requireSupabaseAuth])
+  .validator(GrantInput)
+  .handler(async ({ data, context }) => {
+    if (!(await hasCreditAdminAccess(context.supabase))) {
+      return { ok: false as const, error: "无管理权限" };
+    }
+
+    const { data: rows, error } = await (context.supabase.rpc as any)("admin_revoke_credits", {
+      p_target_type: data.kind,
+      p_target_id: data.targetId,
+      p_amount: data.amount,
+      p_description: data.description || null,
+    });
+
+    if (error) {
+      console.error("[adminCredits] revoke credits failed:", error);
+      const insufficient = /Insufficient credits/i.test(error.message ?? "");
+      return {
+        ok: false as const,
+        error: insufficient ? "可回收积分不足" : error.message,
+        insufficient,
+      };
+    }
+
+    return {
+      ok: true as const,
+      balance: Number(rows?.[0]?.balance_after ?? 0),
+    };
+  });
+
+// ====================================================================
 // getAdminCreditTransactions —— 后台积分消耗明细（2026/08 项目维度查询）
 //
 // 权限:is_credit_admin（用户态 RPC 判定）后走 supabaseAdmin 读流水
