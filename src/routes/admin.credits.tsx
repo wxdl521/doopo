@@ -501,11 +501,17 @@ function AdminCredits() {
               />
             </div>
             <button
-              onClick={() => void grant()}
+              onClick={() => void submitCredits()}
               disabled={!selected || submitting}
               className="btn-primary w-full disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {submitting ? t.admin_credits_granting : t.admin_credits_grant}
+              {creditMode === "revoke"
+                ? submitting
+                  ? t.admin_credits_revoking
+                  : t.admin_credits_revoke
+                : submitting
+                  ? t.admin_credits_granting
+                  : t.admin_credits_grant}
             </button>
           </div>
         </aside>
