@@ -429,12 +429,32 @@ function AdminCredits() {
               <Coins size={20} />
             </span>
             <div>
-              <h2 className="font-display font-bold">{t.admin_credits_grant_title}</h2>
-              <p className="text-xs text-text-muted">{t.admin_credits_grant_hint}</p>
+              <h2 className="font-display font-bold">
+                {creditMode === "revoke" ? t.admin_credits_revoke_title : t.admin_credits_grant_title}
+              </h2>
+              <p className="text-xs text-text-muted">
+                {creditMode === "revoke" ? t.admin_credits_revoke_hint : t.admin_credits_grant_hint}
+              </p>
             </div>
           </div>
 
           <div className="space-y-4">
+            <div className="grid grid-cols-2 gap-2 rounded-md border border-border bg-bg-elevated p-1">
+              {(["grant", "revoke"] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => setCreditMode(mode)}
+                  className={`rounded px-3 py-1.5 text-sm font-medium transition ${
+                    creditMode === mode
+                      ? "bg-accent text-white"
+                      : "text-text-secondary hover:text-text-primary"
+                  }`}
+                >
+                  {mode === "grant" ? t.admin_credits_mode_grant : t.admin_credits_mode_revoke}
+                </button>
+              ))}
+            </div>
             <div>
               <label className="mb-1.5 block text-sm font-medium">{t.admin_credits_selected}</label>
               <div className="min-h-10 rounded-md border border-border bg-bg-elevated px-3 py-2 text-sm text-text-secondary">
