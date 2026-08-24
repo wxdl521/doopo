@@ -525,6 +525,8 @@ function AdminCredits() {
         onSuccess={() => void loadRecipients()}
       />
 
+      <ConfirmDialog />
+
       {/* 2026/08:积分消耗明细（按项目名称维度查询） */}
       <section className="panel overflow-hidden">
         <div className="flex flex-col gap-3 border-b border-border px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
