@@ -2,22 +2,34 @@
 
 两个独立问题，都已确认。
 
-## 一、DNS 检查结果（test.doopoo.ai）
+## 一、DNS 检查结果（test.doopoo.ai）—— 13:23 复查后仍未生效
 
-状态：**drifted（已漂移）**，持续约 11 小时，是当前主域名。
+状态：**drifted（仍漂移）**，已持续约 13 小时。刚刚直接向 1.1.1.1 / 8.8.8.8 查询，公网解析结果是：
 
-| 记录 | 期望值 | 实际观测值 | 状态 |
+```text
+test.doopoo.ai  A  188.114.96.2
+test.doopoo.ai  A  188.114.97.2   (TTL 300)
+```
+
+| 记录 | 期望值 | 公网实际值 | 状态 |
 | --- | --- | --- | --- |
-| A `test.doopoo.ai` | 185.158.133.1 | 188.114.97.0 / 188.114.96.0 | 不匹配 |
+| A `test.doopoo.ai` | 185.158.133.1 | 188.114.96.2 / 188.114.97.2 | 仍不匹配 |
 | TXT `_lovable.test.doopoo.ai` | lovable_verify=b7760f21… | 一致 | 正常 |
 
-观测到的两个 IP 属于 Cloudflare 边缘节点，说明该记录在 Cloudflare 处开启了**橙色云代理（Proxied）**，因此对外解析出的不是源站 IP，Lovable 无法确认指向本项目。
+`188.114.96.x / 188.114.97.x` 是 Cloudflare 边缘 IP，说明该 A 记录的**橙色云代理仍处于开启状态**——只要开着代理，公网永远看不到 185.158.133.1，Lovable 就会一直判定 DNS 未正确配置。你这次的修改可能只改了记录值、没有关掉代理开关，或改的是另一条记录。
 
-修复二选一（在 Cloudflare DNS 面板操作）：
-- 方案 A（推荐，最简单）：把 `test.doopoo.ai` 的 A 记录切换为 **DNS only（灰色云）**，值保持 `185.158.133.1`。
-- 方案 B：保留代理，则需在 Lovable 项目设置 → 域名中移除后重新连接，并在「高级」里勾选「域名使用 Cloudflare 或类似代理」，改用 CNAME 校验方式。
+请在 Cloudflare → doopoo.ai → DNS → 记录列表中，找到 Name 为 `test` 的那条 A 记录，确认三件事：
 
-TXT 验证记录正常，不需要改动。同时建议把 `www` / 根域一并按同样方式配置（如果需要）。
+1. Type = `A`，Name = `test`，Content = `185.158.133.1`
+2. Proxy status 一栏点成 **DNS only（灰色云）**，不是 Proxied（橙色云）
+3. 删除同名的其它冲突记录（另一条 A、AAAA 或 CNAME `test`），同名多条会导致解析回到代理
+
+保存后 TTL 为 300 秒，约 5 分钟后我再复查一次。
+
+替代方案（若你必须保留 Cloudflare 代理）：在 Lovable 项目设置 → 域名中移除 `test.doopoo.ai` 后重新连接，并在「高级」里勾选「域名使用 Cloudflare 或类似代理」，改用 CNAME 校验方式。
+
+TXT 验证记录正常，不需要改动。
+
 
 ## 二、Backend configuration is missing
 
