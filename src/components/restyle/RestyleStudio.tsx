@@ -107,6 +107,7 @@ import {
 import {
   ensureSegmentReferenceClip,
   estimateSourceDurationMs,
+  manualReferenceClipUrl,
   rangesFromSceneGroups,
   resolveSegmentTimeRange,
   trimCacheKey,
@@ -2647,6 +2648,8 @@ export default function RestyleStudio() {
     attachmentId: string,
     resultUrl: string,
     taskId?: string,
+    /** 产物对象 key（persistRestyleVideo 返回）——永不过期,签名过期后可现签 */
+    storageKey?: string,
   ) {
     // 台账同步记账（先于 setState 直接调 record）：updater 内记账会延迟到
     // 渲染阶段执行,收尾同步读取读空（772bbb2 根因）。集/段坐标读 projectsRef
@@ -2676,6 +2679,8 @@ export default function RestyleStudio() {
               ...file,
               url: resultUrl,
               resultUrl,
+              // 对象 key 随产物落库（签名 7 天过期后 signMediaReadUrl 现签）
+              ...(storageKey ? { storageKey } : {}),
               renderTaskId: taskId ?? file.renderTaskId,
               renderStatus: "succeeded" as const,
               renderProgress: 100,
@@ -2727,6 +2732,19 @@ export default function RestyleStudio() {
         };
       },
     );
+  }
+
+  /** 探测片段 URL 可读性（Range 0-0 拉 1 字节,不出全文）;合成失败诊断用。 */
+  async function probeClipUrl(url: string): Promise<string> {
+    try {
+      const res = await fetch(url, {
+        headers: { Range: "bytes=0-0" },
+        signal: AbortSignal.timeout(8_000),
+      });
+      return String(res.status);
+    } catch {
+      return "网络错误";
+    }
   }
 
   /** 单段失败的建议动作：按已知上游错误归类文案，其它错误原样提示重试并附 requestId（若有）。 */
@@ -2960,6 +2978,17 @@ export default function RestyleStudio() {
         : `分段依据：方案显式时间区间（逐镜表不可用），参考区间 ${rangeSeconds}s。`,
     );
     const cacheKey = trimCacheKey(job.source.id, range.startMs, range.endMs);
+    // 手动覆盖优先（2026-08 转码产物损坏绕行：人工修好的片段直接用,
+    // 不触发重裁、不回写缓存,服务端 trimCacheMap 的旧坏键不再生效）
+    const manualClip = manualReferenceClipUrl(project?.manualReferenceClips, cacheKey);
+    if (manualClip) {
+      appendRenderLog(
+        projectId,
+        job.attachmentId,
+        `使用手动指定的 ${rangeSeconds}s 参考片段（绕过转码裁剪）。`,
+      );
+      return { ok: true, url: manualClip, durationSec: (range.endMs - range.startMs) / 1000 };
+    }
     const clip = await ensureSegmentReferenceClip({
       sourceUrl: source.url,
       range,
@@ -3090,6 +3119,23 @@ export default function RestyleStudio() {
         }),
       );
       const mergedClips = mergeInsertClips(clips, insertAnchors);
+      // 合成提交前统一现签（2026-08 EP03 实证：分段产物签名 7 天过期,
+      // 合成服务拉取失败 530/1016）——带 storageKey 的片段签发新 URL;
+      // 无 key 的旧产物标记出来,失败时点名提示重生成,不让 1016 裸报。
+      const stitchInputs = await Promise.all(
+        mergedClips.map(async (clip) => {
+          const fallbackUrl = (clip.url ?? clip.resultUrl) as string;
+          const segmentId = (clip as { segmentId?: string }).segmentId;
+          const storageKey = (clip as { storageKey?: string }).storageKey;
+          if (!storageKey) return { url: fallbackUrl, segmentId, resignable: false };
+          const signed = await callSignMediaReadUrl({ data: { path: storageKey } });
+          return {
+            url: signed.ok && signed.url ? signed.url : fallbackUrl,
+            segmentId,
+            resignable: Boolean(signed.ok && signed.url),
+          };
+        }),
+      );
       updateRenderAttachments(
         projectId,
         (file) => file.id === finalAttachment.id,
@@ -3106,12 +3152,28 @@ export default function RestyleStudio() {
         const submitted = await callSubmitVideoStitchJob({
           data: {
             episode,
-            clips: mergedClips.map((clip) => (clip.url ?? clip.resultUrl) as string),
+            clips: stitchInputs.map((input) => input.url),
           },
         });
         if (!submitted.ok) {
-          failRenderAttachment(projectId, finalAttachment.id, submitted.error);
-          report(`「${episode}」成片合成失败：${submitted.error}`);
+          // 拼接输入清单逐段探测（Range 0-0,不出全文）——1016/530 时一次定位
+          // 是哪一段拉取失败;无对象键的旧产物点名「链接可能已过期,请重新生成」。
+          const probeResults = await Promise.all(
+            stitchInputs.map(async (input) => {
+              const status = await probeClipUrl(input.url);
+              return `${input.segmentId ?? "?"} ${status}`;
+            }),
+          );
+          const staleSegments = stitchInputs
+            .filter((input) => !input.resignable)
+            .map((input) => input.segmentId)
+            .filter(Boolean);
+          const hint = staleSegments.length
+            ? `（${staleSegments.join("、")} 的产物链接可能已过期，请重新生成该段）`
+            : "";
+          const detail = `${submitted.error}${hint}；分段可读性：${probeResults.join("、")}`;
+          failRenderAttachment(projectId, finalAttachment.id, detail);
+          report(`「${episode}」成片合成失败：${detail}`);
           continue;
         }
         const jobId = submitted.jobId;
@@ -3152,7 +3214,13 @@ export default function RestyleStudio() {
               `成片转存素材库失败（链接可能 24h 后失效）：${persisted.error}`,
             );
           }
-          completeRenderAttachment(projectId, finalAttachment.id, finalUrl, jobId);
+          completeRenderAttachment(
+            projectId,
+            finalAttachment.id,
+            finalUrl,
+            jobId,
+            persisted.ok ? persisted.storageKey : undefined,
+          );
           report(`「${episode}」成片已合成。`);
         } else {
           failRenderAttachment(projectId, finalAttachment.id, lastError, jobId);
@@ -4019,7 +4087,13 @@ export default function RestyleStudio() {
               ? "已转存素材库，链接长期有效。"
               : `转存失败（链接可能 24h 后失效）：${persisted.error}`,
           );
-          completeRenderAttachment(projectId, job.attachmentId, finalUrl, finalTask.taskId);
+          completeRenderAttachment(
+            projectId,
+            job.attachmentId,
+            finalUrl,
+            finalTask.taskId,
+            persisted.ok ? persisted.storageKey : undefined,
+          );
         }
       }
     } catch (error) {

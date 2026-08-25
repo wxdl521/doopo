@@ -74,7 +74,9 @@ const PersistInput = z.object({
   id: z.string().min(1).max(128),
 });
 
-export type PersistVideoResult = { ok: true; url: string } | { ok: false; error: string };
+export type PersistVideoResult =
+  | { ok: true; url: string; storageKey: string }
+  | { ok: false; error: string };
 
 /**
  * 转存模型产出的视频到 workspace-media（分段/成片通用）。
@@ -118,10 +120,12 @@ export const persistRestyleVideo = createServerFn({ method: "POST" })
       .upload(path, new Blob([buf], { type: "video/mp4" }), { contentType: "video/mp4" });
     if (uploadErr) return { ok: false as const, error: `转存失败: ${uploadErr.message}` };
 
-    // 签名 7 天有效（审计加固：不再签 10 年）；过期后需重新转存/签发
+    // 签名 7 天有效（审计加固：不再签 10 年）；过期后需重新转存/签发。
+    // storageKey 一并返回并随附件持久化——key 永不过期,过期后用
+    // signMediaReadUrl 现签（合成 EP03 因签名过期 530/1016 的根治路径）。
     const { data: read, error: signErr } = await supabase.storage
       .from(BUCKET)
       .createSignedUrl(path, 604_800);
     if (signErr || !read?.signedUrl) return { ok: false as const, error: "读取地址签名失败" };
-    return { ok: true as const, url: read.signedUrl };
+    return { ok: true as const, url: read.signedUrl, storageKey: path };
   });

@@ -150,6 +150,9 @@ export type RestyleProject = {
   assetReviewMap?: Record<string, string>;
   /** 参考视频裁剪缓存：`${sourceId}|${startMs}|${endMs}` -> 片段 URL；同一片段跨集、重跑只裁一次。 */
   trimCacheMap?: Record<string, string>;
+  /** 手动覆盖参考片段（2026-08 转码产物损坏绕行）：键同 trimCacheKey,
+   *  命中时优先于 trimCacheMap 使用该 URL,不触发重裁、不回写缓存。 */
+  manualReferenceClips?: Record<string, string>;
   /** 人物关系表。空关系表不持久化该字段。 */
   characterRelations?: RestyleCharacterRelation[];
   /** 执行模式：极速全自动 / 分步护航（默认）/ 自定义干预。 */
@@ -610,6 +613,20 @@ function parseProject(value: unknown): RestyleProject | null {
       item.trimCacheMap && typeof item.trimCacheMap === "object"
         ? Object.fromEntries(
             Object.entries(item.trimCacheMap).flatMap(([key, value]) =>
+              typeof key === "string" &&
+              /^\S+\|\d+\|\d+$/.test(key) &&
+              typeof value === "string" &&
+              /^https?:\/\//i.test(value)
+                ? [[key, value]]
+                : [],
+            ),
+          )
+        : undefined,
+    // 手动覆盖片段与裁剪缓存同键型/同 URL 校验
+    manualReferenceClips:
+      item.manualReferenceClips && typeof item.manualReferenceClips === "object"
+        ? Object.fromEntries(
+            Object.entries(item.manualReferenceClips).flatMap(([key, value]) =>
               typeof key === "string" &&
               /^\S+\|\d+\|\d+$/.test(key) &&
               typeof value === "string" &&

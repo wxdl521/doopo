@@ -3,6 +3,7 @@ import {
   clampSegmentRange,
   ensureSegmentReferenceClip,
   estimateSourceDurationMs,
+  manualReferenceClipUrl,
   rangesFromSceneGroups,
   resolveSegmentTimeRange,
   trimCacheKey,
@@ -372,5 +373,25 @@ describe("ensureSegmentReferenceClip 元数据自检（转码流复制 bug 加�
       pollTrim: async () => ({ ok: true as const, status: "succeeded" as const, videoUrl: "u" }),
     });
     expect(legacy.ok).toBe(true);
+  });
+});
+
+describe("manualReferenceClipUrl（转码损坏绕行:手动覆盖优先）", () => {
+  it("命中手动覆盖 → 直接用该 URL（不再触发重裁/回写）", () => {
+    expect(
+      manualReferenceClipUrl(
+        { "v2|src-1|30000|42000": "https://cdn.example.com/u04-fixed.mp4" },
+        "v2|src-1|30000|42000",
+      ),
+    ).toBe("https://cdn.example.com/u04-fixed.mp4");
+  });
+
+  it("未命中/非法 URL → undefined（走自动裁剪链）", () => {
+    expect(manualReferenceClipUrl({ "v2|a|0|1000": "not-a-url" }, "v2|a|0|1000")).toBeUndefined();
+    expect(manualReferenceClipUrl({}, "v2|a|0|1000")).toBeUndefined();
+    expect(manualReferenceClipUrl(undefined, "v2|a|0|1000")).toBeUndefined();
+    expect(
+      manualReferenceClipUrl({ "v2|b|0|1000": "https://x/y.mp4" }, "v2|a|0|1000"),
+    ).toBeUndefined();
   });
 });

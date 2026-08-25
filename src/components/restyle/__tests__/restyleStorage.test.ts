@@ -172,3 +172,29 @@ describe("restyleStorage · 分段时间区间与裁剪缓存", () => {
     });
   });
 });
+
+describe("restyleStorage · manualReferenceClips 持久化（转码损坏绕行）", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("手动覆盖片段映射随项目持久化并原样读回;非法键/URL 被剔除", () => {
+    window.localStorage.setItem(
+      "doopoo:restyle-projects:u1",
+      JSON.stringify([
+        {
+          ...makePersistedProject([]),
+          manualReferenceClips: {
+            "v2|src-1|30000|42000": "https://cdn.example.com/u04-fixed.mp4",
+            badkey: "https://cdn.example.com/x.mp4",
+            "v2|src-1|1|2": "not-a-url",
+          },
+        },
+      ]),
+    );
+    const [project] = loadRestyleProjects("u1");
+    expect(project.manualReferenceClips).toEqual({
+      "v2|src-1|30000|42000": "https://cdn.example.com/u04-fixed.mp4",
+    });
+  });
+});

@@ -141,6 +141,19 @@ export function trimCacheKey(sourceId: string, startMs: number, endMs: number): 
 
 const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+/**
+ * 手动覆盖片段查询（2026-08 转码产物损坏绕行）：项目数据里人工修好的
+ * 片段 URL（manualReferenceClips,键同 trimCacheKey）优先于自动裁剪缓存
+ * 使用——命中即直接用,不触发重裁、不回写缓存。
+ */
+export function manualReferenceClipUrl(
+  manualClips: Record<string, string> | undefined,
+  cacheKey: string,
+): string | undefined {
+  const url = manualClips?.[cacheKey];
+  return url && /^https?:\/\//i.test(url) ? url : undefined;
+}
+
 /** 网络瞬时错误退避重试一次（默认 2 秒）；非网络错误原样抛出。 */
 export async function withBackoffRetry<T>(
   fn: () => Promise<T>,
