@@ -69,6 +69,32 @@ export const signMediaReadUrl = createServerFn({ method: "POST" })
     return { ok: true as const, url: read.signedUrl };
   });
 
+/**
+ * 从 supabase 签名/公共 URL 提取对象 key（纯函数）。
+ * 背景（2026-08 EP03 实证）：产物签名 URL 7 天过期,但对象 key 就嵌在
+ * URL 路径里（/storage/v1/object/sign|public/workspace-media/<path>?token=…）,
+ * 解析出 path 后用 signMediaReadUrl 现签即可救活,不必重新生成。
+ * 非 http(s)/非本桶前缀/空 path 返回 null。
+ */
+export function deriveStorageKeyFromSignedUrl(url: string, bucket = "workspace-media"): string | null {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "http:" && u.protocol !== "https:") return null;
+    const signPrefix = `/storage/v1/object/sign/${bucket}/`;
+    const publicPrefix = `/storage/v1/object/public/${bucket}/`;
+    const prefix = u.pathname.startsWith(signPrefix)
+      ? signPrefix
+      : u.pathname.startsWith(publicPrefix)
+        ? publicPrefix
+        : null;
+    if (!prefix) return null;
+    const path = decodeURIComponent(u.pathname.slice(prefix.length));
+    return path || null;
+  } catch {
+    return null;
+  }
+}
+
 const PersistInput = z.object({
   url: z.string().url().max(2_000),
   id: z.string().min(1).max(128),

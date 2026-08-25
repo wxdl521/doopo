@@ -151,7 +151,10 @@ import { resignRestyleMedia } from "./resignMediaClient";
 import { useMediaSelfHeal } from "./useMediaSelfHeal";
 import { createMediaUploadUrl, signMediaReadUrl } from "../../lib/restyleMedia.functions";
 import { persistAssetImage } from "../../lib/workspaceMedia.functions";
-import { persistRestyleVideo } from "../../lib/restyleMedia.functions";
+import {
+  deriveStorageKeyFromSignedUrl,
+  persistRestyleVideo,
+} from "../../lib/restyleMedia.functions";
 import { realImageModelOptions, realVideoModels } from "../NewProjectDialog";
 import { useListedModels } from "../../hooks/useListedModels";
 import {
@@ -2747,6 +2750,15 @@ export default function RestyleStudio() {
     }
   }
 
+  /** 过期签名 URL 救活（2026-08 EP03 实证）：对象 key 嵌在签名 URL 路径里,
+   *  解析出来现签新 URL;派生不出（非本桶/外部链接）原样返回。 */
+  async function refreshExpiredStorageUrl(url: string): Promise<string> {
+    const key = deriveStorageKeyFromSignedUrl(url);
+    if (!key) return url;
+    const signed = await callSignMediaReadUrl({ data: { path: key } });
+    return signed.ok && signed.url ? signed.url : url;
+  }
+
   /** 单段失败的建议动作：按已知上游错误归类文案，其它错误原样提示重试并附 requestId（若有）。 */
   function renderFailureAdvice(error: string): string {
     if (/Duration must be between|duration|时长/i.test(error)) {
@@ -3126,7 +3138,10 @@ export default function RestyleStudio() {
         mergedClips.map(async (clip) => {
           const fallbackUrl = (clip.url ?? clip.resultUrl) as string;
           const segmentId = (clip as { segmentId?: string }).segmentId;
-          const storageKey = (clip as { storageKey?: string }).storageKey;
+          const storageKey =
+            (clip as { storageKey?: string }).storageKey ??
+            deriveStorageKeyFromSignedUrl(fallbackUrl) ??
+            undefined;
           if (!storageKey) return { url: fallbackUrl, segmentId, resignable: false };
           const signed = await callSignMediaReadUrl({ data: { path: storageKey } });
           return {
@@ -3595,6 +3610,9 @@ export default function RestyleStudio() {
     for (const { url, index } of pending) {
       const label = index === 0 ? "首帧图" : `参考图 ${index + 1}`;
       appendRenderLog(input.projectId, input.attachmentId, `${label}素材入库中…`);
+      // 过期签名 URL 救活:对象 key 嵌在路径里,先现签再交给上游登记
+      // （旧产物参考图与 EP03 分段同病,见 deriveStorageKeyFromSignedUrl）
+      const uploadUrl = await refreshExpiredStorageUrl(url);
       const name = `doopoo-restyle-${Date.now()}-${index + 1}`.slice(0, 200);
       try {
         // 素材入库加一次退避 2 秒重试，治 Failed to fetch 这类瞬时网络错误。
@@ -3606,13 +3624,13 @@ export default function RestyleStudio() {
         const uploaded = await withBackoffRetry(
           (): Promise<AssetUploadResult> =>
             vendor === "keyiyun"
-              ? callUploadKeyiyunAsset({ data: { url, assetType: "Image", name } })
+              ? callUploadKeyiyunAsset({ data: { url: uploadUrl, assetType: "Image", name } })
               : vendor === "jieyun"
-                ? callUploadJieyunAsset({ data: { url, assetType: "Image", name } })
+                ? callUploadJieyunAsset({ data: { url: uploadUrl, assetType: "Image", name } })
                 : vendor === "tokenpony"
-                  ? callUploadTokenponyAsset({ data: { url, assetType: "Image", name } })
+                  ? callUploadTokenponyAsset({ data: { url: uploadUrl, assetType: "Image", name } })
                   : callUploadTopenrouterAsset({
-                      data: { url, assetType: "Image", name, model: input.videoModel },
+                      data: { url: uploadUrl, assetType: "Image", name, model: input.videoModel },
                     }),
         );
         if (uploaded.ok && uploaded.assetUrl) {
@@ -3921,7 +3939,12 @@ export default function RestyleStudio() {
           const keptImages = job.referenceImages.filter((url) => !dropped.includes(url));
           const content = buildRestyleVideoContent({
             prompt: directedPrompt,
-            imageUrls: keptImages.map((url) => preChecked.assetUrls[url] ?? url),
+            // 非 asset:// 的原始参考图先救活过期签名（对象 key 嵌路径,现签即用）
+            imageUrls: await Promise.all(
+              keptImages.map(async (url) =>
+                preChecked.assetUrls[url] ?? (await refreshExpiredStorageUrl(url)),
+              ),
+            ),
             referenceVideoUrl: referenceDroppedForDuration ? undefined : referenceVideo.url,
             stage,
           });

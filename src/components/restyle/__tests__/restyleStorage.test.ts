@@ -198,3 +198,28 @@ describe("restyleStorage · manualReferenceClips 持久化（转码损坏绕行�
     });
   });
 });
+
+describe("restyleStorage · manualReferenceClips 保存→加载 round-trip", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("经 saveRestyleProjects 写入后刷新加载仍保留（覆盖「写入后存活不住」回归）", () => {
+    const project = {
+      ...makePersistedProject([]),
+      stage: "render",
+      manualReferenceClips: {
+        "v2|src-1|30000|42000": "https://cdn.example.com/u04-fixed.mp4",
+      },
+    } as unknown as Parameters<typeof saveRestyleProjects>[1][number];
+    saveRestyleProjects("u1", [project]);
+    const [loaded] = loadRestyleProjects("u1");
+    expect(loaded.manualReferenceClips).toEqual({
+      "v2|src-1|30000|42000": "https://cdn.example.com/u04-fixed.mp4",
+    });
+    // 再保存一轮（模拟渲染提交后的持久化）仍保留
+    saveRestyleProjects("u1", [loaded]);
+    const [again] = loadRestyleProjects("u1");
+    expect(again.manualReferenceClips).toEqual(loaded.manualReferenceClips);
+  });
+});
