@@ -1,52 +1,37 @@
-# 邀请好友 · 充值返现 5%
+# 修复「加载项目失败：Backend configuration is missing」+ 域名 DNS 漂移
 
-在账户中心新增「邀请好友」页面：生成专属邀请链接，好友通过链接注册后建立绑定关系；好友**首次**积分到账（个人发放或团队发放）时，双方各获得该笔金额 **5%** 的积分返现。
+两个独立问题，都已确认。
 
-## 用户流程
+## 一、DNS 检查结果（test.doopoo.ai）
 
-```text
-我 → /account/referral → 复制邀请链接 (…/register?ref=XXXXXX)
-好友打开链接 → 注册 → 首次登录时自动绑定「邀请关系」
-管理员给好友（或其团队）发放 100 积分
-   → 好友 +5 积分，我 +5 积分（各写一条「邀请返现」流水）
-   → 该好友后续再到账不再返现（仅首次）
-邀请页可看到：已邀请人数 / 已返现人数 / 累计返现积分 / 好友列表
-```
+状态：**drifted（已漂移）**，持续约 11 小时，是当前主域名。
 
-## 规则
+| 记录 | 期望值 | 实际观测值 | 状态 |
+| --- | --- | --- | --- |
+| A `test.doopoo.ai` | 185.158.133.1 | 188.114.97.0 / 188.114.96.0 | 不匹配 |
+| TXT `_lovable.test.doopoo.ai` | lovable_verify=b7760f21… | 一致 | 正常 |
 
-- 仅首次到账触发，每位好友最多返现一次；返现基数为该笔到账金额，5% 向下取整（不足 1 分不返）。
-- 个人钱包发放与团队发放都算；团队发放按「团队所有者」为被邀请人判定。
-- 不能自己邀请自己；已被邀请过或已有积分流水的老账号不再绑定。
-- 返现积分与普通积分等价，可直接消耗。
+观测到的两个 IP 属于 Cloudflare 边缘节点，说明该记录在 Cloudflare 处开启了**橙色云代理（Proxied）**，因此对外解析出的不是源站 IP，Lovable 无法确认指向本项目。
 
-## 技术方案
+修复二选一（在 Cloudflare DNS 面板操作）：
+- 方案 A（推荐，最简单）：把 `test.doopoo.ai` 的 A 记录切换为 **DNS only（灰色云）**，值保持 `185.158.133.1`。
+- 方案 B：保留代理，则需在 Lovable 项目设置 → 域名中移除后重新连接，并在「高级」里勾选「域名使用 Cloudflare 或类似代理」，改用 CNAME 校验方式。
 
-### 数据库（迁移）
+TXT 验证记录正常，不需要改动。同时建议把 `www` / 根域一并按同样方式配置（如果需要）。
 
-- `public.referral_codes(user_id, code unique, created_at)` — 6~8 位大写字母数字码，首次访问邀请页时懒生成。
-- `public.referrals(id, inviter_id, invitee_id unique, code, status[pending|rewarded], reward_amount, rewarded_at, created_at)`。
-- GRANT + RLS：本人可读自己作为 inviter 或 invitee 的行；写入统一走 SECURITY DEFINER 函数，客户端不可直接 INSERT/UPDATE。
-- 函数：
-  - `ensure_referral_code()` → 返回当前用户邀请码（不存在则生成）。
-  - `bind_referral(p_code text)` → 校验非自邀、无重复绑定、账号无历史积分流水，写 pending 行。
-  - `apply_referral_cashback(p_invitee uuid, p_amount numeric)`（内部）→ 命中 pending 行则给双方钱包各加 `floor(amount*0.05)`，写 `user_credit_transactions`（type=`referral_cashback`），把行标记为 rewarded；幂等。
-  - 修改 `admin_grant_credits`：用户分支用目标用户、团队分支用团队所有者，成功后调用 `apply_referral_cashback`。
+## 二、Backend configuration is missing
 
-### 服务端函数（`src/lib/referral.functions.ts`）
+报错来自 `src/lib/projects.functions.ts` 的 `listMyProjects`：当服务端 `process.env.SUPABASE_URL` 或 `SUPABASE_PUBLISHABLE_KEY` 为空时直接返回该文案。已确认 `wrangler.jsonc` 中没有任何 `vars`，即自建 Cloudflare Workers 部署上这两个变量确实没有注入 —— 这是线上出现该报错的直接原因（之前 test.doopoo.ai 的同类环境变量缺失问题同源）。
 
-- `getMyReferralOverview`（requireSupabaseAuth）：邀请码、邀请链接、统计与好友列表（邮箱脱敏，经 SECURITY DEFINER 读 `auth.users`）。
-- `bindReferralCode`（requireSupabaseAuth）：调用 `bind_referral`，失败静默返回原因。
+修复内容：
 
-### 前端
+1. 在部署环境补齐服务端变量：`SUPABASE_URL`、`SUPABASE_PUBLISHABLE_KEY`、`SUPABASE_SERVICE_ROLE_KEY`（后者用于服务端管理类调用）。通过 `wrangler secret put` 注入，不写入仓库。
+2. 新增构建/启动期护栏：在 `src/server.ts` 入口做一次性检查，缺失时输出明确的一行日志（只打印缺失的变量名，不打印值），便于定位。
+3. 前端提示可读化：`listMyProjects` 等返回 `Backend configuration is missing` 的位置，改为返回稳定错误码（如 `BACKEND_CONFIG_MISSING`），前端映射为中英双语文案「后端配置缺失，请联系管理员检查部署环境变量」，并在 i18n 的 `zh.ts` / `en.ts` 同步补键。
+4. 排查同类分支：检索所有读取 `process.env.SUPABASE_*` 并静默降级的 server function，统一走同一错误码与提示，避免出现「空列表 + 模糊文案」。
 
-- `src/routes/register.tsx`：读取 `?ref=`（`useSearch`），存 `sessionStorage`，并写入 `signUp` 的 `options.data.referral_code`。
-- 登录后入口（`src/hooks/useAuth.ts` 之外，在 `MainLayout` 或 `account` 布局挂一次性 effect）：有 session 且本地存在待绑定 code → 调 `bindReferralCode` 后清除。
-- 新页面 `src/routes/account.referral.tsx`：邀请链接输入框 + 复制按钮、二维码可后续再加、4 个统计卡（已邀请 / 已返现 / 累计返现积分 / 返现比例 5%）、好友列表表格（脱敏邮箱、注册时间、状态、返现积分）。
-- `src/routes/account.tsx` 侧边栏在「积分与奖励」下新增「邀请好友」（`UserPlus` 图标）。
-- `src/routes/account.rewards.tsx` 的 `TYPE_LABEL` 增加 `referral_cashback: "邀请返现"`。
-- i18n：`zh.ts` / `en.ts` 同步补齐 ~15 个文案键。
+## 技术细节
 
-### 顺序
-
-1. 迁移（表 + 函数 + 改 `admin_grant_credits`）→ 2. 服务端函数 → 3. 注册链路带参与绑定 → 4. 邀请页与侧边栏 → 5. i18n 与流水类型文案。
+- 涉及文件：`src/lib/projects.functions.ts`、`src/server.ts`、`src/i18n/zh.ts`、`src/i18n/en.ts`，以及 `rg` 检索出的其他 `SUPABASE_URL` 降级分支。
+- 不改动 `src/integrations/supabase/*` 自动生成文件。
+- DNS 部分无代码改动，需要你在 Cloudflare 侧操作。
