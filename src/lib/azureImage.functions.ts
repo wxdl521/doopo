@@ -420,21 +420,32 @@ export async function callAzureImage(input: AzureImageInput): Promise<AzureImage
     let res: Response | null = null;
     let lastText = "";
     let retries = 0;
-    for (let attempt = 0; attempt < 3; attempt++) {
+    // 429（RateLimitReached，S0 层调用速率限制）此前固定等 8s、最多 2 次重试，
+    // 约 16s 就放弃。改为：优先遵守 Retry-After，否则指数退避 + 抖动，最多 5 次尝试
+    // （整体仍受 600s 超时保护）。
+    const MAX_ATTEMPTS = 5;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       stage = `request-${endpoint}`;
       res = await fetch(url, requestInit);
       if (res.ok) break;
       lastText = await res.text().catch(() => "");
       const transient =
         res.status === 429 || res.status === 502 || res.status === 503 || res.status === 504;
-      if (!transient || attempt === 2) break;
-      const wait = res.status === 429 ? 8000 : 1500;
+      if (!transient || attempt === MAX_ATTEMPTS - 1) break;
+      const retryAfterRaw = res.headers.get("retry-after");
+      const retryAfterMs =
+        retryAfterRaw && Number.isFinite(Number(retryAfterRaw))
+          ? Math.min(Number(retryAfterRaw) * 1000, 60_000)
+          : null;
+      const base = res.status === 429 ? 8000 * 2 ** attempt : 1500 * 2 ** attempt;
+      const wait = retryAfterMs ?? Math.min(base, 60_000) + Math.floor(Math.random() * 1000);
       retries++;
       console.warn(
         `[azure⟳] rid=${requestId} deployment=${deployment} status=${res.status} retry#${retries} in ${wait}ms`,
       );
       await new Promise((r) => setTimeout(r, wait));
     }
+
     clearTimeout(timeout);
 
     // 对账用:x-request-id 是后端 Azure OpenAI/AI Foundry 服务侧 id,对方后台/诊断日志按它检索;
