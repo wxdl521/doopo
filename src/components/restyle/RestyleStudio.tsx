@@ -3078,7 +3078,14 @@ export default function RestyleStudio() {
    * 交给外部转码服务 concat（原片音轨随分段视频自带，不做二次混音）。
    * 任一分段缺结果就把成片标记为失败并说明缺哪些段，不做静默拼接。
    */
-  async function stitchFinalEpisodes(projectId: string, episodes: string[], conversationId?: string) {
+  async function stitchFinalEpisodes(
+    projectId: string,
+    episodes: string[],
+    conversationId?: string,
+    // 同一事件循环内刚补建、尚未进 projectsRef 的成片占位（drain 返工收尾分支）——
+    // 不传会被下方 find 判成「无占位」而静默跳过该集（2026-08 EP01 实证）。
+    extraFiles: RestyleAttachment[] = [],
+  ) {
     // 合成结果播报（2026-08：此前只写 renderStatus/渲染日志，失败完全静默）
     const report = (content: string) => {
       if (conversationId) {
@@ -3089,10 +3096,16 @@ export default function RestyleStudio() {
       const project = projectsRef.current.find((item) => item.id === projectId);
       // projectsRef 可能滞后一个渲染帧（本轮最后一段的成功写回尚未进 ref）——
       // 用同步台账覆盖后再找占位/校验缺段,避免刚补齐的分段被误判缺失。
-      const episodeFiles = applyRunOutcomesToFiles(
+      const ledgerFiles = applyRunOutcomesToFiles(
         project?.files ?? [],
         renderRunOutcomesRef.current.snapshot(projectId),
       );
+      // extraFiles 与 ref 已flush的内容按 id 去重（React 可能已刷帧,占位两边都有）。
+      const knownIds = new Set(ledgerFiles.map((file) => file.id));
+      const episodeFiles = [
+        ...ledgerFiles,
+        ...extraFiles.filter((file) => !knownIds.has(file.id)),
+      ];
       const finalAttachment = episodeFiles.find(
         (file) => file.generatedKind === "final_video" && file.episode === episode,
       );
@@ -3284,6 +3297,10 @@ export default function RestyleStudio() {
         const eligible = rerunEpisodes.filter(
           (episode) => episodeRestitchEligibility(currentFiles, episode).eligible,
         );
+        // 本循环内补建的占位：updateProject 走 setState,projectsRef 下一渲染帧
+        // 才更新,紧随其后的 stitchFinalEpisodes 读 ref 会判「无占位」静默跳过
+        // （2026-08 EP01 实证）——收集起来显式传入。
+        const createdPlaceholders: RestyleAttachment[] = [];
         for (const episode of eligible) {
           // 成片占位缺失时补建（stitch 以占位附件落结果;首轮没整集跑过该集
           // 的边角情形下占位不存在,不补建会被 stitch 静默跳过）。
@@ -3291,6 +3308,9 @@ export default function RestyleStudio() {
             projectsRef.current.find((item) => item.id === projectId)?.files ?? [];
           if (
             filesNow.some(
+              (file) => file.generatedKind === "final_video" && file.episode === episode,
+            ) ||
+            createdPlaceholders.some(
               (file) => file.generatedKind === "final_video" && file.episode === episode,
             )
           ) {
@@ -3301,24 +3321,23 @@ export default function RestyleStudio() {
           );
           const source = filesNow.find((file) => file.id === anyClip?.sourceAttachmentId);
           const sourceStem = source?.name.replace(/\.[^.]+$/, "") || "转绘视频";
+          const placeholder: RestyleAttachment = {
+            id: crypto.randomUUID(),
+            name: `${sourceStem}_转绘.mp4`,
+            size: source?.size ?? 0,
+            type: "video/mp4",
+            lastModified: Date.now(),
+            generatedKind: "final_video" as const,
+            sourceAttachmentId: source?.id,
+            episode,
+            renderTaskId: makeRenderTaskId(episode),
+            renderStatus: "queued" as const,
+            renderProgress: 0,
+          };
+          createdPlaceholders.push(placeholder);
           updateProject(projectId, (project) => ({
             ...project,
-            files: [
-              ...project.files,
-              {
-                id: crypto.randomUUID(),
-                name: `${sourceStem}_转绘.mp4`,
-                size: source?.size ?? 0,
-                type: "video/mp4",
-                lastModified: Date.now(),
-                generatedKind: "final_video" as const,
-                sourceAttachmentId: source?.id,
-                episode,
-                renderTaskId: makeRenderTaskId(episode),
-                renderStatus: "queued" as const,
-                renderProgress: 0,
-              },
-            ],
+            files: [...project.files, placeholder],
           }));
         }
         if (eligible.length) {
@@ -3326,7 +3345,7 @@ export default function RestyleStudio() {
             role: "assistant",
             content: `返工分段已补齐，正在重新合成整集成片：${eligible.join("、")}。`,
           });
-          await stitchFinalEpisodes(projectId, eligible, conversationId);
+          await stitchFinalEpisodes(projectId, eligible, conversationId, createdPlaceholders);
         } else {
           // 诊断播报：进入返工收尾分支但没有集被触发时给出逐集原因,
           // 并附本轮台账的 (集/段) 成败清单——id 错位类假阴性一次复跑即可定论。
