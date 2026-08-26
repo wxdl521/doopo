@@ -15,8 +15,9 @@ const SENSITIVE_ERROR_PATTERN =
   /敏感|审核|违规|nsfw|sensitive|moderation|content.?policy|不适宜|real person/i;
 
 /** 配额/余额/权限类错误特征（换渠道可能成功）。 */
+/** 配额/余额/权限/限流类错误特征（换渠道可能成功）。 */
 const QUOTA_ERROR_PATTERN =
-  /403|401|余额|配额|欠费|额度|超限|quota|balance|insufficient|credit|billing|payment|permission|forbidden|unauthorized/i;
+  /403|401|429|余额|配额|欠费|额度|超限|限流|quota|balance|insufficient|credit|billing|payment|permission|forbidden|unauthorized|rate.?limit|ratelimitreached/i;
 
 /**
  * 是否「可换渠道重试」的配额/权限类失败。
