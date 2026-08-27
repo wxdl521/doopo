@@ -287,8 +287,10 @@ function logDynamicError(input: {
   durationMs: number;
   requestPayload: unknown;
   error: string;
-}): void {
-  import("./errorLogs.server").then(({ logGenerationError }) =>
+}): Promise<void> {
+  // 返回 Promise 给调用方 await——Cloudflare Workers 会回收 fire-and-forget
+  // 任务,不 await 的 insert 会被静默丢弃（2026-08 图片错误日志缺失实证）。
+  return import("./errorLogs.server").then(({ logGenerationError }) =>
     logGenerationError({
       kind: input.kind,
       provider: `dynamic:${input.target.providerCode}`,
@@ -434,7 +436,7 @@ export async function tryDynamicProviderImage(input: {
 
   const r = await callDynamicImage(target, input);
   if (!r.url && r.error) {
-    logDynamicError({
+    await logDynamicError({
       kind: "image",
       target,
       durationMs: Date.now() - startedAt,
@@ -505,7 +507,7 @@ export async function tryDynamicProviderVideoSubmit(input: {
     });
     if (!res.ok) {
       const error = await readErrorBody(res);
-      logDynamicError({
+      await logDynamicError({
         kind: "video",
         target,
         durationMs: Date.now() - startedAt,

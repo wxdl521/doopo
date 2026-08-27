@@ -297,22 +297,23 @@ export const generateImage = createServerFn({ method: "POST" })
         };
       }
     }
-    const __afterCall = <T extends { url?: string; error?: string | null; model?: string }>(
+    const __afterCall = async <T extends { url?: string; error?: string | null; model?: string }>(
       provider: string,
       r: T,
-    ): T => {
+    ): Promise<T> => {
       if (r && r.error && !r.url) {
-        import("./errorLogs.server").then(({ logGenerationError }) =>
-          logGenerationError({
-            kind: "image",
-            provider,
-            model: r.model ?? data.model ?? null,
-            durationMs: Date.now() - __t0,
-            requestPayload: __logPayload,
-            responseBody: r.error ?? null,
-            errorMessage: r.error ?? null,
-          }),
-        );
+        // 必须 await：Cloudflare Workers 在响应返回后回收未 waitUntil 的任务，
+        // fire-and-forget 的 insert 会被静默丢弃（2026-08 图片错误日志缺失实证）。
+        const { logGenerationError } = await import("./errorLogs.server");
+        await logGenerationError({
+          kind: "image",
+          provider,
+          model: r.model ?? data.model ?? null,
+          durationMs: Date.now() - __t0,
+          requestPayload: __logPayload,
+          responseBody: r.error ?? null,
+          errorMessage: r.error ?? null,
+        });
       }
       return r;
     };

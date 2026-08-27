@@ -96,7 +96,7 @@ export const transcribeRestyleAudio = createServerFn({ method: "POST" })
     } catch (error) {
       const message = error instanceof Error ? error.message : "网络异常";
       const { logGenerationError } = await import("./errorLogs.server");
-      logGenerationError({
+      await logGenerationError({
         kind: "image",
         provider: "lovable-ai-asr",
         model: STT_MODEL,
@@ -110,7 +110,7 @@ export const transcribeRestyleAudio = createServerFn({ method: "POST" })
     if (!response.ok) {
       const body = await response.text().catch(() => "");
       const { logGenerationError } = await import("./errorLogs.server");
-      logGenerationError({
+      await logGenerationError({
         kind: "image",
         provider: "lovable-ai-asr",
         model: STT_MODEL,
