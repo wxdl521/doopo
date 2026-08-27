@@ -1108,6 +1108,9 @@ export const en: Translations = {
 
   // New Project Dialog
   np_title: "Configure base settings",
+  np_project_name: "Project name",
+  np_project_name_placeholder: "Enter a project name (required)",
+  np_project_name_required: "Please enter a project name first",
   np_estimate_prefix: "Current setup, est.",
   np_estimate_suffix: "/s",
   np_aspect: "Aspect ratio",
@@ -1734,6 +1737,10 @@ export const en: Translations = {
     "Use a conversation-driven workflow to adapt source videos for a target market.",
   restyle_demo_badge: "UI prototype · no live jobs connected",
   restyle_new_project: "New restyle project",
+  restyle_name_project_title: "Name your restyle project",
+  restyle_project_name_placeholder: "Enter a project name (required)",
+  restyle_project_name_required: "Please enter a project name first",
+  restyle_project_name_create: "Create",
   restyle_search: "Search restyle projects…",
   restyle_projects: "Restyle projects",
   restyle_workbench: "Restyle workbench",

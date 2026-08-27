@@ -56,6 +56,16 @@ function renderStudio() {
   );
 }
 
+/** 新建转绘项目现强制命名（2026/08）：点按钮→命名弹窗输入→创建。 */
+async function createNamedProject(
+  user: ReturnType<typeof userEvent.setup>,
+  name = "测试转绘项目",
+) {
+  await user.click(screen.getByRole("button", { name: "新建转绘项目" }));
+  await user.type(screen.getByPlaceholderText("请输入项目名称（必填）"), name);
+  await user.click(screen.getByRole("button", { name: "创建" }));
+}
+
 describe("RestyleStudio prototype", () => {
   it("maps the current asset library into restyle assets", () => {
     const assets = libraryAssetsFromRows(
@@ -126,12 +136,12 @@ describe("RestyleStudio prototype", () => {
     renderStudio();
 
     expect(screen.getByText("暂无转绘项目")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "新建转绘项目" }));
+    await createNamedProject(user);
 
     expect(screen.getByTestId("restyle-workbench")).toBeInTheDocument();
     // 第 4 处项目标题在右栏「文件」Tab 的文件树头部。
     await user.click(screen.getByRole("tab", { name: "文件" }));
-    expect(screen.getAllByText("未命名转绘项目 1")).toHaveLength(4);
+    expect(screen.getAllByText("测试转绘项目")).toHaveLength(4);
   });
 
   it("uses the conversation as the only task progression surface", async () => {
@@ -154,7 +164,7 @@ describe("RestyleStudio prototype", () => {
   it("keeps the assistant composer as local prototype interaction", async () => {
     const user = userEvent.setup();
     renderStudio();
-    await user.click(screen.getByRole("button", { name: "新建转绘项目" }));
+    await createNamedProject(user);
 
     await user.type(screen.getByPlaceholderText("输入你的转绘需求…"), "保留庄园客厅");
     await user.click(screen.getByRole("button", { name: "发送" }));
@@ -179,7 +189,7 @@ describe("RestyleStudio prototype", () => {
   it("creates multiple conversations under the active project", async () => {
     const user = userEvent.setup();
     renderStudio();
-    await user.click(screen.getByRole("button", { name: "新建转绘项目" }));
+    await createNamedProject(user);
     await user.click(screen.getByRole("button", { name: "新建对话" }));
 
     expect(screen.getAllByRole("button", { name: "新对话" })).toHaveLength(2);
@@ -190,16 +200,18 @@ describe("RestyleStudio prototype", () => {
     renderStudio();
 
     await user.selectOptions(screen.getByLabelText("选择项目"), "__create__");
+    await user.type(screen.getByPlaceholderText("请输入项目名称（必填）"), "测试转绘项目");
+    await user.click(screen.getByRole("button", { name: "创建" }));
 
     // 第 4 处项目标题在右栏「文件」Tab 的文件树头部。
     await user.click(screen.getByRole("tab", { name: "文件" }));
-    expect(screen.getAllByText("未命名转绘项目 1")).toHaveLength(4);
+    expect(screen.getAllByText("测试转绘项目")).toHaveLength(4);
   });
 
   it("adds a selected source file to the active conversation without advancing the stage", async () => {
     const user = userEvent.setup();
     renderStudio();
-    await user.click(screen.getByRole("button", { name: "新建转绘项目" }));
+    await createNamedProject(user);
 
     await user.upload(
       screen.getByTestId("restyle-file-input"),
@@ -215,7 +227,7 @@ describe("RestyleStudio prototype", () => {
   it("keeps uploaded videos visible after sending them into the conversation", async () => {
     const user = userEvent.setup();
     renderStudio();
-    await user.click(screen.getByRole("button", { name: "新建转绘项目" }));
+    await createNamedProject(user);
 
     await user.upload(
       screen.getByTestId("restyle-file-input"),
@@ -229,7 +241,7 @@ describe("RestyleStudio prototype", () => {
   it("submits video rendering from a direct confirm message before the plan stage", async () => {
     const user = userEvent.setup();
     renderStudio();
-    await user.click(screen.getByRole("button", { name: "新建转绘项目" }));
+    await createNamedProject(user);
 
     await user.upload(
       screen.getByTestId("restyle-file-input"),
@@ -244,7 +256,7 @@ describe("RestyleStudio prototype", () => {
   it("opens and collapses files from the project file tree", async () => {
     const user = userEvent.setup();
     renderStudio();
-    await user.click(screen.getByRole("button", { name: "新建转绘项目" }));
+    await createNamedProject(user);
 
     await user.upload(
       screen.getByTestId("restyle-file-input"),
@@ -371,7 +383,7 @@ describe("RestyleStudio prototype", () => {
   it("sends the composer message on Enter but not on Shift+Enter or while composing", async () => {
     const user = userEvent.setup();
     renderStudio();
-    await user.click(screen.getByRole("button", { name: "新建转绘项目" }));
+    await createNamedProject(user);
 
     const textarea = screen.getByPlaceholderText("输入你的转绘需求…");
     fireEvent.change(textarea, { target: { value: "保留庄园客厅" } });

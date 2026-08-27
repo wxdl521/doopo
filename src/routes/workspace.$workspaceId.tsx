@@ -11965,6 +11965,7 @@ function WorkspacePage() {
           project
             ? {
                 id: project.id,
+                name: project.name,
                 aspect: project.aspect,
                 storyboardModel: project.storyboardModel,
                 sceneModel: project.sceneModel,

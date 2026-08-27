@@ -1089,6 +1089,9 @@ export const zh = {
 
   // ============ New Project Dialog ============
   np_title: "请先配置基础设置",
+  np_project_name: "项目名称",
+  np_project_name_placeholder: "请输入项目名称（必填）",
+  np_project_name_required: "请先填写项目名称",
   np_estimate_prefix: "当前设置，预计",
   np_estimate_suffix: "/s",
   np_aspect: "画幅比例",
@@ -1706,6 +1709,10 @@ export const zh = {
   restyle_subtitle: "以对话驱动的方式，将原片转绘为目标市场版本。",
   restyle_demo_badge: "UI 演示原型 · 尚未接入真实任务",
   restyle_new_project: "新建转绘项目",
+  restyle_name_project_title: "命名转绘项目",
+  restyle_project_name_placeholder: "请输入项目名称（必填）",
+  restyle_project_name_required: "请先填写项目名称",
+  restyle_project_name_create: "创建",
   restyle_search: "搜索转绘项目…",
   restyle_projects: "转绘项目",
   restyle_workbench: "转绘工作台",

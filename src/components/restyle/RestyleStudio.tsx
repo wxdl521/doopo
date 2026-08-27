@@ -1780,19 +1780,40 @@ export default function RestyleStudio() {
     isAnalyzing,
   ]);
 
-  function createLocalProject() {
-    const project = createProjectRecord();
-    setProjects((current) => [project, ...current]);
-    setActiveProjectId(project.id);
+  // 新建转绘项目强制命名（2026/08 需求）：点「新建转绘项目」或无任何项目时
+  // 直接上传，都先弹命名框；上传场景把文件暂存，命名确认后续上。
+  const [namingOpen, setNamingOpen] = useState(false);
+  const [namingValue, setNamingValue] = useState("");
+  const pendingFilesRef = useRef<{ files: File[]; isFolder: boolean } | null>(null);
+
+  function requestNewProjectName(pending?: { files: File[]; isFolder: boolean }) {
+    pendingFilesRef.current = pending ?? null;
+    setNamingValue("");
+    setNamingOpen(true);
   }
 
-  function createProjectRecord(): RestyleProject {
+  function confirmNewProjectName() {
+    const title = namingValue.trim();
+    if (!title) {
+      toast.error(t.restyle_project_name_required);
+      return;
+    }
+    const pending = pendingFilesRef.current;
+    pendingFilesRef.current = null;
+    setNamingOpen(false);
+    const project = createProjectRecord(title);
+    setProjects((current) => [project, ...current]);
+    setActiveProjectId(project.id);
+    if (pending) attachFilesToProject(project, pending.files, pending.isFolder);
+  }
+
+  function createProjectRecord(title: string): RestyleProject {
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
     const conversation = createConversation(now);
     return {
       id,
-      title: `${t.restyle_untitled_project} ${projects.length + 1}`,
+      title,
       createdAt: now,
       updatedAt: now,
       stage: "upload",
@@ -2285,12 +2306,15 @@ export default function RestyleStudio() {
 
   function attachFiles(files: FileList | File[] | null, isFolder = false) {
     if (!files?.length) return;
-    const project = activeProject ?? createProjectRecord();
+    // 无活动项目时上传 = 隐式创建项目——同样强制命名,文件暂存待命名后续传
     if (!activeProject) {
-      setProjects((current) => [project, ...current]);
-      setActiveProjectId(project.id);
+      requestNewProjectName({ files: Array.from(files), isFolder });
+      return;
     }
-    const selectedFiles = Array.from(files);
+    attachFilesToProject(activeProject, Array.from(files), isFolder);
+  }
+
+  function attachFilesToProject(project: RestyleProject, selectedFiles: File[], isFolder: boolean) {
     // 集号按现有 EP\d+ 最大序号续排：删除中间集后新上传取 max+1，不与存量集撞号。
     const episodeLabels = nextEpisodeLabels(
       project.files,
@@ -6542,6 +6566,63 @@ export default function RestyleStudio() {
           </div>
         </div>
       ) : null}
+      {namingOpen ? (
+        <div
+          className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-6"
+          role="dialog"
+          aria-modal="true"
+        >
+          <div className="w-full max-w-md rounded-2xl border border-border bg-bg-surface shadow-2xl">
+            <div className="flex items-center justify-between border-b border-border px-5 py-4">
+              <h2 className="font-semibold text-text-primary">{t.restyle_name_project_title}</h2>
+              <button
+                type="button"
+                onClick={() => {
+                  pendingFilesRef.current = null;
+                  setNamingOpen(false);
+                }}
+                className="text-text-muted hover:text-text-primary"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <form
+              className="space-y-4 p-5"
+              onSubmit={(event) => {
+                event.preventDefault();
+                confirmNewProjectName();
+              }}
+            >
+              <input
+                autoFocus
+                value={namingValue}
+                onChange={(event) => setNamingValue(event.target.value)}
+                maxLength={200}
+                placeholder={t.restyle_project_name_placeholder}
+                className="w-full rounded-lg border border-border bg-bg-elevated px-3 py-2 text-sm text-text-primary outline-none placeholder:text-text-muted focus:border-accent"
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    pendingFilesRef.current = null;
+                    setNamingOpen(false);
+                  }}
+                  className="rounded-full px-4 py-2 text-sm text-text-muted hover:text-text-primary"
+                >
+                  {t.common_cancel}
+                </button>
+                <button
+                  type="submit"
+                  className="rounded-full bg-accent px-6 py-2 text-sm font-semibold text-accent-foreground hover:opacity-90"
+                >
+                  {t.restyle_project_name_create}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      ) : null}
       <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden xl:grid-cols-[232px_minmax(0,1fr)_310px]">
         {assetPickerFor || assetPickerKind ? (
           <div
@@ -6611,7 +6692,7 @@ export default function RestyleStudio() {
             </button>
             <button
               type="button"
-              onClick={createLocalProject}
+              onClick={() => requestNewProjectName()}
               className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm text-text-secondary hover:bg-bg-elevated hover:text-text-primary"
             >
               <Plus size={15} className="text-accent" /> {t.restyle_new_project}
@@ -7132,7 +7213,7 @@ export default function RestyleStudio() {
                   value={activeProjectId ?? ""}
                   onChange={(event) => {
                     if (event.target.value === "__create__") {
-                      createLocalProject();
+                      requestNewProjectName();
                       return;
                     }
                     setActiveProjectId(event.target.value || null);

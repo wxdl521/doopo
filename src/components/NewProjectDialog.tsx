@@ -495,6 +495,8 @@ const orderedCharacterNationalities = [
 ];
 
 export type ProjectConfig = {
+  /** 项目名称（创建时必填，编辑时回显可改）。 */
+  name?: string;
   aspect: string;
   storyboardModel: string;
   sceneModel: string;
@@ -630,6 +632,8 @@ export function NewProjectDialog({
     )!;
   };
   const [aspect, setAspect] = useState(pickAspect);
+  // 项目名称：创建必填（2026/08 需求），编辑模式回显当前名称
+  const [projectName, setProjectName] = useState(() => initial?.name ?? "");
   const [customCover] = useState<string | null>(() => initial?.customCover ?? null);
   const [customStyle, setCustomStyle] = useState(
     () => initialPrefs.lastCustomStyle ?? initial?.customStyle ?? "",
@@ -671,6 +675,7 @@ export function NewProjectDialog({
     if (authLoading || initializedForOpenRef.current) return;
     initializedForOpenRef.current = true;
     const prefs = loadUserPrefs(userId);
+    setProjectName(initial?.name ?? "");
     // 默认值链（统一规格）：已保存偏好 → 库内 is_default 行 → sortOrder 最前 → 硬编码兜底
     const chooseImage = (...candidates: Array<string | undefined>) =>
       resolveDefaultModel(
@@ -751,10 +756,17 @@ export function NewProjectDialog({
       toast.error("请先登录后再保存项目配置");
       return;
     }
+    // 项目名称必填：创建/编辑都强制（2026/08 需求），trim 后为空即拦截
+    const trimmedName = projectName.trim();
+    if (!trimmedName) {
+      toast.error(t.np_project_name_required);
+      return;
+    }
     try {
       const res = await saveProject({
         data: {
           id,
+          name: trimmedName,
           aspect,
           storyboardModel,
           sceneModel,
@@ -800,6 +812,7 @@ export function NewProjectDialog({
       // 编辑模式:仅关闭弹窗,把保存后的结果回传给父组件(刷新 project state)。
       onSaved?.({
         id,
+        name: trimmedName,
         aspect,
         storyboardModel,
         sceneModel,
@@ -844,6 +857,20 @@ export function NewProjectDialog({
             {t.np_estimate_prefix} <span className="text-accent font-semibold">✦ {estimate}</span>
             {t.np_estimate_suffix}
           </div>
+        </div>
+
+        <div className="pt-4">
+          <label className="block text-sm font-semibold" htmlFor="np-project-name">
+            {t.np_project_name} <span className="text-accent">*</span>
+          </label>
+          <input
+            id="np-project-name"
+            value={projectName}
+            onChange={(e) => setProjectName(e.target.value)}
+            maxLength={200}
+            placeholder={t.np_project_name_placeholder}
+            className="mt-1 w-full rounded-lg border border-border bg-bg-elevated px-3 py-2 text-sm text-text-primary outline-none placeholder:text-text-muted focus:border-accent"
+          />
         </div>
 
         <div className="grid md:grid-cols-4 gap-4 pt-4">
