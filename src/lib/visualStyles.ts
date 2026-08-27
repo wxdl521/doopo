@@ -571,6 +571,8 @@ const VALID_T2I_MODELS = new Set<string>([
   "azure2/gpt-image-2",
   "azure3/gpt-image-2",
   "azure0716/gpt-image-2",
+  // 晶美 APIM 并发生图网关（此前缺白名单,选了被静默 fallback 到 Seedream）
+  "azure-image2/gpt-image-2",
   // OneToken gateway
   "onetoken/gpt-image-2",
   // OTU gateway
@@ -624,6 +626,7 @@ const VALID_I2I_MODELS = new Set<string>([
   "azure2/gpt-image-2",
   "azure3/gpt-image-2",
   "azure0716/gpt-image-2",
+  "azure-image2/gpt-image-2",
   "onetoken/gpt-image-2",
   "otu/gpt-image-2",
   "aitokenvibe/gpt-image-2",
@@ -652,6 +655,7 @@ const KNOWN_MODEL_PREFIXES = [
   "azure2/",
   "azure3/",
   "azure0716/",
+  "azure-image2/",
   "onetoken/",
   "otu/",
   "aitokenvibe/",
