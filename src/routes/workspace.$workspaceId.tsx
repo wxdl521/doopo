@@ -614,6 +614,14 @@ const SCENE_TIME_LABELS: Record<string, string> = {
 function explainVideoError(raw: string | undefined | null): string {
   const s = (raw || "").trim();
   if (!s) return "视频生成失败";
+  // 0) ARK 文本内容审核拦截 —— prompt 文本含敏感信息,原样重试无意义,
+  //    给中文引导并保留 requestId 便于对照渠道后台排查。
+  if (/InputTextSensitiveContentDetected/i.test(s)) {
+    const reqId = s.match(/request\s*id[:：\s]*([0-9a-f]+)/i)?.[1];
+    return `内容审核拦截：视频提示词文本可能含敏感信息，已拒绝生成。请修改分镜描述 / 剧本中的相关文案（避免暴力、未成年人、露骨等描述）后重试。${
+      reqId ? `（requestId: ${reqId}）` : ""
+    }`;
+  }
   // 1) ARK 内容审核拦截 —— 输入图被识别为含真实人物，直接透传原始错误
   if (
     /InputImageSensitiveContentDetected\.PrivacyInformation/i.test(s) ||
@@ -12213,6 +12221,19 @@ function WorkspacePage() {
                               )}
                             </button>
                           )}
+                          {episodeEditing === ep.epIndex && (
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                // 放弃本次编辑：草稿不落库，剧本保持编辑前内容
+                                setEpisodeEditing(null);
+                                setEpisodeDraft("");
+                              }}
+                              className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold border border-border text-text-muted hover:text-text-primary hover:bg-bg-elevated transition shrink-0"
+                            >
+                              <X size={11} /> 取消
+                            </button>
+                          )}
                           <span className="px-2 py-1 rounded-md bg-bg-elevated border border-border text-text-muted text-xs">
                             {isExpanded ? "折叠" : "展开"}
                           </span>
@@ -12329,6 +12350,18 @@ function WorkspacePage() {
                             </>
                           )}
                         </button>
+                        {episodeEditing === selectedEp.epIndex && (
+                          <button
+                            onClick={() => {
+                              // 放弃本次编辑：草稿不落库，剧本保持编辑前内容
+                              setEpisodeEditing(null);
+                              setEpisodeDraft("");
+                            }}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold border border-border text-text-muted hover:text-text-primary hover:bg-bg-elevated transition shrink-0"
+                          >
+                            <X size={11} /> 取消
+                          </button>
+                        )}
                       </div>
                       {episodeEditing === selectedEp.epIndex ? (
                         <div className="px-5 pb-5 pt-4">
@@ -14099,14 +14132,31 @@ function WorkspacePage() {
                                 分镜描述 · Plot
                               </div>
                               {editingGroupId === g.id ? (
-                                <button
-                                  type="button"
-                                  onClick={() => commitGroupBreakdown(g.id)}
-                                  className="inline-flex items-center gap-1 text-[10px] text-accent hover:text-accent/80 transition"
-                                  title="保存修改"
-                                >
-                                  <Check size={11} /> 完成
-                                </button>
+                                <div className="inline-flex items-center gap-3">
+                                  <button
+                                    type="button"
+                                    onClick={() => commitGroupBreakdown(g.id)}
+                                    className="inline-flex items-center gap-1 text-[10px] text-accent hover:text-accent/80 transition"
+                                    title="保存修改"
+                                  >
+                                    <Check size={11} /> 完成
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      // 放弃本次编辑：草稿不落盘，分镜描述保持编辑前内容
+                                      setGroupBreakdownDraft((prev) => {
+                                        const { [g.id]: _, ...rest } = prev;
+                                        return rest;
+                                      });
+                                      setEditingGroupId(null);
+                                    }}
+                                    className="inline-flex items-center gap-1 text-[10px] text-text-muted hover:text-text-primary transition"
+                                    title="放弃修改"
+                                  >
+                                    <X size={11} /> 取消
+                                  </button>
+                                </div>
                               ) : (
                                 <button
                                   type="button"
@@ -14911,7 +14961,6 @@ function WorkspacePage() {
                                       <WorkspaceMediaVideo
                                         src={videoEntry.url}
                                         controls
-                                        loop
                                         playsInline
                                         className="w-full h-full object-contain block"
                                       />

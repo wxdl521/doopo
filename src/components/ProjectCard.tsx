@@ -71,12 +71,24 @@ export function ProjectCard({
       <Link to="/workspace/$workspaceId" params={{ workspaceId: project.id }} className="block">
         <div className="relative aspect-[16/10] overflow-hidden bg-bg-elevated">
           {/^https?:\/\//.test(project.thumbnail) ? (
-            <img
-              src={project.thumbnail}
-              alt={project.title}
-              loading="lazy"
-              className="absolute inset-0 w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.04]"
-            />
+            <>
+              {/* 2026/08 缩略图优化:角色图多为竖版全身像,object-cover 在 16/10
+                  容器里会截掉上下半截。改为模糊底色铺满 + object-contain 前景,
+                  人物/场景图都能完整显示,两侧不留黑边。 */}
+              <img
+                src={project.thumbnail}
+                alt=""
+                aria-hidden
+                loading="lazy"
+                className="absolute inset-0 w-full h-full object-cover blur-lg scale-110 opacity-50"
+              />
+              <img
+                src={project.thumbnail}
+                alt={project.title}
+                loading="lazy"
+                className="absolute inset-0 w-full h-full object-contain transition-transform duration-500 group-hover:scale-[1.04]"
+              />
+            </>
           ) : (
             <div className={`absolute inset-0 bg-gradient-to-br ${project.thumbnail}`}>
               <div
