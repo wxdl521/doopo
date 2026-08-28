@@ -201,7 +201,7 @@ const PersistAssetImageInput = z.object({
   // 上限放宽到 ~15MB 字符,覆盖常见 base64 图。
   url: z.string().min(1).max(15_000_000),
   userId: z.string().min(1).max(64),
-  kind: z.enum(["character", "scene", "prop", "panel", "shot"]),
+  kind: z.enum(["character", "scene", "prop", "panel", "shot", "poster"]),
   id: z.string().min(1).max(128),
 });
 

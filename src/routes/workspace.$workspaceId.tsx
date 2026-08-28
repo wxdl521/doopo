@@ -66,6 +66,13 @@ import { withLoadRetry, withWatchdog } from "../lib/withWatchdog";
 import { buildWorkspaceDataPatch } from "../lib/workspaceSavePatch";
 import { generateStageAi } from "../lib/aiGenerate.functions";
 import { generateImage, regenerateSceneImage } from "../lib/seedream.functions";
+import { generateImageWithReferences } from "../lib/seedream.functions";
+import {
+  buildPosterPrompt,
+  decidePosterAction,
+  POSTER_SIZE,
+  type PosterState,
+} from "../lib/projectPoster";
 import { logImageMeta } from "../lib/logImageMeta";
 import { uploadLocalImage, serverUrlToBase64 } from "../lib/uploadImage.functions";
 import { audioFileToWavDataUrl } from "../lib/audioWav";
@@ -1455,6 +1462,7 @@ function WorkspacePage() {
   const callRegenScene = useServerFn(regenerateSceneImage);
   const callGenerateStoryboard = useServerFn(generateStoryboardFromPlot);
   const callGenerateShotImage = useServerFn(generateStoryboardShotImage);
+  const callGeneratePosterImage = useServerFn(generateImageWithReferences);
   const callRegenShot = useServerFn(regenerateStoryboardShot);
   const callGenVideoSubmit = useServerFn(submitVideoTaskFn);
   const callGenVideoPoll = useServerFn(pollVideoTaskFn);
@@ -2191,6 +2199,23 @@ function WorkspacePage() {
   const [imagesRestored, setImagesRestored] = useState(false);
   const autoSavedRef = useRef(false);
   const [charImages, setCharImages] = useState<Record<string, string[]>>({});
+  // 2026/08:项目剧照(海报)——主角图+场景图融合生成的横版封面图。
+  // 持久化在 workspace_data.posterImage;autoCoverUrl 记录我们自动写进
+  // custom_cover 的最后一个 URL,用于区分自动封面与导入项目自带封面。
+  const [posterImage, setPosterImage] = useState<PosterState | null>(null);
+  const posterImageRef = useRef<PosterState | null>(null);
+  const [autoCoverUrl, setAutoCoverUrl] = useState<string | null>(null);
+  const autoCoverUrlRef = useRef<string | null>(null);
+  /** 剧照生成防重:state 有 running 态,但 ref 不受 React batching 影响。 */
+  const posterInflightRef = useRef(false);
+  const updatePosterImage = (p: PosterState | null) => {
+    posterImageRef.current = p;
+    setPosterImage(p);
+  };
+  const updateAutoCoverUrl = (url: string | null) => {
+    autoCoverUrlRef.current = url;
+    setAutoCoverUrl(url);
+  };
   /** 正在上传的角色/场景/道具图片；用于在卡片上显示上传进度。 */
   const [uploadingImageKeys, setUploadingImageKeys] = useState<Set<string>>(() => new Set());
   // 与 charImages 按下标一一对应，保存每张图的内部 prompt、用户可编辑属性快照和生成类型。
@@ -3600,6 +3625,13 @@ function WorkspacePage() {
         // 2026/06:恢复上次选中的集数
         if (typeof wd.selectedEpisodeIndex === "number") {
           setSelectedEpisodeIndex(wd.selectedEpisodeIndex);
+        }
+        // 2026/08:恢复项目剧照状态与自动封面 URL(老数据没有这两个字段,可选读)
+        if (wd.posterImage) {
+          updatePosterImage(wd.posterImage as PosterState);
+        }
+        if (typeof wd.autoCoverUrl === "string") {
+          updateAutoCoverUrl(wd.autoCoverUrl);
         }
         // 媒体仍单独读取以规避超大的 workspace_data JSONB。主体内容已经就绪，
         // 先打开工作区；各素材卡在 workspaceMediaReady 前显示加载动画。
@@ -10315,6 +10347,127 @@ function WorkspacePage() {
   }
 
   const pendingSaveRef = useRef(false);
+
+  // ==================================================================
+  // 2026/08:项目剧照(海报)自动生成 + 封面回退
+  // 决策在 lib/projectPoster.ts(纯函数,已单测);这里只负责执行:
+  //   setCover → 写 projects.custom_cover;generate → 主角图+场景图融合
+  //   生横版剧照 → persistAssetImage(kind="poster") 入库 → 设为封面。
+  // ==================================================================
+
+  /** 旧兜底链:分镜图 → 故事板图(原 pickCover 的后两段,角色图已由主角逻辑接管)。 */
+  function pickLegacyCoverFallback(): string | null {
+    for (const k of Object.keys(shotImages)) {
+      const arr = shotImages[k];
+      if (Array.isArray(arr) && arr.length && arr[0]) return arr[0];
+    }
+    for (const k of Object.keys(groupStoryboards)) {
+      const arr = groupStoryboards[k];
+      if (!arr) continue;
+      for (const v of arr) {
+        if (v?.url && v.status === "succeeded") return v.url;
+      }
+    }
+    return null;
+  }
+
+  /** 当前封面决策输入(图片类走 ref 拿最新,避免闭包陈旧)。 */
+  function posterDecisionInput(legacyFallbackUrl: string | null) {
+    return {
+      poster: posterImageRef.current,
+      characters: data.characters,
+      charImages: charImagesRef.current,
+      selectedCharImages,
+      scenes: data.scenes,
+      sceneImages: sceneImagesRef.current,
+      selectedSceneImages,
+      currentCover: project?.customCover ?? null,
+      autoCoverUrl: autoCoverUrlRef.current,
+      legacyFallbackUrl,
+    };
+  }
+
+  /** 执行 setCover:记录 autoCoverUrl、同步本地 project state、写 custom_cover。 */
+  function applyAutoCover(url: string) {
+    updateAutoCoverUrl(url);
+    setProject((p) => (p ? { ...p, customCover: url } : p));
+    callUpsertProject({ data: { id: workspaceId, customCover: url } }).catch(() => {});
+  }
+
+  /** 保存尾部调用:只做轻量封面回写(setCover),不在保存路径发生图请求。 */
+  function applyPosterCoverAction() {
+    const action = decidePosterAction(posterDecisionInput(pickLegacyCoverFallback()));
+    if (action.type === "setCover") applyAutoCover(action.url);
+  }
+
+  /** 素材就绪时自动生成剧照;失败自动重试至 MAX_POSTER_ATTEMPTS,再回退主角照片。 */
+  async function ensureProjectPoster() {
+    if (posterInflightRef.current) return;
+    if (!user) return;
+    const action = decidePosterAction(posterDecisionInput(pickLegacyCoverFallback()));
+    if (action.type === "setCover") {
+      applyAutoCover(action.url);
+      return;
+    }
+    if (action.type !== "generate") return;
+    posterInflightRef.current = true;
+    const attempts = (posterImageRef.current?.attempts ?? 0) + 1;
+    updatePosterImage({ url: null, status: "running", attempts });
+    try {
+      const r = await callGeneratePosterImage({
+        data: {
+          prompt: buildPosterPrompt({
+            leadNames: action.leadNames,
+            sceneLocations: action.sceneLocations,
+            style: resolveProjectStyle(projectVisualStyle).label,
+          }),
+          model: resolveI2IModel(project?.sceneModel),
+          referenceImages: action.references,
+          size: POSTER_SIZE,
+        },
+      });
+      if (!r.url || r.error) throw new Error(r.error || "剧照生成失败");
+      // 供应商临时 URL 会过期,入 workspace-media 换永久签名 URL(读取时 resignCover 按路径续签)
+      let posterUrl = r.url;
+      const persisted = await callPersistAsset({
+        data: { url: r.url, userId: user.id, kind: "poster", id: "cover" },
+      });
+      if (persisted.ok && persisted.url) posterUrl = persisted.url;
+      updatePosterImage({ url: posterUrl, status: "succeeded", attempts });
+      applyAutoCover(posterUrl);
+      toast.success("项目剧照已生成并设为封面");
+    } catch (e) {
+      console.warn("[poster] generate failed:", e);
+      updatePosterImage({ url: null, status: "failed", attempts });
+      // 重试次数用尽时立刻落回退封面;未到上限则等 effect 因 posterImage 变化再触发重试
+      const fallback = decidePosterAction(posterDecisionInput(pickLegacyCoverFallback()));
+      if (fallback.type === "setCover") applyAutoCover(fallback.url);
+    } finally {
+      posterInflightRef.current = false;
+    }
+  }
+
+  // 剧照触发器:素材(主角图+场景图)就绪 / 剧照状态变化时跑一次决策。
+  // generate 幂等由 posterInflightRef + poster.status==="running" 双重保证。
+  useEffect(() => {
+    if (!dataLoaded || workspaceLoadError || !workspaceMediaReady) return;
+    if (!user) return;
+    void ensureProjectPoster();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    dataLoaded,
+    workspaceLoadError,
+    workspaceMediaReady,
+    charImages,
+    sceneImages,
+    selectedCharImages,
+    selectedSceneImages,
+    posterImage,
+    autoCoverUrl,
+    project?.customCover,
+    user,
+  ]);
+
   // 2026/07 修复:延迟调用点(beforeunload / auto-save / 排队重试)若直接用闭包里的
   // handleSaveWorkspace,会捕获注册时的旧 state 快照,刷新时用旧 data 整体覆盖
   // workspace_data,抹掉本次会话新生成的场景/道具。改走 ref 永远拿最新实例。
@@ -10575,6 +10728,9 @@ function WorkspacePage() {
         selectedSceneImages,
         selectedPropImages,
         savedAssetKeys: Array.from(savedAssetKeysRef.current),
+        // 2026/08:项目剧照状态 + 自动封面 URL,跨 session 恢复后不再重复生成/回写
+        posterImage: posterImageRef.current,
+        autoCoverUrl: autoCoverUrlRef.current,
         selectedEpisodeIndex,
         groupVideos: Object.fromEntries(
           Object.entries(persistGroupVideos).map(([k, arr]) => [
@@ -10619,35 +10775,11 @@ function WorkspacePage() {
       if (res.ok) {
         setSavedWorkspace(true);
         if (!silent) toast.success("工作区已保存");
-        // 2026/06:保存时自动挑一张角色图作为项目封面(不覆盖用户手动设的 customCover)。
-        // 优先级:charImages(角色图)→ shotImages(分镜图)→ groupStoryboards(故事板图)。
-        if (!project?.customCover) {
-          const pickCover = (): string | null => {
-            const imgSrc = charImagesRef.current;
-            for (const k of Object.keys(imgSrc)) {
-              const arr = imgSrc[k];
-              if (Array.isArray(arr) && arr.length && arr[0] && !arr[0].startsWith("data:"))
-                return arr[0];
-            }
-            const shots = shotImages;
-            for (const k of Object.keys(shots)) {
-              const arr = shots[k];
-              if (Array.isArray(arr) && arr.length && arr[0]) return arr[0];
-            }
-            for (const k of Object.keys(persistGroupStoryboards)) {
-              const arr = persistGroupStoryboards[k];
-              if (!arr) continue;
-              for (const v of arr) {
-                if (v?.url && v.status === "succeeded") return v.url;
-              }
-            }
-            return null;
-          };
-          const cover = pickCover();
-          if (cover) {
-            callUpsertProject({ data: { id: workspaceId, customCover: cover } }).catch(() => {});
-          }
-        }
+        // 2026/08:封面决策收拢到 decidePosterAction —— 剧照优先,主角照片回退,
+        // 分镜/故事板图最后兜底;只写/替换自动封面,不覆盖导入项目自带封面。
+        // generate(生剧照)不在这里执行,由 ensureProjectPoster 的 useEffect 触发,
+        // 保存路径保持轻量。
+        applyPosterCoverAction();
         // Reset "saved" badge after 3 seconds
         setTimeout(() => setSavedWorkspace(false), 3000);
       } else {
