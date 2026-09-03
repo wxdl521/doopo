@@ -1,0 +1,16 @@
+{
+  "identifier": "default",
+  "description": "Doopoo desktop webview (thin shell)",
+  "windows": ["main"],
+  "remote": {
+    "urls": [
+      "http://localhost:8080/*",
+      "http://127.0.0.1:8080/*",
+      "https://doopoo.ai/*",
+      "https://www.doopoo.ai/*",
+      "https://test.doopoo.ai/*",
+      "https://doopoo.app/*"
+    ]
+  },
+  "permissions": ["core:default"]
+}
