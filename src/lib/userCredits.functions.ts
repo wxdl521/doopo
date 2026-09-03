@@ -2,6 +2,56 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
 
+function isMissingRpc(message: string | undefined): boolean {
+  return /PGRST202|PGRST204|42883|does not exist|could not find/i.test(message ?? "");
+}
+
+function rpcRow<T>(data: unknown): T | null {
+  if (data == null) return null;
+  if (Array.isArray(data)) return (data[0] as T) ?? null;
+  return data as T;
+}
+
+/** RPC 未落地时的钱包初始化（旧 INSERT 策略仍在时可用；RLS 收紧后必须走 ensure_user_wallet） */
+async function fallbackInitWallet(supabase: any, userId: string): Promise<number> {
+  const { data: wallet } = await supabase
+    .from("user_wallets")
+    .select("credits_balance")
+    .eq("user_id", userId)
+    .maybeSingle();
+  if (wallet) return Number(wallet.credits_balance ?? 0);
+
+  const { error: insertErr } = await supabase
+    .from("user_wallets")
+    .insert({ user_id: userId, credits_balance: 0 });
+  if (insertErr) {
+    if (insertErr.code === "23505") {
+      const { data: retry } = await supabase
+        .from("user_wallets")
+        .select("credits_balance")
+        .eq("user_id", userId)
+        .maybeSingle();
+      return Number(retry?.credits_balance ?? 0);
+    }
+    console.error("[readOrInitWalletBalance] insert wallet failed:", insertErr);
+    return 0;
+  }
+  return 0;
+}
+
+/** 读余额；无钱包则创建为 0。优先 ensure_user_wallet RPC（不依赖客户端写钱包）。 */
+export async function readOrInitWalletBalance(supabase: any, userId: string): Promise<number> {
+  const { data, error } = await supabase.rpc("ensure_user_wallet");
+  if (!error && data != null) {
+    const value = Array.isArray(data) ? data[0] : data;
+    return Number(value ?? 0);
+  }
+  if (error && !isMissingRpc(error.message)) {
+    console.error("[readOrInitWalletBalance] ensure_user_wallet failed:", error);
+  }
+  return fallbackInitWallet(supabase, userId);
+}
+
 // ====================================================================
 // getUserBalance — 获取当前用户个人积分余额（不存在则自动创建钱包）
 // ====================================================================
@@ -10,37 +60,8 @@ export const getUserBalance = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     const { supabase, userId } = context;
-
-    const { data: wallet } = await supabase
-      .from("user_wallets")
-      .select("credits_balance")
-      .eq("user_id", userId)
-      .maybeSingle();
-
-    if (wallet) {
-      return { balance: wallet.credits_balance };
-    }
-
-    // 钱包不存在 → 创建（余额 0）
-    const { error: insertErr } = await supabase
-      .from("user_wallets")
-      .insert({ user_id: userId, credits_balance: 0 });
-
-    if (insertErr) {
-      // 并发创建导致的唯一冲突 → 重新查询
-      if (insertErr.code === "23505") {
-        const { data: retry } = await supabase
-          .from("user_wallets")
-          .select("credits_balance")
-          .eq("user_id", userId)
-          .maybeSingle();
-        return { balance: retry?.credits_balance ?? 0 };
-      }
-      console.error("[getUserBalance] insert wallet failed:", insertErr);
-      return { balance: 0 };
-    }
-
-    return { balance: 0 };
+    const balance = await readOrInitWalletBalance(supabase, userId);
+    return { balance };
   });
 
 // ====================================================================
@@ -51,31 +72,37 @@ export const getUserCreditSummary = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .handler(async ({ context }) => {
     const { supabase, userId } = context;
+    const { data, error } = await supabase.rpc("get_my_credit_summary");
+    if (!error) {
+      const row = rpcRow<{
+        balance: number;
+        lifetime_earned: number;
+        lifetime_spent: number;
+      }>(data);
+      if (row) {
+        return {
+          balance: Number(row.balance ?? 0),
+          lifetimeEarned: Number(row.lifetime_earned ?? 0),
+          lifetimeSpent: Number(row.lifetime_spent ?? 0),
+        };
+      }
+    } else if (error && !isMissingRpc(error.message)) {
+      console.error("[getUserCreditSummary] rpc failed:", error);
+    }
 
-    const { data: wallet } = await supabase
-      .from("user_wallets")
-      .select("credits_balance")
-      .eq("user_id", userId)
-      .maybeSingle();
-
+    const balance = await readOrInitWalletBalance(supabase, userId);
     const { data: rows } = await supabase
       .from("user_credit_transactions")
       .select("amount")
       .eq("user_id", userId);
-
     let earned = 0;
     let spent = 0;
     for (const r of rows ?? []) {
-      const a = Number((r as any).amount) || 0;
+      const a = Number((r as { amount?: number }).amount) || 0;
       if (a > 0) earned += a;
       else if (a < 0) spent += -a;
     }
-
-    return {
-      balance: Number(wallet?.credits_balance ?? 0),
-      lifetimeEarned: earned,
-      lifetimeSpent: spent,
-    };
+    return { balance, lifetimeEarned: earned, lifetimeSpent: spent };
   });
 
 // ====================================================================
@@ -85,7 +112,9 @@ export const getUserCreditSummary = createServerFn({ method: "POST" })
 export const rechargeCredits = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input: unknown) => {
-    const parsed = z.object({ amount: z.number().int().positive() }).safeParse(input);
+    const parsed = z
+      .object({ amount: z.number().int().positive().max(1_000_000) })
+      .safeParse(input);
     if (!parsed.success) throw new Error("Invalid amount");
     return parsed.data;
   })
@@ -230,7 +259,11 @@ export const getUserCreditTransactions = createServerFn({ method: "POST" })
     }
     const { data: rows, error } = result;
     if (error)
-      return { transactions: [] as UserCreditTransactionRow[], error: error.message, hasProjectColumns };
+      return {
+        transactions: [] as UserCreditTransactionRow[],
+        error: error.message,
+        hasProjectColumns,
+      };
     const transactions: UserCreditTransactionRow[] = (rows ?? []).map((r: any) => ({
       id: r.id,
       type: r.type,
@@ -246,7 +279,6 @@ export const getUserCreditTransactions = createServerFn({ method: "POST" })
     return { transactions, error: null as string | null, hasProjectColumns };
   });
 
-
 // ====================================================================
 // refundChargedCredits — 按扣费幂等键退款（断连补偿）
 //
@@ -254,23 +286,20 @@ export const getUserCreditTransactions = createServerFn({ method: "POST" })
 // 服务端那次调用可能已完成并滞后扣费——按同一幂等键退还该窗已扣积分。
 //
 // 安全模型：
-//   - 只退已扣的：先核对本人流水里存在该幂等键的 consume 记录，未扣不退；
-//   - 退款流水以 `refund:{chargeKey}` 为幂等键，库级唯一索引防并发/重复退款；
-//   - 验证用 supabaseAdmin 读本人流水（RLS 下用户态也读得到，admin 只为与
-//     写入同通道）；加余额走 admin upsert（add_user_credits 已撤销
-//     authenticated 执行权，且其内部 auth.uid() 对 service role 为 null 不可用）。
+//   - 只退已扣的：本人流水必须有该幂等键的 consume 记录，未扣不退；
+//   - 退款金额 = abs(consume.amount)，忽略客户端传入的 amount；
+//   - 优先 refund_user_credits_by_key RPC（锁钱包 + 写流水，同一事务）；
+//   - 退款流水以 `refund:{chargeKey}` 为幂等键，库级唯一索引防重复退款。
 //
-// 一致性边界（已在回归中接受的取舍，见迁移 20260804230000 的幂等设计）：
-//   - 滞后入账：断连的服务端扣费可能晚于退款请求到账——此时查不到 consume
-//     记录，本轮返回 no_charge 不退；调用方稍后重试即可收敛（幂等键保证
-//     不会退两次），流水里 consume/refund 两条记录可对账；
-//   - 非原子窗口：先写退款流水再补余额，两步之间崩溃会漏补余额（流水已记）。
-//     不加新 RPC（避免新建 DB 函数），窗口极小且流水可对账，接受该边界。
+// 一致性边界（见迁移 20260804230000 / 20260902000000）：
+//   - 滞后入账：扣费晚于退款请求时查不到 consume，返回 no_charge，后续重试收敛；
+//   - RPC 未执行时的降级路径仍是「先流水后改余额」，窗口极小。
 // ====================================================================
 
 const RefundInput = z.object({
   chargeIdempotencyKey: z.string().min(1).max(200),
-  amount: z.number().positive().max(10_000),
+  /** @deprecated 金额一律取 consume 流水，忽略客户端传入值。 */
+  amount: z.number().positive().max(10_000).optional(),
   description: z.string().min(1).max(240),
 });
 
@@ -278,65 +307,107 @@ export type RefundChargedCreditsResult =
   | { ok: true; refunded: boolean; reason: "refunded" | "no_charge" | "deduped" }
   | { ok: false; error: string };
 
+type RefundReason = "refunded" | "no_charge" | "deduped";
+
+function asRefundReason(value: unknown): RefundReason {
+  if (value === "refunded" || value === "no_charge" || value === "deduped") return value;
+  return "refunded";
+}
+
+/** 优先 RPC（金额=原 consume）；SQL 未执行时降级，仍用流水实扣额而非客户端 amount。 */
+export async function executeRefundChargedCredits(opts: {
+  supabase: any;
+  supabaseAdmin: any;
+  userId: string;
+  chargeIdempotencyKey: string;
+  description: string;
+}): Promise<RefundChargedCreditsResult> {
+  const { supabase, supabaseAdmin, userId, chargeIdempotencyKey, description } = opts;
+
+  const { data, error } = await supabase.rpc("refund_user_credits_by_key", {
+    p_charge_idempotency_key: chargeIdempotencyKey,
+    p_description: description,
+  });
+  if (!error) {
+    const row = rpcRow<{ refunded?: boolean; reason?: string }>(data);
+    if (!row) return { ok: false, error: "empty refund result" };
+    return {
+      ok: true,
+      refunded: row.refunded === true,
+      reason: asRefundReason(row.reason),
+    };
+  }
+  if (!isMissingRpc(error.message)) {
+    return { ok: false, error: error.message };
+  }
+
+  const { data: chargeRow, error: chargeError } = await supabaseAdmin
+    .from("user_credit_transactions")
+    .select("id, amount")
+    .eq("user_id", userId)
+    .eq("idempotency_key", chargeIdempotencyKey)
+    .eq("type", "consume")
+    .maybeSingle();
+  if (chargeError) return { ok: false, error: chargeError.message };
+  if (!chargeRow) return { ok: true, refunded: false, reason: "no_charge" };
+
+  const refundAmount = Math.abs(Number(chargeRow.amount) || 0);
+  if (refundAmount <= 0) return { ok: true, refunded: false, reason: "no_charge" };
+
+  const refundKey = `refund:${chargeIdempotencyKey}`;
+  const { data: wallet } = await supabaseAdmin
+    .from("user_wallets")
+    .select("credits_balance")
+    .eq("user_id", userId)
+    .maybeSingle();
+  const balanceAfter = Number(wallet?.credits_balance ?? 0) + refundAmount;
+
+  const { error: ledgerError } = await supabaseAdmin.from("user_credit_transactions").insert({
+    user_id: userId,
+    type: "refund",
+    amount: refundAmount,
+    balance_after: balanceAfter,
+    model: null,
+    resolution: null,
+    duration: null,
+    description,
+    idempotency_key: refundKey,
+  });
+  if (ledgerError) {
+    if (/unique|duplicate/i.test(ledgerError.message)) {
+      return { ok: true, refunded: false, reason: "deduped" };
+    }
+    return { ok: false, error: ledgerError.message };
+  }
+
+  const { error: walletError } = await supabaseAdmin
+    .from("user_wallets")
+    .upsert(
+      { user_id: userId, credits_balance: balanceAfter, updated_at: new Date().toISOString() },
+      { onConflict: "user_id" },
+    );
+  if (walletError) {
+    await supabaseAdmin
+      .from("user_credit_transactions")
+      .delete()
+      .eq("user_id", userId)
+      .eq("idempotency_key", refundKey);
+    return { ok: false, error: walletError.message };
+  }
+  return { ok: true, refunded: true, reason: "refunded" };
+}
+
 export const refundChargedCredits = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .validator((input: unknown) => RefundInput.parse(input))
   .handler(async ({ data, context }): Promise<RefundChargedCreditsResult> => {
-    const { userId } = context as { supabase: any; userId: string };
+    const { supabase, userId } = context as { supabase: any; userId: string };
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-
-    // 只退已扣的：本人流水里必须存在该幂等键的 consume 记录。
-    const { data: chargeRow, error: chargeError } = await supabaseAdmin
-      .from("user_credit_transactions")
-      .select("id, amount")
-      .eq("user_id", userId)
-      .eq("idempotency_key", data.chargeIdempotencyKey)
-      .eq("type", "consume")
-      .maybeSingle();
-    if (chargeError) return { ok: false, error: chargeError.message };
-    if (!chargeRow) return { ok: true, refunded: false, reason: "no_charge" };
-
-    const refundKey = `refund:${data.chargeIdempotencyKey}`;
-    const { data: wallet } = await supabaseAdmin
-      .from("user_wallets")
-      .select("credits_balance")
-      .eq("user_id", userId)
-      .maybeSingle();
-    const balanceAfter = Number(wallet?.credits_balance ?? 0) + data.amount;
-
-    // 退款流水先行登记（幂等键唯一索引兜底并发与重复调用）。
-    const { error: ledgerError } = await supabaseAdmin.from("user_credit_transactions").insert({
-      user_id: userId,
-      type: "refund",
-      amount: data.amount,
-      balance_after: balanceAfter,
-      model: null,
-      resolution: null,
-      duration: null,
+    return executeRefundChargedCredits({
+      supabase,
+      supabaseAdmin,
+      userId,
+      chargeIdempotencyKey: data.chargeIdempotencyKey,
       description: data.description,
-      idempotency_key: refundKey,
     });
-    if (ledgerError) {
-      if (/unique|duplicate/i.test(ledgerError.message)) {
-        return { ok: true, refunded: false, reason: "deduped" };
-      }
-      return { ok: false, error: ledgerError.message };
-    }
-
-    // 余额回补；失败时补偿删除流水，允许重试（best-effort 原子性）。
-    const { error: walletError } = await supabaseAdmin
-      .from("user_wallets")
-      .upsert(
-        { user_id: userId, credits_balance: balanceAfter, updated_at: new Date().toISOString() },
-        { onConflict: "user_id" },
-      );
-    if (walletError) {
-      await supabaseAdmin
-        .from("user_credit_transactions")
-        .delete()
-        .eq("user_id", userId)
-        .eq("idempotency_key", refundKey);
-      return { ok: false, error: walletError.message };
-    }
-    return { ok: true, refunded: true, reason: "refunded" };
   });

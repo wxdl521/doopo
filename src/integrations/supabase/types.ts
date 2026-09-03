@@ -1706,6 +1706,63 @@ export type Database = {
         }
         Relationships: []
       }
+      user_invite_codes: {
+        Row: {
+          code: string
+          created_at: string
+          user_id: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          user_id: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      user_referrals: {
+        Row: {
+          bound_at: string
+          id: string
+          invite_code: string
+          invitee_id: string
+          inviter_id: string
+          reward_amount: number | null
+          reward_status: string
+          rewarded_at: string | null
+          source_amount: number | null
+          source_tx_id: string | null
+        }
+        Insert: {
+          bound_at?: string
+          id?: string
+          invite_code: string
+          invitee_id: string
+          inviter_id: string
+          reward_amount?: number | null
+          reward_status?: string
+          rewarded_at?: string | null
+          source_amount?: number | null
+          source_tx_id?: string | null
+        }
+        Update: {
+          bound_at?: string
+          id?: string
+          invite_code?: string
+          invitee_id?: string
+          inviter_id?: string
+          reward_amount?: number | null
+          reward_status?: string
+          rewarded_at?: string | null
+          source_amount?: number | null
+          source_tx_id?: string | null
+        }
+        Relationships: []
+      }
       user_wallets: {
         Row: {
           created_at: string
@@ -1735,19 +1792,29 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      add_user_credits:
-        | {
-            Args: { p_amount: number }
-            Returns: {
-              error: true
-            } & "Could not choose the best candidate function between: public.add_user_credits(p_amount => int4), public.add_user_credits(p_amount => numeric). Try renaming the parameters or the function itself in the database so function overloading can be resolved"
-          }
-        | {
-            Args: { p_amount: number }
-            Returns: {
-              error: true
-            } & "Could not choose the best candidate function between: public.add_user_credits(p_amount => int4), public.add_user_credits(p_amount => numeric). Try renaming the parameters or the function itself in the database so function overloading can be resolved"
-          }
+      add_user_credits: { Args: { p_amount: number }; Returns: undefined }
+      add_user_credits_for_user: { Args: { p_amount: number; p_user_id: string }; Returns: number }
+      ensure_my_invite_code: { Args: never; Returns: string }
+      ensure_user_wallet: { Args: never; Returns: number }
+      get_my_referral_overview: { Args: never; Returns: Json }
+      get_my_credit_summary: {
+        Args: never
+        Returns: {
+          balance: number
+          lifetime_earned: number
+          lifetime_spent: number
+        }[]
+      }
+      refund_user_credits_by_key: {
+        Args: { p_charge_idempotency_key: string; p_description?: string }
+        Returns: {
+          amount: number
+          balance_after: number
+          ok: boolean
+          reason: string
+          refunded: boolean
+        }[]
+      }
       admin_grant_credits: {
         Args: {
           p_amount: number
