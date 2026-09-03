@@ -72,9 +72,8 @@ async function tryLoadLocalEnv() {
     if (!m) continue;
     const [, key, rawVal] = m;
     if (!rawVal) continue;
-    // 不覆盖 OS env 里已设的值(让 Cloudflare / Docker env 优先)
-    if (process.env[key] && process.env[key] !== "") continue;
-    // 去引号
+    // .env.local 覆盖仓库 .env（本地 Docker 库）。生产 Worker 没有这个文件，
+    // 仍走 Cloudflare / 系统环境变量。
     process.env[key] = rawVal.replace(/^['"]|['"]$/g, "");
     count++;
   }
