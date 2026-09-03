@@ -53,8 +53,8 @@ export default function Home() {
   return (
     <div className="space-y-16 animate-fade-in">
       {/* Hero */}
-      <section className="relative pt-6 pb-10 -mx-6 px-6 overflow-hidden">
-        <div className="absolute inset-0 -z-10">
+      <section className="relative z-10 pt-6 pb-10 -mx-6 px-6">
+        <div className="absolute inset-0 -z-10 overflow-hidden">
           <img
             src="https://images.unsplash.com/photo-1534796636912-3b95b3ab5986?w=2400&h=1000&fit=crop&q=80"
             alt=""

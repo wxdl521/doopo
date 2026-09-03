@@ -9,6 +9,7 @@ import {
   ShieldCheck,
   Coins,
   AlertTriangle,
+  UserPlus,
 } from "lucide-react";
 import SectionSidebar from "../components/SectionSidebar";
 import { RequireAuth } from "../components/RequireAuth";
@@ -27,6 +28,7 @@ function AccountLayout() {
     { to: "/account/credits", label: t.account_credits, icon: Coins },
     { to: "/account/assets", label: t.account_assets, icon: FolderOpen },
     { to: "/account/posts", label: t.account_posts, icon: Share2 },
+    { to: "/account/invite", label: t.account_invite, icon: UserPlus },
     { to: "/account/rewards", label: t.account_rewards, icon: Award },
     { to: "/account/notifications", label: t.account_notifications, icon: Bell },
     { to: "/account/security", label: t.account_security, icon: ShieldCheck },

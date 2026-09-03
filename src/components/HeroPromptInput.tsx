@@ -122,7 +122,7 @@ export default function HeroPromptInput() {
       {/* 输入区 */}
       <div className="relative">
         <div className="absolute -inset-4 bg-glow-orb opacity-70 blur-2xl pointer-events-none" />
-        <div className="relative corner-frame panel p-5 md:p-6 animate-slide-up">
+        <div className="relative overflow-visible corner-frame panel p-5 md:p-6 animate-slide-up">
           <span className="c-tr" />
           <span className="c-bl" />
 
@@ -159,14 +159,14 @@ export default function HeroPromptInput() {
             </button>
 
             {/* 模型选择器 */}
-            <div className="relative" hidden={scriptMode}>
+            <div className="relative z-30" hidden={scriptMode}>
               <button onClick={() => setShowModels((s) => !s)} className="btn-ghost">
                 <RefreshCw size={14} className="text-accent" />
                 {selectedModel?.label ?? AI_MODELS[0]?.label}
                 <ChevronDown size={14} className="opacity-60" />
               </button>
               {showModels && (
-                <div className="absolute left-0 top-full mt-2 w-64 panel p-1.5 z-20 animate-fade-in shadow-glow">
+                <div className="absolute left-0 top-full mt-2 z-50 w-64 max-h-[320px] overflow-y-auto overscroll-contain panel p-1.5 animate-fade-in shadow-glow">
                   {AI_MODELS.map((m) => (
                     <button
                       key={m.id}

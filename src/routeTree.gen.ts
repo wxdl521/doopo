@@ -52,6 +52,7 @@ import { Route as AccountSecurityRouteImport } from './routes/account.security'
 import { Route as AccountRewardsRouteImport } from './routes/account.rewards'
 import { Route as AccountPostsRouteImport } from './routes/account.posts'
 import { Route as AccountNotificationsRouteImport } from './routes/account.notifications'
+import { Route as AccountInviteRouteImport } from './routes/account.invite'
 import { Route as AccountErrorLogsRouteImport } from './routes/account.error-logs'
 import { Route as AccountCreditsRouteImport } from './routes/account.credits'
 import { Route as AccountAssetsRouteImport } from './routes/account.assets'
@@ -273,6 +274,11 @@ const AccountNotificationsRoute = AccountNotificationsRouteImport.update({
   path: '/notifications',
   getParentRoute: () => AccountRoute,
 } as any)
+const AccountInviteRoute = AccountInviteRouteImport.update({
+  id: '/invite',
+  path: '/invite',
+  getParentRoute: () => AccountRoute,
+} as any)
 const AccountErrorLogsRoute = AccountErrorLogsRouteImport.update({
   id: '/error-logs',
   path: '/error-logs',
@@ -324,6 +330,7 @@ export interface FileRoutesByFullPath {
   '/account/assets': typeof AccountAssetsRoute
   '/account/credits': typeof AccountCreditsRoute
   '/account/error-logs': typeof AccountErrorLogsRoute
+  '/account/invite': typeof AccountInviteRoute
   '/account/notifications': typeof AccountNotificationsRoute
   '/account/posts': typeof AccountPostsRoute
   '/account/rewards': typeof AccountRewardsRoute
@@ -369,6 +376,7 @@ export interface FileRoutesByTo {
   '/account/assets': typeof AccountAssetsRoute
   '/account/credits': typeof AccountCreditsRoute
   '/account/error-logs': typeof AccountErrorLogsRoute
+  '/account/invite': typeof AccountInviteRoute
   '/account/notifications': typeof AccountNotificationsRoute
   '/account/posts': typeof AccountPostsRoute
   '/account/rewards': typeof AccountRewardsRoute
@@ -420,6 +428,7 @@ export interface FileRoutesById {
   '/account/assets': typeof AccountAssetsRoute
   '/account/credits': typeof AccountCreditsRoute
   '/account/error-logs': typeof AccountErrorLogsRoute
+  '/account/invite': typeof AccountInviteRoute
   '/account/notifications': typeof AccountNotificationsRoute
   '/account/posts': typeof AccountPostsRoute
   '/account/rewards': typeof AccountRewardsRoute
@@ -472,6 +481,7 @@ export interface FileRouteTypes {
     | '/account/assets'
     | '/account/credits'
     | '/account/error-logs'
+    | '/account/invite'
     | '/account/notifications'
     | '/account/posts'
     | '/account/rewards'
@@ -517,6 +527,7 @@ export interface FileRouteTypes {
     | '/account/assets'
     | '/account/credits'
     | '/account/error-logs'
+    | '/account/invite'
     | '/account/notifications'
     | '/account/posts'
     | '/account/rewards'
@@ -567,6 +578,7 @@ export interface FileRouteTypes {
     | '/account/assets'
     | '/account/credits'
     | '/account/error-logs'
+    | '/account/invite'
     | '/account/notifications'
     | '/account/posts'
     | '/account/rewards'
@@ -923,6 +935,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AccountNotificationsRouteImport
       parentRoute: typeof AccountRoute
     }
+    '/account/invite': {
+      id: '/account/invite'
+      path: '/invite'
+      fullPath: '/account/invite'
+      preLoaderRoute: typeof AccountInviteRouteImport
+      parentRoute: typeof AccountRoute
+    }
     '/account/error-logs': {
       id: '/account/error-logs'
       path: '/error-logs'
@@ -965,6 +984,7 @@ interface AccountRouteChildren {
   AccountAssetsRoute: typeof AccountAssetsRoute
   AccountCreditsRoute: typeof AccountCreditsRoute
   AccountErrorLogsRoute: typeof AccountErrorLogsRoute
+  AccountInviteRoute: typeof AccountInviteRoute
   AccountNotificationsRoute: typeof AccountNotificationsRoute
   AccountPostsRoute: typeof AccountPostsRoute
   AccountRewardsRoute: typeof AccountRewardsRoute
@@ -977,6 +997,7 @@ const AccountRouteChildren: AccountRouteChildren = {
   AccountAssetsRoute: AccountAssetsRoute,
   AccountCreditsRoute: AccountCreditsRoute,
   AccountErrorLogsRoute: AccountErrorLogsRoute,
+  AccountInviteRoute: AccountInviteRoute,
   AccountNotificationsRoute: AccountNotificationsRoute,
   AccountPostsRoute: AccountPostsRoute,
   AccountRewardsRoute: AccountRewardsRoute,

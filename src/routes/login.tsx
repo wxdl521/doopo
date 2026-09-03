@@ -101,7 +101,7 @@ function Login() {
         </form>
         <div className="text-center text-sm text-text-muted mt-6">
           {t.auth_no_account}{" "}
-          <Link to="/register" className="text-accent hover:underline">
+          <Link to="/register" search={{ ref: undefined }} className="text-accent hover:underline">
             {t.auth_to_signup}
           </Link>
         </div>

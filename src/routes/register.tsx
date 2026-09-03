@@ -1,12 +1,21 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Logo from "../components/Logo";
 import PasswordInput from "../components/PasswordInput";
 import { useLanguage } from "../i18n/LanguageContext";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import {
+  clearInviteRef,
+  normalizeInviteCode,
+  persistInviteRef,
+  readInviteRef,
+} from "../lib/referralRules";
 
 export const Route = createFileRoute("/register")({
+  validateSearch: (search: Record<string, unknown>) => ({
+    ref: normalizeInviteCode(search.ref) ?? undefined,
+  }),
   head: () => ({ meta: [{ title: "Create account — Doopoo" }] }),
   component: Register,
 });
@@ -14,6 +23,8 @@ export const Route = createFileRoute("/register")({
 function Register() {
   const { t } = useLanguage();
   const navigate = useNavigate();
+  const { ref } = Route.useSearch();
+  const [inviteCode, setInviteCode] = useState<string | null>(ref ?? null);
   const [form, setForm] = useState({
     name: "",
     email: "",
@@ -21,15 +32,30 @@ function Register() {
     accountType: "personal" as "personal" | "team",
   });
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (ref) {
+      persistInviteRef(ref);
+      setInviteCode(ref);
+      return;
+    }
+    setInviteCode(readInviteRef());
+  }, [ref]);
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    const boundCode = inviteCode ?? readInviteRef();
     const { data, error } = await supabase.auth.signUp({
       email: form.email,
       password: form.password,
       options: {
         emailRedirectTo: `${window.location.origin}/home`,
-        data: { name: form.name, account_type: form.accountType },
+        data: {
+          name: form.name,
+          account_type: form.accountType,
+          ...(boundCode ? { invite_code: boundCode } : {}),
+        },
       },
     });
     setLoading(false);
@@ -38,9 +64,11 @@ function Register() {
       return;
     }
     if (data.session) {
+      clearInviteRef();
       toast.success("注册成功");
       navigate({ to: "/home" });
     } else {
+      clearInviteRef();
       try {
         sessionStorage.setItem("pendingActivationEmail", form.email);
       } catch {
@@ -64,6 +92,11 @@ function Register() {
         </div>
         <h1 className="font-display text-2xl font-bold text-center mb-1">{t.auth_signup_title}</h1>
         <p className="text-sm text-text-muted text-center mb-6">{t.auth_signup_sub}</p>
+        {inviteCode && (
+          <div className="mb-4 p-3 rounded-lg border border-accent/40 bg-accent-dim text-sm text-text-secondary">
+            {t.auth_signup_invite_hint}
+          </div>
+        )}
         <form onSubmit={submit} className="space-y-4">
           <div className="grid grid-cols-2 gap-2">
             {(["personal", "team"] as const).map((tp) => (

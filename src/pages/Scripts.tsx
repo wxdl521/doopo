@@ -98,7 +98,7 @@ export default function Scripts() {
             >
               <LogIn size={14} /> {t.sl_login}
             </Link>
-            <Link to="/register" className="text-sm text-accent hover:underline">
+            <Link to="/register" search={{ ref: undefined }} className="text-sm text-accent hover:underline">
               {t.sl_register}
             </Link>
           </div>

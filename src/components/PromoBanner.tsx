@@ -1,4 +1,5 @@
 import { Gift, X, Zap } from "lucide-react";
+import { Link } from "@tanstack/react-router";
 import { useLanguage } from "../i18n/LanguageContext";
 
 export default function PromoBanner({ onClose }: { onClose: () => void }) {
@@ -11,9 +12,16 @@ export default function PromoBanner({ onClose }: { onClose: () => void }) {
     >
       <Gift size={16} className="text-accent flex-shrink-0" />
       <span className="text-text-secondary text-xs sm:text-sm truncate">
-        {t.promo_text} <span className="gradient-text font-semibold">{t.promo_bonus}</span>
+        {t.promo_text}
+        {t.promo_bonus ? (
+          <>
+            {" "}
+            <span className="gradient-text font-semibold">{t.promo_bonus}</span>
+          </>
+        ) : null}
       </span>
-      <button
+      <Link
+        to="/pricing"
         className="hidden sm:inline-flex ml-2 px-3 py-1 rounded-full text-xs font-semibold
                          bg-gradient-to-r from-fuchsia-500 to-orange-400 text-white
                          hover:opacity-90 transition"
@@ -21,13 +29,14 @@ export default function PromoBanner({ onClose }: { onClose: () => void }) {
         <span className="flex items-center gap-1">
           <Zap size={12} /> {t.promo_upgrade}
         </span>
-      </button>
-      <button
+      </Link>
+      <Link
+        to="/account/credits"
         className="hidden sm:inline-flex px-3 py-1 rounded-full text-xs font-semibold
                          border border-accent/60 text-accent hover:bg-accent-dim transition"
       >
         {t.promo_topup}
-      </button>
+      </Link>
       <button
         onClick={onClose}
         className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary"

@@ -2,7 +2,12 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useState, useEffect } from "react";
 import { Coins, ChevronLeft, ChevronRight } from "lucide-react";
-import { getUserBalance, getUserCreditTransactions } from "../lib/userCredits.functions";
+import { toast } from "sonner";
+import {
+  getUserBalance,
+  getUserCreditTransactions,
+  rechargeCredits,
+} from "../lib/userCredits.functions";
 import { useLanguage } from "../i18n/LanguageContext";
 import {
   Table,
@@ -31,9 +36,11 @@ function AccountCredits() {
   const { t } = useLanguage();
   const callGetBalance = useServerFn(getUserBalance);
   const callTransactions = useServerFn(getUserCreditTransactions);
+  const callRecharge = useServerFn(rechargeCredits);
 
   const [balance, setBalance] = useState<number | null>(null);
   const [customAmount, setCustomAmount] = useState("");
+  const [recharging, setRecharging] = useState<number | "custom" | null>(null);
   const [transactions, setTransactions] = useState<any[]>([]);
   const [page, setPage] = useState(0);
   // 项目名筛选：输入后 400ms 防抖生效，回到第一页
@@ -66,9 +73,36 @@ function AccountCredits() {
       .catch(() => setTransactions([]));
   }, [page, projectFilter]);
 
-  const customCredits = parseInt(customAmount, 10);
-  const customPrice =
-    isNaN(customCredits) || customCredits <= 0 ? null : (customCredits / 20).toFixed(2);
+  const customCredits = Number.parseInt(customAmount, 10);
+  const customValid =
+    Number.isInteger(customCredits) && customCredits >= 1 && customCredits <= 1_000_000;
+  const customPrice = customValid ? (customCredits / 20).toFixed(2) : null;
+
+  const refreshBalance = () =>
+    callGetBalance({ data: undefined })
+      .then((r: { balance?: number }) => setBalance(r?.balance ?? 0))
+      .catch(() => setBalance(0));
+
+  const handleRecharge = async (credits: number, source: number | "custom") => {
+    if (!Number.isInteger(credits) || credits < 1 || credits > 1_000_000) {
+      toast.error(t.acc_credits_invalid_amount);
+      return;
+    }
+    setRecharging(source);
+    try {
+      const result = await callRecharge({ data: { amount: credits } });
+      if (result && "ok" in result && result.ok) {
+        toast.success(t.acc_credits_recharge);
+        await refreshBalance();
+      } else {
+        toast.error(t.acc_credits_offline_hint);
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : t.acc_credits_offline_hint);
+    } finally {
+      setRecharging(null);
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -83,9 +117,10 @@ function AccountCredits() {
         </div>
       </div>
 
-      {/* 充值套餐 */}
-      <h3 className="font-display text-lg font-bold">充值积分</h3>
-      <p className="text-xs text-text-muted -mt-4">1元 = 20积分</p>
+      {/* 充值套餐（在线支付未开通：按钮走 rechargeCredits 明确提示） */}
+      <h3 className="font-display text-lg font-bold">{t.acc_credits_title}</h3>
+      <p className="text-xs text-text-muted -mt-4">{t.acc_credits_rate}</p>
+      <p className="text-xs text-text-muted -mt-2">{t.acc_credits_offline_hint}</p>
       <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {PACKAGES.map((pkg) => (
           <div
@@ -96,31 +131,36 @@ function AccountCredits() {
           >
             {pkg.popular && (
               <span className="absolute -top-2.5 left-1/2 -translate-x-1/2 px-3 py-0.5 rounded-full text-[10px] font-semibold bg-accent text-white">
-                热门
+                {t.acc_credits_popular}
               </span>
             )}
             <div className="text-2xl font-bold">{pkg.amount.toLocaleString()}</div>
-            <div className="text-sm text-text-muted">积分</div>
+            <div className="text-sm text-text-muted">{t.acc_credits_unit}</div>
             <div className="text-lg font-semibold">¥{pkg.price}</div>
             <button
-              className={`w-full py-2 rounded-lg text-sm font-semibold transition ${
+              type="button"
+              disabled={recharging != null}
+              onClick={() => void handleRecharge(pkg.amount, pkg.amount)}
+              className={`w-full py-2 rounded-lg text-sm font-semibold transition disabled:opacity-50 ${
                 pkg.popular
                   ? "bg-accent text-white hover:bg-accent/90"
                   : "bg-bg-elevated text-text-primary border border-border hover:border-accent/50"
               }`}
             >
-              充值
+              {recharging === pkg.amount ? t.acc_credits_busy : t.acc_credits_recharge}
             </button>
           </div>
         ))}
 
         {/* 自定义金额 */}
         <div className="panel p-5 text-center space-y-3">
-          <div className="text-sm text-text-muted">自定义</div>
+          <div className="text-sm text-text-muted">{t.acc_credits_custom}</div>
           <input
             type="number"
             min="1"
-            placeholder="输入积分"
+            max="1000000"
+            step="1"
+            placeholder={t.acc_credits_custom_placeholder}
             value={customAmount}
             onChange={(e) => setCustomAmount(e.target.value)}
             className="w-full text-center text-xl font-bold bg-transparent border-b border-border focus:border-accent outline-none py-1"
@@ -128,8 +168,13 @@ function AccountCredits() {
           <div className="text-lg font-semibold">
             {customPrice != null ? `¥${customPrice}` : "-"}
           </div>
-          <button className="w-full py-2 rounded-lg text-sm font-semibold transition bg-bg-elevated text-text-primary border border-border hover:border-accent/50">
-            充值
+          <button
+            type="button"
+            disabled={recharging != null}
+            onClick={() => void handleRecharge(customCredits, "custom")}
+            className="w-full py-2 rounded-lg text-sm font-semibold transition bg-bg-elevated text-text-primary border border-border hover:border-accent/50 disabled:opacity-50"
+          >
+            {recharging === "custom" ? t.acc_credits_busy : t.acc_credits_recharge}
           </button>
         </div>
       </div>

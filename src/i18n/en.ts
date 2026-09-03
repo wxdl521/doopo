@@ -85,6 +85,7 @@ export const en: Translations = {
   // Hero / Home
   hero_title_line1: "Let AI Be Your",
   hero_title_line2: "Creative Partner",
+  landing_cta: "Start creating",
   hero_subtitle:
     "Explore powerful AI models, generate stunning images, write professional scripts, and craft dimensional characters — all for free.",
   hero_chars_suffix: "chars",
@@ -358,7 +359,7 @@ export const en: Translations = {
   pricing_title_p1: "Pricing that scales with your",
   pricing_title_p2: "story",
   pricing_subtitle:
-    "One subscription unlocks every model on Doopoo. Points roll over for two months; unused points convert to render credits the third.",
+    "Usage is billed in points today. Online subscriptions and self-serve payments are coming soon.",
   pricing_billing_monthly: "Monthly",
   pricing_billing_annual: "Annual",
   pricing_save_badge: "save 17%",
@@ -396,17 +397,18 @@ export const en: Translations = {
   pricing_faq_a1:
     "A point is a unit of compute. Generating a 5-second 1080p video on Kling 03 costs about 12 points.",
   pricing_faq_q2: "Do points expire?",
-  pricing_faq_a2: "Subscription points roll over for 2 billing cycles. Top-up packs never expire.",
+  pricing_faq_a2:
+    "There is a single wallet balance and no expiry job. Points are not wiped on a billing cycle until subscriptions ship.",
   pricing_faq_q3: "Can I cancel anytime?",
   pricing_faq_a3:
-    "Yes. You keep access until the end of the period and any unused points are still usable.",
+    "There is no subscription period yet. Unused points stay in your account and are deducted when you generate.",
   pricing_faq_q4: "Is there a student plan?",
   pricing_faq_a4:
-    "Yes — write to support with a .edu address and we'll set you up with Pro at 50% off.",
+    "Contact support if you need a discount. Automatic student pricing is not enabled yet.",
 
   // Promo Banner
-  promo_text: "Top up & subscribe to get",
-  promo_bonus: "bonus points",
+  promo_text: "Pay-as-you-go points. Top up to start generating.",
+  promo_bonus: "",
   promo_upgrade: "Upgrade",
   promo_topup: "Top Up",
   promo_close: "Close banner",
@@ -496,6 +498,8 @@ export const en: Translations = {
   auth_account_personal: "Personal",
   auth_account_team: "Team",
   auth_company_name: "Company name",
+  auth_signup_invite_hint:
+    "You were invited. New accounts get 50 points; you both earn 5% of the first top-up or grant.",
 
   team_center: "Team Center",
   team_overview: "Overview",
@@ -721,16 +725,16 @@ export const en: Translations = {
   settings_saved: "Saved",
   settings_danger_title: "Danger Zone",
   settings_danger_desc:
-    "Delete this team. Credits will be converted and refunded to your personal account. This action cannot be undone.",
+    "Delete this team. Member points are reclaimed to the owner’s wallet — they are not converted to cash. This cannot be undone.",
   settings_dissolve: "Dissolve Team",
   settings_dissolve_confirm_title: "Confirm dissolving team",
   settings_dissolve_confirm_desc:
-    "After dissolving, all member credits will be converted and refunded to your personal account. This action cannot be undone.",
+    "After dissolving, non-owner member points are reclaimed to the owner’s wallet — not converted to cash. This cannot be undone.",
   settings_dissolve_confirm_input: "Type the team name {name} to confirm:",
   settings_dissolve_continue: "Continue",
   settings_dissolve_final_title: "Final Confirmation",
   settings_dissolve_final_desc:
-    "Are you sure you want to dissolve {name}? All member credits will be refunded to your account. This cannot be undone.",
+    "Are you sure you want to dissolve {name}? Member points will be reclaimed to the owner. This cannot be undone.",
   settings_dissolve_back: "Back",
   settings_dissolve_confirm_btn: "Confirm Dissolve",
   settings_dissolve_processing: "Dissolving...",
@@ -967,7 +971,8 @@ export const en: Translations = {
   account_overview: "Overview",
   account_subscription: "Subscription",
   account_assets: "My Assets",
-  account_rewards: "Points & Rewards",
+  account_rewards: "Points ledger",
+  account_invite: "Invite friends",
   account_notifications: "Notifications",
   account_credits: "Top Up",
   account_posts: "My Posts",
@@ -986,7 +991,23 @@ export const en: Translations = {
   acc_credits_no_records: "No usage records yet",
   acc_credits_prev: "Prev",
   acc_credits_next: "Next",
-  account_points_rollover: "rolls over 2 cycles",
+  account_points_rollover: "Pay as you go",
+  acc_credits_title: "Buy points",
+  acc_credits_rate: "Reference rate: ¥1 = 20 points (online payments not live yet)",
+  acc_credits_unit: "points",
+  acc_credits_custom: "Custom",
+  acc_credits_custom_placeholder: "Enter points",
+  acc_credits_recharge: "Request top-up",
+  acc_credits_popular: "Popular",
+  acc_credits_offline_hint:
+    "Self-serve payments are not live. This request tells you to contact an admin — it will not charge a card.",
+  acc_credits_invalid_amount: "Enter an integer between 1 and 1,000,000",
+  acc_credits_busy: "Submitting…",
+  account_subscription_none: "No subscription",
+  account_subscription_none_desc:
+    "Usage is billed from your points balance. There is no auto-renewal or saved card. Top up on the credits page or ask an admin.",
+  account_go_credits: "Top up",
+  pricing_choose_credits: "Go to points",
   account_level: "Level",
   account_level_value: "L4 Director",
   account_level_to_next: "320 XP to L5",
@@ -996,7 +1017,7 @@ export const en: Translations = {
   account_display_name: "Display name",
   account_workspace: "Workspace",
   account_plan: "Plan",
-  account_subscription_sub: "Plan, payment method and invoices.",
+  account_subscription_sub: "Usage is billed in points. Online subscriptions are not live yet.",
   account_current_plan: "Current plan",
   account_renews_on: "Renews on",
   account_points_per_month: "points / month",
@@ -1011,8 +1032,37 @@ export const en: Translations = {
   account_assets_count: "assets",
   account_images_generated: "Images generated",
   account_video_renders: "Video renders",
-  account_rewards_sub:
-    "Earn from showcase upvotes, referrals and daily activity. Cash out when you reach 500 pts.",
+  account_rewards_sub: "Balance and full credit history. Rewards and cash-out are not live yet.",
+  account_invite_sub:
+    "Share your link. After a friend signs up, you both earn 5% of their first top-up or grant.",
+  account_invite_link: "Your invite link",
+  account_invite_copy: "Copy link",
+  account_invite_copied: "Copied",
+  account_invite_rules_title: "Rules",
+  account_invite_rule_1: "Every new account gets 50 points on signup, invited or not.",
+  account_invite_rule_2:
+    "Binding happens when a friend registers with your link. You cannot invite yourself, and accounts that already have a ledger cannot be bound.",
+  account_invite_rule_3:
+    "On the friend's first personal or team grant (team grants count for the team owner), you both receive 5% of that amount, rounded down. Amounts under 1 point pay nothing.",
+  account_invite_rule_4:
+    "Each friend pays out at most once. Referral points spend like normal points.",
+  account_invite_stat_invited: "Invited",
+  account_invite_stat_pending: "Waiting",
+  account_invite_stat_rewarded: "Paid out",
+  account_invite_stat_earned: "Your referral points",
+  account_invite_col_friend: "Friend",
+  account_invite_col_bound: "Bound",
+  account_invite_col_status: "Status",
+  account_invite_col_base: "Base amount",
+  account_invite_col_reward: "Payout each",
+  account_invite_empty: "No friends have signed up with your link yet.",
+  account_invite_status_pending: "Waiting for first credit",
+  account_invite_status_rewarded: "Paid out",
+  account_invite_status_skipped: "Under 1 point",
+  account_invite_unavailable: "Invites are not ready yet. Please try again later.",
+  account_invite_loading: "Loading…",
+  account_tx_signup_bonus: "Signup bonus",
+  account_tx_referral_reward: "Referral bonus",
   account_balance: "Balance",
   account_lifetime_earned: "Lifetime earned",
   account_tier: "Tier",

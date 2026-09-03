@@ -26,7 +26,12 @@ import { useAuth } from "../../hooks/useAuth";
 import { getUserBalance } from "../../lib/userCredits.functions";
 
 export type WorkspaceTab =
-  "canvas" | "script" | "episodes" | "character" | "storyboard" | "timeline";
+  | "canvas"
+  | "script"
+  | "episodes"
+  | "character"
+  | "storyboard"
+  | "timeline";
 
 // 'episodes' is intentionally excluded from the workflow bar — it is accessed via the top-left episode dropdown
 const tabs: { id: Exclude<WorkspaceTab, "episodes">; icon: typeof Layers }[] = [
@@ -114,6 +119,7 @@ export default function WorkspaceTopbar({
     storyboard: t.ws_tab_storyboard,
     timeline: t.ws_tab_timeline,
   };
+  const projectTitle = currentProject?.name?.trim() || t.ws_new_workspace;
 
   return (
     <header className="relative z-[60] h-14 border-b border-border bg-bg-surface/90 backdrop-blur flex items-center px-4 gap-3 shrink-0">
@@ -122,7 +128,9 @@ export default function WorkspaceTopbar({
       </div>
 
       <div className="flex items-center gap-1 text-sm shrink-0">
-        <span className="text-text-secondary">{t.ws_new_workspace}</span>
+        <span className="text-text-secondary max-w-[220px] truncate" title={projectTitle}>
+          {projectTitle}
+        </span>
         <span className="text-text-muted">/</span>
         <div className="relative">
           <button
@@ -279,12 +287,19 @@ export default function WorkspaceTopbar({
             查看提示词
           </button>
         )}
-        <span className="px-2 py-1 text-xs rounded-full bg-bg-elevated border border-border text-accent font-semibold tabular-nums">
+        <Link
+          to="/account/credits"
+          className="px-2 py-1 text-xs rounded-full bg-bg-elevated border border-border text-accent font-semibold tabular-nums hover:border-accent/60"
+          title={t.account_credits}
+        >
           ✦ {creditBalance ?? "–"}
-        </span>
-        <button className="px-3 py-1 text-xs rounded-full bg-gradient-to-r from-rose-500 to-orange-500 text-white font-semibold">
+        </Link>
+        <Link
+          to="/pricing"
+          className="px-3 py-1 text-xs rounded-full bg-gradient-to-r from-rose-500 to-orange-500 text-white font-semibold"
+        >
           {t.header_upgrade}
-        </button>
+        </Link>
         {!loading && isAuthenticated && (
           <div className="relative" ref={accountRef}>
             <button

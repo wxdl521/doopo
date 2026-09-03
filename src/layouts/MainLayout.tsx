@@ -6,12 +6,18 @@ import PromoBanner from "../components/PromoBanner";
 import Footer from "../components/Footer";
 import MobileNav from "../components/MobileNav";
 import AuthGate from "../components/AuthGate";
+import { appShellMode } from "../lib/appShell";
 
 export default function MainLayout({ children }: { children: ReactNode }) {
   const [showPromo, setShowPromo] = useState(true);
   const location = useLocation();
-  const isRestyle = location.pathname.startsWith("/restyle");
-  const isWorkspace = location.pathname.startsWith("/workspace/");
+  const shell = appShellMode(location.pathname);
+  const isRestyle = shell === "restyle";
+  const isWorkspace = shell === "workspace";
+
+  if (shell === "landing") {
+    return <AuthGate>{children}</AuthGate>;
+  }
 
   if (isRestyle) {
     return (

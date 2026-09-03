@@ -18,20 +18,22 @@ export const Route = createFileRoute("/account/rewards")({
 
 const PAGE_SIZE = 20;
 
-const TYPE_LABEL: Record<string, string> = {
-  recharge: "充值",
-  consume: "消耗",
-  admin_grant: "系统发放",
-  admin_reclaim: "系统回收",
-  team_allocate: "团队分配",
-  team_reclaim: "团队回收",
-  team_transfer_in: "团队转入",
-  team_transfer_out: "团队转出",
-  team_member_reclaim: "成员离队回收",
-};
-
 function Rewards() {
-  const { t } = useLanguage();
+  const { t, lang } = useLanguage();
+  const locale = lang === "en" ? "en-US" : "zh-CN";
+  const typeLabel: Record<string, string> = {
+    recharge: "充值",
+    consume: "消耗",
+    admin_grant: "系统发放",
+    admin_reclaim: "系统回收",
+    team_allocate: "团队分配",
+    team_reclaim: "团队回收",
+    team_transfer_in: "团队转入",
+    team_transfer_out: "团队转出",
+    team_member_reclaim: "成员离队回收",
+    signup_bonus: t.account_tx_signup_bonus,
+    referral_reward: t.account_tx_referral_reward,
+  };
   const callSummary = useServerFn(getUserCreditSummary);
   const callTx = useServerFn(getUserCreditTransactions);
 
@@ -68,7 +70,7 @@ function Rewards() {
 
   return (
     <>
-      <PageHeader title={t.account_rewards} subtitle="查看你的积分余额与全部收支明细" />
+      <PageHeader title={t.account_rewards} subtitle={t.account_rewards_sub} />
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
         <StatCard icon={Coins} label={t.account_balance} value={fmt(summary?.balance ?? null)} />
         <StatCard
@@ -111,23 +113,25 @@ function Rewards() {
             ) : (
               transactions.map((tx) => {
                 const isPositive = tx.amount > 0;
-                const fmtTime = new Date(tx.createdAt).toLocaleString("zh-CN", {
+                const fmtTime = new Date(tx.createdAt).toLocaleString(locale, {
                   year: "numeric",
                   month: "2-digit",
                   day: "2-digit",
                   hour: "2-digit",
                   minute: "2-digit",
                 });
-                const source = [tx.description ?? tx.model ?? "-", tx.resolution, tx.duration ? `${tx.duration}s` : null]
+                const source = [
+                  tx.description ?? tx.model ?? "-",
+                  tx.resolution,
+                  tx.duration ? `${tx.duration}s` : null,
+                ]
                   .filter(Boolean)
                   .join(" · ");
                 return (
                   <tr key={tx.id} className="border-t border-border">
                     <td className="px-4 py-3 text-text-muted whitespace-nowrap">{fmtTime}</td>
                     <td className="px-4 py-3">{source}</td>
-                    <td className="px-4 py-3 text-text-muted">
-                      {TYPE_LABEL[tx.type] ?? tx.type}
-                    </td>
+                    <td className="px-4 py-3 text-text-muted">{typeLabel[tx.type] ?? tx.type}</td>
                     <td
                       className={`px-4 py-3 text-right font-mono ${isPositive ? "text-emerald-500" : "text-rose-500"}`}
                     >

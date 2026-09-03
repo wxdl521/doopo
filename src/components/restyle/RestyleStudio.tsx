@@ -2067,7 +2067,6 @@ export default function RestyleStudio() {
               assetsCount: assets.length,
               shotsCount,
             }),
-            amount: 1,
             description: `转绘方案分窗退款（${failedJob.videoId} 第 ${failedJob.window.index + 1}/${failedJob.windowCount} 窗）`,
           },
         });

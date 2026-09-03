@@ -1,6 +1,8 @@
 import { Check, Sparkles, Star, Zap } from "lucide-react";
 import { useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { useLanguage } from "../i18n/LanguageContext";
+import { useAuth } from "../hooks/useAuth";
 
 type Plan = {
   id: string;
@@ -16,7 +18,21 @@ type Plan = {
 
 export default function Pricing() {
   const { t } = useLanguage();
+  const navigate = useNavigate();
+  const { isAuthenticated } = useAuth();
   const [annual, setAnnual] = useState(true);
+
+  const onChoosePlan = (planId: string) => {
+    if (planId === "free") {
+      void navigate({ to: isAuthenticated ? "/home" : "/register" });
+      return;
+    }
+    if (!isAuthenticated) {
+      void navigate({ to: "/login", search: { redirect: "/account/credits" } });
+      return;
+    }
+    void navigate({ to: "/account/credits" });
+  };
 
   const plans: Plan[] = [
     {
@@ -139,10 +155,12 @@ export default function Pricing() {
               </div>
 
               <button
+                type="button"
+                onClick={() => onChoosePlan(p.id)}
                 className={`mt-6 w-full justify-center ${p.highlight ? "btn-primary" : "btn-outline"}`}
               >
                 <Sparkles size={14} />{" "}
-                {p.id === "free" ? t.pricing_start_free : `${t.pricing_choose} ${p.name}`}
+                {p.id === "free" ? t.pricing_start_free : t.pricing_choose_credits}
               </button>
 
               <ul className="mt-7 space-y-3">

@@ -203,22 +203,30 @@ export default function Header() {
             </div>
           </div>
 
-          <div className="badge-points hidden sm:flex">
-            <Sparkles size={14} className="text-accent" />
-            <span className="text-text-primary">{creditBalance ?? 0}</span>
-          </div>
+          {isAuthenticated && (
+            <Link
+              to="/account/credits"
+              className="badge-points hidden sm:flex hover:border-accent/50 transition"
+              title={t.account_credits}
+            >
+              <Sparkles size={14} className="text-accent" />
+              <span className="text-text-primary">{creditBalance ?? 0}</span>
+            </Link>
+          )}
 
-          <button
+          <Link
+            to="/pricing"
             className="hidden sm:inline-flex px-4 py-1.5 rounded-full text-sm font-semibold
                              bg-gradient-to-r from-fuchsia-500 to-orange-400 text-white
                              hover:opacity-90 transition shadow-card"
           >
             {t.header_upgrade}
-          </button>
+          </Link>
 
           {!loading && !isAuthenticated ? (
             <Link
-              to="/login" search={{ redirect: undefined }}
+              to="/login"
+              search={{ redirect: undefined }}
               className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-sm font-medium border border-accent/40 text-accent bg-accent-dim hover:bg-accent/20 transition flex-shrink-0"
             >
               登录

@@ -14,6 +14,7 @@ import { LanguageProvider } from "../i18n/LanguageContext";
 import MainLayout from "../layouts/MainLayout";
 import { useEffect } from "react";
 import { runLegacyMigration } from "../lib/legacyMigrate";
+import { captureInviteRefFromSearch } from "../lib/referralRules";
 import { Toaster } from "../components/ui/sonner";
 
 // 404 / 错误页在 LanguageProvider 之外渲染，无法走 i18n context；
@@ -178,6 +179,9 @@ function RootComponent() {
     // 2026 Seedream 迁移:删除了 OpenRouter 动态模型市场探针(probeImageModels)。
     // 现在模型是写死的(Seedream 主力 + legacy 兜底层),不需要启动时探测。
     runLegacyMigration();
+    if (typeof window !== "undefined") {
+      captureInviteRefFromSearch(window.location.search);
+    }
   }, []);
 
   return (

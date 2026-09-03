@@ -7,6 +7,17 @@ export type SectionNavItem = {
   icon: LucideIcon;
 };
 
+/** 只高亮最长匹配项，避免 /account 在 /account/rewards 上仍显示选中。 */
+export function isSectionNavActive(path: string, to: string, allTos: string[]): boolean {
+  const matches = (item: string) =>
+    path === item || (item !== "/" && path.startsWith(`${item}/`));
+  if (!matches(to)) return false;
+  const longest = allTos.filter(matches).reduce((best, item) =>
+    item.length > best.length ? item : best,
+  );
+  return longest === to;
+}
+
 export default function SectionSidebar({
   title,
   items,
@@ -15,6 +26,7 @@ export default function SectionSidebar({
   items: SectionNavItem[];
 }) {
   const path = useRouterState({ select: (s) => s.location.pathname });
+  const allTos = items.map((it) => it.to);
   return (
     <aside className="md:w-56 md:shrink-0">
       <div className="panel p-3">
@@ -23,7 +35,7 @@ export default function SectionSidebar({
         </div>
         <nav className="flex md:flex-col gap-1 overflow-x-auto md:overflow-visible">
           {items.map((it) => {
-            const active = path === it.to || (it.to !== "/" && path.startsWith(it.to + "/"));
+            const active = isSectionNavActive(path, it.to, allTos);
             const Icon = it.icon;
             return (
               <Link
