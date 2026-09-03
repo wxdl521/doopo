@@ -16,9 +16,20 @@ dist-ssr
 .nitro
 *.local
 
+# Supabase CLI local runtime
+supabase/.temp/
+supabase/.branches/
+
 # Wrangler / Cloudflare
 .wrangler/
 .dev.vars
+
+# Tauri desktop
+src-tauri/target/
+src-tauri/gen/
+
+# Brainstorm visual companion
+.superpowers/
 
 # Editor directories and files
 .vscode/*
